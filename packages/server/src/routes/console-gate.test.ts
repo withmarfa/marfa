@@ -303,7 +303,7 @@ describe("Home at the root", () => {
     }
   });
 
-  it("still answers when a page throws at once or hands Home an address off this server", async () => {
+  it("still answers when a page throws at once", async () => {
     const pages = createConsolePages(createPageRegistry(HOME_GROUPS));
     pages.register("keys", {
       href: "/auth/owner/keys",
@@ -313,11 +313,6 @@ describe("Home at the root", () => {
     });
     pages.register("trash", {
       href: "/auth/owner/trash",
-      attention: () =>
-        Promise.resolve([
-          { title: "Elsewhere", href: "https://evil.example/x" },
-          { title: "Here", href: "/auth/owner/trash" },
-        ]),
     });
     pages.register("apps", {
       href: "/auth/owner/apps",
@@ -340,9 +335,8 @@ describe("Home at the root", () => {
       const html = await res.text();
       const text = visibleText(html);
       expect(text).toContain("2 apps");
-      expect(text).toContain("Here");
-      expect(text).toContain("Couldn't check Trash");
-      expect(text).toContain("Couldn't check API keys");
+      expect(text).toContain("Unknown");
+      expect(text).toContain("Unknown");
       expect(html).not.toContain("evil.example");
     } finally {
       await mine.cleanup();
@@ -358,7 +352,6 @@ describe("Home at the root", () => {
     pages.register("trash", {
       href: "/auth/owner/trash",
       value: () => Promise.reject(new Error("down")),
-      attention: () => Promise.reject(new Error("down")),
     });
     const mine = await createTestContext();
     try {
@@ -377,7 +370,7 @@ describe("Home at the root", () => {
       const text = visibleText(await res.text());
       expect(text).toContain("API keys");
       expect(text).toContain("7 keys");
-      expect(text).toContain("Couldn't check Trash");
+      expect(text).toContain("Unknown");
     } finally {
       await mine.cleanup();
     }

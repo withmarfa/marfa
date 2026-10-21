@@ -204,7 +204,7 @@ export async function readHealth(
   // number said most. On the timed-out branch it is the budget by
   // construction, which is worth publishing anyway: a watcher graphing this
   // sees the climb and then the cap rather than a gap.
-  components.database = await timed(
+  const database = timed(
     () => storage.keys.count(),
     `no answer within ${String(PROBE_TIMEOUT_MS)}ms — the database may be held`,
   );
@@ -213,21 +213,28 @@ export async function readHealth(
   // every write: a volume remounted read-only, a disk that is full, a log
   // that cannot grow. Under the same budget, since a write queues behind
   // the writes ahead of it.
-  components.database_write = await timed(
+  const databaseWrite = timed(
     () => probes.write(),
     `no write committed within ${String(PROBE_TIMEOUT_MS)}ms — the database may be held`,
   );
 
   // Room to write into. Unknown is not down: a volume the probe could not
   // read says so as `degraded`, and only a measured shortage is `down`.
-  components.disk = await diskComponent(probes, config.diskReserveBytes ?? 0);
+  const disk = diskComponent(probes, config.diskReserveBytes ?? 0);
 
   // Blob storage. The disk store, which every upload lands on, under the
   // same budget: a held disk is a fault this door exists to report.
-  components.blob_storage = await timed(
+  const blobStorage = timed(
     () => blobs.disk.has("sha256:healthcheck"),
     `no answer within ${String(PROBE_TIMEOUT_MS)}ms`,
   );
+
+  [
+    components.database,
+    components.database_write,
+    components.disk,
+    components.blob_storage,
+  ] = await Promise.all([database, databaseWrite, disk, blobStorage]);
 
   const statuses = Object.values(components).map((one) => one.status);
   const overall: Status = statuses.includes("down")

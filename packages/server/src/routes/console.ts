@@ -1,15 +1,5 @@
-/**
- * How a console page tells Home about itself.
- *
- * A page registers once, beside its entry in the page registry, with the
- * address it is served at and, if it has them, two things Home shows: its
- * current value (the right end of its row) and its attention items (the
- * Needs attention list). Home reads both when it renders, so adding a page
- * never edits Home. The registry itself holds no storage; the providers that
- * read it live here, in the routes layer.
- */
+/** Page registrations supply Home row values; the shared attention reader supplies concerns. */
 import { errorMessage } from "../error-text.js";
-import { localHref } from "../pages/href.js";
 import { PAGE_REGISTRY } from "../pages/registry.js";
 import type { PageRegistry, Registration } from "../pages/registry.js";
 import type { AppConfig } from "../config.js";
@@ -43,13 +33,12 @@ export interface ConsoleReads {
   auth?: MarfaAuth;
   /** Present where the server runs housekeeping; Health leaves its value out without it. */
   health?: ConsoleHealth;
+  attention?: () => Promise<readonly AttentionItem[]>;
 }
 
 export interface ConsoleRegistration extends Registration {
   /** The page's current value, or nothing when it has none worth saying. */
   value?: (reads: ConsoleReads) => Promise<HomeValue | undefined>;
-  /** What is wrong on the page, if anything. Empty when nothing is. */
-  attention?: (reads: ConsoleReads) => Promise<readonly AttentionItem[]>;
 }
 
 export interface HomeReading {
@@ -62,27 +51,25 @@ export interface ConsolePages {
   readonly registry: PageRegistry;
   /** Mark a page built and attach what Home shows for it. Once per page. */
   register(id: string, registration: ConsoleRegistration): void;
-  /**
-   * Ask every registered page for its value and its attention items, all at
-   * once. A page that fails to answer never takes Home down with it: its
-   * value is left out, and an attention failure becomes an item that says the
-   * page could not be checked.
-   */
+  /** Read row values and the shared attention inventory concurrently. */
   read(reads: ConsoleReads): Promise<HomeReading>;
 }
 
-/** How long Home waits for one page's value or attention items. */
+/** How long an unbounded console read may hold a response. */
 const PROVIDER_DEADLINE_MS = 2000;
 
 const TONES: readonly unknown[] = ["warn", "danger"];
 
 /** Runs `provider` and gives up on it at the deadline. Its timer never outlives it. */
-async function withinDeadline<T>(provider: () => Promise<T> | T): Promise<T> {
+export async function withinDeadline<T>(
+  provider: () => Promise<T> | T,
+  budgetMs = PROVIDER_DEADLINE_MS,
+): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const late = new Promise<never>((_, reject) => {
     timer = setTimeout(() => {
-      reject(new Error(`no answer within ${String(PROVIDER_DEADLINE_MS)} ms`));
-    }, PROVIDER_DEADLINE_MS);
+      reject(new Error(`no answer within ${String(budgetMs)} ms`));
+    }, budgetMs);
   });
   try {
     // Started from a promise so a provider that throws before it returns one
@@ -101,78 +88,35 @@ function checkedValue(value: HomeValue | undefined): HomeValue | undefined {
   return value;
 }
 
-/** Checks one item the way Home will render it, so rendering cannot throw on it. */
-function checkedItem(item: AttentionItem): AttentionItem {
-  if (typeof item.title !== "string")
-    throw new Error("an attention item must have a title");
-  if (item.description !== undefined && typeof item.description !== "string")
-    throw new Error("an attention item's description must be text");
-  if (item.tone !== undefined && !TONES.includes(item.tone))
-    throw new Error(`unknown tone ${JSON.stringify(item.tone)}`);
-  localHref(item.href);
-  return item;
-}
-
 export function createConsolePages(registry: PageRegistry): ConsolePages {
-  const providers = new Map<
-    string,
-    Pick<ConsoleRegistration, "value" | "attention">
-  >();
+  const providers = new Map<string, ConsoleRegistration["value"]>();
   return {
     registry,
-    register(id, { value, attention, ...registration }) {
+    register(id, { value, ...registration }) {
       registry.register(id, registration);
-      providers.set(id, { value, attention });
+      providers.set(id, value);
     },
     async read(reads) {
+      const attention = reads.attention?.() ?? Promise.resolve([]);
       const values = new Map<string, HomeValue>();
-      const lists = await Promise.all(
+      await Promise.all(
         [...providers].map(async ([id, provider]) => {
-          const page = registry.page(id);
-          if (!page) return [];
-          const [value, attention] = await Promise.allSettled([
-            withinDeadline(async () =>
-              checkedValue(await provider.value?.(reads)),
-            ),
-            withinDeadline(async (): Promise<readonly AttentionItem[]> => {
-              const items: unknown = await provider.attention?.(reads);
-              if (items === undefined) return [];
-              if (!Array.isArray(items))
-                throw new Error("attention must be a list");
-              return items as AttentionItem[];
-            }),
-          ]);
-          let failures = 0;
-          const fail = (error: unknown): void => {
-            failures += 1;
+          if (!provider) return;
+          try {
+            const value = await withinDeadline(async () =>
+              checkedValue(await provider(reads)),
+            );
+            if (value) values.set(id, value);
+          } catch (error) {
             log("warn", "console: a page could not be read for Home", {
               page: id,
               error: errorMessage(error),
             });
-          };
-          if (value.status === "fulfilled") {
-            if (value.value !== undefined) values.set(id, value.value);
-          } else fail(value.reason);
-          const items: AttentionItem[] = [];
-          if (attention.status === "fulfilled") {
-            for (const item of attention.value) {
-              try {
-                items.push(checkedItem(item));
-              } catch (error) {
-                fail(error);
-              }
-            }
-          } else fail(attention.reason);
-          if (failures > 0)
-            items.push({
-              title: `Couldn't check ${page.title}`,
-              href: page.href,
-              tone: "warn",
-            });
-          return items;
+            values.set(id, { text: "Unknown", tone: "warn" });
+          }
         }),
       );
-      return { values, attention: lists.flat() };
+      return { values, attention: await attention };
     },
   };
 }

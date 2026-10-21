@@ -33,13 +33,7 @@ import {
   type Denials,
   type KeyMap,
 } from "../pages/key-body.js";
-import {
-  createdWords,
-  endingTitle,
-  endsSoon,
-  lastUsedValue,
-  dateWords,
-} from "../pages/key-time.js";
+import { createdWords, lastUsedValue, dateWords } from "../pages/key-time.js";
 import { ALL_EXTENSIONS } from "../pages/access-summary.js";
 import type { RegistryItem } from "../pages/registry.js";
 import type { Storage, StoredApiKey } from "../storage/interface.js";
@@ -48,7 +42,6 @@ import type { AccessModel } from "./access-model.js";
 import { resolveChoosableTypes } from "./access-types.js";
 import { readAccessWords, scopesOfKey } from "./access-view.js";
 import { CONSOLE_PAGES } from "./console.js";
-import type { AttentionItem } from "./console.js";
 import { consoleContentSecurityPolicy } from "./content-security-policy.js";
 import { homeSearchQuery } from "./home-page.js";
 import { appNames, keyListRows, timeOf, withReads } from "./key-rows.js";
@@ -81,7 +74,7 @@ const CREATE_LITERALS: readonly string[] = [
   ...PERMISSIONS,
 ];
 
-/** The keys Home counts and warns about. Home is the owner's, who manages every key. */
+/** The keys Home counts. The owner manages every key. */
 async function liveKeys(storage: Storage): Promise<StoredApiKey[]> {
   return storage.keys.list();
 }
@@ -103,21 +96,6 @@ CONSOLE_PAGES.register("keys", {
   value: async ({ storage }) => {
     const keys = await liveKeys(storage);
     return { text: keys.length === 0 ? "None" : count(keys.length) };
-  },
-  attention: async ({ storage }) => {
-    const now = clock.nowMs();
-    const items: AttentionItem[] = [];
-    for (const key of await liveKeys(storage)) {
-      const ends = key.expires_at ? Date.parse(key.expires_at) : null;
-      if (ends === null || !endsSoon(ends, now)) continue;
-      items.push({
-        title: endingTitle(key.label, ends, now),
-        description: "Scripts using it will stop working",
-        href: keyHref(key.id),
-        tone: "warn",
-      });
-    }
-    return items;
   },
 });
 

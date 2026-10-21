@@ -4,6 +4,42 @@ What one deployment says about itself, and what happens to it as an owner runs i
 
 `GET /` answers one of two things. The description is the JSON object with `name`, `version`, `instance_id`, `contract` and `features`, and with `release` when the build is a numbered release. A page is the HTML a browser is given instead.
 
+## Needs attention
+
+### `instance/attention-authority`
+
+When the owner or a private local command sends `GET /attention`, the server MUST return an unpaginated `data` array of concerns, each with `kind`, `reference`, `title`, `description`, and a local console `href`.
+
+**Tests:** `cli/attention.test.ts › shares owner HTTP and private-socket attention, keeps known concerns, and refuses keys`.
+
+### `instance/attention-credentials`
+
+When a key or delegated credential sends `GET /attention`, the server MUST answer `403 forbidden`.
+
+**Reason:** the aggregate includes the owner's folder and key inventories, which management permissions alone do not grant.
+
+**Tests:** `cli/attention.test.ts › shares owner HTTP and private-socket attention, keeps known concerns, and refuses keys`.
+
+### `instance/attention-concerns`
+
+When `GET /attention` completes its checks, the server MUST include degraded or down health components, housekeeping jobs whose last run failed, connectors whose last run failed or that report problems or have said nothing for more than 24 hours, current folder reports with problems, paused removals or first sync waiting, and live keys expiring within the next seven days inclusive.
+
+**Reason:** connector silence follows the latest registration, heartbeat, or received run; folder totals exclude historical sign-ins and do not claim that a copy is online.
+
+**Tests:** `cli/attention.test.ts › shares owner HTTP and private-socket attention, keeps known concerns, and refuses keys`.
+
+### `instance/attention-unavailable`
+
+If a check fails or does not answer within its bounded deadline, then the server MUST answer `GET /attention` with known concerns and an `unavailable` item identifying the check whose state is unknown.
+
+**Tests:** `cli/attention.test.ts › shares owner HTTP and private-socket attention, keeps known concerns, and refuses keys`.
+
+### `instance/attention-empty`
+
+When every attention check completes without finding a concern, the server MUST return an empty `data` array from `GET /attention`.
+
+**Tests:** `cli/attention.test.ts › shares owner HTTP and private-socket attention, keeps known concerns, and refuses keys`.
+
 ## Background work
 
 ### `instance/background-request-authority`

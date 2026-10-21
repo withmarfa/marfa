@@ -62,7 +62,9 @@ const NOT_A_DOOR: Record<string, string> = {
   "webhooks/read.ts › webhookMaker › get":
     "reads only the display name of a subscription maker after webhook read authorization; an ordinary credential sees only itself and direct authority may inspect every maker",
   "routes/key-routes.ts › liveKeys › list":
-    "the owner's console reads every key for Home's count and attention and for the API keys pages, behind direct owner authority, which manages every key",
+    "the owner's console reads every key for Home's count and the API keys pages, behind direct owner authority, which manages every key",
+  "attention.ts › readAttention › list":
+    "the shared attention reader lists expiring keys only after its owner or private-local caller establishes direct authority; ordinary credentials are refused",
   "routes/keys.ts › refuseOwnSourceClaimedElsewhere › list":
     "asks whether any live key claims a source, and answers with a refusal naming only that source",
   "auth/grant-lifecycle.ts › keysMintedByApp › list":

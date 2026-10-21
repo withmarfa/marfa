@@ -11,10 +11,14 @@ import { requireDirectAuthority, type AppEnv } from "../middleware/auth.js";
 import { usedWords } from "../pages/key-time.js";
 import type { HousekeepingRow, Storage } from "../storage/interface.js";
 import type { ConsoleHealth } from "./console-health.js";
-import { CONSOLE_PAGES } from "./console.js";
-import type { AttentionItem, ConsoleReads, HomeValue } from "./console.js";
+import { CONSOLE_PAGES, withinDeadline } from "./console.js";
+import type { AttentionItem, HomeValue } from "./console.js";
 import { consoleContentSecurityPolicy } from "./content-security-policy.js";
-import type { ComponentStatus, Status } from "./health.js";
+import {
+  PROBE_TIMEOUT_MS,
+  type ComponentStatus,
+  type Status,
+} from "./health.js";
 import {
   HEALTH_HREF,
   renderHealthPage,
@@ -117,7 +121,7 @@ const toneOf = (status: Status): HealthTone | undefined =>
   status === "ok" ? undefined : status === "down" ? "danger" : "warn";
 
 /** The checks in the order the page lists them, from what `readHealth` and the object store answered. */
-function checksFrom(
+export function checksFrom(
   components: Readonly<Record<string, ComponentStatus>>,
   objectStore: ComponentStatus | null,
 ): { name: CheckName; status: Status }[] {
@@ -263,26 +267,12 @@ async function readForHome(health: ConsoleHealth) {
   const [reading, objectStore, jobs] = await Promise.all([
     health.read(),
     health.objectStore(HOME_OBJECT_STORE_BUDGET_MS),
-    health.jobs().catch((): HousekeepingRow[] => []),
+    health.jobs(),
   ]);
   return {
     checks: checksFrom(reading.components, objectStore),
     jobs,
   };
-}
-
-/** Home hands the value and the attention items the same reads, so one reading answers both. */
-const homeReadings = new WeakMap<
-  ConsoleReads,
-  ReturnType<typeof readForHome>
->();
-
-function homeReading(reads: ConsoleReads, health: ConsoleHealth) {
-  const held = homeReadings.get(reads);
-  if (held) return held;
-  const reading = readForHome(health);
-  homeReadings.set(reads, reading);
-  return reading;
 }
 
 CONSOLE_PAGES.register("health", {
@@ -298,13 +288,8 @@ CONSOLE_PAGES.register("health", {
   ],
   value: async (reads) => {
     if (!reads.health) return undefined;
-    const { checks, jobs } = await homeReading(reads, reads.health);
+    const { checks, jobs } = await readForHome(reads.health);
     return healthValue(checks, jobs);
-  },
-  attention: async (reads) => {
-    if (!reads.health) return [];
-    const { checks, jobs } = await homeReading(reads, reads.health);
-    return healthAttention(checks, jobs);
   },
 });
 
@@ -314,13 +299,32 @@ export function healthPageRoutes(storage: Storage, health: ConsoleHealth) {
     requireDirectAuthority(c);
     refuseUndeclaredKeysOf(c.req.url, []);
     const [reading, objectStore, jobs] = await Promise.all([
-      health.read(),
-      health.objectStore(),
-      health.jobs().then(
+      withinDeadline(() => health.read(), PROBE_TIMEOUT_MS + 500).catch(
+        () => null,
+      ),
+      withinDeadline(() => health.objectStore(), PROBE_TIMEOUT_MS + 500).catch(
+        () => undefined,
+      ),
+      withinDeadline(() => health.jobs()).then(
         (rows) => rows,
         () => null,
       ),
     ]);
+    const now = nowRows(reading?.components ?? {}, objectStore ?? null);
+    if (reading === null)
+      now.unshift({
+        title: "Health",
+        description: "Couldn't read health checks. Their state is unknown.",
+        word: "Unknown",
+        tone: "warn",
+      });
+    if (objectStore === undefined)
+      now.push({
+        title: "Object store",
+        description: "Couldn't check the object store. Its state is unknown.",
+        word: "Unknown",
+        tone: "warn",
+      });
     c.header(
       "Content-Security-Policy",
       consoleContentSecurityPolicy(c.var.cspNonce),
@@ -329,7 +333,7 @@ export function healthPageRoutes(storage: Storage, health: ConsoleHealth) {
       renderHealthPage({
         nonce: c.var.cspNonce,
         instanceName: await readInstanceName(storage.settings),
-        now: nowRows(reading.components, objectStore),
+        now,
         jobs: jobs === null ? null : jobRows(jobs, clock.nowMs()),
       }),
     );

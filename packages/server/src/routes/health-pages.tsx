@@ -100,7 +100,7 @@ export function HealthPage(props: HealthPageParams) {
             <RowGroup>
               <EmptyState
                 title="Couldn't read the jobs"
-                description="Marfa couldn't reach its database. Try again in a moment."
+                description="The check failed or did not answer in time. Try again in a moment."
               />
             </RowGroup>
           ) : (

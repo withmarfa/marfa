@@ -44,16 +44,17 @@ beforeAll(async () => {
   pages.register("keys", {
     href: PAGE,
     value: () => Promise.resolve({ text: "7 keys" }),
-    attention: () =>
-      Promise.resolve([
-        {
-          title: "A key has not been used in a year",
-          description: "Revoke it if nothing needs it.",
-          href: PAGE,
-        },
-      ]),
   });
   pages.register("trash", { href: PAGE });
+  await ctx.ownerRequest("/keys", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      label: "Browser fixture",
+      source: "browser-attention",
+      expires_at: new Date(Date.now() + 86400000).toISOString(),
+    }),
+  });
   const app = createApp(
     ctx.storage,
     ctx.blobs,
@@ -151,7 +152,7 @@ describe("Home", () => {
           .getByRole("heading", { name: "Library", level: 1 })
           .waitFor();
         await page.getByText("Needs attention").waitFor();
-        await page.getByText("A key has not been used in a year").waitFor();
+        await page.getByText(/Key Browser fixture ends/).waitFor();
         await page.getByText("7 keys").waitFor();
         // The script ran: it shows the controls the server sent hidden.
         await page.getByRole("button", { name: "Sign out" }).waitFor();

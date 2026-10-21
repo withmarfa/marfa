@@ -95,6 +95,7 @@ pub const OPERATIONS: &[Operation] = &[
     reached("listBlobLocations", "blobs locations"),
     reached("deleteBlobLocation", "blobs delete-location"),
     reached("listBlobOrphans", "blobs orphans"),
+    reached("listAttention", "attention"),
     reached("listHousekeeping", "housekeeping list"),
     reached("runHousekeeping", "housekeeping run"),
     reached("registerConnector", "connectors register"),

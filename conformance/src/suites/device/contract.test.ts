@@ -1145,6 +1145,7 @@ const PRIVATE_SOCKET_TABLE: Record<string, () => string[]> = {
   "items trash restore": () => [ID, "--version", "1"],
   "items trash purge": () => [ID, "--version", "1"],
   "items trash empty": () => ["--confirm", "PURGE"],
+  attention: () => [],
   "folders inventory": () => ["--limit", "1"],
   "owner update": () => ["--email", "a@cyzr.me", "--name", "Owner"],
   "owner passkeys list": () => [],
@@ -1563,6 +1564,37 @@ describe("every command holds the server to the contract", () => {
         ]);
         const label = `folders inventory on contract ${String(contract)}: ${outcome.stderr}`;
         expect(socket.asked, label).toEqual(["GET /folders?limit=1"]);
+        if (contract === BUILT_FOR) {
+          expect(outcome.code, label).toBe(0);
+          expect(JSON.parse(outcome.stdout), label).toEqual(body);
+        } else {
+          expect(outcome.code, label).toBe(1);
+          expect(codeOf(outcome.stderr), label).toBe("contract_mismatch");
+          expect(outcome.stdout, label).toBe("");
+        }
+      }
+    } finally {
+      await socket.stop();
+    }
+  });
+
+  it("holds attention to the contract through its private socket", async () => {
+    const socket = await PrivateSocket.start();
+    const body = { data: [] };
+    socket.answer = body;
+    try {
+      for (const contract of [BUILT_FOR, String(builtFor + 1), null]) {
+        socket.contract = contract;
+        socket.asked = [];
+        const outcome = await marfa([
+          "--json",
+          "--socket",
+          socket.path,
+          "attention",
+          ...PRIVATE_SOCKET_TABLE.attention!(),
+        ]);
+        const label = `attention on contract ${String(contract)}: ${outcome.stderr}`;
+        expect(socket.asked, label).toEqual(["GET /attention"]);
         if (contract === BUILT_FOR) {
           expect(outcome.code, label).toBe(0);
           expect(JSON.parse(outcome.stdout), label).toEqual(body);

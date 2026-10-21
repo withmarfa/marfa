@@ -1,8 +1,8 @@
 /**
  * What the console says about a connector's health, from what the connector
  * reported. The server takes no action on a stale heartbeat (`connectors.ts`),
- * so this is the console's own reading, shared by the list, a connector's page
- * and Home.
+ * so this reading is shared by the list, a connector's page, and the attention
+ * operation.
  */
 import type { Connector } from "../storage/interface.js";
 

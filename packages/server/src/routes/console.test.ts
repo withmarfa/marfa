@@ -25,22 +25,16 @@ const reads = {} as ConsoleReads;
 const pages = () => createConsolePages(createPageRegistry(GROUPS));
 
 describe("the seam a console page uses to tell Home about itself", () => {
-  it("registers the page and reads its value and attention items", async () => {
+  it("registers the page and reads its value", async () => {
     const console = pages();
     console.register("keys", {
       href: "/auth/owner/keys",
       value: () => Promise.resolve({ text: "3 keys" }),
-      attention: () =>
-        Promise.resolve([
-          { title: "A key ends soon", href: "/auth/owner/keys", tone: "warn" },
-        ]),
     });
     expect(console.registry.page("keys")?.href).toBe("/auth/owner/keys");
     const reading = await console.read(reads);
     expect(reading.values.get("keys")).toEqual({ text: "3 keys" });
-    expect(reading.attention).toEqual([
-      { title: "A key ends soon", href: "/auth/owner/keys", tone: "warn" },
-    ]);
+    expect(reading.attention).toEqual([]);
   });
 
   it("reads nothing from a page that registered neither", async () => {
@@ -68,22 +62,15 @@ describe("the seam a console page uses to tell Home about itself", () => {
     console.register("keys", {
       href: "/auth/owner/keys",
       value: () => Promise.reject(new Error("boom")),
-      attention: () => Promise.reject(new Error("boom")),
     });
     console.register("apps", {
       href: "/auth/owner/apps",
       value: () => Promise.resolve({ text: "1 app", tone: "warn" }),
     });
     const reading = await console.read(reads);
-    expect(reading.values.has("keys")).toBe(false);
+    expect(reading.values.get("keys")?.text).toBe("Unknown");
     expect(reading.values.get("apps")).toEqual({ text: "1 app", tone: "warn" });
-    expect(reading.attention).toEqual([
-      {
-        title: "Couldn't check API keys",
-        href: "/auth/owner/keys",
-        tone: "warn",
-      },
-    ]);
+    expect(reading.attention).toEqual([]);
   });
 
   it("does not wait for ever on a page that never answers, and counts that as a failure", async () => {
@@ -96,7 +83,7 @@ describe("the seam a console page uses to tell Home about itself", () => {
     });
     console.register("apps", {
       href: "/auth/owner/apps",
-      attention: () => new Promise<never>(() => undefined),
+      value: () => new Promise<never>(() => undefined),
     });
     let done = false;
     const reading = console.read(reads).then((r) => {
@@ -106,11 +93,10 @@ describe("the seam a console page uses to tell Home about itself", () => {
     await vi.advanceTimersByTimeAsync(60_000);
     expect(done).toBe(true);
     const result = await reading;
-    expect(result.values.size).toBe(0);
-    expect(result.attention.map((item) => item.title)).toEqual([
-      "Couldn't check API keys",
-      "Couldn't check Connected apps",
-    ]);
+    expect(result.values.size).toBe(2);
+    expect(
+      [...result.values.values()].every((value) => value.text === "Unknown"),
+    ).toBe(true);
   });
 
   it("lets a page that answers in time be heard, and leaves no timer running", async () => {
@@ -119,7 +105,6 @@ describe("the seam a console page uses to tell Home about itself", () => {
     console.register("keys", {
       href: "/auth/owner/keys",
       value: () => Promise.resolve({ text: "3 keys" }),
-      attention: () => Promise.resolve([]),
     });
     const reading = await console.read(reads);
     expect(reading.values.get("keys")).toEqual({ text: "3 keys" });
@@ -135,9 +120,6 @@ describe("the seam a console page uses to tell Home about itself", () => {
       value: () => {
         throw new Error("sync");
       },
-      attention: () => {
-        throw new Error("sync");
-      },
     });
     console.register("apps", {
       href: "/auth/owner/apps",
@@ -145,62 +127,7 @@ describe("the seam a console page uses to tell Home about itself", () => {
     });
     const reading = await console.read(reads);
     expect(reading.values.get("apps")).toEqual({ text: "1 app" });
-    expect(reading.attention.map((item) => item.title)).toEqual([
-      "Couldn't check API keys",
-    ]);
-  });
-
-  it("treats an attention item that does not point at this server as a page that could not be checked", async () => {
-    vi.spyOn(logger, "log").mockImplementation(() => undefined);
-    const good = { title: "A key ends soon", href: "/auth/owner/keys" };
-    // Witness: the same item with a path on this server is kept.
-    const kept = pages();
-    kept.register("keys", {
-      href: "/auth/owner/keys",
-      attention: () => Promise.resolve([good]),
-    });
-    expect((await kept.read(reads)).attention).toEqual([good]);
-    for (const href of [
-      "https://evil.example/",
-      "//evil.example/x",
-      "/\\evil.example",
-      "/a\tb",
-      "",
-    ]) {
-      const console = pages();
-      console.register("keys", {
-        href: "/auth/owner/keys",
-        attention: () =>
-          Promise.resolve([good, { title: "Off", href, tone: "warn" }]),
-      });
-      const reading = await console.read(reads);
-      expect(reading.attention, JSON.stringify(href)).toEqual([
-        good,
-        {
-          title: "Couldn't check API keys",
-          href: "/auth/owner/keys",
-          tone: "warn",
-        },
-      ]);
-    }
-  });
-
-  it("refuses a tone Home does not know, on an item and on a value", async () => {
-    vi.spyOn(logger, "log").mockImplementation(() => undefined);
-    const console = pages();
-    console.register("keys", {
-      href: "/auth/owner/keys",
-      value: () => Promise.resolve({ text: "x", tone: "red" as "warn" }),
-      attention: () =>
-        Promise.resolve([
-          { title: "t", href: "/auth/owner/keys", tone: "red" as "warn" },
-        ]),
-    });
-    const reading = await console.read(reads);
-    expect(reading.values.has("keys")).toBe(false);
-    expect(reading.attention.map((item) => item.title)).toEqual([
-      "Couldn't check API keys",
-    ]);
+    expect(reading.values.get("keys")?.text).toBe("Unknown");
   });
 
   it("says in the log which page failed and why", async () => {
@@ -212,7 +139,6 @@ describe("the seam a console page uses to tell Home about itself", () => {
     console.register("keys", {
       href: "/auth/owner/keys",
       value: () => Promise.reject(new Error("keys table gone")),
-      attention: () => Promise.resolve([]),
     });
     await console.read(reads);
     expect(lines).toHaveLength(1);

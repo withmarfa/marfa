@@ -103,6 +103,7 @@ const STANDING: Record<string, string> = {
   "DELETE /auth/grants/:id": "grants.manage",
   "GET /export": "reads some type, or owner browser session",
   "GET /items/stats": "reads some type, or owner browser session",
+  "GET /attention": "owner or local command",
   "GET /folders": "owner or local command",
   "GET /folders/:id/status": "reads some type, or owner or local command",
   "PUT /folders/:id/status": "reads some type, or owner or local command",
