@@ -174,6 +174,7 @@ export function itemPageRoutes(storage: Storage) {
         instanceName: await readInstanceName(storage.settings),
         types,
         schema,
+        provenance: schema ? await storage.types.provenance(id) : undefined,
         count: types.find((t) => t.schema.id === id)?.count ?? 0,
         trashed: trashed[id] ?? 0,
         removable: !!schema && !isLockedPlatformType(id),

@@ -2415,7 +2415,7 @@ export interface components {
             /** @description The sign-in that moved the item to the trash, captured at that time, or null if not recorded. */
             trashed_by: {
                 /**
-                 * @description What wrote the version. `browser`: the owner's browser. `app`: an app the owner approved. `key`: an API key. `local`: the local command on the server's machine.
+                 * @description The recorded sign-in kind. `browser`: the owner's browser. `app`: an app the owner approved. `key`: an API key. `local`: the local command on the server's machine.
                  * @enum {string}
                  */
                 kind: "browser" | "app" | "key" | "local";
@@ -2425,7 +2425,7 @@ export interface components {
                  */
                 id: string;
                 /**
-                 * @description The sign-in's name when it wrote the version, as `GET /owner/sign-ins` showed it. At most 200 characters.
+                 * @description The sign-in's name when the action happened, as `GET /owner/sign-ins` showed it. At most 200 characters.
                  * @example Safari on macOS
                  */
                 name: string;

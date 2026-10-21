@@ -1223,7 +1223,7 @@
                       "key",
                       "local"
                     ],
-                    "description": "What wrote the version. `browser`: the owner's browser. `app`: an app the owner approved. `key`: an API key. `local`: the local command on the server's machine."
+                    "description": "The recorded sign-in kind. `browser`: the owner's browser. `app`: an app the owner approved. `key`: an API key. `local`: the local command on the server's machine."
                   },
                   "id": {
                     "type": "string",
@@ -1232,7 +1232,7 @@
                   },
                   "name": {
                     "type": "string",
-                    "description": "The sign-in's name when it wrote the version, as `GET /owner/sign-ins` showed it. At most 200 characters.",
+                    "description": "The sign-in's name when the action happened, as `GET /owner/sign-ins` showed it. At most 200 characters.",
                     "example": "Safari on macOS"
                   }
                 },

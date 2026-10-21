@@ -1,5 +1,10 @@
 import { afterAll, beforeAll, expect, it } from "vitest";
-import { createTestContext, request, type TestContext } from "../test-utils.js";
+import {
+  createTestContext,
+  mintWorkingKey,
+  request,
+  type TestContext,
+} from "../test-utils.js";
 let ctx: TestContext;
 beforeAll(async () => {
   ctx = await createTestContext();
@@ -196,4 +201,76 @@ it("rolls the creator back with a failed registration", async () => {
   expect(
     (await ctx.storage.audit.list({ action: "test.creator_rollback" })).data,
   ).toEqual([]);
+});
+
+it("renders trusted type creators and preserves both provenance columns in archives", async () => {
+  const source = await createTestContext();
+  const target = await createTestContext();
+  try {
+    const key = await mintWorkingKey(source, { label: "Research importer" });
+    const registered = await request(source.app, "POST", "/types", {
+      key,
+      body: { id: "user.creator_page", label: "Research", fields: {} },
+    });
+    expect(registered.status).toBe(201);
+    await source.storage.runInTransaction(() =>
+      source.storage.types.create(
+        { id: "user.unknown_creator", version: 1, fields: {} },
+        { origin: "user", created_by: null },
+      ),
+    );
+    const page = await source.ownerRequest(
+      "/auth/owner/types/user.creator_page",
+    );
+    expect(page.status).toBe(200);
+    expect(await page.text()).toContain("Research importer");
+    const builtin = await source.ownerRequest("/auth/owner/types/core.note");
+    expect(builtin.status).toBe(200);
+    expect(await builtin.text()).toContain("Built in to Marfa");
+    const unknown = await source.ownerRequest(
+      "/auth/owner/types/user.unknown_creator",
+    );
+    expect(unknown.status).toBe(200);
+    expect(await unknown.text()).toContain("Not recorded");
+
+    const created = await request(source.app, "POST", "/items", {
+      key,
+      body: { type: "user.creator_page", properties: {} },
+    });
+    expect(created.status).toBe(201);
+    const { item } = (await created.json()) as { item: { id: string } };
+    const deleted = await request(source.app, "DELETE", `/items/${item.id}`, {
+      key,
+    });
+    expect(deleted.status).toBe(200);
+    const trash = (await source.storage.items.trashDetailsOf([item.id])).get(
+      item.id,
+    );
+    expect(trash?.trashed_by?.name).toBe("Research importer");
+    const exported = await source.ownerRequest(
+      "/export?format=archive&state=any",
+    );
+    expect(exported.status).toBe(200);
+    const restored = await target.ownerRequest("/restore", {
+      method: "POST",
+      headers: { "Content-Type": "application/gzip" },
+      body: await exported.arrayBuffer(),
+    });
+    expect(restored.status, await restored.clone().text()).toBe(200);
+    expect(await target.storage.types.provenance("user.creator_page")).toEqual(
+      await source.storage.types.provenance("user.creator_page"),
+    );
+    expect(
+      await target.storage.types.provenance("user.unknown_creator"),
+    ).toEqual({
+      origin: "user",
+      created_by: null,
+    });
+    expect(
+      (await target.storage.items.trashDetailsOf([item.id])).get(item.id),
+    ).toEqual(trash);
+  } finally {
+    await source.cleanup();
+    await target.cleanup();
+  }
 });
