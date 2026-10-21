@@ -532,6 +532,7 @@ pub struct Journaled {
     pub kept: Option<Kept>,
 }
 
+/// Records what a sweep decided for a journaled file whose binding it kept.
 pub fn journal_keep(
     conn: &Connection,
     path: &str,

@@ -1748,9 +1748,9 @@ impl Folder {
         Ok(())
     }
 
-    /// Past the grace, a file the last sweep kept bound is looked for in the
-    /// other folders again only by a full pass, so a watch walks them once a
-    /// full pass for it, not once a second.
+    /// Past the grace, a file whose binding the last sweep kept is looked for
+    /// in the other folders again only by a full pass, so a watch walks them
+    /// at most once every full pass for it.
     fn sweep_journal(
         &self,
         settings: &Settings,
