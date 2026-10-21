@@ -4419,7 +4419,7 @@ mod tests {
                     }
                 };
                 assert_eq!(
-                    store::queued_write(&*core.conn().unwrap(), &row.id)
+                    store::queued_write(&core.conn().unwrap(), &row.id)
                         .unwrap()
                         .unwrap()
                         .verdict,

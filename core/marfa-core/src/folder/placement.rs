@@ -243,12 +243,19 @@ impl Folder {
         }
     }
 
+    /// The version of the settings the copy holds, read whether or not the
+    /// copy can be read: a drain that a changed read view ends remembers its
+    /// refusals before the copy is built again.
+    fn settings_version(&self) -> Result<Option<i64>> {
+        store::held_version(&*self.core.conn()?, &self.folder)
+    }
+
     fn refused(&self) -> Result<Option<Refused>> {
         let Some(json) = store::meta_get(&*self.core.conn()?, META_REFUSED)? else {
             return Ok(None);
         };
         let refused: Option<Refused> = serde_json::from_str(&json).ok();
-        let settings = self.core.get(&self.folder)?.map(|row| row.version);
+        let settings = self.settings_version()?;
         let Some(mut refused) = refused.filter(|refused| Some(refused.settings) == settings) else {
             store::meta_delete(&*self.core.conn()?, META_REFUSED)?;
             return Ok(None);
@@ -523,7 +530,7 @@ impl Folder {
             Some(record) => record,
             None => Refused {
                 key: self.key_state().ok(),
-                settings: self.core.get(&self.folder)?.map_or(0, |row| row.version),
+                settings: self.settings_version()?.unwrap_or(0),
                 placements: Withheld::new(),
             },
         };
