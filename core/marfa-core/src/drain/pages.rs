@@ -33,8 +33,7 @@ use crate::{read_view, store, telemetry};
 const FLOOR: usize = 50;
 
 /// Well inside the server's 5,000 entries and 16 MiB to a page
-/// (`items/bulk-entry-cap`, `items/bulk-body-cap`), so one page is answered
-/// in about the time a single write is.
+/// (`items/bulk-entry-cap`, `items/bulk-body-cap`).
 const ENTRIES: usize = 1000;
 const BYTES: usize = 4 * 1024 * 1024;
 
