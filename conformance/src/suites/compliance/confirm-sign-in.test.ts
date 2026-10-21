@@ -426,6 +426,106 @@ describe("signing out the other browsers", () => {
   });
 });
 
+describe("signing out every browser", () => {
+  /** `POST /auth/revoke-sessions` from the browser session `cookie`. */
+  const endAll = (cookie: string) =>
+    fetch(`${server.apiUrl}/auth/revoke-sessions`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        cookie,
+        origin,
+        [CLIENT_HEADER]: nextAddress(),
+      },
+      body: "{}",
+    });
+
+  it("ends no browser session for one created more than five minutes ago, until the owner confirms", async () => {
+    const stale = await signIn();
+    const other = await signIn();
+    await server.advanceClock(6 * MINUTE);
+    const refused = await endAll(stale);
+    expect(refused.status).toBe(403);
+    expect(await code(refused)).toBe("forbidden");
+    expect((await get("/owner/sign-ins", stale)).status).toBe(200);
+    expect((await get("/owner/sign-ins", other)).status).toBe(200);
+
+    const renewed = sessionCookie(
+      await confirm({ password: TEST_OWNER.password }, stale),
+    )!;
+    expect((await endAll(renewed)).status).toBe(200);
+    expect((await get("/owner/sign-ins", other)).status).toBe(401);
+    expect((await get("/owner/sign-ins", renewed)).status).toBe(401);
+  });
+});
+
+describe("a stale session changing a passkey", () => {
+  it("refuses a rename and a removal from a session created more than five minutes ago, and a recent session makes both", async () => {
+    const holder = await signIn();
+    const rpID = new URL(origin).hostname;
+    const options = await get(
+      "/auth/passkey/generate-register-options",
+      holder,
+    );
+    const challenge = ((await options.json()) as { challenge: string })
+      .challenge;
+    const added = await fetch(
+      `${server.apiUrl}/auth/passkey/verify-registration`,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          origin,
+          cookie: [holder, cookiesOf(options)].join("; "),
+          [CLIENT_HEADER]: nextAddress(),
+        },
+        body: JSON.stringify({
+          name: "Kept by age",
+          response: testAuthenticator().registration(challenge, origin, rpID),
+        }),
+      },
+    );
+    expect(added.status).toBe(200);
+
+    await server.advanceClock(6 * MINUTE);
+    const fresh = await signIn();
+    const listed = await get("/owner/passkeys", fresh);
+    expect(listed.status).toBe(200);
+    const id = (
+      (await listed.json()) as { data: { id: string; name: string }[] }
+    ).data.find((row) => row.name === "Kept by age")!.id;
+    const change = (method: string, cookie: string) =>
+      fetch(`${server.apiUrl}/owner/passkeys/${id}`, {
+        method,
+        headers: {
+          "content-type": "application/json",
+          cookie,
+          origin,
+          [CLIENT_HEADER]: nextAddress(),
+        },
+        ...(method === "PATCH"
+          ? { body: JSON.stringify({ name: "Renamed by age" }) }
+          : {}),
+      });
+    for (const method of ["PATCH", "DELETE"]) {
+      const refused = await change(method, holder);
+      expect(refused.status, method).toBe(403);
+      expect(await code(refused)).toBe("forbidden");
+    }
+    const kept = (await (await get("/owner/passkeys", fresh)).json()) as {
+      data: { id: string; name: string }[];
+    };
+    expect(kept.data.find((row) => row.id === id)?.name).toBe("Kept by age");
+
+    const renamed = await change("PATCH", fresh);
+    expect(renamed.status).toBe(200);
+    expect(((await renamed.json()) as { name: string }).name).toBe(
+      "Renamed by age",
+    );
+    expect((await change("DELETE", fresh)).status).toBe(200);
+  });
+});
+
 describe("a stale session adding a passkey", () => {
   it("refuses a passkey registration from a stale session", async () => {
     const stale = await signIn();

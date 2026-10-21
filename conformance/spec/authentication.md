@@ -84,7 +84,7 @@ When a foreign origin asks to remove an owner passkey, the server MUST refuse it
 
 When the owner renames or removes a passkey through `PATCH` or `DELETE /owner/passkeys/{id}`, the server MUST require a live owner browser session authenticated within five minutes or private local authority.
 
-**Tests:** `compliance/passkeys.test.ts › requires owner authority and the instance origin for passkey management`.
+**Tests:** `compliance/passkeys.test.ts › requires owner authority and the instance origin for passkey management`, `compliance/confirm-sign-in.test.ts › refuses a rename and a removal from a session created more than five minutes ago, and a recent session makes both`.
 
 ### `authentication/passkey-rename`
 
@@ -203,6 +203,14 @@ When an owner browser session created in the last five minutes sends `POST /auth
 **Reason:** the Browsers page signs out every browser but the one the owner is using, so the owner is not signed out of the page that asked. The browsers' sessions end and the apps they approved stay connected (`keys-and-oauth/app-outlives-browser`), because an app is not the browser that approved it. A session older than five minutes is refused as `authentication/recent-refusal` says.
 
 **Tests:** `compliance/confirm-sign-in.test.ts › ends every other browser session of the owner and keeps the one that sent it`, `compliance/browser-sessions.test.ts › through ending the other sessions leaves every app connected`.
+
+### `authentication/sign-out-all-recent`
+
+If an owner browser session created more than five minutes ago sends `POST /auth/revoke-sessions`, then the server MUST answer `403 forbidden` and end no session.
+
+**Reason:** The request ends every browser session of the owner, so a browser left signed in, or a copied cookie, cannot lock the owner out without the password.
+
+**Tests:** `compliance/confirm-sign-in.test.ts › ends no browser session for one created more than five minutes ago, until the owner confirms`.
 
 ### `authentication/passkey-register-recent`
 

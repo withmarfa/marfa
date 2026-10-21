@@ -219,9 +219,12 @@ pub enum DeviceCommand {
     /// `failing_alone` out of the queue, and put the copy back to what the
     /// server holds.
     ///
-    /// Sent again, a write blocked `ancestor_unavailable` or
-    /// `conflict_unresolved` is refused the same way under any key. The writes
-    /// held for the withdrawn write are refused unsent.
+    /// A release sends a write again under a fresh idempotency key but on the
+    /// version it already names. A write blocked `conflict_unresolved` is
+    /// refused the same way each time, and one blocked `ancestor_unavailable`
+    /// too, unless the credential it is sent with has come to read the
+    /// snapshot it names. The writes held for the withdrawn write are refused
+    /// unsent.
     Withdraw {
         /// The queued write to withdraw.
         #[arg(value_name = "ID")]

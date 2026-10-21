@@ -865,6 +865,14 @@ When the owner's browser session authenticated within five minutes or private lo
 
 **Tests:** `compliance/webhooks-owner.test.ts › retries a failed delivery through owner authority without exposing its frame`.
 
+### `events/webhook-direct-retry-recent`
+
+If the owner's browser session that requests redelivery signed in more than five minutes ago, then the server MUST answer `403 forbidden`.
+
+**Reason:** A redelivery sends the maker's retained content to the maker's address again, so a browser left signed in, or a copied cookie, cannot cause one without the password.
+
+**Tests:** `compliance/webhooks-owner.test.ts › refuses the owner's redelivery to a browser session that signed in more than five minutes ago, and accepts it from a recent one`.
+
 ### `events/webhook-direct-mutations`
 
 When direct owner or local authority sends a subscription create, update or delete without the maker's credential, the server MUST refuse it with `401 unauthorized`.

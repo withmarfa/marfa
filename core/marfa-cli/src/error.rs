@@ -244,7 +244,7 @@ impl Exit {
         match self {
             Exit::Done => "done",
             Exit::Refused => {
-                "the request was refused, by the server (a wrong or spent setup code included), by the CLI before sending, for an answer on another contract, or for a docs page that does not exist, or the archive of an export or a restore lacks blobs it names; a retry does not change it"
+                "the server refused the request (a wrong or spent setup code included), the CLI refused it before sending, the answer came from another contract, a docs page does not exist, or the archive of an export or a restore lacks blobs it names; a retry does not change it"
             }
             Exit::Usage => "the command line was wrong, or named no store or server",
             Exit::Environment => {
@@ -254,10 +254,10 @@ impl Exit {
                 "the working copy or the queue refused under the device rules, or the keychain cannot be used (locked, missing, unreadable, or none on this system)"
             }
             Exit::Credential => {
-                "no credential, the credential was refused, or the sign-in ended; `marfa login` starts one"
+                "there is no credential, the credential was refused, or the sign-in ended; run `marfa login` to start one"
             }
             Exit::Interrupted => {
-                "a long-lived command (`folders watch`, `events`, `device changes`) was ended by Ctrl-C, or a second Ctrl-C ended a command that was still stopping"
+                "you ended a long-lived command (`folders watch`, `events`, `device changes`) with Ctrl-C, or ended one that was still stopping with a second Ctrl-C"
             }
         }
     }
@@ -582,10 +582,10 @@ impl From<serde_json::Error> for CliError {
 }
 
 /// How a drain's report sets the exit code, said after the exit codes.
-pub const DRAIN_EXITS: &str = "A device drain prints its complete report on stdout: 0 for a completed pass (including refused writes), 3 for undelivered writes or an unavailable pass, and 5 for a credential-stopped pass. A report exit prints no additional refusal on stderr. Refused verdicts have a separate plain-text count.";
+pub const DRAIN_EXITS: &str = "`marfa device drain` prints its complete report on stdout and sets the exit code from it: 0 when the pass completed (refused writes included), 3 when writes went undelivered or the pass could not run, and 5 when a credential stopped the pass. These exits print no additional refusal on stderr. The report counts refused verdicts separately, in plain text.";
 
 /// What a failed catch-up adds to its refusal, said after the drain.
-pub const CATCH_UP_FAILED: &str = "A device catch-up that fails says whether it had changed the catalog the copy holds, which the copy keeps; with --json, as \"catalog_changed\" beside \"exit\".";
+pub const CATCH_UP_FAILED: &str = "When `marfa device catch-up` fails, the refusal says whether the catch-up had already changed the catalog the copy holds; the copy keeps that change. With --json, the refusal carries this as \"catalog_changed\" beside \"exit\".";
 
 /// The refusal `--json` prints, said after the drain and the catch-up: what
 /// it is, its shape, and the words before the codes its `error.code` can be.

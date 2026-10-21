@@ -2136,6 +2136,14 @@ When a recent owner session or a private local command posts to `/trash/empty`, 
 
 **Tests:** `compliance/owner-trash.test.ts › lists and changes trash as summaries, with exact versions and cascade restore`.
 
+### `items/owner-trash-recent`
+
+If the browser session posting to `/items/summaries/{id}/trash`, `/restore` or `/purge`, or to `/trash/empty`, signed in more than five minutes ago, then the server MUST answer `403 forbidden` and change no item.
+
+**Reason:** A purge cannot be undone, so a browser left signed in, or a copied cookie, cannot remove what the owner kept without the password.
+
+**Tests:** `compliance/recent-sign-in-consent.test.ts › refuses a session that signed in more than five minutes ago 403 at each door and changes no item, and a fresh session passes through them`.
+
 ### `items/owner-trash-cli`
 
 When a caller runs `marfa --socket PATH items trash list`, `move`, `restore`, `purge` or `empty`, the CLI MUST use the corresponding owner summary operation through private local authority.

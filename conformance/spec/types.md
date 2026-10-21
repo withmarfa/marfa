@@ -976,6 +976,14 @@ When a recent owner session or private local command sends `DELETE /types/{id}`,
 
 **Tests:** `compliance/owner-trash.test.ts › lets the owner remove only unused custom types`.
 
+### `types/delete-owner-recent`
+
+If the browser session sending `DELETE /types/{id}` signed in more than five minutes ago, then the server MUST answer `403 forbidden` and keep the type.
+
+**Reason:** Removing a type changes what every app can store, so a browser left signed in, or a copied cookie, cannot do it without the password.
+
+**Tests:** `compliance/recent-sign-in-consent.test.ts › refuses a session that signed in more than five minutes ago 403 and keeps the type, and a fresh session removes it`.
+
 ### `types/delete-owner-force`
 
 If a direct owner or private local command sends `DELETE /types/{id}?force=true`, then the server MUST answer `403 forbidden`.
