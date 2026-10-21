@@ -464,7 +464,7 @@ export function buildAccess(given: AccessInput): AccessModel {
             : option,
         );
         row.description = [
-          row.description,
+          row.description && `${row.description.replace(/\.$/, "")}.`,
           "Other settings still apply within this group.",
         ]
           .filter(Boolean)
