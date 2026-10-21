@@ -48,6 +48,7 @@ import {
 import { CliFolder, type FolderSettings } from "../../device/cli-adapter.js";
 import { BUILT_FOR, ScriptedServer } from "../../device/scripted-server.js";
 import { FolderDoor } from "../../device/folder-door.js";
+import { writeSteadily } from "../../device/steady-writer.js";
 import type { FolderHarness } from "./harness.js";
 import type {
   Answer,
@@ -2554,22 +2555,28 @@ describe("files and items", () => {
     acceptUploads(harness.server);
     const log = join(harness.dir, "capture.bin");
     writeFileSync(log, Buffer.alloc(0));
-    let written = 0;
-    const writing = setInterval(() => {
-      written += 1;
-      appendFileSync(log, Buffer.alloc(1024, written % 256));
-    }, 50);
+    const writing = writeSteadily(log, 10);
     const said = "capture.bin: still changing, so not sent yet";
     const watching = harness.folder.watchText();
     try {
-      // Long enough for several passes the folder never settles for.
       await vi.waitFor(
         () => {
           expect(watching.stdout).toContain(said);
         },
         { timeout: 30_000, interval: 100 },
       );
-      await new Promise((resolve) => setTimeout(resolve, 11_000));
+      // Each note below is sent by a pass that began after the one that spoke,
+      // and `watch-settle-ceiling` starts the next pass while the file keeps
+      // changing, so the watch has passed twice more with the file unsettled.
+      for (const title of ["after-first", "after-second"]) {
+        writeFileSync(join(harness.dir, `${title}.md`), `# ${title}\n`);
+        await vi.waitFor(
+          () => {
+            expect(sentTitles(harness!)).toContain(title);
+          },
+          { timeout: 30_000, interval: 100 },
+        );
+      }
       expect(
         watching.stdout.split(said).length - 1,
         `a watch said the same still-changing file at every pass: ${watching.stdout}`,
@@ -2579,11 +2586,11 @@ describe("files and items", () => {
           (request) =>
             request.method === "POST" && request.pathname === "/blobs",
         ),
-        "a file that never stopped changing was uploaded part-written",
+        `a file that never stopped changing was uploaded part-written (its writer's longest pause was ${String(writing.longestPause())} ms)`,
       ).toEqual([]);
       expect(watching.running(), watching.stderr).toBe(true);
     } finally {
-      clearInterval(writing);
+      await writing.stop();
       await watching.stop();
     }
   });
