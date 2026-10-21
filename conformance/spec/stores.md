@@ -366,9 +366,19 @@ When a caller authorized by `blobs.manage` or direct owner or local authority se
 
 ### `stores/drop-order`
 
-When `DELETE /blobs/{hash}/locations/{store}` meets more than one of the answers this chapter gives it, the server MUST give the first in this order: no credential, `401 unauthorized`; a key or app token lacking `blobs.manage`, `403 forbidden`; a malformed hash, `400 validation_error`; a hash no blob holds, `404 blob_not_found`; a store that is not attached or holds no copy, `404 blob_location_not_found`; fewer than `min_copies` live copies left, or fewer confirmed by their stores (`stores/drop-confirms-copies`), `409 copies_below_minimum`.
+When `DELETE /blobs/{hash}/locations/{store}` meets more than one of the answers this chapter gives it, the server MUST give the first in this order: no credential, `401 unauthorized`; a key or app token lacking `blobs.manage`, `403 forbidden`; a malformed hash, `400 validation_error`; a hash no blob holds, `404 blob_not_found`; a store that has not finished a write or a deletion of the blob's bytes (`stores/drop-unfinished`), `503 blob_store_unavailable`; a store that is not attached or holds no copy, `404 blob_location_not_found`; fewer than `min_copies` live copies left, or fewer confirmed by their stores (`stores/drop-confirms-copies`), `409 copies_below_minimum`.
 
-**Tests:** `compliance/blob-rules.test.ts › answers the drop door's refusals in their order`, `compliance/key-management.test.ts › refuses a key that may not use a door 403 before it reads the request`, `compliance/declared-refusals.test.ts › is refused 400 on the key and blob-location doors`.
+**Reason:** the location log is read before any store is asked, so a drop that the log alone refuses is answered without waiting on a store.
+
+**Tests:** `compliance/blob-rules.test.ts › answers the drop door's refusals in their order`, `compliance/key-management.test.ts › refuses a key that may not use a door 403 before it reads the request`, `compliance/declared-refusals.test.ts › is refused 400 on the key and blob-location doors`, `compliance/blob-store-silent.test.ts › answers 503 blob_store_unavailable at once, keeps the copy, and drops it once the store answers`.
+
+### `stores/drop-unfinished`
+
+While an attached store has not finished a write or a deletion of a blob's bytes that the server stopped waiting for, if a caller authorized by `blobs.manage` or direct owner or local authority sends `DELETE /blobs/{hash}/locations/{store}` for that blob, then the server MUST answer `503 blob_store_unavailable` without changing any copy.
+
+**Reason:** the late write or deletion can still change which copies the blob has, so neither the location log nor the stores can yet say whether enough copies would remain. Waiting would hang the request on a store that may never answer. The drop can be sent again once the store answers.
+
+**Tests:** `compliance/blob-store-silent.test.ts › answers 503 blob_store_unavailable at once, keeps the copy, and drops it once the store answers`.
 
 ### `stores/drop-concurrent`
 

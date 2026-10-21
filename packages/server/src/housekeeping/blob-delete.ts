@@ -1,7 +1,11 @@
 import { BlobStoreUnreachable, type BlobStore } from "../storage/blob-store.js";
 import { runAuditedTransaction } from "../storage/audited-transaction.js";
 import { log } from "../middleware/logger.js";
-import type { AuditLogEntry, Storage } from "../storage/interface.js";
+import type {
+  AuditLogEntry,
+  BlobLocation,
+  Storage,
+} from "../storage/interface.js";
 import {
   LOCK_HELD,
   tryBlobUploadLock,
@@ -33,7 +37,8 @@ import {
  * A store's `delete` here is waited on for the store check bound and no
  * longer, and the lock is kept until it ends (`awaitStoreChange`).
  * Housekeeping takes a blob's lock only when it is free, so a later run
- * skips a blob whose delete is still out rather than waiting on it.
+ * skips a blob whose delete is still out rather than waiting on it, and a
+ * request that takes the lock meanwhile is refused.
  */
 export interface Stores {
   readonly stores: readonly BlobStore[];
@@ -67,9 +72,15 @@ export class LocationNotFound extends Error {
  * Drop one store's copy of a blob, when the log says enough live copies
  * would remain and their stores confirm they hold them. The log alone can
  * name a copy that is gone, such as one a store's late delete removed, and
- * a drop trusting it could take the last real copy. Location removal, audit
- * and cleanup intent commit together before bytes are deleted, so a store
- * failure leaves a retryable intent and the drop still succeeds.
+ * a drop trusting it could take the last real copy. The log is asked first,
+ * so a drop it refuses answers without waiting on any store. Location
+ * removal, audit and cleanup intent commit together before bytes are
+ * deleted, so a store failure leaves a retryable intent and the drop still
+ * succeeds.
+ *
+ * Refused with `blob_store_unavailable`, as every taker of the lock is,
+ * while a store has not finished a write or delete of the blob that its
+ * caller stopped waiting for: that call can still change the blob's copies.
  */
 export async function dropBlobCopy(
   storage: Storage,
@@ -79,10 +90,22 @@ export async function dropBlobCopy(
   minCopies: number,
   actor: Pick<AuditLogEntry, "key_id" | "client_ip"> = { client_ip: null },
 ): Promise<void> {
-  const store = stores.byId(storeId);
-  if (!store) throw new LocationNotFound(hash, storeId);
   await withBlobUploadLock(hash, async () => {
-    const confirmed = await confirmedOthers(storage, stores, hash, storeId);
+    const store = stores.byId(storeId);
+    if (!store) throw new LocationNotFound(hash, storeId);
+    const live = (await storage.blobs.listLocations(hash)).filter(
+      (location) => !location.detached,
+    );
+    if (!live.some((location) => location.store_id === storeId))
+      throw new LocationNotFound(hash, storeId);
+    if (live.length - 1 < minCopies)
+      throw new CopiesBelowMinimum(hash, live.length, minCopies);
+    const confirmed = await confirmedOthers(
+      storage,
+      stores,
+      hash,
+      live.filter((location) => location.store_id !== storeId),
+    );
     await runAuditedTransaction(
       storage,
       async () => {
@@ -128,43 +151,39 @@ export async function dropBlobCopy(
 }
 
 /**
- * How many of the blob's other live copies, those the log names in attached
- * stores other than `storeId`, their stores confirm they hold at the blob's
- * size, each asked within the store check bound. A store that fails or does
- * not answer confirms nothing. The caller holds the blob's upload lock, so
- * the log's copies of the blob do not change before the drop commits.
+ * How many of `others`, the blob's other live copies the log names, their
+ * stores confirm they hold at the blob's size, each asked within the store
+ * check bound. A store that fails or does not answer confirms nothing. The
+ * caller holds the blob's upload lock, so the log's copies of the blob do
+ * not change before the drop commits.
  */
 async function confirmedOthers(
   storage: Storage,
   stores: Stores,
   hash: string,
-  storeId: string,
+  others: readonly BlobLocation[],
 ): Promise<number> {
   const record = await storage.blobs.get(hash);
-  const locations = await storage.blobs.listLocations(hash);
-  if (!record || !locations.some((l) => l.store_id === storeId && !l.detached))
-    return 0;
+  if (!record) return 0;
   const answers = await Promise.all(
-    locations
-      .filter((location) => !location.detached && location.store_id !== storeId)
-      .map(async (location) => {
-        const other = stores.byId(location.store_id);
-        if (!other) return false;
-        try {
-          const held = await within(
-            (cancel) => other.has(hash, cancel),
-            storeCheckTimeoutMs(),
-          );
-          return held?.size_bytes === record.size_bytes;
-        } catch (err) {
-          log("error", "blob.drop_copy_unconfirmed", {
-            hash,
-            store_id: other.id,
-            error: errorMessage(err),
-          });
-          return false;
-        }
-      }),
+    others.map(async (location) => {
+      const other = stores.byId(location.store_id);
+      if (!other) return false;
+      try {
+        const held = await within(
+          (cancel) => other.has(hash, cancel),
+          storeCheckTimeoutMs(),
+        );
+        return held?.size_bytes === record.size_bytes;
+      } catch (err) {
+        log("error", "blob.drop_copy_unconfirmed", {
+          hash,
+          store_id: other.id,
+          error: errorMessage(err),
+        });
+        return false;
+      }
+    }),
   );
   return answers.filter(Boolean).length;
 }

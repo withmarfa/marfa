@@ -625,6 +625,18 @@ const deleteBlobLocationRoute = createRoute({
       description:
         "- `copies_below_minimum`: deleting the copy would leave fewer live copies than `min_copies`, or fewer that their stores confirm they hold within 15 seconds. Nothing changes.",
     },
+    503: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema([
+            "blob_store_unavailable",
+            "write_contention",
+          ]),
+        },
+      },
+      description:
+        "- `blob_store_unavailable`: a store hasn't finished an earlier write or delete of this blob, so Marfa can't tell which copies it has yet. Nothing changes. Try again later.\n- `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again.",
+    },
   },
 });
 

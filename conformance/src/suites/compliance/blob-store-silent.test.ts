@@ -19,8 +19,8 @@ import { TEST_OWNER } from "../../utils/target.js";
 import { waitFor } from "../../utils/wait.js";
 
 /**
- * What `blob-integrity`, `blob-replicate` and a read of a blob's bytes do
- * when a store does not answer, on a server of the fixture's own that keeps
+ * What `blob-integrity`, `blob-replicate`, a drop and a read of a blob's
+ * bytes do when a store does not answer, on a server of the fixture's own that keeps
  * its bytes on a disk and in the run's object store. The `hold:blob-has`
  * and `hold:blob-read` faults (`conformance/README.md`, "Faults") make every
  * store hang before it answers whether it holds a blob or opens its bytes,
@@ -390,6 +390,46 @@ describe("a store's write that does not answer", () => {
       return copied.result.remaining === 0 ? true : undefined;
     });
     expect((await operator.listBlobLocations(hash!)).data.data).toHaveLength(2);
+  });
+});
+
+describe("a drop while a store does not finish a write of the blob's bytes", () => {
+  it("answers 503 blob_store_unavailable at once, keeps the copy, and drops it once the store answers", async () => {
+    const content = bytesOf("dropped while the store's write hangs", 120);
+    const [hash] = await leaveBacklog(operator, working, [content]);
+    const disk = (await operator.listBlobStores()).data.data.find(
+      (store) => store.kind === "disk",
+    )!.id;
+
+    await server.setFault("store-check-deadline=200");
+    await server.setFault("hold:blob-write");
+    const run = await runJob(operator, "blob-replicate");
+    expect(run.result).toMatchObject({ copied: 0, remaining: 1 });
+    expect(await waitingAt("hold:blob-write")).toBe(1);
+
+    // The write is held until the fault is cleared, so a drop that waited
+    // on it would not answer at all.
+    const refused = await operator.deleteBlobLocation(hash!, disk);
+    expect(refused.status).toBe(503);
+    expect(refused.error?.error.code).toBe("blob_store_unavailable");
+    expect(await waitingAt("hold:blob-write")).toBe(1);
+    expect(
+      (await operator.listBlobLocations(hash!)).data.data.map(
+        (location) => location.kind,
+      ),
+    ).toEqual(["disk"]);
+
+    // The witness: once the store answers and the copy is made, the same
+    // drop goes through.
+    await server.clearFault();
+    await replicatedAgain("the object store's copy");
+    const dropped = await operator.deleteBlobLocation(hash!, disk);
+    expect(dropped.status, JSON.stringify(dropped.error)).toBe(200);
+    expect(
+      (await operator.listBlobLocations(hash!)).data.data.map(
+        (location) => location.kind,
+      ),
+    ).toEqual(["s3"]);
   });
 });
 

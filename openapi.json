@@ -31994,11 +31994,11 @@
             }
           },
           "503": {
-            "description": "`write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again.",
+            "description": "- `blob_store_unavailable`: a store hasn't finished an earlier write or delete of this blob, so Marfa can't tell which copies it has yet. Nothing changes. Try again later.\n- `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/WriteContentionRefusal"
+                  "$ref": "#/components/schemas/BlobStoreUnavailableOrWriteContentionRefusal"
                 }
               }
             },

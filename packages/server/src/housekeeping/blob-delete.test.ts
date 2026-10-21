@@ -6,7 +6,8 @@ import { Readable } from "node:stream";
 import { describe, it, expect, afterEach } from "vitest";
 import { createTestContext, request, withSecondStore } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
-import { storeChecks } from "../storage/blob-layer.js";
+import { awaitStoreChange, storeChecks } from "../storage/blob-layer.js";
+import { withBlobUploadLock } from "../storage/blob-upload-lock.js";
 import {
   CopiesBelowMinimum,
   LocationNotFound,
@@ -21,6 +22,23 @@ afterEach(async () => {
   await ctx?.cleanup();
   ctx = undefined;
 });
+
+/** `work`, or a rejection once `ms` have passed without it settling. */
+async function settlesWithin<T>(work: Promise<T>, ms: number): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      work,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+          reject(new Error(`still running after ${String(ms)} ms`));
+        }, ms);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 async function upload(c: TestContext, content: string): Promise<string> {
   const res = await c.app.request("/blobs", {
@@ -491,5 +509,147 @@ describe("a drop that the location log alone would allow", () => {
     }
     expect(await ctx.storage.blobs.listLocations(hash)).toHaveLength(2);
     expect(await second.has(hash)).not.toBeNull();
+  });
+});
+
+describe("a drop while a store has not finished a change to the blob", () => {
+  it("answers 503 blob_store_unavailable at once, and drops the copy once the store answers", async () => {
+    ctx = await createTestContext();
+    const c = ctx;
+    const { second } = await withSecondStore(c);
+    const content = "dropped while a store's write is out";
+    const hash = await upload(c, content);
+    await second.put(hash, {
+      stream: Readable.from([Buffer.from(content)]),
+      size_bytes: content.length,
+    });
+    await c.storage.blobs.recordLocation(hash, second.id);
+    // A write to the second store that its caller stops waiting for, as
+    // replication's is when the store does not answer.
+    let finish: () => void = () => undefined;
+    const write = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    await withBlobUploadLock(hash, () =>
+      awaitStoreChange(second, hash, () => write, 50).catch(() => undefined),
+    );
+    const drop = () =>
+      c.app.request(`/blobs/${hash}/locations/${second.id}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${c.managementKey}` },
+      });
+    try {
+      const refused = await settlesWithin(Promise.resolve(drop()), 1_000);
+      expect(refused.status).toBe(503);
+      expect(await refused.json()).toMatchObject({
+        error: { code: "blob_store_unavailable" },
+      });
+      expect(await c.storage.blobs.listLocations(hash)).toHaveLength(2);
+      expect(await second.has(hash)).not.toBeNull();
+    } finally {
+      finish();
+    }
+    // The witness: once the write ends, the same drop goes through.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const dropped = await settlesWithin(Promise.resolve(drop()), 1_000);
+    expect(dropped.status).toBe(200);
+    expect(
+      (await c.storage.blobs.listLocations(hash)).map((l) => l.store_id),
+    ).toEqual([c.blobs.disk.id]);
+  });
+
+  it("waits in turn behind a live drop of the same blob", async () => {
+    ctx = await createTestContext();
+    const c = ctx;
+    const { stores, second } = await withSecondStore(c);
+    const content = "two live drops";
+    const hash = await upload(c, content);
+    await second.put(hash, {
+      stream: Readable.from([Buffer.from(content)]),
+      size_bytes: content.length,
+    });
+    await c.storage.blobs.recordLocation(hash, second.id);
+    // The first drop holds the blob while it asks the disk, well within
+    // the store check bound.
+    const has = c.blobs.disk.has.bind(c.blobs.disk);
+    let answer: () => void = () => undefined;
+    const answered = new Promise<void>((resolve) => {
+      answer = resolve;
+    });
+    let asking: () => void = () => undefined;
+    const asked = new Promise<void>((resolve) => {
+      asking = resolve;
+    });
+    c.blobs.disk.has = async (wanted, cancel) => {
+      asking();
+      await answered;
+      return has(wanted, cancel);
+    };
+    try {
+      const first = dropBlobCopy(c.storage, stores, hash, second.id, 1);
+      await asked;
+      let settled = false;
+      const next = dropBlobCopy(c.storage, stores, hash, c.blobs.disk.id, 1)
+        .catch((error: unknown) => error)
+        .finally(() => {
+          settled = true;
+        });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(settled).toBe(false);
+      c.blobs.disk.has = has;
+      answer();
+      await first;
+      // Its turn came after the first committed, so it found one copy.
+      const outcome = await next;
+      expect(outcome).toBeInstanceOf(CopiesBelowMinimum);
+      expect(outcome).toMatchObject({ live: 1, minCopies: 1 });
+    } finally {
+      c.blobs.disk.has = has;
+      answer();
+    }
+    expect(
+      (await c.storage.blobs.listLocations(hash)).map((l) => l.store_id),
+    ).toEqual([c.blobs.disk.id]);
+  });
+
+  it("refuses a drop the log alone refuses without asking any store", async () => {
+    ctx = await createTestContext();
+    const c = ctx;
+    const { stores, second } = await withSecondStore(c);
+    const content = "refused by the log";
+    const hash = await upload(c, content);
+    await second.put(hash, {
+      stream: Readable.from([Buffer.from(content)]),
+      size_bytes: content.length,
+    });
+    await c.storage.blobs.recordLocation(hash, second.id);
+    let asked = 0;
+    const has = c.blobs.disk.has.bind(c.blobs.disk);
+    c.blobs.disk.has = () => {
+      asked++;
+      return new Promise(() => undefined);
+    };
+    try {
+      // Two copies and a minimum of two: the log refuses the drop.
+      const refused = dropBlobCopy(c.storage, stores, hash, second.id, 2);
+      await expect(settlesWithin(refused, 1_000)).rejects.toBeInstanceOf(
+        CopiesBelowMinimum,
+      );
+      await expect(refused).rejects.toMatchObject({ live: 2, minCopies: 2 });
+      expect(asked).toBe(0);
+    } finally {
+      c.blobs.disk.has = has;
+    }
+    // The witness: a drop the log allows asks the other store.
+    c.blobs.disk.has = (wanted, cancel) => {
+      asked++;
+      return has(wanted, cancel);
+    };
+    try {
+      await dropBlobCopy(c.storage, stores, hash, second.id, 1);
+      expect(asked).toBe(1);
+    } finally {
+      c.blobs.disk.has = has;
+    }
   });
 });
