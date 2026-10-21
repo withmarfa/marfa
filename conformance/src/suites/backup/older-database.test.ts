@@ -93,6 +93,36 @@ async function replicaPast(path: string, txid: bigint): Promise<void> {
   }
 }
 
+/**
+ * Litestream's record on `volume` with every level-0 file but the newest
+ * removed, as its level-0 retention leaves a volume that has run for more
+ * than a few minutes.
+ */
+function keepNewestLocalLtx(volume: string): void {
+  const dir = join(dataDir(volume), ".marfa.db-litestream", "ltx", "0");
+  const names = readdirSync(dir).filter((name) => LTX_NAME.test(name));
+  const newest = newestTxid(names);
+  expect(newest).toBeGreaterThan(1n);
+  for (const name of names) {
+    if (newestTxid([name]) !== newest) rmSync(join(dir, name));
+  }
+}
+
+/**
+ * Writes a row to the database of the instance running on `volume`, and
+ * waits until Litestream has recorded the transaction.
+ */
+async function write(volume: string, name: string): Promise<void> {
+  const before = recordedTxid(volume);
+  query(volume, `INSERT INTO starts VALUES ('${name}');`);
+  const deadline = Date.now() + 20_000;
+  while (recordedTxid(volume) <= before) {
+    if (Date.now() > deadline)
+      throw new Error(`Litestream did not record the write ${name}`);
+    await pause(100);
+  }
+}
+
 /** A copy of everything on `volume`, Litestream's record included. */
 function copyVolume(volume: string): string {
   const copy = newVolume();
@@ -103,12 +133,15 @@ function copyVolume(volume: string): string {
 /**
  * An instance that started twice under `prefix`, and a copy of its volume
  * taken between the two starts, which the replica has since moved past.
+ * The first start writes `laterWrites` more rows after its first
+ * transaction, each a transaction of its own.
  */
-async function startedTwice(prefix: string) {
+async function startedTwice(prefix: string, laterWrites = 0) {
   const volume = newVolume();
   const first = await boot(volume, "first", prefix);
   expect(first.bootedAs).toBe("fresh");
   await replicaAt(`${prefix}/db`);
+  for (let i = 0; i < laterWrites; i++) await write(volume, `first-${i}`);
   expect(await first.stop()).toBe(0);
 
   const copy = copyVolume(volume);
@@ -146,9 +179,7 @@ describe("deploy/entrypoint.sh with a database already on the volume", () => {
 
     const again = await boot(volume, "third", prefix);
     expect(again.bootedAs).toBe("first");
-    expect(newestTxid(await replicaAt(`${prefix}/db`, before))).toBeGreaterThan(
-      newestTxid(before),
-    );
+    await replicaPast(`${prefix}/db/0000`, newestTxid(before));
     expect(await again.stop()).toBe(0);
   });
 
@@ -212,16 +243,20 @@ describe("deploy/entrypoint.sh with a database already on the volume", () => {
     );
   });
 
-  it("starts an older database under a new prefix that holds no replica, and leaves the old replica unchanged", async () => {
+  it("starts an older database under a new prefix that holds no replica, replicates its writes there, and leaves the old replica unchanged", async () => {
     const prefix = `${run}/old-prefix`;
     const fresh = `${run}/new-prefix`;
-    const { copy } = await startedTwice(prefix);
+    const { copy } = await startedTwice(prefix, 2);
+    keepNewestLocalLtx(copy);
     const old = await keysUnder(`${prefix}/`);
 
     const moved = await boot(copy, "moved", fresh);
     expect(moved.bootedAs).toBe("first");
-    await replicaAt(`${fresh}/db`);
+    const started = newestTxid(await replicaAt(`${fresh}/db/0000`));
+    await write(copy, "after-move");
+    await replicaPast(`${fresh}/db/0000`, started);
     expect(await moved.stop()).toBe(0);
+    expect(moved.output()).toContain("Removing Litestream's record");
     expect(await keysUnder(`${prefix}/`)).toEqual(old);
   });
 
@@ -234,7 +269,9 @@ describe("deploy/entrypoint.sh with a database already on the volume", () => {
       MARFA_REPLACE_NEWER_REPLICA: "true",
     });
     expect(replaced.bootedAs).toBe("first");
-    await replicaAt(`${prefix}/db`, before);
+    const started = newestTxid(await replicaAt(`${prefix}/db/0000`, before));
+    await write(copy, "after-override");
+    await replicaPast(`${prefix}/db/0000`, started);
     expect(await replaced.stop()).toBe(0);
     expect(replaced.output()).toContain("MARFA_REPLACE_NEWER_REPLICA is set");
   });

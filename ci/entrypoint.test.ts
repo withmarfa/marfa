@@ -26,6 +26,8 @@ import { loadConfig } from "../packages/server/src/config.js";
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const ENTRYPOINT = join(ROOT, "deploy/entrypoint.sh");
 const REFUSED = 78;
+/** Litestream's record beside `data/marfa.db`, relative to a run's folder. */
+const RECORD = "data/.marfa.db-litestream";
 
 const dirs: string[] = [];
 const running: ChildProcess[] = [];
@@ -59,12 +61,16 @@ const LISTING =
  * entrypoint runs last. `node dist/replica-check.js` runs `check` instead,
  * which by default writes down its arguments and input and passes;
  * `litestream ltx` prints `listing`, or fails when it is `null`. With
- * `database`, the volume holds a database before the entrypoint starts.
+ * `database`, the volume holds a database before the entrypoint starts;
+ * with `restored`, `litestream restore` writes one; with `record`, the
+ * volume holds Litestream's record beside it.
  */
 function start(options: {
   body: string;
   bucket?: boolean;
   database?: boolean;
+  restored?: boolean;
+  record?: boolean;
   check?: string;
   listing?: string | null;
   env?: Record<string, string>;
@@ -85,9 +91,14 @@ function start(options: {
     }\n`,
   );
   chmodSync(join(dir, "check.sh"), 0o755);
-  if (options.database) {
-    mkdirSync(join(dir, "data"));
-    writeFileSync(join(dir, "data/marfa.db"), "");
+  mkdirSync(join(dir, "data"));
+  if (options.database) writeFileSync(join(dir, "data/marfa.db"), "");
+  if (options.record) {
+    mkdirSync(join(dir, RECORD, "ltx/0"), { recursive: true });
+    writeFileSync(
+      join(dir, RECORD, "ltx/0/0000000000000007-0000000000000007.ltx"),
+      "",
+    );
   }
   // `node`, run by the entrypoint or by Litestream's `-exec`, is the stand-in
   // too; `litestream restore` does nothing.
@@ -114,7 +125,9 @@ function start(options: {
     [
       "#!/bin/sh",
       `echo "$1" >> "${join(dir, "litestream-commands")}"`,
-      'case "$1" in restore) exit 0 ;; esac',
+      `case "$1" in restore) ${
+        options.restored ? `: > "${join(dir, "data/marfa.db")}"; ` : ""
+      }exit 0 ;; esac`,
       `case "$1" in ltx) ${
         options.listing === null
           ? 'echo "cannot reach the bucket" >&2; exit 1'
@@ -388,7 +401,12 @@ describe("deploy/entrypoint.sh, before replication starts", () => {
   });
 
   it("does not check a database the restore wrote, which is the replica's newest state", async () => {
-    const run = start({ bucket: true, listing: LISTING, body: SERVER_STARTED });
+    const run = start({
+      bucket: true,
+      restored: true,
+      listing: LISTING,
+      body: SERVER_STARTED,
+    });
 
     expect(await run.exited).toBe(0);
     expect(existsSync(join(run.dir, "check-args"))).toBe(false);
@@ -428,7 +446,15 @@ describe("deploy/entrypoint.sh, before replication starts", () => {
   });
 
   it("starts without the check when MARFA_REPLACE_NEWER_REPLICA is a true word, and says so", async () => {
-    for (const value of ["true", "TRUE", "1", "yes", "On"]) {
+    for (const value of [
+      "true",
+      "TRUE",
+      "1",
+      "yes",
+      "On",
+      " true ",
+      "\tON\n",
+    ]) {
       const run = start({
         bucket: true,
         database: true,
@@ -448,7 +474,7 @@ describe("deploy/entrypoint.sh, before replication starts", () => {
   });
 
   it("checks as usual when MARFA_REPLACE_NEWER_REPLICA is a false word or empty", async () => {
-    for (const value of ["false", "0", "no", "OFF", ""]) {
+    for (const value of ["false", "0", "no", "OFF", "", " no\t", "  "]) {
       const run = start({
         bucket: true,
         database: true,
@@ -464,6 +490,91 @@ describe("deploy/entrypoint.sh, before replication starts", () => {
       );
       expect(commands(run), value).toEqual(["restore", "ltx"]);
     }
+  });
+
+  it("removes Litestream's record before replicating when the check finds the replica empty", async () => {
+    const run = start({
+      bucket: true,
+      database: true,
+      record: true,
+      listing: "[]",
+      check: "cat > /dev/null\necho empty",
+      body: SERVER_STARTED,
+    });
+
+    expect(await run.exited).toBe(0);
+    expect(existsSync(join(run.dir, RECORD))).toBe(false);
+    expect(run.output()).toContain("Removing Litestream's record");
+    expect(commands(run)).toEqual(["restore", "ltx", "replicate"]);
+    expect(existsSync(join(run.dir, "started"))).toBe(true);
+  });
+
+  it("keeps Litestream's record when the check passes on a replica that holds transactions", async () => {
+    const run = start({
+      bucket: true,
+      database: true,
+      record: true,
+      listing: LISTING,
+      body: SERVER_STARTED,
+    });
+
+    expect(await run.exited).toBe(0);
+    expect(existsSync(join(run.dir, RECORD))).toBe(true);
+    expect(run.output()).not.toContain("Removing Litestream's record");
+    expect(commands(run)).toEqual(["restore", "ltx", "replicate"]);
+  });
+
+  it("keeps Litestream's record when the check refuses", async () => {
+    const run = start({
+      bucket: true,
+      database: true,
+      record: true,
+      listing: "[]",
+      check: "echo empty\nexit 1",
+      body: SERVER_STARTED,
+    });
+
+    expect(await run.exited).toBe(1);
+    expect(existsSync(join(run.dir, RECORD))).toBe(true);
+    expect(commands(run)).toEqual(["restore", "ltx"]);
+  });
+
+  it("removes Litestream's record under MARFA_REPLACE_NEWER_REPLICA", async () => {
+    const run = start({
+      bucket: true,
+      database: true,
+      record: true,
+      listing: null,
+      env: { MARFA_REPLACE_NEWER_REPLICA: "true" },
+      body: SERVER_STARTED,
+    });
+
+    expect(await run.exited).toBe(0);
+    expect(existsSync(join(run.dir, RECORD))).toBe(false);
+    expect(commands(run)).toEqual(["restore", "replicate"]);
+  });
+
+  it("removes Litestream's record when the volume holds no database and the restore finds no replica", async () => {
+    const run = start({ bucket: true, record: true, body: SERVER_STARTED });
+
+    expect(await run.exited).toBe(0);
+    expect(existsSync(join(run.dir, RECORD))).toBe(false);
+    expect(commands(run)).toEqual(["restore", "replicate"]);
+  });
+
+  it("keeps Litestream's record when the restore writes the database", async () => {
+    const run = start({
+      bucket: true,
+      record: true,
+      restored: true,
+      body: SERVER_STARTED,
+    });
+
+    expect(await run.exited).toBe(0);
+    expect(existsSync(join(run.dir, "data/marfa.db"))).toBe(true);
+    expect(existsSync(join(run.dir, RECORD))).toBe(true);
+    expect(run.output()).not.toContain("Removing Litestream's record");
+    expect(commands(run)).toEqual(["restore", "replicate"]);
   });
 
   it("refuses a MARFA_REPLACE_NEWER_REPLICA that is not a flag word, before anything runs", async () => {
