@@ -2590,8 +2590,12 @@ describe("files and items", () => {
       ).toEqual([]);
       expect(watching.running(), watching.stderr).toBe(true);
     } finally {
-      await writing.stop();
-      await watching.stop();
+      // The writer's own failure is thrown, so the watch is stopped either way.
+      try {
+        await writing.stop();
+      } finally {
+        await watching.stop();
+      }
     }
   });
 
