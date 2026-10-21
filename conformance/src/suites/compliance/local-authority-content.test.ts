@@ -9,11 +9,44 @@ import { controlRequest } from "../../utils/control-request.js";
 let server: FreshServer;
 let kept: string;
 let other: string;
+/** The pair the edge doors act on, so `kept` keeps no edge. */
+let from: string;
+let to: string;
+/** Holds a metadata tag and an extension for the doors that read or change them. */
+let annotated: string;
+/** The type whose link a purged row leaves a tombstone under. */
+const LINKED = "user.local-authority-linked";
+const EXTENSION = "socket.fixture";
 
 beforeAll(async () => {
   server = await bootFreshServer("local-authority-content");
   kept = await create("kept");
   other = await create("other");
+  from = await create("edge-from");
+  to = await create("edge-to");
+  annotated = await create("annotated");
+  const tagged = await keyed({
+    method: "PUT",
+    path: `/items/${annotated}/metadata`,
+    body: { tags: ["annotated-tag"] },
+  });
+  expect(tagged.status).toBe(200);
+  const extended = await keyed({
+    method: "PUT",
+    path: `/items/${annotated}/extensions/${EXTENSION}`,
+    body: { marker: "seeded" },
+  });
+  expect(extended.status).toBe(200);
+  const registered = await keyed({
+    method: "POST",
+    path: "/types",
+    body: {
+      id: LINKED,
+      fields: { vendor_id: { type: "string" } },
+      link_field: "vendor_id",
+    },
+  });
+  expect(registered.status).toBe(201);
 }, 2 * FRESH_SERVER_TIMEOUT_MS);
 
 afterAll(async () => {
@@ -109,6 +142,8 @@ it("refuses every item, edge, tag, search and occurrence door through the privat
       body: { type: "core.note", ids: [kept] },
     },
     { method: "GET", path: "/edges" },
+    { method: "GET", path: "/metadata/tags" },
+    { method: "GET", path: `/items/${annotated}/extensions/${EXTENSION}` },
     { method: "GET", path: "/search?q=kept" },
     {
       method: "GET",
@@ -256,4 +291,176 @@ it("queues no bulk action through the private socket, where the working key's jo
   }
   expect(status).toBe("completed");
   expect((await read(target)).tags).toEqual(["bulk-socket"]);
+});
+
+it("refuses the event stream through the private socket with 401, where the working key opens it", async () => {
+  const door: Door = { method: "GET", path: "/events" };
+  await expectRefusedWithoutKey(door);
+  const stream = await keyed(door);
+  expect(stream.status).toBe(200);
+  expect(stream.headers.get("content-type")).toContain("text/event-stream");
+  await stream.body?.cancel();
+});
+
+it("refuses every edge door through the private socket with 401 and changes nothing, where the working key reads and writes", async () => {
+  const created = await keyed({
+    method: "POST",
+    path: "/edges",
+    body: { source_id: from, target_id: to, edge_type: "references" },
+  });
+  expect(created.status).toBe(201);
+  const edge = ((await created.json()) as { edge: { id: string } }).edge.id;
+  const read = async (): Promise<unknown> => {
+    const answer = await keyed({ method: "GET", path: `/edges/${edge}` });
+    expect(answer.status).toBe(200);
+    return answer.json();
+  };
+  const before = await read();
+  const fromEdges = async (): Promise<unknown> =>
+    (await keyed({ method: "GET", path: `/items/${from}/edges` })).json();
+  const edgesBefore = await fromEdges();
+
+  const bulk: Door = {
+    method: "POST",
+    path: "/edges/bulk",
+    body: {
+      edges: [{ source_id: to, target_id: from, edge_type: "references" }],
+    },
+  };
+  const patch: Door = {
+    method: "PATCH",
+    path: `/edges/${edge}`,
+    body: { version: 1, properties: { note: "socket" } },
+  };
+  const remove: Door = { method: "DELETE", path: `/edges/${edge}` };
+  for (const door of [
+    { method: "GET", path: `/edges/${edge}` },
+    patch,
+    bulk,
+    remove,
+  ])
+    await expectRefusedWithoutKey(door);
+  expect(await read()).toEqual(before);
+  expect(await fromEdges()).toEqual(edgesBefore);
+
+  for (const door of [
+    { method: "GET", path: `/edges/${edge}` },
+    patch,
+    bulk,
+    remove,
+  ]) {
+    const witness = await keyed(door);
+    expect(witness.status, `${door.method} ${door.path} with the key`).toBe(
+      200,
+    );
+    if (door === bulk)
+      expect(
+        ((await witness.json()) as { counts: { created: number } }).counts
+          .created,
+      ).toBe(1);
+    else await witness.arrayBuffer();
+  }
+  expect((await keyed({ method: "GET", path: `/edges/${edge}` })).status).toBe(
+    404,
+  );
+});
+
+it("refuses metadata and extension writes through the private socket with 401 and changes nothing, where the working key writes", async () => {
+  const state = async (): Promise<unknown> => {
+    const [metadata, extension] = await Promise.all([
+      keyed({ method: "GET", path: `/items/${annotated}/metadata` }),
+      keyed({
+        method: "GET",
+        path: `/items/${annotated}/extensions/${EXTENSION}`,
+      }),
+    ]);
+    expect(metadata.status).toBe(200);
+    expect(extension.status).toBe(200);
+    return [await metadata.json(), await extension.json()];
+  };
+  const before = await state();
+  const replace: Door = {
+    method: "PUT",
+    path: `/items/${annotated}/metadata`,
+    body: { tags: ["socket-tag"] },
+  };
+  const extend: Door = {
+    method: "PUT",
+    path: `/items/${annotated}/extensions/${EXTENSION}`,
+    body: { marker: "socket" },
+  };
+  const clear: Door = {
+    method: "DELETE",
+    path: `/items/${annotated}/extensions/${EXTENSION}`,
+  };
+  for (const door of [replace, extend, clear])
+    await expectRefusedWithoutKey(door);
+  expect(await state()).toEqual(before);
+
+  // Each change left the item as it was, so the same change under the key is
+  // what makes it.
+  for (const door of [replace, extend]) {
+    const witness = await keyed(door);
+    expect(witness.status, `${door.method} ${door.path} with the key`).toBe(
+      200,
+    );
+    await witness.arrayBuffer();
+  }
+  expect(await state()).not.toEqual(before);
+  const removed = await keyed(clear);
+  expect(removed.status).toBe(200);
+  await removed.arrayBuffer();
+  const gone = await keyed({
+    method: "GET",
+    path: `/items/${annotated}/extensions/${EXTENSION}`,
+  });
+  expect(gone.status).toBe(200);
+  expect(((await gone.json()) as { data: unknown }).data).toBeNull();
+});
+
+it("refuses settling a tombstone through the private socket with 401 and changes nothing, where the working key moves it", async () => {
+  const link = "tombstoned-vendor";
+  const created = await keyed({
+    method: "POST",
+    path: "/items",
+    body: { type: LINKED, properties: { vendor_id: link } },
+  });
+  expect(created.status).toBe(201);
+  const id = ((await created.json()) as { item: { id: string } }).item.id;
+  expect((await keyed({ method: "DELETE", path: `/items/${id}` })).status).toBe(
+    200,
+  );
+  expect(
+    (await keyed({ method: "POST", path: `/items/${id}/purge` })).status,
+  ).toBe(200);
+
+  const tombstones = async (): Promise<unknown> => {
+    const answer = await keyed({
+      method: "POST",
+      path: "/items/lookup",
+      body: { type: LINKED, links: [link] },
+    });
+    expect(answer.status).toBe(200);
+    return ((await answer.json()) as { tombstones: unknown[] }).tombstones;
+  };
+  const [before] = (await tombstones()) as { purged_at: string }[];
+  expect(before).toBeDefined();
+  const door: Door = {
+    method: "POST",
+    path: "/items/tombstones",
+    body: {
+      type: LINKED,
+      links: [link],
+      settled_at: new Date(
+        Date.parse(before!.purged_at) + 7_200_000,
+      ).toISOString(),
+    },
+  };
+  await expectRefusedWithoutKey(door);
+  expect([before]).toEqual(await tombstones());
+
+  const settled = await keyed(door);
+  expect(settled.status).toBe(200);
+  await settled.arrayBuffer();
+  expect([before]).not.toEqual(await tombstones());
 });
