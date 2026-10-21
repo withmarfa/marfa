@@ -2310,6 +2310,8 @@ describe("the scripted answers match the server's", () => {
           "row.id",
           "row.display_hints.title_field",
           "row.display_hints.body_field",
+          "row.provenance.origin",
+          "row.provenance.created_by",
         ],
         // A type with no parent carries no `parent` at all. A scripted `null`
         // there is a shape the server never sends, and a device walking a
@@ -2364,7 +2366,13 @@ describe("the scripted answers match the server's", () => {
         },
       },
       {
-        same: ["row.id", "row.parent", "row.display_hints.title_field"],
+        same: [
+          "row.id",
+          "row.parent",
+          "row.display_hints.title_field",
+          "row.provenance.origin",
+          "row.provenance.created_by",
+        ],
         // `row.fields` by kind, so the two sides agree there is a field
         // schema and not on what is in it.
         shape: ["row.label", "row.fields"],
@@ -2413,8 +2421,15 @@ describe("the scripted answers match the server's", () => {
           "row.id",
           "row.display_hints.title_field",
           "row.fields.thumbnail.type",
+          "row.provenance.origin",
+          "row.provenance.created_by.kind",
         ],
-        shape: ["row.label", "row.fields"],
+        shape: [
+          "row.label",
+          "row.fields",
+          "row.provenance.created_by.id",
+          "row.provenance.created_by.name",
+        ],
       },
     );
   });

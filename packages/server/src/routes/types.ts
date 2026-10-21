@@ -348,8 +348,7 @@ const TypeProvenanceSchema = z
   })
   .describe(
     "Whether Marfa ships the type, and the sign-in that first registered it when known.",
-  )
-  .openapi("TypeProvenance");
+  );
 
 /**
  * The same body on the replacement door, where the path names the type.
@@ -507,7 +506,9 @@ const TypeSchemaResponse = z
   .openapi("TypeDefinition");
 
 const RegisteredTypeResponse = TypeSchemaResponse.extend({
-  provenance: TypeProvenanceSchema,
+  provenance: TypeProvenanceSchema.describe(
+    "The type's recorded origin and creator.",
+  ),
 }).openapi("RegisteredType");
 
 const TypeResponseSchema = z
