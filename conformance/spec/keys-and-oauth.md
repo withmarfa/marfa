@@ -277,6 +277,14 @@ If a caller holding none of `keys.mint`, `keys.manage` and direct owner or local
 
 **Tests:** `compliance/key-management.test.ts › list keys requires keys.mint`, `› revoke key requires keys.mint`, `compliance/keys-update.test.ts › refuses a caller without keys.mint`.
 
+### `keys-and-oauth/mint-recent`
+
+If the browser session sending `POST /keys` signed in more than five minutes ago, then the server MUST answer `403 forbidden`.
+
+**Reason:** A browser left signed in, or a copied cookie, cannot give itself a new credential without the password.
+
+**Tests:** `compliance/recent-sign-in-consent.test.ts › refuses a session that signed in more than five minutes ago 403 and mints no key, and a fresh session mints it`.
+
 ### `keys-and-oauth/mint-invalid-level`
 
 If a key body names a map level the map does not take, then the server MUST answer `400 validation_error` with `details.errors[].path` naming the entry.
@@ -290,6 +298,14 @@ If a key body names a map level the map does not take, then the server MUST answ
 When `PATCH /keys/{id}` names `label`, `default_tier`, `sources` or a permission family, the server MUST replace each field it names and leave each field it does not name as it was.
 
 **Tests:** `compliance/keys-update.test.ts › updates the label and the maps in place, never the source`, `compliance/claimed-sources.test.ts › answers a key's claims on the mint, the listing and the update`.
+
+### `keys-and-oauth/update-recent`
+
+If the browser session sending `PATCH /keys/{id}` signed in more than five minutes ago, then the server MUST answer `403 forbidden`.
+
+**Reason:** A key's label, sources and permissions decide what it can do, so changing them needs the same recent sign-in as minting (`keys-and-oauth/mint-recent`) and revoking (`keys-and-oauth/revoke-recent`).
+
+**Tests:** `compliance/recent-sign-in-consent.test.ts › refuses a session that signed in more than five minutes ago 403 and changes nothing, and a fresh session changes the key`.
 
 ### `keys-and-oauth/update-empty-family`
 
@@ -1803,7 +1819,7 @@ When `GET /auth/grants` lists a grant, the server MUST report `kind` as `cli` fo
 
 When a caller sends `PATCH /auth/grants/{id}`, the server MUST require a direct owner sign-in within five minutes or private machine authority.
 
-**Tests:** `compliance/auth-grants.test.ts › requires direct owner authority and reports an unknown grant`.
+**Tests:** `compliance/auth-grants.test.ts › requires direct owner authority and reports an unknown grant`, `compliance/recent-sign-in-consent.test.ts › refuses a session that signed in more than five minutes ago 403 and leaves the app as it was, and a fresh session narrows it`.
 
 ### `keys-and-oauth/grant-narrow-ceiling`
 
