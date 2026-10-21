@@ -27431,7 +27431,7 @@ export interface operations {
                     "application/json": components["schemas"]["WebhookNotFoundRefusal"];
                 };
             };
-            /** @description - `conflict`: the delivery isn't `dead_letter`, it's older than the instance's audit retention, or the webhook is turned off. */
+            /** @description - `conflict`: Marfa can't send it again. `details.reason` is the first that applies: `webhook_inactive`; `credential_unavailable`, the registering key or app is gone or lacks `webhooks.manage`; `delivery_not_failed`; `delivery_expired`, past audit retention; or `delivery_not_retained`, its event is no longer held. */
             409: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];

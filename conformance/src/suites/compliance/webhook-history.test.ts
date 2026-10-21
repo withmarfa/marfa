@@ -187,6 +187,9 @@ describe("an outbound delivery's history", () => {
       const refused = await redeliver(id, older!.id);
       expect(refused.status).toBe(409);
       expect(refused.error?.error.code).toBe("conflict");
+      expect(refused.error?.error.details).toEqual({
+        reason: "delivery_expired",
+      });
       expect(
         (await deliveries(id)).find((row) => row.id === older!.id),
       ).toMatchObject({ status: "dead_letter", attempt: 1, status_code: 400 });
