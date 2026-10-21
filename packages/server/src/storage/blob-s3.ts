@@ -52,6 +52,20 @@ export interface S3BlobConfig {
 const MARKER = ".marfa-store";
 
 /**
+ * Every request to the bucket ends: one that accepts a connection and never
+ * answers would otherwise hold a write or delete, and the blob's upload lock
+ * with it, for good. A request is bounded until its answer starts, so a read
+ * streams for as long as it takes, and the write bound covers a multipart
+ * part over a slow link. The client retries a request that timed out.
+ */
+export const s3Timeouts = {
+  connectionTimeoutMs: 10_000,
+  requestTimeoutMs: 300_000,
+  /** For a question or a delete, which carry no body. */
+  bodilessRequestTimeoutMs: 60_000,
+};
+
+/**
  * Bytes in an S3-compatible bucket, one object per hash under the prefix,
  * beside a marker object naming the store. The client's own SigV4 signing
  * is what makes the link a store-signed one: a client fetches from the
@@ -91,6 +105,11 @@ export class S3BlobStore implements BlobStore {
           // on a check that proves nothing the hash does not.
           requestChecksumCalculation: "WHEN_REQUIRED",
           responseChecksumValidation: "WHEN_REQUIRED",
+          requestHandler: {
+            connectionTimeout: s3Timeouts.connectionTimeoutMs,
+            requestTimeout: s3Timeouts.requestTimeoutMs,
+            throwOnRequestTimeout: true,
+          },
           ...(config.endpoint
             ? {
                 endpoint: config.endpoint,
@@ -240,7 +259,10 @@ export class S3BlobStore implements BlobStore {
       const response = await withRealTime(() =>
         this.client.send(
           new HeadObjectCommand({ Bucket: this.bucket, Key: this.key(hash) }),
-          { abortSignal: signal },
+          {
+            abortSignal: signal,
+            requestTimeout: s3Timeouts.bodilessRequestTimeoutMs,
+          },
         ),
       );
       return { size_bytes: response.ContentLength ?? 0 };
@@ -254,6 +276,7 @@ export class S3BlobStore implements BlobStore {
     await withRealTime(() =>
       this.client.send(
         new DeleteObjectCommand({ Bucket: this.bucket, Key: this.key(hash) }),
+        { requestTimeout: s3Timeouts.bodilessRequestTimeoutMs },
       ),
     );
   }

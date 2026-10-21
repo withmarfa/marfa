@@ -67,7 +67,7 @@ vi.mock("@aws-sdk/s3-request-presigner", () => ({
   },
 }));
 
-import { S3BlobStore } from "./blob-s3.js";
+import { S3BlobStore, s3Timeouts } from "./blob-s3.js";
 import type { S3BlobConfig } from "./blob-s3.js";
 import { BlobHashMismatch } from "./blob-store.js";
 
@@ -313,7 +313,10 @@ describe("S3BlobStore", () => {
       const signal = new AbortController().signal;
       mockSend.mockResolvedValueOnce({ ContentLength: 42 });
       await store.has("sha256:abc", signal);
-      expect(mockSend.mock.calls[1]?.[1]).toEqual({ abortSignal: signal });
+      expect(mockSend.mock.calls[1]?.[1]).toEqual({
+        abortSignal: signal,
+        requestTimeout: s3Timeouts.bodilessRequestTimeoutMs,
+      });
     });
   });
 
