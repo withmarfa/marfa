@@ -34,7 +34,7 @@ pub fn error(error: &CliError) -> &'static str {
         CliError::CredentialEnded => "the credential that held the stream has ended",
         CliError::Invalid(_) => "a value was not accepted",
         CliError::ArchiveLacksBlobs(_) | CliError::ArchiveKeptApart { .. } => {
-            "the export archive lacks blobs no store could read"
+            "the export archive lacks blobs its manifest names"
         }
         CliError::RestoreLacksBlobs(_) => {
             "the restored archive lacks blobs this instance does not hold"
