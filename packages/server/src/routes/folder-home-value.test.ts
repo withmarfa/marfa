@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, expect, it, vi } from "vitest";
 import { createTestContext, request, type TestContext } from "../test-utils.js";
-import { pageLinks, visibleText } from "../pages/reading.js";
+import { pageLinks } from "../pages/reading.js";
 import * as logger from "../middleware/logger.js";
 
 let ctx: TestContext;
@@ -58,9 +58,8 @@ it("shows active folder totals on Home and does not guess when counting fails", 
     );
   const failedHome = await ownerHome();
   expect(folderHomeValue(failedHome)).toBe(
-    "Folders Folders kept in step with Marfa, and their reported copies",
+    "Folders Folders kept in step with Marfa, and their reported copies Unknown",
   );
-  expect(visibleText(failedHome)).toContain("Couldn't check Folders");
   expect(failed).toHaveBeenCalledWith({
     type: "system.folder",
     state: "active",

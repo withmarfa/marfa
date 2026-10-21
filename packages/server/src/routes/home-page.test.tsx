@@ -46,16 +46,19 @@ async function home(
             ]
           : [],
       value: page.value ? () => Promise.resolve(page.value) : undefined,
-      attention: page.attention
-        ? () => Promise.resolve(page.attention ?? [])
-        : undefined,
     });
   return renderHomePage({
     nonce: "abc123",
     instanceName: options.instanceName ?? "Marfa",
     address: "marfa.example.net",
     registry: pages.registry,
-    reading: await pages.read(reads),
+    reading: await pages.read({
+      ...reads,
+      attention: () =>
+        Promise.resolve(
+          Object.values(built).flatMap((page) => page.attention ?? []),
+        ),
+    }),
     query: options.query,
   });
 }

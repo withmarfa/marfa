@@ -28,10 +28,11 @@ describe("when a key ends", () => {
     expect(endsWords(NOW - 1, NOW)).toBe("Ended");
   });
 
-  it("is soon from the moment before it happens until the last day of the week, and not at the edges", () => {
+  it("includes the next seven days and excludes expired or later keys", () => {
     expect(endsSoon(NOW + 1, NOW)).toBe(true);
     expect(endsSoon(Date.UTC(2026, 9, 26, 23, 59, 59), NOW)).toBe(true);
-    expect(endsSoon(Date.UTC(2026, 9, 27), NOW)).toBe(false);
+    expect(endsSoon(NOW + 7 * DAY, NOW)).toBe(true);
+    expect(endsSoon(NOW + 7 * DAY + 1, NOW)).toBe(false);
     expect(endsSoon(NOW, NOW)).toBe(false);
     expect(endsSoon(NOW - DAY, NOW)).toBe(false);
     expect(endsSoon(null, NOW)).toBe(false);
@@ -77,9 +78,9 @@ describe("across midnight", () => {
     );
   });
 
-  it("counts the days to a date a week out by the calendar", () => {
+  it("uses elapsed time for the seven-day warning across midnight", () => {
     expect(endsSoon(Date.UTC(2026, 9, 26, 23, 59), EARLY)).toBe(true);
-    expect(endsSoon(Date.UTC(2026, 9, 27, 0, 10), LATE)).toBe(false);
+    expect(endsSoon(Date.UTC(2026, 9, 27, 0, 10), LATE)).toBe(true);
     expect(
       endsSoon(Date.UTC(2026, 9, 27, 0, 10), Date.UTC(2026, 9, 20, 0, 5)),
     ).toBe(false);

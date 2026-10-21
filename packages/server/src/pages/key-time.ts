@@ -59,12 +59,12 @@ export function endsWords(expiresAt: number | null, now: number): string {
   return `Ends ${dateWords(expiresAt, now)}`;
 }
 
-/** Whether a key ends soon enough to need a look: before the seventh calendar day out. */
+/** Whether a key ends soon enough to need a look: within seven days. */
 export function endsSoon(expiresAt: number | null, now: number): boolean {
   return (
     expiresAt !== null &&
     expiresAt - now > 0 &&
-    daysBetween(now, expiresAt) < ENDING_SOON_DAYS
+    expiresAt - now <= ENDING_SOON_DAYS * DAY_MS
   );
 }
 

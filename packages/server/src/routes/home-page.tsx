@@ -3,7 +3,7 @@
 /**
  * Home: where the owner lands, and the one page that lists the rest. The
  * pages come from the registry, grouped as it groups them, each with the value
- * the page registered for it; what needs a look comes from the pages too. Home
+ * the page registered for it; concerns come from the shared attention read. Home
  * names no page itself.
  */
 import { renderDocument } from "../pages/render.js";

@@ -131,6 +131,8 @@ import {
 } from "./middleware/idempotency.js";
 import { healthRoutes, instanceReadCaller } from "./routes/health.js";
 import { storageProbes } from "./routes/health-probes.js";
+import { readAttention } from "./attention.js";
+import { attentionRoutes } from "./routes/attention.js";
 import { consoleHealth } from "./routes/console-health.js";
 import {
   refuseUndeclaredKeysOf,
@@ -524,7 +526,13 @@ export function createApp(
           instanceName,
           address: new URL(config.authBaseUrl).host,
           registry: consolePages.registry,
-          reading: await consolePages.read({ storage, config, auth, health }),
+          reading: await consolePages.read({
+            storage,
+            config,
+            auth,
+            health,
+            attention: () => readAttention(storage, health),
+          }),
           query: homeSearchQuery(c.req.query("q")),
         }),
       );
@@ -855,6 +863,7 @@ export function createApp(
   app.route("/connectors", connectorRoutes(storage));
   app.route("/connectors", connectorStateRoutes(storage, config));
   app.route("/folders", folderInventoryRoutes(storage));
+  app.route("/attention", attentionRoutes(storage, health));
   app.route("/folders", folderRoutes(storage));
   app.route("/folders", folderStatusRoutes(storage));
   app.route("/keys", keyRoutes(storage, config.apiKeySalt));

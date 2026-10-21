@@ -18,7 +18,7 @@ import {
 } from "../pages/navigation.js";
 import type { RegistryItem } from "../pages/registry.js";
 import type { Connector, Storage } from "../storage/interface.js";
-import { CONSOLE_PAGES, type AttentionItem } from "./console.js";
+import { CONSOLE_PAGES } from "./console.js";
 import { consoleContentSecurityPolicy } from "./content-security-policy.js";
 import {
   CONNECTORS_HREF,
@@ -117,29 +117,6 @@ CONSOLE_PAGES.register("connectors", {
         tone: failing > 0 ? "danger" : "warn",
       };
     return { text: `${String(connectors.length)} running` };
-  },
-  attention: async ({ storage }) => {
-    const now = clock.nowMs();
-    const items: AttentionItem[] = [];
-    for (const connector of await storage.connectors.list()) {
-      const { state } = connectorStatus(connector, now);
-      if (state === "running") continue;
-      items.push({
-        title:
-          state === "failing"
-            ? `${connector.name} failed its last run`
-            : state === "problems"
-              ? `${connector.name} reported problems`
-              : `${connector.name} has gone quiet`,
-        description:
-          state === "silent"
-            ? `Nothing heard for ${silenceWords(connector, now)}`
-            : undefined,
-        href: connectorHref(connector.id),
-        tone: state === "failing" ? "danger" : "warn",
-      });
-    }
-    return items;
   },
 });
 

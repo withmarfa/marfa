@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { pageButtons, visibleText } from "../pages/reading.js";
 import { createTestContext } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
@@ -68,3 +68,23 @@ describe("the Health page", () => {
     expect(home).toContain("Needs a look");
   });
 });
+
+it.each(["failure", "timeout"])(
+  "shows unavailable jobs on the Health page after %s",
+  async (mode) => {
+    const jobs = vi
+      .spyOn(ctx.housekeeping, "list")
+      .mockImplementation(() =>
+        mode === "failure"
+          ? Promise.reject(new Error("unavailable"))
+          : new Promise(() => undefined),
+      );
+    try {
+      const text = visibleText(await html("/auth/owner/health"));
+      expect(text).toContain("Couldn't read the jobs");
+      expect(text).toContain("Database");
+    } finally {
+      jobs.mockRestore();
+    }
+  },
+);

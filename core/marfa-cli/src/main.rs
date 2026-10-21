@@ -225,6 +225,8 @@ enum Command {
     /// non-zero exit when the stream closes on `cursor_ahead`,
     /// `catchup_too_old` or `stream_incomplete`.
     Events(events::EventsArgs),
+    /// Current concerns and unavailable checks. Requires the owner or --socket.
+    Attention,
     /// The housekeeping jobs the server runs on itself. Explicit management permission required.
     Housekeeping {
         #[command(subcommand)]
@@ -520,6 +522,9 @@ fn run(cli: Cli) -> Result<Exit, CliError> {
         Command::Webhooks { command } => webhooks::run(command, &remote()?, &out),
         Command::Audit(args) => audit::run(args, &remote()?, &out),
         Command::Events(args) => events::run(args, &remote()?, &out),
+        Command::Attention => {
+            out.value(&remote()?.json(&crate::remote::request::Request::get(&["attention"]))?)
+        }
         Command::Housekeeping { command } => housekeeping::run(command, &remote()?, &out),
         Command::Connectors { command } => connectors::run(command, &remote()?, &out),
     }

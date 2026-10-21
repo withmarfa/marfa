@@ -1955,6 +1955,16 @@ marfa events [OPTIONS]
 | `--from <CURSOR>` | Resume from this cursor, replaying what the log holds after it. |
 | `--for <SECONDS>` | Stop after this many seconds. Unset, it reads until you interrupt it or the stream ends. |
 
+## attention
+
+Current concerns and unavailable checks. Requires the owner or --socket.
+
+### marfa attention
+
+```text
+marfa attention [OPTIONS]
+```
+
 ## housekeeping
 
 The housekeeping jobs the server runs on itself. Explicit management permission required.

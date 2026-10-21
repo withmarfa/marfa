@@ -156,15 +156,12 @@ Keep these in every page you build.
    that is not signed in to sign in and back (`routes/console-gate.ts`).
 1. Register the page so the picker, the search and Home link to it, once, at
    module level where the route is defined, with
-   `CONSOLE_PAGES.register("keys", { href, hasItems, settings, value, attention })`
+   `CONSOLE_PAGES.register("keys", { href, hasItems, settings, value })`
    (`routes/console.ts`). A second registration of the same page throws.
-   `value` returns the text at the right end of the page's row on Home and
-   `attention` returns the lines Home lists under Needs attention, each a short
-   title and a link. Both are optional and Home reads them as it renders, so
-   Home never changes when a page is added. Home waits two seconds for each.
-   One that is late, throws, or returns a link that is not a path on this
-   server or a tone other than `warn` or `danger` is left out, logged, and
-   shown as "Couldn't check" the page, so one page never takes Home down.
+   `value` is optional and supplies the text at the right end of the page's
+   row on Home. Home waits two seconds for each value. If a value fails or
+   times out, Home shows "Unknown" for that row. The shared attention reader
+   supplies the Needs attention list (`attention.ts`).
 1. Add a test that renders the page and checks its behavior (status, text,
    links, roles), not its class names.
 
