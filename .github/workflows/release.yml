@@ -896,3 +896,56 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release edit "v$VERSION" --draft=false
+
+  # The Homebrew formula follows the public release: `brew install
+  # withmarfa/tap/marfa` installs the macOS archive of this version, by the
+  # checksum file the release carries. It runs after the release is public, so
+  # a formula never names an archive a person cannot download, and a failure
+  # here leaves the release as it is; run the job again.
+  tap:
+    name: Update the Homebrew tap
+    needs: [build, publish]
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    env:
+      VERSION: ${{ needs.build.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+      # A fine-grained token with Contents read and write on withmarfa/homebrew-tap
+      # only, kept as an Actions secret of this repository.
+      - name: Require the tap token
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          if [ -z "$HOMEBREW_TAP_TOKEN" ]; then
+            echo "::error::The secret HOMEBREW_TAP_TOKEN is not set. Add a fine-grained token with Contents read and write on withmarfa/homebrew-tap as an Actions secret of this repository, then run this job again."
+            exit 1
+          fi
+      - name: Get the release's checksums
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release download "v$VERSION" --pattern "marfa-$VERSION-checksums.txt"
+      - uses: actions/checkout@v7
+        with:
+          repository: withmarfa/homebrew-tap
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: tap
+      - name: Write the formula
+        run: |
+          mkdir -p tap/Formula
+          bash scripts/release/write-formula.sh "$VERSION" "marfa-$VERSION-checksums.txt" > tap/Formula/marfa.rb
+      - name: Commit and push the formula
+        working-directory: tap
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/marfa.rb
+          if git diff --cached --quiet; then
+            echo "The tap already has marfa $VERSION."
+            exit 0
+          fi
+          git commit -m "marfa $VERSION"
+          git push origin HEAD:main
