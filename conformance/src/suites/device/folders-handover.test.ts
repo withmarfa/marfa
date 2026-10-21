@@ -1,6 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import {
+  chmodSync,
   existsSync,
   mkdtempSync,
   readFileSync,
@@ -713,6 +714,100 @@ describe("handing a folder to a command", () => {
     }, WAIT);
     expect(watch.running(), watch.stderr).toBe(true);
   }, 90_000);
+});
+
+describe("a folder whose lock file cannot be written", () => {
+  /** The refusal's envelope: its code, message and exit. */
+  function envelope(raw: string): {
+    error: { code: string; message: string };
+    exit: number;
+  } {
+    return JSON.parse(raw) as {
+      error: { code: string; message: string };
+      exit: number;
+    };
+  }
+
+  it("refuses a command that works the folder, and still reads it", async () => {
+    // A superuser writes any file, so no mode would make the lock unwritable.
+    expect(process.getuid?.(), "the fixture runs as a superuser").not.toBe(0);
+    const harness = await oneFolder("lock-unwritable");
+    const lock = join(harness.dir, ".marfa", "core.sqlite.writer-lock");
+    expect(existsSync(lock), "the add left no lock file to change").toBe(true);
+    put(harness, "Locked.md", note("Locked"));
+    chmodSync(lock, 0o400);
+    try {
+      for (const attempt of ["first", "second"]) {
+        const refused = await harness.folder.scan();
+        expect(
+          refused.ok,
+          `${attempt} command: a command worked a folder whose lock file it cannot write`,
+        ).toBe(false);
+        if (refused.ok) continue;
+        const said = envelope(refused.refusal.raw);
+        expect(said.error.code, refused.refusal.raw).toBe("store");
+        expect(said.error.message, refused.refusal.raw).toContain(
+          "core.sqlite.writer-lock",
+        );
+        expect(said.exit, refused.refusal.raw).toBe(4);
+      }
+      const read = await harness.folder.status();
+      expect(read.ok, JSON.stringify(read)).toBe(true);
+    } finally {
+      chmodSync(lock, 0o600);
+    }
+    // The witness: with the lock file writable again, the same command works
+    // the folder.
+    const scanned = await harness.folder.scan();
+    expect(scanned.ok, JSON.stringify(scanned)).toBe(true);
+  });
+
+  it("refuses a command that asks a watch for the folder once the request file cannot be written", async () => {
+    expect(process.getuid?.(), "the fixture runs as a superuser").not.toBe(0);
+    const harness = await oneFolder("request-unwritable");
+    const request = join(harness.dir, ".marfa", "core.sqlite.handover-lock");
+    const watch = hold(harness.folder.watch());
+    await vi.waitFor(() => expect(watch.stderr).toContain("watching"), WAIT);
+    // One handover first, which leaves the request file there to change.
+    const first = await harness.folder.scan();
+    expect(first.ok, JSON.stringify(first)).toBe(true);
+    await vi.waitFor(() => {
+      expect(handovers(watch)).toEqual(["let go", "taken back"]);
+    }, WAIT);
+    expect(existsSync(request), "no handover left a request file").toBe(true);
+    chmodSync(request, 0o400);
+    try {
+      const started = Date.now();
+      const refused = await harness.folder.scan();
+      const waited = Date.now() - started;
+      expect(
+        refused.ok,
+        "a command worked a folder a watch holds, though it could not ask the watch for it",
+      ).toBe(false);
+      if (refused.ok) return;
+      expect(waited).toBeGreaterThanOrEqual(10_000);
+      const said = envelope(refused.refusal.raw);
+      expect(said.error.code, refused.refusal.raw).toBe("store");
+      expect(said.error.message, refused.refusal.raw).toContain(request);
+      expect(said.exit, refused.refusal.raw).toBe(4);
+      // The watch was never asked, so it never let the folder go.
+      expect(handovers(watch)).toEqual(["let go", "taken back"]);
+    } finally {
+      chmodSync(request, 0o600);
+    }
+    // The witness: with the request file writable again, the watch is asked
+    // and lets the folder go.
+    const scanned = await harness.folder.scan();
+    expect(scanned.ok, JSON.stringify(scanned)).toBe(true);
+    await vi.waitFor(() => {
+      expect(handovers(watch)).toEqual([
+        "let go",
+        "taken back",
+        "let go",
+        "taken back",
+      ]);
+    }, WAIT);
+  }, 60_000);
 });
 
 /** Where there are keychain files to give the binary a credential of its own. */

@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { chmodSync, existsSync, readFileSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { describe, it, expect, afterEach, vi } from "vitest";
@@ -2006,6 +2006,48 @@ describe("the working copy belongs to one server", () => {
     } finally {
       await writer.stop();
     }
+  });
+});
+
+describe("a store whose lock file cannot be written", () => {
+  it("refuses to open for writing a store whose lock file cannot be written, and still reads it", async () => {
+    // A superuser writes any file, so no mode would make the lock unwritable.
+    expect(process.getuid?.(), "the fixture runs as a superuser").not.toBe(0);
+    harness = await hydratedHarness("lock-unwritable");
+    const { device } = harness;
+    const lock = `${device.store}.writer-lock`;
+    expect(existsSync(lock), "the hydration left no lock file to change").toBe(
+      true,
+    );
+    chmodSync(lock, 0o400);
+    try {
+      // Twice: a second open must not find the first one's claim in the way.
+      for (const attempt of ["first", "second"]) {
+        const refused = await device.status();
+        expect(
+          refused.ok,
+          `${attempt} open: a device took the writer role on a lock file it cannot write, so a second process could take it too`,
+        ).toBe(false);
+        if (refused.ok) continue;
+        const envelope = JSON.parse(refused.refusal.raw) as {
+          error: { code: string; message: string };
+          exit: number;
+        };
+        expect(envelope.error.code, refused.refusal.raw).toBe("store");
+        expect(envelope.error.message, refused.refusal.raw).toContain(lock);
+        expect(envelope.exit, refused.refusal.raw).toBe(4);
+      }
+      const read = await device.reopen({ reader: true }).status();
+      expect(
+        read.ok,
+        `a reader was kept from a store by a lock file it never writes: ${JSON.stringify(read)}`,
+      ).toBe(true);
+    } finally {
+      chmodSync(lock, 0o600);
+    }
+    // The witness: the lock file writable again, the same open is the writer.
+    const writer = await device.status();
+    expect(writer.ok, JSON.stringify(writer)).toBe(true);
   });
 });
 

@@ -2490,6 +2490,28 @@ A device MUST give each store file its own writer role, so two stores in one dir
 
 **Tests:** `device/working-copy.test.ts › gives two stores sharing a stem a writer each`.
 
+### `device/writer-lock-unwritable`
+
+If a store's writer lock file cannot be written when a device opens the store to write, then a device MUST refuse the open `store`, naming the lock file.
+
+**Reason:** a lock file that cannot be written holds no lock, so a device that took the writer role on it would leave a second process free to take the role too, and two processes would queue into one store (`device/reading-handle-refuses`).
+
+**Tests:** `device/working-copy.test.ts › refuses to open for writing a store whose lock file cannot be written, and still reads it`.
+
+### `device/command-writer-lock-unwritable`
+
+If a command opens a store to write and its writer lock file cannot be written, then the CLI MUST exit 4.
+
+**Tests:** `device/working-copy.test.ts › refuses to open for writing a store whose lock file cannot be written, and still reads it`.
+
+### `device/reader-lock-unwritable`
+
+While a store's writer lock file cannot be written, a device MUST open the store to read.
+
+**Reason:** a reader takes no lock (`device/reader-not-writer`), so a lock file it cannot write is no reason to keep a person from reading their own store.
+
+**Tests:** `device/working-copy.test.ts › refuses to open for writing a store whose lock file cannot be written, and still reads it`.
+
 ## Where a store is made
 
 ### `device/command-makes-store`
