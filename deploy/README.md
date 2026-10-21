@@ -200,7 +200,7 @@ sqlite3 /data/marfa.db "BEGIN; SELECT count(*) FROM sqlite_master;" ".shell cp /
 Restore from any of these like this. **If the bucket is still live and holds writes newer than the copy, read [Restore a backup that is older than the bucket](#restore-a-backup-that-is-older-than-the-bucket) first:** the image does not start a copy that may be older than the bucket's copy under the same prefix. These steps start the copy on the bucket's own prefix.
 
 1. Stop the instance.
-2. Put the copied database file, the log (when the copy has one), the `.marfa.db-litestream` folder (when the copy has one) and the blob folder where `SQLITE_PATH` and `BLOB_PATH` name. Do not restore a `marfa.db-shm` file, which is rebuilt at start. Without the `.marfa.db-litestream` folder, the image cannot tell that the copy is not older than the bucket's copy, and does not start on it while the bucket holds one.
+2. Delete the `marfa.db-wal` and `marfa.db-shm` files already in the data directory: SQLite applies a log it finds beside a database file at start, even when the log belongs to another copy. Then put the copied database file, the log (when the copy has one), the `.marfa.db-litestream` folder (when the copy has one) and the blob folder where `SQLITE_PATH` and `BLOB_PATH` name. Do not restore a `marfa.db-shm` file, which is rebuilt at start. Without the `.marfa.db-litestream` folder, the image cannot tell that the copy is not older than the bucket's copy, and does not start on it while the bucket holds one.
 3. Start the instance with the same `API_KEY_SALT` and `MARFA_AUTH_SECRET` as before, and read `GET /health`.
 
 The instance applies the log at start. A copy's integrity can be checked first with `sqlite3 marfa.db "PRAGMA integrity_check"`, which answers `ok`.
@@ -222,7 +222,7 @@ Going back to an older state loses the later writes from the instance, as you in
 1. Note the instance's current `S3_PREFIX`. It is `blobs` when you have not set one.
 2. Stop the instance.
 3. Choose a new prefix that no instance has used, such as `restored/blobs`. [The names it needs](#the-names-it-needs) gives the rules for a prefix.
-4. Put the copied database file, the log (when the copy has one) and the blob folder where `SQLITE_PATH` and `BLOB_PATH` name. Do not restore a `marfa.db-shm` file.
+4. Delete the `marfa.db-wal` and `marfa.db-shm` files already in the data directory, then put the copied database file, the log (when the copy has one) and the blob folder where `SQLITE_PATH` and `BLOB_PATH` name. Do not restore a `marfa.db-shm` file.
 5. Set `S3_PREFIX` to the new prefix. Leave the bucket, its credentials, `API_KEY_SALT` and `MARFA_AUTH_SECRET` as they were.
 6. Start the instance. In its log, check that the `replicating to` line shows `path=` followed by the new prefix and `/db`, such as `path=restored/blobs/db`, and that no `detected database behind replica` line appears. Then read `GET /health`.
 
