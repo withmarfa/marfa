@@ -6,6 +6,8 @@ import { trace } from "@opentelemetry/api";
 import { logs } from "@opentelemetry/api-logs";
 import { Hono } from "hono";
 import { createErrorHandler } from "./middleware/error-handler.js";
+import { writeInstanceConfig } from "./storage/instance-config.js";
+import { createTestContext, type TestContext } from "./test-utils.js";
 import type { AppEnv } from "./middleware/auth.js";
 
 interface CapturedEvent {
@@ -74,6 +76,7 @@ function appThatFails(): Hono<AppEnv> {
  * whether it reached for the PostHog client.
  */
 async function bootInstrumentation(
+  ctx: TestContext,
   env: Record<string, string>,
   onPostHogConstruct?: () => void,
 ): Promise<{ loadedPostHog: () => boolean }> {
@@ -104,14 +107,22 @@ async function bootInstrumentation(
   });
   vi.resetModules();
   await import("./instrumentation.js");
+  const { bindErrorReporting } = await import("./error-reporting.js");
+  const { bootConfig } = await import("./config.js");
+  bindErrorReporting(ctx.storage.settings, {
+    ...ctx.config,
+    otel: bootConfig().otel,
+  });
   return { loadedPostHog: () => loaded };
 }
 
 describe("unhandled errors reach PostHog's error tracking", () => {
+  let ctx: TestContext;
   let collector: Awaited<ReturnType<typeof startStubCollector>>;
 
   beforeEach(async () => {
     collector = await startStubCollector();
+    ctx = await createTestContext();
     vi.spyOn(process.stdout, "write").mockImplementation(() => true);
   });
 
@@ -128,6 +139,7 @@ describe("unhandled errors reach PostHog's error tracking", () => {
     vi.unstubAllEnvs();
     vi.restoreAllMocks();
     await collector.close();
+    await ctx.cleanup();
   });
 
   it.each([false, true])(
@@ -140,6 +152,7 @@ describe("unhandled errors reach PostHog's error tracking", () => {
       });
       let external!: Promise<number>;
       await bootInstrumentation(
+        ctx,
         {
           MARFA_TEST_HOOKS: String(testHooks),
           OTEL_EXPORTER_OTLP_ENDPOINT: collector.url,
@@ -166,14 +179,101 @@ describe("unhandled errors reach PostHog's error tracking", () => {
 
   it("installs the test clock even when telemetry is disabled", async () => {
     const systemDate = Date;
-    await bootInstrumentation({ MARFA_TEST_HOOKS: "true" });
+    await bootInstrumentation(ctx, { MARFA_TEST_HOOKS: "true" });
     const clock = await import("./clock.js");
     clock.advanceClock(86_400_000);
     expect(Date.now() - systemDate.now()).toBeGreaterThan(86_399_900);
   });
 
+  it("applies durable reporting changes without stopping traces or logs", async () => {
+    ctx.config.errorReportingEnabled = false;
+    await bootInstrumentation(ctx, {
+      OTEL_EXPORTER_OTLP_ENDPOINT: collector.url,
+      MARFA_POSTHOG_HOST: collector.url,
+      MARFA_POSTHOG_PROJECT_TOKEN: "phc_test_token",
+    });
+    const report = async (path: string) => {
+      const app = new Hono<AppEnv>();
+      app.onError(createErrorHandler({ errorWebhookUrl: "" }));
+      app.get(path, () => {
+        throw new Error("A test fault");
+      });
+      await trace.getTracer("test").startActiveSpan(path, async (span) => {
+        expect((await app.request(path)).status).toBe(500);
+        span.end();
+      });
+      // Let this report's read and capture settle before changing its choice.
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    };
+    await report("/default");
+    await writeInstanceConfig(ctx.storage.settings, {
+      error_reporting_enabled: true,
+    });
+    await report("/enabled");
+    await writeInstanceConfig(ctx.storage.settings, {
+      error_reporting_enabled: false,
+    });
+    await report("/disabled");
+    await writeInstanceConfig(ctx.storage.settings, {});
+    await report("/cleared");
+    await writeInstanceConfig(ctx.storage.settings, {
+      error_reporting_enabled: true,
+    });
+    vi.spyOn(ctx.storage.settings, "get").mockRejectedValueOnce(
+      new Error("Unavailable"),
+    );
+    await report("/unavailable");
+    await globalThis.__marfaOtelShutdown?.();
+    expect(
+      collector.events
+        .filter((e) => e.event === "$exception")
+        .map((e) => e.properties.path),
+    ).toEqual(["/enabled"]);
+    for (const suffix of ["/v1/traces", "/v1/logs"]) {
+      const bodies = collector.requests
+        .filter((r) => r.path.endsWith(suffix))
+        .map((r) => r.text)
+        .join("\n");
+      for (const path of [
+        "/default",
+        "/enabled",
+        "/disabled",
+        "/cleared",
+        "/unavailable",
+      ])
+        expect(bodies).toContain(path);
+    }
+  });
+
+  it("waits for an in-flight reporting choice before flushing exceptions", async () => {
+    await bootInstrumentation(ctx, {
+      OTEL_EXPORTER_OTLP_ENDPOINT: collector.url,
+      MARFA_POSTHOG_HOST: collector.url,
+      MARFA_POSTHOG_PROJECT_TOKEN: "phc_test_token",
+    });
+    let release!: () => void;
+    const pending = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const get = ctx.storage.settings.get.bind(ctx.storage.settings);
+    const read = vi
+      .spyOn(ctx.storage.settings, "get")
+      .mockImplementation(async (key) => {
+        await pending;
+        return get(key);
+      });
+    await appThatFails().request("/explode");
+    expect(read).toHaveBeenCalled();
+    const shutdown = globalThis.__marfaOtelShutdown!();
+    release();
+    await shutdown;
+    expect(
+      collector.events.filter((e) => e.event === "$exception"),
+    ).toHaveLength(1);
+  });
+
   it("reports a thrown error as an exception with its stack and environment", async () => {
-    const boot = await bootInstrumentation({
+    const boot = await bootInstrumentation(ctx, {
       OTEL_EXPORTER_OTLP_ENDPOINT: collector.url,
       MARFA_POSTHOG_HOST: collector.url,
       MARFA_POSTHOG_PROJECT_TOKEN: "phc_test_token",
@@ -208,7 +308,7 @@ describe("unhandled errors reach PostHog's error tracking", () => {
       return true;
     });
     // The endpoint, the PostHog pair and nothing that names an environment.
-    await bootInstrumentation({
+    await bootInstrumentation(ctx, {
       OTEL_EXPORTER_OTLP_ENDPOINT: collector.url,
       MARFA_POSTHOG_HOST: collector.url,
       MARFA_POSTHOG_PROJECT_TOKEN: "phc_test_token",
@@ -247,7 +347,7 @@ describe("unhandled errors reach PostHog's error tracking", () => {
       `"${key}","value":{"stringValue":"${value}"}`;
 
     it("replace the environment and the service name the server states, on traces, logs and exceptions", async () => {
-      await bootInstrumentation({
+      await bootInstrumentation(ctx, {
         OTEL_EXPORTER_OTLP_ENDPOINT: collector.url,
         MARFA_POSTHOG_HOST: collector.url,
         MARFA_POSTHOG_PROJECT_TOKEN: "phc_test_token",
@@ -292,7 +392,7 @@ describe("unhandled errors reach PostHog's error tracking", () => {
     });
 
     it("send deployment.environment.name alone when that is the name the operator uses", async () => {
-      await bootInstrumentation({
+      await bootInstrumentation(ctx, {
         OTEL_EXPORTER_OTLP_ENDPOINT: collector.url,
         OTEL_RESOURCE_ATTRIBUTES: "deployment.environment.name=rehearsal",
       });
@@ -327,7 +427,7 @@ describe("unhandled errors reach PostHog's error tracking", () => {
     }
 
     it("puts the instance's id on every log record, span and exception once the server has read it", async () => {
-      await bootInstrumentation({
+      await bootInstrumentation(ctx, {
         OTEL_EXPORTER_OTLP_ENDPOINT: collector.url,
         MARFA_POSTHOG_HOST: collector.url,
         MARFA_POSTHOG_PROJECT_TOKEN: "phc_test_token",
@@ -349,7 +449,7 @@ describe("unhandled errors reach PostHog's error tracking", () => {
 
     it("still sends what it holds, unnamed, when the server stops before it knows its id", async () => {
       // The witness for the case above: the same export, with the id told.
-      await bootInstrumentation({
+      await bootInstrumentation(ctx, {
         OTEL_EXPORTER_OTLP_ENDPOINT: collector.url,
         MARFA_POSTHOG_HOST: collector.url,
         MARFA_POSTHOG_PROJECT_TOKEN: "phc_test_token",
@@ -371,7 +471,7 @@ describe("unhandled errors reach PostHog's error tracking", () => {
   });
 
   it("loads and sends nothing with no endpoint set", async () => {
-    const boot = await bootInstrumentation({});
+    const boot = await bootInstrumentation(ctx, {});
 
     const response = await appThatFails().request("/explode");
     expect(response.status).toBe(500);
@@ -390,7 +490,7 @@ describe("unhandled errors reach PostHog's error tracking", () => {
       throw new Error("exited");
     });
     await expect(
-      bootInstrumentation({
+      bootInstrumentation(ctx, {
         MARFA_POSTHOG_HOST: collector.url,
         MARFA_POSTHOG_PROJECT_TOKEN: "phc_test_token",
       }),
@@ -410,7 +510,7 @@ describe("unhandled errors reach PostHog's error tracking", () => {
       throw new Error("exited");
     });
     await expect(
-      bootInstrumentation({
+      bootInstrumentation(ctx, {
         OTEL_EXPORTER_OTLP_ENDPOINT: collector.url,
         MARFA_POSTHOG_HOST: collector.url,
       }),

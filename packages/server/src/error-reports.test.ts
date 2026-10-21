@@ -120,13 +120,22 @@ async function allowInserts(ctx: TestContext): Promise<void> {
 }
 
 /** Turns telemetry on, pointed at the collector for traces, logs and exceptions. */
-async function bootTelemetry(collectorUrl: string): Promise<void> {
+async function bootTelemetry(
+  ctx: TestContext,
+  collectorUrl: string,
+): Promise<void> {
   vi.stubEnv("OTEL_EXPORTER_OTLP_ENDPOINT", collectorUrl);
   vi.stubEnv("MARFA_OTEL_SAMPLE_RATIO", "1");
   vi.stubEnv("MARFA_POSTHOG_HOST", collectorUrl);
   vi.stubEnv("MARFA_POSTHOG_PROJECT_TOKEN", "phc_test_token");
   vi.resetModules();
   await import("./instrumentation.js");
+  const { bindErrorReporting } = await import("./error-reporting.js");
+  const { bootConfig } = await import("./config.js");
+  bindErrorReporting(ctx.storage.settings, {
+    ...ctx.config,
+    otel: bootConfig().otel,
+  });
 }
 
 async function stopTelemetry(): Promise<void> {
@@ -319,7 +328,7 @@ describe.each(WRITES)("an unhandled failed write of $name", (write) => {
   afterEach(stopTelemetry);
 
   it("reaches no sink with the statement or the values it was bound to", async () => {
-    await bootTelemetry(collector.url);
+    await bootTelemetry(ctx, collector.url);
     const handed = recordReportedExceptions();
 
     // A server span is the active one while a real request is handled, and
@@ -402,7 +411,7 @@ describe("a failed write no request is waiting on", () => {
   afterEach(stopTelemetry);
 
   it("reaches no sink with the statement or the values it was bound to when it ends as an unhandled rejection", async () => {
-    await bootTelemetry(collector.url);
+    await bootTelemetry(ctx, collector.url);
     const handed = recordReportedExceptions();
     const proc = new EventEmitter();
     installUnhandledRejectionReporter((event, listener) => {
@@ -494,7 +503,7 @@ describe("a read that fails after the response has begun", () => {
       });
       expect(created.status).toBe(201);
     }
-    await bootTelemetry(collector.url);
+    await bootTelemetry(ctx, collector.url);
 
     // An open WAL snapshot still sees a table dropped on another connection.
     // Hold the next page before capture so its real metadata query fails.
