@@ -34,6 +34,8 @@ const CONSOLE_PAGES = [
   "/auth/owner/settings/file-storage",
   "/auth/owner/settings.json",
   "/auth/owner/export",
+  "/auth/owner/folders",
+  "/auth/owner/folders/00000000-0000-4000-8000-000000000000",
   "/auth/owner/connectors",
   "/auth/owner/connectors/00000000-0000-4000-8000-000000000000",
   "/auth/owner/keys",

@@ -804,6 +804,7 @@ describe("a query key no door declares", () => {
     const path = template.replace(/\{[^}]+\}/g, id);
     if (
       template === "/items/summaries" ||
+      (method === "GET" && template === "/folders") ||
       template === "/auth/grants" ||
       template.startsWith("/auth/grants/") ||
       template === "/owner" ||

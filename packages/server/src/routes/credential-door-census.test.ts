@@ -143,6 +143,8 @@ const OPEN_DOORS: Record<string, string> = {
   "GET /auth/owner/types/:id": "the owner console gate",
   "GET /auth/owner/export":
     "Export and restore page authenticated by direct owner session",
+  "GET /auth/owner/folders": "owner folder list",
+  "GET /auth/owner/folders/:id": "owner folder detail",
   "GET /auth/owner/connectors":
     "connectors list authenticated by direct owner session",
   "GET /auth/owner/connectors/:id":

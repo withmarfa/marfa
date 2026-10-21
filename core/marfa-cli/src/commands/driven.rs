@@ -185,7 +185,7 @@ fn skipped(words: &[String]) -> bool {
         // Remote settings and health commands need no local folder. Other
         // folder commands use a working copy, driven by the device fixtures.
         || (first == Some("folders")
-            && !matches!(words.get(1).map(String::as_str), Some("create" | "change" | "revoke" | "health")))
+            && !matches!(words.get(1).map(String::as_str), Some("create" | "change" | "revoke" | "health" | "inventory")))
         // A browser and the keychain.
         || matches!(first, Some("login" | "logout"))
         // Private transport is exercised independently of this HTTP walk.

@@ -1,4 +1,10 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import {
+  bootFreshServer,
+  FRESH_SERVER_TIMEOUT_MS,
+  type FreshServer,
+} from "../../utils/fresh-server.js";
+import { controlRequest } from "../../utils/control-request.js";
 import { MarfaClient } from "../../client/api.js";
 import type { TestContext } from "../../client/types.js";
 import {
@@ -38,6 +44,7 @@ let ctx: TestContext;
 let receiver: Receiver;
 const extra: TestContext[] = [];
 const connectors: string[] = [];
+const isolated: FreshServer[] = [];
 
 beforeAll(async () => {
   ({ ctx, client, apiUrl } = await createTestContext(
@@ -49,6 +56,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await receiver.close();
+  for (const server of isolated) await server.stop();
   for (const id of connectors) await client.deleteConnector(id);
   for (const own of extra) await cleanup(own);
   await cleanup(ctx);
@@ -123,6 +131,42 @@ async function trashSummaryPage(): Promise<Read> {
 
 /** Seeds exactly `LIMIT` rows behind a door and returns how to read them. */
 const seeds: Record<string, () => Promise<Read>> = {
+  "GET /folders": async () => {
+    const server = await bootFreshServer("full-last-page-folders");
+    isolated.push(server);
+    const writer = new MarfaClient({
+      baseUrl: server.apiUrl,
+      apiKey: server.workingKey,
+    });
+    const ids: string[] = [];
+    for (let i = 0; i < LIMIT; i++) {
+      ids.push(
+        answered(await writer.createFolder({ title: `Folder ${String(i)}` }))
+          .item.id,
+      );
+    }
+    for (const key of [server.workingKey, server.managementKey]) {
+      const refused = await fetch(`${server.apiUrl}/folders`, {
+        headers: { Authorization: `Bearer ${key}` },
+      });
+      expect(refused.status).toBe(403);
+    }
+    return async ({ limit, cursor }) => {
+      const query = new URLSearchParams({ limit: String(limit) });
+      if (cursor) query.set("cursor", cursor);
+      const path = `/folders?${query}`;
+      const response = await fetch(`${server.apiUrl}${path}`, {
+        headers: { cookie: server.ownerCookie },
+      });
+      expect(response.status).toBe(200);
+      const body = (await response.json()) as Page;
+      const local = await controlRequest(server.controlSocket, path);
+      expect(local.status).toBe(200);
+      expect(local.body).toEqual(body);
+      expect(body.data.every((row) => ids.includes(row.id!))).toBe(true);
+      return body;
+    };
+  },
   "GET /items/summaries": async () => {
     const name = `fullsummary${ctx.runId.replace(/[^a-z0-9]/gi, "")}`;
     const ids = await notes(LIMIT, name);
@@ -349,7 +393,7 @@ describe("a full last page answers a null cursor", () => {
         (parameter) => parameter.in === "query" && parameter.name === "cursor",
       );
     });
-    expect(cursorDoors).toHaveLength(13);
+    expect(cursorDoors).toHaveLength(14);
     expect(Object.keys(seeds).sort()).toEqual(cursorDoors.sort());
   });
 
@@ -370,5 +414,6 @@ describe("a full last page answers a null cursor", () => {
       expect(full.data, door).toHaveLength(LIMIT);
       expect(full.next_cursor, door).toBeNull();
     },
+    FRESH_SERVER_TIMEOUT_MS + 120_000,
   );
 });

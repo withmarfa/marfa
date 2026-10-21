@@ -175,6 +175,8 @@ export const SIGN_IN_ROUTE_STATUSES: Readonly<
   "GET /auth/owner/items": [200, 302, 400, 401, 403, 404],
   "GET /auth/owner/types/{id}": [200, 302, 400, 401, 403, 404],
   "GET /auth/owner/export": [200, 302, 401, 403],
+  "GET /auth/owner/folders": [200, 302, 401, 403],
+  "GET /auth/owner/folders/{id}": [200, 302, 401, 403, 404],
   "GET /auth/owner/connectors": [200, 302, 401, 403],
   "GET /auth/owner/connectors/{id}": [200, 302, 401, 403, 404],
   "GET /auth/owner/profile": [200, 302, 401, 403],
