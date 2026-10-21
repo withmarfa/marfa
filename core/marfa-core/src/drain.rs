@@ -5382,7 +5382,10 @@ mod tests {
         for (cannot, says) in [
             (crate::scripted::refusal(503, "unavailable"), "503"),
             (crate::scripted::refusal(429, "rate_limited"), "429"),
-            (crate::scripted::Answer::Stall, "request to http://127.0.0.1:"),
+            (
+                crate::scripted::Answer::Stall,
+                "request to http://127.0.0.1:",
+            ),
         ] {
             let server = crate::scripted::Scripted::start();
             let rows = ["a", "b", "c"];
