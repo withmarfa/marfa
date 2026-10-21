@@ -1,3 +1,4 @@
+import { errorReportingEnabled } from "./error-reporting.js";
 /**
  * OpenTelemetry bootstrap.
  *
@@ -35,7 +36,9 @@
  * follow, and it can be personal.
  *
  * Exceptions are a third, separate pipeline, gated on `MARFA_POSTHOG_HOST`
- * and `MARFA_POSTHOG_PROJECT_TOKEN`, and on the endpoint being set. PostHog's
+ * and `MARFA_POSTHOG_PROJECT_TOKEN`, and on the endpoint being set. Each
+ * report also requires the effective error-reporting choice from storage;
+ * before storage is bound or when its read fails, no exception is sent. PostHog's
  * error tracking groups `$exception` events, and its documentation describes
  * no way for OTLP logs or traces to become them, so the two OTLP pipelines
  * leave error tracking empty. `posthog-node` builds those events from a
@@ -158,6 +161,8 @@ async function start(): Promise<void> {
     shutdown: () => Promise<void>;
   }
   let exceptionClient: Shutdownable | undefined;
+  const pendingReports = new Set<Promise<void>>();
+  let stopping = false;
 
   // ---- Traces ----
   const [
@@ -253,26 +258,42 @@ async function start(): Promise<void> {
     );
     exceptionClient = client;
     globalThis.__marfaReportException = (err, properties) => {
+      if (stopping) return;
       // No distinct id: the event is the instance's, and the client then
       // sends it without creating a person.
-      clock.withRealTime(() => {
-        client.captureException(reportableError(err), undefined, {
-          ...staticAttributes,
-          ...(instanceId === undefined || instanceChosen
-            ? {}
-            : { [ATTR_SERVICE_INSTANCE_ID]: instanceId }),
-          ...properties,
+      const pending = errorReportingEnabled()
+        .then((enabled) => {
+          if (!enabled) return;
+          clock.withRealTime(() => {
+            client.captureException(reportableError(err), undefined, {
+              ...staticAttributes,
+              ...(instanceId === undefined || instanceChosen
+                ? {}
+                : { [ATTR_SERVICE_INSTANCE_ID]: instanceId }),
+              ...properties,
+            });
+          });
+        })
+        .catch(() => {
+          // A failed reporter must not become another reportable rejection.
         });
-      });
+      pendingReports.add(pending);
+      void pending.finally(() => pendingReports.delete(pending));
     };
   }
 
   globalThis.__marfaOtelShutdown = async () => {
+    stopping = true;
     settleInstanceId(undefined);
     await Promise.allSettled([
       tracerProvider.shutdown(),
       loggerProvider.shutdown(),
-      clock.withRealTime(() => exceptionClient?.shutdown()),
+      clock.withRealTime(async () => {
+        // A report can still be reading its durable permission when shutdown
+        // starts. Capture it before the client flushes its last batch.
+        await Promise.all(pendingReports);
+        await exceptionClient?.shutdown();
+      }),
     ]);
   };
 

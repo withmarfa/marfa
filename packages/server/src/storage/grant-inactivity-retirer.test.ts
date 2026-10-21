@@ -1,3 +1,5 @@
+import { readEffectiveConfig } from "../effective-config.js";
+import { writeInstanceConfig } from "./instance-config.js";
 /**
  * A grant nobody has used for the window is retired through the grant
  * cascade with an audit row saying why; a recent one is left alone; a
@@ -396,4 +398,41 @@ describe("GrantInactivityRetirer.runOnce", () => {
       stdout.mockRestore();
     }
   });
+});
+
+it("keeps grants when the inactivity choice changes after listing, then retires them on the next enabled run", async () => {
+  ctx = await createTestContext({ grantInactivityDays: 0 });
+  const clientId = await seedClient(ctx);
+  await deviceGrant(ctx, clientId, await signInUser(ctx));
+  await backdate(ctx, clientId, 400, ["granted_at", "last_used_at"]);
+  const retirer = new GrantInactivityRetirer(
+    ctx.storage,
+    0,
+    undefined,
+    async () =>
+      (await readEffectiveConfig(ctx!.storage.settings, ctx!.config))
+        .grant_inactivity_days,
+  );
+  expect(await retirer.runOnce()).toBe(0);
+  await writeInstanceConfig(ctx.storage.settings, {
+    grant_inactivity_days: 365,
+  });
+  const list = ctx.storage.items.listInactiveAppGrants.bind(ctx.storage.items);
+  vi.spyOn(ctx.storage.items, "listInactiveAppGrants").mockImplementationOnce(
+    async (cutoff) => {
+      const rows = await list(cutoff);
+      expect(rows).toHaveLength(1);
+      await writeInstanceConfig(ctx!.storage.settings, {});
+      return rows;
+    },
+  );
+  expect(await retirer.runOnce()).toBe(0);
+  expect((await grantOf(ctx, clientId)).properties.status).toBe("active");
+  expect(await tokenRows(ctx, clientId)).toBe(2);
+  await writeInstanceConfig(ctx.storage.settings, {
+    grant_inactivity_days: 365,
+  });
+  expect(await retirer.runOnce()).toBe(1);
+  expect((await grantOf(ctx, clientId)).properties.status).toBe("revoked");
+  expect(await tokenRows(ctx, clientId)).toBe(0);
 });

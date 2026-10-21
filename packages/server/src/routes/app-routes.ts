@@ -6,6 +6,7 @@ import { webhookHistories } from "../pages/webhook-history.js";
  * the owner is refused here. Disconnecting is done by the browser through the
  * public sign-in door.
  */
+import { readEffectiveConfig } from "../effective-config.js";
 import { parseScope, grantCoversScope } from "@withmarfa/shared";
 import { getPermissionBundles } from "../config.js";
 import { grantExpiresAt } from "../auth/grant-expiry.js";
@@ -163,6 +164,7 @@ export function appRoutes(storage: Storage) {
         404,
       );
     const now = clock.nowMs();
+    const effective = await readEffectiveConfig(storage.settings, c.var.config);
     const details: AppDetail[] = [
       {
         title: "Kind",
@@ -180,10 +182,7 @@ export function appRoutes(storage: Storage) {
       {
         title: "Ends if unused",
         value: (() => {
-          const at = grantExpiresAt(
-            app,
-            c.var.config.grantInactivityDays ?? 365,
-          );
+          const at = grantExpiresAt(app, effective.grant_inactivity_days);
           return at === null ? "Never" : dateWords(Date.parse(at), now);
         })(),
       },

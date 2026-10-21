@@ -4,6 +4,8 @@ import { ErrorCode, MarfaError } from "@withmarfa/shared";
 import type { InstanceConfig } from "@withmarfa/shared";
 import { InstanceNameSchema } from "../instance-name.js";
 import { MAX_RETENTION_DAYS, MAX_RETENTION_HOURS } from "../config.js";
+import type { AppConfig } from "../config.js";
+import { validateEffectiveConfig } from "../effective-config.js";
 import type { AppEnv } from "../middleware/auth.js";
 import {
   requirePermission,
@@ -29,7 +31,80 @@ import { EnforcementReadSchema, EnforcementWriteSchema } from "./_schemas.js";
 const KEPT_FOREVER = "`0` keeps them with no age limit.";
 const SERVER_DEFAULT = "Absent: the server's default applies.";
 
+const liveConfigShape = {
+  version_recent_days: z
+    .number()
+    .int()
+    .min(0)
+    .max(MAX_RETENTION_DAYS)
+    .optional()
+    .describe(
+      "Days within which every version is kept. Zero makes this window empty. Absent: the environment default applies.",
+    ),
+  version_daily_snapshot_days: z
+    .number()
+    .int()
+    .min(0)
+    .max(MAX_RETENTION_DAYS)
+    .optional()
+    .describe(
+      "Days within which a daily version is kept. Must be at least `version_recent_days`. Absent: the environment default applies.",
+    ),
+  version_weekly_snapshot_days: z
+    .number()
+    .int()
+    .min(0)
+    .max(MAX_RETENTION_DAYS)
+    .optional()
+    .describe(
+      "Days within which a weekly version is kept. Must be at least `version_daily_snapshot_days`. Absent: the environment default applies.",
+    ),
+  version_max_versions: z
+    .number()
+    .int()
+    .min(1)
+    .max(Number.MAX_SAFE_INTEGER)
+    .optional()
+    .describe(
+      "Maximum versions per item, after applying the time windows. Per-type policy overrides these instance defaults.",
+    ),
+  grant_inactivity_days: z
+    .number()
+    .int()
+    .min(0)
+    .max(MAX_RETENTION_DAYS)
+    .optional()
+    .describe(
+      "Disconnect apps unused for this many days. Zero disables retirement.",
+    ),
+  enrichment_enabled: z
+    .boolean()
+    .optional()
+    .describe(
+      "`true` if Marfa reads text and dimensions from files. An active extraction can finish after disabling. Absent: the environment default applies.",
+    ),
+  enrichment_ocr_enabled: z
+    .boolean()
+    .optional()
+    .describe(
+      "`true` if file reading includes image text. Enabling reconsiders previously skipped images. Absent: the environment default applies.",
+    ),
+  error_reporting_enabled: z
+    .boolean()
+    .optional()
+    .describe(
+      "`true` if error alerts and exception reports are sent. Enabling requires a configured receiver. Absent: the environment default applies.",
+    ),
+  heartbeat_enabled: z
+    .boolean()
+    .optional()
+    .describe(
+      "`true` if scheduled heartbeat requests are sent. Enabling requires a configured receiver. Absent: the environment default applies.",
+    ),
+};
+
 const instanceConfigShape = (strict: boolean) => ({
+  ...liveConfigShape,
   name: InstanceNameSchema.optional(),
   enforcement: (strict ? EnforcementWriteSchema : EnforcementReadSchema)
     .optional()
@@ -106,7 +181,7 @@ const InstanceConfigSchema = z
     ...instanceConfigShape(false),
   })
   .describe(
-    "The instance configuration: its display name, enforcement levers and retention settings, with the instance's ID.",
+    "The instance configuration: its display name, enforcement levers and live settings, with the instance's ID.",
   )
   .openapi("InstanceConfig");
 
@@ -158,6 +233,19 @@ const clearableDays = (what: string) =>
  * dropped while the answer says the change was made.
  */
 const InstanceConfigPatchSchema = z.strictObject({
+  ...(Object.fromEntries(
+    Object.entries(liveConfigShape).map(([name, schema]) => [
+      name,
+      schema
+        .nullable()
+        .optional()
+        .describe(`${schema.description ?? ""}${CLEARS}`),
+    ]),
+  ) as {
+    [K in keyof typeof liveConfigShape]: z.ZodOptional<
+      z.ZodNullable<(typeof liveConfigShape)[K]>
+    >;
+  }),
   instance_id: InstanceConfigWriteSchema.shape.instance_id,
   name: InstanceNameSchema.nullable()
     .optional()
@@ -204,7 +292,7 @@ const getConfigRoute = createRoute({
   tags: ["Instance"],
   summary: "Get the configuration",
   description:
-    "Returns the instance configuration: its display name, enforcement levers and retention settings, with its `instance_id`. A setting nobody has set is left out. Requires `config.manage`.",
+    "Returns the instance configuration: its display name, enforcement levers and live settings, with its `instance_id`. A setting nobody has set is left out. Requires `config.manage`.",
   security: [{ bearerAuth: [] }],
   middleware: managesConfig,
   responses: {
@@ -267,7 +355,7 @@ const putConfigRoute = createRoute({
         },
       },
       description:
-        "- `missing_required_field`: a lever lacks `types` or `sources`.\n- `validation_error`: the body names a setting Marfa doesn't know, a retention value is out of range, the name is invalid, or `instance_id` names a different instance.",
+        "- `missing_required_field`: a lever lacks `types` or `sources`.\n- `validation_error`: the body names a setting Marfa doesn't know, a value is out of range, the effective version windows are out of order, reporting is enabled without a configured receiver, the name is invalid, or `instance_id` names a different instance.",
     },
     401: {
       content: {
@@ -322,7 +410,7 @@ const patchConfigRoute = createRoute({
         },
       },
       description:
-        "- `missing_required_field`: a lever lacks `types` or `sources`.\n- `validation_error`: the body names a setting Marfa doesn't know, a retention value is out of range, the name is invalid, or `instance_id` names a different instance.",
+        "- `missing_required_field`: a lever lacks `types` or `sources`.\n- `validation_error`: the body names a setting Marfa doesn't know, a value is out of range, the effective version windows are out of order, reporting is enabled without a configured receiver, the name is invalid, or `instance_id` names a different instance.",
     },
     401: {
       content: {
@@ -343,7 +431,11 @@ const patchConfigRoute = createRoute({
   },
 });
 
-export function configRoutes(storage: Storage, instanceId: string) {
+export function configRoutes(
+  storage: Storage,
+  instanceId: string,
+  config: AppConfig,
+) {
   const router = createOpenAPIRouter<AppEnv>();
 
   function refuseOtherInstance(addressed: string | undefined): void {
@@ -384,7 +476,10 @@ export function configRoutes(storage: Storage, instanceId: string) {
 
     await runAuditedTransaction(
       storage,
-      () => writeInstanceConfig(storage.settings, body),
+      () => {
+        validateEffectiveConfig(config, body);
+        return writeInstanceConfig(storage.settings, body);
+      },
       {
         client_ip: c.get("clientIp") ?? null,
         key_id: authorityId(c),
@@ -412,6 +507,7 @@ export function configRoutes(storage: Storage, instanceId: string) {
           await readInstanceConfig(storage.settings),
           changes,
         );
+        validateEffectiveConfig(config, merged, changes);
         await writeInstanceConfig(storage.settings, merged);
         return merged;
       },

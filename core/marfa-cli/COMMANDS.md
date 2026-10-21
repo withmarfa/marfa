@@ -1730,7 +1730,7 @@ marfa config [OPTIONS] <COMMAND>
 
 ### marfa config get
 
-The instance configuration: the enforcement levers and the retention overrides. Needs `config.manage`.
+The instance configuration: the name, enforcement levers and live settings. Needs `config.manage`.
 
 ```text
 marfa config get [OPTIONS]

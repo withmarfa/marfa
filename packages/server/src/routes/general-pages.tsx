@@ -42,6 +42,7 @@ export interface GeneralPageParams {
   nonce: string;
   instanceName: string;
   keeping: readonly KeepingRow[];
+  live: readonly KeepingRow[];
   rules: readonly RuleRow[];
   about: { address: string; version: string };
 }
@@ -100,6 +101,28 @@ export function GeneralPage(props: GeneralPageParams) {
           >
             <RowGroup>
               {props.keeping.map((row) => (
+                <Row
+                  title={row.title}
+                  description={row.description}
+                  for={`general-${row.field}`}
+                  control={
+                    <Select
+                      id={`general-${row.field}`}
+                      name={row.field}
+                      value={row.value}
+                      options={row.options}
+                    />
+                  }
+                />
+              ))}
+            </RowGroup>
+          </Section>
+          <Section
+            title="Reading and reporting"
+            description="Changes apply to future work. Receiver addresses and credentials are set where Marfa runs."
+          >
+            <RowGroup>
+              {props.live.map((row) => (
                 <Row
                   title={row.title}
                   description={row.description}

@@ -1,3 +1,4 @@
+import { readEffectiveConfig } from "../effective-config.js";
 import { ownerPasskeyRoutes } from "./owner-passkeys.js";
 import { OwnerUpdateSchema } from "../profile-fields.js";
 import { runAuditedTransaction } from "../storage/audited-transaction.js";
@@ -409,7 +410,8 @@ export function ownerRoutes(storage: Storage, auth: MarfaAuth) {
       auth,
       keysInReach(storage, c),
       owner?.id ?? null,
-      c.var.config.grantInactivityDays ?? 365,
+      (await readEffectiveConfig(storage.settings, c.var.config))
+        .grant_inactivity_days,
     );
     const current =
       authority?.kind === "owner" ? authority.sessionId : undefined;
@@ -438,7 +440,8 @@ export function ownerRoutes(storage: Storage, auth: MarfaAuth) {
         clientIp: c.get("clientIp") ?? null,
         writer: requestWriter(c),
       },
-      c.var.config.grantInactivityDays ?? 365,
+      (await readEffectiveConfig(storage.settings, c.var.config))
+        .grant_inactivity_days,
     );
     if (renamed === "browser")
       throw new MarfaError(

@@ -42,7 +42,7 @@ interface Step {
 export class VersionThinner {
   constructor(
     private storage: Storage,
-    private globalDefaults: ResolvedPolicy,
+    private globalDefaults: ResolvedPolicy | (() => Promise<ResolvedPolicy>),
   ) {}
 
   /** One sweep. Reports how many versions were pruned across how many
@@ -150,7 +150,11 @@ export class VersionThinner {
       }
       throw error;
     }
-    const policy = resolvePolicy(typePolicy, this.globalDefaults);
+    const defaults =
+      typeof this.globalDefaults === "function"
+        ? await this.globalDefaults()
+        : this.globalDefaults;
+    const policy = resolvePolicy(typePolicy, defaults);
 
     const versions = await this.storage.versions.all(itemId);
     const ids = computeVersionsToDelete(versions, policy);

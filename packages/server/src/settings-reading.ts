@@ -107,7 +107,7 @@ export function readSettings(
     const value = settingWords(
       setting.rule,
       resolved[setting.name],
-      setting.live !== undefined,
+      setting.live !== undefined && !setting.live.startsWith("version_"),
     );
     return value === undefined ? reading : { ...reading, value };
   });

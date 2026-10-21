@@ -600,4 +600,13 @@ export interface InstanceConfig {
   trash_retention_days?: number;
   inbound_handled_retention_days?: number;
   inbound_pending_retention_days?: number;
+  version_recent_days?: number;
+  version_daily_snapshot_days?: number;
+  version_weekly_snapshot_days?: number;
+  version_max_versions?: number;
+  grant_inactivity_days?: number;
+  enrichment_enabled?: boolean;
+  enrichment_ocr_enabled?: boolean;
+  error_reporting_enabled?: boolean;
+  heartbeat_enabled?: boolean;
 }

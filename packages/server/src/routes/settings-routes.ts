@@ -1,3 +1,4 @@
+import { effectiveConfig } from "../effective-config.js";
 /**
  * The All settings pages of the owner console, and the owner's own read of
  * every setting, drawn from the settings schema in `config.ts`.
@@ -41,17 +42,21 @@ export async function readSettingEntries(
   config: AppConfig,
 ): Promise<SettingEntry[]> {
   const stored = await readInstanceConfig(storage.settings);
+  const effective = effectiveConfig(config, stored);
   return (config.settingReadings ?? []).map(({ live, ...reading }) => {
     if (live === undefined) return { ...reading, live: false };
-    const changed = stored?.[live];
+    const changed =
+      live in effective
+        ? effective[live as keyof typeof effective]
+        : stored?.[live];
     const rule = BY_NAME.get(reading.name);
     if (changed === undefined || rule === undefined)
       return { ...reading, live: true };
-    const value = settingWords(rule, changed, true);
+    const value = settingWords(rule, changed, !live.startsWith("version_"));
     return {
       ...reading,
       live: true,
-      set: true,
+      set: stored?.[live] !== undefined || reading.set,
       ...(value !== undefined && { value }),
     };
   });

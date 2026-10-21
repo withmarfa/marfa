@@ -8,8 +8,8 @@ use crate::remote::request::Request;
 
 #[derive(Debug, Subcommand)]
 pub enum ConfigCommand {
-    /// The instance configuration: the enforcement levers and the retention
-    /// overrides. Needs `config.manage`.
+    /// The instance configuration: the name, enforcement levers and live
+    /// settings. Needs `config.manage`.
     Get,
     /// Replace the instance configuration whole. Needs `config.manage`.
     Replace(BodySource),

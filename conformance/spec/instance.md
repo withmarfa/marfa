@@ -832,7 +832,7 @@ When the server completes an unfinished database, the server MUST leave the rows
 
 ## The configuration operations
 
-`GET /config`, `PUT /config` and `PATCH /config` hold the instance's display name, levers and retention settings. What a lever does is `types/strict-mode`, `types/source-allowlist` and `types/source-filter`, and the bounds of a retention are `housekeeping/retention-days-range` and `housekeeping/retention-hours-range`. That `PUT /config` replaces the configuration whole is `types/config`, and the code a lever missing a member gets is `types/config-lever-missing-field`.
+`GET /config`, `PUT /config` and `PATCH /config` hold the instance's display name, levers and live settings. What a lever does is `types/strict-mode`, `types/source-allowlist` and `types/source-filter`, and the bounds of a retention are `housekeeping/retention-days-range` and `housekeeping/retention-hours-range`. That `PUT /config` replaces the configuration whole is `types/config`, and the code a lever missing a member gets is `types/config-lever-missing-field`.
 
 ### `instance/config-name`
 
@@ -1345,7 +1345,7 @@ The server reads each of these environment variables once, when it starts, and a
 | `AUDIT_RETENTION_DAYS`                      | `90` days                     | Whole number of days, 0 to 36500                                   | How long the server keeps audit entries and webhook delivery history. At 0 no entry expires by age. `PUT /config` overrides it.                                                                                                                                   |
 | `AUDIT_CLEANUP_INTERVAL_MS`                 | `86400000` ms                 | Whole number of milliseconds, 1 to 3153600000000                   | How often the `audit-cleanup` job runs.                                                                                                                                                                                                                           |
 | `MARFA_REVOKED_GRANT_RETENTION_DAYS`        | `90` days                     | Whole number of days, 0 to 36500                                   | How long a revoked application grant is kept. At 0 the job that purges them is off. `PUT /config` does not override it.                                                                                                                                           |
-| `MARFA_GRANT_INACTIVITY_DAYS`               | `365` days                    | Whole number of days, 0 to 36500                                   | How long an application grant may go unused before the server retires it. At 0 grants are never retired. `PUT /config` does not override it.                                                                                                                      |
+| `MARFA_GRANT_INACTIVITY_DAYS`               | `365` days                    | Whole number of days, 0 to 36500                                   | How long an application grant may go unused before the server retires it. At 0 grants are never retired. `/config` overrides it.                                                                                                                                  |
 | `MARFA_EVENT_LOG_RETENTION_HOURS`           | `168` hours                   | Whole number of hours, 0 to 876000                                 | The least time an event stays in the event log, which bounds how far back a stream can replay. At 0 no event expires by age. `PUT /config` overrides it.                                                                                                          |
 | `MARFA_EVENT_LOG_CLEANUP_INTERVAL_MS`       | `3600000` ms                  | Whole number of milliseconds, 1 to 3153600000000                   | How often the `event-log-cleanup` job runs.                                                                                                                                                                                                                       |
 | `VERSION_THINNING_INTERVAL_MS`              | `3600000` ms                  | Whole number of milliseconds, 1 to 3153600000000                   | How often the `version-thinning` job runs.                                                                                                                                                                                                                        |
@@ -1366,6 +1366,8 @@ The server reads each of these environment variables once, when it starts, and a
 | `MARFA_BULK_ACTION_POLL_BACKOFF_MULTIPLIER` | `2`                           | Decimal number, 1 to 100                                           | The factor by which the bulk-action worker's wait grows after each look that finds no work.                                                                                                                                                                       |
 | `MARFA_SSE_MAX_VIEWERS`                     | `0`                           | Whole number, 0 or more                                            | The most event-stream viewers one server instance serves at once. At 0 there is no limit.                                                                                                                                                                         |
 | `MARFA_WEBHOOK_ALLOW_PRIVATE_ADDRESSES`     | `false`                       | `true`, `1`, `yes`, `on`, `false`, `0`, `no` or `off`, in any case | Whether outbound webhooks may reach loopback, private and other non-public addresses.                                                                                                                                                                             |
+| `MARFA_ERROR_REPORTING_ENABLED`             | `true`                        | `true`, `1`, `yes`, `on`, `false`, `0`, `no` or `off`, in any case | Send error alerts and exception reports to configured receivers. `/config` overrides it; receiver addresses and credentials stay machine settings.                                                                                                                |
+| `MARFA_HEARTBEAT_ENABLED`                   | `true`                        | `true`, `1`, `yes`, `on`, `false`, `0`, `no` or `off`, in any case | Send scheduled requests to the configured heartbeat receiver. `/config` overrides it; its address stays a machine setting.                                                                                                                                        |
 | `ERROR_WEBHOOK_URL`                         | None                          | Absolute `http` or `https` URL                                     | The URL the server posts a notice to when a request fails with a 500 error. When blank, no notice is sent.                                                                                                                                                        |
 | `MARFA_ERROR_WEBHOOK_TIMEOUT_MS`            | `5000` ms                     | Whole number of milliseconds, 1 to 2147483647                      | How long one post to `ERROR_WEBHOOK_URL` may take.                                                                                                                                                                                                                |
 | `MARFA_HEARTBEAT_URL`                       | None                          | Absolute `http` or `https` URL                                     | The URL the server requests on a schedule, so that something else can notice when the requests stop. When blank, there is no heartbeat.                                                                                                                           |
@@ -1386,3 +1388,27 @@ The server reads each of these environment variables once, when it starts, and a
 | `MARFA_POSTHOG_PROJECT_TOKEN`               | None                          | Text with no whitespace around it                                  | The PostHog project token for exception reports. It needs `OTEL_EXPORTER_OTLP_ENDPOINT` and `MARFA_POSTHOG_HOST` set too.                                                                                                                                         |
 
 <!-- settings-table:end -->
+
+### `instance/live-settings`
+
+When an authorized caller replaces or updates the configuration, the server MUST accept `version_recent_days`, `version_daily_snapshot_days`, `version_weekly_snapshot_days`, `version_max_versions`, `grant_inactivity_days`, `enrichment_enabled`, `enrichment_ocr_enabled`, `error_reporting_enabled` and `heartbeat_enabled` as persisted overrides of their environment defaults.
+
+**Reason:** the owner can change version retention, unused-app retirement, file reading and reporting without changing machine configuration.
+
+**Tests:** `compliance/instance-config.test.ts › keeps live settings across restart, preserves omitted choices and clears to the environment`.
+
+### `instance/live-policy-validation`
+
+If a configuration write would make the effective recent, daily and weekly version windows decrease in that order, set a negative window or inactivity period, set a version count below one, or enable reporting without a configured receiver, then the server MUST refuse it with `400 validation_error` without changing the stored configuration.
+
+**Reason:** validation includes environment defaults exposed by clearing an override. Addresses and credentials remain machine settings.
+
+**Tests:** `compliance/instance-config.test.ts › keeps live settings across restart, preserves omitted choices and clears to the environment`.
+
+### `instance/live-work`
+
+When a persisted override changes, the server MUST use the effective choice for future work without a restart, including a job disabled when the process started.
+
+**Reason:** disabling does not promise to cancel an extraction or request already in flight. Version deletion and unused-app retirement recheck the effective policy in the transaction that removes the versions or revokes the grant. A zero version window is empty; a zero inactivity period disables retirement. Type-specific version policies retain precedence.
+
+**Tests:** `compliance/live-settings.test.ts › starts disabled work after a live choice and stops it again without restarting`.

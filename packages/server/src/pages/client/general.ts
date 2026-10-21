@@ -18,11 +18,19 @@ const NAME_WORDS = "Give this Marfa a name.";
 /** The settings that changed, under the names `PATCH /config` takes them by. */
 export function changesOf(
   form: HTMLFormElement,
-): Record<string, string | number> {
-  const changes: Record<string, string | number> = {};
+): Record<string, string | number | boolean | null> {
+  const changes: Record<string, string | number | boolean | null> = {};
   for (const control of changedControls(form))
     changes[control.name] =
-      control.name === "name" ? control.value.trim() : Number(control.value);
+      control.name === "name"
+        ? control.value.trim()
+        : control.value === "default"
+          ? null
+          : control.value === "true"
+            ? true
+            : control.value === "false"
+              ? false
+              : Number(control.value);
   return changes;
 }
 

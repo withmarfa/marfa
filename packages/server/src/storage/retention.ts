@@ -282,14 +282,17 @@ export class GrantInactivityRetirer {
     private storage: Storage,
     private inactivityDays: number,
     private nowFn: () => Date = () => clock.now(),
+    private currentDays: () => Promise<number> = () =>
+      Promise.resolve(this.inactivityDays),
   ) {}
 
   /** One sweep: retires every grant inactive past the window and returns
    *  how many. */
   async runOnce(): Promise<number> {
-    if (this.inactivityDays <= 0) return 0;
+    const days = await this.currentDays();
+    if (days <= 0) return 0;
     const cutoff = new Date(
-      this.nowFn().getTime() - this.inactivityDays * MS_PER_DAY,
+      this.nowFn().getTime() - days * MS_PER_DAY,
     ).toISOString();
     const inactive = await this.storage.items.listInactiveAppGrants(cutoff);
     let retired = 0;
@@ -314,7 +317,16 @@ export class GrantInactivityRetirer {
             const props = now.properties;
             if (props.status !== "active") return false;
             const seen = props.last_used_at ?? props.granted_at;
-            return typeof seen === "string" && seen < cutoff;
+            const current = await this.currentDays();
+            const currentCutoff = new Date(
+              this.nowFn().getTime() - current * MS_PER_DAY,
+            ).toISOString();
+            return (
+              current === days &&
+              current > 0 &&
+              typeof seen === "string" &&
+              seen < currentCutoff
+            );
           },
           clientId: grant.clientId ?? undefined,
           authUserId: grant.authUserId ?? undefined,
@@ -331,7 +343,7 @@ export class GrantInactivityRetirer {
               reason: "inactive",
               last_used_at: grant.lastUsedAt,
               granted_at: grant.grantedAt,
-              inactivity_days: this.inactivityDays,
+              inactivity_days: days,
             },
           },
         });
@@ -350,7 +362,7 @@ export class GrantInactivityRetirer {
     if (retired > 0) {
       log("info", "Inactive grants retired", {
         retired,
-        inactivityDays: this.inactivityDays,
+        inactivityDays: days,
       });
     }
     return retired;

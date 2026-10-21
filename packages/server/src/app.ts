@@ -1,3 +1,4 @@
+import { readEffectiveConfig } from "./effective-config.js";
 import { profileRoutes } from "./routes/profile.js";
 import {
   instanceDescriptionRoute,
@@ -209,6 +210,9 @@ export function createApp(
   // than re-deriving what it produces — a stored body that is nearly the
   // one that went out is worse than storing nothing.
   const errorHandler = createErrorHandler({
+    reportingEnabled: async () =>
+      (await readEffectiveConfig(storage.settings, config))
+        .error_reporting_enabled,
     errorWebhookUrl: config.errorWebhookUrl,
     errorWebhookTimeoutMs: config.errorWebhookTimeoutMs,
     deploymentEnvironment: config.deploymentEnvironment,
@@ -854,7 +858,7 @@ export function createApp(
   app.route("/folders", folderRoutes(storage));
   app.route("/folders", folderStatusRoutes(storage));
   app.route("/keys", keyRoutes(storage, config.apiKeySalt));
-  app.route("/config", configRoutes(storage, instanceId));
+  app.route("/config", configRoutes(storage, instanceId, config));
   app.route(
     "/restore",
     restoreArchiveRoutes(storage, blobs, {
