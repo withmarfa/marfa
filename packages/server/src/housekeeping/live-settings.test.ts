@@ -1,7 +1,12 @@
 import { createHash } from "node:crypto";
 import { createServer } from "node:http";
 import { afterEach, expect, it } from "vitest";
-import { createTestContext, request, type TestContext } from "../test-utils.js";
+import {
+  createTestContext,
+  request,
+  seedOauthBearer,
+  type TestContext,
+} from "../test-utils.js";
 import { readEffectiveConfig } from "../effective-config.js";
 import { Housekeeping } from "./scheduler.js";
 import { registerHousekeepingJobs } from "./registrations.js";
@@ -306,4 +311,62 @@ it("refuses a version sweep when changed environment defaults conflict with over
     kind: "ran",
     run: { outcome: "ok" },
   });
+});
+
+it("uses the live inactivity choice for the app page, owner responses and retirement", async () => {
+  const { itemWrites } = await import("../storage/item-writes.js");
+  const { visibleText } = await import("../pages/reading.js");
+  const { dateWords } = await import("../pages/key-time.js");
+  ctx = await createTestContext({ grantInactivityDays: 365 });
+  const { grantId } = await seedOauthBearer(ctx, ["core.note:read"]);
+  const lastUsed = new Date(Date.now() - 2 * 86_400_000).toISOString();
+  await itemWrites(ctx.storage).update(grantId, {
+    writer: null,
+    properties: { last_used_at: lastUsed },
+  });
+  scheduler = new Housekeeping(ctx.storage.housekeeping, {
+    pollIntervalMs: 3_600_000,
+  });
+  registerHousekeepingJobs(scheduler, ctx.storage, ctx.blobs, ctx.config);
+  await scheduler.start();
+  for (const days of [0, 1]) {
+    expect(
+      (
+        await request(ctx.app, "PATCH", "/config", {
+          key: ctx.workingKey,
+          body: { grant_inactivity_days: days },
+        })
+      ).status,
+    ).toBe(200);
+    const expected =
+      days === 0
+        ? null
+        : new Date(Date.parse(lastUsed) + 86_400_000).toISOString();
+    const list = await ctx.ownerRequest("/owner/sign-ins");
+    expect(list.status).toBe(200);
+    const body = (await list.json()) as {
+      data: { id: string; expires_at: string | null }[];
+    };
+    expect(body.data.find((row) => row.id === grantId)?.expires_at).toBe(
+      expected,
+    );
+    const renamed = await ctx.ownerRequest(`/owner/sign-ins/${grantId}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "Live policy app" }),
+    });
+    expect(renamed.status).toBe(200);
+    expect(await renamed.json()).toMatchObject({ expires_at: expected });
+    const page = await ctx.ownerRequest(`/auth/owner/apps/${grantId}`);
+    expect(page.status).toBe(200);
+    expect(visibleText(await page.text())).toContain(
+      `Ends if unused ${expected === null ? "Never" : dateWords(Date.parse(expected), Date.now())}`,
+    );
+    expect(await scheduler.runNow("grant-inactivity-retirement")).toMatchObject(
+      { kind: "ran", run: { outcome: "ok" } },
+    );
+    expect((await ctx.storage.items.get(grantId))?.properties.status).toBe(
+      days === 0 ? "active" : "revoked",
+    );
+  }
 });
