@@ -5883,6 +5883,9 @@ mod tests {
             (include_str!("folder/mod.rs"), &["working"][..]),
             (include_str!("folder/document.rs"), others),
             (include_str!("folder/identity.rs"), others),
+            (include_str!("folder/pull.rs"), others),
+            (include_str!("folder/push.rs"), others),
+            (include_str!("folder/scan.rs"), others),
             (include_str!("folder/settings.rs"), others),
             (include_str!("folder/state.rs"), others),
             (
@@ -5917,6 +5920,7 @@ mod tests {
                 let declared = line.trim_start();
                 let declared = declared
                     .strip_prefix("pub(crate) ")
+                    .or_else(|| declared.strip_prefix("pub(super) "))
                     .or_else(|| declared.strip_prefix("pub "))
                     .unwrap_or(declared);
                 if let Some(name) = declared.strip_prefix("fn ") {
