@@ -1190,3 +1190,48 @@ fn a_port_that_tailscale_serves_to_something_else_is_never_replaced() {
     );
     assert!(!rig.dir.exists() && !rig.log().contains("network create"));
 }
+
+#[test]
+fn a_login_agent_that_failed_to_load_is_not_left_to_load_at_the_next_login() {
+    let rig = Rig::new("agent-left");
+    fs::write(
+        rig.home().join("bin/launchctl"),
+        "#!/bin/sh\ncase \"$1\" in print) exit 1;; bootstrap) exit 5;; esac\n",
+    )
+    .unwrap();
+    let (code, _, stderr) = rig.install(&["--access", "local", "--autostart"]);
+    assert_eq!(code, 0, "{stderr}");
+    assert!(
+        !rig.agent("marfa").exists(),
+        "the agent's file stays for the next login"
+    );
+}
+
+#[test]
+fn an_empty_secret_is_made_where_there_is_no_data() {
+    let rig = Rig::new("empty-secret");
+    managed_elsewhere(&rig, "API_KEY_SALT=\nMARFA_AUTH_SECRET=\n");
+    rig.installed(&["--access", "local"]);
+    let [salt, secret] = secrets(&rig);
+    assert_eq!((salt.len(), secret.len()), (64, 64));
+}
+
+#[test]
+fn a_tailnet_that_cannot_be_reached_does_not_cost_the_setup_link() {
+    let rig = Rig::new("tailnet-down");
+    rig.installed(&["--access", "tailscale"]);
+    // Tailscale stops answering, so the old address cannot be taken off.
+    let broken = rig.root.join("tailscale-down");
+    fs::write(&broken, "#!/bin/sh\nexit 1\n").unwrap();
+    fs::set_permissions(&broken, fs::Permissions::from_mode(0o755)).unwrap();
+    let (code, stdout, stderr) = rig.marfa_with(
+        &["install", "--yes", "--wait", "5", "--access", "local"],
+        &[("MARFA_TAILSCALE", &broken)],
+    );
+    assert_eq!(code, 0, "{stderr}");
+    assert!(stdout.contains("TICKET123"), "{stdout}");
+    assert!(
+        stderr.contains("The old address stays on your tailnet"),
+        "{stderr}"
+    );
+}

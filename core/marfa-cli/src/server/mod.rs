@@ -873,14 +873,13 @@ fn install(args: InstallArgs, out: &Printer) -> Result<(), CliError> {
             ));
         }
     }
-    let made_secrets = !external
-        && (settings.get("API_KEY_SALT").is_none() || settings.get("MARFA_AUTH_SECRET").is_none());
+    let lacks = |name: &str| settings.get(name).is_none_or(str::is_empty);
+    let made_secrets = !external && (lacks("API_KEY_SALT") || lacks("MARFA_AUTH_SECRET"));
     if !external {
-        if settings.get("API_KEY_SALT").is_none() {
-            settings.set("API_KEY_SALT", &envfile::secret()?)?;
-        }
-        if settings.get("MARFA_AUTH_SECRET").is_none() {
-            settings.set("MARFA_AUTH_SECRET", &envfile::secret()?)?;
+        for secret in ["API_KEY_SALT", "MARFA_AUTH_SECRET"] {
+            if settings.get(secret).is_none_or(str::is_empty) {
+                settings.set(secret, &envfile::secret()?)?;
+            }
         }
         settings.set("MARFA_AUTH_BASE_URL", &address)?;
         let (cidrs, header) = proxy_trust(access, &subnet);
@@ -965,6 +964,9 @@ fn install(args: InstallArgs, out: &Printer) -> Result<(), CliError> {
             // asked.
             autostart = false;
             autostart_failed = Some(error.to_string());
+            // The plist is written before launchd is asked to load it, and a
+            // file left behind would load at the next login.
+            let _ = boot::off(&name, false);
             dotenv.set("MARFA_AUTOSTART", "off")?;
             files::write_if_changed(&folder.path(files::DOTENV), &dotenv.render(), false)?;
         }
@@ -975,7 +977,11 @@ fn install(args: InstallArgs, out: &Printer) -> Result<(), CliError> {
         && (access != Access::Tailscale || *https != https_port.unwrap_or(443))
     {
         steps.say("Taking the old address off your tailnet...");
-        tailscale::unserve(*https, target, !out.json)?;
+        if let Err(error) = tailscale::unserve(*https, target, !out.json) {
+            eprintln!(
+                "The old address stays on your tailnet: {error}. Remove it with `tailscale serve --https={https} off`."
+            );
+        }
     }
 
     // Claim.
