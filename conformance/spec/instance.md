@@ -272,6 +272,28 @@ The server MUST send `X-Marfa-Contract`, with the number the root answers as `co
 
 **Tests:** `compliance/instance.test.ts › sends its contract version on every answer, a refusal included`, `› sends its contract version on every kind of answer, not only a JSON body`, `compliance/contract-header.test.ts › sends its contract version on a request the limiter refuses`, `› sends its contract version on a preflight from an origin the instance allows`.
 
+## The reference's groups
+
+### `instance/document-groups`
+
+When `GET /openapi.json` is answered, the server MUST give each operation in `paths` exactly one tag, and declare in `tags` only tags that an operation carries.
+
+**Tests:** `compliance/instance.test.ts › declares no tag that no operation carries, and no operation without one`, `› lists every operation once, under its own tag, in each tag's x-operation-order`.
+
+### `instance/document-operation-order`
+
+When `GET /openapi.json` is answered, the server MUST write on each tag an `x-operation-order` that lists each operation carrying the tag once, by its `operationId` or, for a request Marfa sends, by its name in `webhooks`, in the order a developer meets them: create or register, get, list, update, replace, delete, then the group's other actions.
+
+**Reason:** the order interleaves paths, so `paths` alone cannot carry it, and a reader of the document needs the order from the server.
+
+**Tests:** `compliance/instance.test.ts › lists every operation once, under its own tag, in each tag's x-operation-order`.
+
+### `instance/document-paths-order`
+
+When `GET /openapi.json` is answered, the server MUST write `paths` in the order of each path's earliest operation in the tags' `x-operation-order` lists.
+
+**Tests:** `compliance/instance.test.ts › lists every operation once, under its own tag, in each tag's x-operation-order`.
+
 ## Backing up
 
 An owner backs up an instance by backing up the machine it runs on. The data directory is the one thing the instance keeps: the database file, the log beside it that holds the writes not yet moved into the file, and the folder of blob files. The setting `API_KEY_SALT` is not in it. In the image `deploy/Dockerfile` builds, with `S3_BUCKET` set, Litestream also streams the database to the bucket, and a volume that holds no database is first restored from it.

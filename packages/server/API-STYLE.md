@@ -33,16 +33,27 @@ So each operation, parameter, field and response says what it needs to on its ow
 - An imperative verb and its object, in sentence case, with no final period: "Create an item", "Get a blob URL". About four words: the summary is a label, and anything more goes in the description. **(checked: at most 32 characters)**
 - Use one verb for one meaning:
 
-  | Verb    | Use it for                                                  |
-  | ------- | ----------------------------------------------------------- |
-  | Get     | One object, by ID.                                          |
-  | List    | A page of objects.                                          |
-  | Create  | A new object.                                               |
-  | Update  | A partial change (`PATCH`).                                 |
-  | Replace | A whole object (`PUT`).                                     |
-  | Delete  | Removal. Say what happens to the object in the description. |
+  | Verb     | Use it for                                                                |
+  | -------- | ------------------------------------------------------------------------- |
+  | Get      | One object, by ID.                                                        |
+  | List     | A page of objects.                                                        |
+  | Create   | A new object that Marfa makes.                                            |
+  | Register | A new object you declare to Marfa, such as a type, a connector or an app. |
+  | Update   | A partial change (`PATCH`).                                               |
+  | Replace  | A whole object (`PUT`).                                                   |
+  | Delete   | Removal. Say what happens to the object in the description.               |
 
-  When none fits, use the plain verb for the act, such as Restore, Upload, Search, Revoke, Trash or Purge.
+  When none fits, use the plain verb for the act, such as Restore, Upload or Search. These verbs stay on purpose, because a generic one would lose what happens:
+
+  | Verb   | Meaning                                                             |
+  | ------ | ------------------------------------------------------------------- |
+  | Revoke | Ends access that was given: a folder, a key or an app grant.        |
+  | Trash  | Moves an item to the trash, where you can restore it.               |
+  | Purge  | Deletes permanently what is in the trash.                           |
+  | Retire | Stops a webhook endpoint accepting deliveries, and keeps it listed. |
+  | End    | Ends a sign-in at once.                                             |
+  | Rename | Changes only a name.                                                |
+  | Take   | Takes or renews a connector's hold. Release gives the hold back.    |
 
 ### Description
 
@@ -103,7 +114,23 @@ So each operation, parameter, field and response says what it needs to on its ow
 
 ## Groups
 
-Each operation has one tag, which is its group in the reference. The groups and their order are `PUBLIC_TAGS` in `packages/server/src/openapi-finalize.ts`, each with a one-sentence description. Add an operation to the group of the object it acts on; add a group only for a new kind of object.
+Each operation has one tag, which is its group in the reference. The groups, their order and each group's operations are `PUBLIC_TAGS` in `packages/server/src/openapi-finalize.ts`, each group with a one-sentence description. Add an operation to the group of the object it acts on; add a group only for a new kind of object.
+
+Within a group, operations come in the order a developer meets them:
+
+1. Create or register.
+2. Get.
+3. List.
+4. Update.
+5. Replace.
+6. Delete.
+7. The group's other actions, in the order a developer meets them. For example, restore comes before purge.
+
+A group starts with the first of these it has. Give the order as the group's `operations` in `PUBLIC_TAGS`, each an `operationId`, or for a request Marfa sends, the name the document's `webhooks` gives it. The document publishes the list as `x-operation-order` on the tag and orders `paths` by the first appearance of their operations in the lists, so a reader of `openapi.json` follows the same order. A path whose methods fall in two groups stands where its earliest operation does.
+
+**(checked)** Every published operation and webhook is listed once, under its own tag, and every name in a list is published. A new operation fails `openapi-operation-order.test.ts`, naming it, until it has an entry.
+
+Leave the route mounts in `app.ts` alone: Hono matches in registration order, and a static route such as `/items/stats` shares a prefix with a parameter route.
 
 ## General sections
 
@@ -119,7 +146,8 @@ The document's `info.description` holds the rules that apply everywhere, each un
 ## Before you open a pull request
 
 1. The summary uses a verb from the table.
-2. The description starts with a verb in the third person, is at most three sentences, and has no word it doesn't need.
-3. Every parameter, field and response you added or changed is described.
-4. Every fact matches the contract in `conformance/spec/`. Where the server and the contract disagree, fix the one that is wrong; never describe around it.
-5. `pnpm generate` has run, and `pnpm --filter @withmarfa/server test` passes.
+2. The operation has its tag and its place in that group's `operations`.
+3. The description starts with a verb in the third person, is at most three sentences, and has no word it doesn't need.
+4. Every parameter, field and response you added or changed is described.
+5. Every fact matches the contract in `conformance/spec/`. Where the server and the contract disagree, fix the one that is wrong; never describe around it.
+6. `pnpm generate` has run, and `pnpm --filter @withmarfa/server test` passes.
