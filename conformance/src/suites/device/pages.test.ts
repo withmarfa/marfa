@@ -2,8 +2,10 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   answers,
   refusal,
+  typeCatalog,
   wireEdge,
   wireItem,
+  wireType,
   writeAnswers,
   type WireEdgeOptions,
 } from "../../device/marfa-answers.js";
@@ -83,9 +85,15 @@ class Door {
   single?: (entry: ItemEntry) => Answer | undefined;
   /** An answer standing in for a read by id's, where it gives one. */
   reading?: (id: string) => Answer | undefined;
+  /** Edges a read of their source leaves out of its first page, as one
+   *  past the first page of its type is. */
+  readonly unlisted = new Set<string>();
 
-  constructor(private readonly harness: Harness) {
-    this.items.set(HELD, wireItem({ id: HELD }));
+  constructor(
+    private readonly harness: Harness,
+    others: string[] = [],
+  ) {
+    for (const id of [HELD, ...others]) this.items.set(id, wireItem({ id }));
     const { server } = harness;
     server.answer("POST", "/items", (request) => {
       const entry = JSON.parse(request.body) as ItemEntry;
@@ -121,6 +129,10 @@ class Door {
           return { index, outcome: "created", id: entry.id };
         }),
       );
+    });
+    server.answer("DELETE", /^\/items\/[^/]+$/, (request) => {
+      this.items.delete(request.pathname.split("/").at(-1) ?? "");
+      return writeAnswers.ok();
     });
     server.answer("POST", "/edges", (request) => {
       const edge = JSON.parse(request.body) as WireEdgeOptions;
@@ -182,7 +194,7 @@ class Door {
   private edgesFrom(source: string): Record<string, unknown> {
     const byType: Record<string, unknown[]> = {};
     for (const edge of this.edges.values()) {
-      if (edge.source_id !== source) continue;
+      if (edge.source_id !== source || this.unlisted.has(edge.id)) continue;
       const type = edge.edge_type ?? "references";
       (byType[type] ??= []).push(wireEdge(edge));
     }
@@ -255,11 +267,16 @@ function bulkReads(door: Door): string[][] {
     .map((request) => (JSON.parse(request.body) as { ids: string[] }).ids);
 }
 
-async function start(label: string): Promise<{ harness: Harness; door: Door }> {
+async function start(
+  label: string,
+  others: string[] = [],
+): Promise<{ harness: Harness; door: Door }> {
   const made = await hydratedHarness(label, {
-    rows: { "core.note": [{ item: { id: HELD } }] },
+    rows: {
+      "core.note": [HELD, ...others].map((id) => ({ item: { id } })),
+    },
   });
-  return { harness: made, door: new Door(made) };
+  return { harness: made, door: new Door(made, others) };
 }
 
 describe("creates in pages", () => {
@@ -493,6 +510,203 @@ describe("creates in pages", () => {
     expect(second.verdicts.every((entry) => entry.replayed)).toBe(true);
     expect(door.items.size).toBe(51);
   });
+
+  it("sends no create in a page ahead of a write queued before it that is not a create", async () => {
+    const target = "01a00000-0000-7000-8000-0000000000bb";
+    const sources = Array.from(
+      { length: 50 },
+      (_, at) => `01a00000-0000-7000-8000-${String(at).padStart(12, "0")}`,
+    );
+    const made = await start("pages-behind-a-delete", [target, ...sources]);
+    harness = made.harness;
+    const { door } = made;
+    const removed = value(await harness.device.deleteItem(target));
+    const edges: QueuedWrite[] = [];
+    for (const source of sources)
+      edges.push(
+        value(
+          await harness.device.createEdge({
+            source,
+            target,
+            type: "references",
+          }),
+        ),
+      );
+
+    const drained = await drain(harness);
+
+    const deletes = harness.server.requests.filter(
+      (request) =>
+        request.method === "DELETE" && request.pathname === `/items/${target}`,
+    );
+    expect(deletes, JSON.stringify(drained)).toHaveLength(1);
+    const deleted = deletes[0]?.seq ?? Infinity;
+    // Every edge write went after the delete queued ahead of it, and none
+    // in a page sent before the walk reached the delete.
+    const edgeWrites = harness.server.requests.filter(
+      (request) =>
+        request.method === "POST" &&
+        (request.pathname === "/edges" || request.pathname === "/edges/bulk"),
+    );
+    expect(edgeWrites.length).toBeGreaterThan(0);
+    expect(edgeWrites.filter((request) => request.seq < deleted)).toEqual([]);
+    expect(door.requests("POST", "/edges/bulk")).toHaveLength(0);
+    expect(
+      door
+        .requests("POST", "/edges")
+        .map((request) => (JSON.parse(request.body) as WireEdgeOptions).id),
+    ).toEqual(edges.map((edge) => edge.edge_id));
+    expect(removed.kind).toBe("delete_item");
+  });
+
+  it("pages no edge whose end the page it went in did not create", async () => {
+    const made = await start("pages-end-not-created");
+    harness = made.harness;
+    const { door } = made;
+    const { notes, edges } = await queue(harness, 52, { edges: true });
+    const [skipped, errored] = notes as [QueuedWrite, QueuedWrite];
+    // An earlier page the device never heard the answer to took this one,
+    // so this page skips it.
+    door.items.set(
+      skipped.item_id ?? "",
+      wireItem({ id: skipped.item_id ?? "" }),
+    );
+    door.entry = (entry, index) =>
+      entry.id === errored.item_id
+        ? {
+            index,
+            outcome: "errored",
+            error: { code: "validation_error", message: "Not allowed" },
+          }
+        : undefined;
+    door.single = (entry) =>
+      entry.id === errored.item_id
+        ? refusal(400, "validation_error", "Not allowed")
+        : undefined;
+
+    const drained = await drain(harness);
+
+    const edgePages = door.requests("POST", "/edges/bulk");
+    expect(edgePages, JSON.stringify(drained)).toHaveLength(1);
+    expect(
+      (
+        JSON.parse(edgePages[0]?.body ?? "{}") as { edges: WireEdgeOptions[] }
+      ).edges.map((edge) => edge.id),
+    ).toEqual(edges.slice(2).map((edge) => edge.edge_id));
+    // The edge from the skipped note went on its own door once the walk
+    // answered the note; the one from the refused note went nowhere.
+    expect(
+      door
+        .requests("POST", "/edges")
+        .map((request) => (JSON.parse(request.body) as WireEdgeOptions).id),
+    ).toEqual([edges[0]?.edge_id]);
+    const verdicts = new Map(
+      drained.verdicts.map((entry) => [entry.id, entry.verdict]),
+    );
+    expect(verdicts.get(edges[0]?.id ?? "")).toBe("accepted");
+    expect(verdicts.get(edges[1]?.id ?? "")).toBe("refused");
+  });
+
+  it("sends an edge the read of its source does not hold on its own door, under its key, answered as a repeat", async () => {
+    const made = await start("pages-edge-unread");
+    harness = made.harness;
+    const { door } = made;
+    const { edges } = await queue(harness, 50, { edges: true });
+    const [unread] = edges as [QueuedWrite];
+    door.unlisted.add(unread.edge_id ?? "");
+
+    const drained = await drain(harness);
+
+    expect(door.requests("POST", "/edges/bulk")).toHaveLength(1);
+    const singles = door.requests("POST", "/edges");
+    expect(
+      singles.map((request) => [
+        (JSON.parse(request.body) as WireEdgeOptions).id,
+        request.headers["idempotency-key"],
+      ]),
+      JSON.stringify(drained),
+    ).toEqual([[unread.edge_id, unread.idempotency_key]]);
+    expect(drained.answered).toBe(100);
+    const verdict = drained.verdicts.find((entry) => entry.id === unread.id);
+    expect(verdict?.verdict).toBe("accepted");
+    expect(verdict?.replayed).toBe(true);
+    expect(door.edges.size).toBe(50);
+  });
+
+  it("keeps the verdicts of a page whose read-back the server limits, and sends none of its writes again", async () => {
+    const made = await start("pages-read-limited");
+    harness = made.harness;
+    const { door } = made;
+    const { notes } = await queue(harness, 50);
+    let limited = false;
+    door.reading = () => {
+      if (limited) return undefined;
+      limited = true;
+      return answers.rateLimited();
+    };
+
+    const first = await drain(harness);
+
+    expect(limited).toBe(true);
+    expect(first.unavailable, JSON.stringify(first)).toMatch(/rate limited/);
+    expect(first.retry_after_seconds).toBe(2);
+    expect(first.answered).toBe(50);
+    expect(first.verdicts.map((entry) => entry.verdict)).toEqual(
+      notes.map(() => "accepted"),
+    );
+
+    const second = await drain(harness);
+
+    expect(second.unavailable, JSON.stringify(second)).toBeNull();
+    expect(door.requests("POST", "/items/bulk")).toHaveLength(1);
+    expect(door.requests("POST", "/items")).toHaveLength(0);
+    // The read the first drain owed, made in bulk.
+    expect(bulkReads(door).at(-1)).toEqual(notes.map((note) => note.item_id));
+    const queued = value(await harness.device.queue());
+    expect(queued.map((row) => row.verdict)).toEqual(
+      notes.map(() => "accepted"),
+    );
+    const held = value(await harness.device.get(notes[0]?.item_id ?? ""));
+    expect(held.version).toBe(1);
+  });
+
+  it("leaves every write of a page the server refuses the credential for unsent, so it goes in a page again", async () => {
+    const made = await start("pages-credential");
+    harness = made.harness;
+    const { door } = made;
+    const { notes } = await queue(harness, 51);
+    let refused = 0;
+    door.page = () => {
+      if (refused > 0) return undefined;
+      refused += 1;
+      return answers.unauthorized();
+    };
+    door.single = () => {
+      if (refused > 1) return undefined;
+      refused += 1;
+      return answers.unauthorized();
+    };
+
+    const first = await drain(harness);
+
+    expect(refused).toBe(2);
+    expect(first.stopped, JSON.stringify(first)).not.toBeNull();
+    expect(door.items.size).toBe(1);
+
+    const second = await drain(harness);
+
+    // The walk sent the first write on its own door, under its key; the rest
+    // were never taken, so they go in a page as a first attempt.
+    const pages = door.requests("POST", "/items/bulk");
+    expect(pages, JSON.stringify(second)).toHaveLength(2);
+    expect(
+      (JSON.parse(pages[1]?.body ?? "{}") as { items: ItemEntry[] }).items.map(
+        (entry) => entry.id,
+      ),
+    ).toEqual(notes.slice(1).map((note) => note.item_id));
+    expect(second.answered).toBe(51);
+    expect(door.items.size).toBe(52);
+  });
 });
 
 describe("a folder's first sync", () => {
@@ -530,5 +744,59 @@ describe("a folder's first sync", () => {
           edge.target_id === folder?.settings.id,
       ),
     ).toHaveLength(60);
+  });
+
+  it("sends a file larger than a single request may carry on its own door, and the rest in pages", async () => {
+    const large = "user.large_text";
+    folder = await folderHarness("pages-folder-large", {
+      settings: { search: { types: ["core.note", large] } },
+      catalog: typeCatalog([
+        wireType(large, {
+          bodyField: "body",
+          fields: {
+            title: { type: "string" },
+            body: { type: "string", maxLength: 1_000_000 },
+          },
+        }),
+      ]),
+    });
+    const edges = new EdgeDoor();
+    scriptFolderWrites(folder, { edges });
+    const titles = Array.from({ length: 50 }, (_, at) => `Note ${String(at)}`);
+    for (const title of titles)
+      put(folder, `${title}.md`, `---\ntitle: ${title}\n---\ntext\n`);
+    // Each quote doubles as it is encoded: 600,000 characters, within the
+    // type's limit, send as 1.2 MB, over the 1 MiB a single request may carry.
+    put(
+      folder,
+      "Large.md",
+      `---\ntype: ${large}\ntitle: Large\n---\n${'"'.repeat(600_000)}\n`,
+    );
+
+    const pushed = await folder.folder.push();
+
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    const sent = (pathname: string) =>
+      folder?.server.requests.filter(
+        (request) => request.method === "POST" && request.pathname === pathname,
+      ) ?? [];
+    const pages = sent("/items/bulk");
+    expect(pages).toHaveLength(1);
+    expect(
+      (
+        JSON.parse(pages[0]?.body ?? "{}") as {
+          items: Array<{ properties: { title: string } }>;
+        }
+      ).items
+        .map((entry) => entry.properties.title)
+        .sort(),
+    ).toEqual([...titles].sort());
+    expect(
+      sent("/items").map(
+        (request) =>
+          (JSON.parse(request.body) as { properties: { title: string } })
+            .properties.title,
+      ),
+    ).toEqual(["Large"]);
   });
 });

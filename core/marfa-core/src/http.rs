@@ -24,6 +24,11 @@ pub const PAGE_LIMIT: u32 = 200;
 /// (`items/bulk-get-cap`).
 pub const BULK_GET_LIMIT: usize = 100;
 
+/// The server's cap on a request's body unless its instance names another,
+/// past which it answers `413 request_too_large`. An instance does not say
+/// what it set, so a device holds every request to the default.
+pub const REQUEST_LIMIT: usize = 1_048_576;
+
 /// The most values `POST /items/lookup` takes in one request
 /// (`search-and-filters/lookup-values-cap`).
 pub const LOOKUP_LIMIT: usize = 500;

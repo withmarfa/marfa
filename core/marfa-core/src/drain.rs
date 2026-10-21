@@ -2452,7 +2452,10 @@ fn settle_success(
         if let (Some(owed), Some(edge)) = (&mut owed, &edge) {
             owed.id = edge.edge.id.clone();
         }
-        if store::meta_get(&tx, &receipt_key(&row.id))?.is_none() {
+        // A receipt kept from an earlier pass holds the verdict and says how
+        // the answer it settles on reads.
+        let kept = store::meta_get(&tx, &receipt_key(&row.id))?.is_some();
+        if !kept {
             store::record_verdict(
                 &tx,
                 &row.id,
@@ -2466,15 +2469,17 @@ fn settle_success(
         }
         if let Some(owed) = &owed {
             store::owe_read_back(&tx, owed)?;
-            store::meta_set(
-                &tx,
-                &receipt_key(&row.id),
-                match shape {
-                    Shape::Item => "item",
-                    Shape::Edge => "edge",
-                    _ => "plain",
-                },
-            )?;
+            if !kept {
+                store::meta_set(
+                    &tx,
+                    &receipt_key(&row.id),
+                    match shape {
+                        Shape::Item => "item",
+                        Shape::Edge => "edge",
+                        _ => "plain",
+                    },
+                )?;
+            }
         }
         tx.commit()?;
         owed
@@ -2955,6 +2960,12 @@ fn read_owed_backs(
         .iter()
         .filter_map(|(_, shape)| shape.strip_prefix("land:").map(str::to_owned))
         .collect();
+    let (paged, pending): (Vec<_>, Vec<_>) = pending
+        .into_iter()
+        .partition(|(_, shape)| pages::owed_by_a_page(shape));
+    if let Some(unread) = pages::settle_owed(core, stop, pass, &paged)? {
+        return Ok(Some(unread));
+    }
     for (row, shape) in pending {
         crate::catch_up::refuse_if_stopped(stop)?;
         if shape == "refused" {
