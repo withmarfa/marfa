@@ -386,6 +386,105 @@ function revokedAudits(c: TestContext) {
   return c.storage.audit.list({ action: "auth.grant.revoked", limit: 10 });
 }
 
+describe("OAuth mutation actors", () => {
+  it.each(["revoke", "refresh"])(
+    "records the canonical grant actor for every successful %s mutation",
+    async (operation) => {
+      ctx = await createTestContext();
+      const clientId = await seedClient(ctx, "Named App");
+      const cookie = await signInUser(ctx);
+      const tokens = await codeGrant(
+        ctx,
+        clientId,
+        cookie,
+        "core.note:read offline_access",
+      );
+      const grant = await onlyGrant(ctx);
+      const before = new Set(
+        (await ctx.storage.audit.list({ limit: 1000 })).data.map(
+          (row) => row.id,
+        ),
+      );
+      if (operation === "revoke") {
+        expect(
+          (
+            await revoke(
+              ctx,
+              tokens.access_token as string,
+              clientId,
+              "access_token",
+            )
+          ).status,
+        ).toBe(200);
+      } else {
+        expect(
+          (await refresh(ctx, clientId, tokens.refresh_token as string))
+            .access_token,
+        ).toBeTruthy();
+      }
+      const rows = (await ctx.storage.audit.list({ limit: 1000 })).data.filter(
+        (row) => !before.has(row.id),
+      );
+      expect(rows.map((row) => row.action)).toEqual(
+        expect.arrayContaining(
+          operation === "revoke"
+            ? ["auth.oauthAccessToken.delete", "auth.credentials.revoked"]
+            : ["auth.oauthRefreshToken.incrementOne", "auth.token.issued"],
+        ),
+      );
+      for (const row of rows) {
+        expect(row.actor, row.action).toEqual({
+          kind: "app",
+          id: grant.id,
+          name: "Named App",
+        });
+      }
+    },
+  );
+
+  it.each([false, true])(
+    "keeps pre-verification code consumption unknown (invalid proof: %s)",
+    async (invalidProof) => {
+      ctx = await createTestContext();
+      const clientId = await seedClient(ctx, "Named App");
+      const cookie = await signInUser(ctx);
+      const form = await prepareCode(ctx, clientId, cookie, "core.note:read");
+      const before = new Set(
+        (await ctx.storage.audit.list({ limit: 1000 })).data.map(
+          (row) => row.id,
+        ),
+      );
+      const response = await request(ctx.app, "POST", "/auth/oauth2/token", {
+        form: {
+          ...form,
+          ...(invalidProof ? { code_verifier: pkcePair().verifier } : {}),
+        },
+        headers: { origin: ORIGIN },
+      });
+      expect(response.status).toBe(invalidProof ? 400 : 200);
+      const rows = (await ctx.storage.audit.list({ limit: 1000 })).data.filter(
+        (row) => !before.has(row.id),
+      );
+      const consumed = rows.find(
+        (row) => row.action === "auth.verification.consumeOne",
+      );
+      expect(consumed).toBeDefined();
+      expect(consumed?.actor).toBeNull();
+      if (invalidProof) {
+        expect(rows.every((row) => row.actor === null)).toBe(true);
+      } else {
+        expect(
+          rows.find((row) => row.action === "auth.token.issued")?.actor,
+        ).toEqual({
+          kind: "app",
+          id: (await onlyGrant(ctx)).id,
+          name: "Named App",
+        });
+      }
+    },
+  );
+});
+
 describe("POST /auth/oauth2/revoke with a refresh token ends the grant", () => {
   it("drops the consent row, every token and the projection, writes the audit row, and the next authorize asks again", async () => {
     ctx = await createTestContext({});

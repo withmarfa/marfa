@@ -377,6 +377,21 @@ export function withCredentialAudit<
               }
               if (operation === "delete")
                 previous = await adapter.findOne(args);
+              // The provider validates the client and token before these
+              // mutations. Authorization-code consumption happens before
+              // proof validation and must not establish an actor.
+              const verifiedToken =
+                request?.path === "/oauth2/revoke" &&
+                operation === "delete" &&
+                args.model === "oauthAccessToken"
+                  ? previous
+                  : ["/oauth2/token", "/oauth2/revoke"].includes(
+                        request?.path ?? "",
+                      ) &&
+                      operation === "incrementOne" &&
+                      args.model === "oauthRefreshToken"
+                    ? await adapter.findOne(args)
+                    : undefined;
               const matched =
                 revoke &&
                 ["oauthAccessToken", "oauthRefreshToken"].includes(args.model)
@@ -385,21 +400,26 @@ export function withCredentialAudit<
                       unknown
                     >[])
                   : [];
+              const actorToken = (verifiedToken ??
+                (revoke &&
+                  matched.find(
+                    (row) =>
+                      row.clientId === revoke.clientId &&
+                      row.userId === revoke.userId,
+                  ))) as Record<string, unknown> | undefined;
+              const result = await (original as Operation)(args);
               if (
                 request &&
-                revoke &&
-                matched.some(
-                  (row) =>
-                    row.clientId === revoke.clientId &&
-                    row.userId === revoke.userId,
-                )
+                result !== null &&
+                result !== 0 &&
+                typeof actorToken?.clientId === "string" &&
+                typeof actorToken.userId === "string"
               ) {
                 request.actor = await grantWriter(storage, {
-                  clientId: revoke.clientId,
-                  authUserId: revoke.userId,
+                  clientId: actorToken.clientId,
+                  authUserId: actorToken.userId,
                 });
               }
-              const result = await (original as Operation)(args);
               if (
                 request &&
                 operation === "create" &&
