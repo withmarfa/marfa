@@ -59,10 +59,10 @@ describe("renderDevicePage", () => {
     expect(hostile).not.toContain("<script>x</script>");
   });
 
-  it("says a code that is wrong, and asks to check it", () => {
+  it("says a code that is wrong or has expired, and asks to check it or start again on the device", () => {
     const html = renderDevicePage({ prefilled: "", error: "invalid_code" });
     expect(pageFieldError(html, "user_code")).toBe(
-      "That code isn't right. Check it against your device and try again.",
+      "That code isn't right or has expired. Check it against your device, or start again there to get a new one.",
     );
     expect(html).toContain('aria-invalid="true"');
     expect(visibleText(html)).not.toContain("Codes end after");

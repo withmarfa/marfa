@@ -2217,17 +2217,19 @@ When `GET /auth/device` carries `error=too_many_attempts` and a `retry_after` of
 
 ### `keys-and-oauth/device-code-not-right`
 
-When `GET /auth/device` carries `error=invalid_code`, the server MUST answer a page saying the code isn't right and to check it against the device.
+When `GET /auth/device` carries `error=invalid_code`, the server MUST answer a page saying the code isn't right or has expired, and to check it against the device or start again on the device for a new one.
 
-**Tests:** `compliance/sign-in-surface.test.ts › says a code that is wrong in one way and a code that has expired in another`.
+**Reason:** The server removes a device code once it has expired, when the device next asks for a token, so a code that has expired and been removed reads as one the server never issued. The page cannot tell the two apart, so it names both.
+
+**Tests:** `compliance/sign-in-surface.test.ts › says an unknown code as wrong or expired, and a code the server holds as expired as expired`.
 
 ### `keys-and-oauth/device-code-expired`
 
 When `GET /auth/device` carries `error=expired_code`, the server MUST answer a page saying the code has expired and to start again on the device for a new one.
 
-**Reason:** Checking what was typed cannot put an expired code right, so the page sends the person back to the device and not to the keyboard.
+**Reason:** Checking what was typed cannot put an expired code right, so the page sends the person back to the device and not to the keyboard. The server answers this only while it still holds the expired code.
 
-**Tests:** `compliance/sign-in-surface.test.ts › says a code that is wrong in one way and a code that has expired in another`.
+**Tests:** `compliance/sign-in-surface.test.ts › says an unknown code as wrong or expired, and a code the server holds as expired as expired`.
 
 ### `keys-and-oauth/device-code-lifetime`
 

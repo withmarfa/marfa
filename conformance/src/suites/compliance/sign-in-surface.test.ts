@@ -434,7 +434,7 @@ describe("the pages a person reads at sign-in", () => {
     expect(none).not.toMatch(/\d+ minutes?/);
   });
 
-  it("says a code that is wrong in one way and a code that has expired in another", async () => {
+  it("says an unknown code as wrong or expired, and a code the server holds as expired as expired", async () => {
     const said = async (error: string): Promise<string> =>
       visibleText(
         await (
@@ -443,10 +443,9 @@ describe("the pages a person reads at sign-in", () => {
       );
     const wrong = await said("invalid_code");
     expect(wrong).toContain(
-      "That code isn't right. Check it against your device and try again.",
+      "That code isn't right or has expired. Check it against your device, or start again there to get a new one.",
     );
-    expect(wrong).not.toContain("expired");
-    // The witness: the other error is the one that says expired.
+    // The witness: the other error is the one that says only expired.
     const expired = await said("expired_code");
     expect(expired).toContain(
       "That code has expired. Start again on your device to get a new one.",

@@ -35,7 +35,7 @@ interface DevicePageParams {
 const ERROR_MESSAGES: Record<string, string> = {
   missing_code: "Enter the code shown on your device.",
   invalid_code:
-    "That code isn't right. Check it against your device and try again.",
+    "That code isn't right or has expired. Check it against your device, or start again there to get a new one.",
   expired_code:
     "That code has expired. Start again on your device to get a new one.",
   already_resolved:
