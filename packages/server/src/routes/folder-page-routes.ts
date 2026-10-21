@@ -30,7 +30,23 @@ async function readReports(storage: Storage, id: string) {
     return null;
   }
 }
-CONSOLE_PAGES.register("folders", { href: FOLDERS_HREF, hasItems: true });
+CONSOLE_PAGES.register("folders", {
+  href: FOLDERS_HREF,
+  hasItems: true,
+  value: async ({ storage }) => {
+    const counts = await storage.items.stats({
+      type: "system.folder",
+      state: "active",
+    });
+    const count = counts.active ?? 0;
+    return {
+      text:
+        count === 0
+          ? "None"
+          : `${String(count)} ${count === 1 ? "folder" : "folders"}`,
+    };
+  },
+});
 
 export function folderPageRoutes(storage: Storage) {
   const router = new Hono<AppEnv>();
