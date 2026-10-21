@@ -102,11 +102,12 @@ export interface FreshServer {
    * Arms a fault, through `fault set`: `hold:<point>[=<arg>]` waits at a point until
    * cleared, `fail:<point>[=<arg>]` fails the target at a point once,
    * `deadline:<job>=<ms>` shortens a job's run deadline,
-   * `free:<volume>=<bytes>` sets the reported free space, and
-   * `resolve:<hostname>=<answers>` scripts webhook name lookups. The points are
-   * stated in `conformance/README.md`, "Faults". The fault is cleared by
-   * `clearFault`, by `restart`, and by `stop`, so none outlives the fixture
-   * that set it.
+   * `free:<volume>=<bytes>` sets the reported free space,
+   * `store-check-deadline=<ms>` shortens how long a blob store may go
+   * unanswered, and `resolve:<hostname>=<answers>` scripts webhook name
+   * lookups. The points are stated in `conformance/README.md`, "Faults".
+   * The fault is cleared by `clearFault`, by `restart`, and by `stop`, so
+   * none outlives the fixture that set it.
    */
   setFault(spec: string): Promise<void>;
   /** Clears one fault, or every fault when no name is given. */

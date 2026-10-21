@@ -14,6 +14,7 @@ import {
   holdAt,
   POINTS,
   setFault,
+  storeCheckDeadlineFault,
 } from "./faults.js";
 
 const JOBS = ["trash-purge", "inbound-delivery-cleanup"];
@@ -232,6 +233,57 @@ describe("a hold fault and a deadline fault", () => {
     arm("deadline:trash-purge", "250");
     expect(deadlineFault("trash-purge")).toBe(250);
     expect(deadlineFault("inbound-delivery-cleanup")).toBeUndefined();
+  });
+});
+
+describe("a hold on a blob store's read or question", () => {
+  it("lets a caller whose signal aborts go without running its step, and stops counting it", async () => {
+    arm("hold:blob-has");
+    const controller = new AbortController();
+    let ran = false;
+    const held = atPoint(
+      "blob-has",
+      () => {
+        ran = true;
+        return Promise.resolve();
+      },
+      undefined,
+      controller.signal,
+    );
+    const staying = holdAt("blob-has");
+    await Promise.resolve();
+    expect(activeFaults()[0]).toMatchObject({ waiting: 2 });
+    const reason = new Error("given up");
+    controller.abort(reason);
+    await expect(held).rejects.toBe(reason);
+    expect(ran).toBe(false);
+    expect(activeFaults()[0]).toMatchObject({ waiting: 1 });
+    clearFaults();
+    await staying;
+  });
+
+  it("refuses a caller whose signal has already aborted, without waiting", async () => {
+    arm("hold:blob-read");
+    const reason = new Error("already given up");
+    await expect(
+      holdAt("blob-read", undefined, AbortSignal.abort(reason)),
+    ).rejects.toBe(reason);
+    expect(activeFaults()[0]).toMatchObject({ waiting: 0 });
+  });
+});
+
+describe("a store-check-deadline fault", () => {
+  it("reads its milliseconds until cleared, and refuses anything but a whole number from 1", () => {
+    expect(storeCheckDeadlineFault()).toBeUndefined();
+    for (const arg of [null, "0", "soon", "1.5"]) {
+      expect(arm("store-check-deadline", arg), String(arg)).toMatch(
+        /whole number of milliseconds/,
+      );
+    }
+    expect(arm("store-check-deadline", "40")).toBeUndefined();
+    expect(storeCheckDeadlineFault()).toBe(40);
+    clearFaults();
+    expect(storeCheckDeadlineFault()).toBeUndefined();
   });
 });
 

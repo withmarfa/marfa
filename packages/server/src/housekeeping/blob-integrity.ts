@@ -4,6 +4,7 @@ import { log } from "../middleware/logger.js";
 import { withBlobUploadLock } from "../storage/blob-upload-lock.js";
 import { finishPendingCopyDeletions, type Stores } from "./blob-delete.js";
 import { copyIntact, strikeCopy } from "./blob-strike.js";
+import { storeCheckTimeoutMs, within } from "../storage/blob-layer.js";
 import { errorMessage } from "../error-text.js";
 import * as clock from "../clock.js";
 
@@ -38,10 +39,13 @@ export type IntegrityResult = {
  * audit row, and the caller wakes replication to put it back from another
  * store.
  *
- * A store that cannot be reached, such as a disk folder that went away or
- * a drive that did not mount, says nothing of its copies: none is stamped
- * or struck, the store is named in the result and the log, and the rest of
- * the run goes to the other stores.
+ * A store that cannot be reached, such as a disk folder that went away, a
+ * drive that did not mount or a store that does not answer within the
+ * store check bound, says nothing of its copies: none is stamped or struck,
+ * the store is named in the result and the log, and the rest of the run
+ * goes to the other stores. The question to a store that does not answer
+ * is called off. A store's `delete`, which finishes a queued copy deletion
+ * or removes a struck copy's bytes, still has no time limit.
  */
 export class BlobIntegrityChecker {
   constructor(
@@ -93,7 +97,12 @@ export class BlobIntegrityChecker {
             intact =
               store.kind === "disk"
                 ? await copyIntact(store, row.hash, row.size_bytes)
-                : (await store.has(row.hash))?.size_bytes === row.size_bytes;
+                : (
+                    await within(
+                      (cancel) => store.has(row.hash, cancel),
+                      storeCheckTimeoutMs(),
+                    )
+                  )?.size_bytes === row.size_bytes;
           } catch (err) {
             // A store that cannot answer is not evidence against the copy: it
             // is neither stamped nor struck, and the rest of the run goes on.

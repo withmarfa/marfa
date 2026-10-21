@@ -250,6 +250,14 @@ When a copy has been dropped through `DELETE /blobs/{hash}/locations/{store}`, t
 
 **Tests:** `compliance/blob-rules.test.ts › drops a copy while the minimum holds and refuses the drop that would break it`, `› removes a dropped copy's bytes from its store`.
 
+### `stores/replicate-no-answer`
+
+If an attached store leaves unanswered for 15 seconds a question from a run of `blob-replicate` whether it holds a blob, or a read of a blob's bytes, then the server MUST answer the run with the copy it was making counted in `remaining`.
+
+**Reason:** a store that hangs would otherwise hold the run, and every run after it, without end. A later run makes the copy once the store answers. A store's write or delete is not limited here: giving up on one while it can still land would let it undo a later copy.
+
+**Tests:** `compliance/blob-store-silent.test.ts › finishes, copies nothing, counts the copy in remaining, and makes it once the stores answer`.
+
 ## Minimum copies and dropping a copy
 
 ### `stores/drop-allowed`
@@ -374,7 +382,7 @@ When a run of `blob-integrity` cannot reach a store, such as a disk store whose 
 
 **Reason:** a store that cannot be reached is not evidence that its copies are missing. A folder that went away, a drive that did not mount and a mount point left empty each answer that every name is absent. Striking those copies would leave the blobs unreadable through the server after the store returns, with nothing to bring them back.
 
-**Tests:** `compliance/blob-store-folders.test.ts › strikes nothing, answers 503 for the blob while no store can, and serves it again when the folder returns`, `› strikes nothing while an empty folder stands where the store was, as a mount point does without its drive`.
+**Tests:** `compliance/blob-store-folders.test.ts › strikes nothing, answers 503 for the blob while no store can, and serves it again when the folder returns`, `› strikes nothing while an empty folder stands where the store was, as a mount point does without its drive`, `compliance/blob-store-silent.test.ts › finishes, counts each silent store as unreachable, strikes nothing, and checks the copies once the stores answer`.
 
 ### `stores/integrity-unreachable-reported`
 
@@ -389,6 +397,14 @@ When a run of `blob-integrity` cannot reach one store, the server MUST still che
 **Reason:** the unreachable store's copies are never stamped, so they would otherwise stay first in the order and fill every run's `MARFA_BLOB_INTEGRITY_BATCH` copies.
 
 **Tests:** `compliance/blob-store-bounds.test.ts › checks the copies of a store that can answer when another cannot be reached`.
+
+### `stores/integrity-no-answer`
+
+If an attached store leaves unanswered for 15 seconds a question from a run of `blob-integrity` whether it holds a blob, or a read of a blob's bytes, then the server MUST count the store in the run's `unreachable`.
+
+**Reason:** a store that hangs is one the run cannot reach, so its copies are left as they were (`stores/integrity-unreachable-keeps`) and the run ends rather than waiting on it.
+
+**Tests:** `compliance/blob-store-silent.test.ts › finishes, counts each silent store as unreachable, strikes nothing, and checks the copies once the stores answer`.
 
 ### `stores/unreachable-read`
 

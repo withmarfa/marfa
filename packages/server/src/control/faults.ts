@@ -24,6 +24,8 @@
  *   cleared or set again. Setting it again while a body streams in is how
  *   a volume fills as the bytes arrive.
  * - `unfold-deadline=<ms>` shortens the time one series may take to unfold.
+ * - `store-check-deadline=<ms>` shortens the time one question to a blob
+ *   store may go unanswered.
  * - `resolve:<hostname>=<answers>` makes an outbound webhook delivery resolve
  *   that name to scripted addresses. `<answers>` is one answer per lookup,
  *   separated by `;`, each a list of addresses separated by `,`; the last
@@ -83,6 +85,8 @@ export const POINTS: {
     { name: "export-validation", arg: "none" },
     { name: "write", arg: "write" },
     { name: "export-page", arg: "nth" },
+    { name: "blob-read", arg: "none" },
+    { name: "blob-has", arg: "none" },
   ],
   fail: [
     { name: "lock", arg: "nth" },
@@ -253,10 +257,10 @@ function shapeProblem(name: string, arg: string | null): string | undefined {
       return "a free fault takes a whole number of bytes";
     return undefined;
   }
-  if (name === "unfold-deadline") {
+  if (name === "unfold-deadline" || name === "store-check-deadline") {
     const ms = arg === null ? Number.NaN : Number(arg);
     if (!Number.isSafeInteger(ms) || ms < 1 || ms > MAX_DEADLINE_MS)
-      return "an unfold-deadline fault takes a whole number of milliseconds from 1";
+      return `an ${name} fault takes a whole number of milliseconds from 1`;
     return undefined;
   }
   if (kind === "resolve") {
@@ -265,7 +269,7 @@ function shapeProblem(name: string, arg: string | null): string | undefined {
       ? "a resolve fault takes addresses: one answer per lookup, separated by ;, each a list of addresses separated by ,"
       : undefined;
   }
-  return "a fault is named hold:<point>, fail:<point>, deadline:<job>, free:<volume>, unfold-deadline or resolve:<hostname>";
+  return "a fault is named hold:<point>, fail:<point>, deadline:<job>, free:<volume>, unfold-deadline, store-check-deadline or resolve:<hostname>";
 }
 
 /**
@@ -280,7 +284,8 @@ export function faultProblem(
 ): string | undefined {
   const problem = shapeProblem(name, arg);
   if (problem !== undefined) return problem;
-  if (name === "unfold-deadline") return undefined;
+  if (name === "unfold-deadline" || name === "store-check-deadline")
+    return undefined;
   const colon = name.indexOf(":");
   const kind = name.slice(0, colon);
   const rest = name.slice(colon + 1);
@@ -408,12 +413,14 @@ export function recordFired(point: string): void {
  * armed. `step` is told whether it was held, so a caller can refuse to start
  * work a shutdown released. Nothing is deferred when no fault holds the
  * point, so a server without the hooks starts `step` in the same turn it
- * always did.
+ * always did. A caller held when `signal` aborts stops waiting and rejects
+ * with its reason, without running `step`.
  */
 export function atPoint<T>(
   point: string,
   step: (held: boolean) => Promise<T>,
   action?: string,
+  signal?: AbortSignal,
 ): Promise<T> {
   const entry = faults.get(`hold:${point}`);
   if (entry === undefined) return step(false);
@@ -423,18 +430,32 @@ export function atPoint<T>(
     entry.seen += 1;
     if (entry.seen !== entry.target.nth) return step(false);
   }
-  return new Promise<void>((resolve) => {
+  return new Promise<void>((resolve, reject) => {
     const release = () => {
       entry.release.delete(release);
+      signal?.removeEventListener("abort", abandon);
       resolve();
     };
+    const abandon = () => {
+      entry.release.delete(release);
+      reject(signal?.reason as Error);
+    };
+    if (signal?.aborted) {
+      abandon();
+      return;
+    }
     entry.release.add(release);
+    signal?.addEventListener("abort", abandon, { once: true });
   }).then(() => step(true));
 }
 
-/** Waits when this reach is selected by `hold:<point>`. */
-export async function holdAt(point: string, action?: string): Promise<void> {
-  await atPoint(point, () => Promise.resolve(), action);
+/** Waits when this reach is selected by `hold:<point>`, or until `signal` aborts. */
+export async function holdAt(
+  point: string,
+  action?: string,
+  signal?: AbortSignal,
+): Promise<void> {
+  await atPoint(point, () => Promise.resolve(), action, signal);
 }
 
 /** The deadline `deadline:<job>` sets for a run of `job`, if one is armed. */
@@ -453,6 +474,12 @@ export function freeFault(volume: Volume): number | undefined {
 /** The time `unfold-deadline` allows one series to unfold, if it is armed. */
 export function unfoldDeadlineFault(): number | undefined {
   const arg = faults.get("unfold-deadline")?.arg;
+  return arg === undefined || arg === null ? undefined : Number(arg);
+}
+
+/** The time `store-check-deadline` allows one question to a blob store, if it is armed. */
+export function storeCheckDeadlineFault(): number | undefined {
+  const arg = faults.get("store-check-deadline")?.arg;
   return arg === undefined || arg === null ? undefined : Number(arg);
 }
 
