@@ -393,15 +393,7 @@ impl Folders {
         key: Option<String>,
         renewer: Option<Arc<dyn CredentialRenewer>>,
     ) -> Result<Arc<Self>, MarfaError> {
-        let server = match (url, key) {
-            (Some(url), Some(key)) => Some(marfa_core::Server { url, key }),
-            (None, None) => None,
-            _ => {
-                return Err(MarfaError::Invalid {
-                    message: "url and key go together".into(),
-                });
-            }
-        };
+        let server = crate::server_of(url, key)?;
         let renewal = Renewal::of(renewer, server.as_ref())?;
         Ok(Arc::new(Folders { server, renewal }))
     }
