@@ -27,8 +27,12 @@ export interface PageShellProps {
 
 /**
  * The document around every page: doctype and language, the viewport, the
- * title, the stylesheet and script that carry the page's nonce, and a line for
- * a browser that is not running scripts.
+ * title, an empty icon, the stylesheet and script that carry the page's nonce,
+ * and a line for a browser that is not running scripts.
+ *
+ * The empty icon keeps the browser from asking for `/favicon.ico`, which the
+ * server has no file for and which a policy that allows images from the page's
+ * own origin would let the browser send.
  *
  * A missing or malformed nonce throws. Without the right one the policy
  * blocks the stylesheet and script, so a page rendered with `nonce=""` would
@@ -56,6 +60,7 @@ export function PageShell(props: PageShellProps) {
           href={pageAssetUrl("pages.css")}
           nonce={props.nonce}
         />
+        <link rel="icon" href="data:," />
       </head>
       <body>
         <a class="skip" href="#main">

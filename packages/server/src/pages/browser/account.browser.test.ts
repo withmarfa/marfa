@@ -93,10 +93,6 @@ async function open(
     data: { email: owner.email, password },
   });
   expect(signedIn.status()).toBe(200);
-  // The browser asks for an icon the server has none of, once per browser.
-  await context.route("**/favicon.ico", (route) =>
-    route.fulfill({ status: 204 }),
-  );
   const page = await context.newPage();
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(String(e)));

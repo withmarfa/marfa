@@ -82,8 +82,7 @@ async function open(
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(String(error)));
   page.on("console", (message) => {
-    // A failed load is reported by address below, where the browser's own
-    // favicon request can be told from a page's.
+    // A failed load is reported by address below.
     if (
       message.type() === "error" &&
       !message.text().startsWith("Failed to load resource")
@@ -91,7 +90,7 @@ async function open(
       errors.push(message.text());
   });
   page.on("response", (response) => {
-    if (response.status() === 404 && !response.url().endsWith("/favicon.ico"))
+    if (response.status() === 404)
       errors.push(`404 ${new URL(response.url()).pathname}`);
   });
   await page.addInitScript(() => {

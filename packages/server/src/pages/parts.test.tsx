@@ -98,6 +98,10 @@ describe("PageShell", () => {
     expect(out).not.toMatch(/\son[a-z]+="/);
   });
 
+  it("names an empty icon so the browser asks the server for none", () => {
+    expect(page("abc123")).toContain('<link rel="icon" href="data:,"/>');
+  });
+
   it("says in a noscript line that the page needs JavaScript", () => {
     expect(page("abc123")).toMatch(
       /<noscript><p class="noscript">This page needs JavaScript\./,
