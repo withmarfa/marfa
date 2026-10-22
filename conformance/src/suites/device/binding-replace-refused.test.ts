@@ -117,6 +117,28 @@ describe("replacing a store the writer refuses", () => {
     expect((await device.tryOpen()).error?.code).toBe("wrong_schema");
   });
 
+  it("refuses to replace a refused store whose writes it cannot count", async () => {
+    const { harness: started } = await refusedStore("replace-uncounted", true);
+    const { device } = started;
+    // A queue whose shape hides its count: what the store holds is unknown.
+    edit(
+      device.store,
+      "ALTER TABLE queue RENAME COLUMN verdict TO answer_kind",
+    );
+    const before = files(device.store);
+
+    const refused = await device.replaceRefused();
+    expect(refused.ok).toBe(false);
+    if (refused.ok) return;
+    expect(refused.refusal.code, refused.refusal.raw).toBe("wrong_schema");
+    expect(
+      (JSON.parse(refused.refusal.raw) as { unsent?: number }).unsent,
+      "the refusal gave a count of writes it cannot count",
+    ).toBeNull();
+    expect(files(device.store)).toEqual(before);
+    expect((await device.tryOpen()).error?.code).toBe("wrong_schema");
+  });
+
   it("refuses to replace a refused store while another process holds its writer role", async () => {
     const { harness: started } = await refusedStore("replace-held", true);
     const { device } = started;

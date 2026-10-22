@@ -2532,17 +2532,31 @@ When a device refuses a store `wrong_schema`, a device MUST NOT advise deleting 
 
 ### `device/replace-refused`
 
-When a device is asked to replace a store it refuses `wrong_schema` and the store holds no write the server has not taken, a device MUST replace the store with an empty one of this build's shape and open it as the writer.
+While a device holds a store's writer role, when it is asked to replace a store it refuses `wrong_schema` and the store holds no write the server has not taken, a device MUST replace the store with an empty one of this build's shape.
 
-**Reason:** a store another build made that has nothing left to send holds only what the server already has, and without this a person could use this build on that path only by deleting the store's files by hand.
+**Reason:** without this a person could use this build on that path only by deleting the store's files by hand. The new store holds nothing but what a hydration refills. Device-local state the server never held, such as pins, is lost, so an app that needs it reads it before replacing the store.
+
+**Tests:** `device/binding-replace-refused.test.ts › replaces a refused store that holds nothing unsent with an empty one, and opens it`.
+
+### `device/replace-refused-opens`
+
+When a device replaces a store it refuses `wrong_schema`, a device MUST open the new store as the writer.
+
+**Reason:** the writer role is held from the count of the writes the server has not taken through to the new store, so no other process can queue a write in between.
 
 **Tests:** `device/binding-replace-refused.test.ts › replaces a refused store that holds nothing unsent with an empty one, and opens it`.
 
 ### `device/replace-refused-unsent`
 
-If a device is asked to replace a store that holds a write the server has not taken, or whose writes it cannot count, then a device MUST refuse `wrong_schema`, saying how many such writes the store holds where it can count them.
+If a device is asked to replace a store that holds a write the server has not taken, or whose writes it cannot count, then a device MUST refuse `wrong_schema`.
 
-**Reason:** only the build that made the store can send those writes (`device/wrong-schema-no-delete`).
+**Reason:** only the build that made the store can send those writes (`device/wrong-schema-no-delete`), and a store whose writes cannot be counted may hold some.
+
+**Tests:** `device/binding-replace-refused.test.ts › refuses to replace a refused store that holds a write the server has not taken`, `› refuses to replace a refused store whose writes it cannot count`.
+
+### `device/replace-refused-says`
+
+When a device refuses to replace a store `wrong_schema` and can count the writes the server has not taken, a device MUST say how many.
 
 **Tests:** `device/binding-replace-refused.test.ts › refuses to replace a refused store that holds a write the server has not taken`.
 
@@ -2566,7 +2580,7 @@ If a device is asked to replace a store it opens without refusing, then a device
 
 When a device refuses to replace a store, a device MUST leave the store's file and its write-ahead log unchanged.
 
-**Tests:** `device/binding-replace-refused.test.ts › refuses to replace a refused store that holds a write the server has not taken`, `› refuses to replace a refused store while another process holds its writer role`, `› refuses to replace a store it opens`.
+**Tests:** `device/binding-replace-refused.test.ts › refuses to replace a refused store that holds a write the server has not taken`, `› refuses to replace a refused store whose writes it cannot count`, `› refuses to replace a refused store while another process holds its writer role`, `› refuses to replace a store it opens`.
 
 ### `device/writer-per-file`
 
