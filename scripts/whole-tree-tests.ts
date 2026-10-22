@@ -40,6 +40,7 @@ export const ROOT_FILTERS: readonly string[] = [
   "pages/jsx-pragma.test.ts",
   "routes/one-auth-layout.test.ts",
   "routes/rollback-event-doors.test.ts",
+  "routes/ui-viewer-coverage.test.ts",
   "routes/wire-shape-declarations.test.ts",
   "storage/scanned-columns.test.ts",
   // Named source and config files read as text.
