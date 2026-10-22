@@ -205,7 +205,11 @@ async function handle(message) {
     case "replace-refused":
       cores.set(
         message.handle,
-        binding.MarfaCore.replaceRefused(message.path, message.url, message.key),
+        binding.MarfaCore.replaceRefused(
+          message.path,
+          message.url,
+          message.key,
+        ),
       );
       return null;
     case "reentry":
