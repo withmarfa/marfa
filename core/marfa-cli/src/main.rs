@@ -11,6 +11,7 @@ mod environment;
 mod error;
 mod folders;
 mod interrupt;
+mod keyfile;
 mod local;
 mod logfile;
 mod output;

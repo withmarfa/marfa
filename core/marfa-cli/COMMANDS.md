@@ -3581,6 +3581,7 @@ marfa folders watch [OPTIONS] [DIR]
 | --- | --- |
 | `--for <SECONDS>` | Stop after this long. Unset, it runs until interrupted. |
 | `--log <FILE>` | Write what the watch prints, and its errors, to this file in place of the terminal. A file of 1 MiB or more is moved to the same name with `.1` added, replacing the one there, when the watch starts and as it runs. `folders autostart` runs the watch with it. |
+| `--key-file <FILE>` | A file that holds `MARFA_API_URL` and `MARFA_API_KEY` lines, which only you can read (mode 600), for a watch that runs with nobody signed in to unlock the keychain. The watch uses it for the folders that name that server and reads the keychain for none, so a folder of another server is reported as having no credential. Keep the file outside every folder. `folders autostart on --key-file` runs the watch with it. |
 
 ### marfa folders autostart
 
@@ -3594,9 +3595,15 @@ marfa folders autostart [OPTIONS] <COMMAND>
 
 Sync every folder from login, and start now: writes a launchd agent on macOS or a systemd user unit on Linux, in your own account, that runs `folders watch` with no directory by this binary's path. It holds no credential and no server: each folder uses the server its copy came from and the credential the keychain keeps for it. Run again, it changes nothing unless the agent would differ.
 
+With `--key-file` the agent runs the watch with that file in place of the keychain, for a machine where nobody signs in to unlock it. The agent holds the file's path and never what is in it.
+
 ```text
 marfa folders autostart on [OPTIONS]
 ```
+
+| Option | Description |
+| --- | --- |
+| `--key-file <FILE>` | A file that holds `MARFA_API_URL` and `MARFA_API_KEY` lines, which only you can read (mode 600) and which lies outside every folder. The agent uses it for the folders that name that server and reads the keychain for none. A key limited to the types the folder carries is the intended use. Without this option the agent uses the keychain. |
 
 ### marfa folders autostart off
 
