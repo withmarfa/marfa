@@ -49,7 +49,7 @@ const WRITES: Record<string, string> = {
   ItemStore:
     "create settleTombstones update delete purge restore restoreBeneath restoreDates transition",
   MetadataStore:
-    "set merge addTags removeTag setExtension setExtensions deleteExtension",
+    "set addTags removeTag setExtension setExtensions deleteExtension",
   VersionStore: "create restore deleteByIds",
   TypeStore: "create update delete seedPlatformTypes deleteRetiredPlatformType",
   EdgeTypeStore: "create replace delete",

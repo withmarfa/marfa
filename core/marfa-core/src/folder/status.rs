@@ -465,10 +465,9 @@ impl Folder {
                 "placement"
             }
             WriteKind::CreateEdge | WriteKind::UpdateEdge | WriteKind::DeleteEdge => "edge",
-            WriteKind::ReplaceMetadata
-            | WriteKind::MergeMetadata
-            | WriteKind::WriteExtension
-            | WriteKind::DeleteExtension => "metadata",
+            WriteKind::ReplaceMetadata | WriteKind::WriteExtension | WriteKind::DeleteExtension => {
+                "metadata"
+            }
             WriteKind::UploadBlob => "upload",
         }
     }

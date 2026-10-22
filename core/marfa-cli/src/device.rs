@@ -254,7 +254,7 @@ pub enum DeviceCommand {
         #[command(subcommand)]
         command: TagsCommand,
     },
-    /// An item's metadata, written whole or merged.
+    /// An item's metadata, written whole.
     Metadata {
         #[command(subcommand)]
         command: MetadataCommand,
@@ -551,14 +551,6 @@ pub enum TagsCommand {
 pub enum MetadataCommand {
     /// Write the item's tags whole, dropping any not named.
     Replace {
-        /// The item id.
-        item: String,
-        /// A tag, repeatable.
-        #[arg(long = "tag", value_name = "TAG")]
-        tags: Vec<String>,
-    },
-    /// Add the named tags, leaving the rest.
-    Merge {
         /// The item id.
         item: String,
         /// A tag, repeatable.
@@ -1247,12 +1239,9 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
         }
         DeviceCommand::Metadata { command } => {
             let core = store.open(None)?;
-            let (item, tags, replace) = match command {
-                MetadataCommand::Replace { item, tags } => (item, tags, true),
-                MetadataCommand::Merge { item, tags } => (item, tags, false),
-            };
+            let MetadataCommand::Replace { item, tags } = command;
             let write = MetadataWrite { tags };
-            output::queued_one(&core.write_metadata(&item, &write, replace)?, json)
+            output::queued_one(&core.replace_metadata(&item, &write)?, json)
         }
         DeviceCommand::Extensions { command } => {
             let core = store.open(None)?;

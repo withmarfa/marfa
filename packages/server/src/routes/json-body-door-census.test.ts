@@ -437,12 +437,6 @@ describe("the three doors that lost or broke data", () => {
       after: { tags: ["added", "keep"], extensions: { [EXTENSION]: STORED } },
     },
     {
-      door: "PATCH /items/{id}/metadata",
-      path: (id: string) => `/items/${id}/metadata`,
-      body: { tags: ["merged"] },
-      after: { tags: ["keep", "merged"], extensions: { [EXTENSION]: STORED } },
-    },
-    {
       door: "PUT /items/{id}/extensions/{namespace}",
       path: (id: string) => `/items/${id}/extensions/${EXTENSION}`,
       body: { value: "replaced" },

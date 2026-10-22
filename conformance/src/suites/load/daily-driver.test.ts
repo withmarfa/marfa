@@ -157,9 +157,10 @@ describe("daily driver simulation", () => {
           }
           case "tag": {
             const id = openTargets[index % openTargets.length];
-            const response = await client.updateMetadata(id, {
-              tags: [LOAD_TAG, `daily-${index % 5}`],
-            });
+            const response = await client.addTags(id, [
+              LOAD_TAG,
+              `daily-${index % 5}`,
+            ]);
             if (!response.ok) throw new Error(`tag failed: ${response.status}`);
             break;
           }

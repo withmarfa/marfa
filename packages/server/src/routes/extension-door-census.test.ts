@@ -269,15 +269,6 @@ const CARRYING: Record<string, Driver> = {
       }),
     );
   },
-  "PATCH /items/{id}/metadata": async (key) => {
-    const { id } = await seedNote();
-    return answer(
-      await request(ctx.app, "PATCH", `/items/${id}/metadata`, {
-        key,
-        body: { tags: ["merged"] },
-      }),
-    );
-  },
   "POST /items/{id}/tags": async (key) => {
     const { id } = await seedNote();
     return answer(

@@ -794,12 +794,11 @@ export class CliDevice implements DeviceUnderTest {
     return this.json<QueuedWrite>(["tags", "remove", item, tag]);
   }
 
-  async writeMetadata(
+  async replaceMetadata(
     item: string,
     tags: string[],
-    mode: "replace" | "merge",
   ): Promise<Outcome<QueuedWrite>> {
-    const args = ["metadata", mode, item];
+    const args = ["metadata", "replace", item];
     for (const tag of tags) args.push("--tag", tag);
     return this.json<QueuedWrite>(args);
   }

@@ -263,18 +263,6 @@ describe("a key names one request", () => {
         }),
       },
       {
-        method: "PATCH",
-        template: "/items/{id}/metadata",
-        first: async () => ({
-          path: `/items/${await seedItem("merge-tags")}/metadata`,
-          body: { tags: ["a"] },
-        }),
-        second: async () => ({
-          path: `/items/${await seedItem("merge-tags")}/metadata`,
-          body: { tags: ["b"] },
-        }),
-      },
-      {
         method: "PUT",
         template: "/items/{id}/extensions/{namespace}",
         first: async () => ({
@@ -546,7 +534,6 @@ describe("a credential without write on the type", () => {
     ];
     const writes: [string, string, string, unknown][] = [
       ["PUT", "/items/{id}/metadata", `/items/${id}/metadata`, { tags: [] }],
-      ["PATCH", "/items/{id}/metadata", `/items/${id}/metadata`, { tags: [] }],
       ["POST", "/items/{id}/tags", `/items/${id}/tags`, { tags: ["x"] }],
       ["DELETE", "/items/{id}/tags/{tag}", `/items/${id}/tags/x`, undefined],
     ];

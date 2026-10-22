@@ -62,7 +62,7 @@ A device MUST report a write that no drain has sent, held or settled, or whose l
 
 ### `queue-and-verdicts/kinds-closed`
 
-A device MUST queue each write as exactly one of these kinds: `create_item`, `update_item`, `delete_item`, `restore_item`, `transition_item`, `create_edge`, `update_edge`, `delete_edge`, `replace_metadata`, `merge_metadata`, `add_tag`, `remove_tag`, `write_extension`, `delete_extension` and `upload_blob`.
+A device MUST queue each write as exactly one of these kinds: `create_item`, `update_item`, `delete_item`, `restore_item`, `transition_item`, `create_edge`, `update_edge`, `delete_edge`, `replace_metadata`, `add_tag`, `remove_tag`, `write_extension`, `delete_extension` and `upload_blob`.
 
 **Reason:** a purge is sent at once or refused, never queued (`device/purge-unqueued` and `device/purge-at-once`), and a bulk operation is the server's way of doing many things in one request, not a write a device holds.
 

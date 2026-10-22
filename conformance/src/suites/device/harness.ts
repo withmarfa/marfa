@@ -585,12 +585,11 @@ export function scriptWrites(
   if (options.tags !== undefined) {
     server.answer("POST", /^\/items\/[^/]+\/tags$/, ...options.tags);
     server.answer("DELETE", /^\/items\/[^/]+\/tags\/[^/]+$/, ...options.tags);
-    // The metadata doors answer the same sidecar, so they are scripted with
-    // the tag doors rather than needing a group of their own — and leaving
-    // them out is how a drain carrying a metadata write met an unscripted
-    // door and read the 501 as a refusal.
+    // The metadata door answers the same sidecar, so it is scripted with the
+    // tag doors rather than needing a group of its own: leaving it out is how
+    // a drain carrying a metadata write met an unscripted door and read the
+    // 501 as a refusal.
     server.answer("PUT", /^\/items\/[^/]+\/metadata$/, ...options.tags);
-    server.answer("PATCH", /^\/items\/[^/]+\/metadata$/, ...options.tags);
   }
   if (options.extensions !== undefined) {
     const door = /^\/items\/[^/]+\/extensions\/[^/]+$/;

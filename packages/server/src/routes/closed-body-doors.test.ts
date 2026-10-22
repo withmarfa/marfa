@@ -348,8 +348,6 @@ const DOORS: Record<string, () => Promise<Setup>> = {
     itemDoor("POST", "/transition", { state: "archived" }),
   "PUT /items/{id}/metadata": () =>
     itemDoor("PUT", "/metadata", { tags: ["replaced"] }),
-  "PATCH /items/{id}/metadata": () =>
-    itemDoor("PATCH", "/metadata", { tags: ["merged"] }),
   "POST /items/{id}/tags": () => itemDoor("POST", "/tags", { tags: ["added"] }),
   "POST /items/bulk-get": async () => {
     const id = await note();

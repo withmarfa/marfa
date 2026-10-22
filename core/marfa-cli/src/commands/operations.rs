@@ -32,7 +32,6 @@ pub const OPERATIONS: &[Operation] = &[
     reached("listItemVersions", "items versions"),
     reached("getItemMetadata", "metadata get"),
     reached("replaceItemMetadata", "metadata replace"),
-    reached("updateItemMetadata", "metadata update"),
     reached("addItemTags", "items tag"),
     reached("purgeItem", "items purge"),
     reached("removeItemTag", "items untag"),

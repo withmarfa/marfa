@@ -344,10 +344,9 @@
     "boundary": "Audited create/update/delete/purge/tag/metadata units; acknowledgement without mutation adds no record; audit-atomicity.test.ts.",
     "calls": {
       "MetadataStore.addTags": 1,
-      "MetadataStore.merge": 1,
       "MetadataStore.removeTag": 1,
       "MetadataStore.set": 1,
-      "runAuditedTransaction": 8,
+      "runAuditedTransaction": 7,
       "writeItem": 4
     }
   },

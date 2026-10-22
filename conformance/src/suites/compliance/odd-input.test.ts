@@ -160,7 +160,7 @@ describe("odd input is refused, never answered 500", () => {
         201,
       ],
       ["PUT", `/items/${id}/metadata`, { tags: ["a".repeat(128)] }, 200],
-      ["PATCH", `/items/${id}/metadata`, { tags: ["a".repeat(128)] }, 200],
+      ["POST", `/items/${id}/tags`, { tags: ["a".repeat(128)] }, 200],
     ] as const) {
       expect(
         (await send(method, path, JSON.stringify(body))).status,
@@ -171,7 +171,6 @@ describe("odd input is refused, never answered 500", () => {
       for (const [method, path] of [
         ["POST", `/items/${id}/tags`],
         ["PUT", `/items/${id}/metadata`],
-        ["PATCH", `/items/${id}/metadata`],
       ] as const) {
         const r = await send(method, path, tags(tag));
         expect(r.status, `${method} ${path}, ${tag.length} characters`).toBe(
@@ -216,7 +215,6 @@ describe("odd input is refused, never answered 500", () => {
         ],
         ["POST", `/items/${id}/tags`, tags(tag)],
         ["PUT", `/items/${id}/metadata`, tags(tag)],
-        ["PATCH", `/items/${id}/metadata`, tags(tag)],
       ] as const) {
         const res = await ofetch.raw<{
           error?: {

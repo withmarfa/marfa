@@ -1405,23 +1405,6 @@ marfa metadata replace [OPTIONS] <ID>
 | `--tag <TAG>` | A tag, repeatable; none at all clears them. |
 | `--idempotency-key <KEY>` | Sent as `Idempotency-Key`, so a repeat is answered from the record rather than written twice. |
 
-### marfa metadata update
-
-Add the named tags, leaving the rest.
-
-```text
-marfa metadata update [OPTIONS] --tag <TAG> <ID>
-```
-
-| Argument | Description |
-| --- | --- |
-| `<ID>` | The item id. |
-
-| Option | Description |
-| --- | --- |
-| `--tag <TAG>` | A tag, repeatable. |
-| `--idempotency-key <KEY>` | Sent as `Idempotency-Key`, so a repeat is answered from the record rather than written twice. |
-
 ### marfa metadata tags
 
 Every distinct tag in use on the instance.
@@ -3218,7 +3201,7 @@ Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 
 ### marfa device metadata
 
-An item's metadata, written whole or merged.
+An item's metadata, written whole.
 
 ```text
 marfa device metadata [OPTIONS] <COMMAND>
@@ -3232,24 +3215,6 @@ Write the item's tags whole, dropping any not named.
 
 ```text
 marfa device metadata replace [OPTIONS] <ITEM>
-```
-
-| Argument | Description |
-| --- | --- |
-| `<ITEM>` | The item id. |
-
-| Option | Description |
-| --- | --- |
-| `--tag <TAG>` | A tag, repeatable. |
-
-Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
-
-### marfa device metadata merge
-
-Add the named tags, leaving the rest.
-
-```text
-marfa device metadata merge [OPTIONS] <ITEM>
 ```
 
 | Argument | Description |

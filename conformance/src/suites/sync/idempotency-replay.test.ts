@@ -898,7 +898,6 @@ const DOORS = [
   "POST /items/{id}/tags",
   "DELETE /items/{id}/tags/{tag}",
   "PUT /items/{id}/metadata",
-  "PATCH /items/{id}/metadata",
   "PUT /items/{id}/extensions/{namespace}",
   "DELETE /items/{id}/extensions/{namespace}",
 ];
@@ -1012,7 +1011,6 @@ async function prepare(door: string): Promise<Prepared> {
       };
     }
     case "PUT /items/{id}/metadata":
-    case "PATCH /items/{id}/metadata":
       return {
         method,
         path: `/items/${(await note()).id}/metadata`,
@@ -1138,18 +1136,6 @@ async function changedBetween(door: string): Promise<ChangedBetween> {
         kept: async () => expect(await tags(item.id)).toEqual(["theirs"]),
       };
     }
-    case "PATCH /items/{id}/metadata": {
-      const item = await note();
-      return {
-        send: {
-          method,
-          path: `/items/${item.id}/metadata`,
-          body: { tags: ["merged"] },
-        },
-        between: () => ok(client.removeTag(item.id, "merged")),
-        kept: async () => expect(await tags(item.id)).not.toContain("merged"),
-      };
-    }
     case "PUT /items/{id}/extensions/{namespace}": {
       const item = await note();
       return {
@@ -1200,7 +1186,6 @@ describe("a metadata or extension write sent again under its key", () => {
     "POST /items/{id}/tags",
     "DELETE /items/{id}/tags/{tag}",
     "PUT /items/{id}/metadata",
-    "PATCH /items/{id}/metadata",
     "PUT /items/{id}/extensions/{namespace}",
     "DELETE /items/{id}/extensions/{namespace}",
   ])(

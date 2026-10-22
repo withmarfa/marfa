@@ -204,7 +204,6 @@ it("refuses item and edge writes through the private socket with 401 and changes
     },
     { method: "POST", path: `/items/${kept}/tags`, body: { tags: ["socket"] } },
     { method: "DELETE", path: `/items/${kept}/tags/kept-tag` },
-    { method: "PATCH", path: `/items/${kept}/metadata`, body: { tags: [] } },
     {
       method: "POST",
       path: `/items/${kept}/transition`,

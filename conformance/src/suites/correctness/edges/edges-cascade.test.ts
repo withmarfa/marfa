@@ -623,9 +623,7 @@ describe("edge cascade semantics", () => {
 
     // The bulk-action transition is held by the same edge, per row.
     const tag = `block-bulk-${ctx.runId}`;
-    expect((await client.updateMetadata(source, { tags: [tag] })).ok).toBe(
-      true,
-    );
+    expect((await client.addTags(source, [tag])).ok).toBe(true);
     const queued = await client.bulkAction({
       action: "transition",
       state: "trashed",
@@ -657,9 +655,7 @@ describe("edge cascade semantics", () => {
     expect(edge.ok).toBe(true);
     trackEdge(ctx, edge.data.edge.id);
     // Only the parent matches the filter, so the child is taken by the edge.
-    expect((await client.updateMetadata(parent, { tags: [tag] })).ok).toBe(
-      true,
-    );
+    expect((await client.addTags(parent, [tag])).ok).toBe(true);
 
     const queued = await client.bulkAction({
       action: "transition",

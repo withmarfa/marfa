@@ -249,12 +249,6 @@ describe("every door that refuses a missing grant names it", () => {
       grant: typeWrite,
     },
     {
-      door: "PATCH /items/{id}/metadata",
-      key: () => reader,
-      send: () => ["PATCH", `/items/${note}/metadata`, { tags: ["x"] }],
-      grant: typeWrite,
-    },
-    {
       door: "POST /items/{id}/tags",
       key: () => reader,
       send: () => ["POST", `/items/${note}/tags`, { tags: ["x"] }],

@@ -465,7 +465,7 @@ it.each(["replacement", "tag addition"] as const)(
     const queued =
       operation === "replacement"
         ? await device.addTag(id, "stale")
-        : await device.writeMetadata(id, ["old"], "replace");
+        : await device.replaceMetadata(id, ["old"]);
     expect(queued.ok).toBe(true);
     if (!queued.ok) return;
     broken = true;
@@ -481,7 +481,7 @@ it.each(["replacement", "tag addition"] as const)(
     broken = false;
     const newer =
       operation === "replacement"
-        ? await device.writeMetadata(id, [], "replace")
+        ? await device.replaceMetadata(id, [])
         : await device.addTag(id, "new");
     expect(newer.ok).toBe(true);
     expect((await harness.folder.push()).ok).toBe(true);

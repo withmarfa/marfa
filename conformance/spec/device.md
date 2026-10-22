@@ -2514,6 +2514,14 @@ When a device refuses a store `wrong_schema`, a device MUST say how many writes 
 
 **Tests:** `device/working-copy.test.ts › refuses a store another build shaped, by name, with the writes it holds unsent`, `› names a blocked write among the writes a store of another shape holds unsent`.
 
+### `device/wrong-schema-names-kind`
+
+When a device refuses a store `wrong_schema` and its queue holds a write the server has not taken of a kind this build does not queue, a device MUST name that kind and how many such writes the store holds.
+
+**Reason:** a store an earlier build made can hold a write of a kind this build no longer sends, such as a metadata merge; naming the kind tells the person which writes only the build that made the store can send, and the store keeps them.
+
+**Tests:** `device/working-copy.test.ts › names a write of a kind this build does not send, among the writes a store of another shape holds`.
+
 ### `device/wrong-schema-no-delete`
 
 When a device refuses a store `wrong_schema`, a device MUST NOT advise deleting the store.
@@ -3116,7 +3124,7 @@ When a stop ends a hydration, a catch-up, a drain or a read of the server's item
 
 ### `device/tag-bound`
 
-If a create, a tag add, a metadata merge or replace, a file added with tags, or a folder's scan of a document's tags (`folders/document-name-refusal`) adds a tag that is empty, blank as JavaScript's `trim` reads blank, exactly `.` or `..`, or longer than 128 UTF-16 code units, then a device MUST refuse it `validation`, carrying the server's `validation_error`.
+If a create, a tag add, a metadata replace, a file added with tags, or a folder's scan of a document's tags (`folders/document-name-refusal`) adds a tag that is empty, blank as JavaScript's `trim` reads blank, exactly `.` or `..`, or longer than 128 UTF-16 code units, then a device MUST refuse it `validation`, carrying the server's `validation_error`.
 
 **Reason:** a write the server refuses (`items/tag-text`, `items/tag-dot-segment`) stays in the queue until a drain, long after the person saved it, so the bound is held where the write is made.
 
@@ -3124,7 +3132,7 @@ If a create, a tag add, a metadata merge or replace, a file added with tags, or 
 
 ### `device/tag-count`
 
-If a create, a tag add, a metadata merge or replace, a file added with tags, or a folder's scan of a document's tags (`folders/document-name-refusal`) names more than 100 tags, or would leave the row the copy shows more than 100 tags and more than it held, then a device MUST refuse it `validation`, carrying the server's `validation_error`.
+If a create, a tag add, a metadata replace, a file added with tags, or a folder's scan of a document's tags (`folders/document-name-refusal`) names more than 100 tags, or would leave the row the copy shows more than 100 tags and more than it held, then a device MUST refuse it `validation`, carrying the server's `validation_error`.
 
 **Reason:** the server holds the same bound (`items/tags-count`), and a write it refuses would come back refused long after the person saved it.
 

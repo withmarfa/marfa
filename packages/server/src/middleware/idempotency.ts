@@ -92,7 +92,6 @@ export const IDEMPOTENT_WRITE_DOORS: readonly string[] = [
   "POST /items/:id/tags",
   "DELETE /items/:id/tags/:tag",
   "PUT /items/:id/metadata",
-  "PATCH /items/:id/metadata",
   "PUT /items/:id/extensions/:namespace",
   "DELETE /items/:id/extensions/:namespace",
 ];

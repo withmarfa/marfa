@@ -1805,25 +1805,16 @@ impl Core {
 
     /// Only the tags land locally; an extension namespace is not part of the
     /// copy and is its own write.
-    pub fn write_metadata(
-        &self,
-        id: &str,
-        write: &MetadataWrite,
-        replace: bool,
-    ) -> Result<QueuedWrite> {
+    pub fn replace_metadata(&self, id: &str, write: &MetadataWrite) -> Result<QueuedWrite> {
         let payload = write.payload()?;
-        let kind = if replace {
-            WriteKind::ReplaceMetadata
-        } else {
-            WriteKind::MergeMetadata
-        };
-        self.tag_write(id, kind, None, &write.tags, &payload, |tx| {
-            if replace {
-                store::replace_tags(tx, id, &write.tags)
-            } else {
-                store::add_tags(tx, id, &write.tags)
-            }
-        })
+        self.tag_write(
+            id,
+            WriteKind::ReplaceMetadata,
+            None,
+            &write.tags,
+            &payload,
+            |tx| store::replace_tags(tx, id, &write.tags),
+        )
     }
 
     /// Queued and not applied: the copy holds no extension namespaces.
@@ -3334,24 +3325,12 @@ mod tests {
             let failures = [
                 ("add_tag", core.add_tag("row", &tag).unwrap_err()),
                 (
-                    "merge",
-                    core.write_metadata(
-                        "row",
-                        &MetadataWrite {
-                            tags: vec!["fine".into(), tag.clone()],
-                        },
-                        false,
-                    )
-                    .unwrap_err(),
-                ),
-                (
                     "replace",
-                    core.write_metadata(
+                    core.replace_metadata(
                         "row",
                         &MetadataWrite {
                             tags: vec![tag.clone()],
                         },
-                        true,
                     )
                     .unwrap_err(),
                 ),
@@ -3378,7 +3357,7 @@ mod tests {
         // the bound: a row restored from an archive can hold a tag the bound
         // refuses and must be able to shed it.
         assert!(
-            core.write_metadata("row", &MetadataWrite { tags: vec![] }, true)
+            core.replace_metadata("row", &MetadataWrite { tags: vec![] })
                 .is_ok()
         );
         store::add_tags(&core.conn().unwrap(), "row", &[String::new()]).unwrap();
@@ -3389,12 +3368,11 @@ mod tests {
         store::add_tags(&core.conn().unwrap(), "row", &dots).unwrap();
         assert_eq!(core.get("row").unwrap().unwrap().tags, dots);
         assert!(
-            core.write_metadata(
+            core.replace_metadata(
                 "row",
                 &MetadataWrite {
                     tags: vec!["fine".into()],
-                },
-                true,
+                }
             )
             .is_ok()
         );
@@ -5741,9 +5719,9 @@ mod tests {
             ("add_tag", reader.add_tag("x", "t").unwrap_err()),
             ("remove_tag", reader.remove_tag("x", "t").unwrap_err()),
             (
-                "write_metadata",
+                "replace_metadata",
                 reader
-                    .write_metadata("x", &MetadataWrite::default(), true)
+                    .replace_metadata("x", &MetadataWrite::default())
                     .unwrap_err(),
             ),
             (

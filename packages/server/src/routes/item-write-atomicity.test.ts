@@ -154,21 +154,21 @@ describe("POST /items/{id}/purge", () => {
 });
 
 // ---------------------------------------------------------------------------
-// PATCH metadata: the bound is a refusal, so it may not have written first
+// POST tags: the bound is a refusal, so it may not have written first
 // ---------------------------------------------------------------------------
 
-describe("PATCH /items/{id}/metadata", () => {
-  it("refuses the over-bound patch without storing its tags", async () => {
+describe("POST /items/{id}/tags", () => {
+  it("refuses the over-bound add without storing its tags", async () => {
     const item = await makeNote("bounded");
     const hundred = Array.from({ length: 100 }, (_, i) => `t${String(i)}`);
-    const seeded = await request(ctx.app, "PATCH", `/items/${item}/metadata`, {
+    const seeded = await request(ctx.app, "PUT", `/items/${item}/metadata`, {
       key: ctx.workingKey,
       body: { tags: hundred },
     });
     expect(seeded.status).toBe(200);
     const before = await readUpdatedAt(item);
 
-    const res = await request(ctx.app, "PATCH", `/items/${item}/metadata`, {
+    const res = await request(ctx.app, "POST", `/items/${item}/tags`, {
       key: ctx.workingKey,
       body: { tags: ["one-too-many"] },
     });
@@ -187,9 +187,9 @@ describe("PATCH /items/{id}/metadata", () => {
     expect(await readUpdatedAt(item)).toBe(before);
   });
 
-  it("still applies a patch that stays inside the bound", async () => {
+  it("still applies an add that stays inside the bound", async () => {
     const item = await makeNote("bounded");
-    const res = await request(ctx.app, "PATCH", `/items/${item}/metadata`, {
+    const res = await request(ctx.app, "POST", `/items/${item}/tags`, {
       key: ctx.workingKey,
       body: { tags: ["alpha", "beta"] },
     });

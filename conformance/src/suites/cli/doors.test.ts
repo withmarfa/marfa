@@ -194,7 +194,7 @@ describe("types and edge types", () => {
 });
 
 describe("metadata and extensions", () => {
-  it("replaces and merges tags, lists the tags in use, and writes and removes a namespace", async () => {
+  it("replaces and adds tags, lists the tags in use, and writes and removes a namespace", async () => {
     const id = await note(unique("cli-metadata"));
     const replaced = await c.cli.json<{ metadata: { tags: string[] } }>([
       "metadata",
@@ -206,14 +206,13 @@ describe("metadata and extensions", () => {
       "two",
     ]);
     expect(replaced.metadata.tags.sort()).toEqual(["one", "two"]);
-    const updated = await c.cli.json<{ metadata: { tags: string[] } }>([
-      "metadata",
-      "update",
+    const added = await c.cli.json<{ metadata: { tags: string[] } }>([
+      "items",
+      "tag",
       id,
-      "--tag",
       "three",
     ]);
-    expect(updated.metadata.tags.sort()).toEqual(["one", "three", "two"]);
+    expect(added.metadata.tags.sort()).toEqual(["one", "three", "two"]);
     const read = await c.cli.json<{ metadata: { tags: string[] } }>([
       "metadata",
       "get",

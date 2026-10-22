@@ -193,14 +193,6 @@ const doors: [string, () => Door | Promise<Door>][] = [
     }),
   ],
   [
-    "item.metadata.update",
-    async () => ({
-      method: "PATCH",
-      path: `/items/${(await item()).id}/metadata`,
-      body: { tags: ["changed"] },
-    }),
-  ],
-  [
     "item.tag",
     async () => ({
       method: "POST",

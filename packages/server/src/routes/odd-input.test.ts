@@ -153,7 +153,6 @@ describe("tags", () => {
         201,
       ],
       ["PUT", `/items/${id}/metadata`, { tags: [fine] }, 200],
-      ["PATCH", `/items/${id}/metadata`, { tags: [fine] }, 200],
     ] as const) {
       expect(
         (await request(ctx.app, method, path, { key: ctx.workingKey, body }))
@@ -172,7 +171,6 @@ describe("tags", () => {
         ],
         ["POST", `/items/${id}/tags`, { tags: [tag] }],
         ["PUT", `/items/${id}/metadata`, { tags: [tag] }],
-        ["PATCH", `/items/${id}/metadata`, { tags: [tag] }],
       ];
       for (const [method, path, body] of doors) {
         const res = await request(ctx.app, method, path, {
@@ -207,7 +205,6 @@ describe("tags", () => {
         ],
         ["POST", `/items/${id}/tags`, { tags: [tag] }],
         ["PUT", `/items/${id}/metadata`, { tags: [tag] }],
-        ["PATCH", `/items/${id}/metadata`, { tags: [tag] }],
         [
           "POST",
           "/items/bulk-actions",

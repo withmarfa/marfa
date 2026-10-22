@@ -1410,7 +1410,6 @@ mod dispatch {
             Answer::json("200 OK", metadata),
             Answer::json("200 OK", metadata),
             Answer::json("200 OK", metadata),
-            Answer::json("200 OK", metadata),
             Answer::json("200 OK", r#"{"extensions":{}}"#),
             Answer::json("200 OK", r#"{"extensions":{}}"#),
         ]);
@@ -1440,16 +1439,6 @@ mod dispatch {
                 id: "i".into(),
                 tags: vec!["a".into()],
                 idempotency: key("replace"),
-            },
-            &remote,
-            &QUIET,
-        )
-        .unwrap();
-        metadata::run(
-            metadata::MetadataCommand::Update {
-                id: "i".into(),
-                tags: vec!["a".into()],
-                idempotency: key("update"),
             },
             &remote,
             &QUIET,
@@ -1494,7 +1483,6 @@ mod dispatch {
             ("POST", "/items/i/tags", "tag"),
             ("DELETE", "/items/i/tags/a", "untag"),
             ("PUT", "/items/i/metadata", "replace"),
-            ("PATCH", "/items/i/metadata", "update"),
             ("PUT", "/items/i/extensions/app.cursor", "write"),
             ("DELETE", "/items/i/extensions/app.cursor", "delete"),
         ]

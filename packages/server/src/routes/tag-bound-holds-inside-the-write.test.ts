@@ -46,19 +46,6 @@ function tags(prefix: string, n: number): string[] {
 
 describe("the tag bound is enforced where the tags are written", () => {
   // The deterministic guard: it fails on the unfixed store on every run.
-  it("refuses a merge whose result is over the bound, at the store", async () => {
-    const id = await createNote("bound at the store, merge");
-    const under = MAX_TAGS_PER_ITEM - 10;
-    await ctx.storage.metadata.merge(id, tags("a", under));
-
-    await expect(ctx.storage.metadata.merge(id, tags("b", 20))).rejects.toThrow(
-      /tags per item/,
-    );
-
-    const after = await ctx.storage.metadata.get(id);
-    expect(after.tags).toHaveLength(under);
-  });
-
   it("refuses an addTags whose result is over the bound, at the store", async () => {
     const id = await createNote("bound at the store, addTags");
     const under = MAX_TAGS_PER_ITEM - 10;
@@ -80,7 +67,7 @@ describe("the tag bound is enforced where the tags are written", () => {
   // all green.
   it("accepts a set landing exactly on the bound", async () => {
     const id = await createNote("exactly at the bound");
-    await ctx.storage.metadata.merge(id, tags("a", MAX_TAGS_PER_ITEM - 1));
+    await ctx.storage.metadata.addTags(id, tags("a", MAX_TAGS_PER_ITEM - 1));
 
     const at = await ctx.storage.metadata.addTags(id, ["one-more"]);
     expect(at.tags).toHaveLength(MAX_TAGS_PER_ITEM);
@@ -92,8 +79,8 @@ describe("the tag bound is enforced where the tags are written", () => {
 
   // A row can already be over the bound: `items.create` writes tags unbounded
   // so an archive of such rows stays restorable. Refusing every write to one
-  // would strand it: a merge carrying nothing, which changes nothing, would
-  // answer 400 about a limit the caller never approached.
+  // would strand it: adding a tag it already holds, which changes nothing,
+  // would answer 400 about a limit the caller never approached.
   it("leaves a row that is already over the bound writable", async () => {
     // Through `items.create`, the one writer that is deliberately unbounded,
     // the same way an archive restore produces one.
@@ -105,7 +92,7 @@ describe("the tag bound is enforced where the tags are written", () => {
     });
     const id = created.id;
 
-    const unchanged = await ctx.storage.metadata.merge(id, undefined);
+    const unchanged = await ctx.storage.metadata.addTags(id, ["legacy-0"]);
     expect(unchanged.tags.length).toBeGreaterThan(MAX_TAGS_PER_ITEM);
 
     // Adding to it is still refused, because that is an increase.
@@ -130,6 +117,31 @@ describe("the tag bound is enforced where the tags are written", () => {
 
     const after = await ctx.storage.metadata.get(id);
     expect(after.tags).toHaveLength(0);
+  });
+
+  // The case the store cannot see: the copies collapse to one tag, so the
+  // resulting set is inside the bound, yet the request names more tags than
+  // the bound allows and `items/tags-count` requires it refused.
+  it("refuses a body of more copies of one tag than the bound, and stores nothing", async () => {
+    const id = await createNote("too many copies in one body");
+
+    const res = await request(ctx.app, "POST", `/items/${id}/tags`, {
+      key: ctx.workingKey,
+      body: {
+        tags: Array.from({ length: MAX_TAGS_PER_ITEM + 1 }, () => "same"),
+      },
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as {
+      error: { code: string; message: string };
+    };
+    expect(body.error.code).toBe("validation_error");
+    expect(body.error.message).toBe(
+      `Maximum ${String(MAX_TAGS_PER_ITEM)} tags per item`,
+    );
+
+    const after = await ctx.storage.metadata.get(id);
+    expect(after.tags).toEqual([]);
   });
 });
 

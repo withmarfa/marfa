@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import type { MarfaClient } from "../../client/api.js";
 import type { TestContext } from "../../client/types.js";
-import { cleanup, createTestContext } from "../../utils/setup.js";
+import { cleanup, createTestContext, trackItem } from "../../utils/setup.js";
 
 /**
  * What a request no door serves is answered: a path nobody serves, or a
@@ -9,11 +10,12 @@ import { cleanup, createTestContext } from "../../utils/setup.js";
  * makes ambiguous.
  */
 let ctx: TestContext;
+let client: MarfaClient;
 let apiUrl: string;
 let apiKey: string;
 
 beforeAll(async () => {
-  ({ ctx, apiUrl, apiKey } = await createTestContext(
+  ({ ctx, client, apiUrl, apiKey } = await createTestContext(
     "compliance",
     "unmatched-paths",
   ));
@@ -81,6 +83,51 @@ describe("a request no door serves", () => {
       expect(answer.status, `${method} ${path}`).toBe(404);
       expect(answer.code, `${method} ${path}`).toBe("not_found");
     }
+  });
+
+  it("answers a PATCH to an item's metadata 404 not_found, under an Idempotency-Key it then keeps no record of, and writes nothing", async () => {
+    const created = await client.createItem({
+      type: "core.note",
+      source: ctx.source,
+      properties: { body: "unmatched metadata" },
+      tags: ["kept"],
+    });
+    expect(created.status).toBe(201);
+    const id = created.data!.item.id;
+    trackItem(ctx, id);
+    const version = created.data!.item.version;
+    // The witness: the path is served to another method.
+    expect((await ask("GET", `/items/${id}/metadata`, asKey())).status).toBe(
+      200,
+    );
+
+    const key = `unmatched-metadata-${ctx.runId}`;
+    const send = (method: string, path: string) =>
+      fetch(`${apiUrl}${path}`, {
+        method,
+        headers: {
+          ...asKey(),
+          "Content-Type": "application/json",
+          "Idempotency-Key": key,
+        },
+        body: JSON.stringify({ tags: ["added"] }),
+      });
+    for (const attempt of ["first", "again"]) {
+      const res = await send("PATCH", `/items/${id}/metadata`);
+      const body = (await res.json()) as { error?: { code?: string } };
+      expect(res.status, attempt).toBe(404);
+      expect(body.error?.code, attempt).toBe("not_found");
+    }
+    const after = await client.getItem(id);
+    expect(after.data!.metadata.tags).toEqual(["kept"]);
+    expect(after.data!.item.version).toBe(version);
+
+    // The key was kept for nothing, so the door that adds tags takes it as
+    // its own first use rather than a replay of the refusal.
+    const added = await send("POST", `/items/${id}/tags`);
+    expect(added.status).toBe(200);
+    const answer = (await added.json()) as { metadata: { tags: string[] } };
+    expect([...answer.metadata.tags].sort()).toEqual(["added", "kept"]);
   });
 
   it("answers a GET to a path no door serves 400 validation_error when it carries X-Marfa-Read-View, to a caller with a credential and to one without", async () => {
