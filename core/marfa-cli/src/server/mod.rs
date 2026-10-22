@@ -28,6 +28,9 @@ use prompt::Prompter;
 const DEFAULT_PORT: u16 = 8600;
 const IMAGE: &str = "ghcr.io/withmarfa/marfa-server";
 const CLOUDFLARE_HEADER: &str = "CF-Connecting-IP";
+const AGENT_HINT: &str =
+    "To give an AI agent access to this server, run `marfa docs guides/ai-agents`.";
+const OPTIONS_HINT: &str = "Options, all optional: --dir <folder> to install somewhere else, --port <port> for the port on this machine, --name <name> to run more than one, --external-settings when a secrets manager writes marfa.env. `marfa server install --help` lists them all.";
 
 #[derive(Debug, Subcommand)]
 pub enum ServerCommand {
@@ -489,6 +492,11 @@ fn port_is_free(port: u16) -> std::io::Result<()> {
     Ok(())
 }
 
+/// Where a tunnel or proxy on this machine reaches the server.
+fn local_address(port: u16) -> String {
+    format!("http://localhost:{port}")
+}
+
 fn free_port(from: u16) -> Option<u16> {
     (from..from.saturating_add(100)).find(|port| port_is_free(*port).is_ok())
 }
@@ -595,6 +603,15 @@ fn install(args: InstallArgs, out: &Printer) -> Result<(), CliError> {
     let docker = Docker::new(!out.json);
     let prompter = Prompter::new(args.yes);
     let existing = folder.state()?;
+    if prompter.asking()
+        && existing.is_none()
+        && args.dir.dir.is_none()
+        && args.name.is_none()
+        && args.port.is_none()
+        && !args.external_settings
+    {
+        eprintln!("{OPTIONS_HINT}\n");
+    }
     let external = args.external_settings || existing.as_ref().is_some_and(|(s, _)| s.external);
 
     let name = match (&args.name, &existing) {
@@ -759,7 +776,7 @@ fn install(args: InstallArgs, out: &Printer) -> Result<(), CliError> {
                     "--address is for tailscale, cloudflare and proxy: a local server is at http://localhost".into(),
                 ));
             }
-            format!("http://localhost:{port}")
+            local_address(port)
         }
         Access::Tailscale => match &args.address {
             Some(address) => public_address(address)?,
@@ -772,6 +789,17 @@ fn install(args: InstallArgs, out: &Printer) -> Result<(), CliError> {
             }
         },
         Access::Cloudflare | Access::Proxy => {
+            if prompter.asking() && args.address.is_none() {
+                eprintln!(
+                    "Point your {} at {} on this machine.",
+                    if access == Access::Cloudflare {
+                        "Cloudflare Tunnel"
+                    } else {
+                        "proxy"
+                    },
+                    local_address(port)
+                );
+            }
             let raw = match (&args.address, &existing) {
                 (Some(address), _) => address.clone(),
                 (None, Some((_, _))) => have_secrets
@@ -990,6 +1018,7 @@ fn install(args: InstallArgs, out: &Printer) -> Result<(), CliError> {
     let claim = claim_state(&docker, &name)?;
     let notes = boot_notes(autostart);
     let backup_on = settings.get("S3_BUCKET").is_some();
+    let host = crate::auth::machine_name();
     let report = json!({
         "installed": true,
         "changed": changed,
@@ -997,7 +1026,9 @@ fn install(args: InstallArgs, out: &Printer) -> Result<(), CliError> {
         "name": name,
         "release": release,
         "address": address,
+        "host": host,
         "port": port,
+        "local_address": local_address(port),
         "access": access.name(),
         "backup": backup_on,
         "secrets_made": made_secrets,
@@ -1014,7 +1045,18 @@ fn install(args: InstallArgs, out: &Printer) -> Result<(), CliError> {
             "\nMarfa {release} is running.\n\n"
         ));
         text.push_str(&format!("  Address   {address}\n"));
-        text.push_str(&format!("  Folder    {}\n", folder.dir.display()));
+        if matches!(access, Access::Cloudflare | Access::Proxy) {
+            text.push_str(&format!(
+                "  Point at  {} (point your {} here, or the address answers 502)\n",
+                local_address(port),
+                if access == Access::Cloudflare { "tunnel" } else { "proxy" }
+            ));
+        }
+        text.push_str(&format!(
+            "  Folder    {} on {}\n",
+            folder.dir.display(),
+            host.as_deref().unwrap_or("this machine")
+        ));
         text.push_str(&format!(
             "  Backup    {}\n",
             if backup_on {
@@ -1051,6 +1093,7 @@ fn install(args: InstallArgs, out: &Printer) -> Result<(), CliError> {
         for note in &notes {
             text.push_str(&format!("\n{note}\n"));
         }
+        text.push_str(&format!("\n{AGENT_HINT}\n"));
         text
     })
 }

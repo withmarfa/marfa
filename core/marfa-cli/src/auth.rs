@@ -191,7 +191,7 @@ pub fn client_name(machine: Option<&str>) -> String {
 
 /// This machine's host name, without the domain after it, such as the
 /// `.local` a Mac adds.
-fn machine_name() -> Option<String> {
+pub fn machine_name() -> Option<String> {
     let mut buffer = [0u8; 256];
     // SAFETY: the buffer is writable for the length passed.
     if unsafe { libc::gethostname(buffer.as_mut_ptr().cast(), buffer.len()) } != 0 {

@@ -33,7 +33,7 @@ use crate::commands::{
     restore, search, sign_ins, status, types, webhooks, whoami,
 };
 use crate::device::DeviceArgs;
-use crate::error::{CliError, Exit, exit_codes_help};
+use crate::error::{CliError, DOCS_HINT, Exit, long_help_footer};
 use crate::folders::FoldersCommand;
 use crate::output::Printer;
 use crate::remote::{Named, Remote};
@@ -46,7 +46,8 @@ use crate::remote::{Named, Remote};
     name = "marfa",
     version,
     max_term_width = 100,
-    after_long_help = exit_codes_help()
+    after_help = DOCS_HINT,
+    after_long_help = long_help_footer()
 )]
 struct Cli {
     /// The server's base URL. Falls back to MARFA_API_URL, then to the

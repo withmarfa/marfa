@@ -454,6 +454,66 @@ fn each_way_of_reaching_it_sets_the_proxy_trust_it_needs() {
 }
 
 #[test]
+fn the_summary_says_where_a_tunnel_points_and_which_machine_holds_the_folder() {
+    let rig = Rig::new("target");
+    let (code, stdout, stderr) = rig.install(&[
+        "--access",
+        "cloudflare",
+        "--address",
+        "https://marfa.example.com",
+    ]);
+    assert_eq!(code, 0, "{stderr}");
+    let target = format!("http://localhost:{}", rig.port);
+    assert!(
+        stdout.contains(&format!("Point at  {target}")),
+        "the summary never says where the tunnel points: {stdout}"
+    );
+    let folder = format!("  Folder    {} on ", rig.dir.display());
+    assert!(
+        stdout.contains(&folder),
+        "the summary never names the machine: {stdout}"
+    );
+    assert!(
+        stdout
+            .trim_end()
+            .ends_with("run `marfa docs guides/ai-agents`."),
+        "the summary does not end by pointing at the agent guide: {stdout}"
+    );
+
+    let (code, stdout, _) = rig.install(&["--access", "local"]);
+    assert_eq!(code, 0);
+    assert!(
+        !stdout.contains("Point at"),
+        "a local server has no tunnel to point: {stdout}"
+    );
+}
+
+#[test]
+fn the_json_report_gains_the_host_and_the_local_address_and_keeps_its_shape() {
+    let rig = Rig::new("target-json");
+    let (code, stdout, stderr) = rig.install(&[
+        "--json",
+        "--access",
+        "proxy",
+        "--address",
+        "https://marfa.example.com",
+    ]);
+    assert_eq!(code, 0, "{stderr}");
+    let report: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(
+        report["local_address"],
+        format!("http://localhost:{}", rig.port)
+    );
+    assert_eq!(report["port"], rig.port);
+    assert_eq!(report["address"], "https://marfa.example.com");
+    assert!(report.get("host").is_some(), "{report}");
+    assert!(
+        !stdout.contains("ai-agents"),
+        "the pointer is for people, not the report: {stdout}"
+    );
+}
+
+#[test]
 fn an_address_the_server_would_refuse_is_refused_first() {
     let rig = Rig::new("address");
     for (args, said) in [

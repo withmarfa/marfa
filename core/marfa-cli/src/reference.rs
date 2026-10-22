@@ -49,12 +49,10 @@ pub fn render() -> String {
     let mut root = Cli::command();
     root.build();
     // The exit codes below are set out from the parts this text is made of.
-    assert_eq!(
+    assert!(
         root.get_after_long_help()
-            .map(ToString::to_string)
-            .as_deref(),
-        Some(exit_codes_help()),
-        "the root's after-help is not the exit codes the reference sets out"
+            .is_some_and(|help| help.to_string().ends_with(exit_codes_help())),
+        "the root's after-help does not end with the exit codes the reference sets out"
     );
 
     let mut out = String::new();
