@@ -1,6 +1,10 @@
 //! Replacing a store `Core::open` refuses `wrong_schema`: only under the
 //! writer lock, only with nothing unsent, and never losing the store when it
 //! cannot finish.
+//!
+//! `a_store_that_cannot_be_made_leaves_the_refused_one_where_it_was` flips a
+//! process-global fault, so these tests need one process per test, as
+//! `cargo nextest` runs them (`core/README.md`).
 
 use std::path::{Path, PathBuf};
 
@@ -273,6 +277,19 @@ fn no_store_and_a_file_that_is_not_a_store_are_refused_and_left_alone() {
     assert_eq!(files(&words), before);
 }
 
+/// The names of everything beside the store, sorted, but for its
+/// shared-memory index: reading a store that has a log makes one, and it is
+/// rebuilt from the log by whoever opens the store.
+fn listing(path: &Path) -> Vec<String> {
+    let mut names: Vec<String> = std::fs::read_dir(path.parent().unwrap())
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|name| !name.ends_with("-shm"))
+        .collect();
+    names.sort();
+    names
+}
+
 #[test]
 fn a_store_that_cannot_be_made_leaves_the_refused_one_where_it_was() {
     let (_dir, path) = refused_store(false);
@@ -281,6 +298,9 @@ fn a_store_that_cannot_be_made_leaves_the_refused_one_where_it_was() {
         "UPDATE meta SET value = value WHERE key = 'schema_version'",
     );
     let before = files(&path);
+    let names = listing(&path);
+    // The fault fires once the new store's file has been made, so what the
+    // call removes is a real partial store.
     crate::fault::set_failing("replace-refused-make", true);
     let failed = Core::replace_refused(&path, None);
     crate::fault::set_failing("replace-refused-make", false);
@@ -293,6 +313,11 @@ fn a_store_that_cannot_be_made_leaves_the_refused_one_where_it_was() {
         files(&path),
         before,
         "the refused store was not put back whole"
+    );
+    assert_eq!(
+        listing(&path),
+        names,
+        "a file of the partial store or a set-aside copy was left"
     );
     no_set_aside_copy(&path);
     assert!(matches!(
@@ -310,21 +335,89 @@ fn a_store_that_cannot_be_made_leaves_the_refused_one_where_it_was() {
     );
 }
 
+/// Leaves what a replacement that did not finish would have: copies set aside
+/// under the unnumbered name and under `.refused-1`, each with a log.
+fn leave_copies(path: &Path) -> Vec<(PathBuf, Vec<u8>)> {
+    let mut left = Vec::new();
+    for aside in [".refused", ".refused-1"] {
+        for suffix in ["", "-wal"] {
+            let file = beside(&beside(path, aside), suffix);
+            let bytes = format!("what an earlier replacement set aside as {aside}{suffix}");
+            std::fs::write(&file, &bytes).unwrap();
+            left.push((file, bytes.into_bytes()));
+        }
+    }
+    left
+}
+
+fn assert_untouched(left: &[(PathBuf, Vec<u8>)]) {
+    for (file, bytes) in left {
+        assert_eq!(
+            &std::fs::read(file).unwrap(),
+            bytes,
+            "{} was overwritten or removed",
+            file.display()
+        );
+    }
+}
+
 #[test]
-fn a_copy_left_set_aside_by_a_replacement_that_did_not_finish_is_never_overwritten() {
+fn a_copy_left_set_aside_does_not_block_a_replacement_and_is_never_overwritten() {
     let (_dir, path) = refused_store(false);
-    let aside = beside(&path, ".refused");
-    std::fs::write(&aside, b"what an interrupted replacement set aside").unwrap();
-    let before = files(&path);
-    assert!(matches!(
-        Core::replace_refused(&path, None),
-        Err(CoreError::Store(message)) if message.contains(&aside.display().to_string())
-    ));
-    assert_eq!(files(&path), before);
-    assert_eq!(
-        std::fs::read(&aside).unwrap(),
-        b"what an interrupted replacement set aside"
-    );
+    let left = leave_copies(&path);
+
+    // The witness: the store is refused, so the call has something to do.
+    assert!(matches!(refusal(&path), CoreError::WrongSchema { .. }));
+    let core = Core::replace_refused(&path, None).unwrap();
+    assert_eq!(core.handle(), Handle::Writer);
+    drop(core);
+
+    assert_untouched(&left);
+    drop(Core::open(&path, None).expect("the new store is refused"));
+}
+
+#[test]
+fn replacements_in_a_row_after_a_leftover_set_aside_overwrite_nothing() {
+    let (_dir, path) = refused_store(false);
+    let left = leave_copies(&path);
+
+    for _ in 0..2 {
+        drop(Core::replace_refused(&path, None).unwrap());
+        assert_untouched(&left);
+        no_numbered_copy_beyond_leftovers(&path);
+        // Another build refuses the store again.
+        let conn = Connection::open(&path).unwrap();
+        conn.execute_batch("ALTER TABLE queue RENAME COLUMN follows TO after_write")
+            .unwrap();
+    }
+}
+
+fn no_numbered_copy_beyond_leftovers(path: &Path) {
+    for n in 2..5 {
+        for suffix in ["", "-wal", "-shm", "-journal"] {
+            let aside = beside(&beside(path, &format!(".refused-{n}")), suffix);
+            assert!(!aside.exists(), "{} was left behind", aside.display());
+        }
+    }
+}
+
+#[test]
+fn a_set_aside_copy_takes_the_first_name_whose_every_file_is_free() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("core.sqlite");
+    let name = |n: u32| beside(&path, &format!(".refused-{n}"));
+    assert_eq!(crate::store::free_set_aside(&path).unwrap(), name(1));
+
+    // Each file of a copy, alone, takes its name: a log with no store beside
+    // it would be read into whatever store came to hold that name.
+    for (n, suffix) in [(1, "-shm"), (2, "-wal"), (3, "-journal"), (4, "")] {
+        std::fs::write(beside(&name(n), suffix), b"left").unwrap();
+        assert_eq!(
+            crate::store::free_set_aside(&path).unwrap(),
+            name(n + 1),
+            "{suffix} did not take the name {n}"
+        );
+    }
 }
 
 #[test]

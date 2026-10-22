@@ -320,8 +320,10 @@ impl Core {
     /// this build's shape, and opens it as the writer. Refuses, leaving the
     /// store as it is, while another process holds the writer role, while
     /// the store holds a write the server has not taken or one it cannot
-    /// count, and where `open` would not refuse it. The blob cache is kept:
-    /// it is addressed by content, not by the store.
+    /// count, and where `open` would not refuse it. The new store holds
+    /// nothing a hydration does not refill, so device-local state the server
+    /// never held, such as pins, is lost: read it first. The blob cache is
+    /// kept: it is addressed by content, not by the store.
     pub fn replace_refused(path: impl AsRef<Path>, server: Option<Server>) -> Result<Core> {
         let path = path.as_ref();
         // Held from the count to the returned core, so no write can be

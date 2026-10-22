@@ -1793,6 +1793,9 @@ impl MarfaCore {
     /// another process writes the store, with `wrong_schema` and its `unsent`
     /// count while it holds a write the server has not taken, and with
     /// `invalid` where `open` would not refuse it, leaving the store as it is.
+    /// The new store holds nothing a hydration does not refill, so
+    /// device-local state the server never held, such as pins, is lost: read
+    /// it first.
     #[napi(factory)]
     pub fn replace_refused(
         env: Env,

@@ -136,23 +136,48 @@ fn suffixed(path: &Path, suffix: &str) -> std::path::PathBuf {
     name.into()
 }
 
-/// Replaces the store at `path` with an empty one of this build's shape. The
-/// caller holds the writer lock and has found nothing unsent. The old store
-/// is set aside under `<store>.refused`, logs first, so a log is never left
-/// beside a store that is not its own; it is put back if the new store
-/// cannot be made, and removed only once it has been.
-pub(crate) fn replace(path: &Path) -> Result<Connection, CoreError> {
-    let aside = suffixed(path, ".refused");
-    for suffix in STORE_FILES {
-        let left = suffixed(&aside, suffix);
-        if left.symlink_metadata().is_ok() {
-            return Err(CoreError::Store(format!(
-                "{} cannot be replaced: {} is left from a replacement that did not finish; move it elsewhere first",
-                path.display(),
-                left.display()
-            )));
+/// The most set-aside copies one store's name can have beside it. Reached
+/// only where something other than a copy keeps taking the names.
+const MOST_SET_ASIDE: u32 = 1000;
+
+/// The name, `<store>.refused-<n>` for the first `n` from 1 whose store file
+/// and logs are all absent, so a copy a replacement left is never overwritten
+/// or mistaken for part of this one.
+pub(crate) fn free_set_aside(path: &Path) -> Result<std::path::PathBuf, CoreError> {
+    for n in 1..=MOST_SET_ASIDE {
+        let aside = suffixed(path, &format!(".refused-{n}"));
+        let mut free = true;
+        for suffix in STORE_FILES {
+            let name = suffixed(&aside, suffix);
+            match name.symlink_metadata() {
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => {
+                    return Err(CoreError::Store(format!(
+                        "{} cannot be replaced: {} cannot be checked: {error}",
+                        path.display(),
+                        name.display()
+                    )));
+                }
+                Ok(_) => free = false,
+            }
+        }
+        if free {
+            return Ok(aside);
         }
     }
+    Err(CoreError::Store(format!(
+        "{} cannot be replaced: {MOST_SET_ASIDE} copies set aside beside it are left; remove them first",
+        path.display()
+    )))
+}
+
+/// Replaces the store at `path` with an empty one of this build's shape. The
+/// caller holds the writer lock and has found nothing unsent. The old store
+/// is set aside under a name of its own (`free_set_aside`), logs first, so a
+/// log is never left beside a store that is not its own; it is put back if
+/// the new store cannot be made, and removed only once it has been.
+pub(crate) fn replace(path: &Path) -> Result<Connection, CoreError> {
+    let aside = free_set_aside(path)?;
     let mut moved = Vec::new();
     for suffix in STORE_FILES.iter().rev() {
         let (from, to) = (suffixed(path, suffix), suffixed(&aside, suffix));
@@ -168,13 +193,16 @@ pub(crate) fn replace(path: &Path) -> Result<Connection, CoreError> {
             }
         }
     }
-    let made = (|| {
+    let made = (|| -> Result<Connection, CoreError> {
+        crate::owner_only(path)?;
+        let conn = open(path)?;
+        // After the new store's files exist, so a failure leaves a partial
+        // store to clean up.
         #[cfg(debug_assertions)]
         if crate::fault::fails(|| "replace-refused-make") {
             return Err(CoreError::Store("replace-refused-make".into()));
         }
-        crate::owner_only(path)?;
-        open(path)
+        Ok(conn)
     })();
     match made {
         Ok(conn) => {

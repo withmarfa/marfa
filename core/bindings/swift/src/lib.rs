@@ -1775,7 +1775,9 @@ impl Core {
     /// `open` does. Refuses with `ReadingHandle` while another process
     /// writes the store, with `WrongSchema` and its `unsent` count while it
     /// holds a write the server has not taken, and with `Invalid` where
-    /// `open` would not refuse it, leaving the store as it is.
+    /// `open` would not refuse it, leaving the store as it is. The new store
+    /// holds nothing a hydration does not refill, so device-local state the
+    /// server never held, such as pins, is lost: read it first.
     #[uniffi::constructor(default(renewer = None))]
     pub fn replace_refused(
         path: String,
