@@ -586,12 +586,6 @@ a.row,
 button.row {
   cursor: pointer;
 }
-a.row:hover .rt,
-button.row:hover .rt {
-  text-decoration: underline;
-  text-underline-offset: 3px;
-  text-decoration-color: var(--line);
-}
 .row .rt {
   font-weight: var(--weight-medium);
   overflow-wrap: anywhere;
@@ -1340,11 +1334,6 @@ body:has(.savebar:not([hidden])) .col {
 }
 .disclosure-row > summary::-webkit-details-marker {
   display: none;
-}
-.disclosure-row > summary:hover .rt {
-  text-decoration: underline;
-  text-underline-offset: 3px;
-  text-decoration-color: var(--line);
 }
 .disclosure-row > summary .chev .icon {
   transition: transform 120ms ease;
