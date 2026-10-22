@@ -114,4 +114,28 @@ describe("the 100-tags-per-item limit", () => {
       expect(await tagsHeld(short), name).toHaveLength(MAX_TAGS);
     }
   });
+
+  it("refuses a tag add naming more than 100 tags even when they are copies of one, and stores nothing", async () => {
+    // The copies collapse to one tag, so the item would end up holding one:
+    // the request is refused for what it names, not for what it would leave.
+    const id = await noteHolding(0);
+    const copies = Array.from({ length: MAX_TAGS + 1 }, () => "same");
+    const refused = await client.rawRequest(`/items/${id}/tags`, {
+      method: "POST",
+      body: { tags: copies },
+    });
+    expect([refused.status, refused.error?.error.code]).toEqual([
+      400,
+      "validation_error",
+    ]);
+    expect(await tagsHeld(id)).toEqual([]);
+
+    // The witness: 100 copies of the same tag are within the bound.
+    const accepted = await client.rawRequest(`/items/${id}/tags`, {
+      method: "POST",
+      body: { tags: copies.slice(0, MAX_TAGS) },
+    });
+    expect(accepted.status).toBe(200);
+    expect(await tagsHeld(id)).toEqual(["same"]);
+  });
 });

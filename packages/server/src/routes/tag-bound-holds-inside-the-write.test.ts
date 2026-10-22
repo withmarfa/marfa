@@ -118,6 +118,31 @@ describe("the tag bound is enforced where the tags are written", () => {
     const after = await ctx.storage.metadata.get(id);
     expect(after.tags).toHaveLength(0);
   });
+
+  // The case the store cannot see: the copies collapse to one tag, so the
+  // resulting set is inside the bound, yet the request names more tags than
+  // the bound allows and `items/tags-count` requires it refused.
+  it("refuses a body of more copies of one tag than the bound, and stores nothing", async () => {
+    const id = await createNote("too many copies in one body");
+
+    const res = await request(ctx.app, "POST", `/items/${id}/tags`, {
+      key: ctx.workingKey,
+      body: {
+        tags: Array.from({ length: MAX_TAGS_PER_ITEM + 1 }, () => "same"),
+      },
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as {
+      error: { code: string; message: string };
+    };
+    expect(body.error.code).toBe("validation_error");
+    expect(body.error.message).toBe(
+      `Maximum ${String(MAX_TAGS_PER_ITEM)} tags per item`,
+    );
+
+    const after = await ctx.storage.metadata.get(id);
+    expect(after.tags).toEqual([]);
+  });
 });
 
 /**

@@ -2236,6 +2236,16 @@ export function itemRoutes(storage: Storage) {
         // The metadata layer reaches the same row the properties doors
         // guard, so it answers to the same row-level rule.
 
+        // What the request names, counted as sent: a hundred and one copies
+        // of one tag collapse to one, so the store, which counts the set, never
+        // sees them (`items/tags-count`).
+        if (tags.length > MAX_TAGS_PER_ITEM) {
+          throw new MarfaError(
+            ErrorCode.VALIDATION_ERROR,
+            `Maximum ${String(MAX_TAGS_PER_ITEM)} tags per item`,
+          );
+        }
+
         // No projection of the resulting set here: reading the row, unioning
         // the tags into it and refusing over the bound would read in one
         // transaction and write in another, so it would bound nothing under

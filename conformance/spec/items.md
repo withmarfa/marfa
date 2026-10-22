@@ -420,7 +420,7 @@ When a create names an empty `tags` list, the server MUST store the item with `t
 
 If a write names more than 100 tags, or would leave an item more than 100 tags and more than it held, on a create or any tag operation, then the server MUST refuse it `validation_error`.
 
-**Tests:** `compliance/item-limits.test.ts › refuses a create carrying more than 100 tags, and takes one of 100`, `› refuses a tag write that would leave an item more than 100 tags, on each tag operation`, `compliance/bulk-limits.test.ts › refuses an update_tags action adding more than 100 tags`.
+**Tests:** `compliance/item-limits.test.ts › refuses a create carrying more than 100 tags, and takes one of 100`, `› refuses a tag write that would leave an item more than 100 tags, on each tag operation`, `compliance/bulk-limits.test.ts › refuses an update_tags action adding more than 100 tags`, `compliance/item-limits.test.ts › refuses a tag add naming more than 100 tags even when they are copies of one, and stores nothing`.
 
 ### `items/tag-text`
 
