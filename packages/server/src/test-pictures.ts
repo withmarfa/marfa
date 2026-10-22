@@ -46,31 +46,33 @@ export function png(width = 8, height = 8): Buffer {
 }
 
 /**
- * A PNG that declares `width` by `height` in its header but carries no pixel
- * data, which is enough for a reader that judges the header.
+ * A PNG of exactly `size` bytes: `png()` with a private ancillary chunk of
+ * zeros before the end, which every PNG reader skips.
  */
-export function pngHeaderOnly(width: number, height: number): Buffer {
-  const header = Buffer.alloc(13);
-  header.writeUInt32BE(width, 0);
-  header.writeUInt32BE(height, 4);
-  header[8] = 8;
-  header[9] = 2;
+export function pngPadded(size: number, width = 8, height = 8): Buffer {
+  const whole = png(width, height);
+  const end = whole.length - 12;
+  const filler = size - whole.length - 12;
+  if (filler < 0) throw new Error("the size is smaller than the picture");
   return Buffer.concat([
-    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
-    chunk("IHDR", header),
-    chunk("IEND", Buffer.alloc(0)),
+    whole.subarray(0, end),
+    chunk("paDd", Buffer.alloc(filler)),
+    whole.subarray(end),
   ]);
 }
 
-/** A JPEG whose frame header declares `width` by `height`. */
-export function jpeg(width = 8, height = 8): Buffer {
+/**
+ * A JPEG whose frame header declares `width` by `height`, under the frame
+ * marker `kind`: 0xc0 is baseline, 0xc1 extended sequential, 0xc2 progressive.
+ */
+export function jpeg(width = 8, height = 8, kind = 0xc0): Buffer {
   const app0 = Buffer.from([
     0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01, 0x01, 0x00,
     0x00, 0x01, 0x00, 0x01, 0x00, 0x00,
   ]);
   const frame = Buffer.from([
     0xff,
-    0xc0,
+    kind,
     0x00,
     0x0b,
     0x08,

@@ -1,7 +1,9 @@
 /**
- * What a picture may be. The kind is decided from the bytes: a signature and
- * a header that parses into a width and a height. Nothing the sender claims
- * about the file counts.
+ * What a picture may be. The kind is decided from the bytes: a signature, a
+ * header that parses into a width and a height, and the marks that show the
+ * file is whole. Nothing the sender claims about the file counts. The checks
+ * do not decode the pixels, so a file that is whole in structure can still
+ * fail to draw.
  */
 
 /** The largest picture, in bytes: 2 MiB. */
@@ -73,21 +75,53 @@ function u32be(bytes: Uint8Array, at: number): number {
   );
 }
 
+function u32le(bytes: Uint8Array, at: number): number {
+  return (
+    byte(bytes, at) +
+    byte(bytes, at + 1) * 0x100 +
+    byte(bytes, at + 2) * 0x10000 +
+    byte(bytes, at + 3) * 0x1000000
+  );
+}
+
 function u24le(bytes: Uint8Array, at: number): number {
   return (
     byte(bytes, at) | (byte(bytes, at + 1) << 8) | (byte(bytes, at + 2) << 16)
   );
 }
 
-/** The IHDR chunk, which a PNG opens with. */
+const PNG_CHUNK_OVERHEAD = 12;
+
+/**
+ * The IHDR chunk, which a PNG opens with, and then the chain of chunks to the
+ * end: each one fits in the file, an IDAT comes before the IEND, and the IEND
+ * is the last twelve bytes.
+ */
 function pngSize(bytes: Uint8Array): Size | undefined {
   if (bytes.length < 24 || !ascii(bytes, 12, "IHDR") || u32be(bytes, 8) !== 13)
     return undefined;
-  return { width: u32be(bytes, 16), height: u32be(bytes, 20) };
+  let at = PNG_SIGNATURE.length;
+  let sawData = false;
+  while (at + PNG_CHUNK_OVERHEAD <= bytes.length) {
+    const length = u32be(bytes, at);
+    if (length > bytes.length - at - PNG_CHUNK_OVERHEAD) return undefined;
+    if (ascii(bytes, at + 4, "IDAT")) sawData = true;
+    at += PNG_CHUNK_OVERHEAD + length;
+    if (ascii(bytes, at - PNG_CHUNK_OVERHEAD + 4, "IEND")) {
+      if (length !== 0 || at !== bytes.length || !sawData) return undefined;
+      return { width: u32be(bytes, 16), height: u32be(bytes, 20) };
+    }
+  }
+  return undefined;
 }
 
-/** The first frame header, found by walking the segments from the start. */
+/**
+ * The frame header of a JPEG that browsers draw (baseline, extended
+ * sequential or progressive), found by walking the segments from the start,
+ * and then the end-of-image mark after the first scan's header.
+ */
 function jpegSize(bytes: Uint8Array): Size | undefined {
+  let size: Size | undefined;
   let at = 2;
   while (at + 1 < bytes.length) {
     if (bytes[at] !== 0xff) return undefined;
@@ -99,28 +133,43 @@ function jpegSize(bytes: Uint8Array): Size | undefined {
     at += 2;
     // Markers with no length: the restart markers, TEM and the start of image.
     if (marker === 0x01 || (marker >= 0xd0 && marker <= 0xd8)) continue;
-    // The end of the image or the scan comes before any frame header.
-    if (marker === 0xd9 || marker === 0xda) return undefined;
+    // The end of the image comes before any scan.
+    if (marker === 0xd9) return undefined;
     if (at + 2 > bytes.length) return undefined;
     const length = u16be(bytes, at);
-    const frame =
+    if (length < 2 || at + length > bytes.length) return undefined;
+    if (
       marker >= 0xc0 &&
       marker <= 0xcf &&
       marker !== 0xc4 &&
-      marker !== 0xc8 &&
-      marker !== 0xcc;
-    if (frame) {
-      if (length < 8 || at + 7 > bytes.length) return undefined;
-      return { width: u16be(bytes, at + 5), height: u16be(bytes, at + 3) };
+      marker !== 0xcc
+    ) {
+      if (marker > 0xc2 || size !== undefined || length < 8) return undefined;
+      size = { width: u16be(bytes, at + 5), height: u16be(bytes, at + 3) };
     }
-    if (length < 2) return undefined;
     at += length;
+    if (marker === 0xda) {
+      if (size === undefined) return undefined;
+      return endsImage(bytes, at) ? size : undefined;
+    }
   }
   return undefined;
 }
 
-/** The first chunk of a RIFF container: lossy, lossless or extended. */
+/** Whether the end-of-image mark comes at or after `from`. */
+function endsImage(bytes: Uint8Array, from: number): boolean {
+  for (let at = from; at + 1 < bytes.length; at += 1)
+    if (bytes[at] === 0xff && bytes[at + 1] === 0xd9) return true;
+  return false;
+}
+
+/**
+ * The first chunk of a RIFF container: lossy, lossless or extended. The size
+ * the container declares is the size of the file.
+ */
 function webpSize(bytes: Uint8Array): Size | undefined {
+  if (bytes.length < 12 || u32le(bytes, 4) !== bytes.length - 8)
+    return undefined;
   if (ascii(bytes, 12, "VP8 ")) {
     if (
       bytes.length < 30 ||

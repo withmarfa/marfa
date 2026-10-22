@@ -8,7 +8,7 @@ import {
   html,
   jpeg,
   png,
-  pngHeaderOnly,
+  pngPadded,
   svg,
   webp,
 } from "../test-pictures.js";
@@ -45,11 +45,6 @@ const rows = () =>
 
 function bytesOf(buffer: Uint8Array): Uint8Array<ArrayBuffer> {
   return new Uint8Array(buffer);
-}
-
-/** A file padded with zeros to `size` bytes after a header that parses. */
-function padded(header: Buffer, size: number): Buffer {
-  return Buffer.concat([header, Buffer.alloc(size - header.length)]);
 }
 
 function owner(
@@ -229,30 +224,42 @@ describe("uploading a picture", () => {
     expect(await rows()).toHaveLength(0);
   });
 
-  it("refuses a picture cut inside its header and keeps the previous one", async () => {
+  it("refuses a picture that is cut short and keeps the previous one", async () => {
     const first = png();
     expect((await owner(bytesOf(first))).status).toBe(200);
     for (const whole of [png(), jpeg(), webp()]) {
-      // The witness: the whole file replaces the first.
-      const cut = whole.subarray(0, 14);
-      const refused = await owner(bytesOf(cut));
-      expect(refused.status).toBe(400);
-      expect(await rows()).toMatchObject([{ sha256: sha(first) }]);
+      for (const length of [14, 33, whole.length - 1].filter(
+        (at) => at < whole.length,
+      )) {
+        const refused = await owner(bytesOf(whole.subarray(0, length)));
+        expect(
+          refused.status,
+          `${String(length)} of ${String(whole.length)}`,
+        ).toBe(400);
+        expect(await refused.json()).toMatchObject({
+          error: { code: "validation_error" },
+        });
+        expect(await rows()).toMatchObject([{ sha256: sha(first) }]);
+      }
     }
-    expect((await owner(bytesOf(jpeg()))).status).toBe(200);
-    expect(await rows()).toMatchObject([{ sha256: sha(jpeg()) }]);
+    // The witness: each whole file is taken.
+    for (const whole of [jpeg(), webp(), png(9, 9)]) {
+      expect((await owner(bytesOf(whole))).status).toBe(200);
+      expect(await rows()).toMatchObject([{ sha256: sha(whole) }]);
+    }
   });
 
   it("refuses a width or height outside 1 to 4096 and takes the edge itself", async () => {
-    expect((await owner(bytesOf(pngHeaderOnly(4096, 4096)))).status).toBe(200);
+    expect((await owner(bytesOf(png(4096, 1)))).status).toBe(200);
+    expect((await owner(bytesOf(png(1, 4096)))).status).toBe(200);
     const kept = await rows();
     for (const [width, height] of [
       [0, 8],
       [8, 0],
-      [4097, 8],
-      [8, 4097],
+      [4097, 1],
+      [1, 4097],
     ] as const) {
-      const refused = await owner(bytesOf(pngHeaderOnly(width, height)));
+      const refused = await owner(bytesOf(png(width, height)));
       expect(refused.status, `${String(width)}x${String(height)}`).toBe(400);
       expect(await refused.json()).toMatchObject({
         error: { code: "validation_error" },
@@ -265,10 +272,10 @@ describe("uploading a picture", () => {
 describe("the size cap", () => {
   it("takes a picture of exactly 2 MiB and refuses one byte more", async () => {
     expect(PICTURE_MAX_BYTES).toBe(2_097_152);
-    const exact = padded(pngHeaderOnly(8, 8), PICTURE_MAX_BYTES);
+    const exact = pngPadded(PICTURE_MAX_BYTES);
     expect((await owner(bytesOf(exact))).status).toBe(200);
     expect(await rows()).toMatchObject([{ size_bytes: PICTURE_MAX_BYTES }]);
-    const over = padded(pngHeaderOnly(9, 9), PICTURE_MAX_BYTES + 1);
+    const over = pngPadded(PICTURE_MAX_BYTES + 1);
     const refused = await owner(bytesOf(over));
     expect(refused.status).toBe(413);
     expect(await refused.json()).toMatchObject({
@@ -315,7 +322,7 @@ describe("the size cap", () => {
   });
 
   it("applies the same cap at the profile door", async () => {
-    const over = padded(pngHeaderOnly(9, 9), PICTURE_MAX_BYTES + 1);
+    const over = pngPadded(PICTURE_MAX_BYTES + 1);
     expect((await profile(bytesOf(over))).status).toBe(413);
     expect(await rows()).toHaveLength(0);
   });
@@ -326,9 +333,8 @@ describe("an upload that does not finish", () => {
     const first = png(4, 4);
     expect((await owner(bytesOf(first))).status).toBe(200);
     const next = jpeg(6, 6);
-    const half = next.subarray(0, 20);
     const refused = await owner(
-      brokenStream([bytesOf(half)]),
+      brokenStream([bytesOf(next)]),
       {},
       {
         duplex: "half",
@@ -339,7 +345,7 @@ describe("an upload that does not finish", () => {
       error: { code: "validation_error" },
     });
     expect(await rows()).toMatchObject([{ sha256: sha(first) }]);
-    // The witness: the same bytes, delivered whole, do replace it.
+    // The witness: the same bytes, with the upload finished, do replace it.
     expect((await owner(bytesOf(next))).status).toBe(200);
     expect(await rows()).toMatchObject([{ sha256: sha(next) }]);
   });

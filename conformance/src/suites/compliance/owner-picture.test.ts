@@ -16,9 +16,8 @@ import {
   gif,
   html,
   jpeg,
-  padded,
   png,
-  pngHeaderOnly,
+  pngPadded,
   svg,
   webp,
 } from "../../utils/pictures.js";
@@ -351,31 +350,56 @@ describe("the owner's picture", () => {
       // refused for being cut and not for being what they are.
       expect((await putOwner(whole)).status, label).toBe(200);
       expect((await putOwner(kept)).status, label).toBe(200);
-      for (const cut of [4, 10, 16]) {
-        const res = await putOwner(whole.subarray(0, cut));
-        expect(await refusal(res), `${label} at ${String(cut)}`).toMatchObject({
-          status: 400,
-          code: "validation_error",
-        });
+      for (const cut of [4, 10, 16, 33, whole.length - 1]) {
+        if (cut >= whole.length) continue;
+        for (const send of [putOwner, putProfile]) {
+          const res = await send(whole.subarray(0, cut));
+          expect(
+            await refusal(res),
+            `${label} at ${String(cut)} of ${String(whole.length)}`,
+          ).toMatchObject({ status: 400, code: "validation_error" });
+        }
       }
     }
+    // Files that stop where they should not, or hold more than they declare.
+    const longerWebp = Buffer.concat([webp(20, 20), Buffer.alloc(2)]);
+    const shorterWebp = Buffer.from(webp(20, 20));
+    shorterWebp.writeUInt32LE(shorterWebp.readUInt32LE(4) - 2, 4);
+    const whole = jpeg(20, 20);
+    for (const [label, file] of [
+      [
+        "a PNG with a byte after its end",
+        Buffer.concat([png(20, 20), Buffer.alloc(1)]),
+      ],
+      ["a WebP with bytes past its declared size", longerWebp],
+      ["a WebP that declares less than the file", shorterWebp],
+      ["a JPEG with no end marker", whole.subarray(0, whole.length - 2)],
+      ["a JPEG of a lossless frame", jpeg(20, 20, 0xc3)],
+      ["a JPEG of an arithmetic frame", jpeg(20, 20, 0xc9)],
+    ] as const) {
+      expect(await refusal(await putOwner(file)), label).toMatchObject({
+        status: 400,
+        code: "validation_error",
+      });
+    }
+    // The witness: a progressive frame is taken, so the refusals above were
+    // for what they are.
+    expect((await putOwner(jpeg(20, 20, 0xc2))).status).toBe(200);
+    expect((await putOwner(kept)).status).toBe(200);
     expect((await served()).bytes).toEqual(kept);
   });
 
   it("accepts 4096 pixels on a side and refuses none and 4097", async () => {
     await clear();
-    const makers = {
-      png: pngHeaderOnly,
-      jpeg,
-      webp,
-    } as const;
+    const makers = { png: (w: number, h: number) => png(w, h), jpeg, webp };
     for (const [label, make] of Object.entries(makers)) {
-      expect((await putOwner(make(4096, 4096))).status, label).toBe(200);
+      expect((await putOwner(make(4096, 1))).status, label).toBe(200);
+      expect((await putOwner(make(1, 4096))).status, label).toBe(200);
       for (const [width, height] of [
         [0, 8],
         [8, 0],
-        [4097, 8],
-        [8, 4097],
+        [4097, 1],
+        [1, 4097],
       ] as const) {
         // WebP stores its size less one, so zero is not writable there.
         if (label === "webp" && (width === 0 || height === 0)) continue;
@@ -390,13 +414,11 @@ describe("the owner's picture", () => {
 
   it("accepts a picture of exactly 2097152 bytes and refuses one byte more", async () => {
     await clear();
-    const atLimit = padded(png(8, 8), MAX_BYTES);
+    const atLimit = pngPadded(MAX_BYTES);
     expect(atLimit.length).toBe(MAX_BYTES);
-    // Zeros after the header are not a decodable picture, which the contract
-    // does not ask for: the kind and the size are judged from the header.
     expect((await putOwner(atLimit)).status).toBe(200);
     expect((await served()).bytes.length).toBe(MAX_BYTES);
-    const over = padded(png(8, 8), MAX_BYTES + 1);
+    const over = pngPadded(MAX_BYTES + 1);
     for (const send of [() => putOwner(over), () => putProfile(over)]) {
       const refused = await refusal(await send());
       expect(refused).toMatchObject({
@@ -421,7 +443,7 @@ describe("the owner's picture", () => {
     expect(declared.status).toBe(413);
     expect(JSON.parse(declared.body).error.code).toBe("request_too_large");
     // Not declared: past the limit the answer comes with the body still open.
-    const piece = padded(png(8, 8), 256 * 1024);
+    const piece = pngPadded(256 * 1024);
     const parts = Array.from({ length: 10 }, () => piece);
     const answer = await sendChunked(parts, 20_000);
     expect(answer).toEqual({ status: 413, ended: false });
@@ -435,7 +457,7 @@ describe("the owner's picture", () => {
   it("keeps the previous picture when an upload is cut off, and replaces it when one finishes", async () => {
     const kept = png(14, 14, 0x11);
     expect((await putOwner(kept)).status).toBe(200);
-    // The start of a real picture, whose header parses: were the cut body
+    // A whole picture, sent under a length that promises more: were the body
     // judged as it stood, the server would take it.
     const next = png(64, 64, 0x22);
     await new Promise<void>((resolve) => {
@@ -445,12 +467,12 @@ describe("the owner's picture", () => {
         headers: {
           cookie: server.ownerCookie,
           origin: server.apiUrl,
-          "content-length": String(next.length),
+          "content-length": String(next.length + 16),
         },
       });
       req.on("error", () => resolve());
       req.on("close", () => resolve());
-      req.write(next.subarray(0, 60), () => {
+      req.write(next, () => {
         setTimeout(() => req.destroy(), 100);
       });
     });

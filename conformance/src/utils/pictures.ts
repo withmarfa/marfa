@@ -57,24 +57,34 @@ export function png(width = 8, height = 8, shade = 0x7f): Buffer {
   ]);
 }
 
-/** A PNG that declares a size and carries no pixel data. */
-export function pngHeaderOnly(width: number, height: number): Buffer {
+/**
+ * A PNG of exactly `size` bytes: `png()` with a private ancillary chunk of
+ * zeros before the end, which every PNG reader skips.
+ */
+export function pngPadded(size: number, width = 8, height = 8): Buffer {
+  const whole = png(width, height);
+  const end = whole.length - 12;
+  const filler = size - whole.length - 12;
+  if (filler < 0) throw new Error("the size is smaller than the picture");
   return Buffer.concat([
-    PNG_SIGNATURE,
-    chunk("IHDR", pngHeader(width, height)),
-    chunk("IEND", Buffer.alloc(0)),
+    whole.subarray(0, end),
+    chunk("paDd", Buffer.alloc(filler)),
+    whole.subarray(end),
   ]);
 }
 
-/** A JPEG whose frame header declares `width` by `height`. */
-export function jpeg(width = 8, height = 8): Buffer {
+/**
+ * A JPEG whose frame header declares `width` by `height`, under the frame
+ * marker `kind`: 0xc0 is baseline, 0xc1 extended sequential, 0xc2 progressive.
+ */
+export function jpeg(width = 8, height = 8, kind = 0xc0): Buffer {
   const app0 = Buffer.from([
     0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01, 0x01, 0x00,
     0x00, 0x01, 0x00, 0x01, 0x00, 0x00,
   ]);
   const frame = Buffer.from([
     0xff,
-    0xc0,
+    kind,
     0x00,
     0x0b,
     0x08,
@@ -147,9 +157,4 @@ export function svg(): Buffer {
 
 export function html(): Buffer {
   return Buffer.from("<!doctype html><script>alert(1)</script>");
-}
-
-/** `header` followed by zeros, `size` bytes in all. */
-export function padded(header: Buffer, size: number): Buffer {
-  return Buffer.concat([header, Buffer.alloc(size - header.length)]);
 }

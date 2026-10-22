@@ -398,7 +398,9 @@ If the body of a picture upload is empty, then the server MUST refuse it with `4
 
 ### `instance-claim/picture-damaged`
 
-If the body of a picture upload begins as a PNG, a JPEG or a WebP and ends before the header that gives its width and height, then the server MUST refuse it with `400 validation_error` and keep the previous picture.
+If the body of a picture upload begins as a PNG, a JPEG or a WebP and is cut short or damaged, then the server MUST refuse it with `400 validation_error` and keep the previous picture.
+
+**Reason:** A picture that stops short draws as a broken image on every page that shows it. The server judges a file whole by the marks that end it, not by decoding it: a PNG is a chain of chunks that ends in `IEND` as its last twelve bytes and holds an `IDAT`, a WebP declares in its `RIFF` header a size equal to the file's size less eight, and a JPEG is a baseline, extended sequential or progressive frame whose first scan is followed by the end-of-image marker. A file that has more or less than it declares is damaged.
 
 **Tests:** `compliance/owner-picture.test.ts › refuses an empty body and a picture cut short, and keeps the previous one`.
 
