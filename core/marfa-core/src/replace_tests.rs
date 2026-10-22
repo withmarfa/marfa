@@ -3,8 +3,9 @@
 //! cannot finish.
 //!
 //! `a_store_that_cannot_be_made_leaves_the_refused_one_where_it_was` flips a
-//! process-global fault, so these tests need one process per test, as
-//! `cargo nextest` runs them (`core/README.md`).
+//! process-global fault, so it must not share a process with another
+//! replacement: run these tests with `cargo nextest`, one process per test
+//! (`core/README.md`).
 
 use std::path::{Path, PathBuf};
 
@@ -95,11 +96,14 @@ fn refusal(path: &Path) -> CoreError {
     }
 }
 
+/// Nothing beside the store is a copy set aside, whatever `n` it took.
 fn no_set_aside_copy(path: &Path) {
-    for suffix in ["", "-wal", "-shm", "-journal"] {
-        let aside = beside(&beside(path, ".refused"), suffix);
-        assert!(!aside.exists(), "{} was left behind", aside.display());
-    }
+    let left: Vec<String> = std::fs::read_dir(path.parent().unwrap())
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|name| name.contains(".refused"))
+        .collect();
+    assert!(left.is_empty(), "{left:?} was left behind");
 }
 
 #[test]
@@ -336,10 +340,10 @@ fn a_store_that_cannot_be_made_leaves_the_refused_one_where_it_was() {
 }
 
 /// Leaves what a replacement that did not finish would have: copies set aside
-/// under the unnumbered name and under `.refused-1`, each with a log.
+/// under `.refused-1` and `.refused-2`, each with a log.
 fn leave_copies(path: &Path) -> Vec<(PathBuf, Vec<u8>)> {
     let mut left = Vec::new();
-    for aside in [".refused", ".refused-1"] {
+    for aside in [".refused-1", ".refused-2"] {
         for suffix in ["", "-wal"] {
             let file = beside(&beside(path, aside), suffix);
             let bytes = format!("what an earlier replacement set aside as {aside}{suffix}");
@@ -373,6 +377,7 @@ fn a_copy_left_set_aside_does_not_block_a_replacement_and_is_never_overwritten()
     drop(core);
 
     assert_untouched(&left);
+    no_numbered_copy_beyond_leftovers(&path);
     drop(Core::open(&path, None).expect("the new store is refused"));
 }
 
@@ -393,7 +398,7 @@ fn replacements_in_a_row_after_a_leftover_set_aside_overwrite_nothing() {
 }
 
 fn no_numbered_copy_beyond_leftovers(path: &Path) {
-    for n in 2..5 {
+    for n in 3..6 {
         for suffix in ["", "-wal", "-shm", "-journal"] {
             let aside = beside(&beside(path, &format!(".refused-{n}")), suffix);
             assert!(!aside.exists(), "{} was left behind", aside.display());

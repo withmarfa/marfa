@@ -2534,7 +2534,7 @@ When a device refuses a store `wrong_schema`, a device MUST NOT advise deleting 
 
 While a device holds a store's writer role, when it is asked to replace a store it refuses `wrong_schema` and the store holds no write the server has not taken, a device MUST replace the store with an empty one of this build's shape.
 
-**Reason:** without this a person could use this build on that path only by deleting the store's files by hand. The new store holds nothing but what a hydration refills. Device-local state the server never held, such as pins, is lost, so an app that needs it reads it before replacing the store.
+**Reason:** without this a person could use this build on that path only by deleting the store's files by hand. The new store is empty, so what only the old store held, such as pins, is lost, and an app that needs it reads it before replacing the store.
 
 **Tests:** `device/binding-replace-refused.test.ts › replaces a refused store that holds nothing unsent with an empty one, and opens it`.
 
@@ -2548,7 +2548,7 @@ When a device replaces a store it refuses `wrong_schema`, a device MUST open the
 
 ### `device/replace-refused-unsent`
 
-If a device is asked to replace a store that holds a write the server has not taken, or whose writes it cannot count, then a device MUST refuse `wrong_schema`.
+If a device is asked to replace a store it refuses `wrong_schema` that holds a write the server has not taken, or whose writes it cannot count, then a device MUST refuse to replace it `wrong_schema`.
 
 **Reason:** only the build that made the store can send those writes (`device/wrong-schema-no-delete`), and a store whose writes cannot be counted may hold some.
 
