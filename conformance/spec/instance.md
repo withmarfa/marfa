@@ -846,17 +846,19 @@ The server MUST write the `Content-Security-Policy` of an HTML page with `defaul
 
 **Tests:** `compliance/instance.test.ts › sends a content security policy with every HTML page and a nonce of its own with each`.
 
-### `instance/page-policy-images-own`
+### `instance/page-policy-images-console`
 
-When the server writes `connect-src 'self'` into the `Content-Security-Policy` of an HTML page, the server MUST write the page's `img-src` as `'self' data:`.
+When the server writes the `Content-Security-Policy` of an owner's console page, the server MUST write the page's `img-src` as `'self' data:`.
 
-**Reason:** The pages that talk to their own server show the owner's picture from the server's address. The picture is served with `sandbox` and `nosniff`, so an image source by origin cannot become a script or a style.
+**Reason:** the console pages show the owner's picture from the server's own address. The picture is served with `sandbox` and `nosniff`, so an image source by origin cannot become a script or a style. The console pages are listed under Console pages in `authentication`.
 
 **Tests:** `compliance/instance.test.ts › sends a content security policy with every HTML page and a nonce of its own with each`.
 
-### `instance/page-policy-images-inline`
+### `instance/page-policy-images-other`
 
-When the server writes no `connect-src` into the `Content-Security-Policy` of an HTML page, the server MUST write the page's `img-src` as `data:`.
+When the server writes the `Content-Security-Policy` of an HTML page that is not an owner's console page, the server MUST write the page's `img-src` as `data:`, whether or not the page has a `connect-src`.
+
+**Reason:** no other page shows the picture, so none has a reason to load an image from the server's address.
 
 **Tests:** `compliance/instance.test.ts › sends a content security policy with every HTML page and a nonce of its own with each`.
 
