@@ -4154,6 +4154,38 @@ When `marfa docs` is given a page by its path, with or without leading and trail
 
 **Tests:** `device/contract.test.ts › reads one docs page however it is named: with a slash, under docs/, with .md, or by its address`.
 
+### `device/docs-search-miss`
+
+When `marfa docs search` receives no hit and `--json` is not given, the CLI MUST print that no page matches, then the titles and paths of the pages whose title, path or description hold words of the query when the docs site lists any, then the line "`marfa docs topics` lists every page.", and exit 0.
+
+**Reason:** an agent that searched for a word the docs do not use has no next step in a bare "no match". A site that cannot list its pages still gets the plain miss, because the search itself succeeded.
+
+**Tests:** `device/contract.test.ts › helps a docs search that finds nothing, and reads one section of a page`.
+
+### `device/docs-search-miss-json`
+
+Where `--json` is given, when `marfa docs search` receives no hit, the CLI MUST print the answer of the docs site and send no request to `/api/docs/topics`.
+
+**Reason:** the answer of a search keeps one shape whether or not it found something, and a script reading it asked for nothing else.
+
+**Tests:** `device/contract.test.ts › helps a docs search that finds nothing, and reads one section of a page`.
+
+### `device/docs-section`
+
+When `marfa docs` is given a page and `--section` with the text or the anchor of one of the page's Markdown headings, in any case, the CLI MUST print the page from that heading up to the next heading of the same depth or a higher one, and where `--json` is given, report that text in `markdown` and the heading asked for in `section`.
+
+**Reason:** the changelog is longer than any agent needs to read to learn what one command does, and the site needs no change because the page is cut where it is read.
+
+**Tests:** `device/contract.test.ts › helps a docs search that finds nothing, and reads one section of a page`.
+
+### `device/docs-section-missing`
+
+If the page `marfa docs` is given has no heading named by `--section`, then the CLI MUST exit 1 with `docs_section_not_found`, naming the page and listing the page's headings.
+
+**Reason:** a retry does not change a heading the page lacks, and the list is the next step for an agent that guessed the wording.
+
+**Tests:** `device/contract.test.ts › helps a docs search that finds nothing, and reads one section of a page`.
+
 ### `device/docs-json-refused`
 
 If the docs site answers a success to `marfa docs search` with anything but a JSON object whose `hits` is an array of hits that each carry a `title` and a `url`, or to `marfa docs topics` with anything but a JSON object whose `pages` is an array of pages that each carry a `title` and a `url`, then the CLI MUST exit 3 with `decoding`, printing nothing to standard output.

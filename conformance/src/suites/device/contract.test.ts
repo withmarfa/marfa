@@ -2046,6 +2046,91 @@ describe("every command holds the server to the contract", () => {
     }
   });
 
+  it("helps a docs search that finds nothing, and reads one section of a page", async () => {
+    server = await ScriptedServer.start();
+    const noHits = {
+      kind: "json",
+      status: 200,
+      contract: null,
+      body: { hits: [] },
+    } as const;
+    // Consumed in order: the plain miss, the miss under --json, the miss
+    // when the site cannot list its pages.
+    server.answer("GET", "/api/docs/search", noHits, noHits, noHits);
+    server.answer(
+      "GET",
+      "/api/docs/topics",
+      {
+        kind: "json",
+        status: 200,
+        contract: null,
+        body: {
+          pages: [
+            {
+              title: "Restore an archive",
+              url: "https://docs.marfa.so/guides/restore",
+              description: null,
+              breadcrumbs: [],
+            },
+            {
+              title: "Webhooks",
+              url: "https://docs.marfa.so/webhooks",
+              description: null,
+              breadcrumbs: [],
+            },
+          ],
+        },
+      },
+      markdownPage("down", 503),
+    );
+    const page =
+      "# Files\n\nKeep files.\n\n## Folders\n\nIn a folder.\n\n### Rules\n\nOne.\n\n## Backup\n\nCopy.\n";
+    server.answer("GET", "/files.md", markdownPage(page), markdownPage(page));
+
+    const miss = await marfa(["docs", "search", "archive"], undefined, {
+      MARFA_DOCS_URL: server.url,
+    });
+    expect(miss.code, miss.stderr).toBe(0);
+    expect(miss.stdout).toBe(
+      'no docs page matches "archive"\nThe closest pages by title:\n  Restore an archive  /guides/restore\n`marfa docs topics` lists every page.\n',
+    );
+    const json = await docs(server.url, ["search", "archive"]);
+    expect(json.code, json.stderr).toBe(0);
+    expect(JSON.parse(json.stdout)).toEqual({ hits: [] });
+    expect(sent(server)).toEqual([
+      "GET /api/docs/search",
+      "GET /api/docs/topics",
+      "GET /api/docs/search",
+    ]);
+    const unlisted = await marfa(["docs", "search", "archive"], undefined, {
+      MARFA_DOCS_URL: server.url,
+    });
+    expect(unlisted.code, unlisted.stderr).toBe(0);
+    expect(unlisted.stdout).toBe(
+      'no docs page matches "archive"\n`marfa docs topics` lists every page.\n',
+    );
+
+    const section = await marfa(
+      ["docs", "files", "--section", "folders"],
+      undefined,
+      { MARFA_DOCS_URL: server.url },
+    );
+    expect(section.code, section.stderr).toBe(0);
+    expect(section.stdout).toBe(
+      "## Folders\n\nIn a folder.\n\n### Rules\n\nOne.\n",
+    );
+    const absent = await docs(server.url, ["files", "--section", "nowhere"]);
+    expect(absent.code, absent.stderr).toBe(1);
+    expect(absent.stdout).toBe("");
+    const envelope = refusal(absent.stderr);
+    expect(envelope.error.code).toBe("docs_section_not_found");
+    expect(envelope.error.message).toContain("files");
+    for (const heading of ["Files", "  Folders", "    Rules", "  Backup"]) {
+      expect(envelope.error.message).toContain(heading);
+    }
+    expect(server.unmatchedRequests).toEqual([]);
+  });
+
   it("exits 3 with decoding for a docs search or topics answer that is not the JSON read, printing none of it", async () => {
     server = await ScriptedServer.start();
     // Consumed in order: a body that is not the shape read, then entries

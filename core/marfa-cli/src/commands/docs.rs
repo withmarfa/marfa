@@ -4,6 +4,7 @@
 //! `marfa_core::http::Http`: both send a credential and check the contract
 //! header, and the site has neither.
 
+use std::io::IsTerminal;
 use std::time::Duration;
 
 use clap::builder::NonEmptyStringValueParser;
@@ -15,7 +16,7 @@ use serde_json::{Value, json};
 use url::Url;
 
 use crate::error::CliError;
-use crate::output::Printer;
+use crate::output::{Printer, printable};
 use crate::remote::Named;
 
 pub const DEFAULT_SITE: &str = "https://docs.marfa.so";
@@ -43,12 +44,17 @@ const BODY_LIMIT: u64 = 10 * 1024 * 1024;
 #[command(
     args_conflicts_with_subcommands = true,
     arg_required_else_help = true,
-    after_long_help = "Examples:\n  marfa docs search \"restore an archive\" --limit 5\n  marfa docs topics\n  marfa docs files"
+    after_long_help = "Examples:\n  marfa docs search \"restore an archive\" --limit 5\n  marfa docs topics\n  marfa docs files\n  marfa docs cli --section \"Use another keychain file\""
 )]
 pub struct DocsArgs {
     /// The page to print, as Markdown: its path on the docs site, or its address.
     #[arg(value_name = "PAGE")]
     pub page: Option<String>,
+    /// Print only the section under this heading, with the sections inside it:
+    /// the heading's text, or its anchor such as `use-another-keychain-file`.
+    /// An unknown heading is refused with the page's headings listed.
+    #[arg(long, value_name = "HEADING", requires = "page")]
+    pub section: Option<String>,
     #[command(subcommand)]
     pub command: Option<DocsCommand>,
 }
@@ -346,9 +352,17 @@ fn one_line(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-fn describe_hits(query: &str, hits: &Hits) -> String {
+fn describe_hits(query: &str, hits: &Hits, closest: &[&Topic]) -> String {
     if hits.hits.is_empty() {
-        return format!("no docs page matches {query:?}");
+        let mut text = format!("no docs page matches {query:?}");
+        if !closest.is_empty() {
+            text.push_str("\nThe closest pages by title:");
+            for page in closest {
+                text.push_str(&format!("\n  {}  {}", page.title, address_path(&page.url)));
+            }
+        }
+        text.push_str("\n`marfa docs topics` lists every page.");
+        return text;
     }
     hits.hits
         .iter()
@@ -361,6 +375,202 @@ fn describe_hits(query: &str, hits: &Hits) -> String {
         })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+/// A page's address as the path `marfa docs` takes, or the address itself
+/// where it is not one.
+fn address_path(url: &str) -> String {
+    Url::parse(url).map_or_else(|_| url.to_string(), |url| url.path().to_string())
+}
+
+/// The most pages a miss offers.
+const CLOSEST: usize = 5;
+
+/// The pages whose title, path or description holds the most words of the
+/// query, best first, none that holds none.
+fn closest<'a>(query: &str, topics: &'a Topics) -> Vec<&'a Topic> {
+    let words: Vec<String> = query
+        .to_lowercase()
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|word| word.chars().count() >= 2)
+        .map(|word| {
+            // "archives" finds "archive".
+            match word.strip_suffix('s') {
+                Some(stem) if stem.chars().count() >= 3 => stem.to_string(),
+                _ => word.to_string(),
+            }
+        })
+        .collect();
+    let mut scored: Vec<(usize, &Topic)> = topics
+        .pages
+        .iter()
+        .map(|page| {
+            let haystack = format!(
+                "{} {} {}",
+                page.title,
+                address_path(&page.url),
+                page.description.as_deref().unwrap_or_default()
+            )
+            .to_lowercase();
+            let title = page.title.to_lowercase();
+            // A word in the title counts double.
+            let score = words
+                .iter()
+                .map(|word| {
+                    usize::from(haystack.contains(word.as_str()))
+                        + usize::from(title.contains(word.as_str()))
+                })
+                .sum();
+            (score, page)
+        })
+        .filter(|(score, _)| *score > 0)
+        .collect();
+    scored.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.title.cmp(&b.1.title)));
+    scored
+        .into_iter()
+        .take(CLOSEST)
+        .map(|(_, page)| page)
+        .collect()
+}
+
+/// A heading of a Markdown page: its depth, its text, the anchor the site
+/// gave it where it wrote one as a trailing `[#anchor]`, and the line it is on.
+struct Heading {
+    level: usize,
+    text: String,
+    anchor: Option<String>,
+    line: usize,
+}
+
+/// The ATX headings of a page, leaving out lines inside a fenced code block.
+fn headings(markdown: &str) -> Vec<Heading> {
+    let mut found = Vec::new();
+    let mut fence: Option<(char, usize)> = None;
+    for (line, text) in markdown.lines().enumerate() {
+        let trimmed = text.trim_start();
+        if text.len() - trimmed.len() > 3 {
+            continue;
+        }
+        let mark = trimmed.chars().next().filter(|c| matches!(c, '`' | '~'));
+        if let Some(mark) = mark {
+            let run = trimmed.chars().take_while(|c| *c == mark).count();
+            if run >= 3 {
+                match fence {
+                    None => fence = Some((mark, run)),
+                    Some((open, length)) if open == mark && run >= length => {
+                        if trimmed[run..].trim().is_empty() {
+                            fence = None;
+                        }
+                    }
+                    Some(_) => {}
+                }
+                continue;
+            }
+        }
+        if fence.is_some() {
+            continue;
+        }
+        let level = trimmed.chars().take_while(|c| *c == '#').count();
+        if (1..=6).contains(&level) {
+            let rest = &trimmed[level..];
+            if rest.is_empty() || rest.starts_with([' ', '\t']) {
+                let title = rest.trim().trim_end_matches('#').trim_end();
+                let (title, anchor) = match title.rsplit_once(" [#") {
+                    Some((title, id)) if id.ends_with(']') && !id.contains(' ') => {
+                        (title.trim_end(), Some(id.trim_end_matches(']').to_string()))
+                    }
+                    _ => (title, None),
+                };
+                if !title.is_empty() {
+                    found.push(Heading {
+                        level,
+                        text: title.to_string(),
+                        anchor,
+                        line,
+                    });
+                }
+            }
+        }
+    }
+    found
+}
+
+/// A heading as a reader types it: no code marks or emphasis, one space
+/// between words, lower case.
+fn plain(text: &str) -> String {
+    text.chars()
+        .filter(|c| !matches!(c, '`' | '*' | '_'))
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
+}
+
+/// The anchor a heading has on the site: lower case, words joined by `-`,
+/// punctuation dropped.
+fn anchor(text: &str) -> String {
+    plain(text)
+        .chars()
+        .filter(|c| c.is_alphanumeric() || *c == ' ' || *c == '-')
+        .collect::<String>()
+        .replace(' ', "-")
+}
+
+/// The part of `markdown` under the heading `asked`, up to the next heading
+/// of the same depth or a higher one. Where no heading is named so, the
+/// headings the page has, each indented by its depth.
+fn section(markdown: &str, asked: &str) -> Result<String, Vec<String>> {
+    let found = headings(markdown);
+    let wanted = plain(asked.trim().trim_start_matches('#'));
+    let anchored = asked.trim().trim_start_matches('#').trim().to_lowercase();
+    let start = found.iter().position(|h| {
+        plain(&h.text) == wanted
+            || h.anchor
+                .as_deref()
+                .unwrap_or(&anchor(&h.text))
+                .to_lowercase()
+                == anchored
+    });
+    let Some(start) = start else {
+        return Err(found
+            .iter()
+            .map(|h| format!("{}{}", "  ".repeat(h.level - 1), printable(&h.text)))
+            .collect());
+    };
+    let end = found[start + 1..]
+        .iter()
+        .find(|h| h.level <= found[start].level)
+        .map_or(usize::MAX, |h| h.line);
+    let lines: Vec<&str> = markdown
+        .lines()
+        .skip(found[start].line)
+        .take(end.saturating_sub(found[start].line))
+        .collect();
+    let mut text = lines.join("\n");
+    while text.ends_with('\n') {
+        text.pop();
+    }
+    text.push('\n');
+    Ok(text)
+}
+
+/// A page as a terminal may be shown it: every control character but the
+/// line break and the tab made visible, as `printable` does for other text.
+fn for_terminal(markdown: &str) -> String {
+    markdown
+        .split_inclusive('\n')
+        .map(|line| {
+            let (body, end) = line
+                .strip_suffix('\n')
+                .map_or((line, ""), |body| (body, "\n"));
+            body.split('\t')
+                .map(printable)
+                .collect::<Vec<_>>()
+                .join("\t")
+                + end
+        })
+        .collect()
 }
 
 fn describe_topics(topics: &Topics) -> String {
@@ -391,7 +601,24 @@ pub fn run(args: DocsArgs, named: &Named, out: &Printer) -> Result<(), CliError>
         (Some(DocsCommand::Search { query, limit }), _) => {
             let answer = site.search(&query, limit)?;
             let hits: Hits = serde_json::from_value(answer.clone())?;
-            out.report(&answer, || describe_hits(&query, &hits))
+            out.report(&answer, || {
+                // A miss is helped with the page titles nearest the query; a
+                // site that cannot list them still gets the plain miss.
+                let topics: Option<Topics> = hits
+                    .hits
+                    .is_empty()
+                    .then(|| {
+                        site.topics()
+                            .ok()
+                            .and_then(|answer| serde_json::from_value(answer).ok())
+                    })
+                    .flatten();
+                let near = topics
+                    .as_ref()
+                    .map(|topics| closest(&query, topics))
+                    .unwrap_or_default();
+                describe_hits(&query, &hits, &near)
+            })
         }
         (Some(DocsCommand::Topics), _) => {
             let answer = site.topics()?;
@@ -399,13 +626,28 @@ pub fn run(args: DocsArgs, named: &Named, out: &Printer) -> Result<(), CliError>
             out.report(&answer, || describe_topics(&topics))
         }
         (None, Some(page)) => {
-            let page = site.page(&page)?;
+            let mut page = site.page(&page)?;
+            if let Some(heading) = &args.section {
+                page.markdown = section(&page.markdown, heading).map_err(|headings| {
+                    CliError::DocsSectionNotFound {
+                        path: page.path.clone(),
+                        heading: heading.clone(),
+                        headings,
+                    }
+                })?;
+            }
             if out.json {
-                out.value(&json!({
+                let mut shown = json!({
                     "path": page.path,
                     "url": page.url,
                     "markdown": page.markdown,
-                }))
+                });
+                if let Some(heading) = &args.section {
+                    shown["section"] = json!(heading);
+                }
+                out.value(&shown)
+            } else if std::io::stdout().is_terminal() {
+                out.raw(&for_terminal(&page.markdown))
             } else {
                 out.raw(&page.markdown)
             }
@@ -794,12 +1036,108 @@ mod tests {
     fn a_hit_is_its_title_and_address_with_its_first_snippet_under_it() {
         let hits: Hits = serde_json::from_str(HITS).unwrap();
         assert_eq!(
-            describe_hits("files", &hits),
+            describe_hits("files", &hits, &[]),
             "Files  https://docs.marfa.so/files\n  a folder of files\n\
              Bare  https://docs.marfa.so/bare"
         );
         let none: Hits = serde_json::from_str(r#"{"hits":[]}"#).unwrap();
-        assert_eq!(describe_hits("zzz", &none), "no docs page matches \"zzz\"");
+        assert_eq!(
+            describe_hits("zzz", &none, &[]),
+            "no docs page matches \"zzz\"\n`marfa docs topics` lists every page."
+        );
+    }
+
+    #[test]
+    fn a_miss_offers_the_titles_nearest_the_query_and_none_that_share_no_word() {
+        let topics: Topics = serde_json::from_str(
+            r#"{"pages":[
+            {"title":"Restore an archive","url":"https://docs.marfa.so/guides/restore","description":"Bring an export back."},
+            {"title":"Keep files","url":"https://docs.marfa.so/files","description":"Files in a folder."},
+            {"title":"Webhooks","url":"https://docs.marfa.so/webhooks","description":null}]}"#,
+        )
+        .unwrap();
+        let near = closest("restoring archives", &topics);
+        assert_eq!(
+            near.len(),
+            1,
+            "stems and suffixes are not matched: {near:?}"
+        );
+        assert_eq!(near[0].title, "Restore an archive");
+        let near = closest("archive of my folder", &topics);
+        assert_eq!(
+            near.iter().map(|p| p.title.as_str()).collect::<Vec<_>>(),
+            ["Restore an archive", "Keep files"]
+        );
+        assert!(closest("zzz qqq", &topics).is_empty());
+        let none: Hits = serde_json::from_str(r#"{"hits":[]}"#).unwrap();
+        assert_eq!(
+            describe_hits(
+                "restore archive",
+                &none,
+                &closest("restore archive", &topics)
+            ),
+            "no docs page matches \"restore archive\"\nThe closest pages by title:\n  \
+             Restore an archive  /guides/restore\n`marfa docs topics` lists every page."
+        );
+    }
+
+    const PAGE: &str = "# Title\n\nIntro.\n\n## First\n\nOne.\n\n```sh\n# not a heading\n## nor this\n```\n\n### Inner `code`\n\nDeep.\n\n## Second [#the-second]\n\nTwo.\n\n## First\n\nAgain.\n";
+
+    #[test]
+    fn a_section_runs_from_its_heading_to_the_next_of_the_same_depth_or_higher() {
+        assert_eq!(
+            section(PAGE, "First").unwrap(),
+            "## First\n\nOne.\n\n```sh\n# not a heading\n## nor this\n```\n\n### Inner `code`\n\nDeep.\n"
+        );
+        assert_eq!(
+            section(PAGE, "Second").unwrap(),
+            "## Second [#the-second]\n\nTwo.\n"
+        );
+        assert_eq!(
+            section(PAGE, "the-second").unwrap(),
+            section(PAGE, "second").unwrap()
+        );
+        assert_eq!(
+            section(PAGE, "Inner code").unwrap(),
+            "### Inner `code`\n\nDeep.\n"
+        );
+        assert!(section(PAGE, "Title").unwrap().ends_with("Again.\n"));
+    }
+
+    #[test]
+    fn a_section_is_found_by_its_text_in_any_case_or_by_its_anchor() {
+        let first = section(PAGE, "First").unwrap();
+        for asked in ["first", "  FIRST ", "## First", "#first"] {
+            assert_eq!(section(PAGE, asked).unwrap(), first, "{asked}");
+        }
+        assert_eq!(
+            section(PAGE, "inner-code").unwrap(),
+            "### Inner `code`\n\nDeep.\n"
+        );
+    }
+
+    #[test]
+    fn an_unknown_heading_lists_the_headings_the_page_has_and_not_those_in_code() {
+        let headings = section(PAGE, "not a heading").unwrap_err();
+        assert_eq!(
+            headings,
+            [
+                "Title",
+                "  First",
+                "    Inner `code`",
+                "  Second",
+                "  First"
+            ]
+        );
+    }
+
+    #[test]
+    fn a_page_on_a_terminal_shows_control_characters_and_keeps_its_lines_and_tabs() {
+        assert_eq!(
+            for_terminal("# A\n\tcol\u{1b}[2J\ttwo\r\nok \u{202e}x\n"),
+            "# A\n\tcol\\u{1b}[2J\ttwo\\u{d}\nok \\u{202e}x\n"
+        );
+        assert_eq!(for_terminal("plain\n"), "plain\n");
     }
 
     #[test]
