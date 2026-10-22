@@ -49,6 +49,10 @@ pub enum CliError {
     },
     #[error("{0}")]
     Usage(String),
+    /// Docker, Tailscale or the server in its container did not do what
+    /// `marfa server` needs; the message says what to start or install.
+    #[error("{0}")]
+    Install(String),
     #[error("no working copy named: pass --db or set MARFA_DB")]
     NoStoreNamed,
     #[error(
@@ -290,6 +294,7 @@ own_codes! {
     CliError::Watch(_) => "watch",
     CliError::ClosedOutput => "closed_output",
     CliError::Usage(_) => "usage",
+    CliError::Install(_) => "install",
     CliError::NoStoreNamed | CliError::NoStoreAt(_) => "no_store",
     CliError::NoServerNamed | CliError::NoServerForKey => "no_server",
     CliError::NoCredential { .. } => "no_credential",
@@ -385,9 +390,10 @@ impl CliError {
                 | CoreError::CopyExpired { .. }
                 | CoreError::WrongServer { .. } => Exit::Local,
             },
-            CliError::Io(_) | CliError::Watch(_) | CliError::DocsUnreachable { .. } => {
-                Exit::Environment
-            }
+            CliError::Io(_)
+            | CliError::Watch(_)
+            | CliError::Install(_)
+            | CliError::DocsUnreachable { .. } => Exit::Environment,
             CliError::NotHeld(_)
             | CliError::Invalid(_)
             | CliError::ArchiveLacksBlobs(_)
@@ -776,6 +782,7 @@ mod tests {
             "docs_page_not_found",
             "docs_unreachable",
             "blobs_missing",
+            "install",
         ] {
             expected.push(own);
         }
@@ -804,6 +811,7 @@ mod tests {
             CliError::FolderNotHandedOver(std::path::PathBuf::new()),
             CliError::Watch(String::new()),
             CliError::Usage(String::new()),
+            CliError::Install(String::new()),
             CliError::NoStoreNamed,
             CliError::NoStoreAt(std::path::PathBuf::new()),
             CliError::NoServerNamed,
