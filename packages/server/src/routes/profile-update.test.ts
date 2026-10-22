@@ -51,7 +51,7 @@ it("refuses empty, unknown and invalid owner fields", async () => {
   for (const body of [
     {},
     { avatar: "file:///tmp/picture" },
-    { avatar: "https://example.com/" + "a".repeat(2048) },
+    { avatar: "https://example.com/portrait.png" },
     { name: " " },
     { name: "\tName" },
     { name: "\u200fName" },
@@ -98,7 +98,7 @@ it("refuses profile fields without credential write authority and never accepts 
     { email: "other@example.com" },
     { name: "No", email: "other@example.com" },
     { avatar: "file:///tmp/picture" },
-    { avatar: "https://example.com/" + "a".repeat(2048) },
+    { avatar: "https://example.com/portrait.png" },
   ]) {
     expect(
       (
