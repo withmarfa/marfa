@@ -9,6 +9,11 @@ it("signs requests and links on real time before and after clock moves", async (
   const dates: string[] = [];
   const peer = createServer((request, response) => {
     dates.push(String(request.headers["x-amz-date"]));
+    // The SDK sets its signing clock from the Date header of each answer,
+    // which has one-second resolution, so a later signature can lag real
+    // time by up to a second plus the time since that answer, more than the
+    // bound below allows. With no header the signing clock is real time.
+    response.sendDate = false;
     response.writeHead(200, { "content-length": "0" });
     response.end();
   });
