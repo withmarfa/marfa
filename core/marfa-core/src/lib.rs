@@ -328,6 +328,7 @@ impl Core {
         // queued between the count and the replacement.
         let lock = lock::WriterLock::claim(Some(path))?;
         lock.refuse_unless_writer()?;
+        // A server `open` would refuse is refused here, before the store goes.
         if let Some(server) = &server {
             http::Http::new(&server.url, &server.key)?;
         }

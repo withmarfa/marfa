@@ -120,7 +120,7 @@ fn a_refused_store_holding_nothing_unsent_is_replaced_and_opened_as_the_writer()
     assert_eq!(
         crate::store::meta_get(&conn, crate::store::META_SERVER_ORIGIN).unwrap(),
         None,
-        "the new store holds what the refused one held"
+        "the new store holds what the refused one recorded"
     );
     drop(conn);
     drop(Core::open(&path, None).expect("the new store is refused"));

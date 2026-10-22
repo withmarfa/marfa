@@ -504,9 +504,10 @@ follows.
     the registry supervisor's turn.
 - **Failures.** `testHooks.fail(point, on)` makes the engine fail where it
   reaches `point`, and `testHooks.fail(point, false)` stops. The engine counts
-  each reach as `testHooks.reached` does. The only point that fails is
-  `data-version`, the read a reading handle's watch makes to learn that
-  another process saved.
+  each reach as `testHooks.reached` does. Two points fail: `data-version`, the
+  read a reading handle's watch makes to learn that another process saved, and
+  `replace-refused-make`, the making of the empty store that replaces a refused
+  one.
 - **Listeners and stores.** `watch` can be called more than once on one working
   copy, and each call is a listener. The host can make a listener block in each
   change, throw from one, and open the store the moment it is told it ended

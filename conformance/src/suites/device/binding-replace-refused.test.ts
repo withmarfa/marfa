@@ -59,7 +59,10 @@ async function refusedStore(
   expect(read.ok && read.value?.id).toBe(note);
   await started.device.forget();
   if (answered) {
-    edit(started.device.store, "UPDATE queue SET verdict = 'accepted', sent = 1");
+    edit(
+      started.device.store,
+      "UPDATE queue SET verdict = 'accepted', sent = 1",
+    );
   }
   edit(
     started.device.store,
@@ -88,7 +91,7 @@ describe("replacing a store the writer refuses", () => {
     const read = await device.get(note);
     expect(
       read.ok && read.value,
-      "the new store holds the note the refused one held",
+      "the new store still holds the note the refused one held",
     ).toBe(null);
     const created = await device.createItem({
       type: "core.note",
