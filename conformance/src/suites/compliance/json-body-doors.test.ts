@@ -36,6 +36,8 @@ afterAll(async () => {
 const NOT_JSON: Record<string, string> = {
   "POST /blobs": "the bytes of a blob",
   "POST /restore": "a gzip archive",
+  "PUT /owner/picture": "the bytes of a picture",
+  "PUT /profile/picture": "the bytes of a picture",
 };
 
 /** A published door that takes JSON, answered by the sign-in library. */

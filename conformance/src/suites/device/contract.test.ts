@@ -1110,6 +1110,7 @@ const invocations: Record<string, () => string[]> = {
   "folders health": () => [ID],
   login: () => ["--no-browser", "--print-token"],
   "owner show": () => [],
+  "owner picture": () => [],
   "profile update": () => ["--name", "Profile"],
   "apps list": () => [],
   "apps disconnect": () => [ID],
@@ -1259,10 +1260,21 @@ const BOUND_CORE_TABLE: Record<string, string> = {
     "bound-folder content refusal and invalid-contract receipt cases",
 };
 
+/**
+ * The table's rows, one to a command: a command that sends more than one
+ * request, such as `profile update` with a picture and a name, is the entry
+ * of each operation it reaches, and is driven once.
+ */
+function commandsOf<Row extends { command: string }>(rows: Row[]): Row[] {
+  return rows.filter(
+    (row, at) => rows.findIndex((it) => it.command === row.command) === at,
+  );
+}
+
 /** Every command driven here, as the table names it and beyond it. */
 async function driven(): Promise<{ command: string }[]> {
   const outcome = await marfa(["--json", "operations"]);
-  const rows = JSON.parse(outcome.stdout) as { command: string }[];
+  const rows = commandsOf(JSON.parse(outcome.stdout) as { command: string }[]);
   return [
     ...rows.filter(
       (row) =>
@@ -1289,10 +1301,12 @@ describe("every command holds the server to the contract", () => {
   async function table(): Promise<{ operation_id: string; command: string }[]> {
     const outcome = await marfa(["--json", "operations"]);
     expect(outcome.code, outcome.stderr).toBe(0);
-    return JSON.parse(outcome.stdout) as {
-      operation_id: string;
-      command: string;
-    }[];
+    return commandsOf(
+      JSON.parse(outcome.stdout) as {
+        operation_id: string;
+        command: string;
+      }[],
+    );
   }
 
   /** A server that answers every door alike, on the given contract. */
@@ -1694,6 +1708,87 @@ describe("every command holds the server to the contract", () => {
       }
       await server.stop();
       server = undefined;
+    }
+  });
+
+  it("holds the profile picture upload to the contract through its ordinary credential", async () => {
+    const picture = fileOf("profile-picture.png", "picture bytes");
+    for (const contract of [BUILT_FOR, String(builtFor + 1), null]) {
+      server = await ScriptedServer.start();
+      server.contract = contract;
+      server.answer("PUT", "/profile/picture", {
+        kind: "json",
+        status: 200,
+        body: { ok: true },
+      });
+      const outcome = await marfa([
+        "--json",
+        "--url",
+        server.url,
+        "--key",
+        KEY,
+        "profile",
+        "update",
+        "--avatar",
+        picture,
+      ]);
+      const label = `profile update --avatar on contract ${String(contract)}: ${outcome.stderr}`;
+      expect(sent(server), label).toEqual(["PUT /profile/picture"]);
+      expect(server.requests[0]?.headers.authorization, label).toBe(
+        `Bearer ${KEY}`,
+      );
+      expect(server.requests[0]?.body, label).toBe("picture bytes");
+      if (contract === BUILT_FOR) {
+        expect(outcome.code, label).toBe(0);
+        expect(JSON.parse(outcome.stdout), label).toEqual({ ok: true });
+      } else {
+        expect(outcome.code, label).toBe(1);
+        expect(codeOf(outcome.stderr), label).toBe("contract_mismatch");
+        expect(outcome.stdout, label).toBe("");
+        expect(outcome.stderr, label).toContain("may have taken effect");
+      }
+      await server.stop();
+      server = undefined;
+    }
+  });
+
+  it("holds the owner picture upload to the contract through its private socket", async () => {
+    const socket = await PrivateSocket.start();
+    const picture = fileOf("owner-picture.png", "picture bytes");
+    const body = {
+      id: "owner",
+      email: "a@cyzr.me",
+      name: "Owner",
+      created_at: WHEN,
+    };
+    socket.answer = body;
+    try {
+      for (const contract of [BUILT_FOR, String(builtFor + 1), null]) {
+        socket.contract = contract;
+        socket.asked = [];
+        const outcome = await marfa([
+          "--json",
+          "--socket",
+          socket.path,
+          "owner",
+          "update",
+          "--avatar",
+          picture,
+        ]);
+        const label = `owner update --avatar on contract ${String(contract)}: ${outcome.stderr}`;
+        expect(socket.asked, label).toEqual(["PUT /owner/picture"]);
+        if (contract === BUILT_FOR) {
+          expect(outcome.code, label).toBe(0);
+          expect(JSON.parse(outcome.stdout), label).toEqual(body);
+        } else {
+          expect(outcome.code, label).toBe(1);
+          expect(codeOf(outcome.stderr), label).toBe("contract_mismatch");
+          expect(outcome.stdout, label).toBe("");
+          expect(outcome.stderr, label).toContain("may have taken effect");
+        }
+      }
+    } finally {
+      await socket.stop();
     }
   });
 
