@@ -99,31 +99,6 @@ describe("owner and delegated profile changes", () => {
       ).status,
     ).toBe(200);
   });
-  it("sets and clears the owner's avatar without changing other fields", async () => {
-    const before = await controlRequest(server.controlSocket, "/owner");
-    const set = await owner({ avatar: "https://example.test/portrait.png" });
-    expect(set.status).toBe(200);
-    const updated = await set.json();
-    expect(updated).toMatchObject({
-      ...before.body,
-      avatar: "https://example.test/portrait.png",
-    });
-    await expectMatchesSchema("PATCH", "/owner", 200, updated);
-    expect(
-      (await controlRequest(server.controlSocket, "/owner")).body.avatar,
-    ).toBe("https://example.test/portrait.png");
-    const cleared = await owner({ avatar: null });
-    expect(cleared.status).toBe(200);
-    expect((await cleared.json()).avatar).toBeNull();
-    expect((await controlRequest(server.controlSocket, "/owner")).body).toEqual(
-      before.body,
-    );
-    for (const avatar of [
-      "file:///picture",
-      "https://example.test/" + "a".repeat(2048),
-    ])
-      expect((await owner({ avatar })).status).toBe(400);
-  });
   it("validates fields and limits credential writes to approved name and avatar", async () => {
     for (const body of [
       {},
@@ -132,6 +107,7 @@ describe("owner and delegated profile changes", () => {
       { name: " " },
       { email: "invalid" },
       { avatar: "file:///picture" },
+      { avatar: "https://example.test/portrait.png" },
     ])
       expect((await owner(body)).status).toBe(400);
     const invalid = await owner({ name: "a".repeat(201) });
@@ -148,12 +124,8 @@ describe("owner and delegated profile changes", () => {
     expect(made.status).toBe(201);
     const before = await controlRequest(server.controlSocket, "/owner");
     expect(
-      (
-        await profile(
-          { name: "No", avatar: "https://example.test/a.png" },
-          made.body.key as string,
-        )
-      ).status,
+      (await profile({ name: "No", avatar: null }, made.body.key as string))
+        .status,
     ).toBe(403);
     expect((await controlRequest(server.controlSocket, "/owner")).body).toEqual(
       before.body,
@@ -165,7 +137,7 @@ describe("owner and delegated profile changes", () => {
       (
         await profile({
           name: "Wildcard",
-          avatar: "https://example.test/a.png",
+          avatar: null,
         })
       ).status,
     ).toBe(200);
@@ -175,6 +147,7 @@ describe("owner and delegated profile changes", () => {
       { email: "app@example.test" },
       { name: "No", email: "app@example.test" },
       { avatar: "file:///picture" },
+      { avatar: "https://example.test/portrait.png" },
     ])
       expect((await profile(body)).status).toBe(400);
     const response = await profile({ name: "Final" });

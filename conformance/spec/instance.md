@@ -846,6 +846,20 @@ The server MUST write the `Content-Security-Policy` of an HTML page with `defaul
 
 **Tests:** `compliance/instance.test.ts › sends a content security policy with every HTML page and a nonce of its own with each`.
 
+### `instance/page-policy-images-own`
+
+When the server writes `connect-src 'self'` into the `Content-Security-Policy` of an HTML page, the server MUST write the page's `img-src` as `'self' data:`.
+
+**Reason:** The pages that talk to their own server show the owner's picture from the server's address. The picture is served with `sandbox` and `nosniff`, so an image source by origin cannot become a script or a style.
+
+**Tests:** `compliance/instance.test.ts › sends a content security policy with every HTML page and a nonce of its own with each`.
+
+### `instance/page-policy-images-inline`
+
+When the server writes no `connect-src` into the `Content-Security-Policy` of an HTML page, the server MUST write the page's `img-src` as `data:`.
+
+**Tests:** `compliance/instance.test.ts › sends a content security policy with every HTML page and a nonce of its own with each`.
+
 ### `instance/page-policy-json-none`
 
 When the server answers the root or a refusal as JSON, the server MUST NOT send a `Content-Security-Policy` on it.

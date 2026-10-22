@@ -339,6 +339,11 @@ describe("the instance", () => {
       expect(directives.get("connect-src"), path).toEqual(
         connects ? ["'self'"] : undefined,
       );
+      // The pages that talk to their own server show the owner's picture
+      // from it; the others may draw an inline image and nothing else.
+      expect(directives.get("img-src"), path).toEqual(
+        connects ? ["'self'", "data:"] : ["data:"],
+      );
       expect(policy, path).not.toContain("unsafe-inline");
       nonces.add(nonce ?? "");
     }
