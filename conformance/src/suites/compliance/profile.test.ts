@@ -9,6 +9,7 @@ import { controlRequest } from "../../utils/control-request.js";
 import { TEST_OWNER } from "../../utils/target.js";
 import { expectMatchesSchema } from "../../utils/openapi.js";
 import { withInstanceDatabase } from "../../utils/instance-database.js";
+import { png } from "../../utils/pictures.js";
 import {
   bootUnclaimedServer,
   stopServer,
@@ -206,7 +207,7 @@ describe("owner and delegated profile changes", () => {
   });
 
   it(
-    "refuses owner and profile updates without recreating an unavailable persisted owner",
+    "refuses owner and profile updates and picture uploads without recreating an unavailable persisted owner",
     async () => {
       const missing = await bootFreshServer("profile-missing-owner");
       try {
@@ -239,6 +240,28 @@ describe("owner and delegated profile changes", () => {
         expect(
           (await controlRequest(missing.controlSocket, "/owner")).body.name,
         ).toBe("Existing profile");
+
+        // Witness: the same upload, through each door, succeeds while the
+        // owner exists, so the refusals below are the missing owner's.
+        const file = png(8, 8);
+        const putOwnerPicture = () =>
+          controlRequest(missing.controlSocket, "/owner/picture", {
+            method: "PUT",
+            body: file,
+          });
+        const putProfilePicture = () =>
+          fetch(missing.apiUrl + "/profile/picture", {
+            method: "PUT",
+            headers: { authorization: `Bearer ${missing.workingKey}` },
+            body: new Uint8Array(file),
+          });
+        expect((await putOwnerPicture()).status).toBe(200);
+        expect((await putProfilePicture()).status).toBe(200);
+        const cleared = await controlRequest(missing.controlSocket, "/owner", {
+          method: "PATCH",
+          body: { avatar: null },
+        });
+        expect(cleared.status).toBe(200);
 
         await stopServer({ state: missing.stateDir });
         withInstanceDatabase(missing.sqlitePath, (db) => {
@@ -274,6 +297,10 @@ describe("owner and delegated profile changes", () => {
               db.prepare("SELECT count(*) AS count FROM auth_user").get()
                 ?.count,
             ).toBe(0);
+            expect(
+              db.prepare("SELECT count(*) AS count FROM owner_picture").get()
+                ?.count,
+            ).toBe(0);
           });
         };
         const ownerRefused = await controlRequest(
@@ -295,6 +322,32 @@ describe("owner and delegated profile changes", () => {
           error: { code: "owner_not_found" },
         });
         await expectMatchesSchema("PATCH", "/profile", 404, profileBody);
+        await assertOwnerRemainsUnavailable();
+
+        const ownerPictureRefused = await putOwnerPicture();
+        expect(ownerPictureRefused.status).toBe(404);
+        expect(ownerPictureRefused.body).toMatchObject({
+          error: { code: "owner_not_found" },
+        });
+        await expectMatchesSchema(
+          "PUT",
+          "/owner/picture",
+          404,
+          ownerPictureRefused.body,
+        );
+        await assertOwnerRemainsUnavailable();
+        const profilePictureRefused = await putProfilePicture();
+        expect(profilePictureRefused.status).toBe(404);
+        const profilePictureBody = await profilePictureRefused.json();
+        expect(profilePictureBody).toMatchObject({
+          error: { code: "owner_not_found" },
+        });
+        await expectMatchesSchema(
+          "PUT",
+          "/profile/picture",
+          404,
+          profilePictureBody,
+        );
         await assertOwnerRemainsUnavailable();
       } finally {
         await missing.stop();

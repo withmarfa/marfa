@@ -290,11 +290,11 @@ Where control-only mode is enabled, when another process holds the configured pu
 
 ### `instance-claim/profile-owner-unavailable`
 
-If the persisted owner is unavailable, then the server MUST answer `PATCH /owner` and `PATCH /profile` with `404 owner_not_found` without creating an owner.
+If the persisted owner is unavailable, then the server MUST answer `PATCH /owner`, `PATCH /profile`, `PUT /owner/picture` and `PUT /profile/picture` with `404 owner_not_found` without creating an owner or storing a picture.
 
-**Reason:** An update cannot replace the owner's existing identity or reopen a completed claim.
+**Reason:** An update or an upload cannot replace the owner's existing identity or reopen a completed claim.
 
-**Tests:** `compliance/profile.test.ts › refuses owner and profile updates without recreating an unavailable persisted owner`.
+**Tests:** `compliance/profile.test.ts › refuses owner and profile updates and picture uploads without recreating an unavailable persisted owner`.
 
 ### `instance-claim/owner-update`
 
