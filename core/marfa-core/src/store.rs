@@ -217,7 +217,7 @@ fn refuse_misshapen(conn: &Connection, held: &Shape, reading: bool) -> Result<()
     let refuse = |reason: String| {
         Err(CoreError::WrongSchema {
             path: String::new(),
-            reason,
+            reason: format!("{reason}{}", unsendable(conn)),
             unsent: untaken_count(conn),
         })
     };
@@ -249,6 +249,46 @@ fn refuse_misshapen(conn: &Connection, held: &Shape, reading: bool) -> Result<()
         )));
     }
     Ok(())
+}
+
+/// The writes the server has not taken whose kind this build does not send,
+/// which only an earlier build's queue can hold, named by kind. Empty where
+/// there are none or the queue cannot be read.
+fn unsendable(conn: &Connection) -> String {
+    let held = (|| -> rusqlite::Result<Vec<(String, i64)>> {
+        let mut query = conn.prepare(
+            "SELECT kind, COUNT(*) FROM queue
+              WHERE verdict IS NULL OR verdict NOT IN (?1, ?2, ?3)
+              GROUP BY kind ORDER BY kind",
+        )?;
+        let rows = query.query_map(
+            [
+                Verdict::Accepted.as_str(),
+                Verdict::Merged.as_str(),
+                Verdict::Conflicted.as_str(),
+            ],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        rows.collect()
+    })()
+    .unwrap_or_default();
+    let named: Vec<String> = held
+        .into_iter()
+        .filter(|(kind, _)| kind.parse::<WriteKind>().is_err())
+        .map(|(kind, count)| {
+            format!(
+                "{count} {} of kind {kind}",
+                if count == 1 { "write" } else { "writes" }
+            )
+        })
+        .collect();
+    if named.is_empty() {
+        return String::new();
+    }
+    format!(
+        ", and its queue holds {}, which this build cannot send",
+        named.join(" and ")
+    )
 }
 
 /// Every write the server has not taken that clearing answered writes would
@@ -1344,10 +1384,7 @@ fn edit_fields(conn: &Connection, row: &QueuedWrite) -> Result<HashSet<EditField
 fn is_tag_write(row: &QueuedWrite) -> bool {
     matches!(
         row.kind,
-        WriteKind::AddTag
-            | WriteKind::RemoveTag
-            | WriteKind::MergeMetadata
-            | WriteKind::ReplaceMetadata
+        WriteKind::AddTag | WriteKind::RemoveTag | WriteKind::ReplaceMetadata
     )
 }
 
@@ -2406,7 +2443,6 @@ pub fn land_on_held_row(
             | WriteKind::RestoreItem
             | WriteKind::TransitionItem
             | WriteKind::ReplaceMetadata
-            | WriteKind::MergeMetadata
             | WriteKind::RemoveTag
             | WriteKind::WriteExtension
             | WriteKind::DeleteExtension => true,
@@ -3513,7 +3549,7 @@ fn forget_answered_inner(
 }
 
 fn forget_answered_once(conn: &Connection, only: Option<&str>) -> Result<usize, CoreError> {
-    let kept = content_kinds();
+    let free = content_free_kinds();
     // Kept while an unanswered or releasable row names it, which would
     // otherwise wait on a write no drain can find.
     let unreleasable = conn.execute(
@@ -3521,7 +3557,7 @@ fn forget_answered_once(conn: &Connection, only: Option<&str>) -> Result<usize, 
             "DELETE FROM queue
           WHERE NOT EXISTS (SELECT 1 FROM meta WHERE key = 'receipt_pending/' || queue.id)
             AND (:only IS NULL OR queue.id IN (SELECT value FROM json_each(:only)))
-            AND verdict = :refused AND sent = 0 AND kind NOT IN ({kept})
+            AND verdict = :refused AND sent = 0 AND kind IN ({free})
             AND EXISTS (
               SELECT 1 FROM json_each(queue.depends_on) AS named
                WHERE named.value NOT IN (SELECT id FROM queue)
@@ -3547,7 +3583,7 @@ fn forget_answered_once(conn: &Connection, only: Option<&str>) -> Result<usize, 
             AND (:only IS NULL OR queue.id IN (SELECT value FROM json_each(:only)))
             AND verdict IN (:accepted, :merged, :conflicted, :refused)
             AND NOT (verdict = :refused AND sent = 0)
-            AND NOT (verdict = :refused AND kind IN ({kept}))
+            AND NOT (verdict = :refused AND kind NOT IN ({free}))
             AND NOT EXISTS (
               SELECT 1 FROM queue AS waiting
                WHERE (waiting.verdict IS NULL
@@ -3569,10 +3605,12 @@ fn forget_answered_once(conn: &Connection, only: Option<&str>) -> Result<usize, 
 }
 
 /// The kinds `carries_content` names, as an SQL list.
-fn content_kinds() -> String {
+/// Named by the kinds that carry nothing, so a kind this build does not know,
+/// held by an earlier build's queue that it is counting, is kept as content.
+fn content_free_kinds() -> String {
     WriteKind::ALL
         .into_iter()
-        .filter(|kind| kind.carries_content())
+        .filter(|kind| !kind.carries_content())
         .map(|kind| format!("'{}'", kind.as_str()))
         .collect::<Vec<_>>()
         .join(", ")
@@ -3773,10 +3811,7 @@ pub fn lay_waiting_writes_over(
                         .cloned(),
                 );
             }
-            if matches!(
-                row.kind,
-                WriteKind::AddTag | WriteKind::MergeMetadata | WriteKind::ReplaceMetadata
-            ) {
+            if matches!(row.kind, WriteKind::AddTag | WriteKind::ReplaceMetadata) {
                 row.body["tags"] = serde_json::to_value(desired)?;
             }
         }
@@ -3892,7 +3927,7 @@ fn lay_write(
         }
         WriteKind::DeleteItem => item.state = ItemState::Trashed,
         WriteKind::RestoreItem => item.state = ItemState::Active,
-        WriteKind::AddTag | WriteKind::MergeMetadata => {
+        WriteKind::AddTag => {
             for tag in named_tags() {
                 if !tags.contains(&tag) {
                     tags.push(tag);
@@ -5787,7 +5822,7 @@ mod tests {
         queue(WriteKind::TransitionItem, r#"{"state":"archived"}"#, None);
         queue(WriteKind::RestoreItem, "{}", None);
         queue(WriteKind::ReplaceMetadata, r#"{"tags":["a","b"]}"#, None);
-        queue(WriteKind::MergeMetadata, r#"{"tags":["c"]}"#, None);
+        queue(WriteKind::AddTag, r#"{"tags":["c"]}"#, Some("c"));
         queue(WriteKind::RemoveTag, "{}", Some("a"));
         let answered = queue(
             WriteKind::AddTag,
@@ -6303,7 +6338,7 @@ mod tests {
         assert_eq!(queue(WriteKind::UploadBlob, None).follows, None);
         assert_eq!(
             Subject::Item.kinds().len() + Subject::Edge.kinds().len(),
-            14
+            13
         );
     }
 
@@ -6550,6 +6585,77 @@ mod tests {
         assert!(said.contains("cannot be read"), "{said}");
     }
 
+    /// The queue an earlier build made, whose `CHECK` still admits `kind`.
+    fn queue_admitting(conn: &Connection, kind: &str) {
+        let made: String = conn
+            .query_row(
+                "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'queue'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let earlier = made.replacen(
+            "'replace_metadata',",
+            &format!("'replace_metadata', '{kind}',"),
+            1,
+        );
+        assert_ne!(earlier, made);
+        conn.execute_batch(&format!("DROP TABLE queue; {earlier};"))
+            .unwrap();
+    }
+
+    #[test]
+    fn a_queued_write_of_a_kind_this_build_does_not_send_is_refused_by_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("core.sqlite");
+        let hold = |verdict: Option<&str>| {
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch("DELETE FROM queue").unwrap();
+            conn.execute(
+                "INSERT INTO queue (id, kind, item_id, idempotency_key, payload, queued_at, verdict, sent)
+                 VALUES ('q1', 'merge_metadata', 'n1', 'k1', '{\"tags\":[\"a\"]}',
+                         '2026-01-01T00:00:00Z', ?1, ?2)",
+                params![verdict, verdict.is_some()],
+            )
+            .unwrap();
+        };
+        {
+            let conn = open(&path).unwrap();
+            queue_admitting(&conn, "merge_metadata");
+        }
+        // A refused write that carried content stays until discarded, so it
+        // is counted with the waiting one.
+        for verdict in [None, Some("refused"), Some("dead")] {
+            hold(verdict);
+            let (reason, unsent, said) = refusal_of(&path);
+            assert!(
+                reason.contains("1 write of kind merge_metadata, which this build cannot send"),
+                "{verdict:?}: {reason}"
+            );
+            assert_eq!(unsent, Some(1), "{verdict:?}");
+            assert!(said.contains("1 write the server has not taken"), "{said}");
+            assert!(
+                matches!(open_to_read(&path), Err(CoreError::WrongSchema { reason, .. })
+                    if reason.contains("merge_metadata")),
+                "a reader opened it"
+            );
+            let conn = Connection::open(&path).unwrap();
+            assert_eq!(
+                conn.query_row("SELECT kind FROM queue", [], |row| row.get::<_, String>(0))
+                    .unwrap(),
+                "merge_metadata",
+                "refusing the store took the write"
+            );
+        }
+        // The witness: the same earlier queue with the write answered names
+        // no kind, and is refused only for its shape.
+        hold(Some("accepted"));
+        let (reason, unsent, _) = refusal_of(&path);
+        assert!(!reason.contains("merge_metadata"), "{reason}");
+        assert!(reason.contains("its table queue"), "{reason}");
+        assert_eq!(unsent, Some(0));
+    }
+
     #[test]
     fn a_store_with_the_older_index_is_refused_with_its_queue_kept() {
         let dir = tempfile::tempdir().unwrap();
@@ -6639,7 +6745,7 @@ mod tests {
             .collect();
         assert_eq!(
             crate::folder::state::hash(named.as_bytes()),
-            "c94119469ee5a4e4",
+            "b8a09a88fdc89de4",
             "the shape of a table changed, which refuses every store made before it"
         );
         // The comment strip reads `--` alone, so a block comment would ride
@@ -7122,17 +7228,6 @@ mod tests {
                 false,
             ),
             (
-                "merge_metadata",
-                None,
-                r#"{"tags":["old","keep"]}"#,
-                "replace_metadata",
-                None,
-                r#"{"tags":["new"]}"#,
-                vec!["new"],
-                vec!["new"],
-                false,
-            ),
-            (
                 "replace_metadata",
                 None,
                 r#"{"tags":["old","keep"]}"#,
@@ -7166,33 +7261,22 @@ mod tests {
                 true,
             ),
             (
-                "merge_metadata",
-                None,
-                r#"{"tags":["old","keep"]}"#,
-                "remove_tag",
-                Some("old"),
-                "{}",
-                vec![],
-                vec!["keep"],
-                true,
-            ),
-            (
                 "remove_tag",
                 Some("stale"),
                 "{}",
-                "merge_metadata",
-                None,
-                r#"{"tags":["stale","new"]}"#,
-                vec!["new", "stale"],
-                vec!["new", "stale"],
+                "add_tag",
+                Some("stale"),
+                r#"{"tags":["stale"]}"#,
+                vec!["stale"],
+                vec!["stale"],
                 false,
             ),
             (
                 "add_tag",
                 Some("stale"),
                 r#"{"tags":["stale"]}"#,
-                "merge_metadata",
-                None,
+                "add_tag",
+                Some("other"),
                 r#"{"tags":["other"]}"#,
                 vec!["other"],
                 vec!["other", "stale"],

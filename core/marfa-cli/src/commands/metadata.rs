@@ -24,16 +24,6 @@ pub enum MetadataCommand {
         #[command(flatten)]
         idempotency: IdempotencyArgs,
     },
-    /// Add the named tags, leaving the rest.
-    Update {
-        /// The item id.
-        id: String,
-        /// A tag, repeatable.
-        #[arg(long = "tag", value_name = "TAG", required = true)]
-        tags: Vec<String>,
-        #[command(flatten)]
-        idempotency: IdempotencyArgs,
-    },
     /// Every distinct tag in use on the instance.
     Tags,
 }
@@ -44,10 +34,6 @@ pub fn get_request(id: &str) -> Request {
 
 pub fn replace_request(id: &str, tags: &[String]) -> Request {
     Request::put(&["items", id, "metadata"]).json(json!({ "tags": tags }))
-}
-
-pub fn update_request(id: &str, tags: &[String]) -> Request {
-    Request::patch(&["items", id, "metadata"]).json(json!({ "tags": tags }))
 }
 
 pub fn tags_request() -> Request {
@@ -62,11 +48,6 @@ pub fn run(command: MetadataCommand, remote: &Remote, out: &Printer) -> Result<(
             tags,
             idempotency,
         } => idempotency.apply(replace_request(id, tags)),
-        MetadataCommand::Update {
-            id,
-            tags,
-            idempotency,
-        } => idempotency.apply(update_request(id, tags)),
         MetadataCommand::Tags => tags_request(),
     };
     out.value(&remote.json(&request)?)

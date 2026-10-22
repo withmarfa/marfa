@@ -130,7 +130,6 @@ CREATE TABLE IF NOT EXISTS queue (
       'update_edge',
       'delete_edge',
       'replace_metadata',
-      'merge_metadata',
       'add_tag',
       'remove_tag',
       'write_extension',

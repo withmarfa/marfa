@@ -425,30 +425,25 @@ type Queues = dyn Fn(&Core) -> crate::QueuedWrite;
 
 #[test]
 fn a_stopped_drain_leaves_a_tag_metadata_or_extension_write_in_flight_for_the_next_drain() {
-    let metadata = |replace: bool| {
-        move |core: &Core| {
-            core.write_metadata(
-                "a",
-                &crate::MetadataWrite {
-                    tags: vec!["y".into()],
-                },
-                replace,
-            )
-            .unwrap()
-        }
+    let replace = |core: &Core| {
+        core.replace_metadata(
+            "a",
+            &crate::MetadataWrite {
+                tags: vec!["y".into()],
+            },
+        )
+        .unwrap()
     };
-    let (replace, merge) = (metadata(true), metadata(false));
     let add = |core: &Core| core.add_tag("a", "x").unwrap();
     let remove = |core: &Core| core.remove_tag("a", "x").unwrap();
     let write = |core: &Core| core.write_extension("a", "app.cursor", "{}").unwrap();
     let delete = |core: &Core| core.delete_extension("a", "app.cursor").unwrap();
     let tags = r#"{"metadata":{"item_id":"a","tags":["x"],"extensions":{}}}"#;
     let extensions = r#"{"extensions":{"app.cursor":{}}}"#;
-    let writes: [(&str, &Queues, &str); 6] = [
+    let writes: [(&str, &Queues, &str); 5] = [
         ("/items/a/tags", &add, tags),
         ("/items/a/tags/x", &remove, tags),
         ("/items/a/metadata", &replace, tags),
-        ("/items/a/metadata", &merge, tags),
         ("/items/a/extensions/app.cursor", &write, extensions),
         ("/items/a/extensions/app.cursor", &delete, extensions),
     ];

@@ -723,11 +723,6 @@ fn address<'a>(row: &'a QueuedWrite, payload: &'a str) -> Result<Door<'a>> {
             vec!["items".into(), item_id()?.into(), "metadata".into()],
             Shape::Plain,
         ),
-        WriteKind::MergeMetadata => to(
-            Method::Patch,
-            vec!["items".into(), item_id()?.into(), "metadata".into()],
-            Shape::Plain,
-        ),
         WriteKind::AddTag => to(
             Method::Post,
             vec!["items".into(), item_id()?.into(), "tags".into()],

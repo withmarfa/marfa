@@ -601,7 +601,6 @@ pub enum WriteKind {
     UpdateEdge,
     DeleteEdge,
     ReplaceMetadata,
-    MergeMetadata,
     AddTag,
     RemoveTag,
     WriteExtension,
@@ -610,7 +609,7 @@ pub enum WriteKind {
 }
 
 impl WriteKind {
-    pub const ALL: [WriteKind; 15] = [
+    pub const ALL: [WriteKind; 14] = [
         WriteKind::CreateItem,
         WriteKind::UpdateItem,
         WriteKind::DeleteItem,
@@ -620,7 +619,6 @@ impl WriteKind {
         WriteKind::UpdateEdge,
         WriteKind::DeleteEdge,
         WriteKind::ReplaceMetadata,
-        WriteKind::MergeMetadata,
         WriteKind::AddTag,
         WriteKind::RemoveTag,
         WriteKind::WriteExtension,
@@ -645,7 +643,6 @@ impl WriteKind {
             WriteKind::CreateItem
                 | WriteKind::UpdateItem
                 | WriteKind::ReplaceMetadata
-                | WriteKind::MergeMetadata
                 | WriteKind::WriteExtension
                 | WriteKind::CreateEdge
                 | WriteKind::UpdateEdge
@@ -662,7 +659,6 @@ impl WriteKind {
             | WriteKind::RestoreItem
             | WriteKind::TransitionItem
             | WriteKind::ReplaceMetadata
-            | WriteKind::MergeMetadata
             | WriteKind::AddTag
             | WriteKind::RemoveTag
             | WriteKind::WriteExtension
@@ -685,7 +681,6 @@ impl WriteKind {
             WriteKind::UpdateEdge => "update_edge",
             WriteKind::DeleteEdge => "delete_edge",
             WriteKind::ReplaceMetadata => "replace_metadata",
-            WriteKind::MergeMetadata => "merge_metadata",
             WriteKind::AddTag => "add_tag",
             WriteKind::RemoveTag => "remove_tag",
             WriteKind::WriteExtension => "write_extension",
