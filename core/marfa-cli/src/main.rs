@@ -319,8 +319,9 @@ fn json_in(args: impl IntoIterator<Item = std::ffi::OsString>) -> bool {
 fn parse() -> Result<(Cli, String), clap::Error> {
     let mut command = Cli::command();
     // clap draws help and usage errors in color on a terminal and reads
-    // `NO_COLOR` itself; `--json` it does not know.
-    if json_in(std::env::args_os()) {
+    // `NO_COLOR` itself; `--json` it does not know, and on some systems it
+    // draws for `TERM=dumb`.
+    if json_in(std::env::args_os()) || std::env::var("TERM").is_ok_and(|term| term == "dumb") {
         command = command.color(clap::ColorChoice::Never);
     }
     let mut matches = command.try_get_matches_from_mut(std::env::args_os())?;
