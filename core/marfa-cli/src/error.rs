@@ -131,6 +131,12 @@ pub enum CliError {
         "no docs page at {path}: `marfa docs search` finds pages and `marfa docs topics` lists them"
     )]
     DocsPageNotFound { path: String },
+    #[error("no section {heading:?} in the docs page {path}; its headings are:\n{}", .headings.join("\n"))]
+    DocsSectionNotFound {
+        path: String,
+        heading: String,
+        headings: Vec<String>,
+    },
     #[error("cannot read the docs site at {address}: {reason}")]
     DocsUnreachable { address: String, reason: String },
     #[error(
@@ -308,6 +314,7 @@ own_codes! {
     CliError::ContractMismatch { .. } => "contract_mismatch",
     CliError::Redirected { .. } => "redirect",
     CliError::DocsPageNotFound { .. } => "docs_page_not_found",
+    CliError::DocsSectionNotFound { .. } => "docs_section_not_found",
     CliError::DocsUnreachable { .. } => "docs_unreachable",
 }
 
@@ -400,6 +407,7 @@ impl CliError {
             | CliError::ArchiveKeptApart { .. }
             | CliError::RestoreLacksBlobs(_)
             | CliError::DocsPageNotFound { .. }
+            | CliError::DocsSectionNotFound { .. }
             | CliError::ContractMismatch { .. }
             | CliError::Redirected { .. } => Exit::Refused,
             CliError::ClosedOutput => Exit::Done,
@@ -789,6 +797,7 @@ mod tests {
             "no_store",
             "no_credential",
             "docs_page_not_found",
+            "docs_section_not_found",
             "docs_unreachable",
             "blobs_missing",
             "install",
@@ -848,6 +857,11 @@ mod tests {
             },
             CliError::DocsPageNotFound {
                 path: String::new(),
+            },
+            CliError::DocsSectionNotFound {
+                path: String::new(),
+                heading: String::new(),
+                headings: Vec::new(),
             },
             CliError::DocsUnreachable {
                 address: String::new(),
@@ -993,6 +1007,15 @@ mod tests {
         assert_eq!(CliError::NotHeld("x".into()).exit(), Exit::Refused);
         assert_eq!(
             CliError::DocsPageNotFound { path: "x".into() }.exit(),
+            Exit::Refused
+        );
+        assert_eq!(
+            CliError::DocsSectionNotFound {
+                path: "x".into(),
+                heading: "y".into(),
+                headings: Vec::new()
+            }
+            .exit(),
             Exit::Refused
         );
         assert_eq!(

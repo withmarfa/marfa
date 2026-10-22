@@ -44,6 +44,7 @@ pub fn error(error: &CliError) -> &'static str {
             "the server speaks a different contract than this build"
         }
         CliError::DocsPageNotFound { .. } => "the docs page asked for does not exist",
+        CliError::DocsSectionNotFound { .. } => "the docs page has no section of that name",
         CliError::DocsUnreachable { .. } => "the docs site could not be read",
         CliError::Redirected { .. } => "the server answered with a redirect, which is not followed",
     }

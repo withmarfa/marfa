@@ -340,3 +340,118 @@ fn an_empty_address_variable_takes_the_public_site() {
             .contains("not a docs page")
     );
 }
+
+const PAGE: &str = "# Files\n\nKeep files.\n\n## Folders\n\nIn a folder.\n\n### Rules\n\nOne rule.\n\n## Backup\n\nCopy them.\n";
+
+#[test]
+fn a_search_with_no_hit_offers_the_nearest_titles_and_says_where_every_page_is_listed() {
+    let door = Door::open(vec![
+        answer("200 OK", "application/json", r#"{"hits":[]}"#),
+        answer("200 OK", "application/json", PAGES),
+        answer("200 OK", "application/json", r#"{"hits":[]}"#),
+        answer("200 OK", "application/json", r#"{"hits":[]}"#),
+        answer("503 Service Unavailable", "text/plain", "down"),
+    ]);
+    let plain = marfa(&door.url, &["docs", "search", "keep files"]);
+    assert_eq!(plain.code, 0, "{}", plain.stderr);
+    assert_eq!(
+        plain.stdout,
+        "no docs page matches \"keep files\"\nThe closest pages by title:\n  Files  /files\n`marfa docs topics` lists every page.\n"
+    );
+    let json = marfa(&door.url, &["--json", "docs", "search", "keep files"]);
+    assert_eq!(json.code, 0, "{}", json.stderr);
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&json.stdout).unwrap(),
+        serde_json::json!({"hits": []})
+    );
+    // A site that cannot list its pages still gets the plain miss.
+    let down = marfa(&door.url, &["docs", "search", "keep files"]);
+    assert_eq!(down.code, 0, "{}", down.stderr);
+    assert_eq!(
+        down.stdout,
+        "no docs page matches \"keep files\"\n`marfa docs topics` lists every page.\n"
+    );
+    let paths: Vec<String> = door
+        .received()
+        .iter()
+        .map(|r| r.path().to_string())
+        .collect();
+    assert_eq!(
+        paths,
+        [
+            "/api/docs/search?q=keep+files",
+            "/api/docs/topics",
+            "/api/docs/search?q=keep+files",
+            "/api/docs/search?q=keep+files",
+            "/api/docs/topics"
+        ]
+    );
+}
+
+#[test]
+fn a_section_prints_only_what_is_under_its_heading() {
+    let door = Door::open(vec![
+        answer("200 OK", "text/markdown; charset=utf-8", PAGE),
+        answer("200 OK", "text/markdown; charset=utf-8", PAGE),
+    ]);
+    let plain = marfa(&door.url, &["docs", "files", "--section", "folders"]);
+    assert_eq!(plain.code, 0, "{}", plain.stderr);
+    assert_eq!(
+        plain.stdout,
+        "## Folders\n\nIn a folder.\n\n### Rules\n\nOne rule.\n"
+    );
+    let json = marfa(
+        &door.url,
+        &["--json", "docs", "files", "--section", "Backup"],
+    );
+    let record: serde_json::Value = serde_json::from_str(&json.stdout).unwrap();
+    assert_eq!(
+        record,
+        serde_json::json!({
+            "path": "files",
+            "url": format!("{}/files.md", door.url),
+            "markdown": "## Backup\n\nCopy them.\n",
+            "section": "Backup",
+        })
+    );
+    door.received();
+}
+
+#[test]
+fn an_unknown_section_is_refused_by_one_listing_the_headings() {
+    let door = Door::open(vec![
+        answer("200 OK", "text/markdown; charset=utf-8", PAGE),
+        answer("200 OK", "text/markdown; charset=utf-8", PAGE),
+    ]);
+    let plain = marfa(&door.url, &["docs", "files", "--section", "nope"]);
+    assert_eq!(plain.code, 1);
+    assert_eq!(plain.stdout, "");
+    assert!(
+        plain
+            .stderr
+            .contains("no section \"nope\" in the docs page files"),
+        "{}",
+        plain.stderr
+    );
+    let json = marfa(&door.url, &["--json", "docs", "files", "--section", "nope"]);
+    assert_eq!(json.code, 1);
+    assert_eq!(json.stdout, "");
+    let envelope = envelope(&json.stderr);
+    assert_eq!(envelope["error"]["code"], "docs_section_not_found");
+    assert_eq!(envelope["exit"], 1);
+    let message = envelope["error"]["message"].as_str().unwrap();
+    for heading in ["Files", "  Folders", "    Rules", "  Backup"] {
+        assert!(message.contains(heading), "{heading}: {message}");
+    }
+    door.received();
+}
+
+#[test]
+fn a_page_piped_keeps_every_byte_it_was_served() {
+    let body = "# Files\n\u{1b}[31mred\u{1b}[0m\tand\r\n";
+    let door = Door::open(vec![answer("200 OK", "text/markdown; charset=utf-8", body)]);
+    let ran = marfa(&door.url, &["docs", "files"]);
+    assert_eq!(ran.code, 0, "{}", ran.stderr);
+    assert_eq!(ran.stdout, body);
+    door.received();
+}
