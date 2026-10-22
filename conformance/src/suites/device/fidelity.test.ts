@@ -1510,19 +1510,19 @@ describe("the scripted answers match the server's", () => {
       { same: ["metadata.item_id", "metadata.tags", "metadata.extensions"] },
     );
 
-    const merged = await client.rawRequest(`/items/${seeded.id}/metadata`, {
-      method: "PATCH",
-      body: { tags: ["also"] },
+    const replaced = await client.rawRequest(`/items/${seeded.id}/metadata`, {
+      method: "PUT",
+      body: { tags: ["replaced"] },
     });
-    expect(merged.ok).toBe(true);
+    expect(
+      replaced.ok,
+      `the fixture could not replace the tags: ${JSON.stringify(replaced.error)}`,
+    ).toBe(true);
     expectFidelity(
-      "a metadata write",
-      { status: merged.status, body: merged.data },
-      writeAnswers.metadata(seeded.id, ["fidelity", "also"]),
-      {
-        same: ["metadata.item_id"],
-        shape: ["metadata.tags", "metadata.extensions"],
-      },
+      "a tag list replaced",
+      { status: replaced.status, body: replaced.data },
+      writeAnswers.metadata(seeded.id, ["replaced"]),
+      { same: ["metadata.item_id", "metadata.tags", "metadata.extensions"] },
     );
 
     const extended = await client.rawRequest(

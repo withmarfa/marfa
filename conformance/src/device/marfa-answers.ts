@@ -1156,14 +1156,14 @@ export const answers = {
  *
  * Four different shapes, and none of them carries an `item`. A device that
  * read every `2xx` against the item shape would take a tag, an edge, a
- * metadata write, an extension and a delete — every one of which the server
+ * tag-list replacement, an extension and a delete — every one of which the server
  * had already done — as an answer it could not read, count a refusal, and
  * kill the write on the fifth pass. Scripting them as items is what hid
  * exactly that, so these exist to be scripted instead.
  */
 export const writeAnswers = {
-  /** `POST /items/{id}/tags`, `DELETE /items/{id}/tags/{tag}` and both
-   *  metadata doors: the sidecar, whole. */
+  /** `POST /items/{id}/tags`, `DELETE /items/{id}/tags/{tag}` and
+   *  `PUT /items/{id}/metadata`: the sidecar, whole. */
   metadata: (itemId: string, tags: string[] = []): Answer => ({
     kind: "json",
     status: 200,
