@@ -145,7 +145,6 @@ describe("metadata doors", () => {
     const doors: [string, string, unknown?][] = [
       ["GET", "/items/{id}/metadata"],
       ["PUT", "/items/{id}/metadata", { tags: ["x"] }],
-      ["PATCH", "/items/{id}/metadata", { tags: ["x"] }],
       ["POST", "/items/{id}/tags", { tags: ["x"] }],
       ["DELETE", "/items/{id}/tags/{tag}"],
       ["GET", "/items/{id}/extensions"],

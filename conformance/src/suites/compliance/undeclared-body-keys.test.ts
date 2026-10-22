@@ -70,8 +70,6 @@ const OPERATIONS: Record<string, () => Promise<Setup>> = {
     itemSetup("POST", "/transition", { state: "archived" }),
   "PUT /items/{id}/metadata": () =>
     itemSetup("PUT", "/metadata", { tags: ["replaced"] }),
-  "PATCH /items/{id}/metadata": () =>
-    itemSetup("PATCH", "/metadata", { tags: ["merged"] }),
   "POST /items/{id}/tags": () =>
     itemSetup("POST", "/tags", { tags: ["added"] }),
   "POST /items/bulk-get": async () => {

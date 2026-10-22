@@ -249,12 +249,6 @@ describe("the doors that lost or broke data without a JSON Content-Type", () => 
       after: { tags: ["added", "keep"], extensions: { [NAMESPACE]: STORED } },
     },
     {
-      door: "PATCH /items/{id}/metadata",
-      path: (id: string) => `/items/${id}/metadata`,
-      body: { tags: ["merged"] },
-      after: { tags: ["keep", "merged"], extensions: { [NAMESPACE]: STORED } },
-    },
-    {
       door: "PUT /items/{id}/extensions/{namespace}",
       path: (id: string) => `/items/${id}/extensions/${NAMESPACE}`,
       body: { value: "replaced" },

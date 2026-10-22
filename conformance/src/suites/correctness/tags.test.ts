@@ -34,7 +34,7 @@ describe("tags", () => {
     expect(fetched.data.metadata.tags).toContain("starred");
   });
 
-  it("updates tags via metadata PATCH", async () => {
+  it("adds tags as a set union with POST /items/{id}/tags", async () => {
     const note = createNote({
       source: ctx.source,
       tags: ["initial"],
@@ -45,18 +45,11 @@ describe("tags", () => {
     const itemId = r.data.item.id;
     trackItem(ctx, itemId);
 
-    // The server merges tags as a set union, so the initial tag survives.
-    const updated = await client.updateMetadata(itemId, {
-      tags: ["updated", "new-tag"],
-    });
+    // The server adds tags as a set union, so the initial tag survives.
+    const updated = await client.addTags(itemId, ["updated", "new-tag"]);
     expect(updated.ok).toBe(true);
-    await expectMatchesSchema(
-      "PATCH",
-      "/items/{id}/metadata",
-      200,
-      updated.data,
-    );
-    // The whole set, not three memberships: a merge that added a tag nobody
+    await expectMatchesSchema("POST", "/items/{id}/tags", 200, updated.data);
+    // The whole set, not three memberships: an add that added a tag nobody
     // asked for would satisfy three `toContain` checks.
     expect([...updated.data.metadata.tags].sort()).toEqual([
       "initial",
@@ -176,19 +169,19 @@ describe("tags", () => {
     expect(fetched.data.metadata.tags).toContain("persist-test");
   });
 
-  it("refuses a metadata patch whose tags are not an array, and answers 404 for an unknown item", async () => {
+  it("refuses a tags add whose tags are not an array, and answers 404 for an unknown item", async () => {
     const r = await client.createItem(createNote({ source: ctx.source }));
     expect(r.ok).toBe(true);
     trackItem(ctx, r.data.item.id);
-    const malformed = await client.rawRequest(
-      `/items/${r.data.item.id}/metadata`,
-      { method: "PATCH", body: { tags: "x" } },
-    );
+    const malformed = await client.rawRequest(`/items/${r.data.item.id}/tags`, {
+      method: "POST",
+      body: { tags: "x" },
+    });
     expect(malformed.status).toBe(400);
     expect(malformed.error?.error.code).toBe("validation_error");
 
     const unknown = "00000000-0000-7000-8000-000000000000";
-    const patched = await client.updateMetadata(unknown, { tags: ["x"] });
+    const patched = await client.addTags(unknown, ["x"]);
     expect(patched.status).toBe(404);
     expect(patched.error?.error.code).toBe("item_not_found");
     const removed = await client.removeTag(unknown, "x");
@@ -213,16 +206,14 @@ describe("tags", () => {
 });
 
 describe("favorite reserved tag", () => {
-  it("favorite persists when added via metadata PATCH", async () => {
+  it("favorite persists when added with POST /items/{id}/tags", async () => {
     const r = await client.createItem(
       createNote({ source: ctx.source, tags: ["env:test"] }),
     );
     expect(r.ok).toBe(true);
     trackItem(ctx, r.data.item.id);
 
-    const patched = await client.updateMetadata(r.data.item.id, {
-      tags: ["favorite"],
-    });
+    const patched = await client.addTags(r.data.item.id, ["favorite"]);
     expect(patched.ok).toBe(true);
     expect(patched.data.metadata.tags).toContain("favorite");
     expect(patched.data.metadata.tags).toContain("env:test");

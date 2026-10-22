@@ -533,12 +533,8 @@ export interface DeviceUnderTest {
   /** One tag, as its own write. */
   addTag(item: string, tag: string): Promise<Outcome<QueuedWrite>>;
   removeTag(item: string, tag: string): Promise<Outcome<QueuedWrite>>;
-  /** The item's tags, written whole or merged into what is there. */
-  writeMetadata(
-    item: string,
-    tags: string[],
-    mode: "replace" | "merge",
-  ): Promise<Outcome<QueuedWrite>>;
+  /** The item's tags, written whole. */
+  replaceMetadata(item: string, tags: string[]): Promise<Outcome<QueuedWrite>>;
   /** One extension namespace, as its own write. */
   writeExtension(
     item: string,

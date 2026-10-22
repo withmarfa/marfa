@@ -78,7 +78,7 @@ describe("metadata operations at scale", () => {
       const { result, durationMs } = await measure(() =>
         // The tag list replaces wholesale, so LOAD_TAG is restated to keep the
         // sweep-by-tag cleanup backstop working on these rows.
-        client.updateMetadata(id, { tags: [LOAD_TAG, runTag] }),
+        client.addTags(id, [LOAD_TAG, runTag]),
       );
       if (result.ok) durations.push(durationMs);
       else errors++;
@@ -103,9 +103,11 @@ describe("metadata operations at scale", () => {
     const { timings, errors, totalDurationMs } = await benchmarkConcurrent(
       async (index) => {
         const id = targets[index % targets.length];
-        const response = await client.updateMetadata(id, {
-          tags: [LOAD_TAG, runTag, `parallel-${index}`],
-        });
+        const response = await client.addTags(id, [
+          LOAD_TAG,
+          runTag,
+          `parallel-${index}`,
+        ]);
         if (!response.ok)
           throw new Error(`metadata write failed: ${response.status}`);
         return id;

@@ -267,14 +267,6 @@ describe("an item the key cannot read answers as a missing one", () => {
       served: 200,
     },
     {
-      name: "PATCH /items/{id}/metadata",
-      method: "PATCH",
-      path: (id) => `/items/${id}/metadata`,
-      body: () => ({ tags: ["unreadable"] }),
-      witness: live,
-      served: 200,
-    },
-    {
       name: "POST /items/{id}/tags",
       method: "POST",
       path: (id) => `/items/${id}/tags`,

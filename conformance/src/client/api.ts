@@ -128,7 +128,7 @@ export interface UpdateItemInput {
   edges?: Record<string, string[]>;
 }
 
-export interface UpdateMetadataInput {
+export interface ReplaceMetadataInput {
   tags?: string[];
 }
 
@@ -385,16 +385,6 @@ export class MarfaClient {
     return this.request<{ item: MarfaItem }>(`/items/${id}/transition`, {
       method: "POST",
       body: { state },
-    });
-  }
-
-  async updateMetadata(
-    id: string,
-    metadata: UpdateMetadataInput,
-  ): Promise<ApiResponse<{ metadata: MarfaMetadata }>> {
-    return this.request<{ metadata: MarfaMetadata }>(`/items/${id}/metadata`, {
-      method: "PATCH",
-      body: metadata,
     });
   }
 
@@ -1179,7 +1169,7 @@ export class MarfaClient {
 
   async replaceMetadata(
     id: string,
-    metadata: UpdateMetadataInput,
+    metadata: ReplaceMetadataInput,
   ): Promise<ApiResponse<{ metadata: MarfaMetadata }>> {
     return this.request<{ metadata: MarfaMetadata }>(`/items/${id}/metadata`, {
       method: "PUT",

@@ -82,9 +82,9 @@ describe("the modification time a catch-up reads", () => {
     // are the same value and the assertion below passes either way.
     await new Promise((r) => setTimeout(r, 1100));
 
-    const tag = await client.updateMetadata(tagged.data.item.id, {
-      tags: ["catchup-updated-at"],
-    });
+    const tag = await client.addTags(tagged.data.item.id, [
+      "catchup-updated-at",
+    ]);
     expect(
       tag.ok,
       `could not write the tag under test: ${JSON.stringify(tag.error)}`,
@@ -208,9 +208,7 @@ describe("incremental catch-up", () => {
     const boundary = new Date().toISOString();
     await new Promise((r) => setTimeout(r, 1100));
 
-    const tag = await client.updateMetadata(tagged.data.item.id, {
-      tags: ["catchup-probe"],
-    });
+    const tag = await client.addTags(tagged.data.item.id, ["catchup-probe"]);
     expect(
       tag.ok,
       `could not write the tag under test: ${JSON.stringify(tag.error)}`,

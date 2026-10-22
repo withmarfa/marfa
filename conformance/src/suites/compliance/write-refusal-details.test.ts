@@ -118,7 +118,7 @@ describe("a refusal caused by a missing grant names it", () => {
       level: "write",
     });
 
-    const tagged = await reader.updateMetadata(target.id, { tags: ["x"] });
+    const tagged = await reader.addTags(target.id, ["x"]);
     expect(tagged.status).toBe(403);
     expect(tagged.error?.error.details?.grant).toEqual({
       kind: "type",
@@ -337,7 +337,7 @@ describe("a write to an item in the bin says so", () => {
   it("answers 404 with details.trashed to a key that may read the type, and nothing to one that may not", async () => {
     const { id, version } = await note("binned");
     // The witness: the same write lands while the item is live.
-    const live = await client.updateMetadata(id, { tags: ["live"] });
+    const live = await client.addTags(id, ["live"]);
     expect(live.status).toBe(200);
     const stored = await client.setItemExtension(id, "notes-app", {
       pinned: true,
@@ -369,7 +369,6 @@ describe("a write to an item in the bin says so", () => {
     expect(again.error?.error.details).toEqual({ trashed: true });
 
     for (const write of [
-      () => client.updateMetadata(id, { tags: ["late"] }),
       () => client.replaceMetadata(id, { tags: ["late"] }),
       () => client.addTags(id, ["late"]),
       () => client.removeTag(id, "live"),

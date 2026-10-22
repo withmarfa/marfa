@@ -999,7 +999,6 @@ const invocations: Record<string, () => string[]> = {
   "items versions": () => [ID],
   "metadata get": () => [ID],
   "metadata replace": () => ["--tag", "t", ID],
-  "metadata update": () => ["--tag", "t", ID],
   "items tag": () => [ID, "t"],
   "items purge": () => [ID],
   "items untag": () => [ID, "t"],

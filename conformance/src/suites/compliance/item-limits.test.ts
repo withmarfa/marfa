@@ -83,16 +83,6 @@ describe("the 100-tags-per-item limit", () => {
         within: ["one-more"],
       },
       {
-        name: "PATCH /items/{id}/metadata",
-        send: (id: string, tags: string[]) =>
-          client.rawRequest(`/items/${id}/metadata`, {
-            method: "PATCH",
-            body: { tags },
-          }),
-        over: ["one-more"],
-        within: ["one-more"],
-      },
-      {
         name: "PUT /items/{id}/metadata",
         send: (id: string, tags: string[]) =>
           client.rawRequest(`/items/${id}/metadata`, {

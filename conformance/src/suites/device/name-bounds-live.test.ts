@@ -113,7 +113,7 @@ it("refuses a tag the server refuses, on every door, before it saves or queues a
     // not a stricter one.
     const served = [
       await client.addTags(row, [tag]),
-      await client.updateMetadata(row, { tags: [tag] }),
+      await client.addTags(row, [tag]),
       await client.replaceMetadata(row, { tags: [tag] }),
       await client.createItem({
         type,
@@ -129,11 +129,7 @@ it("refuses a tag the server refuses, on every door, before it saves or queues a
 
     for (const [door, outcome] of [
       ["tags add", await device.addTag(row, tag)],
-      [
-        "metadata merge",
-        await device.writeMetadata(row, ["fine", tag], "merge"),
-      ],
-      ["metadata replace", await device.writeMetadata(row, [tag], "replace")],
+      ["metadata replace", await device.replaceMetadata(row, [tag])],
       [
         "items create",
         await device.create({
@@ -171,10 +167,9 @@ it("takes a tag the server takes, queues it, and has it accepted when the queue 
   await queue(device.addTag(row, ACCEPTED_TAGS[0]![0]));
   await queue(device.addTag(row, ACCEPTED_TAGS[2]![0]));
   await queue(
-    device.writeMetadata(
+    device.replaceMetadata(
       row,
       ACCEPTED_TAGS.map(([tag]) => tag),
-      "merge",
     ),
   );
   const created = await device.create({
@@ -270,7 +265,7 @@ it("refuses a write naming more than 100 tags, or leaving a row more than 100 it
       tags: tags(101, "sent"),
     }),
     await client.addTags(id, ["one-more"]),
-    await client.updateMetadata(id, { tags: ["one-more"] }),
+    await client.addTags(id, ["one-more"]),
     await client.replaceMetadata(id, { tags: tags(101, "sent") }),
   ]) {
     expect(refused.status, "the server took more than 100 tags").toBe(400);
@@ -294,11 +289,7 @@ it("refuses a write naming more than 100 tags, or leaving a row more than 100 it
     ],
     ["items add", await device.addFile(file, { tags: tags(101, "sent") })],
     ["tags add", await device.addTag(id, "one-more")],
-    ["metadata merge", await device.writeMetadata(id, ["one-more"], "merge")],
-    [
-      "metadata replace",
-      await device.writeMetadata(id, tags(101, "sent"), "replace"),
-    ],
+    ["metadata replace", await device.replaceMetadata(id, tags(101, "sent"))],
   ] as const) {
     expectRefusedAsTheServerDoes(outcome, `${door} past 100 tags`);
   }

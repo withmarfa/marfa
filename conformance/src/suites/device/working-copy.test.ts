@@ -1899,6 +1899,81 @@ describe("the working copy belongs to one server", () => {
     ).toContain("blocked");
   });
 
+  it("names a write of a kind this build does not send, among the writes a store of another shape holds", async () => {
+    harness = await hydratedHarness("store-shape-kind", {
+      rows: { "core.note": [{ item: { id: "n1" } }] },
+    });
+    const { device } = harness;
+    const queued = await device.replaceMetadata("n1", ["held"]);
+    expect(queued.ok, JSON.stringify(queued)).toBe(true);
+
+    // What an earlier build would have left: a queue that admits a kind this
+    // build no longer queues, here the metadata merge it once sent.
+    const reshape = (kind: string) => {
+      const store = new DatabaseSync(device.store, {
+        enableForeignKeyConstraints: false,
+      });
+      try {
+        const { sql } = store
+          .prepare(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'queue'",
+          )
+          .get() as { sql: string };
+        const admitting = sql
+          .replace(
+            "'replace_metadata',",
+            "'replace_metadata', 'merge_metadata',",
+          )
+          .replace(/^CREATE TABLE\s+"?queue"?/, "CREATE TABLE queue_admitting");
+        expect(admitting).toContain("'merge_metadata'");
+        store.exec(admitting);
+        store.exec(
+          "INSERT INTO queue_admitting SELECT * FROM queue; DROP TABLE queue; ALTER TABLE queue_admitting RENAME TO queue;",
+        );
+        store.prepare("UPDATE queue SET kind = ?").run(kind);
+      } finally {
+        store.close();
+      }
+    };
+    const said = async () => {
+      const refused = await device.queue();
+      expect(refused.ok, "a store of another shape was opened").toBe(false);
+      if (refused.ok) return "";
+      expect(refused.refusal.code).toBe("wrong_schema");
+      return (
+        JSON.parse(refused.refusal.raw) as { error: { message: string } }
+      ).error.message.replace(device.store, "");
+    };
+
+    // The witness: the same reshaped store, its write still a kind this
+    // build sends, is refused without naming a kind.
+    reshape("replace_metadata");
+    const known = await said();
+    expect(known).toContain("1 write");
+    expect(known).not.toContain("of kind");
+
+    reshape("merge_metadata");
+    const unknown = await said();
+    expect(
+      unknown,
+      "the refusal did not name the kind of write this build cannot send",
+    ).toContain("1 write of kind merge_metadata");
+    expect(unknown).toContain("1 write");
+
+    const store = new DatabaseSync(device.store);
+    try {
+      const rows = store.prepare("SELECT kind FROM queue").all() as Array<{
+        kind: string;
+      }>;
+      expect(
+        rows.map((row) => row.kind),
+        "the refusal dropped the write it could not send",
+      ).toEqual(["merge_metadata"]);
+    } finally {
+      store.close();
+    }
+  });
+
   it("opens a store made before a table this build adds, and adds it", async () => {
     harness = await hydratedHarness("store-older", {
       rows: { "core.note": [{ item: { id: "n1" } }] },

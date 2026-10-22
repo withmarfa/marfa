@@ -1994,7 +1994,6 @@ const WRITE_KINDS = [
   "update_edge",
   "delete_edge",
   "replace_metadata",
-  "merge_metadata",
   "add_tag",
   "remove_tag",
   "write_extension",
@@ -2029,7 +2028,7 @@ describe("what a queue holds", () => {
     // Every kind this build can queue, once each.
     // One at a time, and deliberately: each is its own process, and a
     // device holds the writer handle for as long as its process lives — so
-    // thirteen started at once would contend for it and twelve would be
+    // twelve started at once would contend for it and eleven would be
     // refused as readers.
     const asked: Array<[string, () => Promise<{ ok: boolean }>]> = [
       [
@@ -2047,14 +2046,7 @@ describe("what a queue holds", () => {
       ],
       ["add_tag", () => device.addTag(HELD.id, "alpha")],
       ["remove_tag", () => device.removeTag(HELD.id, "alpha")],
-      [
-        "merge_metadata",
-        () => device.writeMetadata(HELD.id, ["beta"], "merge"),
-      ],
-      [
-        "replace_metadata",
-        () => device.writeMetadata(HELD.id, ["gamma"], "replace"),
-      ],
+      ["replace_metadata", () => device.replaceMetadata(HELD.id, ["gamma"])],
       [
         "write_extension",
         () => device.writeExtension(HELD.id, "app.notes", { a: 1 }),
@@ -2207,7 +2199,7 @@ describe("a write that is not about an item's fields", () => {
   /**
    * Every kind whose door answers with something other than an item.
    *
-   * Ten of the fourteen sendable kinds are in here. Read against the item
+   * Ten of the fourteen kinds are in here. Read against the item
    * shape instead, a tag, an edge, a metadata write, an extension and a
    * delete all come back as an answer the device cannot read: the server
    * does the work, the device counts a refusal, sends it again, and kills
@@ -2241,14 +2233,7 @@ describe("a write that is not about an item's fields", () => {
     const queued: Array<[string, () => Promise<{ ok: boolean }>]> = [
       ["add_tag", () => device.addTag(HELD.id, "alpha")],
       ["remove_tag", () => device.removeTag(HELD.id, "alpha")],
-      [
-        "merge_metadata",
-        () => device.writeMetadata(HELD.id, ["beta"], "merge"),
-      ],
-      [
-        "replace_metadata",
-        () => device.writeMetadata(HELD.id, ["gamma"], "replace"),
-      ],
+      ["replace_metadata", () => device.replaceMetadata(HELD.id, ["gamma"])],
       [
         "write_extension",
         () => device.writeExtension(HELD.id, "app.notes", { a: 1 }),
@@ -3969,8 +3954,7 @@ describe("an answer the device applies keeps what it has not had answered", () =
         target: local,
         type: "references",
       }),
-      replaced: await device.writeMetadata(local, ["only"], "replace"),
-      merged: await device.writeMetadata(local, ["more"], "merge"),
+      replaced: await device.replaceMetadata(local, ["only"]),
       untagged: await device.removeTag(local, "theirs"),
       extension: await device.writeExtension(local, "app.test", { a: 1 }),
       unextended: await device.deleteExtension(local, "app.test"),
@@ -4025,7 +4009,6 @@ describe("an answer the device applies keeps what it has not had answered", () =
     expect(
       [
         verdictOf(idOf(queued.replaced)),
-        verdictOf(idOf(queued.merged)),
         verdictOf(idOf(queued.untagged)),
         verdictOf(idOf(queued.extension)),
         verdictOf(idOf(queued.unextended)),
@@ -4034,7 +4017,7 @@ describe("an answer the device applies keeps what it has not had answered", () =
         verdictOf(idOf(queued.restored)),
       ],
       "a write that takes from the row went to another device's item",
-    ).toEqual(Array(8).fill("refused"));
+    ).toEqual(Array(7).fill("refused"));
     // Only the tag and the edge went out after the create.
     expect(
       server.requests
@@ -7374,8 +7357,8 @@ describe("an edit behind an edit of the same row", () => {
       rows: rows(),
     });
     const { device, server } = harness;
-    const first = await device.writeMetadata(HELD.id, ["one"], "replace");
-    const second = await device.writeMetadata(HELD.id, ["two"], "replace");
+    const first = await device.replaceMetadata(HELD.id, ["one"]);
+    const second = await device.replaceMetadata(HELD.id, ["two"]);
     const deleted = await device.deleteItem(QUIET.id);
     const restored = await device.restoreItem(QUIET.id);
     for (const queued of [first, second, deleted, restored]) {

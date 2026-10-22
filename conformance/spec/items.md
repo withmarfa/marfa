@@ -750,7 +750,7 @@ When the revocation of a key commits after an earlier entry of a `POST /items/bu
 
 ### `items/idempotency-operations`
 
-The server MUST honor an `Idempotency-Key` on `POST /items`, `PATCH /items/{id}`, `DELETE /items/{id}`, `POST /items/{id}/purge`, `POST /items/{id}/transition`, `POST /items/{id}/restore`, `POST /items/{id}/tags`, `DELETE /items/{id}/tags/{tag}`, `PUT /items/{id}/metadata`, `PATCH /items/{id}/metadata`, `PUT /items/{id}/extensions/{namespace}`, `DELETE /items/{id}/extensions/{namespace}`, `POST /edges`, `PATCH /edges/{id}`, `DELETE /edges/{id}`, `POST /folders`, `PATCH /folders/{id}`, `POST /folders/{id}/revoke` and `POST /items/bulk-actions`, and on no other operation.
+The server MUST honor an `Idempotency-Key` on `POST /items`, `PATCH /items/{id}`, `DELETE /items/{id}`, `POST /items/{id}/purge`, `POST /items/{id}/transition`, `POST /items/{id}/restore`, `POST /items/{id}/tags`, `DELETE /items/{id}/tags/{tag}`, `PUT /items/{id}/metadata`, `PUT /items/{id}/extensions/{namespace}`, `DELETE /items/{id}/extensions/{namespace}`, `POST /edges`, `PATCH /edges/{id}`, `DELETE /edges/{id}`, `POST /folders`, `PATCH /folders/{id}`, `POST /folders/{id}/revoke` and `POST /items/bulk-actions`, and on no other operation.
 
 **Reason:** a client resends a write whose answer it lost. A tag, metadata or extension write checks no version, so one applied a second time would undo a change made between the two sends.
 
@@ -984,7 +984,7 @@ When `GET /items/{id}` names an archived item the key may read, the server MUST 
 
 ### `items/write-in-bin`
 
-If `PATCH /items/{id}`, `DELETE /items/{id}`, `PUT` or `PATCH /items/{id}/metadata`, `POST /items/{id}/tags`, `DELETE /items/{id}/tags/{tag}`, or `PUT` or `DELETE /items/{id}/extensions/{namespace}` names an item in the bin, then the server MUST answer `404 item_not_found`, with `details.trashed: true` only to a key that may read the item's type (`errors/bin-trashed`).
+If `PATCH /items/{id}`, `DELETE /items/{id}`, `PUT /items/{id}/metadata`, `POST /items/{id}/tags`, `DELETE /items/{id}/tags/{tag}`, or `PUT` or `DELETE /items/{id}/extensions/{namespace}` names an item in the bin, then the server MUST answer `404 item_not_found`, with `details.trashed: true` only to a key that may read the item's type (`errors/bin-trashed`).
 
 **Tests:** `correctness/trash.test.ts › deleted item is hidden from default queries`, `compliance/write-refusal-details.test.ts › answers 404 with details.trashed to a key that may read the type, and nothing to one that may not`.
 
@@ -1672,9 +1672,9 @@ The server MUST hold an item's tags as a set, keeping each tag once, in the orde
 
 ### `items/tags-add`
 
-When a key sends tags on `PATCH /items/{id}/metadata` or `POST /items/{id}/tags`, the server MUST add them to the item's tags.
+When a key sends tags on `POST /items/{id}/tags`, the server MUST add them to the item's tags.
 
-**Tests:** `correctness/tags.test.ts › updates tags via metadata PATCH`, `compliance/metadata-routes.test.ts › adds tags, reads them back, and replaces them wholesale`.
+**Tests:** `correctness/tags.test.ts › adds tags as a set union with POST /items/{id}/tags`, `compliance/metadata-routes.test.ts › adds tags, reads them back, and replaces them wholesale`.
 
 ### `items/tags-replace`
 
@@ -1698,11 +1698,11 @@ The server MUST answer an item's tags in its `metadata` on `GET /items/{id}` and
 
 If a tag write names `tags` that is not a list, then the server MUST answer `400 validation_error`.
 
-**Tests:** `correctness/tags.test.ts › refuses a metadata patch whose tags are not an array, and answers 404 for an unknown item`, `compliance/metadata-routes.test.ts › refuses a tags body that is not an array`.
+**Tests:** `correctness/tags.test.ts › refuses a tags add whose tags are not an array, and answers 404 for an unknown item`, `compliance/metadata-routes.test.ts › refuses a tags body that is not an array`.
 
 ### `items/metadata-undeclared-key`
 
-If `PUT /items/{id}/metadata`, `PATCH /items/{id}/metadata` or `POST /items/{id}/tags` carries a top-level body key the operation does not declare, then the server MUST answer `400 validation_error` naming each such key in `details.unknown_body_fields`.
+If `PUT /items/{id}/metadata` or `POST /items/{id}/tags` carries a top-level body key the operation does not declare, then the server MUST answer `400 validation_error` naming each such key in `details.unknown_body_fields`.
 
 **Reason:** a misspelled `tags` would otherwise be dropped, and the write answered as the success of a different request.
 
@@ -1712,7 +1712,7 @@ If `PUT /items/{id}/metadata`, `PATCH /items/{id}/metadata` or `POST /items/{id}
 
 If a metadata, tag or extension operation names an item that does not exist, then the server MUST answer `404 item_not_found`.
 
-**Tests:** `correctness/tags.test.ts › refuses a metadata patch whose tags are not an array, and answers 404 for an unknown item`, `compliance/metadata-routes.test.ts › answers 404 for an unknown item on every metadata door`, `compliance/extensions.test.ts › answers 404 for an unknown item and 400 for a malformed id on every door`.
+**Tests:** `correctness/tags.test.ts › refuses a tags add whose tags are not an array, and answers 404 for an unknown item`, `compliance/metadata-routes.test.ts › answers 404 for an unknown item on every metadata door`, `compliance/extensions.test.ts › answers 404 for an unknown item and 400 for a malformed id on every door`.
 
 ### `items/metadata-write-grant`
 
@@ -1724,7 +1724,7 @@ If a key that may read an item's type but not write it writes the item's tags or
 
 The server MUST hold `favorite` as an ordinary tag, with no field of its own.
 
-**Tests:** `correctness/tags.test.ts › favorite is not a separate metadata field; it lives in tags`, `› favorite persists when added via metadata PATCH`.
+**Tests:** `correctness/tags.test.ts › favorite is not a separate metadata field; it lives in tags`, `› favorite persists when added with POST /items/{id}/tags`.
 
 ### `items/tag-counts`
 

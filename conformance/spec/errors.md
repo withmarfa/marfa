@@ -284,7 +284,7 @@ When a request other than `OPTIONS` names a path no operation serves, and is nei
 
 When a request other than `OPTIONS` names a method no operation serves on a path that another method serves, and is not a `GET` or `POST` under `/auth/`, which the sign-in library answers, the server MUST answer `404 not_found` and not `405`.
 
-**Tests:** `compliance/unmatched-paths.test.ts › answers a method no door serves on a path another method serves 404 not_found, not 405`.
+**Tests:** `compliance/unmatched-paths.test.ts › answers a method no door serves on a path another method serves 404 not_found, not 405`, `› answers a PATCH to an item's metadata 404 not_found, under an Idempotency-Key it then keeps no record of, and writes nothing`.
 
 ### `errors/unmatched-read-view`
 
@@ -476,7 +476,7 @@ If a `403` is not caused by a grant that the key could be given, such as the res
 
 ### `errors/bin-trashed`
 
-When `PATCH /items/{id}`, `DELETE /items/{id}`, `PUT` or `PATCH /items/{id}/metadata`, `POST /items/{id}/tags`, `DELETE /items/{id}/tags/{tag}`, or `PUT` or `DELETE /items/{id}/extensions/{namespace}` names an item in the bin and the key may read the item's type, the server MUST carry `details` of exactly `{ "trashed": true }` in the `404 item_not_found`.
+When `PATCH /items/{id}`, `DELETE /items/{id}`, `PUT /items/{id}/metadata`, `POST /items/{id}/tags`, `DELETE /items/{id}/tags/{tag}`, or `PUT` or `DELETE /items/{id}/extensions/{namespace}` names an item in the bin and the key may read the item's type, the server MUST carry `details` of exactly `{ "trashed": true }` in the `404 item_not_found`.
 
 **Reason:** a client holding a write to the item can tell an item someone deleted from one that never existed. `items/write-in-bin` states the refusal itself.
 
