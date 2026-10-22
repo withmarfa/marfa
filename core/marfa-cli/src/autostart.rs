@@ -50,7 +50,20 @@ pub enum AutostartCommand {
     /// credential and no server: each folder uses the server its copy came
     /// from and the credential the keychain keeps for it. Run again, it
     /// changes nothing unless the agent would differ.
-    On,
+    ///
+    /// With `--key-file` the agent runs the watch with that file in place of
+    /// the keychain, for a machine where nobody signs in to unlock it. The
+    /// agent holds the file's path and never what is in it.
+    On {
+        /// A file that holds `MARFA_API_URL` and `MARFA_API_KEY` lines, which
+        /// only you can read (mode 600) and which lies outside every folder.
+        /// The agent uses it for the folders that name that server and reads
+        /// the keychain for none. A key limited to the types the folder
+        /// carries is the intended use. Without this option the agent uses
+        /// the keychain.
+        #[arg(long, value_name = "FILE")]
+        key_file: Option<PathBuf>,
+    },
     /// Stop syncing folders from login: stops the watch and removes the
     /// agent. Run again, it changes nothing.
     Off,
@@ -68,7 +81,7 @@ pub fn run(command: AutostartCommand, named: &Named, json: bool) -> Result<(), C
     }
     let place = Place::here()?;
     match command {
-        AutostartCommand::On => on(&place, json),
+        AutostartCommand::On { key_file } => on(&place, key_file.as_deref(), json),
         AutostartCommand::Off => off(&place, json),
         AutostartCommand::Status => status(&place, json),
     }
@@ -113,6 +126,9 @@ struct Agent {
     binary: PathBuf,
     log: PathBuf,
     registry: PathBuf,
+    /// The file the watch takes its server and key from, in place of the
+    /// keychain. Its path only: the agent never holds what the file does.
+    key_file: Option<PathBuf>,
 }
 
 impl Agent {
@@ -136,17 +152,17 @@ impl Agent {
             log: registry.with_file_name(LOG_NAME),
             binary,
             registry,
+            key_file: None,
         })
     }
 
     fn arguments(&self) -> Result<Vec<&str>, CliError> {
-        Ok(vec![
-            text(&self.binary)?,
-            "folders",
-            "watch",
-            "--log",
-            text(&self.log)?,
-        ])
+        let mut arguments = vec![text(&self.binary)?, "folders", "watch"];
+        if let Some(key_file) = &self.key_file {
+            arguments.extend(["--key-file", text(key_file)?]);
+        }
+        arguments.extend(["--log", text(&self.log)?]);
+        Ok(arguments)
     }
 
     fn render(&self, manager: Manager) -> Result<String, CliError> {
@@ -252,18 +268,28 @@ WantedBy=default.target
                     }),
             ),
         };
-        match arguments.as_slice() {
+        let (binary, key_file, log) = match arguments.as_slice() {
             [binary, folders, watch, flag, log]
                 if folders == "folders" && watch == "watch" && flag == "--log" =>
             {
-                Some(Agent {
-                    binary: binary.into(),
-                    log: log.into(),
-                    registry: registry?.into(),
-                })
+                (binary, None, log)
             }
-            _ => None,
-        }
+            [binary, folders, watch, keyed, key_file, flag, log]
+                if folders == "folders"
+                    && watch == "watch"
+                    && keyed == "--key-file"
+                    && flag == "--log" =>
+            {
+                (binary, Some(PathBuf::from(key_file)), log)
+            }
+            _ => return None,
+        };
+        Some(Agent {
+            binary: binary.into(),
+            log: log.into(),
+            registry: registry?.into(),
+            key_file,
+        })
     }
 }
 
@@ -690,11 +716,20 @@ struct Switched {
     #[serde(skip_serializing_if = "Option::is_none")]
     registry: Option<PathBuf>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    key_file: Option<PathBuf>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     running: Option<bool>,
 }
 
-fn on(place: &Place, json: bool) -> Result<(), CliError> {
-    let agent = Agent::for_this_binary()?;
+fn on(place: &Place, key_file: Option<&Path>, json: bool) -> Result<(), CliError> {
+    let mut agent = Agent::for_this_binary()?;
+    if let Some(key_file) = key_file {
+        // Refused before anything is written, so a file the watch could not
+        // use is found now and not at the next login.
+        let path = crate::keyfile::placed(key_file, None)?;
+        crate::keyfile::read(&path)?;
+        agent.key_file = Some(path);
+    }
     let wanted = agent.render(place.manager)?;
     let changed = read_file(&place.file)?.as_deref() != Some(wanted.as_str());
     let state = place
@@ -742,6 +777,7 @@ fn on(place: &Place, json: bool) -> Result<(), CliError> {
         binary: Some(agent.binary.clone()),
         log: Some(agent.log.clone()),
         registry: Some(agent.registry.clone()),
+        key_file: agent.key_file.clone(),
         running,
     };
     output::report(&report, json, || {
@@ -764,14 +800,21 @@ fn on(place: &Place, json: bool) -> Result<(), CliError> {
             agent.registry.display()
         ));
         lines.push(format!("it logs to {}", agent.log.display()));
+        if let Some(key_file) = &agent.key_file {
+            lines.push(format!(
+                "it takes its server and key from {}, and reads the keychain for no folder",
+                key_file.display()
+            ));
+        }
         if running == Some(false) {
             lines.push(
                 "the watch is not running yet: `marfa folders autostart status` says why".into(),
             );
         }
-        if ["MARFA_API_KEY", "MARFA_API_URL"]
-            .iter()
-            .any(|name| std::env::var_os(name).is_some_and(|value| !value.is_empty()))
+        if agent.key_file.is_none()
+            && ["MARFA_API_KEY", "MARFA_API_URL"]
+                .iter()
+                .any(|name| std::env::var_os(name).is_some_and(|value| !value.is_empty()))
         {
             lines.push(
                 "the watch reads no MARFA_API_KEY or MARFA_API_URL: each folder uses the credential the keychain keeps for its server".into(),
@@ -830,6 +873,7 @@ fn off(place: &Place, json: bool) -> Result<(), CliError> {
         binary: None,
         log: None,
         registry: None,
+        key_file: None,
         running: None,
     };
     output::report(&report, json, || {
@@ -875,6 +919,9 @@ struct Status {
     binary: Option<Binary>,
     log: Option<PathBuf>,
     registry: Option<PathBuf>,
+    /// The file the watch takes its server and key from, or none where it
+    /// uses the keychain.
+    key_file: Option<PathBuf>,
     record: Option<RecordView>,
     /// The folders the watch has no credential it can use for.
     credential: Vec<String>,
@@ -995,6 +1042,7 @@ fn status(place: &Place, json: bool) -> Result<(), CliError> {
         binary,
         log: agent.as_ref().map(|agent| agent.log.clone()),
         registry: agent.as_ref().map(|agent| agent.registry.clone()),
+        key_file: agent.as_ref().and_then(|agent| agent.key_file.clone()),
         record,
         credential,
     };
@@ -1067,6 +1115,19 @@ fn describe_status(place: &Place, report: &Status) -> String {
     if let Some(log) = &report.log {
         lines.push(format!("it logs to {}", log.display()));
     }
+    if let Some(key_file) = &report.key_file {
+        lines.push(if key_file.is_file() {
+            format!(
+                "it takes its server and key from {}, and reads the keychain for no folder",
+                key_file.display()
+            )
+        } else {
+            format!(
+                "it takes its server and key from {}, which no longer exists: the watch cannot start until it does",
+                key_file.display()
+            )
+        });
+    }
     if let Some(record) = &report.record {
         let running = report.state.as_ref().is_some_and(|state| state.running);
         if record.current {
@@ -1123,6 +1184,7 @@ mod tests {
             binary: binary.into(),
             log: "/data/marfa/folder-watch.log".into(),
             registry: "/data/marfa/folders.json".into(),
+            key_file: None,
         }
     }
 
@@ -1196,6 +1258,47 @@ mod tests {
             }
             // Witness: the one variable it carries is there.
             assert!(written.contains("MARFA_FOLDER_REGISTRY"));
+        }
+    }
+
+    #[test]
+    fn an_agent_with_a_key_file_runs_the_watch_with_its_path_and_holds_nothing_from_it() {
+        let keyed = Agent {
+            key_file: Some("/home/me/.config/marfa/watch.env".into()),
+            ..agent("/bin/marfa")
+        };
+        let plist = keyed.plist().unwrap();
+        assert!(plist.contains(
+            "\t\t<string>watch</string>\n\t\t<string>--key-file</string>\n\t\t<string>/home/me/.config/marfa/watch.env</string>\n\t\t<string>--log</string>"
+        ));
+        let unit = keyed.unit().unwrap();
+        assert!(
+            unit.contains(
+                "\"watch\" \"--key-file\" \"/home/me/.config/marfa/watch.env\" \"--log\""
+            )
+        );
+        for manager in [Manager::Launchd, Manager::Systemd] {
+            let written = keyed.render(manager).unwrap();
+            for name in [
+                "MARFA_API_KEY",
+                "MARFA_API_URL",
+                "MARFA_KEYCHAIN",
+                "--url",
+                "--key\"",
+            ] {
+                assert!(!written.contains(name), "{manager:?} carries {name}");
+            }
+            assert_eq!(
+                Agent::read(manager, &written),
+                Some(keyed.clone()),
+                "{manager:?}"
+            );
+            // The witness: an agent with none is another agent.
+            assert_ne!(
+                written,
+                agent("/bin/marfa").render(manager).unwrap(),
+                "{manager:?}"
+            );
         }
     }
 

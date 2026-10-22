@@ -10,8 +10,10 @@ use marfa_core::{CoreError, FirstSync, Folder, Removal, SendReport, SyncReport, 
 use crate::autostart::{self, AutostartCommand};
 use crate::commands::folders as folder_settings;
 use crate::commands::items::IdempotencyArgs;
+use crate::credentials;
 use crate::error::{CliError, Exit};
 use crate::interrupt;
+use crate::keyfile;
 use crate::logfile;
 use crate::output::{self, Printer};
 use crate::remote::{Named, Remote, Session, renewing};
@@ -179,6 +181,15 @@ pub enum FoldersCommand {
         /// as it runs. `folders autostart` runs the watch with it.
         #[arg(long, value_name = "FILE")]
         log: Option<PathBuf>,
+        /// A file that holds `MARFA_API_URL` and `MARFA_API_KEY` lines, which
+        /// only you can read (mode 600), for a watch that runs with nobody
+        /// signed in to unlock the keychain. The watch uses it for the folders
+        /// that name that server and reads the keychain for none, so a folder
+        /// of another server is reported as having no credential. Keep the
+        /// file outside every folder. `folders autostart on --key-file` runs
+        /// the watch with it.
+        #[arg(long, value_name = "FILE")]
+        key_file: Option<PathBuf>,
     },
     /// Sync every folder from login, in your own account: a launchd agent on
     /// macOS or a systemd user unit on Linux runs `folders watch` with no
@@ -529,11 +540,24 @@ pub fn run(
             )
         }
         FoldersCommand::Unmatched { dir, remove, yes } => unmatched(&dir, remove, yes, json),
-        FoldersCommand::Watch { dir, r#for, log } => {
+        FoldersCommand::Watch {
+            dir,
+            r#for,
+            log,
+            key_file,
+        } => {
             interrupt::stop_on_terminate_too();
             if let Some(log) = &log {
                 logfile::redirect(log)?;
             }
+            let keyed;
+            let named = match &key_file {
+                Some(path) => {
+                    keyed = from_key_file(path, dir.as_deref(), named)?;
+                    &keyed
+                }
+                None => named,
+            };
             match dir {
                 Some(dir) => watch::watch(&dir, named, r#for.map(Duration::from_secs), json),
                 None => watch::watch_every(named, r#for, json),
@@ -549,6 +573,24 @@ pub fn run(
         ),
     };
     done.map(|()| exit)
+}
+
+/// The server and key a key file holds, as this command's own. The keychain
+/// is turned off, so that a folder of another server is reported without a
+/// credential rather than looked up where nobody can answer a prompt.
+fn from_key_file(path: &Path, dir: Option<&Path>, named: &Named) -> Result<Named, CliError> {
+    if named.url.is_some() || named.key.is_some() {
+        return Err(CliError::Usage(
+            "--key-file holds the server and key, so it takes neither --url nor --key".into(),
+        ));
+    }
+    let path = keyfile::placed(path, dir)?;
+    let held = keyfile::read(&path)?;
+    credentials::turn_off();
+    Ok(Named {
+        url: Some(held.url),
+        key: Some(held.key),
+    })
 }
 
 fn unmatched(dir: &Path, remove: bool, yes: bool, json: bool) -> Result<(), CliError> {

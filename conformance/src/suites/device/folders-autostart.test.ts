@@ -313,6 +313,7 @@ interface Switched {
   binary?: string;
   log?: string;
   registry?: string;
+  key_file?: string;
   running?: boolean | null;
 }
 
@@ -328,6 +329,7 @@ interface Status {
   binary: { path: string; exists: boolean; this_binary: boolean } | null;
   log: string | null;
   registry: string | null;
+  key_file: string | null;
   record: {
     path: string;
     current: boolean;
@@ -746,6 +748,182 @@ describe("folder syncing from login", () => {
     expect(
       readFileSync(join(dirname(registry), "folder-watch.log"), "utf8"),
     ).toContain(harness.dir);
+  });
+
+  /** A key file below the stand-in home, readable by its owner alone. */
+  function keyFile(root: string, url: string, key: string, mode = 0o600) {
+    const path = join(root, "keys", "watch.env");
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, `MARFA_API_URL=${url}\nMARFA_API_KEY=${key}\n`);
+    chmodSync(path, mode);
+    return path;
+  }
+
+  it("writes the path of a key file into the agent and nothing from it, and says so in the status", () => {
+    const root = standIn("keyfile");
+    const registry = registryOf(root);
+    const binary = requireBinary();
+    const secret = `device-fixture-secret-${randomUUID()}`;
+    const path = keyFile(root, "http://127.0.0.1:9/never", secret);
+    const report = parsed<Switched>(
+      autostart(root, "on", { registry, args: ["--key-file", path] }),
+    );
+    expect(report.key_file).toBe(path);
+    const log = join(dirname(registry), "folder-watch.log");
+    expect(agentRuns(root).argv).toEqual([
+      binary,
+      "folders",
+      "watch",
+      "--key-file",
+      path,
+      "--log",
+      log,
+    ]);
+    const written = readFileSync(agentFile(root), "utf8");
+    for (const carried of [
+      secret,
+      "MARFA_API_KEY",
+      "MARFA_API_URL",
+      "127.0.0.1:9",
+    ]) {
+      expect(written, carried).not.toContain(carried);
+    }
+    // The witness: the path does reach the file.
+    expect(written).toContain(path);
+    const status = parsed<Status>(autostart(root, "status", { registry }));
+    expect(status.key_file).toBe(path);
+    // Turned on again as it was, nothing changes; without the option, the
+    // keychain is used again and the agent is replaced.
+    expect(
+      parsed<Switched>(
+        autostart(root, "on", { registry, args: ["--key-file", path] }),
+      ).changed,
+    ).toBe(false);
+    const back = parsed<Switched>(autostart(root, "on", { registry }));
+    expect(back.changed).toBe(true);
+    expect(back.key_file).toBeUndefined();
+    expect(agentRuns(root).argv).not.toContain("--key-file");
+    expect(
+      parsed<Status>(autostart(root, "status", { registry })).key_file,
+    ).toBe(null);
+  });
+
+  it("refuses a key file that others can read, a link, one that lacks a name and one inside a folder, naming the reason and writing nothing", () => {
+    const root = standIn("keyfile-refused");
+    const registry = registryOf(root);
+    const secret = `device-fixture-secret-${randomUUID()}`;
+    const refused = (path: string, reason: string) => {
+      const ran = autostart(root, "on", {
+        registry,
+        args: ["--key-file", path],
+      });
+      expect(ran.status, ran.stdout).toBe(1);
+      expect(ran.stdout).toBe("");
+      const envelope = JSON.parse(ran.stderr) as {
+        error: { code: string; message: string };
+      };
+      expect(envelope.error.code).toBe("invalid");
+      expect(envelope.error.message).toContain(reason);
+      expect(ran.stderr).not.toContain(secret);
+      expect(existsSync(agentFile(root))).toBe(false);
+    };
+    const open = keyFile(root, "http://127.0.0.1:9", secret, 0o644);
+    refused(open, "can be read by others");
+    chmodSync(open, 0o600);
+    const link = join(root, "keys", "link.env");
+    symlinkSync(open, link);
+    refused(link, "is a link");
+    refused(join(root, "keys", "absent.env"), "does not exist");
+    const bare = join(root, "keys", "bare.env");
+    writeFileSync(bare, "MARFA_API_URL=http://127.0.0.1:9\n");
+    chmodSync(bare, 0o600);
+    refused(bare, "has no MARFA_API_KEY line");
+    // A key file inside a listed folder would be sent to the server.
+    const folder = join(root, "notes");
+    mkdirSync(folder, { recursive: true });
+    mkdirSync(dirname(registry), { recursive: true });
+    writeFileSync(
+      registry,
+      JSON.stringify({ folders: [{ dir: folder, folder: randomUUID() }] }),
+    );
+    const inside = join(folder, "watch.env");
+    writeFileSync(
+      inside,
+      `MARFA_API_URL=http://127.0.0.1:9\nMARFA_API_KEY=${secret}\n`,
+    );
+    chmodSync(inside, 0o600);
+    refused(inside, "lies inside the folder");
+    // The witness: a file that is fine is taken.
+    const fine = parsed<Switched>(
+      autostart(root, "on", { registry, args: ["--key-file", open] }),
+    );
+    expect(fine.key_file).toBe(open);
+  });
+
+  it("keeps a folder in step from the agent with the key file, and reads the keychain for no folder", async () => {
+    const harness = await folderHarness("autostart-keyfile");
+    made.push(harness);
+    scriptFolderWrites(harness);
+    const root = standIn("keyfile-sync");
+    const kept = "device-fixture-key-from-a-file";
+    const path = keyFile(root, harness.server.url, kept);
+    const from = harness.server.requests.length;
+    parsed<Switched>(
+      autostart(root, "on", {
+        registry: harness.registry,
+        // A keychain that holds nothing and cannot be asked: the watch gets
+        // its key from the file or has none.
+        env: { MARFA_KEYCHAIN: join(root, "none.keychain-db") },
+        args: ["--key-file", path],
+      }),
+    );
+    put(
+      harness,
+      "From a file.md",
+      "---\ntitle: From a file\n---\nno keychain asked\n",
+    );
+    await vi.waitFor(
+      () => expect(sentTitles(harness)).toEqual(["From a file"]),
+      WAIT,
+    );
+    const sent = harness.server.requests
+      .slice(from)
+      .map((request) => request.headers.authorization)
+      .filter((header) => header !== undefined);
+    expect(sent).toContain(`Bearer ${kept}`);
+    expect(sent.filter((header) => header !== `Bearer ${kept}`)).toEqual([]);
+  });
+
+  it("does not send a key file's key to a folder of another server", async () => {
+    const harness = await folderHarness("autostart-keyfile-other");
+    made.push(harness);
+    scriptFolderWrites(harness);
+    const root = standIn("keyfile-other");
+    const kept = "device-fixture-key-for-another-server";
+    const path = keyFile(root, "http://127.0.0.1:9", kept);
+    const from = harness.server.requests.length;
+    parsed<Switched>(
+      autostart(root, "on", {
+        registry: harness.registry,
+        env: { MARFA_KEYCHAIN: join(root, "none.keychain-db") },
+        args: ["--key-file", path],
+      }),
+    );
+    await vi.waitFor(() => {
+      const status = parsed<Status>(
+        autostart(root, "status", { registry: harness.registry }),
+      );
+      expect(status.record?.current).toBe(true);
+      expect(["no_credential", "no_keychain"]).toContain(
+        status.record?.folders.find((folder) => folder.dir === harness.dir)
+          ?.reason,
+      );
+    }, WAIT);
+    const sent = harness.server.requests
+      .slice(from)
+      .map((request) => request.headers.authorization)
+      .filter((header) => header !== undefined);
+    expect(sent).not.toContain(`Bearer ${kept}`);
   });
 
   describe.runIf(process.platform === "darwin")(

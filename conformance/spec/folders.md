@@ -4666,9 +4666,33 @@ When `folders autostart on` writes the agent, the CLI MUST set `MARFA_FOLDER_REG
 
 The CLI MUST NOT write into the agent a credential, a server address, a variable that names either, such as `MARFA_API_KEY` or `MARFA_API_URL`, or a variable that names a keychain file, such as `MARFA_KEYCHAIN`.
 
-**Reason:** Each folder uses the server its copy came from and the credential the keychain keeps for that server, as a watch of every folder does.
+**Reason:** Each folder uses the server its copy came from and the credential the keychain keeps for that server, as a watch of every folder does, or the key file `folders/autostart-key-file` names, whose path the agent holds and whose contents it does not.
 
-**Tests:** `device/folders-autostart.test.ts › writes an agent in the person's account that runs the watch of every folder by this binary's path, holding no credential, and starts it`.
+**Tests:** `device/folders-autostart.test.ts › writes an agent in the person's account that runs the watch of every folder by this binary's path, holding no credential, and starts it`, `› writes the path of a key file into the agent and nothing from it, and says so in the status`.
+
+### `folders/autostart-key-file`
+
+Where `folders autostart on` is given `--key-file` naming a file, the CLI MUST make the agent run `folders watch` with `--key-file` and the absolute path of that file before `--log`, and MUST write no other part of the file into the agent. Where `--key-file` is not given, the CLI MUST make the agent run the watch as `folders/autostart-runs-watch` says.
+
+**Reason:** A machine where nobody signs in has no keychain to unlock, so the watch takes the server and key from a file that only its owner can read. The agent holds the path alone, so a key that is rotated is read from the file at the watch's next start.
+
+**Tests:** `device/folders-autostart.test.ts › writes the path of a key file into the agent and nothing from it, and says so in the status`.
+
+### `folders/autostart-key-file-refused`
+
+If the file named by `folders autostart on --key-file` or `folders watch --key-file` does not exist, is a symbolic link, belongs to another user, can be read by its group or by others, lacks a `MARFA_API_URL` line or a `MARFA_API_KEY` line, or lies inside a folder the folder registry lists, then the CLI MUST exit 1 with `invalid`, name the file and the reason and never print a value from it, and `folders autostart on` MUST write nothing.
+
+**Reason:** A key readable by others is no safer than one on a command line, and a key file inside a folder would be sent to the server as one of its files. Refusing in `on` finds the fault now and not at the next login.
+
+**Tests:** `device/folders-autostart.test.ts › refuses a key file that others can read, a link, one that lacks a name and one inside a folder, naming the reason and writing nothing`.
+
+### `folders/watch-key-file`
+
+While `folders watch` runs with `--key-file`, the CLI MUST use the file's address and key for each folder whose copy records that server, MUST read the keychain for no folder, and MUST NOT send the key to a folder of another server.
+
+**Reason:** A setup that must never raise a keychain dialog has no use for one, and one key cannot serve every folder's server.
+
+**Tests:** `device/folders-autostart.test.ts › keeps a folder in step from the agent with the key file, and reads the keychain for no folder`, `› does not send a key file's key to a folder of another server`.
 
 ### `folders/autostart-file-mode`
 
@@ -4758,9 +4782,9 @@ If `folders autostart` is given `--url` or `--key`, then the CLI MUST refuse it 
 
 ### `folders/autostart-status`
 
-When `folders autostart status` runs, the CLI MUST report whether the agent is installed, whether the service manager runs its watch and as which process, the binary the agent runs, and where the watch logs.
+When `folders autostart status` runs, the CLI MUST report whether the agent is installed, whether the service manager runs its watch and as which process, the binary the agent runs, where the watch logs, and the key file the agent names, or none.
 
-**Tests:** `device/folders-autostart.test.ts › says whether the watch runs, where it logs, and from the record which folders it has no credential for, with no server or credential of its own`, `device/folders-autostart.test.ts › changes nothing when turned on again, and off removes the agent and stops its watch, twice over`.
+**Tests:** `device/folders-autostart.test.ts › says whether the watch runs, where it logs, and from the record which folders it has no credential for, with no server or credential of its own`, `device/folders-autostart.test.ts › changes nothing when turned on again, and off removes the agent and stops its watch, twice over`, `› writes the path of a key file into the agent and nothing from it, and says so in the status`.
 
 ### `folders/autostart-status-offline`
 
