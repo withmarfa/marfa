@@ -18,6 +18,7 @@ import {
   renderDevicePage,
 } from "./test-render.js";
 import {
+  consoleContentSecurityPolicy,
   contentSecurityPolicy,
   pageSecurityPolicy,
 } from "./content-security-policy.js";
@@ -76,6 +77,17 @@ describe("the policy", () => {
     }
     expect(policy.get("base-uri")).toEqual(["'none'"]);
     expect(policy.get("frame-ancestors")).toEqual(["'none'"]);
+  });
+
+  it("lets only a console page load an image from its own origin, and every page load an inline one", () => {
+    const baseline = directives(contentSecurityPolicy("abc"));
+    const consolePolicy = directives(consoleContentSecurityPolicy("abc"));
+    // The witness: the console policy is the baseline with additions, so the
+    // difference in `img-src` is the one under test.
+    expect(consolePolicy.get("connect-src")).toEqual(["'self'"]);
+    expect(baseline.get("connect-src")).toBeUndefined();
+    expect(baseline.get("img-src")).toEqual(["data:"]);
+    expect(consolePolicy.get("img-src")).toEqual(["'self'", "data:"]);
   });
 });
 

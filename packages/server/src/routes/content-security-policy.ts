@@ -16,7 +16,10 @@
  * could only be allowed by allowing every inline style.
  *
  * Pages that fetch their own endpoints add `connect-src 'self'`; this does
- * not allow scripts or styles by origin.
+ * not allow scripts or styles by origin. The console pages also add
+ * `'self'` to `img-src` for the owner's picture, which the instance serves
+ * from its own address with a sandbox policy and `nosniff`, so an image
+ * source by origin cannot become a script or a style.
  *
  * **The baseline leaves `form-action` unset.** The consent decision answers
  * a form post with a redirect to the app's own callback, and a browser holds
@@ -34,25 +37,29 @@ import { randomBytes } from "node:crypto";
 import { createMiddleware } from "hono/factory";
 import type { AppEnv } from "../middleware/auth.js";
 
-/** The policy naming `nonce`. */
-export function contentSecurityPolicy(nonce: string): string {
+function policy(nonce: string, images: string): string {
   return [
     "default-src 'none'",
     `script-src 'nonce-${nonce}'`,
     `style-src 'nonce-${nonce}'`,
-    "img-src data:",
+    `img-src ${images}`,
     "base-uri 'none'",
     "frame-ancestors 'none'",
   ].join("; ");
 }
 
+/** The policy naming `nonce`. */
+export function contentSecurityPolicy(nonce: string): string {
+  return policy(nonce, "data:");
+}
+
 /**
  * The policy for a console page: the baseline, and the page's own origin for
- * the requests its script makes (signing out, confirming it's you) and for the
- * forms it posts.
+ * the requests its script makes (signing out, confirming it's you), for the
+ * forms it posts and for the owner's picture.
  */
 export function consoleContentSecurityPolicy(nonce: string): string {
-  return `${contentSecurityPolicy(nonce)}; connect-src 'self'; form-action 'self'`;
+  return `${policy(nonce, "'self' data:")}; connect-src 'self'; form-action 'self'`;
 }
 
 /**

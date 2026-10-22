@@ -14,7 +14,7 @@ const profile = (
   owner = {
     name: "Ada Lovelace",
     email: "ada@example.net",
-    avatar: null as string | null,
+    hasPicture: false,
   },
 ) => renderProfilePage({ nonce: "abc123", instanceName: "Marfa", owner });
 
@@ -53,8 +53,36 @@ describe("the Profile page", () => {
     expect(text).toContain(
       "You sign in with this email. Marfa sends no email, so there's nothing to confirm.",
     );
-    expect(text).toContain("No picture address set");
-    expect(text).toContain("Picture address");
+    expect(text).toContain("No picture set");
+    expect(text).toContain("Change picture");
+    expect(text).toContain(
+      "Choose a PNG, JPEG or WebP picture of 2 MiB or less.",
+    );
+    expect(text).not.toMatch(/address/i);
+  });
+
+  it("takes a picture as a file, not a web address", () => {
+    const out = profile();
+    expect(pageField(out, "avatar")?.type).toBe("file");
+    expect(out).toContain('accept="image/png,image/jpeg,image/webp"');
+  });
+
+  it("shows the picture itself in place of the letter tile once one is set, with a way to remove it", () => {
+    const without = profile();
+    expect(without).toContain('class="tile"');
+    expect(without).not.toContain("<img");
+    expect(visibleText(without)).not.toContain("Remove picture");
+    const out = profile({
+      name: "Ada Lovelace",
+      email: "ada@example.net",
+      hasPicture: true,
+    });
+    expect(out).toMatch(/<img[^>]*src="\/owner\/picture"/);
+    expect(out).toMatch(/<img[^>]*alt=""/);
+    expect(out).not.toContain('class="tile"');
+    expect(visibleText(out)).toContain("Remove picture");
+    expect(visibleText(out)).toContain("Picture set");
+    expect(visibleText(out)).not.toContain("No picture set");
   });
 
   it("starts each field with the current value and checks nothing in the browser itself", () => {
@@ -62,7 +90,6 @@ describe("the Profile page", () => {
     expect(pageField(out, "name")?.value).toBe("Ada Lovelace");
     expect(pageField(out, "email")?.value).toBe("ada@example.net");
     expect(pageField(out, "email")?.type).toBe("email");
-    expect(pageField(out, "avatar")?.type).toBe("url");
     // The final form is the dialog that confirms it's you, which every console page carries.
     const forms = pageForms(out);
     expect(forms.map((form) => form.method)).toEqual([
@@ -78,7 +105,7 @@ describe("the Profile page", () => {
     const out = profile({
       name: HOSTILE,
       email: `${LONG_UNBROKEN}@example.net`,
-      avatar: null,
+      hasPicture: false,
     });
     expect(out).not.toContain("<script>window.__injected");
     expect(out).not.toContain("<b>bold</b>");

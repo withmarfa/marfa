@@ -5,6 +5,7 @@ import {
   Button,
   ConsolePage,
   Dialog,
+  FileField,
   Notice,
   PageHeader,
   Row,
@@ -17,11 +18,14 @@ export const PROFILE_HREF = "/auth/owner/profile";
 export interface ProfilePageParams {
   nonce: string;
   instanceName: string;
-  owner: { name: string; email: string; avatar: string | null };
+  owner: { name: string; email: string; hasPicture: boolean };
 }
 
+/** Where the owner's picture is served, as this page's own address. */
+const PICTURE_PATH = "/owner/picture";
+
 function ChangeDialog(props: {
-  kind: "name" | "email" | "avatar";
+  kind: "name" | "email";
   title: string;
   description: string;
   label: string;
@@ -61,16 +65,51 @@ function ChangeDialog(props: {
           id={`profile-${props.kind}-input`}
           name={props.kind}
           label={props.label}
-          type={
-            props.kind === "email"
-              ? "email"
-              : props.kind === "avatar"
-                ? "url"
-                : "text"
-          }
+          type={props.kind === "email" ? "email" : "text"}
           value={props.value}
-          autocomplete={props.kind === "avatar" ? "off" : props.kind}
+          autocomplete={props.kind}
           full
+        />
+      </form>
+    </Dialog>
+  );
+}
+
+function PictureDialog() {
+  return (
+    <Dialog
+      id="profile-avatar-dialog"
+      title="Change picture"
+      description="Choose a PNG, JPEG or WebP picture of 2 MiB or less."
+      actions={
+        <>
+          <Button kind="outline" closes>
+            Cancel
+          </Button>
+          <Button
+            kind="primary"
+            type="submit"
+            form="profile-avatar-form"
+            loadingLabel="Saving..."
+          >
+            Save
+          </Button>
+        </>
+      }
+    >
+      <form
+        id="profile-avatar-form"
+        method="dialog"
+        novalidate
+        data-account-form="avatar"
+        data-refresh=""
+        data-after="change-avatar"
+      >
+        <FileField
+          id="profile-avatar-input"
+          name="avatar"
+          label="Picture"
+          accept="image/png,image/jpeg,image/webp"
         />
       </form>
     </Dialog>
@@ -130,14 +169,31 @@ export function ProfilePage(props: ProfilePageParams) {
           <Row
             id="profile-avatar"
             title="Picture"
-            description={props.owner.avatar ?? "No picture address set"}
+            description={
+              props.owner.hasPicture ? "Picture set" : "No picture set"
+            }
             buttons={
               <>
-                <span class="tile" aria-hidden="true">
-                  {Array.from(
-                    props.owner.name || props.owner.email,
-                  )[0]?.toUpperCase() ?? "?"}
-                </span>
+                {props.owner.hasPicture ? (
+                  <img
+                    class="avatar"
+                    src={PICTURE_PATH}
+                    alt=""
+                    width="32"
+                    height="32"
+                  />
+                ) : (
+                  <span class="tile" aria-hidden="true">
+                    {Array.from(
+                      props.owner.name || props.owner.email,
+                    )[0]?.toUpperCase() ?? "?"}
+                  </span>
+                )}
+                {props.owner.hasPicture && (
+                  <Button kind="quiet" hook="remove-avatar">
+                    Remove picture
+                  </Button>
+                )}
                 <Button
                   kind="quiet"
                   opens="profile-avatar-dialog"
@@ -163,13 +219,7 @@ export function ProfilePage(props: ProfilePageParams) {
           label="Email"
           value={props.owner.email}
         />
-        <ChangeDialog
-          kind="avatar"
-          title="Change picture"
-          description="The address of an image on the web. Leave it empty to clear the picture address."
-          label="Picture address"
-          value={props.owner.avatar ?? ""}
-        />
+        <PictureDialog />
       </div>
     </ConsolePage>
   );

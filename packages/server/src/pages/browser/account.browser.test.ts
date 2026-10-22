@@ -14,6 +14,8 @@ import {
 } from "../../test-browser.js";
 import { createTestContext } from "../../test-utils.js";
 import type { TestContext } from "../../test-utils.js";
+import { PICTURE_MAX_BYTES } from "../../picture.js";
+import { gif, png } from "../../test-pictures.js";
 import { HOSTILE, LONG_UNBROKEN } from "../test-fixture.js";
 
 const launched = await launchTestBrowser();
@@ -91,6 +93,10 @@ async function open(
     data: { email: owner.email, password },
   });
   expect(signedIn.status()).toBe(200);
+  // The browser asks for an icon the server has none of, once per browser.
+  await context.route("**/favicon.ico", (route) =>
+    route.fulfill({ status: 204 }),
+  );
   const page = await context.newPage();
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(String(e)));
@@ -172,7 +178,7 @@ async function theOwner() {
 async function setOwner(fields: {
   name?: string;
   email?: string;
-  avatar?: string | null;
+  avatar?: null;
 }) {
   const signIn = await fetch(`${origin}/auth/sign-in/email`, {
     method: "POST",
@@ -212,38 +218,58 @@ const restore = async () => {
 
 describe("Profile", () => {
   inBrowser(
-    "sets and clears a picture address from the Profile page",
+    "uploads, shows and removes a picture from the Profile page",
     async () => {
       const { page, context, requests, errors } = await open();
       try {
         await page.goto(origin + PROFILE);
         await page.locator('[data-hook="change-avatar"]').click();
         const dialog = dialogOf(page, "Change picture");
-        const field = dialog.getByLabel("Picture address");
-        await field.fill("file:///private/picture.png");
-        await dialog.getByRole("button", { name: "Save" }).click();
-        await dialog
-          .getByText("Enter an http:// or https:// address.")
-          .waitFor();
-        expect(
-          requests.filter((request) => request.method === "PATCH"),
-        ).toEqual([]);
+        const field = dialog.getByLabel("Picture");
+        const upload = (name: string, buffer: Buffer) =>
+          field.setInputFiles({ name, mimeType: "image/png", buffer });
 
-        const url = "https://example.test/picture.png";
-        await field.fill(url);
+        await dialog.getByRole("button", { name: "Save" }).click();
+        await dialog.getByText("Choose a picture.").waitFor();
+
+        await upload("huge.png", Buffer.alloc(PICTURE_MAX_BYTES + 1));
+        await dialog.getByRole("button", { name: "Save" }).click();
+        await dialog.getByText("Use a picture of 2 MiB or less.").waitFor();
+        expect(requests.filter((r) => r.method === "PUT")).toEqual([]);
+
+        // The name and claimed type say PNG; the bytes say GIF, and the
+        // server's refusal is what the person reads.
+        await upload("picture.png", gif());
+        await dialog.getByRole("button", { name: "Save" }).click();
+        await dialog.getByText("Use a PNG, JPEG or WebP picture.").waitFor();
+        expect(requests.filter((r) => r.method === "PUT")).toEqual([
+          { method: "PUT", path: "/owner/picture", status: 400 },
+        ]);
+        expect((await theOwner()).hasPicture).toBe(false);
+
+        await upload("picture.png", png(64, 64));
         await dialog.getByRole("button", { name: "Save" }).click();
         await done(page).getByText("Picture changed").waitFor();
-        expect((await theOwner()).avatar).toBe(url);
-        await page.getByText(url, { exact: true }).waitFor();
-        await page.locator('[data-hook="change-avatar"]').click();
-        expect(await dialog.getByLabel("Picture address").inputValue()).toBe(
-          url,
-        );
-        await dialog.getByLabel("Picture address").fill("");
-        await dialog.getByRole("button", { name: "Save" }).click();
-        await done(page).getByText("Picture changed").waitFor();
-        expect((await theOwner()).avatar).toBeNull();
-        expect(errors).toEqual([]);
+        expect((await theOwner()).hasPicture).toBe(true);
+        const shown = page.locator("#profile-avatar img");
+        await shown.waitFor();
+        expect(
+          await shown.evaluate(
+            (img: { naturalWidth: number }) => img.naturalWidth,
+          ),
+        ).toBe(64);
+
+        await page.getByRole("button", { name: "Remove picture" }).click();
+        await done(page).getByText("Picture removed").waitFor();
+        expect((await theOwner()).hasPicture).toBe(false);
+        expect(await page.locator("#profile-avatar img").count()).toBe(0);
+        expect(
+          await page.getByRole("button", { name: "Remove picture" }).count(),
+        ).toBe(0);
+        // The one refused upload is the only failed load the page logs.
+        expect(errors).toEqual([
+          "Failed to load resource: the server responded with a status of 400 (Bad Request)",
+        ]);
       } finally {
         await context.close();
         await restore();
