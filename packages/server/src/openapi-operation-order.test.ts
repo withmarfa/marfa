@@ -19,7 +19,6 @@ const document = JSON.parse(readFileSync(COMMITTED, "utf8")) as Json;
 const METHODS = ["get", "put", "post", "patch", "delete"];
 
 interface Published {
-  /** The `operationId`, or for a request Marfa sends, the webhook's name. */
   id: string;
   where: string;
   tags: string[];
@@ -38,12 +37,8 @@ function published(doc: Json): Published[] {
       for (const method of METHODS) {
         const operation = methods[method] as Json | undefined;
         if (operation === undefined) continue;
-        const id =
-          prefix === ""
-            ? ((operation.operationId as string | undefined) ?? "")
-            : name;
         out.push({
-          id,
+          id: (operation.operationId as string | undefined) ?? "",
           where: `${prefix}${method.toUpperCase()} ${name}`,
           tags: (operation.tags ?? []) as string[],
         });
@@ -174,7 +169,7 @@ describe("the reference lists every operation once, in its group", () => {
       "getThing (GET /things) is listed 3 times: Things, Things, Parts.",
       "createThing (POST /things) is in no group's x-operation-order: add it to its group's operations in PUBLIC_TAGS.",
       "getPart (GET /parts/{id}) is in no group's x-operation-order: add it to its group's operations in PUBLIC_TAGS.",
-      "event (webhook POST event) is in no group's x-operation-order: add it to its group's operations in PUBLIC_TAGS.",
+      "receive (webhook POST event) is in no group's x-operation-order: add it to its group's operations in PUBLIC_TAGS.",
       "Things lists ghost, which nothing publishes.",
     ]);
   });

@@ -696,7 +696,7 @@ describe("GET /health placement", () => {
 });
 
 describe("GET /health unrecognized stored values", () => {
-  // Module state, exactly as `platformDrift` is, so one case would
+  // Module state, exactly as `retiredPlatformTypes` is, so one case would
   // otherwise decide the next one's answer.
   afterEach(() => {
     setStoredValueScan({ scanned: false, values: [] });

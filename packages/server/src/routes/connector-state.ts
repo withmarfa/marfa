@@ -206,11 +206,11 @@ const fencedResponse = {
 };
 
 const holdRoute = createRoute({
-  operationId: "holdConnector",
+  operationId: "takeConnectorHold",
   method: "post",
   path: "/{id}/hold",
   tags: ["Connector state"],
-  summary: "Take or renew a hold",
+  summary: "Take a connector hold",
   description:
     "Takes the connector's hold for `process`, or renews it if `process` already holds it. Only the process holding a live hold can replace the state document or write agreements.",
   security: [{ bearerAuth: [] }],
@@ -262,7 +262,7 @@ const releaseHoldRoute = createRoute({
   method: "delete",
   path: "/{id}/hold",
   tags: ["Connector state"],
-  summary: "Release a hold",
+  summary: "Release a connector hold",
   description:
     "Releases the hold if `process` holds it, so another process can take it at once. Returns the same either way, and leaves another process's hold in place.",
   security: [{ bearerAuth: [] }],
@@ -288,7 +288,7 @@ const getStateRoute = createRoute({
   method: "get",
   path: "/{id}/state",
   tags: ["Connector state"],
-  summary: "Get the state document",
+  summary: "Get a connector's state",
   description:
     "Returns the state document of the connector's source. A later key with the same source reads the same document.",
   security: [{ bearerAuth: [] }],
@@ -307,7 +307,7 @@ const putStateRoute = createRoute({
   method: "put",
   path: "/{id}/state",
   tags: ["Connector state"],
-  summary: "Replace the state document",
+  summary: "Replace a connector's state",
   description:
     "Replaces the whole state document of the connector's source. Only the process holding a live hold can write it.",
   security: [{ bearerAuth: [] }],
@@ -337,7 +337,7 @@ const deleteStateRoute = createRoute({
   method: "delete",
   path: "/{id}/state",
   tags: ["Connector state"],
-  summary: "Delete the state document",
+  summary: "Delete a connector's state",
   description:
     "Deletes the state document, current problems and every agreement of the connector's source, which every registration of that source reads. No hold is needed.",
   security: [{ bearerAuth: [] }],
@@ -356,7 +356,7 @@ const writeAgreementsRoute = createRoute({
   method: "post",
   path: "/{id}/agreements",
   tags: ["Connector state"],
-  summary: "Write agreements",
+  summary: "Write connector agreements",
   description:
     "Writes and clears the connector's agreements, its records of what it and its vendor last agreed about each item. Only the process holding a live hold can write them.",
   security: [{ bearerAuth: [] }],
@@ -403,9 +403,9 @@ const lookupAgreementsRoute = createRoute({
   method: "post",
   path: "/{id}/agreements/lookup",
   tags: ["Connector state"],
-  summary: "Look up agreements",
+  summary: "Look up connector agreements",
   description:
-    "Returns the agreements of the named items that have one, each item once, in the order you first named it. An item whose type you can't read is left out.",
+    "Looks up the agreements of the named items and returns those that exist, each item once, in the order you first named it. An item whose type you can't read is left out.",
   security: [{ bearerAuth: [] }],
   request: {
     params: IdParam,
@@ -440,7 +440,7 @@ const listAgreementsRoute = createRoute({
   method: "get",
   path: "/{id}/agreements",
   tags: ["Connector state"],
-  summary: "List a connector's agreements",
+  summary: "List connector agreements",
   description:
     "Returns the agreements of the connector's source, the one written longest ago first. Items whose type you can't read are left out, so a page can be short with more to follow.",
   security: [{ bearerAuth: [] }],

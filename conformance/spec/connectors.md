@@ -2,7 +2,7 @@
 
 A connector is a process outside the server that registers under a key of its own, heartbeats, reports its runs, holds its registration so that one process at a time replaces its state or writes its agreements, and keeps what it needs to resume on the instance. The connector's own key is the key its registration was made under.
 
-The source-owned webhook endpoints a current registration exposes are `inbound-webhooks.md`'s. The error envelope and the codes are `errors.md`'s, and the settings named here are `instance.md`'s.
+The source-owned inbound endpoints a current registration exposes are `inbound-webhooks.md`'s. The error envelope and the codes are `errors.md`'s, and the settings named here are `instance.md`'s.
 
 ## Registering
 
@@ -202,7 +202,7 @@ The server MUST name `connectors` among the `features` that `GET /` answers.
 
 ## Removing a registration
 
-Removing a source's current registration removes its webhook endpoints and deliveries, as `inbound-webhooks/endpoints-go-with-it` and `inbound-webhooks/deliveries-go-with-it` say. Removing an old registration after takeover preserves them.
+Removing a source's current registration removes its inbound endpoints and deliveries, as `inbound-webhooks/endpoints-go-with-it` and `inbound-webhooks/deliveries-go-with-it` say. Removing an old registration after takeover preserves them.
 
 ### `connectors/delete-answer`
 

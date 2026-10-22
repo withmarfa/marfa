@@ -104,7 +104,7 @@ async function replicated(
   });
   expect(note.status, JSON.stringify(note.error)).toBe(201);
   await waitFor(`the object store's copy of ${hash}`, async () =>
-    (await operator.listBlobLocations(hash)).data.data.length === 2
+    (await operator.listBlobCopies(hash)).data.data.length === 2
       ? true
       : undefined,
   );
@@ -177,9 +177,7 @@ describe("an integrity check while no store answers", () => {
     // The questions the run gave up on wait at the holds no longer.
     expect(await waiting()).toBe(0);
     expect(
-      (await operator.listBlobLocations(hash)).data.data.map(
-        (location) => location.kind,
-      ),
+      (await operator.listBlobCopies(hash)).data.data.map((copy) => copy.kind),
     ).toEqual(expect.arrayContaining(["disk", "s3"]));
     const struck = await operator.listAudit({
       action: "blob.copy_struck",
@@ -193,7 +191,7 @@ describe("an integrity check while no store answers", () => {
       struck: 0,
       unreachable: 0,
     });
-    expect((await operator.listBlobLocations(hash)).data.data).toHaveLength(2);
+    expect((await operator.listBlobCopies(hash)).data.data).toHaveLength(2);
   });
 });
 
@@ -208,9 +206,7 @@ describe("a replication run while no store answers", () => {
     expect(run.result).toMatchObject({ copied: 0, remaining: 1 });
     expect(await waiting()).toBe(0);
     expect(
-      (await operator.listBlobLocations(hash!)).data.data.map(
-        (location) => location.kind,
-      ),
+      (await operator.listBlobCopies(hash!)).data.data.map((copy) => copy.kind),
     ).toEqual(["disk"]);
 
     await server.clearFault();
@@ -218,7 +214,7 @@ describe("a replication run while no store answers", () => {
       copied: 1,
       remaining: 0,
     });
-    expect((await operator.listBlobLocations(hash!)).data.data).toHaveLength(2);
+    expect((await operator.listBlobCopies(hash!)).data.data).toHaveLength(2);
   });
 });
 
@@ -232,7 +228,7 @@ describe("a store's delete that does not answer", () => {
     const archive = exported.data;
     // The drop's own delete fails, so the deletion stays queued for a run.
     await server.setFault("fail:blob-delete=1");
-    const dropped = await operator.deleteBlobLocation(hash, s3);
+    const dropped = await operator.deleteBlobCopy(hash, s3);
     expect(dropped.status, JSON.stringify(dropped.error)).toBe(200);
     await server.clearFault();
 
@@ -249,9 +245,7 @@ describe("a store's delete that does not answer", () => {
     // Skipped rather than asked again: no second delete waits.
     expect(await waitingAt("hold:blob-delete")).toBe(1);
     expect(
-      (await operator.listBlobLocations(hash)).data.data.map(
-        (location) => location.kind,
-      ),
+      (await operator.listBlobCopies(hash)).data.data.map((copy) => copy.kind),
     ).toEqual(["disk"]);
 
     const refused = await working.uploadBlob(content, "text/plain");
@@ -270,14 +264,14 @@ describe("a store's delete that does not answer", () => {
       );
       return run.result.remaining === 0 ? true : undefined;
     });
-    expect((await operator.listBlobLocations(hash)).data.data).toHaveLength(2);
+    expect((await operator.listBlobCopies(hash)).data.data).toHaveLength(2);
     // The late delete took nothing the copy made after it holds: the check
     // takes the copy never checked first, and would strike it if gone.
     expect((await runJob(operator, "blob-integrity")).result).toMatchObject({
       struck: 0,
       unreachable: 0,
     });
-    expect((await operator.listBlobLocations(hash)).data.data).toHaveLength(2);
+    expect((await operator.listBlobCopies(hash)).data.data).toHaveLength(2);
     const again = await working.uploadBlob(content, "text/plain");
     expect(again.status, JSON.stringify(again.error)).toBe(201);
     // The witness: the same archive restores once the store has answered.
@@ -302,8 +296,8 @@ describe("a strike whose delete does not answer", () => {
     expect(run.result).toMatchObject({ struck: 1, unreachable: 1 });
     expect(await waitingAt("hold:blob-delete")).toBe(1);
     const kinds = async (hash: string) =>
-      (await operator.listBlobLocations(hash)).data.data
-        .map((location) => location.kind)
+      (await operator.listBlobCopies(hash)).data.data
+        .map((copy) => copy.kind)
         .sort();
     const left = await Promise.all(hashes.map(kinds));
     expect(left).toEqual(expect.arrayContaining([["s3"], ["disk", "s3"]]));
@@ -331,7 +325,7 @@ describe("an upload while the disk does not finish a queued deletion of its byte
     // The drop's own delete fails, so the deletion stays queued and the
     // blob's lock is free.
     await server.setFault("fail:blob-delete=1");
-    const dropped = await operator.deleteBlobLocation(hash, disk);
+    const dropped = await operator.deleteBlobCopy(hash, disk);
     expect(dropped.status, JSON.stringify(dropped.error)).toBe(200);
     await server.clearFault();
 
@@ -349,8 +343,8 @@ describe("an upload while the disk does not finish a queued deletion of its byte
     });
     await replicatedAgain("the copies of the uploaded blob");
     expect(
-      (await operator.listBlobLocations(hash)).data.data
-        .map((location) => location.kind)
+      (await operator.listBlobCopies(hash)).data.data
+        .map((copy) => copy.kind)
         .sort(),
     ).toEqual(["disk", "s3"]);
   });
@@ -372,9 +366,7 @@ describe("a store's write that does not answer", () => {
     expect(later.result).toMatchObject({ copied: 0, remaining: 1 });
     expect(await waitingAt("hold:blob-write")).toBe(1);
     expect(
-      (await operator.listBlobLocations(hash!)).data.data.map(
-        (location) => location.kind,
-      ),
+      (await operator.listBlobCopies(hash!)).data.data.map((copy) => copy.kind),
     ).toEqual(["disk"]);
 
     const refused = await working.uploadBlob(content, "text/plain");
@@ -389,7 +381,7 @@ describe("a store's write that does not answer", () => {
       );
       return copied.result.remaining === 0 ? true : undefined;
     });
-    expect((await operator.listBlobLocations(hash!)).data.data).toHaveLength(2);
+    expect((await operator.listBlobCopies(hash!)).data.data).toHaveLength(2);
   });
 });
 
@@ -409,26 +401,22 @@ describe("a drop while a store does not finish a write of the blob's bytes", () 
 
     // The write is held until the fault is cleared, so a drop that waited
     // on it would not answer at all.
-    const refused = await operator.deleteBlobLocation(hash!, disk);
+    const refused = await operator.deleteBlobCopy(hash!, disk);
     expect(refused.status).toBe(503);
     expect(refused.error?.error.code).toBe("blob_store_unavailable");
     expect(await waitingAt("hold:blob-write")).toBe(1);
     expect(
-      (await operator.listBlobLocations(hash!)).data.data.map(
-        (location) => location.kind,
-      ),
+      (await operator.listBlobCopies(hash!)).data.data.map((copy) => copy.kind),
     ).toEqual(["disk"]);
 
     // The witness: once the store answers and the copy is made, the same
     // drop goes through.
     await server.clearFault();
     await replicatedAgain("the object store's copy");
-    const dropped = await operator.deleteBlobLocation(hash!, disk);
+    const dropped = await operator.deleteBlobCopy(hash!, disk);
     expect(dropped.status, JSON.stringify(dropped.error)).toBe(200);
     expect(
-      (await operator.listBlobLocations(hash!)).data.data.map(
-        (location) => location.kind,
-      ),
+      (await operator.listBlobCopies(hash!)).data.data.map((copy) => copy.kind),
     ).toEqual(["s3"]);
   });
 });

@@ -107,10 +107,10 @@ describe("BlobIntegrityChecker.runOnce", () => {
     // Before anything is wrong: every copy stamped, nothing struck.
     expect(await checker.runOnce()).toMatchObject({ verified: 6, struck: 0 });
     for (const hash of [altered, missing, sound]) {
-      const locations = await ctx.storage.blobs.listLocations(hash);
-      expect(locations).toHaveLength(2);
-      for (const location of locations) {
-        expect(location.verified_at).toBe(now.toISOString());
+      const copies = await ctx.storage.blobs.listCopies(hash);
+      expect(copies).toHaveLength(2);
+      for (const copy of copies) {
+        expect(copy.verified_at).toBe(now.toISOString());
       }
     }
 
@@ -138,12 +138,12 @@ describe("BlobIntegrityChecker.runOnce", () => {
       [altered, missing].sort(),
     );
     expect(
-      (await ctx.storage.blobs.listLocations(altered)).map((l) => l.store_id),
+      (await ctx.storage.blobs.listCopies(altered)).map((l) => l.store_id),
     ).toEqual([second.id]);
     expect(
-      (await ctx.storage.blobs.listLocations(missing)).map((l) => l.store_id),
+      (await ctx.storage.blobs.listCopies(missing)).map((l) => l.store_id),
     ).toEqual([ctx.blobs.disk.id]);
-    expect(await ctx.storage.blobs.listLocations(sound)).toHaveLength(2);
+    expect(await ctx.storage.blobs.listCopies(sound)).toHaveLength(2);
     const audits = await ctx.storage.audit.list({
       action: "blob.copy_struck",
       limit: 10,
@@ -182,8 +182,8 @@ describe("BlobIntegrityChecker.runOnce", () => {
     // One row per store per run: the disk holds both, the second store
     // holds neither yet, so the first run stamps one disk copy.
     expect(await checker.runOnce()).toMatchObject({ verified: 1, struck: 0 });
-    const stampedFirst = (await ctx.storage.blobs.listLocations(first))[0];
-    const stampedSecond = (await ctx.storage.blobs.listLocations(second))[0];
+    const stampedFirst = (await ctx.storage.blobs.listCopies(first))[0];
+    const stampedSecond = (await ctx.storage.blobs.listCopies(second))[0];
     const stamped = [stampedFirst, stampedSecond].filter(
       (l) => l?.verified_at !== null,
     );
@@ -193,7 +193,7 @@ describe("BlobIntegrityChecker.runOnce", () => {
     now = new Date(now.getTime() + 1_000);
     expect(await checker.runOnce()).toMatchObject({ verified: 1, struck: 0 });
     const stampOf = async (hash: string) =>
-      (await ctx!.storage.blobs.listLocations(hash))[0]?.verified_at;
+      (await ctx!.storage.blobs.listCopies(hash))[0]?.verified_at;
     const t1 = now.toISOString();
     expect([await stampOf(first), await stampOf(second)].sort()).toEqual([
       t0,
@@ -222,7 +222,7 @@ describe("BlobIntegrityChecker.runOnce", () => {
       verified: 1,
       bytes: 5_000,
     });
-    expect((await ctx.storage.blobs.listLocations(large))[0]?.verified_at).toBe(
+    expect((await ctx.storage.blobs.listCopies(large))[0]?.verified_at).toBe(
       now.toISOString(),
     );
   });
@@ -247,7 +247,7 @@ describe("BlobIntegrityChecker.runOnce", () => {
       () => now,
     );
     const stampOf = async (hash: string, storeId: string) =>
-      (await ctx!.storage.blobs.listLocations(hash)).find(
+      (await ctx!.storage.blobs.listCopies(hash)).find(
         (l) => l.store_id === storeId,
       )?.verified_at ?? null;
     const copies = [
@@ -326,7 +326,7 @@ describe("BlobIntegrityChecker.runOnce", () => {
       locator: stub.locator,
     });
     for (const hash of [good, gone, wrong]) {
-      await ctx.storage.blobs.recordLocation(hash, stub.id);
+      await ctx.storage.blobs.recordCopy(hash, stub.id);
     }
     const all = [ctx.blobs.disk, stub];
     const checker = new BlobIntegrityChecker(
@@ -350,7 +350,7 @@ describe("BlobIntegrityChecker.runOnce", () => {
     expect(fetched).toBe(0);
     expect(deleted.sort()).toEqual([gone, wrong].sort());
     const stubHolds = async (hash: string) =>
-      (await ctx!.storage.blobs.listLocations(hash)).some(
+      (await ctx!.storage.blobs.listCopies(hash)).some(
         (l) => l.store_id === stub.id,
       );
     expect(await stubHolds(good)).toBe(true);
@@ -376,7 +376,7 @@ describe("BlobIntegrityChecker.runOnce", () => {
       kind: stub.kind,
       locator: stub.locator,
     });
-    await ctx.storage.blobs.recordLocation(held, stub.id);
+    await ctx.storage.blobs.recordCopy(held, stub.id);
     const all = [ctx.blobs.disk, stub];
     const checker = new BlobIntegrityChecker(
       ctx.storage,
@@ -391,12 +391,10 @@ describe("BlobIntegrityChecker.runOnce", () => {
       silenced.restore();
     }
     expect(result).toMatchObject({ verified: 1, struck: 0 });
-    const locations = await ctx.storage.blobs.listLocations(held);
+    const copies = await ctx.storage.blobs.listCopies(held);
+    expect(copies.find((l) => l.store_id === stub.id)?.verified_at).toBeNull();
     expect(
-      locations.find((l) => l.store_id === stub.id)?.verified_at,
-    ).toBeNull();
-    expect(
-      locations.find((l) => l.store_id === ctx!.blobs.disk.id)?.verified_at,
+      copies.find((l) => l.store_id === ctx!.blobs.disk.id)?.verified_at,
     ).not.toBeNull();
   });
 
@@ -428,8 +426,8 @@ describe("BlobIntegrityChecker.runOnce", () => {
       silenced.restore();
     }
     expect(result).toMatchObject({ struck: 0 });
-    const [location] = await ctx.storage.blobs.listLocations(hash);
-    expect(location?.verified_at).toBeNull();
+    const [copy] = await ctx.storage.blobs.listCopies(hash);
+    expect(copy?.verified_at).toBeNull();
   });
 
   it("calls off a disk read that does not open in time, and neither stamps nor strikes the copy", async () => {
@@ -462,8 +460,8 @@ describe("BlobIntegrityChecker.runOnce", () => {
     }
     expect(result).toMatchObject({ verified: 0, struck: 0, unreachable: 1 });
     expect(open).toBe(0);
-    const [location] = await ctx.storage.blobs.listLocations(hash);
-    expect(location?.verified_at).toBeNull();
+    const [copy] = await ctx.storage.blobs.listCopies(hash);
+    expect(copy?.verified_at).toBeNull();
   });
 
   it("counts an object store that does not answer in time as unreachable, strikes nothing, and lets every lock go", async () => {
@@ -503,7 +501,7 @@ describe("BlobIntegrityChecker.runOnce", () => {
       locator: stub.locator,
     });
     for (const hash of held) {
-      await ctx.storage.blobs.recordLocation(hash, stub.id);
+      await ctx.storage.blobs.recordCopy(hash, stub.id);
     }
     const all = [ctx.blobs.disk, stub];
     const timeout = storeChecks.timeoutMs;
@@ -539,8 +537,8 @@ describe("BlobIntegrityChecker.runOnce", () => {
       silenced.lines().filter((line) => line.message === "blob.copy_struck"),
     ).toEqual([]);
     for (const hash of held) {
-      const locations = await ctx.storage.blobs.listLocations(hash);
-      expect(locations.find((l) => l.store_id === stub.id)?.verified_at).toBe(
+      const copies = await ctx.storage.blobs.listCopies(hash);
+      expect(copies.find((l) => l.store_id === stub.id)?.verified_at).toBe(
         null,
       );
       // The lock the check took for the copy is free again.
@@ -588,7 +586,7 @@ describe("BlobIntegrityChecker.runOnce", () => {
       locator: stub.locator,
     });
     for (const hash of held) {
-      await ctx.storage.blobs.recordLocation(hash, stub.id);
+      await ctx.storage.blobs.recordCopy(hash, stub.id);
     }
     const all = [ctx.blobs.disk, stub];
     const timeout = storeChecks.timeoutMs;
@@ -615,7 +613,7 @@ describe("BlobIntegrityChecker.runOnce", () => {
     expect(deletes).toHaveLength(1);
     const struck = deletes[0]!;
     expect(
-      (await ctx.storage.blobs.listLocations(struck)).map((l) => l.store_id),
+      (await ctx.storage.blobs.listCopies(struck)).map((l) => l.store_id),
     ).toEqual([ctx.blobs.disk.id]);
     // The copy stays struck, with its deletion queued for a later run.
     expect(await ctx.storage.blobs.listPendingCopyDeletions(10)).toEqual([
@@ -633,7 +631,7 @@ describe("BlobIntegrityChecker.runOnce", () => {
   it("counts no strike for a row dropped between the listing and the check", async () => {
     // The listing named a copy; by the time the check reaches it an
     // operator has dropped the row. Nothing was found wrong with a copy
-    // the log claims, so nothing is logged, audited or discarded.
+    // the copy record claims, so nothing is logged, audited or discarded.
     ctx = await createTestContext();
     const { stores, second } = await withSecondStore(ctx);
     const hash = await upload(ctx, "dropped under the check");
@@ -647,7 +645,7 @@ describe("BlobIntegrityChecker.runOnce", () => {
     registry.listToVerify = async (storeIds, limit) => {
       const rows = await listToVerify(storeIds, limit);
       // The drop lands after the listing was taken.
-      await registry.removeLocation(hash, second.id);
+      await registry.removeCopy(hash, second.id);
       return rows;
     };
     const deletes: string[] = [];
@@ -677,7 +675,7 @@ describe("BlobIntegrityChecker.runOnce", () => {
     ).toEqual([]);
     expect(deletes).toEqual([]);
     // The witness: the same missing copy with its row in place is struck.
-    await ctx.storage.blobs.recordLocation(hash, second.id);
+    await ctx.storage.blobs.recordCopy(hash, second.id);
     const again = quiet();
     let struck;
     try {
@@ -742,7 +740,7 @@ describe("BlobIntegrityChecker.runOnce on a store that cannot be reached", () =>
     ).toEqual([]);
     // The record stands, and the read says the store did not answer, not
     // that the blob is gone.
-    expect(await ctx.storage.blobs.listLocations(hash)).toHaveLength(1);
+    expect(await ctx.storage.blobs.listCopies(hash)).toHaveLength(1);
     expect(
       (await ctx.storage.audit.list({ action: "blob.copy_struck", limit: 10 }))
         .data,
@@ -776,7 +774,7 @@ describe("BlobIntegrityChecker.runOnce on a store that cannot be reached", () =>
       struck: 0,
       unreachable: 1,
     });
-    expect(await ctx.storage.blobs.listLocations(hash)).toHaveLength(1);
+    expect(await ctx.storage.blobs.listCopies(hash)).toHaveLength(1);
 
     await rm(folder, { recursive: true });
     await rename(`${folder}.away`, folder);
@@ -791,7 +789,7 @@ describe("BlobIntegrityChecker.runOnce on a store that cannot be reached", () =>
 
     const { result } = await check(checker);
     expect(result).toMatchObject({ struck: 1, unreachable: 0 });
-    expect(await ctx.storage.blobs.listLocations(hash)).toEqual([]);
+    expect(await ctx.storage.blobs.listCopies(hash)).toEqual([]);
   });
 
   it("goes on to the other stores, and does not let the unreachable one fill the run's rows", async () => {
@@ -819,14 +817,13 @@ describe("BlobIntegrityChecker.runOnce on a store that cannot be reached", () =>
     );
     expect(result).toMatchObject({ verified: 3, struck: 0, unreachable: 1 });
     for (const hash of hashes) {
-      const locations = await ctx.storage.blobs.listLocations(hash);
-      expect(locations).toHaveLength(2);
+      const copies = await ctx.storage.blobs.listCopies(hash);
+      expect(copies).toHaveLength(2);
       expect(
-        locations.find((location) => location.store_id === second.id)
-          ?.verified_at,
+        copies.find((copy) => copy.store_id === second.id)?.verified_at,
       ).not.toBeNull();
       expect(
-        locations.find((location) => location.store_id === ctx!.blobs.disk.id)
+        copies.find((copy) => copy.store_id === ctx!.blobs.disk.id)
           ?.verified_at,
       ).toBeNull();
     }

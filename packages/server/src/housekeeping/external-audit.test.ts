@@ -275,7 +275,7 @@ describe("external and background audit units with real SQLite and disk", () => 
       stream: Readable.from([blob.bytes]),
       size_bytes: blob.bytes.length,
     });
-    await ctx.storage.blobs.recordLocation(blob.hash, second.id);
+    await ctx.storage.blobs.recordCopy(blob.hash, second.id);
     const hex = blob.hash.slice("sha256:".length);
     await writeFile(
       join(ctx.blobs.disk.locator, hex.slice(0, 4), hex),
@@ -312,12 +312,12 @@ describe("external and background audit units with real SQLite and disk", () => 
       stream: Readable.from([blob.bytes]),
       size_bytes: blob.bytes.length,
     });
-    await ctx.storage.blobs.recordLocation(blob.hash, second.id);
+    await ctx.storage.blobs.recordCopy(blob.hash, second.id);
     await refuse("blob.copy_dropped");
     await expect(
       dropBlobCopy(ctx.storage, stores, blob.hash, ctx.blobs.disk.id, 1),
     ).rejects.toThrow();
-    expect(await ctx.storage.blobs.listLocations(blob.hash)).toHaveLength(2);
+    expect(await ctx.storage.blobs.listCopies(blob.hash)).toHaveLength(2);
     expect(await ctx.storage.blobs.listPendingCopyDeletions(10)).toEqual([]);
     expect(await ctx.blobs.disk.has(blob.hash)).not.toBeNull();
     await allow();
@@ -326,7 +326,7 @@ describe("external and background audit units with real SQLite and disk", () => 
       .mockRejectedValueOnce(new Error("disk unavailable"));
     // The drop has committed, so it stands though the bytes stay for now.
     await dropBlobCopy(ctx.storage, stores, blob.hash, ctx.blobs.disk.id, 1);
-    expect(await ctx.storage.blobs.listLocations(blob.hash)).toHaveLength(1);
+    expect(await ctx.storage.blobs.listCopies(blob.hash)).toHaveLength(1);
     expect(await ctx.storage.blobs.listPendingCopyDeletions(10)).toHaveLength(
       1,
     );
@@ -338,7 +338,7 @@ describe("external and background audit units with real SQLite and disk", () => 
     expect((await audits("blob.copy_dropped")).data).toHaveLength(1);
   });
 
-  it("keeps a missing copy's location on refused strike and audits its accepted removal", async () => {
+  it("keeps a missing copy's record on refused strike and audits its accepted removal", async () => {
     const blob = await stored("missing copy");
     await ctx.blobs.disk.delete(blob.hash);
     const checker = new BlobIntegrityChecker(ctx.storage, ctx.blobs, {
@@ -347,10 +347,10 @@ describe("external and background audit units with real SQLite and disk", () => 
     });
     await refuse("blob.copy_struck");
     await expect(checker.runOnce()).rejects.toThrow();
-    expect(await ctx.storage.blobs.listLocations(blob.hash)).toHaveLength(1);
+    expect(await ctx.storage.blobs.listCopies(blob.hash)).toHaveLength(1);
     await allow();
     expect((await checker.runOnce()).struck).toBe(1);
-    expect(await ctx.storage.blobs.listLocations(blob.hash)).toEqual([]);
+    expect(await ctx.storage.blobs.listCopies(blob.hash)).toEqual([]);
     expect((await audits("blob.copy_struck")).data).toHaveLength(1);
   });
 
@@ -377,7 +377,7 @@ describe("external and background audit units with real SQLite and disk", () => 
     expect((await audits("blob.purge")).data).toHaveLength(1);
   });
 
-  it("refuses replication location and removes only its own prepared bytes", async () => {
+  it("refuses to record a replicated copy and removes only its own prepared bytes", async () => {
     const blob = await stored("replication");
     const { stores, second } = await withSecondStore(ctx);
     const replicator = new BlobReplicator(ctx.storage, stores, {
@@ -386,7 +386,7 @@ describe("external and background audit units with real SQLite and disk", () => 
     });
     await refuse("blob.copy_replicated");
     await expect(replicator.runOnce()).rejects.toThrow();
-    expect(await ctx.storage.blobs.listLocations(blob.hash)).toHaveLength(1);
+    expect(await ctx.storage.blobs.listCopies(blob.hash)).toHaveLength(1);
     expect(await second.has(blob.hash)).toBeNull();
     expect(await ctx.blobs.disk.has(blob.hash)).not.toBeNull();
     await allow();

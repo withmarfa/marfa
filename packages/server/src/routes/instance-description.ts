@@ -39,9 +39,9 @@ export const instanceDescriptionRoute = createRoute({
   path: "/",
   operationId: "getInstance",
   tags: ["Instance"],
-  summary: "Describe the instance",
+  summary: "Get the instance",
   description:
-    "Describes the instance: its display name, `instance_id`, the build it runs, the release it was made as when it is one, the contract version it speaks and the features it serves. Needs no credential.",
+    "Returns a description of the instance: its display name, `instance_id`, the build it runs, the release it was made as when it is one, the contract version it speaks and the features it serves. Needs no credential.",
   responses: {
     200: {
       description:

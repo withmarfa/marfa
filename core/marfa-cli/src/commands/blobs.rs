@@ -40,15 +40,15 @@ pub enum BlobsCommand {
     /// Every store the instance has attached, and the copies a blob keeps
     /// at the least. Requires `instance.read`.
     Stores,
-    /// The stores recorded as holding one blob's bytes, and when each copy
-    /// was last found intact.
-    Locations {
+    /// The copies of one blob: the stores recorded as holding its bytes, and
+    /// when each copy was last found intact.
+    Copies {
         /// The blob hash, `sha256:<hex>`.
         hash: String,
     },
-    /// Remove one store's copy of a blob, where enough live copies remain.
+    /// Delete one store's copy of a blob, where enough live copies remain.
     /// Requires `blobs.manage`.
-    DeleteLocation {
+    DeleteCopy {
         /// The blob hash, `sha256:<hex>`.
         hash: String,
         /// The store whose copy goes, as `blobs stores` names it.
@@ -72,12 +72,12 @@ pub fn stores_request() -> Request {
     Request::get(&["blobs", "stores"])
 }
 
-pub fn locations_request(hash: &str) -> Request {
-    Request::get(&["blobs", hash, "locations"])
+pub fn copies_request(hash: &str) -> Request {
+    Request::get(&["blobs", hash, "copies"])
 }
 
-pub fn delete_location_request(hash: &str, store: &str) -> Request {
-    Request::delete(&["blobs", hash, "locations", store])
+pub fn delete_copy_request(hash: &str, store: &str) -> Request {
+    Request::delete(&["blobs", hash, "copies", store])
 }
 
 pub fn orphans_request() -> Request {
@@ -117,9 +117,9 @@ pub fn run(command: BlobsCommand, remote: &Remote, out: &Printer) -> Result<(), 
         }
         BlobsCommand::Url { hash, ttl } => out.value(&remote.json(&url_request(&hash, ttl))?),
         BlobsCommand::Stores => out.value(&remote.json(&stores_request())?),
-        BlobsCommand::Locations { hash } => out.value(&remote.json(&locations_request(&hash))?),
-        BlobsCommand::DeleteLocation { hash, store } => {
-            out.value(&remote.json(&delete_location_request(&hash, &store))?)
+        BlobsCommand::Copies { hash } => out.value(&remote.json(&copies_request(&hash))?),
+        BlobsCommand::DeleteCopy { hash, store } => {
+            out.value(&remote.json(&delete_copy_request(&hash, &store))?)
         }
         BlobsCommand::Orphans => out.value(&remote.json(&orphans_request())?),
     }

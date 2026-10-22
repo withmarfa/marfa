@@ -110,7 +110,7 @@ async function deliveries(
   return (await res.json()) as { data: Delivery[]; next_cursor: string | null };
 }
 
-describe("inbound webhook endpoints", () => {
+describe("inbound endpoints", () => {
   let ctx: TestContext;
   beforeAll(async () => {
     ctx = await context();

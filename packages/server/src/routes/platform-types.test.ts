@@ -1,16 +1,16 @@
 /**
  * The management surface for shipped types the build no longer carries.
  *
- * Drift is derived at boot, so these tests set it directly rather than
+ * The retired set is derived at boot, so these tests set it directly rather than
  * booting an instance against a doctored database. What that leaves
  * uncovered is one line at warmup; the derivation itself is
- * tested against real storage in `storage/platform-drift.test.ts`.
+ * tested against real storage in `storage/retired-platform-types.test.ts`.
  */
 import { itemWrites } from "../storage/item-writes.js";
 import { afterEach, describe, expect, it } from "vitest";
 import { createTestContext, request } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
-import { setPlatformDrift } from "../storage/platform-drift.js";
+import { setRetiredPlatformTypes } from "../storage/retired-platform-types.js";
 import { sqliteRequestContext } from "../storage/sqlite/request-context.js";
 
 const contexts: TestContext[] = [];
@@ -22,17 +22,17 @@ async function newContext(): Promise<TestContext> {
 }
 
 afterEach(async () => {
-  // Module state, so a test that leaves drift set would decide the next
+  // Module state, so a test that leaves a retired type set would decide the next
   // one's answer.
-  setPlatformDrift([]);
+  setRetiredPlatformTypes([]);
   while (contexts.length > 0) {
     const ctx = contexts.pop();
     if (ctx) await ctx.cleanup();
   }
 });
 
-/** Registers a platform row the build does not ship, and reports it drifted. */
-async function seedDriftedType(ctx: TestContext): Promise<string> {
+/** Registers a platform row the build does not ship, and reports it retired. */
+async function seedRetiredType(ctx: TestContext): Promise<string> {
   const id = `core.retired_${Math.random().toString(36).slice(2, 8)}`;
   await ctx.storage.types.create(
     {
@@ -42,22 +42,22 @@ async function seedDriftedType(ctx: TestContext): Promise<string> {
     },
     { origin: "platform" },
   );
-  setPlatformDrift([id]);
+  setRetiredPlatformTypes([id]);
   return id;
 }
 
-describe("GET /platform-types/drift", () => {
+describe("GET /platform-types/retired", () => {
   it("refuses an unauthenticated caller", async () => {
     const ctx = await newContext();
-    const res = await request(ctx.app, "GET", "/platform-types/drift");
+    const res = await request(ctx.app, "GET", "/platform-types/retired");
     expect(res.status).toBe(401);
   });
 
-  it("lists the drifted rows with their live item counts", async () => {
+  it("lists the retired rows with their live item counts", async () => {
     const ctx = await newContext();
-    const id = await seedDriftedType(ctx);
+    const id = await seedRetiredType(ctx);
 
-    const res = await request(ctx.app, "GET", "/platform-types/drift", {
+    const res = await request(ctx.app, "GET", "/platform-types/retired", {
       key: ctx.managementKey,
     });
     expect(res.status).toBe(200);
@@ -76,16 +76,16 @@ describe("GET /platform-types/drift", () => {
 
   it("reports a row as not removable while items carry it", async () => {
     const ctx = await newContext();
-    const id = await seedDriftedType(ctx);
+    const id = await seedRetiredType(ctx);
     await itemWrites(ctx.storage).create({
       writer: null,
       type: id,
       properties: { name: "still here" },
       source: "test",
-      source_id: "drift-1",
+      source_id: "retired-1",
     });
 
-    const res = await request(ctx.app, "GET", "/platform-types/drift", {
+    const res = await request(ctx.app, "GET", "/platform-types/retired", {
       key: ctx.managementKey,
     });
     const body = (await res.json()) as {
@@ -97,10 +97,10 @@ describe("GET /platform-types/drift", () => {
 });
 
 describe("DELETE /platform-types/{id}", () => {
-  it("keeps a drifted compatibility target until its reader drops the claim", async () => {
+  it("keeps a retired compatibility target until its reader drops the claim", async () => {
     const ctx = await newContext();
-    const id = await seedDriftedType(ctx);
-    const reader = "user.drift_reader";
+    const id = await seedRetiredType(ctx);
+    const reader = "user.retired_reader";
     const fields = { name: { type: "string", required: true } };
     expect(
       (
@@ -117,7 +117,7 @@ describe("DELETE /platform-types/{id}", () => {
     expect(await response.json()).toMatchObject({
       error: { code: "conflict", details: { dependent_type_ids: [reader] } },
     });
-    const listed = await request(ctx.app, "GET", "/platform-types/drift", {
+    const listed = await request(ctx.app, "GET", "/platform-types/retired", {
       key: ctx.managementKey,
     });
     expect(await listed.json()).toMatchObject({
@@ -150,24 +150,24 @@ describe("DELETE /platform-types/{id}", () => {
     expect(res.status).toBe(401);
   });
 
-  it("binds `drift` as an identifier rather than reaching the listing", async () => {
+  it("binds `retired` as an identifier rather than reaching the listing", async () => {
     // The two doors share a prefix and this one names no verb of its own,
     // so the listing's own path is a well-formed `{id}` under DELETE.
-    // It binds the literal, and no platform row carries `drift`, so it is
+    // It binds the literal, and no platform row carries `retired`, so it is
     // refused as an identifier that is not there — the sibling cannot be
     // addressed as something to remove. The listing keeps answering its
     // own verb.
     const ctx = await newContext();
-    const id = await seedDriftedType(ctx);
+    const id = await seedRetiredType(ctx);
 
-    const res = await request(ctx.app, "DELETE", "/platform-types/drift", {
+    const res = await request(ctx.app, "DELETE", "/platform-types/retired", {
       key: ctx.managementKey,
     });
     expect(res.status).toBe(404);
     const body = (await res.json()) as { error: { code: string } };
     expect(body.error.code).toBe("type_not_found");
 
-    const listed = await request(ctx.app, "GET", "/platform-types/drift", {
+    const listed = await request(ctx.app, "GET", "/platform-types/retired", {
       key: ctx.managementKey,
     });
     expect(listed.status).toBe(200);
@@ -178,9 +178,9 @@ describe("DELETE /platform-types/{id}", () => {
     expect(seen.data.map((t) => t.id)).toEqual([id]);
   });
 
-  it("removes a drifted row", async () => {
+  it("removes a retired row", async () => {
     const ctx = await newContext();
-    const id = await seedDriftedType(ctx);
+    const id = await seedRetiredType(ctx);
 
     const res = await request(ctx.app, "DELETE", `/platform-types/${id}`, {
       key: ctx.managementKey,
@@ -199,7 +199,7 @@ describe("DELETE /platform-types/{id}", () => {
     // operator would be told the row was gone. The route's description
     // claims the immediacy this asserts.
     const ctx = await newContext();
-    const id = await seedDriftedType(ctx);
+    const id = await seedRetiredType(ctx);
 
     // The control: it resolves before the removal, so the assertions after
     // it are about the removal rather than about a type that never listed.
@@ -228,18 +228,18 @@ describe("DELETE /platform-types/{id}", () => {
     expect(ids).not.toContain(id);
   });
 
-  it("drops the removed type from the drift list and refuses a second removal", async () => {
+  it("drops the removed type from the retired list and refuses a second removal", async () => {
     const ctx = await newContext();
-    const id = await seedDriftedType(ctx);
+    const id = await seedRetiredType(ctx);
     const other = `${id}_kept`;
     await ctx.storage.types.create(
       { id: other, version: 1, fields: { name: { type: "string" } } },
       { origin: "platform" },
     );
-    setPlatformDrift([id, other]);
+    setRetiredPlatformTypes([id, other]);
 
     const listedIds = async (): Promise<string[]> => {
-      const res = await request(ctx.app, "GET", "/platform-types/drift", {
+      const res = await request(ctx.app, "GET", "/platform-types/retired", {
         key: ctx.managementKey,
       });
       expect(res.status).toBe(200);
@@ -268,13 +268,13 @@ describe("DELETE /platform-types/{id}", () => {
 
   it("keeps a type listed when its removal is refused", async () => {
     const ctx = await newContext();
-    const id = await seedDriftedType(ctx);
+    const id = await seedRetiredType(ctx);
     await itemWrites(ctx.storage).create({
       writer: null,
       type: id,
       properties: { name: "still here" },
       source: "test",
-      source_id: "drift-refused",
+      source_id: "retired-refused",
     });
 
     const res = await request(ctx.app, "DELETE", `/platform-types/${id}`, {
@@ -282,7 +282,7 @@ describe("DELETE /platform-types/{id}", () => {
     });
     expect(res.status).toBe(409);
 
-    const listed = await request(ctx.app, "GET", "/platform-types/drift", {
+    const listed = await request(ctx.app, "GET", "/platform-types/retired", {
       key: ctx.managementKey,
     });
     const seen = (await listed.json()) as { data: { id: string }[] };
@@ -294,7 +294,7 @@ describe("DELETE /platform-types/{id}", () => {
     // too, so testing existence alone would make this able to remove a
     // live one.
     const ctx = await newContext();
-    setPlatformDrift([]);
+    setRetiredPlatformTypes([]);
 
     const res = await request(ctx.app, "DELETE", "/platform-types/core.note", {
       key: ctx.managementKey,
@@ -315,7 +315,7 @@ describe("DELETE /platform-types/{id}", () => {
     // would resolve without the fields it inherits, silently, because
     // ancestor collection degrades to a partial view rather than failing.
     const ctx = await newContext();
-    const parent = await seedDriftedType(ctx);
+    const parent = await seedRetiredType(ctx);
     const child = `${parent}.child`;
     await ctx.storage.types.create(
       {
@@ -338,7 +338,7 @@ describe("DELETE /platform-types/{id}", () => {
 
   it("reports a parent as not removable in the listing", async () => {
     const ctx = await newContext();
-    const parent = await seedDriftedType(ctx);
+    const parent = await seedRetiredType(ctx);
     const child = `${parent}.child`;
     await ctx.storage.types.create(
       {
@@ -350,7 +350,7 @@ describe("DELETE /platform-types/{id}", () => {
       { origin: "platform" },
     );
 
-    const res = await request(ctx.app, "GET", "/platform-types/drift", {
+    const res = await request(ctx.app, "GET", "/platform-types/retired", {
       key: ctx.managementKey,
     });
     const body = (await res.json()) as {
@@ -365,13 +365,13 @@ describe("DELETE /platform-types/{id}", () => {
     // Orphaning readable data to tidy a registry is the wrong trade: the
     // row is what makes those items resolve.
     const ctx = await newContext();
-    const id = await seedDriftedType(ctx);
+    const id = await seedRetiredType(ctx);
     await itemWrites(ctx.storage).create({
       writer: null,
       type: id,
       properties: { name: "still here" },
       source: "test",
-      source_id: "drift-2",
+      source_id: "retired-2",
     });
 
     const res = await request(ctx.app, "DELETE", `/platform-types/${id}`, {
@@ -390,7 +390,7 @@ describe("DELETE /platform-types/{id} decides in one transaction", () => {
     // must either be counted, so the removal is refused, or be refused
     // itself once the type is gone. Never both written.
     const ctx = await newContext();
-    const id = await seedDriftedType(ctx);
+    const id = await seedRetiredType(ctx);
     const items = itemWrites(ctx.storage);
     const count = items.countByType.bind(items);
     let creating: Promise<unknown> | undefined;
@@ -404,7 +404,7 @@ describe("DELETE /platform-types/{id} decides in one transaction", () => {
             type: id,
             properties: { name: "written mid-removal" },
             source: "test",
-            source_id: "drift-race",
+            source_id: "retired-race",
           }),
         )
         .then(
@@ -441,7 +441,7 @@ describe("DELETE /platform-types/{id} decides in one transaction", () => {
 
   it("names the key that removed the type in its audit row", async () => {
     const ctx = await newContext();
-    const id = await seedDriftedType(ctx);
+    const id = await seedRetiredType(ctx);
     const res = await request(ctx.app, "DELETE", `/platform-types/${id}`, {
       key: ctx.managementKey,
     });
@@ -459,25 +459,25 @@ describe("DELETE /platform-types/{id} decides in one transaction", () => {
   });
 });
 
-describe("/health reports drift and does not degrade on it", () => {
+describe("/health reports retired platform types and does not degrade on them", () => {
   it("reports the count while the overall status stays ok", async () => {
     const ctx = await newContext();
-    setPlatformDrift(["core.retired_health", "core.retired_second"]);
+    setRetiredPlatformTypes(["core.retired_health", "core.retired_second"]);
 
     const res = await request(ctx.app, "GET", "/health");
     const body = (await res.json()) as {
       status: string;
       components: Record<string, { status: string; count?: number }>;
-      platform_types: { drifted: number };
+      platform_types: { retired: number };
     };
 
     // Asserted before the status claim, so a fixture that stopped
-    // producing drift fails here rather than passing vacuously: an `ok`
-    // status on an instance carrying no drift proves nothing.
-    expect(body.platform_types).toEqual({ drifted: 2 });
+    // producing a retired type fails here rather than passing vacuously: an `ok`
+    // status on an instance carrying no retired type proves nothing.
+    expect(body.platform_types).toEqual({ retired: 2 });
 
     expect(body.status).toBe("ok");
-    // Not a component. Drift carries no status, so the entry has to be
+    // Not a component. A retired type carries no status, so the entry has to be
     // absent rather than reporting a constant `ok` that a consumer could
     // key on.
     expect(body.components.platform_types).toBeUndefined();
@@ -486,16 +486,16 @@ describe("/health reports drift and does not degrade on it", () => {
     expect(JSON.stringify(body)).not.toContain("core.retired_second");
   });
 
-  it("reports zero when there is no drift", async () => {
+  it("reports zero when no platform type is retired", async () => {
     const ctx = await newContext();
-    setPlatformDrift([]);
+    setRetiredPlatformTypes([]);
     const res = await request(ctx.app, "GET", "/health");
     const body = (await res.json()) as {
       status: string;
       components: Record<string, { status: string; count?: number }>;
-      platform_types: { drifted: number };
+      platform_types: { retired: number };
     };
-    expect(body.platform_types).toEqual({ drifted: 0 });
+    expect(body.platform_types).toEqual({ retired: 0 });
     expect(body.components.platform_types).toBeUndefined();
     expect(body.status).toBe("ok");
   });

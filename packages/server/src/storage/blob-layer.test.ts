@@ -54,7 +54,7 @@ describe("createBlobLayer", () => {
     expect(rows[0]?.detached_at).toBeNull();
 
     // Boot against a different folder: a different store, and the first
-    // one's row is kept but marked detached, because the log may still
+    // one's row is kept but marked detached, because the copy record may still
     // name copies there that nothing can now reach.
     const second = await createBlobLayer(ctx.storage, await diskAt());
     expect(second.disk.id).not.toBe(first.id);
@@ -151,7 +151,7 @@ describe("createBlobLayer", () => {
     ).toEqual(audits);
   });
 
-  it("marks a copy in a detached store as such in the location log", async () => {
+  it("marks a copy in a detached store as such in the copy record", async () => {
     ctx = await createTestContext();
     const res = await ctx.app.request("/blobs", {
       method: "POST",
@@ -159,15 +159,15 @@ describe("createBlobLayer", () => {
         Authorization: `Bearer ${ctx.workingKey}`,
         "Content-Type": "text/plain",
       },
-      body: new TextEncoder().encode("a copy the log will keep naming"),
+      body: new TextEncoder().encode("a copy the copy record will keep naming"),
     });
     expect(res.status).toBe(201);
     const { hash } = (await res.json()) as { hash: string };
-    const before = await ctx.storage.blobs.listLocations(hash);
+    const before = await ctx.storage.blobs.listCopies(hash);
     expect(before.map((row) => row.detached)).toEqual([false]);
 
     await createBlobLayer(ctx.storage, await diskAt());
-    const after = await ctx.storage.blobs.listLocations(hash);
+    const after = await ctx.storage.blobs.listCopies(hash);
     expect(after.map((row) => [row.store_id, row.detached])).toEqual([
       [ctx.blobs.disk.id, true],
     ]);
@@ -229,7 +229,7 @@ describe("createBlobLayer", () => {
       expect(existsSync(marker)).toBe(false);
       expect(await ctx.storage.blobs.listStores()).toEqual(before);
       expect(
-        (await ctx.storage.blobs.listLocations(hash)).map((row) => [
+        (await ctx.storage.blobs.listCopies(hash)).map((row) => [
           row.store_id,
           row.detached,
         ]),

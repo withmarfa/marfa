@@ -83,27 +83,22 @@ describe("the stores an instance keeps bytes in", () => {
     expect(stores.error?.error.code).toBe("forbidden");
   });
 
-  it("records a new blob's location as the disk store", async () => {
+  it("records a new blob's copy as the disk store", async () => {
     const content = new TextEncoder().encode("located on the disk first");
     const upload = await uploadReferenced(client, ctx, content, "text/plain");
     expect(upload.ok).toBe(true);
 
-    const locations = await client.listBlobLocations(upload.data.hash);
-    expect(locations.status).toBe(200);
-    await expectMatchesSchema(
-      "GET",
-      "/blobs/{hash}/locations",
-      200,
-      locations.data,
-    );
+    const copies = await client.listBlobCopies(upload.data.hash);
+    expect(copies.status).toBe(200);
+    await expectMatchesSchema("GET", "/blobs/{hash}/copies", 200, copies.data);
     const stores = await getManagementClient().listBlobStores();
     const disk = stores.data.data.find((store) => store.kind === "disk");
     // The upload woke replication and the run's other files run the
     // integrity check, so with an object store attached its copy can land,
     // and the disk copy be stamped, between the upload and this read. The
-    // case that asserts the one unverified location is on an instance of its
+    // case that asserts the one unverified copy is on an instance of its
     // own with no object store (`blob-store-folders.test.ts`).
-    expect(locations.data.data).toContainEqual(
+    expect(copies.data.data).toContainEqual(
       expect.objectContaining({
         store_id: disk?.id,
         kind: "disk",
@@ -111,20 +106,20 @@ describe("the stores an instance keeps bytes in", () => {
         detached: false,
       }),
     );
-    expect(
-      locations.data.data.filter((row) => row.kind === "disk"),
-    ).toHaveLength(1);
+    expect(copies.data.data.filter((row) => row.kind === "disk")).toHaveLength(
+      1,
+    );
   });
 
-  it("answers 404 for the locations of an unknown hash and 400 for a malformed one", async () => {
-    const content = new TextEncoder().encode("a hash with locations");
+  it("answers 404 for the copies of an unknown hash and 400 for a malformed one", async () => {
+    const content = new TextEncoder().encode("a hash with copies");
     const upload = await uploadReferenced(client, ctx, content, "text/plain");
     expect(upload.ok).toBe(true);
-    expect((await client.listBlobLocations(upload.data.hash)).status).toBe(200);
-    const unknown = await client.listBlobLocations(`sha256:${"0".repeat(64)}`);
+    expect((await client.listBlobCopies(upload.data.hash)).status).toBe(200);
+    const unknown = await client.listBlobCopies(`sha256:${"0".repeat(64)}`);
     expect(unknown.status).toBe(404);
     expect(unknown.error?.error.code).toBe("blob_not_found");
-    const malformed = await client.listBlobLocations("not-a-hash");
+    const malformed = await client.listBlobCopies("not-a-hash");
     expect(malformed.status).toBe(400);
     expect(malformed.error?.error.code).toBe("validation_error");
   });

@@ -45,15 +45,15 @@ So each operation, parameter, field and response says what it needs to on its ow
 
   When none fits, use the plain verb for the act, such as Restore, Upload or Search. These verbs stay on purpose, because a generic one would lose what happens:
 
-  | Verb   | Meaning                                                             |
-  | ------ | ------------------------------------------------------------------- |
-  | Revoke | Ends access that was given: a folder, a key or an app grant.        |
-  | Trash  | Moves an item to the trash, where you can restore it.               |
-  | Purge  | Deletes permanently what is in the trash.                           |
-  | Retire | Stops a webhook endpoint accepting deliveries, and keeps it listed. |
-  | End    | Ends a sign-in at once.                                             |
-  | Rename | Changes only a name.                                                |
-  | Take   | Takes or renews a connector's hold. Release gives the hold back.    |
+  | Verb   | Meaning                                                              |
+  | ------ | -------------------------------------------------------------------- |
+  | Revoke | Ends access that was given: a folder, a key or an app grant.         |
+  | Trash  | Moves an item to the trash, where you can restore it.                |
+  | Purge  | Deletes permanently what is in the trash.                            |
+  | Retire | Stops an inbound endpoint accepting deliveries, and keeps it listed. |
+  | End    | Ends a sign-in at once.                                              |
+  | Rename | Changes only a name.                                                 |
+  | Take   | Takes or renews a connector's hold. Release gives the hold back.     |
 
 ### Description
 
@@ -126,7 +126,7 @@ Within a group, operations come in the order a developer meets them:
 6. Delete.
 7. The group's other actions, in the order a developer meets them. For example, restore comes before purge.
 
-A group starts with the first of these it has, with two exceptions: Connector state starts with the hold, which a process takes before it writes, and Metadata puts Replace before Update. Give the order as the group's `operations` in `PUBLIC_TAGS`, each an `operationId`, or for a request Marfa sends, the name the document's `webhooks` gives it. The document publishes the list as `x-operation-order` on the tag and orders `paths` by the first appearance of their operations in the lists, so a reader of `openapi.json` follows the same order. A path whose methods fall in two groups stands where its earliest operation does.
+A group starts with the first of these it has, with two exceptions: Connector state starts with the hold, which a process takes before it writes, and Metadata puts Replace before Update. Give the order as the group's `operations` in `PUBLIC_TAGS`, each an `operationId`, a request Marfa sends included. The document publishes the list as `x-operation-order` on the tag and orders `paths` by the first appearance of their operations in the lists, so a reader of `openapi.json` follows the same order. A path whose methods fall in two groups stands where its earliest operation does.
 
 `openapi-operation-order.test.ts` checks that every published operation and webhook is listed once, under its own tag, and that every name in a list is published. A new operation fails it, naming the operation, until it has an entry.
 

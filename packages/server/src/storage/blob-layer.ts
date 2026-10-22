@@ -17,8 +17,8 @@ import { outlastBlobUploadLock } from "./blob-upload-lock.js";
 /**
  * The stores this instance has attached, built in one place so that every
  * caller that boots an app has stores with ids and rows. A store that was
- * constructed and never attached has no id, records no location and would
- * make the log lie by omission.
+ * constructed and never attached has no id, records no copy and would
+ * make the copy record lie by omission.
  */
 export interface BlobLayer {
   /** Always present: where an upload lands, and the spool it lands through. */
@@ -31,7 +31,7 @@ export interface BlobLayer {
 }
 
 /**
- * The attached stores the location log records a copy of `hash` in, the disk
+ * The attached stores the copy record records a copy of `hash` in, the disk
  * first. A copy struck or dropped can linger in its store until its deletion
  * is retried, and those bytes are not the blob's.
  */
@@ -41,7 +41,7 @@ export async function recordedStores(
   hash: string,
 ): Promise<BlobStore[]> {
   const holding = new Set(
-    (await storage.blobs.listLocations(hash)).map((l) => l.store_id),
+    (await storage.blobs.listCopies(hash)).map((l) => l.store_id),
   );
   return blobs.stores.filter((store) => holding.has(store.id));
 }
@@ -228,12 +228,12 @@ export function answeringFirst(
 }
 
 /**
- * For each blob in `sizes`, an attached store that the log records a copy
+ * For each blob in `sizes`, an attached store that the copy record names a copy
  * in and that holds the blob at its whole size, asked of the stores
  * themselves; `null` when none does. The stores are asked in the order
  * {@link answeringFirst} gives, the disk first otherwise, and a store that
- * fails or does not answer joins `unanswered`. The log is read once for the
- * lot.
+ * fails or does not answer joins `unanswered`. The copy record is read once
+ * for the lot.
  *
  * Throws `blob_store_unavailable` when no store holds a blob whole and a
  * store it asked failed or did not answer in time: a store that cannot
@@ -317,7 +317,7 @@ export type BlobLayerConfig = Pick<
 >;
 
 /**
- * Refuses a new disk store at a folder where the location log still records
+ * Refuses a new disk store at a folder where the copy record still records
  * copies in the store that was there: a drive that did not mount leaves the
  * folder or its marker missing, and a new store over it would hide every
  * saved file and take every new one where the drive, once back, hides it.

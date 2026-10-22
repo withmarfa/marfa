@@ -1237,7 +1237,7 @@ withReader("archive concurrent writes (%s)", (credential) => {
         (entry) => entry.action !== "export.run",
       ),
       blobs: await ctx.storage.blobs.count(),
-      locations: await ctx.storage.blobs.listLocations(hash),
+      copies: await ctx.storage.blobs.listCopies(hash),
     };
     expect(before.events.length).toBeGreaterThan(0);
     expect(before.items.data.length).toBeGreaterThan(0);
@@ -1256,7 +1256,7 @@ withReader("archive concurrent writes (%s)", (credential) => {
         (entry) => entry.action !== "export.run",
       ),
       blobs: await ctx.storage.blobs.count(),
-      locations: await ctx.storage.blobs.listLocations(hash),
+      copies: await ctx.storage.blobs.listCopies(hash),
     }).toEqual(before);
   });
 

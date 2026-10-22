@@ -1,11 +1,7 @@
 import { BlobStoreUnreachable, type BlobStore } from "../storage/blob-store.js";
 import { runAuditedTransaction } from "../storage/audited-transaction.js";
 import { log } from "../middleware/logger.js";
-import type {
-  AuditLogEntry,
-  BlobLocation,
-  Storage,
-} from "../storage/interface.js";
+import type { AuditLogEntry, BlobCopy, Storage } from "../storage/interface.js";
 import {
   LOCK_HELD,
   tryBlobUploadLock,
@@ -20,13 +16,13 @@ import {
 
 /**
  * Where bytes leave a store once a row has named them. The copy rules are
- * written over the location log, and every deletion here answers to it: a
- * drop goes only if the log's count of live copies allows it, decided in
+ * written over the copy record, and every deletion here answers to it: a
+ * drop goes only if the copy record's count of live copies allows it, decided in
  * the one statement that removes the row, and the stores confirm enough of
  * the copies that remain; a purge takes a blob to zero only because the
  * orphan report named it on an earlier run and nothing names it in the
  * transaction that removes the row; a strike's second half discards bytes
- * the check has just struck from the log. Each
+ * the check has just struck from the copy record. Each
  * runs under the per-hash lock the upload takes, so an upload's own
  * check-and-record cannot interleave with it.
  *
@@ -58,22 +54,22 @@ export class CopiesBelowMinimum extends Error {
   }
 }
 
-export class LocationNotFound extends Error {
+export class CopyNotFound extends Error {
   constructor(
     readonly hash: string,
     readonly storeId: string,
   ) {
     super(`no attached store ${storeId} holds a copy of ${hash}`);
-    this.name = "LocationNotFound";
+    this.name = "CopyNotFound";
   }
 }
 
 /**
- * Drop one store's copy of a blob, when the log says enough live copies
- * would remain and their stores confirm they hold them. The log alone can
- * name a copy that is gone, such as one a store's late delete removed, and
- * a drop trusting it could take the last real copy. The log is asked first,
- * so a drop it refuses answers without waiting on any store. Location
+ * Drop one store's copy of a blob, when the copy record says enough live copies
+ * would remain and their stores confirm they hold them. The copy record alone
+ * can name a copy that is gone, such as one a store's late delete removed, and
+ * a drop trusting it could take the last real copy. The copy record is asked first,
+ * so a drop it refuses answers without waiting on any store. Copy
  * removal, audit and cleanup intent commit together before bytes are
  * deleted, so a store failure leaves a retryable intent and the drop still
  * succeeds.
@@ -92,36 +88,36 @@ export async function dropBlobCopy(
 ): Promise<void> {
   await withBlobUploadLock(hash, async () => {
     const store = stores.byId(storeId);
-    if (!store) throw new LocationNotFound(hash, storeId);
-    const live = (await storage.blobs.listLocations(hash)).filter(
-      (location) => !location.detached,
+    if (!store) throw new CopyNotFound(hash, storeId);
+    const live = (await storage.blobs.listCopies(hash)).filter(
+      (copy) => !copy.detached,
     );
-    if (!live.some((location) => location.store_id === storeId))
-      throw new LocationNotFound(hash, storeId);
+    if (!live.some((copy) => copy.store_id === storeId))
+      throw new CopyNotFound(hash, storeId);
     if (live.length - 1 < minCopies)
       throw new CopiesBelowMinimum(hash, live.length, minCopies);
     const confirmed = await confirmedOthers(
       storage,
       stores,
       hash,
-      live.filter((location) => location.store_id !== storeId),
+      live.filter((copy) => copy.store_id !== storeId),
     );
     await runAuditedTransaction(
       storage,
       async () => {
-        const outcome = await storage.blobs.dropLocationKeeping(
+        const outcome = await storage.blobs.dropCopyKeeping(
           hash,
           storeId,
           minCopies,
         );
-        if (outcome === "absent") throw new LocationNotFound(hash, storeId);
+        if (outcome === "absent") throw new CopyNotFound(hash, storeId);
         if (outcome === "below_minimum") {
-          const live = (await storage.blobs.listLocations(hash)).filter(
-            (location) => !location.detached,
+          const live = (await storage.blobs.listCopies(hash)).filter(
+            (copy) => !copy.detached,
           ).length;
           throw new CopiesBelowMinimum(hash, live, minCopies);
         }
-        // The log allowed it; the stores must too. Thrown here, the row's
+        // The copy record allowed it; the stores must too. Thrown here, the row's
         // removal rolls back with the rest of the transaction.
         if (confirmed < minCopies) {
           throw new CopiesBelowMinimum(hash, confirmed + 1, minCopies);
@@ -151,23 +147,23 @@ export async function dropBlobCopy(
 }
 
 /**
- * How many of `others`, the blob's other live copies the log names, their
+ * How many of `others`, the blob's other live copies the copy record names, their
  * stores confirm they hold at the blob's size, each asked within the store
  * check bound. A store that fails or does not answer confirms nothing. The
- * caller holds the blob's upload lock, so the log's copies of the blob do
+ * caller holds the blob's upload lock, so the copy record's copies of the blob do
  * not change before the drop commits.
  */
 async function confirmedOthers(
   storage: Storage,
   stores: Stores,
   hash: string,
-  others: readonly BlobLocation[],
+  others: readonly BlobCopy[],
 ): Promise<number> {
   const record = await storage.blobs.get(hash);
   if (!record) return 0;
   const answers = await Promise.all(
-    others.map(async (location) => {
-      const other = stores.byId(location.store_id);
+    others.map(async (copy) => {
+      const other = stores.byId(copy.store_id);
       if (!other) return false;
       try {
         const held = await within(
@@ -194,8 +190,8 @@ async function confirmedOthers(
  * which checks that the report still stands within `due` and that nothing
  * references the blob, so an upload of the same bytes or a write naming
  * them that landed after the sweep's walk keeps it. The bytes go after the
- * row, from every attached store rather than the ones the log names,
- * because a copy the log did not know about would otherwise outlive its
+ * row, from every attached store rather than the ones the copy record names,
+ * because a copy the copy record did not know about would otherwise outlive its
  * row; a purge record covers the gap, so a failure between the two leaves
  * the next sweep a purge to finish (`finishPurge`) rather than a row naming
  * bytes that are gone. Answers whether the blob was purged; a blob whose

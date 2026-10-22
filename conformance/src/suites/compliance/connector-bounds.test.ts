@@ -78,7 +78,9 @@ async function connector(
 
 async function holding(mine: Connector): Promise<string> {
   const process = randomUUID();
-  expect((await mine.client.holdConnector(mine.id, process)).status).toBe(200);
+  expect((await mine.client.takeConnectorHold(mine.id, process)).status).toBe(
+    200,
+  );
   return process;
 }
 

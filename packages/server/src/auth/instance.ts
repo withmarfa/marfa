@@ -309,7 +309,7 @@ export interface MarfaAuth {
     name: string,
     clientIp: string | null,
   ) => Promise<OwnerPasskey | null>;
-  removeOwnerPasskey: (
+  deleteOwnerPasskey: (
     userId: string,
     id: string,
     clientIp: string | null,
@@ -1482,7 +1482,7 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
     listOwnerPasskeys,
     renameOwnerPasskey: (userId, id, name, clientIp) =>
       mutateOwnerPasskey(userId, id, name, clientIp),
-    removeOwnerPasskey: async (userId, id, clientIp) =>
+    deleteOwnerPasskey: async (userId, id, clientIp) =>
       (await mutateOwnerPasskey(userId, id, undefined, clientIp)) !== null,
     useSession,
     listBrowserSessions,

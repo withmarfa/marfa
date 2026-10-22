@@ -75,7 +75,7 @@ export const HOUSEKEEPING_JOBS = {
   "blob-integrity": {
     name: "blob-integrity",
     description:
-      "Checks blob copies and removes locations whose bytes are missing or altered.",
+      "Checks blob copies and removes copies whose bytes are missing or altered.",
   },
   "blob-orphans": {
     name: "blob-orphans",

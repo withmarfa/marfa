@@ -288,7 +288,7 @@ When `GET /openapi.json` is answered, the server MUST declare in `tags` exactly 
 
 ### `instance/document-operation-order`
 
-When `GET /openapi.json` is answered, the server MUST write on each tag an `x-operation-order` that lists each operation carrying the tag once, by its `operationId` or, for a request Marfa sends, by its name in `webhooks`.
+When `GET /openapi.json` is answered, the server MUST write on each tag an `x-operation-order` that lists each operation carrying the tag once, by its `operationId`.
 
 **Reason:** the order interleaves paths, so `paths` alone cannot carry it, and a reader of the document needs the order from the server.
 

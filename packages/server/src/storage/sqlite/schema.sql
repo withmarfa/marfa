@@ -259,15 +259,7 @@ CREATE TABLE IF NOT EXISTS `auth_verification` (
 );
 
 CREATE INDEX IF NOT EXISTS `idx_auth_verification_identifier` ON `auth_verification` (`identifier`);
-CREATE TABLE IF NOT EXISTS `blob_copy_deletions` (
-	`hash` text NOT NULL,
-	`store_id` text NOT NULL,
-	`retry_order` integer NOT NULL,
-	PRIMARY KEY(`hash`, `store_id`)
-);
-
-CREATE INDEX IF NOT EXISTS `idx_blob_copy_deletions_retry` ON `blob_copy_deletions` (`retry_order`,`hash`,`store_id`);
-CREATE TABLE IF NOT EXISTS `blob_locations` (
+CREATE TABLE IF NOT EXISTS `blob_copies` (
 	`hash` text NOT NULL,
 	`store_id` text NOT NULL,
 	`recorded_at` text NOT NULL,
@@ -277,7 +269,15 @@ CREATE TABLE IF NOT EXISTS `blob_locations` (
 	FOREIGN KEY (`store_id`) REFERENCES `blob_stores`(`id`) ON UPDATE no action ON DELETE no action
 );
 
-CREATE INDEX IF NOT EXISTS `idx_blob_locations_store_verified` ON `blob_locations` (`store_id`,`verified_at`);
+CREATE INDEX IF NOT EXISTS `idx_blob_copies_store_verified` ON `blob_copies` (`store_id`,`verified_at`);
+CREATE TABLE IF NOT EXISTS `blob_copy_deletions` (
+	`hash` text NOT NULL,
+	`store_id` text NOT NULL,
+	`retry_order` integer NOT NULL,
+	PRIMARY KEY(`hash`, `store_id`)
+);
+
+CREATE INDEX IF NOT EXISTS `idx_blob_copy_deletions_retry` ON `blob_copy_deletions` (`retry_order`,`hash`,`store_id`);
 CREATE TABLE IF NOT EXISTS `blob_orphans` (
 	`hash` text PRIMARY KEY NOT NULL,
 	`reported_at` text NOT NULL,

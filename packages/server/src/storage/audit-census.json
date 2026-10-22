@@ -103,7 +103,7 @@
     "calls": {
       "BlobRegistry.beginCopyDeletionAttempt": 1,
       "BlobRegistry.claimOrphanPurge": 1,
-      "BlobRegistry.dropLocationKeeping": 1,
+      "BlobRegistry.dropCopyKeeping": 1,
       "BlobRegistry.queueCopyDeletion": 1,
       "BlobRegistry.settleCopyDeletion": 2,
       "BlobRegistry.settlePurge": 1,
@@ -125,7 +125,7 @@
   "housekeeping/blob-replicate.ts": {
     "boundary": "Audited registry copy publication after external I/O; external-audit.test.ts.",
     "calls": {
-      "BlobRegistry.recordLocation": 1,
+      "BlobRegistry.recordCopy": 1,
       "runAuditedTransaction": 1
     }
   },
@@ -133,7 +133,7 @@
     "boundary": "Audited strike of a missing or corrupt copy, shared by the integrity check and the archive export; external-audit.test.ts.",
     "calls": {
       "BlobRegistry.queueCopyDeletion": 1,
-      "BlobRegistry.removeLocation": 1,
+      "BlobRegistry.removeCopy": 1,
       "runAuditedTransaction": 1
     }
   },
@@ -214,7 +214,7 @@
   "routes/blobs.ts": {
     "boundary": "Audited uploader/registry publication after staged bytes; external-audit.test.ts.",
     "calls": {
-      "BlobRegistry.recordLocation": 1,
+      "BlobRegistry.recordCopy": 1,
       "BlobRegistry.recordUploader": 1,
       "BlobRegistry.register": 1,
       "runAuditedTransaction": 1
@@ -363,7 +363,7 @@
   "routes/platform-types.ts": {
     "boundary": "Audited platform type removal, registry settlement inside transaction; platform-types.test.ts.",
     "calls": {
-      "TypeStore.deletePlatformType": 1,
+      "TypeStore.deleteRetiredPlatformType": 1,
       "runAuditedTransaction": 1
     }
   },
@@ -380,7 +380,7 @@
     "boundary": "One audited restore transaction holding the registrations, blob rows, items, metadata, history, edges and events; blob bytes are placed before it opens, each behind an unaudited copy-deletion record that the transaction clears, as the cleanup queue's bookkeeping. Native failure coverage in external-audit.test.ts, archive-complete-roundtrip.test.ts and archive-restore-bounds.test.ts.",
     "calls": {
       "BlobRegistry.queueCopyDeletion": 1,
-      "BlobRegistry.recordLocation": 1,
+      "BlobRegistry.recordCopy": 1,
       "BlobRegistry.recordUploader": 1,
       "BlobRegistry.register": 1,
       "EdgeStore.createRaw": 1,

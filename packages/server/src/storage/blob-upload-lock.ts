@@ -5,7 +5,7 @@
  * bytes land outside any lock. What follows is three steps that have to
  * agree: `has` on the disk store, the spool's rename into place (or its
  * discard, when the bytes are already there), and the registration of the
- * row and the location.
+ * row and the copy.
  *
  * The first step decides something it cannot know on its own. `has` answers
  * "were these bytes here a moment ago", not "are these bytes mine", and

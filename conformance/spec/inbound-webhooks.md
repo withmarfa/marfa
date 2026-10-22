@@ -1,6 +1,6 @@
 # Inbound webhooks
 
-A webhook endpoint is an address a sender such as GitHub posts to without a credential: the address is the credential. The server stores each request as it came and answers at once, and holds no sender's secret. The connector that owns the endpoint reads its deliveries with its own key, checks that each came from its sender, and marks it handled.
+An inbound endpoint is an address a sender such as GitHub posts to without a credential: the address is the credential. The server stores each request as it came and answers at once, and holds no sender's secret. The connector that owns the endpoint reads its deliveries with its own key, checks that each came from its sender, and marks it handled.
 
 The webhooks the instance sends are outbound ones, `events.md`'s. The error envelope and the codes are `errors.md`'s, and the settings named here are `instance.md`'s.
 

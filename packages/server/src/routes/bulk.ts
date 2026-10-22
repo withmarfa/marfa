@@ -384,7 +384,7 @@ const bulkActionStatusRoute = createRoute({
   tags: ["Bulk actions"],
   summary: "Get a bulk-action job",
   description:
-    "Returns a bulk-action job's status and counts, and its `result` once it has finished. Only the credential that queued the job, or the holder of instance.read, can read it.",
+    "Returns a bulk-action job's status and counts, and its `result` once it has finished. Only the credential that queued the job, or the holder of `instance.read`, can read it.",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({
@@ -412,7 +412,7 @@ const bulkActionStatusRoute = createRoute({
         },
       },
       description:
-        "- `forbidden`: another credential queued the job, and yours lacks instance.read.",
+        "- `forbidden`: another credential queued the job, and yours lacks `instance.read`.",
     },
     404: {
       content: {
@@ -463,7 +463,7 @@ const bulkActionCancelRoute = createRoute({
         },
       },
       description:
-        "- `forbidden`: another credential queued the job, and yours lacks instance.maintain.",
+        "- `forbidden`: another credential queued the job, and yours lacks `instance.maintain`.",
     },
     404: {
       content: {

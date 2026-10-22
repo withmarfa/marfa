@@ -12,7 +12,7 @@ import {
 } from "drizzle-orm";
 import type {
   BlobCopyRef,
-  BlobLocation,
+  BlobCopy,
   BlobOrphanRow,
   BlobReach,
   BlobRegistry,
@@ -22,7 +22,7 @@ import type {
 } from "../interface.js";
 import {
   blobCopyDeletions,
-  blobLocations,
+  blobCopies,
   blobOrphans,
   blobPurges,
   blobStores,
@@ -301,7 +301,7 @@ export class SqliteBlobRegistry implements BlobRegistry {
         copies: sql<number>`count(*)`,
       })
       .from(blobStores)
-      .innerJoin(blobLocations, eq(blobLocations.store_id, blobStores.id))
+      .innerJoin(blobCopies, eq(blobCopies.store_id, blobStores.id))
       .where(
         and(
           eq(blobStores.kind, kind),
@@ -314,7 +314,7 @@ export class SqliteBlobRegistry implements BlobRegistry {
       .all();
   }
 
-  async recordLocation(hash: string, storeId: string): Promise<void> {
+  async recordCopy(hash: string, storeId: string): Promise<void> {
     await this.db.transaction(async (tx) => {
       await tx
         .delete(blobCopyDeletions)
@@ -326,7 +326,7 @@ export class SqliteBlobRegistry implements BlobRegistry {
         )
         .run();
       await tx
-        .insert(blobLocations)
+        .insert(blobCopies)
         .values({
           hash,
           store_id: storeId,
@@ -395,24 +395,20 @@ export class SqliteBlobRegistry implements BlobRegistry {
       .run();
   }
 
-  async removeLocation(hash: string, storeId: string): Promise<boolean> {
+  async removeCopy(hash: string, storeId: string): Promise<boolean> {
     const rows = await this.db
-      .delete(blobLocations)
-      .where(
-        and(eq(blobLocations.hash, hash), eq(blobLocations.store_id, storeId)),
-      )
-      .returning({ hash: blobLocations.hash })
+      .delete(blobCopies)
+      .where(and(eq(blobCopies.hash, hash), eq(blobCopies.store_id, storeId)))
+      .returning({ hash: blobCopies.hash })
       .all();
     return rows.length > 0;
   }
 
   async markVerified(hash: string, storeId: string, at: string): Promise<void> {
     await this.db
-      .update(blobLocations)
+      .update(blobCopies)
       .set({ verified_at: at })
-      .where(
-        and(eq(blobLocations.hash, hash), eq(blobLocations.store_id, storeId)),
-      )
+      .where(and(eq(blobCopies.hash, hash), eq(blobCopies.store_id, storeId)))
       .run();
   }
 
@@ -423,22 +419,22 @@ export class SqliteBlobRegistry implements BlobRegistry {
       notExists(
         this.db
           .select({ one: sql`1` })
-          .from(blobLocations)
+          .from(blobCopies)
           .where(
             and(
-              eq(blobLocations.hash, blobs.hash),
-              eq(blobLocations.store_id, storeId),
+              eq(blobCopies.hash, blobs.hash),
+              eq(blobCopies.store_id, storeId),
             ),
           ),
       ),
       exists(
         this.db
           .select({ one: sql`1` })
-          .from(blobLocations)
-          .innerJoin(blobStores, eq(blobLocations.store_id, blobStores.id))
+          .from(blobCopies)
+          .innerJoin(blobStores, eq(blobCopies.store_id, blobStores.id))
           .where(
             and(
-              eq(blobLocations.hash, blobs.hash),
+              eq(blobCopies.hash, blobs.hash),
               isNull(blobStores.detached_at),
             ),
           ),
@@ -476,27 +472,27 @@ export class SqliteBlobRegistry implements BlobRegistry {
     return (
       this.db
         .select({
-          hash: blobLocations.hash,
-          store_id: blobLocations.store_id,
+          hash: blobCopies.hash,
+          store_id: blobCopies.store_id,
           size_bytes: blobs.size_bytes,
         })
-        .from(blobLocations)
-        .innerJoin(blobs, eq(blobLocations.hash, blobs.hash))
-        .where(inArray(blobLocations.store_id, [...storeIds]))
+        .from(blobCopies)
+        .innerJoin(blobs, eq(blobCopies.hash, blobs.hash))
+        .where(inArray(blobCopies.store_id, [...storeIds]))
         // Never checked first (a null sorts before any stamp), then the least
         // recently checked, whichever store holds it.
         .orderBy(
-          sql`${blobLocations.verified_at} IS NOT NULL`,
-          asc(blobLocations.verified_at),
-          asc(blobLocations.hash),
-          asc(blobLocations.store_id),
+          sql`${blobCopies.verified_at} IS NOT NULL`,
+          asc(blobCopies.verified_at),
+          asc(blobCopies.hash),
+          asc(blobCopies.store_id),
         )
         .limit(limit)
         .all()
     );
   }
 
-  async dropLocationKeeping(
+  async dropCopyKeeping(
     hash: string,
     storeId: string,
     minCopies: number,
@@ -505,29 +501,29 @@ export class SqliteBlobRegistry implements BlobRegistry {
     // so the row goes only if the minimum holds at the moment it goes.
     const live = this.db
       .select({ count: sql`count(*)` })
-      .from(blobLocations)
-      .innerJoin(blobStores, eq(blobLocations.store_id, blobStores.id))
-      .where(and(eq(blobLocations.hash, hash), isNull(blobStores.detached_at)));
+      .from(blobCopies)
+      .innerJoin(blobStores, eq(blobCopies.store_id, blobStores.id))
+      .where(and(eq(blobCopies.hash, hash), isNull(blobStores.detached_at)));
     const rows = await this.db
-      .delete(blobLocations)
+      .delete(blobCopies)
       .where(
         and(
-          eq(blobLocations.hash, hash),
-          eq(blobLocations.store_id, storeId),
+          eq(blobCopies.hash, hash),
+          eq(blobCopies.store_id, storeId),
           sql`(${live}) - 1 >= ${minCopies}`,
         ),
       )
-      .returning({ hash: blobLocations.hash })
+      .returning({ hash: blobCopies.hash })
       .all();
     if (rows.length > 0) return "dropped";
     const held = await this.db
-      .select({ hash: blobLocations.hash })
-      .from(blobLocations)
-      .innerJoin(blobStores, eq(blobLocations.store_id, blobStores.id))
+      .select({ hash: blobCopies.hash })
+      .from(blobCopies)
+      .innerJoin(blobStores, eq(blobCopies.store_id, blobStores.id))
       .where(
         and(
-          eq(blobLocations.hash, hash),
-          eq(blobLocations.store_id, storeId),
+          eq(blobCopies.hash, hash),
+          eq(blobCopies.store_id, storeId),
           isNull(blobStores.detached_at),
         ),
       )
@@ -679,32 +675,32 @@ export class SqliteBlobRegistry implements BlobRegistry {
     for (let i = 0; i < hashes.length; i += 500) {
       const rows = await this.db
         .select({
-          hash: blobLocations.hash,
-          store_id: blobLocations.store_id,
+          hash: blobCopies.hash,
+          store_id: blobCopies.store_id,
         })
-        .from(blobLocations)
-        .where(inArray(blobLocations.hash, hashes.slice(i, i + 500)))
-        .orderBy(blobLocations.recorded_at)
+        .from(blobCopies)
+        .where(inArray(blobCopies.hash, hashes.slice(i, i + 500)))
+        .orderBy(blobCopies.recorded_at)
         .all();
       for (const row of rows) held.get(row.hash)?.push(row.store_id);
     }
     return held;
   }
 
-  async listLocations(hash: string): Promise<BlobLocation[]> {
+  async listCopies(hash: string): Promise<BlobCopy[]> {
     const rows = await this.db
       .select({
-        store_id: blobLocations.store_id,
+        store_id: blobCopies.store_id,
         kind: blobStores.kind,
         policy: blobStores.policy,
         detached_at: blobStores.detached_at,
-        recorded_at: blobLocations.recorded_at,
-        verified_at: blobLocations.verified_at,
+        recorded_at: blobCopies.recorded_at,
+        verified_at: blobCopies.verified_at,
       })
-      .from(blobLocations)
-      .innerJoin(blobStores, eq(blobLocations.store_id, blobStores.id))
-      .where(eq(blobLocations.hash, hash))
-      .orderBy(blobLocations.recorded_at)
+      .from(blobCopies)
+      .innerJoin(blobStores, eq(blobCopies.store_id, blobStores.id))
+      .where(eq(blobCopies.hash, hash))
+      .orderBy(blobCopies.recorded_at)
       .all();
     return rows.map((row) => ({
       store_id: row.store_id,

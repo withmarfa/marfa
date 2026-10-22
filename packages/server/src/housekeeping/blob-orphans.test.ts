@@ -98,12 +98,12 @@ describe("BlobOrphanReporter.runOnce", () => {
     expect(await reporter.runOnce()).toEqual({ reported: 1, purged: 0 });
     expect(await ctx.blobs.disk.has(orphan)).not.toBeNull();
 
-    // Past it: gone from every store, the log and the registry.
+    // Past it: gone from every store, the copy record and the registry.
     time.advance(2);
     expect(await reporter.runOnce()).toEqual({ reported: 0, purged: 1 });
     expect(await ctx.storage.blobs.get(orphan)).toBeNull();
     expect(await ctx.blobs.disk.has(orphan)).toBeNull();
-    expect(await ctx.storage.blobs.listLocations(orphan)).toHaveLength(0);
+    expect(await ctx.storage.blobs.listCopies(orphan)).toHaveLength(0);
     expect(await ctx.storage.blobs.listOrphans()).toEqual([]);
     // Age is not what condemns a blob; being unreferenced is.
     expect(await ctx.storage.blobs.get(referenced)).not.toBeNull();
@@ -429,12 +429,12 @@ describe("what the report counts as a reference", () => {
     expect(await ctx.blobs.disk.has(data)).not.toBeNull();
   });
 
-  it("purges the bytes, the log's rows and the report's row together", async () => {
+  it("purges the bytes, the copy record's rows and the report's row together", async () => {
     ctx = await createTestContext();
     const data = new TextEncoder().encode("rows go with the bytes");
     const hash = hashOf(data);
     expect(await upload(ctx, "rows go with the bytes")).toBe(hash);
-    expect(await ctx.storage.blobs.listLocations(hash)).toHaveLength(1);
+    expect(await ctx.storage.blobs.listCopies(hash)).toHaveLength(1);
     const time = clock();
     const reporter = new BlobOrphanReporter(
       ctx.storage,
@@ -447,11 +447,11 @@ describe("what the report counts as a reference", () => {
     expect((await ctx.storage.blobs.listOrphans()).map((r) => r.hash)).toEqual([
       hash,
     ]);
-    expect(await ctx.storage.blobs.listLocations(hash)).toHaveLength(1);
+    expect(await ctx.storage.blobs.listCopies(hash)).toHaveLength(1);
     expect(await ctx.blobs.disk.has(hash)).not.toBeNull();
     time.advance(1);
     await reporter.runOnce();
-    expect(await ctx.storage.blobs.listLocations(hash)).toHaveLength(0);
+    expect(await ctx.storage.blobs.listCopies(hash)).toHaveLength(0);
     expect(await ctx.storage.blobs.listOrphans()).toEqual([]);
     expect(await ctx.blobs.disk.has(hash)).toBeNull();
   });

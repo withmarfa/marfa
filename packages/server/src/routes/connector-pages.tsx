@@ -236,7 +236,7 @@ export function ConnectorPage(props: ConnectorPageParams) {
       />
       <DangerRow
         title="Remove connector"
-        description="Removes it, its runs, its webhook endpoints and their stored deliveries from Marfa, not the program itself. Can't be undone."
+        description="Removes it, its runs, its inbound endpoints and their stored deliveries from Marfa, not the program itself. Can't be undone."
         action={
           <Button kind="danger-quiet" opens="connector-remove-dialog">
             Remove
@@ -256,7 +256,7 @@ export function ConnectorPage(props: ConnectorPageParams) {
         id="connector-remove-dialog"
         connector={props}
         title={`Remove the ${props.name} connector?`}
-        description="This also deletes its webhook endpoints and their stored deliveries. The program keeps running until you stop it where it runs, and its key works until you revoke it. This can't be undone."
+        description="This also deletes its inbound endpoints and their stored deliveries. The program keeps running until you stop it where it runs, and its key works until you revoke it. This can't be undone."
         action="Remove"
         loading="Removing..."
         hook="connector-remove"

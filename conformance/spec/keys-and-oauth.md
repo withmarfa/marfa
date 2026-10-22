@@ -9,12 +9,12 @@ A credential holds any of these permissions, each a row of the table below, whic
 | Permission          | What it lets a credential do                                                                                                                            |
 | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `audit.read`        | Reading the audit log.                                                                                                                                  |
-| `blobs.manage`      | Managing blob bytes and locations across the instance, without granting item content access.                                                            |
+| `blobs.manage`      | Managing blob bytes and copies across the instance, without granting item content access.                                                               |
 | `config.manage`     | Reading and replacing the instance configuration at `/config`: the enforcement levers and the cleanup-job retention overrides.                          |
 | `connectors.manage` | Reading and administering connector registrations, their runs and their endpoints, deleting registrations and clearing a registration's retained state. |
 | `grants.manage`     | Listing and revoking other apps' access.                                                                                                                |
 | `instance.maintain` | Running housekeeping, resetting platform type definitions and cancelling bulk jobs.                                                                     |
-| `instance.read`     | Reading detailed health, metrics, housekeeping status, platform drift, blob storage diagnostics and bulk job status.                                    |
+| `instance.read`     | Reading detailed health, metrics, housekeeping status, retired platform types, blob storage diagnostics and bulk job status.                            |
 | `items.purge`       | Destroying a trashed row irrecoverably, through the single-row operation and the bulk one alike.                                                        |
 | `keys.manage`       | Listing and revoking keys across the instance, and changing their metadata or narrowing access.                                                         |
 | `keys.mint`         | Minting keys within the caller's current access, and listing, changing and revoking keys within that access.                                            |
@@ -391,7 +391,7 @@ When `PATCH` or `DELETE /keys/{id}` names a well-formed id that no key within th
 
 When `PATCH` or `DELETE /keys/{id}` names a malformed id, the server MUST answer `400 validation_error`.
 
-**Tests:** `compliance/keys-update.test.ts › answers 404 for an unknown key and 400 for a malformed id`, `compliance/declared-refusals.test.ts › is refused 400 on the key and blob-location doors`.
+**Tests:** `compliance/keys-update.test.ts › answers 404 for an unknown key and 400 for a malformed id`, `compliance/declared-refusals.test.ts › is refused 400 on the key and blob-copy doors`.
 
 ### `keys-and-oauth/revoke-answer`
 

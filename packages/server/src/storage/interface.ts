@@ -1234,7 +1234,7 @@ export interface TypeStore {
    * without the other leaves the identifier answering every read until the
    * next restart, with the route that removed it reporting success.
    */
-  deletePlatformType(id: string): Promise<boolean>;
+  deleteRetiredPlatformType(id: string): Promise<boolean>;
   countRegistered(): Promise<number>;
   /**
    * Which of `names` some row of one of `types` holds a value under, in any
@@ -1392,8 +1392,8 @@ export interface BlobStoreRow {
   detached_at: string | null;
 }
 
-/** One row of the location log, joined with the store it names. */
-export interface BlobLocation {
+/** One row of the copy record, joined with the store it names. */
+export interface BlobCopy {
   store_id: string;
   kind: BlobStoreKind;
   policy: string;
@@ -1420,7 +1420,7 @@ export interface BlobReach {
 
 /**
  * The blob registry: one row per content hash, the stores this instance
- * has attached, and the location log that says which stores hold which
+ * has attached, and the copy record that says which stores hold which
  * blob. The bytes themselves live behind `BlobStore`.
  */
 export interface BlobRegistry {
@@ -1476,8 +1476,8 @@ export interface BlobRegistry {
   detachStoresExcept(ids: readonly string[]): Promise<number>;
   listStores(): Promise<BlobStoreRow[]>;
   /**
-   * The attached stores of `kind` recorded at `locator` that the log
-   * records at least one copy in, with how many.
+   * The attached stores of `kind` recorded at `locator` that the copy
+   * record names at least one copy in, with how many.
    */
   copiesClaimedAt(
     kind: BlobStoreKind,
@@ -1485,15 +1485,15 @@ export interface BlobRegistry {
   ): Promise<{ store_id: string; copies: number }[]>;
 
   /**
-   * Write a location row: the store holds the bytes and they hashed to
+   * Write a copy row: the store holds the bytes and they hashed to
    * their name. Idempotent.
    */
-  recordLocation(hash: string, storeId: string): Promise<void>;
-  listLocations(hash: string): Promise<BlobLocation[]>;
-  /** For each of `hashes`, the ids of the stores the log records a copy
-   *  in, oldest copy first; a hash with no copy maps to an empty list. */
+  recordCopy(hash: string, storeId: string): Promise<void>;
+  listCopies(hash: string): Promise<BlobCopy[]>;
+  /** For each of `hashes`, the ids of the stores the copy record names
+   *  a copy in, oldest copy first; a hash with no copy maps to an empty list. */
   storeIdsOf(hashes: readonly string[]): Promise<Map<string, string[]>>;
-  /** Durable cleanup intent, written with the location removal and its audit. */
+  /** Durable cleanup intent, written with the copy removal and its audit. */
   queueCopyDeletion(hash: string, storeId: string): Promise<void>;
   /** Move a pending intent to the retry tail before I/O; caller holds the per-hash lock. */
   beginCopyDeletionAttempt(hash: string, storeId: string): Promise<boolean>;
@@ -1503,15 +1503,15 @@ export interface BlobRegistry {
   /** Operational acknowledgement after bytes are removed; does not repeat the audit. */
   settleCopyDeletion(hash: string, storeId: string): Promise<void>;
 
-  /** Strike one store's copy from the log. True when a row went. */
-  removeLocation(hash: string, storeId: string): Promise<boolean>;
+  /** Strike one store's copy from the copy record. True when a row went. */
+  removeCopy(hash: string, storeId: string): Promise<boolean>;
   /**
-   * Remove one store's copy from the log only if at least `minCopies`
+   * Remove one store's copy from the copy record only if at least `minCopies`
    * copies in attached stores would remain, decided in the one statement
    * so no second writer can slip between the count and the removal.
    * `"dropped"`, `"below_minimum"`, or `"absent"` when no such row exists.
    */
-  dropLocationKeeping(
+  dropCopyKeeping(
     hash: string,
     storeId: string,
     minCopies: number,
@@ -1556,7 +1556,7 @@ export interface BlobRegistry {
    * reported, within both bounds `listOrphansToPurge` takes, and nothing
    * references it (an item's properties, a metadata extension, an edge's
    * properties or a version snapshot). When all of that holds, the
-   * registry row goes, with its report, locations and uploaders, and a
+   * registry row goes, with its report, copies and uploaders, and a
    * purge record takes its place; the bytes are the caller's to delete
    * next. A blob something references leaves the report instead. Answers
    * whether the purge was recorded.
@@ -1580,7 +1580,7 @@ export interface BlobSizedRef {
   size_bytes: number;
 }
 
-/** One copy: a blob and the store the log says holds it. */
+/** One copy: a blob and the store the copy record says holds it. */
 export interface BlobCopyRef extends BlobSizedRef {
   store_id: string;
 }

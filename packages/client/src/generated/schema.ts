@@ -244,7 +244,7 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * List occurrences
+         * List event occurrences
          * @description Returns the events that overlap a time window, with each recurring event expanded into one entry per occurrence. Marfa computes occurrences when you read them and doesn't store them.
          */
         get: operations["listOccurrences"];
@@ -266,8 +266,8 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Move tombstones' settled time
-         * @description Moves the `settled_at` of tombstones later, never earlier, and returns them. A connector calls it after changing the vendor's copy to carry out a purge, so that change doesn't bring the item back as a new row.
+         * Settle tombstones
+         * @description Settles tombstones, moving their `settled_at` later, never earlier, and returns them. A connector calls it after changing the vendor's copy to carry out a purge, so that change doesn't bring the item back as a new row.
          */
         post: operations["settleTombstones"];
         delete?: never;
@@ -306,7 +306,7 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Move an item to the trash
+         * Trash an item by summary
          * @description Moves the item and its cascading children to the trash. Returns only a summary. Requires the version from the listing.
          */
         post: operations["trashItemSummary"];
@@ -326,7 +326,7 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Restore an item from the trash
+         * Restore an item by summary
          * @description Restores the item and the children its trash took. Returns only a summary. Requires the version from the listing.
          */
         post: operations["restoreItemSummary"];
@@ -346,8 +346,8 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Purge a trashed item
-         * @description Deletes one item permanently if it is still in the trash at the listed version. Returns only a summary.
+         * Purge an item by summary
+         * @description Purges one item, deleting it permanently, if it is still in the trash at the listed version. Returns only a summary.
          */
         post: operations["purgeItemSummary"];
         delete?: never;
@@ -366,8 +366,8 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Empty a page of the trash
-         * @description Deletes up to 200 trash items permanently if their state and version still match. Returns partial results and a continuation cursor. Items trashed during the operation may remain.
+         * Empty the trash
+         * @description Empties one page of the trash: deletes up to 200 items permanently if their state and version still match. Returns partial results and a continuation cursor. Items trashed during the operation may remain.
          */
         post: operations["emptyTrash"];
         delete?: never;
@@ -405,7 +405,7 @@ export interface paths {
         };
         /**
          * Get a bulk-action job
-         * @description Returns a bulk-action job's status and counts, and its `result` once it has finished. Only the credential that queued the job, or the holder of instance.read, can read it.
+         * @description Returns a bulk-action job's status and counts, and its `result` once it has finished. Only the credential that queued the job, or the holder of `instance.read`, can read it.
          */
         get: operations["getBulkActionJob"];
         put?: never;
@@ -766,7 +766,7 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Normalize a type
+         * Normalize a type definition
          * @description Normalizes a candidate definition and returns its declared form, the registered declared definition and the registered resolved definition. It does not register or replace a type.
          */
         post: operations["normalizeType"];
@@ -880,7 +880,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/blobs/{hash}/locations": {
+    "/blobs/{hash}/copies": {
         parameters: {
             query?: never;
             header?: never;
@@ -888,10 +888,10 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * List a blob's locations
+         * List a blob's copies
          * @description Returns the stores that hold a copy of the blob, with when each copy was recorded and when a check last found it intact.
          */
-        get: operations["listBlobLocations"];
+        get: operations["listBlobCopies"];
         put?: never;
         post?: never;
         delete?: never;
@@ -900,7 +900,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/blobs/{hash}/locations/{store}": {
+    "/blobs/{hash}/copies/{store}": {
         parameters: {
             query?: never;
             header?: never;
@@ -911,10 +911,10 @@ export interface paths {
         put?: never;
         post?: never;
         /**
-         * Delete a blob's copy in a store
-         * @description Deletes the copy of a blob that one store holds, and its row in the location log. Requires blobs.manage.
+         * Delete one copy of a blob
+         * @description Deletes one store's copy of a blob, and Marfa's record of it. Requires `blobs.manage`.
          */
-        delete: operations["deleteBlobLocation"];
+        delete: operations["deleteBlobCopy"];
         options?: never;
         head?: never;
         patch?: never;
@@ -929,7 +929,7 @@ export interface paths {
         };
         /**
          * List blob stores
-         * @description Returns every store the instance has attached, including any it has since detached, and `min_copies`, the fewest live copies Marfa keeps of a blob. Requires instance.read.
+         * @description Returns every store the instance has attached, including any it has since detached, and `min_copies`, the fewest live copies Marfa keeps of a blob. Requires `instance.read`.
          */
         get: operations["listBlobStores"];
         put?: never;
@@ -949,7 +949,7 @@ export interface paths {
         };
         /**
          * List orphaned blobs
-         * @description Returns the blobs that nothing references, as the last run of the `blob-orphans` housekeeping job found them, oldest first. Requires instance.read.
+         * @description Returns the blobs that nothing references, as the last run of the `blob-orphans` housekeeping job found them, oldest first. Requires `instance.read`.
          */
         get: operations["listBlobOrphans"];
         put?: never;
@@ -1062,8 +1062,8 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Redeliver a failed delivery
-         * @description Queues a failed delivery again at the current URL. The owner's recently authenticated browser session or local command can retry any subscription; keys and apps can retry only their own.
+         * Redeliver a webhook delivery
+         * @description Redelivers a failed delivery, queuing it again at the current URL. The owner's recently authenticated browser session or local command can retry any subscription; keys and apps can retry only their own.
          */
         post: operations["redeliverWebhookDelivery"];
         delete?: never;
@@ -1149,8 +1149,8 @@ export interface paths {
          */
         get: operations["getFolderStatus"];
         /**
-         * Replace a folder status
-         * @description Replaces your sign-in's report for one folder copy and returns the latest accepted sequence and receipt time. An equal or older sequence leaves the stored report unchanged.
+         * Report a folder status
+         * @description Reports your sign-in's status for one folder copy, replacing its earlier report, and returns the latest accepted sequence and receipt time. An equal or older sequence leaves the stored report unchanged.
          */
         put: operations["reportFolderStatus"];
         post?: never;
@@ -1169,7 +1169,7 @@ export interface paths {
         };
         /**
          * List connectors
-         * @description Returns your registration, or every registration if you hold connectors.manage, newest first.
+         * @description Returns your registration, or every registration if you hold `connectors.manage`, newest first.
          */
         get: operations["listConnectors"];
         put?: never;
@@ -1200,7 +1200,7 @@ export interface paths {
         post?: never;
         /**
          * Delete a connector
-         * @description Deletes the connector, its runs and hold, and its webhook endpoints with every delivery they stored. Its state document and agreements stay with its source, for a later key with the same source.
+         * @description Deletes the connector, its runs and hold, and its inbound endpoints with every delivery they stored. Its state document and agreements stay with its source, for a later key with the same source.
          */
         delete: operations["deleteConnector"];
         options?: never;
@@ -1218,10 +1218,10 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Send a heartbeat
-         * @description Sets `last_heartbeat_at` to the current time and returns it. Marfa takes no action when heartbeats stop.
+         * Send a connector heartbeat
+         * @description Sends a heartbeat, which sets the connector's `last_heartbeat_at` to the current time, and returns that time. Marfa takes no action when heartbeats stop.
          */
-        post: operations["heartbeatConnector"];
+        post: operations["sendConnectorHeartbeat"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1242,8 +1242,8 @@ export interface paths {
         get: operations["listConnectorRuns"];
         put?: never;
         /**
-         * Report a run
-         * @description Records one run of the connector, with its outcome and times, and returns it. Marfa keeps the last 100 runs and drops older ones.
+         * Report a connector run
+         * @description Reports one run of the connector, with its outcome and times, and returns it. Marfa keeps the last 100 runs and drops older ones.
          */
         post: operations["reportConnectorRun"];
         delete?: never;
@@ -1262,12 +1262,12 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Take or renew a hold
+         * Take a connector hold
          * @description Takes the connector's hold for `process`, or renews it if `process` already holds it. Only the process holding a live hold can replace the state document or write agreements.
          */
-        post: operations["holdConnector"];
+        post: operations["takeConnectorHold"];
         /**
-         * Release a hold
+         * Release a connector hold
          * @description Releases the hold if `process` holds it, so another process can take it at once. Returns the same either way, and leaves another process's hold in place.
          */
         delete: operations["releaseConnectorHold"];
@@ -1284,18 +1284,18 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Get the state document
+         * Get a connector's state
          * @description Returns the state document of the connector's source. A later key with the same source reads the same document.
          */
         get: operations["getConnectorState"];
         /**
-         * Replace the state document
+         * Replace a connector's state
          * @description Replaces the whole state document of the connector's source. Only the process holding a live hold can write it.
          */
         put: operations["replaceConnectorState"];
         post?: never;
         /**
-         * Delete the state document
+         * Delete a connector's state
          * @description Deletes the state document, current problems and every agreement of the connector's source, which every registration of that source reads. No hold is needed.
          */
         delete: operations["deleteConnectorState"];
@@ -1312,13 +1312,13 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * List a connector's agreements
+         * List connector agreements
          * @description Returns the agreements of the connector's source, the one written longest ago first. Items whose type you can't read are left out, so a page can be short with more to follow.
          */
         get: operations["listConnectorAgreements"];
         put?: never;
         /**
-         * Write agreements
+         * Write connector agreements
          * @description Writes and clears the connector's agreements, its records of what it and its vendor last agreed about each item. Only the process holding a live hold can write them.
          */
         post: operations["writeConnectorAgreements"];
@@ -1338,8 +1338,8 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Look up agreements
-         * @description Returns the agreements of the named items that have one, each item once, in the order you first named it. An item whose type you can't read is left out.
+         * Look up connector agreements
+         * @description Looks up the agreements of the named items and returns those that exist, each item once, in the order you first named it. An item whose type you can't read is left out.
          */
         post: operations["lookupConnectorAgreements"];
         delete?: never;
@@ -1356,14 +1356,14 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * List webhook endpoints
-         * @description Returns the connector's webhook endpoints, newest first, retired ones included.
+         * List inbound endpoints
+         * @description Returns the connector's inbound endpoints, newest first, retired ones included.
          */
         get: operations["listInboundEndpoints"];
         put?: never;
         /**
-         * Create a webhook endpoint
-         * @description Creates a webhook endpoint for the connector and returns it. Save its `path`: this is the only response that shows it in full.
+         * Create an inbound endpoint
+         * @description Creates an inbound endpoint for the connector and returns it. Save its `path`: this is the only response that shows it in full.
          */
         post: operations["createInboundEndpoint"];
         delete?: never;
@@ -1383,8 +1383,8 @@ export interface paths {
         put?: never;
         post?: never;
         /**
-         * Retire a webhook endpoint
-         * @description Retires a webhook endpoint, so its address stops accepting deliveries. It stays listed with `retired_at`, and deliveries it already stored stay readable until they age out.
+         * Retire an inbound endpoint
+         * @description Retires an inbound endpoint, so its address stops accepting deliveries. It stays listed with `retired_at`, and deliveries it already stored stay readable until they age out.
          */
         delete: operations["retireInboundEndpoint"];
         options?: never;
@@ -1484,8 +1484,8 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Get the current key
-         * @description Returns the key that sends the request, without its plaintext. Any key can read itself, whatever it holds, so a process can check what it was given.
+         * Get the current API key
+         * @description Returns the API key that sends the request, without its plaintext. Any key can read itself, whatever it holds, so a process can check what it was given.
          */
         get: operations["getCurrentKey"];
         put?: never;
@@ -1626,7 +1626,7 @@ export interface paths {
         options?: never;
         head?: never;
         /**
-         * Update the profile
+         * Update the owner's profile
          * @description Updates the owner's name or avatar and returns `ok: true`. Requires profile write permission for every submitted field; email cannot be changed here. All fields commit together.
          */
         patch: operations["updateProfile"];
@@ -1670,10 +1670,10 @@ export interface paths {
         options?: never;
         head?: never;
         /**
-         * Update a sign-in
-         * @description Gives an app or a key a new name and returns the sign-in. A key's name is its `label`. Requires the owner's browser session, signed in within the last five minutes, or the local command.
+         * Rename a sign-in
+         * @description Renames an app or a key and returns the sign-in. A key's name is its `label`. Requires the owner's browser session, signed in within the last five minutes, or the local command.
          */
-        patch: operations["updateSignIn"];
+        patch: operations["renameSignIn"];
         trace?: never;
     };
     "/owner/passkeys": {
@@ -1707,17 +1707,17 @@ export interface paths {
         put?: never;
         post?: never;
         /**
-         * Remove a passkey
-         * @description Removes one passkey so it cannot sign in again. Existing sign-ins remain usable. Requires the owner's browser session authenticated within five minutes or private local authority.
+         * Delete a passkey
+         * @description Deletes one passkey so it cannot sign in again. Existing sign-ins remain usable. Requires the owner's browser session authenticated within five minutes or private local authority.
          */
-        delete: operations["removeOwnerPasskey"];
+        delete: operations["deleteOwnerPasskey"];
         options?: never;
         head?: never;
         /**
          * Rename a passkey
          * @description Renames the passkey and returns its public details. Requires the owner's browser session authenticated within five minutes or private local authority.
          */
-        patch: operations["updateOwnerPasskey"];
+        patch: operations["renameOwnerPasskey"];
         trace?: never;
     };
     "/": {
@@ -1728,8 +1728,8 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Describe the instance
-         * @description Describes the instance: its display name, `instance_id`, the build it runs, the release it was made as when it is one, the contract version it speaks and the features it serves. Needs no credential.
+         * Get the instance
+         * @description Returns a description of the instance: its display name, `instance_id`, the build it runs, the release it was made as when it is one, the contract version it speaks and the features it serves. Needs no credential.
          */
         get: operations["getInstance"];
         put?: never;
@@ -1796,10 +1796,10 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Get server metrics
+         * Get instance metrics
          * @description Returns instance-wide counters and process uptime. Requires `instance.read`; the counters include records outside your content permissions.
          */
-        get: operations["getServerMetrics"];
+        get: operations["getInstanceMetrics"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1837,7 +1837,7 @@ export interface paths {
         };
         /**
          * List housekeeping jobs
-         * @description Returns every housekeeping job Marfa runs: its interval, when it's next due, whether a run holds it, and what its last run did. A job a server setting switches off isn't listed. Requires instance.read.
+         * @description Returns every housekeeping job Marfa runs: its interval, when it's next due, whether a run holds it, and what its last run did. A job a server setting switches off isn't listed. Requires `instance.read`.
          */
         get: operations["listHousekeeping"];
         put?: never;
@@ -1859,7 +1859,7 @@ export interface paths {
         put?: never;
         /**
          * Run a housekeeping job
-         * @description Runs a housekeeping job now, waits for it to finish, and returns what the run did. A failed run still returns `200`, with the failure in `outcome` and `error`. Requires instance.maintain.
+         * @description Runs a housekeeping job now, waits for it to finish, and returns what the run did. A failed run still returns `200`, with the failure in `outcome` and `error`. Requires `instance.maintain`.
          */
         post: operations["runHousekeeping"];
         delete?: never;
@@ -1868,7 +1868,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/platform-types/drift": {
+    "/platform-types/retired": {
         parameters: {
             query?: never;
             header?: never;
@@ -1876,10 +1876,10 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * List stale platform types
-         * @description Returns the platform types that this instance still carries but this build no longer ships, with how many items use each. They stay in `GET /types` until removed. Requires instance.read.
+         * List retired platform types
+         * @description Returns the platform types that this instance still carries but this build no longer ships, with how many items use each. They stay in `GET /types` until removed. Requires `instance.read`.
          */
-        get: operations["listPlatformTypeDrift"];
+        get: operations["listRetiredPlatformTypes"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1899,10 +1899,10 @@ export interface paths {
         put?: never;
         post?: never;
         /**
-         * Delete a stale platform type
-         * @description Deletes one platform type that this build no longer ships. The type stops resolving at once. Requires instance.maintain.
+         * Delete a retired platform type
+         * @description Deletes one retired platform type: a type this build no longer ships. The type stops resolving at once. Requires `instance.maintain`.
          */
-        delete: operations["deletePlatformType"];
+        delete: operations["deleteRetiredPlatformType"];
         options?: never;
         head?: never;
         patch?: never;
@@ -1916,10 +1916,10 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Export items and edges
-         * @description Exports readable items, metadata and edges, excluding trash unless requested. The owner can use their browser session. An archive can be read by `POST /restore`.
+         * Export an archive
+         * @description Exports an archive of the items, metadata and edges you can read, excluding trash unless requested. The owner can use their browser session. An archive can be read by `POST /restore`.
          */
-        get: operations["exportData"];
+        get: operations["exportArchive"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1960,7 +1960,7 @@ export interface webhooks {
         get?: never;
         put?: never;
         /**
-         * Receive an event
+         * Receive a webhook event
          * @description Marfa sends this request to a webhook's `url` for each event it subscribes to, with only what the webhook's credential can read when it's sent. A delivery can arrive more than once: use `delivery_id` to recognize a repeat.
          */
         post: operations["receiveWebhookEvent"];
@@ -3841,7 +3841,7 @@ export interface components {
             data: components["schemas"]["BlobStore"][];
             /** @description Always `null`: Marfa returns every store in one page. */
             next_cursor: string | null;
-            /** @description The fewest live copies Marfa keeps of each blob. `DELETE /blobs/{hash}/locations/{store}` won't delete a copy that would leave fewer. */
+            /** @description The fewest live copies Marfa keeps of each blob. `DELETE /blobs/{hash}/copies/{store}` won't delete a copy that would leave fewer. */
             min_copies: number;
         };
         /** @description A store is a place a blob's bytes live: the disk beside the server, or an S3-compatible bucket. */
@@ -3896,15 +3896,15 @@ export interface components {
                 };
             };
         };
-        /** @description A page holding every location. */
-        BlobLocationPage: {
-            /** @description Every location. */
-            data: components["schemas"]["BlobLocation"][];
-            /** @description Always `null`: Marfa returns every location in one page. */
+        /** @description A page holding every copy. */
+        BlobCopyPage: {
+            /** @description Every copy. */
+            data: components["schemas"]["BlobCopy"][];
+            /** @description Always `null`: Marfa returns every copy in one page. */
             next_cursor: string | null;
         };
-        /** @description A location is one store's copy of a blob. */
-        BlobLocation: {
+        /** @description One store's copy of a blob. */
+        BlobCopy: {
             /** @description The ID of the store that holds the copy. */
             store_id: string;
             /**
@@ -3922,14 +3922,14 @@ export interface components {
             verified_at: string | null;
         };
         /** @description An error response. */
-        BlobLocationNotFoundOrBlobNotFoundRefusal: {
+        BlobCopyNotFoundOrBlobNotFoundRefusal: {
             /** @description What went wrong. */
             error: {
                 /**
                  * @description A machine-readable code for the error. Use it in your logic.
                  * @enum {string}
                  */
-                code: "blob_location_not_found" | "blob_not_found";
+                code: "blob_copy_not_found" | "blob_not_found";
                 /** @description A description of the error for a person to read. It can change, so don't match on it. */
                 message: string;
                 /** @description More about the error, such as the field it concerns. Each code defines its own details. */
@@ -4134,9 +4134,9 @@ export interface components {
             /** @description Pass as `cursor` for the next page; `null` on the last. A page can be short, or empty, with a cursor still to follow, so a walk stops on `null` and never on a short page. */
             next_cursor: string | null;
         };
-        /** @description A webhook endpoint is an address where a sender posts to a connector without a credential: the address is the credential. */
+        /** @description An inbound endpoint is an address where a sender posts to a connector without a credential: the address is the credential. */
         InboundEndpoint: {
-            /** @description Unique identifier for the webhook endpoint. */
+            /** @description Unique identifier for the inbound endpoint. */
             id: string;
             /** @description The ID of the current connector registration for the endpoint's source. */
             connector_id: string;
@@ -4151,11 +4151,11 @@ export interface components {
             /** @description When the endpoint was retired; `null` while it is live. */
             retired_at: string | null;
         };
-        /** @description A page holding every webhook endpoint of the connector. */
+        /** @description A page holding every inbound endpoint of the connector. */
         InboundEndpointPage: {
-            /** @description Every webhook endpoint of the connector. */
+            /** @description Every inbound endpoint of the connector. */
             data: components["schemas"]["InboundEndpoint"][];
-            /** @description Always `null`: Marfa returns every webhook endpoint of the connector in one page. */
+            /** @description Always `null`: Marfa returns every inbound endpoint of the connector in one page. */
             next_cursor: string | null;
         };
         /** @description An error response. */
@@ -4182,7 +4182,7 @@ export interface components {
             /** @description Pass as `cursor` for the next page; `null` on the last. A page can be short, or empty, with a cursor still to follow, so a walk stops on `null` and never on a short page. */
             next_cursor: string | null;
         };
-        /** @description A delivery is one request that arrived at a webhook endpoint, stored as it came until the connector marks it handled. */
+        /** @description A delivery is one request that arrived at an inbound endpoint, stored as it came until the connector marks it handled. */
         InboundDelivery: {
             /** @description Unique identifier for the delivery. */
             id: string;
@@ -4573,7 +4573,7 @@ export interface components {
             last_used_at: string | null;
         };
         /**
-         * @description A permission a credential can hold, for an operation the type, edge, extension, metadata and profile maps don't cover. `schema.write` replaces and deletes types and edge types; `keys.mint` mints keys and lists, changes and revokes those within the caller's reach; `keys.manage` lists and revokes every key and changes one without widening it; `items.purge` purges trashed items; `webhooks.manage` manages webhooks; `config.manage` reads and replaces `/config`; `audit.read` reads the audit log; `grants.manage` lists and revokes other apps' access; `instance.read` reads health, metrics, housekeeping, platform type drift, blob storage reports and every bulk job's status; `instance.maintain` runs housekeeping, resets platform type definitions and cancels bulk jobs; `connectors.manage` administers connector registrations and their endpoints, and clears their retained state; and `blobs.manage` manages every blob.
+         * @description A permission a credential can hold, for an operation the type, edge, extension, metadata and profile maps don't cover. `schema.write` replaces and deletes types and edge types; `keys.mint` mints keys and lists, changes and revokes those within the caller's reach; `keys.manage` lists and revokes every key and changes one without widening it; `items.purge` purges trashed items; `webhooks.manage` manages webhooks; `config.manage` reads and replaces `/config`; `audit.read` reads the audit log; `grants.manage` lists and revokes other apps' access; `instance.read` reads health, metrics, housekeeping, retired platform types, blob storage reports and every bulk job's status; `instance.maintain` runs housekeeping, resets platform type definitions and cancels bulk jobs; `connectors.manage` administers connector registrations and their endpoints, and clears their retained state; and `blobs.manage` manages every blob.
          * @enum {string}
          */
         Permission: "webhooks.manage" | "schema.write" | "config.manage" | "audit.read" | "items.purge" | "keys.mint" | "grants.manage" | "instance.read" | "instance.maintain" | "connectors.manage" | "blobs.manage" | "keys.manage";
@@ -4738,16 +4738,16 @@ export interface components {
                 };
             };
         };
-        /** @description A page holding every stale type. */
-        DriftedPlatformTypePage: {
-            /** @description Every stale type. */
-            data: components["schemas"]["DriftedPlatformType"][];
-            /** @description Always `null`: Marfa returns every stale type in one page. */
+        /** @description A page holding every retired type. */
+        RetiredPlatformTypePage: {
+            /** @description Every retired type. */
+            data: components["schemas"]["RetiredPlatformType"][];
+            /** @description Always `null`: Marfa returns every retired type in one page. */
             next_cursor: string | null;
         };
         /** @description A platform type that this build no longer ships. */
-        DriftedPlatformType: {
-            /** @description The identifier of the stale type. */
+        RetiredPlatformType: {
+            /** @description The identifier of the retired type. */
             id: string;
             /** @description How many items carry this type, counted when you ask. */
             item_count: number;
@@ -10014,7 +10014,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description - `forbidden`: another credential queued the job, and yours lacks instance.read. */
+            /** @description - `forbidden`: another credential queued the job, and yours lacks `instance.read`. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -10166,7 +10166,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description - `forbidden`: another credential queued the job, and yours lacks instance.maintain. */
+            /** @description - `forbidden`: another credential queued the job, and yours lacks `instance.maintain`. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -15711,7 +15711,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                /** @description The blob's hash, `sha256:<hex>`. You can read a blob only if an item, edge or extension you can read references its hash, and whoever wrote that reference had uploaded the bytes or could read them. The blobs.manage permission reads every blob. */
+                /** @description The blob's hash, `sha256:<hex>`. You can read a blob only if an item, edge or extension you can read references its hash, and whoever wrote that reference had uploaded the bytes or could read them. The `blobs.manage` permission reads every blob. */
                 hash: string;
             };
             cookie?: never;
@@ -15915,7 +15915,7 @@ export interface operations {
             };
             header?: never;
             path: {
-                /** @description The blob's hash, `sha256:<hex>`. You can read a blob only if an item, edge or extension you can read references its hash, and whoever wrote that reference had uploaded the bytes or could read them. The blobs.manage permission reads every blob. */
+                /** @description The blob's hash, `sha256:<hex>`. You can read a blob only if an item, edge or extension you can read references its hash, and whoever wrote that reference had uploaded the bytes or could read them. The `blobs.manage` permission reads every blob. */
                 hash: string;
             };
             cookie?: never;
@@ -16064,19 +16064,19 @@ export interface operations {
             };
         };
     };
-    listBlobLocations: {
+    listBlobCopies: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                /** @description The blob's hash, `sha256:<hex>`. You can read a blob only if an item, edge or extension you can read references its hash, and whoever wrote that reference had uploaded the bytes or could read them. The blobs.manage permission reads every blob. */
+                /** @description The blob's hash, `sha256:<hex>`. You can read a blob only if an item, edge or extension you can read references its hash, and whoever wrote that reference had uploaded the bytes or could read them. The `blobs.manage` permission reads every blob. */
                 hash: string;
             };
             cookie?: never;
         };
         requestBody?: never;
         responses: {
-            /** @description Returns every location, in one page. */
+            /** @description Returns every copy, in one page. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -16087,7 +16087,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["BlobLocationPage"];
+                    "application/json": components["schemas"]["BlobCopyPage"];
                 };
             };
             /** @description - `validation_error`: the hash is malformed. */
@@ -16213,7 +16213,7 @@ export interface operations {
             };
         };
     };
-    deleteBlobLocation: {
+    deleteBlobCopy: {
         parameters: {
             query?: never;
             header?: {
@@ -16230,7 +16230,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Returns `ok: true`. The store no longer holds the copy, and the location log no longer lists it. */
+            /** @description Returns `ok: true`. The store no longer holds the copy, and `GET /blobs/{hash}/copies` no longer lists it. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -16291,7 +16291,7 @@ export interface operations {
             };
             /**
              * @description - `blob_not_found`: no blob has this hash.
-             *     - `blob_location_not_found`: the store holds no copy of the blob, or isn't attached.
+             *     - `blob_copy_not_found`: the store holds no copy of the blob, or isn't attached.
              */
             404: {
                 headers: {
@@ -16304,7 +16304,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["BlobLocationNotFoundOrBlobNotFoundRefusal"];
+                    "application/json": components["schemas"]["BlobCopyNotFoundOrBlobNotFoundRefusal"];
                 };
             };
             /** @description - `copies_below_minimum`: deleting the copy would leave fewer live copies than `min_copies`, or fewer that their stores confirm they hold within 15 seconds. Nothing changes. */
@@ -19539,7 +19539,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description - `connector_not_found`: no connector has this ID, or it is registered under another key and yours lacks connectors.manage. */
+            /** @description - `connector_not_found`: no connector has this ID, or it is registered under another key and yours lacks `connectors.manage`. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -19676,7 +19676,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description - `forbidden`: your credential is neither the connector's own key nor a holder of connectors.manage. */
+            /** @description - `forbidden`: your credential is neither the connector's own key nor a holder of `connectors.manage`. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -19796,7 +19796,7 @@ export interface operations {
             };
         };
     };
-    heartbeatConnector: {
+    sendConnectorHeartbeat: {
         parameters: {
             query?: never;
             header?: {
@@ -20039,7 +20039,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description - `connector_not_found`: no connector has this ID, or it is registered under another key and yours lacks connectors.manage. */
+            /** @description - `connector_not_found`: no connector has this ID, or it is registered under another key and yours lacks `connectors.manage`. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -20317,7 +20317,7 @@ export interface operations {
             };
         };
     };
-    holdConnector: {
+    takeConnectorHold: {
         parameters: {
             query?: never;
             header?: {
@@ -21108,7 +21108,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description - `forbidden`: your credential is neither the connector's own key nor a holder of connectors.manage. */
+            /** @description - `forbidden`: your credential is neither the connector's own key nor a holder of `connectors.manage`. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -21841,7 +21841,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description - `forbidden`: your credential is neither the connector's own key nor a holder of connectors.manage. */
+            /** @description - `forbidden`: your credential is neither the connector's own key nor a holder of `connectors.manage`. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -22002,7 +22002,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description - `forbidden`: your credential is neither the connector's own key nor a holder of connectors.manage. */
+            /** @description - `forbidden`: your credential is neither the connector's own key nor a holder of `connectors.manage`. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -22132,7 +22132,7 @@ export interface operations {
             path: {
                 /** @description The ID of the connector. */
                 id: string;
-                /** @description The ID of the webhook endpoint. */
+                /** @description The ID of the inbound endpoint. */
                 endpoint_id: string;
             };
             cookie?: never;
@@ -22183,7 +22183,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description - `forbidden`: your credential is neither the connector's own key nor a holder of connectors.manage. */
+            /** @description - `forbidden`: your credential is neither the connector's own key nor a holder of `connectors.manage`. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -25365,7 +25365,7 @@ export interface operations {
             };
         };
     };
-    updateSignIn: {
+    renameSignIn: {
         parameters: {
             query?: never;
             header?: {
@@ -25688,7 +25688,7 @@ export interface operations {
             };
         };
     };
-    removeOwnerPasskey: {
+    deleteOwnerPasskey: {
         parameters: {
             query?: never;
             header?: {
@@ -25867,7 +25867,7 @@ export interface operations {
             };
         };
     };
-    updateOwnerPasskey: {
+    renameOwnerPasskey: {
         parameters: {
             query?: never;
             header?: {
@@ -26775,7 +26775,7 @@ export interface operations {
             };
         };
     };
-    getServerMetrics: {
+    getInstanceMetrics: {
         parameters: {
             query?: never;
             header?: never;
@@ -26858,7 +26858,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description Caller lacks instance.read */
+            /** @description `forbidden`: your credential lacks `instance.read`. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -27396,7 +27396,7 @@ export interface operations {
             };
         };
     };
-    listPlatformTypeDrift: {
+    listRetiredPlatformTypes: {
         parameters: {
             query?: never;
             header?: never;
@@ -27405,7 +27405,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Returns the stale types. A type you delete drops out of the list at once. */
+            /** @description Returns the retired types. A type you delete drops out of the list at once. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -27416,7 +27416,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DriftedPlatformTypePage"];
+                    "application/json": components["schemas"]["RetiredPlatformTypePage"];
                 };
             };
             /** @description - `validation_error`: the query has a parameter this endpoint doesn't take. */
@@ -27527,7 +27527,7 @@ export interface operations {
             };
         };
     };
-    deletePlatformType: {
+    deleteRetiredPlatformType: {
         parameters: {
             query?: never;
             header?: {
@@ -27535,7 +27535,7 @@ export interface operations {
                 "X-Marfa-Instance-Id"?: string;
             };
             path: {
-                /** @description The identifier of the stale type to delete. */
+                /** @description The identifier of the retired type to delete. */
                 id: string;
             };
             cookie?: never;
@@ -27713,7 +27713,7 @@ export interface operations {
             };
         };
     };
-    exportData: {
+    exportArchive: {
         parameters: {
             query?: {
                 /** @description Only export items of this type or a subtype. A wildcard such as `core.*` matches every type under that prefix. */

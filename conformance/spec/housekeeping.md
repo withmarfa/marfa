@@ -26,7 +26,7 @@ The server registers the following jobs when their settings and required stores 
 | `inbound-delivery-cleanup`    | Removes inbound deliveries after their handled or pending retention window.      |
 | `dcr-client-cleanup`          | Removes OAuth clients with no remaining grant after their retention window.      |
 | `blob-replicate`              | Copies blobs to satisfy each attached store's replication policy.                |
-| `blob-integrity`              | Checks blob copies and removes locations whose bytes are missing or altered.     |
+| `blob-integrity`              | Checks blob copies and removes copies whose bytes are missing or altered.        |
 | `blob-orphans`                | Reports unreferenced blobs and purges them after the grace period.               |
 | `enrichment-sweep`            | Extracts searchable text and image dimensions from uploaded files.               |
 | `bulk-action-gc`              | Removes completed bulk action jobs after their retention window.                 |

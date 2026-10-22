@@ -1,7 +1,7 @@
 import { Hono, type Context } from "hono";
 import { ErrorCode } from "@withmarfa/shared";
 import { shapedError } from "../middleware/error-handler.js";
-import { platformDrift } from "../storage/platform-drift.js";
+import { retiredPlatformTypes } from "../storage/retired-platform-types.js";
 import { storedValueScan } from "../storage/stored-value-scan.js";
 import type { AppConfig } from "../config.js";
 import { hashApiKey, type AppEnv } from "../middleware/auth.js";
@@ -312,7 +312,7 @@ export function healthRoutes(
     // sit behind the admin read.
     //
     // Not a component: it carries no status and never degrades the
-    // response. Neither kind of drift is a fault. A retired type that still holds
+    // response. Neither kind of retired type is a fault. A retired type that still holds
     // items is the designed outcome, because the row is what makes those
     // items resolve, and the removal route refuses to drop it. A retired
     // type holding nothing is untidy rather than unhealthy: it resolves,
@@ -323,7 +323,7 @@ export function healthRoutes(
     // matter, so the rule: a check earns the right to degrade only if
     // something is wrong now. If the honest description is "someone could
     // tidy this up", it is a report.
-    const platformTypes = { drifted: platformDrift().length };
+    const platformTypes = { retired: retiredPlatformTypes().length };
 
     // How many rows this instance holds whose stored value falls outside
     // the union the build compares that column against. Counted at boot,
@@ -331,7 +331,7 @@ export function healthRoutes(
     // process.
     //
     // A count and nothing else, and here that is sharper than it is for
-    // the drift figure above: this endpoint is unauthenticated, and the
+    // the retired figure above: this endpoint is unauthenticated, and the
     // value itself would advertise what another build wrote to anyone who
     // asks. The true stored string is on the boot log, behind the
     // machine administrator's access to it.

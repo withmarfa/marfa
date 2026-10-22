@@ -255,15 +255,15 @@ const listSignInsRoute = createRoute({
   },
 });
 const renameSignInRoute = createRoute({
-  operationId: "updateSignIn",
+  operationId: "renameSignIn",
   method: "patch",
   path: "/sign-ins/{id}",
   tags: ["Sign-ins and passkeys"],
-  summary: "Update a sign-in",
+  summary: "Rename a sign-in",
   security: [{ ownerSession: [] }],
   middleware: directAuthorityOnly,
   description:
-    "Gives an app or a key a new name and returns the sign-in. A key's name is its `label`. Requires the owner's browser session, signed in within the last five minutes, or the local command.",
+    "Renames an app or a key and returns the sign-in. A key's name is its `label`. Requires the owner's browser session, signed in within the last five minutes, or the local command.",
   request: {
     params: z.object({
       id: z.string().describe("The ID of the sign-in."),

@@ -41,7 +41,7 @@ import { READ_REFUSED } from "./_item-refusals.js";
 import type { Housekeeping } from "../housekeeping/scheduler.js";
 import {
   CopiesBelowMinimum,
-  LocationNotFound,
+  CopyNotFound,
   dropBlobCopy,
   finishCopyDeletion,
 } from "../housekeeping/blob-delete.js";
@@ -113,7 +113,7 @@ const BlobStoreSchema = z
       "A store is a place a blob's bytes live: the disk beside the server, or an S3-compatible bucket.",
   });
 
-const BlobLocationSchema = z
+const BlobCopySchema = z
   .object({
     store_id: z.string().describe("The ID of the store that holds the copy."),
     kind: z
@@ -139,8 +139,8 @@ const BlobLocationSchema = z
         "When a check last found the copy present and intact, in UTC, or `null` if none has.",
       ),
   })
-  .openapi("BlobLocation", {
-    description: "A location is one store's copy of a blob.",
+  .openapi("BlobCopy", {
+    description: "One store's copy of a blob.",
   });
 
 const BlobOrphanSchema = z
@@ -161,7 +161,7 @@ const BlobOrphanSchema = z
 
 /** Who may read a blob: the rule each reading door states on its `hash`. */
 const READ_RULE =
-  "You can read a blob only if an item, edge or extension you can read references its hash, and whoever wrote that reference had uploaded the bytes or could read them. The blobs.manage permission reads every blob.";
+  "You can read a blob only if an item, edge or extension you can read references its hash, and whoever wrote that reference had uploaded the bytes or could read them. The `blobs.manage` permission reads every blob.";
 
 const HashParam = z.object({
   hash: z.string().describe(`The blob's hash, \`sha256:<hex>\`. ${READ_RULE}`),
@@ -398,7 +398,7 @@ const listBlobStoresRoute = createRoute({
   tags: ["Blobs"],
   summary: "List blob stores",
   description:
-    "Returns every store the instance has attached, including any it has since detached, and `min_copies`, the fewest live copies Marfa keeps of a blob. Requires instance.read.",
+    "Returns every store the instance has attached, including any it has since detached, and `min_copies`, the fewest live copies Marfa keeps of a blob. Requires `instance.read`.",
   security: [{ bearerAuth: [] }],
   middleware: standingPermission("instance.read"),
   responses: {
@@ -410,7 +410,7 @@ const listBlobStoresRoute = createRoute({
               .number()
               .int()
               .describe(
-                "The fewest live copies Marfa keeps of each blob. `DELETE /blobs/{hash}/locations/{store}` won't delete a copy that would leave fewer.",
+                "The fewest live copies Marfa keeps of each blob. `DELETE /blobs/{hash}/copies/{store}` won't delete a copy that would leave fewer.",
               ),
           }),
         },
@@ -544,12 +544,12 @@ const fetchBlobRoute = createRoute({
   },
 });
 
-const listBlobLocationsRoute = createRoute({
-  operationId: "listBlobLocations",
+const listBlobCopiesRoute = createRoute({
+  operationId: "listBlobCopies",
   method: "get",
-  path: "/{hash}/locations",
+  path: "/{hash}/copies",
   tags: ["Blobs"],
-  summary: "List a blob's locations",
+  summary: "List a blob's copies",
   description:
     "Returns the stores that hold a copy of the blob, with when each copy was recorded and when a check last found it intact.",
   security: [{ bearerAuth: [] }],
@@ -561,14 +561,10 @@ const listBlobLocationsRoute = createRoute({
     200: {
       content: {
         "application/json": {
-          schema: wholeListOf(
-            BlobLocationSchema,
-            "BlobLocationPage",
-            "location",
-          ),
+          schema: wholeListOf(BlobCopySchema, "BlobCopyPage", "copy"),
         },
       },
-      description: "Returns every location, in one page.",
+      description: "Returns every copy, in one page.",
     },
     400: INVALID_HASH_RESPONSE,
     ...unauthorized,
@@ -577,14 +573,14 @@ const listBlobLocationsRoute = createRoute({
   },
 });
 
-const deleteBlobLocationRoute = createRoute({
-  operationId: "deleteBlobLocation",
+const deleteBlobCopyRoute = createRoute({
+  operationId: "deleteBlobCopy",
   method: "delete",
-  path: "/{hash}/locations/{store}",
+  path: "/{hash}/copies/{store}",
   tags: ["Blobs"],
-  summary: "Delete a blob's copy in a store",
+  summary: "Delete one copy of a blob",
   description:
-    "Deletes the copy of a blob that one store holds, and its row in the location log. Requires blobs.manage.",
+    "Deletes one store's copy of a blob, and Marfa's record of it. Requires `blobs.manage`.",
   security: [{ bearerAuth: [] }],
   middleware: standingPermission("blobs.manage"),
   request: { params: HashAndStoreParam },
@@ -594,7 +590,7 @@ const deleteBlobLocationRoute = createRoute({
         "application/json": { schema: OkResponseSchema },
       },
       description:
-        "Returns `ok: true`. The store no longer holds the copy, and the location log no longer lists it.",
+        "Returns `ok: true`. The store no longer holds the copy, and `GET /blobs/{hash}/copies` no longer lists it.",
     },
     400: INVALID_HASH_RESPONSE,
     ...unauthorized,
@@ -609,12 +605,12 @@ const deleteBlobLocationRoute = createRoute({
         "application/json": {
           schema: makeErrorResponseSchema([
             "blob_not_found",
-            "blob_location_not_found",
+            "blob_copy_not_found",
           ]),
         },
       },
       description:
-        "- `blob_not_found`: no blob has this hash.\n- `blob_location_not_found`: the store holds no copy of the blob, or isn't attached.",
+        "- `blob_not_found`: no blob has this hash.\n- `blob_copy_not_found`: the store holds no copy of the blob, or isn't attached.",
     },
     409: {
       content: {
@@ -647,7 +643,7 @@ const listBlobOrphansRoute = createRoute({
   tags: ["Blobs"],
   summary: "List orphaned blobs",
   description:
-    "Returns the blobs that nothing references, as the last run of the `blob-orphans` housekeeping job found them, oldest first. Requires instance.read.",
+    "Returns the blobs that nothing references, as the last run of the `blob-orphans` housekeeping job found them, oldest first. Requires `instance.read`.",
   security: [{ bearerAuth: [] }],
   middleware: standingPermission("instance.read"),
   responses: {
@@ -893,7 +889,7 @@ export function blobRoutes(
             // it stands now, and is the one the upload is credited to.
             const uploader = requireBlobUpload(c);
             await storage.blobs.register(hash, mimeType, sizeBytes);
-            await storage.blobs.recordLocation(hash, disk.id);
+            await storage.blobs.recordCopy(hash, disk.id);
             await storage.blobs.recordUploader(hash, uploader);
             const row = await storage.blobs.get(hash);
             if (!row) throw new Error(`blob ${hash} was not registered`);
@@ -985,10 +981,10 @@ export function blobRoutes(
   async function signingStoreHolding(
     hash: string,
   ): Promise<BlobStore | undefined> {
-    const locations = await storage.blobs.listLocations(hash);
-    for (const location of locations) {
-      if (location.detached) continue;
-      const store = blobs.byId(location.store_id);
+    const copies = await storage.blobs.listCopies(hash);
+    for (const copy of copies) {
+      if (copy.detached) continue;
+      const store = blobs.byId(copy.store_id);
       if (store?.link) return store;
     }
     return undefined;
@@ -1019,16 +1015,16 @@ export function blobRoutes(
     return serveBytes(c, hash, record, c.req.method === "HEAD");
   });
 
-  // GET /blobs/:hash/locations — the location log for one blob
-  router.openapi(listBlobLocationsRoute, async (c) => {
+  // GET /blobs/:hash/copies: the copy record for one blob
+  router.openapi(listBlobCopiesRoute, async (c) => {
     const hash = normalizeHash(c.req.valid("param").hash);
     await requireReadableBlob(c, storage, hash);
-    const data = await storage.blobs.listLocations(hash);
+    const data = await storage.blobs.listCopies(hash);
     return c.json({ data, next_cursor: null }, 200);
   });
 
-  // DELETE /blobs/:hash/locations/:store — drop one store's copy
-  router.openapi(deleteBlobLocationRoute, async (c) => {
+  // DELETE /blobs/:hash/copies/:store: delete one store's copy
+  router.openapi(deleteBlobCopyRoute, async (c) => {
     const params = c.req.valid("param");
     const hash = normalizeHash(params.hash);
     if (!(await storage.blobs.get(hash))) {
@@ -1040,9 +1036,9 @@ export function blobRoutes(
         key_id: authorityId(c),
       });
     } catch (err) {
-      if (err instanceof LocationNotFound) {
+      if (err instanceof CopyNotFound) {
         throw new MarfaError(
-          ErrorCode.BLOB_LOCATION_NOT_FOUND,
+          ErrorCode.BLOB_COPY_NOT_FOUND,
           `No attached store ${params.store} holds a copy of this blob`,
         );
       }

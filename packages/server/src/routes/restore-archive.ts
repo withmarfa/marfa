@@ -290,7 +290,7 @@ function archivedExtensionProofs(
  * Bytes go first and rows second, as `POST /blobs` does it: a rollback
  * cannot reach a filesystem or an object store, so the bytes stay outside
  * the transaction. Each hash no row names yet gets a copy-deletion record,
- * committed before its bytes are placed, and `recordLocation` clears it in
+ * committed before its bytes are placed, and `recordCopy` clears it in
  * the restore's transaction. A restore that does not commit takes the bytes
  * back itself (`takeBackBytes`); one killed before its commit leaves the
  * records, and the next copy cleanup (`finishPendingCopyDeletions`) removes
@@ -414,7 +414,7 @@ async function restoreRows(
                 blob.mimeType,
                 blob.sizeBytes,
               );
-              await storage.blobs.recordLocation(blob.hash, blobs.disk.id);
+              await storage.blobs.recordCopy(blob.hash, blobs.disk.id);
               await storage.blobs.recordUploader(blob.hash, uploader);
             }
           },

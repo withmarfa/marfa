@@ -1,5 +1,5 @@
 /**
- * The copy rules are written over the location log, and a detached
+ * The copy rules are written over the copy record, and a detached
  * store's copy is not a copy: nothing can reach it to check it.
  */
 import { Readable } from "node:stream";
@@ -10,7 +10,7 @@ import { awaitStoreChange, storeChecks } from "../storage/blob-layer.js";
 import { withBlobUploadLock } from "../storage/blob-upload-lock.js";
 import {
   CopiesBelowMinimum,
-  LocationNotFound,
+  CopyNotFound,
   dropBlobCopy,
   finishPendingCopyDeletions,
   purgeBlob,
@@ -63,7 +63,7 @@ describe("dropBlobCopy", () => {
       stream: Readable.from([Buffer.from(content)]),
       size_bytes: content.length,
     });
-    await ctx.storage.blobs.recordLocation(hash, second.id);
+    await ctx.storage.blobs.recordCopy(hash, second.id);
     // With both attached, the disk copy can go.
     await dropBlobCopy(ctx.storage, stores, hash, ctx.blobs.disk.id, 1);
     expect(await ctx.blobs.disk.has(hash)).toBeNull();
@@ -73,7 +73,7 @@ describe("dropBlobCopy", () => {
       stream: Readable.from([Buffer.from(content)]),
       size_bytes: content.length,
     });
-    await ctx.storage.blobs.recordLocation(hash, ctx.blobs.disk.id);
+    await ctx.storage.blobs.recordCopy(hash, ctx.blobs.disk.id);
     await ctx.storage.blobs.detachStoresExcept([ctx.blobs.disk.id]);
     await expect(
       dropBlobCopy(ctx.storage, stores, hash, ctx.blobs.disk.id, 1),
@@ -82,7 +82,7 @@ describe("dropBlobCopy", () => {
     // And the detached store's copy is not one the door can drop.
     await expect(
       dropBlobCopy(ctx.storage, stores, hash, second.id, 1),
-    ).rejects.toBeInstanceOf(LocationNotFound);
+    ).rejects.toBeInstanceOf(CopyNotFound);
     expect(await second.has(hash)).not.toBeNull();
   });
 
@@ -95,7 +95,7 @@ describe("dropBlobCopy", () => {
       stream: Readable.from([Buffer.from(content)]),
       size_bytes: content.length,
     });
-    await ctx.storage.blobs.recordLocation(hash, second.id);
+    await ctx.storage.blobs.recordCopy(hash, second.id);
     const original = ctx.blobs.disk.delete.bind(ctx.blobs.disk);
     ctx.blobs.disk.delete = () => Promise.reject(new Error("refused"));
     try {
@@ -103,8 +103,8 @@ describe("dropBlobCopy", () => {
     } finally {
       ctx.blobs.disk.delete = original;
     }
-    const left = await ctx.storage.blobs.listLocations(hash);
-    expect(left.map((location) => location.store_id)).toEqual([second.id]);
+    const left = await ctx.storage.blobs.listCopies(hash);
+    expect(left.map((copy) => copy.store_id)).toEqual([second.id]);
     const pending = await ctx.storage.blobs.listPendingCopyDeletions(100);
     expect(pending).toContainEqual(
       expect.objectContaining({ hash, store_id: ctx.blobs.disk.id }),
@@ -152,7 +152,7 @@ async function reportOrphan(c: TestContext, hash: string): Promise<void> {
 }
 
 describe("the per-hash lock", () => {
-  it("holds an upload of the same bytes behind a drop in flight, so the log and the bytes agree", async () => {
+  it("holds an upload of the same bytes behind a drop in flight, so the copy record and the bytes agree", async () => {
     // The drop removes the disk's row, then deletes its bytes. An upload
     // arriving between the two would see the bytes present, skip its own
     // put, and record the disk again for bytes about to go; behind the
@@ -165,7 +165,7 @@ describe("the per-hash lock", () => {
       stream: Readable.from([Buffer.from(content)]),
       size_bytes: content.length,
     });
-    await ctx.storage.blobs.recordLocation(hash, second.id);
+    await ctx.storage.blobs.recordCopy(hash, second.id);
     const gate = gateDelete(ctx.blobs.disk);
     try {
       const dropping = dropBlobCopy(
@@ -189,8 +189,8 @@ describe("the per-hash lock", () => {
     } finally {
       gate.restore();
     }
-    const locations = await ctx.storage.blobs.listLocations(hash);
-    expect(locations.map((l) => l.store_id).sort()).toEqual(
+    const copies = await ctx.storage.blobs.listCopies(hash);
+    expect(copies.map((l) => l.store_id).sort()).toEqual(
       [ctx.blobs.disk.id, second.id].sort(),
     );
     expect(await ctx.blobs.disk.has(hash)).not.toBeNull();
@@ -225,7 +225,7 @@ describe("the per-hash lock", () => {
     }
     expect(await ctx.storage.blobs.get(hash)).not.toBeNull();
     expect(
-      (await ctx.storage.blobs.listLocations(hash)).map((l) => l.store_id),
+      (await ctx.storage.blobs.listCopies(hash)).map((l) => l.store_id),
     ).toEqual([ctx.blobs.disk.id]);
     expect(await ctx.blobs.disk.has(hash)).not.toBeNull();
   });
@@ -237,7 +237,7 @@ describe("purgeBlob", () => {
     const { stores, second } = await withSecondStore(ctx);
     const content = "everywhere, then nowhere";
     const hash = await upload(ctx, content);
-    // Bytes in the second store the log does not know about: they go too.
+    // Bytes in the second store the copy record does not know about: they go too.
     await second.put(hash, {
       stream: Readable.from([Buffer.from(content)]),
       size_bytes: content.length,
@@ -245,13 +245,13 @@ describe("purgeBlob", () => {
     expect(await ctx.blobs.disk.has(hash)).not.toBeNull();
     expect(await second.has(hash)).not.toBeNull();
     expect(await ctx.storage.blobs.get(hash)).not.toBeNull();
-    expect(await ctx.storage.blobs.listLocations(hash)).toHaveLength(1);
+    expect(await ctx.storage.blobs.listCopies(hash)).toHaveLength(1);
     await reportOrphan(ctx, hash);
     expect(await purgeBlob(ctx.storage, stores, hash, DUE)).toBe(true);
     expect(await ctx.blobs.disk.has(hash)).toBeNull();
     expect(await second.has(hash)).toBeNull();
     expect(await ctx.storage.blobs.get(hash)).toBeNull();
-    expect(await ctx.storage.blobs.listLocations(hash)).toEqual([]);
+    expect(await ctx.storage.blobs.listCopies(hash)).toEqual([]);
     expect(await ctx.storage.blobs.listPendingPurges()).toEqual([]);
   });
 
@@ -319,7 +319,7 @@ describe("a store's delete that does not answer", () => {
       stream: Readable.from([Buffer.from(content)]),
       size_bytes: content.length,
     });
-    await c.storage.blobs.recordLocation(hash, second.id);
+    await c.storage.blobs.recordCopy(hash, second.id);
     const gate = gateDelete(second);
     let deletes = 0;
     const gated = second.delete.bind(second);
@@ -334,7 +334,7 @@ describe("a store's delete that does not answer", () => {
       await dropBlobCopy(c.storage, stores, hash, second.id, 1);
       expect(deletes).toBe(1);
       expect(
-        (await c.storage.blobs.listLocations(hash)).map((l) => l.store_id),
+        (await c.storage.blobs.listCopies(hash)).map((l) => l.store_id),
       ).toEqual([c.blobs.disk.id]);
       const pending = () => c.storage.blobs.listPendingCopyDeletions(10);
       expect(await pending()).toEqual([{ hash, store_id: second.id }]);
@@ -455,7 +455,7 @@ describe("an upload while the disk's queued deletion of its bytes does not answe
   });
 });
 
-describe("a drop that the location log alone would allow", () => {
+describe("a drop that the copy record alone would allow", () => {
   async function twoCopies(c: TestContext, content: string) {
     const { stores, second } = await withSecondStore(c);
     const hash = await upload(c, content);
@@ -463,30 +463,30 @@ describe("a drop that the location log alone would allow", () => {
       stream: Readable.from([Buffer.from(content)]),
       size_bytes: content.length,
     });
-    await c.storage.blobs.recordLocation(hash, second.id);
+    await c.storage.blobs.recordCopy(hash, second.id);
     return { stores, second, hash };
   }
 
-  it("drops a copy while the other copy the log names is held", async () => {
+  it("drops a copy while the other copy in the copy record is held", async () => {
     ctx = await createTestContext();
     const { stores, second, hash } = await twoCopies(ctx, "both held");
     await dropBlobCopy(ctx.storage, stores, hash, second.id, 1);
     expect(
-      (await ctx.storage.blobs.listLocations(hash)).map((l) => l.store_id),
+      (await ctx.storage.blobs.listCopies(hash)).map((l) => l.store_id),
     ).toEqual([ctx.blobs.disk.id]);
     expect(await second.has(hash)).toBeNull();
   });
 
-  it("refuses the drop when the other copy the log names is gone from its store, and keeps the copy", async () => {
+  it("refuses the drop when the other copy in the copy record is gone from its store, and keeps the copy", async () => {
     ctx = await createTestContext();
     const { stores, second, hash } = await twoCopies(ctx, "one gone");
-    // The disk lost its copy behind the log's back, as a late delete would.
+    // The disk lost its copy behind the copy record's back, as a late delete would.
     await ctx.blobs.disk.delete(hash);
     const refused = dropBlobCopy(ctx.storage, stores, hash, second.id, 1);
     await expect(refused).rejects.toBeInstanceOf(CopiesBelowMinimum);
     await expect(refused).rejects.toMatchObject({ live: 1, minCopies: 1 });
     expect(
-      (await ctx.storage.blobs.listLocations(hash)).map((l) => l.store_id),
+      (await ctx.storage.blobs.listCopies(hash)).map((l) => l.store_id),
     ).toEqual([ctx.blobs.disk.id, second.id].sort());
     expect(await second.has(hash)).not.toBeNull();
     expect(await ctx.storage.blobs.listPendingCopyDeletions(10)).toEqual([]);
@@ -507,7 +507,7 @@ describe("a drop that the location log alone would allow", () => {
       storeChecks.timeoutMs = timeout;
       ctx.blobs.disk.has = has;
     }
-    expect(await ctx.storage.blobs.listLocations(hash)).toHaveLength(2);
+    expect(await ctx.storage.blobs.listCopies(hash)).toHaveLength(2);
     expect(await second.has(hash)).not.toBeNull();
   });
 });
@@ -523,7 +523,7 @@ describe("a drop while a store has not finished a change to the blob", () => {
       stream: Readable.from([Buffer.from(content)]),
       size_bytes: content.length,
     });
-    await c.storage.blobs.recordLocation(hash, second.id);
+    await c.storage.blobs.recordCopy(hash, second.id);
     // A write to the second store that its caller stops waiting for, as
     // replication's is when the store does not answer.
     let finish: () => void = () => undefined;
@@ -534,7 +534,7 @@ describe("a drop while a store has not finished a change to the blob", () => {
       awaitStoreChange(second, hash, () => write, 50).catch(() => undefined),
     );
     const drop = () =>
-      c.app.request(`/blobs/${hash}/locations/${second.id}`, {
+      c.app.request(`/blobs/${hash}/copies/${second.id}`, {
         method: "DELETE",
         headers: { Authorization: `Bearer ${c.managementKey}` },
       });
@@ -544,7 +544,7 @@ describe("a drop while a store has not finished a change to the blob", () => {
       expect(await refused.json()).toMatchObject({
         error: { code: "blob_store_unavailable" },
       });
-      expect(await c.storage.blobs.listLocations(hash)).toHaveLength(2);
+      expect(await c.storage.blobs.listCopies(hash)).toHaveLength(2);
       expect(await second.has(hash)).not.toBeNull();
     } finally {
       finish();
@@ -554,7 +554,7 @@ describe("a drop while a store has not finished a change to the blob", () => {
     const dropped = await settlesWithin(Promise.resolve(drop()), 1_000);
     expect(dropped.status).toBe(200);
     expect(
-      (await c.storage.blobs.listLocations(hash)).map((l) => l.store_id),
+      (await c.storage.blobs.listCopies(hash)).map((l) => l.store_id),
     ).toEqual([c.blobs.disk.id]);
   });
 
@@ -568,7 +568,7 @@ describe("a drop while a store has not finished a change to the blob", () => {
       stream: Readable.from([Buffer.from(content)]),
       size_bytes: content.length,
     });
-    await c.storage.blobs.recordLocation(hash, second.id);
+    await c.storage.blobs.recordCopy(hash, second.id);
     // The first drop holds the blob while it asks the disk, well within
     // the store check bound.
     const has = c.blobs.disk.has.bind(c.blobs.disk);
@@ -608,21 +608,21 @@ describe("a drop while a store has not finished a change to the blob", () => {
       answer();
     }
     expect(
-      (await c.storage.blobs.listLocations(hash)).map((l) => l.store_id),
+      (await c.storage.blobs.listCopies(hash)).map((l) => l.store_id),
     ).toEqual([c.blobs.disk.id]);
   });
 
-  it("refuses a drop the log alone refuses without asking any store", async () => {
+  it("refuses a drop the copy record alone refuses without asking any store", async () => {
     ctx = await createTestContext();
     const c = ctx;
     const { stores, second } = await withSecondStore(c);
-    const content = "refused by the log";
+    const content = "refused by the copy record";
     const hash = await upload(c, content);
     await second.put(hash, {
       stream: Readable.from([Buffer.from(content)]),
       size_bytes: content.length,
     });
-    await c.storage.blobs.recordLocation(hash, second.id);
+    await c.storage.blobs.recordCopy(hash, second.id);
     let asked = 0;
     const has = c.blobs.disk.has.bind(c.blobs.disk);
     c.blobs.disk.has = () => {
@@ -630,7 +630,7 @@ describe("a drop while a store has not finished a change to the blob", () => {
       return new Promise(() => undefined);
     };
     try {
-      // Two copies and a minimum of two: the log refuses the drop.
+      // Two copies and a minimum of two: the copy record refuses the drop.
       const refused = dropBlobCopy(c.storage, stores, hash, second.id, 2);
       await expect(settlesWithin(refused, 1_000)).rejects.toBeInstanceOf(
         CopiesBelowMinimum,
@@ -640,7 +640,7 @@ describe("a drop while a store has not finished a change to the blob", () => {
     } finally {
       c.blobs.disk.has = has;
     }
-    // The witness: a drop the log allows asks the other store.
+    // The witness: a drop the copy record allows asks the other store.
     c.blobs.disk.has = (wanted, cancel) => {
       asked++;
       return has(wanted, cancel);

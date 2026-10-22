@@ -354,7 +354,9 @@ it("retained system forEach passes a captured set to callbacks in another async 
   });
   try {
     await entered.promise;
-    expect(await storage.types.deletePlatformType(platform.id)).toBe(true);
+    expect(await storage.types.deleteRetiredPlatformType(platform.id)).toBe(
+      true,
+    );
     forEach((value, key, selectedSet) => {
       if (key !== platform.id) return;
       retainedSet = selectedSet;

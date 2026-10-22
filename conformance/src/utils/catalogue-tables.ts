@@ -65,7 +65,7 @@ export interface EventTypeRow {
 const PERMISSION_TEXT: Readonly<Record<string, string>> = {
   "audit.read": "Reading the audit log.",
   "blobs.manage":
-    "Managing blob bytes and locations across the instance, without granting item content access.",
+    "Managing blob bytes and copies across the instance, without granting item content access.",
   "config.manage":
     "Reading and replacing the instance configuration at `/config`: the enforcement levers and the cleanup-job retention overrides.",
   "connectors.manage":
@@ -74,7 +74,7 @@ const PERMISSION_TEXT: Readonly<Record<string, string>> = {
   "instance.maintain":
     "Running housekeeping, resetting platform type definitions and cancelling bulk jobs.",
   "instance.read":
-    "Reading detailed health, metrics, housekeeping status, platform drift, blob storage diagnostics and bulk job status.",
+    "Reading detailed health, metrics, housekeeping status, retired platform types, blob storage diagnostics and bulk job status.",
   "items.purge":
     "Destroying a trashed row irrecoverably, through the single-row operation and the bulk one alike.",
   "keys.manage":

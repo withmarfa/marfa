@@ -104,8 +104,8 @@ function readings(
       () => as.rawRequest(`/blobs/${hash}/url${suffix}`),
     ],
     [
-      "GET /blobs/{hash}/locations",
-      () => as.rawRequest(`/blobs/${hash}/locations${suffix}`),
+      "GET /blobs/{hash}/copies",
+      () => as.rawRequest(`/blobs/${hash}/copies${suffix}`),
     ],
   ];
 }
@@ -475,9 +475,9 @@ async function instanceLink(
   trackItem(ctx, file.data.item.id);
 
   await replicateToZero();
-  for (const location of (await operator.listBlobLocations(hash)).data.data) {
-    if (location.kind !== "s3") continue;
-    const dropped = await operator.deleteBlobLocation(hash, location.store_id);
+  for (const copy of (await operator.listBlobCopies(hash)).data.data) {
+    if (copy.kind !== "s3") continue;
+    const dropped = await operator.deleteBlobCopy(hash, copy.store_id);
     expect(dropped.status).toBe(200);
   }
   const link = await client.getBlobUrl(hash, 3600);

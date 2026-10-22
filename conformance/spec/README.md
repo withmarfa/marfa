@@ -19,10 +19,10 @@ The contract has two halves.
 - `versions.md`: versions, snapshots, the 409 envelopes and server-side merge.
 - `read-views.md`: the copy stream, conditional reads, and the read view that certifies what a working copy holds.
 - `blobs.md`: uploads, downloads, ranges and the blob link.
-- `stores.md`: where a blob's bytes live, the location log, and the rules that keep them.
+- `stores.md`: where a blob's bytes live, the copy record, and the rules that keep them.
 - `housekeeping.md`: the jobs the server runs on itself.
 - `connectors.md`: a process outside the server that registers under its key, heartbeats, reports its runs, holds its registration, and keeps its state and agreements on the instance.
-- `inbound-webhooks.md`: a connector's webhook endpoints, the operation a sender posts to, and the deliveries a connector reads and marks handled.
+- `inbound-webhooks.md`: a connector's inbound endpoints, the operation a sender posts to, and the deliveries a connector reads and marks handled.
 - `events.md`: the event stream, its frames and filters, and outbound webhooks.
 - `search-and-filters.md`: the query grammar every listing shares, search, the counts, the lookup by link, natural key or id, export and restore.
 - `occurrences.md`: how `GET /occurrences` unfolds a series across zones and clock changes, what a window includes, and what a write may store as a schedule.

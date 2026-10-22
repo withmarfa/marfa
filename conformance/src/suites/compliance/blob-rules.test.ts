@@ -76,32 +76,32 @@ async function replicateToZero(): Promise<void> {
   throw new Error("blob-replicate never reached remaining: 0");
 }
 
-/** Checks until the predicate holds of the blob's locations, bounded the
+/** Checks until the predicate holds of the blob's copies, bounded the
  *  same way: one run checks a bounded batch, least recently checked first,
  *  and this blob's copies may not be in it. */
 async function checkUntil(
   hash: string,
-  done: (locations: LocationRow[]) => boolean,
-): Promise<LocationRow[]> {
-  let locations: LocationRow[] = [];
+  done: (copies: CopyRow[]) => boolean,
+): Promise<CopyRow[]> {
+  let copies: CopyRow[] = [];
   for (let i = 0; i < 20; i++) {
     await run("blob-integrity");
-    locations = (await client.listBlobLocations(hash)).data.data;
-    if (done(locations)) return locations;
+    copies = (await client.listBlobCopies(hash)).data.data;
+    if (done(copies)) return copies;
   }
   throw new Error(
-    `blob-integrity never reached the expected state for ${hash}: ${JSON.stringify(locations)}`,
+    `blob-integrity never reached the expected state for ${hash}: ${JSON.stringify(copies)}`,
   );
 }
 
-interface LocationRow {
+interface CopyRow {
   store_id: string;
   kind: "disk" | "s3";
   verified_at: string | null;
 }
 
-function kinds(locations: readonly { kind: string }[]): string[] {
-  return locations.map((location) => location.kind).sort();
+function kinds(copies: readonly { kind: string }[]): string[] {
+  return copies.map((copy) => copy.kind).sort();
 }
 
 function sha256(bytes: Uint8Array): string {
@@ -202,9 +202,9 @@ describe("the rules that keep a blob's bytes", () => {
     const stores = await operator.listBlobStores();
     const s3 = stores.data.data.find((store) => store.kind === "s3")!;
     for (const hash of hashes) {
-      const locations = (await client.listBlobLocations(hash)).data.data;
-      expect(kinds(locations)).toEqual(["disk", "s3"]);
-      const copy = locations.find((location) => location.kind === "s3");
+      const copies = (await client.listBlobCopies(hash)).data.data;
+      expect(kinds(copies)).toEqual(["disk", "s3"]);
+      const copy = copies.find((row) => row.kind === "s3");
       expect(copy?.store_id).toBe(s3.id);
       expect(Date.parse(copy?.recorded_at ?? "")).not.toBeNaN();
     }
@@ -227,7 +227,7 @@ describe("the rules that keep a blob's bytes", () => {
     // Through the drop door rather than the instant after an upload,
     // because the server's own scheduler replicates an upload within a
     // second of it.
-    expect((await operator.deleteBlobLocation(first, s3.id)).status).toBe(200);
+    expect((await operator.deleteBlobCopy(first, s3.id)).status).toBe(200);
     const served = await client.getBlobUrl(first);
     expect(served.status).toBe(200);
     expect(new URL(served.data.url).host).toBe(
@@ -294,7 +294,7 @@ describe("the rules that keep a blob's bytes", () => {
     expect(stores.data.min_copies).toBe(1);
     const s3 = stores.data.data.find((store) => store.kind === "s3")!;
     const disk = stores.data.data.find((store) => store.kind === "disk")!;
-    expect(kinds((await client.listBlobLocations(hash)).data.data)).toEqual([
+    expect(kinds((await client.listBlobCopies(hash)).data.data)).toEqual([
       "disk",
       "s3",
     ]);
@@ -302,49 +302,49 @@ describe("the rules that keep a blob's bytes", () => {
     // Two copies: a working key is refused the drop the minimum would
     // allow, and the copy stays; the operator's drop takes the object
     // store's copy, bytes and row, which replication then puts back.
-    const workingFirst = await client.deleteBlobLocation(hash, s3.id);
+    const workingFirst = await client.deleteBlobCopy(hash, s3.id);
     expect(workingFirst.status).toBe(403);
     expect(workingFirst.error?.error.code).toBe("forbidden");
-    expect(kinds((await client.listBlobLocations(hash)).data.data)).toEqual([
+    expect(kinds((await client.listBlobCopies(hash)).data.data)).toEqual([
       "disk",
       "s3",
     ]);
-    const dropped = await operator.deleteBlobLocation(hash, s3.id);
+    const dropped = await operator.deleteBlobCopy(hash, s3.id);
     expect(dropped.status, JSON.stringify(dropped.error)).toBe(200);
     await expectMatchesSchema(
       "DELETE",
-      "/blobs/{hash}/locations/{store}",
+      "/blobs/{hash}/copies/{store}",
       200,
       dropped.data,
     );
-    expect(kinds((await client.listBlobLocations(hash)).data.data)).toEqual([
+    expect(kinds((await client.listBlobCopies(hash)).data.data)).toEqual([
       "disk",
     ]);
     await replicateToZero();
-    expect(kinds((await client.listBlobLocations(hash)).data.data)).toEqual([
+    expect(kinds((await client.listBlobCopies(hash)).data.data)).toEqual([
       "disk",
       "s3",
     ]);
 
     // One copy left after the next drop: the last is refused and the
     // bytes still answer.
-    expect((await operator.deleteBlobLocation(hash, s3.id)).status).toBe(200);
-    const refused = await operator.deleteBlobLocation(hash, disk.id);
+    expect((await operator.deleteBlobCopy(hash, s3.id)).status).toBe(200);
+    const refused = await operator.deleteBlobCopy(hash, disk.id);
     expect(refused.status).toBe(409);
     expect(refused.error?.error.code).toBe("copies_below_minimum");
-    expect(kinds((await client.listBlobLocations(hash)).data.data)).toEqual([
+    expect(kinds((await client.listBlobCopies(hash)).data.data)).toEqual([
       "disk",
     ]);
     expect((await client.downloadBlob(hash)).status).toBe(200);
 
     // A store that no longer holds a copy, one that is not attached, and a
     // working key.
-    const nowhere = await operator.deleteBlobLocation(hash, s3.id);
+    const nowhere = await operator.deleteBlobCopy(hash, s3.id);
     expect(nowhere.status).toBe(404);
-    expect(nowhere.error?.error.code).toBe("blob_location_not_found");
-    const unattached = await operator.deleteBlobLocation(hash, "no-such-store");
+    expect(nowhere.error?.error.code).toBe("blob_copy_not_found");
+    const unattached = await operator.deleteBlobCopy(hash, "no-such-store");
     expect(unattached.status).toBe(404);
-    expect(unattached.error?.error.code).toBe("blob_location_not_found");
+    expect(unattached.error?.error.code).toBe("blob_copy_not_found");
   });
 
   it("stamps a good copy and strikes a corrupt one, which replication then restores", async () => {
@@ -356,9 +356,9 @@ describe("the rules that keep a blob's bytes", () => {
     for (const each of [hash, missing]) {
       const stamped = await checkUntil(
         each,
-        (locations) =>
-          locations.length === 2 &&
-          locations.every((location) => location.verified_at !== null),
+        (copies) =>
+          copies.length === 2 &&
+          copies.every((copy) => copy.verified_at !== null),
       );
       expect(kinds(stamped)).toEqual(["disk", "s3"]);
     }
@@ -373,9 +373,9 @@ describe("the rules that keep a blob's bytes", () => {
     // strikes both with an audit row each, replication brings the right
     // bytes back from the object store, and the download reads them.
     //
-    // The strike is read off the audit rows, not off the location log: a
+    // The strike is read off the audit rows, not off the copy record: a
     // strike wakes replication, which the server runs on its own poll, so
-    // the struck location can be back before a listing sees it gone.
+    // the struck copy can be back before a listing sees it gone.
     writeFileSync(diskPathFor(hash), content.replace("corrupted", "CORRUPTED"));
     unlinkSync(diskPathFor(missing));
     const struckRows = async (each: string) =>
@@ -402,7 +402,7 @@ describe("the rules that keep a blob's bytes", () => {
 
     await replicateToZero();
     for (const each of [hash, missing]) {
-      expect(kinds((await client.listBlobLocations(each)).data.data)).toEqual([
+      expect(kinds((await client.listBlobCopies(each)).data.data)).toEqual([
         "disk",
         "s3",
       ]);
@@ -734,11 +734,11 @@ describe("the rules that keep a blob's bytes", () => {
     expect(file.ok, JSON.stringify(file.error)).toBe(true);
     // The link the instance serves itself, so it does not depend on the
     // object store's copy.
-    for (const location of (await client.listBlobLocations(hash)).data.data) {
-      if (location.kind !== "s3") continue;
-      expect(
-        (await operator.deleteBlobLocation(hash, location.store_id)).status,
-      ).toBe(200);
+    for (const copy of (await client.listBlobCopies(hash)).data.data) {
+      if (copy.kind !== "s3") continue;
+      expect((await operator.deleteBlobCopy(hash, copy.store_id)).status).toBe(
+        200,
+      );
     }
     const link = await client.getBlobUrl(hash, 3600);
     expect(link.status).toBe(200);
@@ -904,22 +904,22 @@ describe("how the copies are placed and removed", () => {
     const hash = await uploadReferencedText("copied with no run asked for");
     // No run is asked for: the housekeeping cadence is an hour, so a second
     // copy can only come from the wake the upload sent.
-    const locations = await waitFor("the object store's copy", async () => {
-      const rows = (await client.listBlobLocations(hash)).data.data;
+    const copies = await waitFor("the object store's copy", async () => {
+      const rows = (await client.listBlobCopies(hash)).data.data;
       return rows.length === 2 ? rows : undefined;
     });
     const after = Date.now();
-    expect(kinds(locations)).toEqual(["disk", "s3"]);
-    const disk = locations.find((row) => row.kind === "disk")!;
-    const copy = locations.find((row) => row.kind === "s3")!;
+    expect(kinds(copies)).toEqual(["disk", "s3"]);
+    const disk = copies.find((row) => row.kind === "disk")!;
+    const copy = copies.find((row) => row.kind === "s3")!;
     for (const row of [disk, copy]) {
       expect(Date.parse(row.recorded_at)).toBeGreaterThanOrEqual(before);
       expect(Date.parse(row.recorded_at)).toBeLessThanOrEqual(after);
     }
     expect(copy.recorded_at >= disk.recorded_at).toBe(true);
     // Oldest first.
-    expect(locations.map((row) => row.recorded_at)).toEqual(
-      locations.map((row) => row.recorded_at).sort(),
+    expect(copies.map((row) => row.recorded_at)).toEqual(
+      copies.map((row) => row.recorded_at).sort(),
     );
   });
 
@@ -934,12 +934,12 @@ describe("how the copies are placed and removed", () => {
     expect(existsSync(diskPathFor(hash))).toBe(true);
     expect((await fetch(link)).status).toBe(200);
 
-    expect((await operator.deleteBlobLocation(hash, disk.id)).status).toBe(200);
+    expect((await operator.deleteBlobCopy(hash, disk.id)).status).toBe(200);
     expect(existsSync(diskPathFor(hash))).toBe(false);
     await replicateToZero();
     expect(existsSync(diskPathFor(hash))).toBe(true);
 
-    expect((await operator.deleteBlobLocation(hash, s3.id)).status).toBe(200);
+    expect((await operator.deleteBlobCopy(hash, s3.id)).status).toBe(200);
     expect((await fetch(link)).status).toBe(404);
     await replicateToZero();
   });
@@ -964,7 +964,7 @@ describe("how the copies are placed and removed", () => {
     });
     expect(await audited("blob.copy_dropped", hash)).toHaveLength(0);
 
-    expect((await operator.deleteBlobLocation(hash, s3.id)).status).toBe(200);
+    expect((await operator.deleteBlobCopy(hash, s3.id)).status).toBe(200);
     const dropped = await audited("blob.copy_dropped", hash);
     expect(dropped).toHaveLength(1);
     expect(dropped[0]).toMatchObject({
@@ -977,7 +977,7 @@ describe("how the copies are placed and removed", () => {
     await replicateToZero();
     expect(await audited("blob.copy_replicated", hash)).toHaveLength(2);
 
-    const orphan = await uploadText("purged with a row in the log");
+    const orphan = await uploadText("purged with a row in the copy record");
     expect(await audited("blob.purge", orphan)).toHaveLength(0);
     await run("blob-orphans");
     expect(await audited("blob.purge", orphan)).toHaveLength(0);
@@ -1007,31 +1007,31 @@ describe("how the copies are placed and removed", () => {
     expect((await fetch(link)).status).toBe(404);
   });
 
-  it("refuses a drop the log allows when the other copy is gone from its store, and keeps the copy", async () => {
+  it("refuses a drop the copy record allows when the other copy is gone from its store, and keeps the copy", async () => {
     const hash = await uploadReferencedText(
-      "the log says two, the disk has none",
+      "the copy record says two, the disk has none",
     );
     await replicateToZero();
     const stores = (await operator.listBlobStores()).data.data;
     const s3 = stores.find((store) => store.kind === "s3")!;
     const path = diskPathFor(hash);
     const bytes = readFileSync(path);
-    expect(kinds((await client.listBlobLocations(hash)).data.data)).toEqual([
+    expect(kinds((await client.listBlobCopies(hash)).data.data)).toEqual([
       "disk",
       "s3",
     ]);
 
-    // The disk's copy goes behind the log's back, as a store's late delete
-    // would take it: the log still names two copies.
+    // The disk's copy goes behind the copy record's back, as a store's late delete
+    // would take it: the copy record still names two copies.
     unlinkSync(path);
-    const refused = await operator.deleteBlobLocation(hash, s3.id);
+    const refused = await operator.deleteBlobCopy(hash, s3.id);
     expect(refused.status).toBe(409);
     expect(refused.error?.error.code).toBe("copies_below_minimum");
     expect(refused.error?.error.details).toMatchObject({
       live: 1,
       min_copies: 1,
     });
-    expect(kinds((await client.listBlobLocations(hash)).data.data)).toEqual([
+    expect(kinds((await client.listBlobCopies(hash)).data.data)).toEqual([
       "disk",
       "s3",
     ]);
@@ -1041,9 +1041,9 @@ describe("how the copies are placed and removed", () => {
 
     // The witness: with the disk's copy back, the same drop goes.
     writeFileSync(path, bytes);
-    const dropped = await operator.deleteBlobLocation(hash, s3.id);
+    const dropped = await operator.deleteBlobCopy(hash, s3.id);
     expect(dropped.status, JSON.stringify(dropped.error)).toBe(200);
-    expect(kinds((await client.listBlobLocations(hash)).data.data)).toEqual([
+    expect(kinds((await client.listBlobCopies(hash)).data.data)).toEqual([
       "disk",
     ]);
     await replicateToZero();
@@ -1055,7 +1055,7 @@ describe("how the copies are placed and removed", () => {
     const stores = (await operator.listBlobStores()).data.data;
 
     const answers = await Promise.all(
-      stores.map((store) => operator.deleteBlobLocation(hash, store.id)),
+      stores.map((store) => operator.deleteBlobCopy(hash, store.id)),
     );
 
     const statuses = answers.map((answer) => answer.status).sort();
@@ -1067,7 +1067,7 @@ describe("how the copies are placed and removed", () => {
     }
     expect(statuses).toContain(200);
     expect(
-      (await client.listBlobLocations(hash)).data.data.length,
+      (await client.listBlobCopies(hash)).data.data.length,
     ).toBeGreaterThanOrEqual(1);
     expect((await client.downloadBlob(hash)).status).toBe(200);
     await replicateToZero();
@@ -1089,49 +1089,49 @@ describe("how the copies are placed and removed", () => {
     const malformed = "not-a-hash";
     const unregistered = `sha256:${"0".repeat(64)}`;
     const managementKey = process.env.MARFA_MANAGEMENT_KEY!;
-    const working = await client.deleteBlobLocation(malformed, "no-such-store");
+    const working = await client.deleteBlobCopy(malformed, "no-such-store");
 
     // Authentication and blobs.manage are checked before the hash or store.
-    const anonymous = await drop(`${malformed}/locations/no-such-store`);
+    const anonymous = await drop(`${malformed}/copies/no-such-store`);
     expect(anonymous.status).toBe(401);
     expect(await code(anonymous)).toBe("unauthorized");
     expect(working.status).toBe(403);
     expect(working.error?.error.code).toBe("forbidden");
 
     // blobs.manage admits hash validation and then the store lookup.
-    const bad = await drop(`${malformed}/locations/${s3.id}`, managementKey);
+    const bad = await drop(`${malformed}/copies/${s3.id}`, managementKey);
     expect(bad.status).toBe(400);
     expect(await code(bad)).toBe("validation_error");
     const unknownBlob = await drop(
-      `${unregistered}/locations/no-such-store`,
+      `${unregistered}/copies/no-such-store`,
       managementKey,
     );
     expect(unknownBlob.status).toBe(404);
     expect(await code(unknownBlob)).toBe("blob_not_found");
     const unknownStore = await drop(
-      `${hash}/locations/no-such-store`,
+      `${hash}/copies/no-such-store`,
       managementKey,
     );
     expect(unknownStore.status).toBe(404);
-    expect(await code(unknownStore)).toBe("blob_location_not_found");
+    expect(await code(unknownStore)).toBe("blob_copy_not_found");
 
     // The witness for all of them: the copy is still there, and the same
     // door drops it once the hash is the bare hex of a registered blob.
-    expect(kinds((await client.listBlobLocations(hash)).data.data)).toEqual([
+    expect(kinds((await client.listBlobCopies(hash)).data.data)).toEqual([
       "disk",
       "s3",
     ]);
     const bare = await drop(
-      `${hash.slice("sha256:".length)}/locations/${s3.id}`,
+      `${hash.slice("sha256:".length)}/copies/${s3.id}`,
       managementKey,
     );
     expect(bare.status).toBe(200);
-    expect(kinds((await client.listBlobLocations(hash)).data.data)).toEqual([
+    expect(kinds((await client.listBlobCopies(hash)).data.data)).toEqual([
       "disk",
     ]);
     // Last, the minimum: every check above it passed for this copy too.
     const disk = stores.find((store) => store.kind === "disk")!;
-    const last = await drop(`${hash}/locations/${disk.id}`, managementKey);
+    const last = await drop(`${hash}/copies/${disk.id}`, managementKey);
     expect(last.status).toBe(409);
     expect(await code(last)).toBe("copies_below_minimum");
     await replicateToZero();

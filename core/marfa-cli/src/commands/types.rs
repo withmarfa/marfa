@@ -43,10 +43,10 @@ pub enum TypesCommand {
         #[arg(long)]
         force: bool,
     },
-    /// Shipped types this instance carries that the build no longer does. Requires `instance.read`.
-    Drift,
-    /// Remove one shipped type the build no longer carries. Requires `instance.maintain`.
-    Prune {
+    /// The retired platform types: shipped types this instance carries that the build no longer does. Requires `instance.read`.
+    Retired,
+    /// Delete one retired platform type. Requires `instance.maintain`.
+    DeleteRetired {
         /// The type id.
         id: String,
     },
@@ -139,11 +139,11 @@ pub fn delete_request(id: &str, force: bool) -> Request {
     Request::delete(&["types", id]).query_flag("force", force)
 }
 
-pub fn drift_request() -> Request {
-    Request::get(&["platform-types", "drift"])
+pub fn retired_request() -> Request {
+    Request::get(&["platform-types", "retired"])
 }
 
-pub fn prune_request(id: &str) -> Request {
+pub fn delete_retired_request(id: &str) -> Request {
     Request::delete(&["platform-types", id])
 }
 
@@ -162,8 +162,8 @@ pub fn run(
         TypesCommand::Normalize(body) => normalize_request(body.read()?),
         TypesCommand::Replace { id, body } => replace_request(id, body.read()?),
         TypesCommand::Delete { id, force } => delete_request(id, *force),
-        TypesCommand::Drift => drift_request(),
-        TypesCommand::Prune { id } => prune_request(id),
+        TypesCommand::Retired => retired_request(),
+        TypesCommand::DeleteRetired { id } => delete_retired_request(id),
     };
     let answer = remote()?.json(&request)?;
     match &command {

@@ -617,22 +617,22 @@ describe("the instance", () => {
         string,
         Record<string, { operationId?: string; tags?: string[] }>
       >;
-      webhooks?: Record<string, Record<string, { tags?: string[] }>>;
+      webhooks?: Record<
+        string,
+        Record<string, { operationId?: string; tags?: string[] }>
+      >;
     };
     const methodNames = ["get", "post", "put", "patch", "delete"];
-    // Each published operation by the name its group lists it under: its
-    // operationId, or for a request Marfa sends, the webhook's name.
+    // Each published operation by its operationId, a request Marfa sends
+    // included.
     const carried = new Map<string, string[]>();
-    for (const methods of Object.values(doc.paths)) {
+    for (const methods of [
+      ...Object.values(doc.paths),
+      ...Object.values(doc.webhooks ?? {}),
+    ]) {
       for (const [method, op] of Object.entries(methods)) {
         if (!methodNames.includes(method)) continue;
         carried.set(op.operationId ?? "(no operationId)", op.tags ?? []);
-      }
-    }
-    for (const [name, methods] of Object.entries(doc.webhooks ?? {})) {
-      for (const [method, op] of Object.entries(methods)) {
-        if (!methodNames.includes(method)) continue;
-        carried.set(name, op.tags ?? []);
       }
     }
     // The witness: there are operations to list, and a webhook among them.

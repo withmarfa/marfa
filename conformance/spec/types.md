@@ -502,9 +502,9 @@ If a key holding neither `schema.write` nor `metadata.types:write` sends `PUT /t
 
 ### `types/shipped-immutable`
 
-If `PUT /types/{id}` or `DELETE /types/{id}` names a platform type, shipped or drifted, then the server MUST answer `403 core_type_immutable`, before it asks about items, subtypes or the key's type map.
+If `PUT /types/{id}` or `DELETE /types/{id}` names a platform type, shipped or retired, then the server MUST answer `403 core_type_immutable`, before it asks about items, subtypes or the key's type map.
 
-**Tests:** `compliance/type-registry.test.ts › refuses both schema.write doors a platform-shipped type, and declares that refusal too`, `› refuses a platform type before it asks about subtypes, items or the key's type map`, `compliance/platform-type-drift.test.ts › refuses a replacement and a delete of a drifted platform type through the type registry`.
+**Tests:** `compliance/type-registry.test.ts › refuses both schema.write doors a platform-shipped type, and declares that refusal too`, `› refuses a platform type before it asks about subtypes, items or the key's type map`, `compliance/retired-platform-types.test.ts › refuses a replacement and a delete of a retired platform type through the type registry`.
 
 ### `types/replace-reach`
 
@@ -608,7 +608,7 @@ When a replacement retains its stored `parent` or a target in its stored `compat
 
 ### `types/parent-shipped`
 
-The server MUST NOT ask write on a parent that is a platform type, shipped or drifted.
+The server MUST NOT ask write on a parent that is a platform type, shipped or retired.
 
 **Reason:** no credential can delete a platform type through `/types`, and connectors subtype them.
 
@@ -854,31 +854,31 @@ The server MUST ship `system.connection` with `kind` taking `app` alone, a descr
 
 ## The platform registry
 
-The registry rows of shipped types are the platform's. An instance upgraded past a build that shipped a type keeps its row, drifted, until an authorized caller removes it.
+The registry rows of shipped types are the platform's. An instance upgraded past a build that shipped a type keeps its row as a retired platform type until an authorized caller removes it.
 
 ### `types/platform-drift`
 
-When a caller with `instance.read` or direct owner or local authority sends `GET /platform-types/drift`, the server MUST list each platform row the build no longer ships, with its `item_count`, `child_types` and whether it is `removable`.
+When a caller with `instance.read` or direct owner or local authority sends `GET /platform-types/retired`, the server MUST list each retired platform type, a platform row the build no longer ships, with its `item_count`, `child_types` and whether it is `removable`.
 
-**Tests:** `compliance/platform-types.test.ts › lists no drift on an instance whose platform types match the build`, `compliance/platform-type-drift.test.ts › lists a drifted platform type, and removes it once nothing holds it`.
+**Tests:** `compliance/platform-types.test.ts › lists no retired platform types on an instance whose types match the build`, `compliance/retired-platform-types.test.ts › lists a retired platform type, and removes it once nothing holds it`.
 
 ### `types/platform-remove`
 
-When a caller with `instance.maintain` or direct owner or local authority sends `DELETE /platform-types/{id}` for a drifted type no item holds and no other type names as parent or compatibility target, the server MUST remove it and answer `200` with `removed: true`.
+When a caller with `instance.maintain` or direct owner or local authority sends `DELETE /platform-types/{id}` for a retired platform type no item holds and no other type names as parent or compatibility target, the server MUST remove it and answer `200` with `removed: true`.
 
-**Tests:** `compliance/platform-type-drift.test.ts › lists a drifted platform type, and removes it once nothing holds it`.
+**Tests:** `compliance/retired-platform-types.test.ts › lists a retired platform type, and removes it once nothing holds it`.
 
 ### `types/platform-remove-audit`
 
 When `DELETE /platform-types/{id}` removes a type, the server MUST record a `platform_type.removed` entry at `GET /audit` naming the type and the acting authority.
 
-**Tests:** `compliance/platform-type-drift.test.ts › lists a drifted platform type, and removes it once nothing holds it`.
+**Tests:** `compliance/retired-platform-types.test.ts › lists a retired platform type, and removes it once nothing holds it`.
 
 ### `types/platform-remove-refused`
 
-If `DELETE /platform-types/{id}` names a type the build ships, a type registered at run time, or a drifted type an item holds or a type names as parent or compatibility target, then the server MUST answer `409 conflict`.
+If `DELETE /platform-types/{id}` names a type the build ships, a type registered at run time, or a retired platform type an item holds or a type names as parent or compatibility target, then the server MUST answer `409 conflict`.
 
-**Tests:** `compliance/platform-types.test.ts › refuses to remove a type the build still ships`, `› answers 409 for a type registered at run time, which no platform row carries`, `compliance/platform-type-drift.test.ts › refuses to remove a drifted type that items still carry`, `› refuses to remove a drifted type another type inherits from`, `› keeps a drifted compatibility target until its reader drops the claim`.
+**Tests:** `compliance/platform-types.test.ts › refuses to remove a type the build still ships`, `› answers 409 for a type registered at run time, which no platform row carries`, `compliance/retired-platform-types.test.ts › refuses to remove a retired type that items still carry`, `› refuses to remove a retired type another type inherits from`, `› keeps a retired compatibility target until its reader drops the claim`.
 
 ### `types/platform-remove-missing`
 
@@ -888,7 +888,7 @@ If `DELETE /platform-types/{id}` names an identifier no registry row carries, th
 
 ### `types/platform-operator-only`
 
-If a credential lacking `instance.read` sends `GET /platform-types/drift`, or one lacking `instance.maintain` sends `DELETE /platform-types/{id}`, then the server MUST answer `403 forbidden`.
+If a credential lacking `instance.read` sends `GET /platform-types/retired`, or one lacking `instance.maintain` sends `DELETE /platform-types/{id}`, then the server MUST answer `403 forbidden`.
 
 **Tests:** `compliance/platform-types.test.ts › refuses removal without instance.maintain`, `› refuses the listing without instance.read and to no credential`.
 

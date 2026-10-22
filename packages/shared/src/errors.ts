@@ -171,9 +171,9 @@ export enum ErrorCode {
    * the server returning an HTTP error.
    */
   BULK_JOB_NOT_FOUND = "bulk_job_not_found",
-  /** `DELETE /blobs/{hash}/locations/{store}` named a store that holds no
+  /** `DELETE /blobs/{hash}/copies/{store}` named a store that holds no
    *  copy of the blob, or that is not attached. */
-  BLOB_LOCATION_NOT_FOUND = "blob_location_not_found",
+  BLOB_COPY_NOT_FOUND = "blob_copy_not_found",
   /** Dropping the copy would leave fewer live copies than the instance's
    *  minimum; the copy stays. */
   COPIES_BELOW_MINIMUM = "copies_below_minimum",
@@ -613,7 +613,7 @@ export const ERROR_CODES: Record<AnsweredCode, ErrorCodeInfo> = {
     status: 404,
     summary: "No bulk action job the caller can see has this id.",
   },
-  [ErrorCode.BLOB_LOCATION_NOT_FOUND]: {
+  [ErrorCode.BLOB_COPY_NOT_FOUND]: {
     status: 404,
     summary: "The named store holds no copy of the blob, or is not attached.",
   },

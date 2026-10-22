@@ -447,8 +447,8 @@ export const apiKeys = sqliteTable(
 );
 
 // ---------------------------------------------------------------------------
-// blobs — one row per content hash. Where the bytes are is the location
-// log's business, not this row's.
+// blobs — one row per content hash. Where the bytes are is the copy
+// record's business, not this row's.
 // ---------------------------------------------------------------------------
 export const blobs = sqliteTable("blobs", {
   hash: text("hash").primaryKey(),
@@ -465,7 +465,7 @@ export const blobs = sqliteTable("blobs", {
 // A store's id comes from a marker the store itself holds, not from the
 // configuration that named it, so a fresh folder is a fresh store with no
 // claimed copies. A row whose store the configuration no longer names is
-// kept and marked detached rather than deleted: the location log still
+// kept and marked detached rather than deleted: the copy record still
 // describes it, and a copy count that forgot a store could never be wrong
 // in the safe direction.
 // ---------------------------------------------------------------------------
@@ -484,15 +484,15 @@ export const blobStores = sqliteTable("blob_stores", {
 });
 
 // ---------------------------------------------------------------------------
-// blob_locations — the location log: which stores hold which blob.
+// blob_copies: the copy record, which stores hold which blob.
 //
 // A row is written only once the store has the bytes and they hashed to
 // their name; `verified_at` is the last time a check found the copy present
 // and intact, null until one has. A copy counts only while its store is
 // still attached.
 // ---------------------------------------------------------------------------
-export const blobLocations = sqliteTable(
-  "blob_locations",
+export const blobCopies = sqliteTable(
+  "blob_copies",
   {
     hash: text("hash")
       .notNull()
@@ -506,14 +506,14 @@ export const blobLocations = sqliteTable(
   (table) => [
     primaryKey({ columns: [table.hash, table.store_id] }),
     // The integrity check takes a store's least recently checked copies.
-    index("idx_blob_locations_store_verified").on(
+    index("idx_blob_copies_store_verified").on(
       table.store_id,
       table.verified_at,
     ),
   ],
 );
 
-// Survives location removal until external byte deletion succeeds. No blob FK:
+// Survives copy removal until external byte deletion succeeds. No blob FK:
 // a whole-blob purge may remove the registry while a store is unavailable.
 export const blobCopyDeletions = sqliteTable(
   "blob_copy_deletions",

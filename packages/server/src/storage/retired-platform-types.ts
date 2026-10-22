@@ -1,6 +1,6 @@
 /**
  * Which shipped types this instance still carries that the build no longer
- * names.
+ * names: the retired platform types.
  *
  * The platform vocabulary is seeded into rows and the registry is filled
  * from the rows, and the seed is an upsert with no prune. So deleting a
@@ -25,7 +25,7 @@
  * boot prune would live: it projects an unreadable row rather than
  * refusing, and names rollback as the reason.
  *
- * **Derived, never stored.** Drift is a pure function of the build and the
+ * **Derived, never stored.** The retired set is a pure function of the build and the
  * rows, recomputed at every boot. A stored flag would be a second source of
  * truth with nothing keeping it honest, and it would go stale in precisely
  * the case that matters: a rollback, where the flag was written by a build
@@ -41,28 +41,28 @@ import type { LoadedType } from "./interface.js";
  * runtime registration, or a restored row nobody recorded, is not the
  * build's to have an opinion about and must never be caught here.
  */
-export function computePlatformDrift(
+export function computeRetiredPlatformTypes(
   shipped: readonly SeededPlatformType[],
   loaded: readonly LoadedType[],
 ): string[] {
   const shippedIds = new Set(shipped.map((s) => s.schema.id));
-  const drifted = new Set<string>();
+  const retired = new Set<string>();
   for (const row of loaded) {
     if (row.origin !== "platform") continue;
     if (shippedIds.has(row.schema.id)) continue;
-    drifted.add(row.schema.id);
+    retired.add(row.schema.id);
   }
-  return [...drifted].sort();
+  return [...retired].sort();
 }
 
-let driftedIds: readonly string[] = [];
+let retiredIds: readonly string[] = [];
 
 /**
  * Record what this boot found. Called once, after the seed has run and the
  * rows have been read, on the same pass that fills the registry.
  */
-export function setPlatformDrift(ids: readonly string[]): void {
-  driftedIds = [...ids];
+export function setRetiredPlatformTypes(ids: readonly string[]): void {
+  retiredIds = [...ids];
 }
 
 /**
@@ -73,15 +73,15 @@ export function setPlatformDrift(ids: readonly string[]): void {
  * either way. Call it after the delete has committed, never inside the
  * transaction, so a rolled-back delete leaves the type listed.
  */
-export function forgetPlatformDrift(id: string): void {
-  driftedIds = driftedIds.filter((drifted) => drifted !== id);
+export function forgetRetiredPlatformType(id: string): void {
+  retiredIds = retiredIds.filter((retired) => retired !== id);
 }
 
 /**
  * What this boot found. Empty until a boot records something, which is the
  * honest answer for a process that has not looked: a fresh instance and an
- * instance mid-boot both genuinely know of no drift.
+ * instance mid-boot both genuinely know of no retired type.
  */
-export function platformDrift(): readonly string[] {
-  return driftedIds;
+export function retiredPlatformTypes(): readonly string[] {
+  return retiredIds;
 }

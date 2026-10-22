@@ -298,8 +298,8 @@ describe("a restore of rows whose type no longer shapes them", () => {
       baseUrl: origin.apiUrl,
       apiKey: origin.managementKey,
     });
-    const drift = await manager.listPlatformTypeDrift();
-    expect(drift.data.data.find((row) => row.id === retired)).toMatchObject({
+    const listed = await manager.listRetiredPlatformTypes();
+    expect(listed.data.data.find((row) => row.id === retired)).toMatchObject({
       item_count: 1,
     });
     const exported = await archiveOf(working(origin));

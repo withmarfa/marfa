@@ -506,9 +506,9 @@ fn types_are_reached_at_their_doors_and_a_forced_delete_says_so() {
         query(&types::delete_request("user.x", false), "force"),
         None
     );
-    assert_eq!(types::drift_request().path(), "/platform-types/drift");
+    assert_eq!(types::retired_request().path(), "/platform-types/retired");
     assert_eq!(
-        types::prune_request("core.gone").path(),
+        types::delete_retired_request("core.gone").path(),
         "/platform-types/core.gone"
     );
     assert_eq!(

@@ -1244,7 +1244,7 @@ The server MUST list in the manifest of an archive each blob it carries, with it
 
 ### `search-and-filters/archive-missing-blobs`
 
-When an archive would carry a blob of which no attached store holds a copy that the location log records, at the blob's whole size, the server MUST name the blob in the manifest's `missing_blobs` with its MIME type and its size in bytes.
+When an archive would carry a blob of which no attached store holds a copy that the copy record records, at the blob's whole size, the server MUST name the blob in the manifest's `missing_blobs` with its MIME type and its size in bytes.
 
 **Reason:** one lost file costs the backup that file and not the rest of the instance, and the manifest, which a reader reads first, says which file the archive lacks. The bytes a struck or dropped copy leaves in its store are not the blob's (`stores/no-bytes-not-found`).
 
@@ -1304,7 +1304,7 @@ If the bytes `GET /export?format=archive` reads for a blob do not hash to the bl
 
 ### `search-and-filters/archive-bytes-struck`
 
-If the bytes `GET /export?format=archive` reads from a store's copy of a blob are as long as the blob and do not hash to its name, and the copy still does not hash to the name when it is read again under the blob's upload lock, then the server MUST strike that copy from the location log.
+If the bytes `GET /export?format=archive` reads from a store's copy of a blob are as long as the blob and do not hash to its name, and the copy still does not hash to the name when it is read again under the blob's upload lock, then the server MUST strike that copy from the copy record.
 
 **Reason:** the next export then reads the blob from another store that holds it, or names it in `missing_blobs`, as it does once `blob-integrity` has struck the copy. The first read is made without the lock, so the copy is read again before it is struck, in case it was put right in between.
 
@@ -1926,7 +1926,7 @@ The server MUST NOT hold a restored snapshot's properties to the current shape o
 
 When `POST /restore` writes an item that is not of a `core` or `system` type that this build ships, the server MUST NOT refuse it because its properties lack a field its type requires or hold a value its type's field does not accept.
 
-**Reason:** a type gains a required field while its rows stand (`types/field-gained`), so an archive that an export wrote can hold a row that its type no longer accepts, and an export that the same build cannot restore is not a usable backup (`search-and-filters/restore-no-count-limit`). The current rows are held to the shape they had as a snapshot's properties are (`search-and-filters/restore-history-shape-free`). A `core` or `system` type that this build ships is read by the server's own code and cannot be deleted or replaced, so its rows keep to it. An instance can also hold items of a platform type this build no longer ships (`GET /platform-types/drift`); a restore takes those as archived, as it takes an item of any type that is not one the build ships, whether or not the instance still carries the type's row (`search-and-filters/restore-rows-orphan`). A property that no type declares is still refused where strict mode names the type (`search-and-filters/restore-strict`), and an event's schedule is still judged (`occurrences/schedule-unreadable`).
+**Reason:** a type gains a required field while its rows stand (`types/field-gained`), so an archive that an export wrote can hold a row that its type no longer accepts, and an export that the same build cannot restore is not a usable backup (`search-and-filters/restore-no-count-limit`). The current rows are held to the shape they had as a snapshot's properties are (`search-and-filters/restore-history-shape-free`). A `core` or `system` type that this build ships is read by the server's own code and cannot be deleted or replaced, so its rows keep to it. An instance can also hold items of a platform type this build no longer ships (`GET /platform-types/retired`); a restore takes those as archived, as it takes an item of any type that is not one the build ships, whether or not the instance still carries the type's row (`search-and-filters/restore-rows-orphan`). A property that no type declares is still refused where strict mode names the type (`search-and-filters/restore-strict`), and an event's schedule is still judged (`occurrences/schedule-unreadable`).
 
 **Tests:** `compliance/restore-rows-shape.test.ts › restores an item that lacks a field its type now requires, as the archive holds it, and still holds an ordinary write to the type`.
 

@@ -9,29 +9,29 @@ import { withInstanceDatabase } from "../../utils/instance-database.js";
 import { expectMatchesSchema } from "../../utils/openapi.js";
 
 /**
- * A drifted platform type is one the instance holds as a platform row and the
- * build no longer ships: listed by `GET /platform-types/drift` and removed by
+ * A retired platform type is one the instance holds as a platform row and the
+ * build no longer ships: listed by `GET /platform-types/retired` and removed by
  * `DELETE /platform-types/{id}` once nothing holds it.
  *
  * **Arranged in the stored file, on a server of its own.** No door registers a
  * platform type, and the shared server's types match its build. The fixture
  * registers ordinary types over HTTP, stops the server, marks their rows as
  * platform rows, and boots the server on that file. The build ships none of
- * them, so each is drift. What is asserted is what the instance then answers.
+ * them, so each is retired. What is asserted is what the instance then answers.
  */
 let server: FreshServer | undefined;
 let working: MarfaClient;
 let manager: MarfaClient;
 
-const REMOVABLE = "drift.removable";
-const WITH_ITEMS = "drift.with-items";
-const PARENT = "drift.parent";
-const CHILD = "drift.child";
-const COMPATIBLE_TARGET = "drift.compatible-target";
-const READER = "drift.reader";
+const REMOVABLE = "retired.removable";
+const WITH_ITEMS = "retired.with-items";
+const PARENT = "retired.parent";
+const CHILD = "retired.child";
+const COMPATIBLE_TARGET = "retired.compatible-target";
+const READER = "retired.reader";
 
 beforeAll(async () => {
-  server = await bootFreshServer("platform-type-drift");
+  server = await bootFreshServer("retired-platform-types");
   const arranging = new MarfaClient({
     baseUrl: server.apiUrl,
     apiKey: server.workingKey,
@@ -88,15 +88,15 @@ afterAll(async () => {
   await server?.stop();
 }, 2 * FRESH_SERVER_TIMEOUT_MS);
 
-describe("a drifted platform type", () => {
-  it("keeps a drifted compatibility target until its reader drops the claim", async () => {
-    const refused = await manager.deletePlatformType(COMPATIBLE_TARGET);
+describe("a retired platform type", () => {
+  it("keeps a retired compatibility target until its reader drops the claim", async () => {
+    const refused = await manager.deleteRetiredPlatformType(COMPATIBLE_TARGET);
     expect(refused.status).toBe(409);
     expect(refused.error?.error).toMatchObject({
       code: "conflict",
       details: { dependent_type_ids: [READER] },
     });
-    const listed = await manager.listPlatformTypeDrift();
+    const listed = await manager.listRetiredPlatformTypes();
     expect(
       listed.data.data.find((row) => row.id === COMPATIBLE_TARGET),
     ).toMatchObject({ removable: false });
@@ -108,12 +108,12 @@ describe("a drifted platform type", () => {
         })
       ).status,
     ).toBe(200);
-    expect((await manager.deletePlatformType(COMPATIBLE_TARGET)).status).toBe(
-      200,
-    );
+    expect(
+      (await manager.deleteRetiredPlatformType(COMPATIBLE_TARGET)).status,
+    ).toBe(200);
   });
-  it("lists a drifted platform type, and removes it once nothing holds it", async () => {
-    const listed = await manager.listPlatformTypeDrift();
+  it("lists a retired platform type, and removes it once nothing holds it", async () => {
+    const listed = await manager.listRetiredPlatformTypes();
     expect(listed.status).toBe(200);
     expect(listed.data.data.find((row) => row.id === REMOVABLE)).toEqual({
       id: REMOVABLE,
@@ -124,7 +124,7 @@ describe("a drifted platform type", () => {
     // The witness: the type resolves as the registered type it was.
     expect((await working.getType(REMOVABLE)).status).toBe(200);
 
-    const removed = await manager.deletePlatformType(REMOVABLE);
+    const removed = await manager.deleteRetiredPlatformType(REMOVABLE);
     expect(removed.status, JSON.stringify(removed.error)).toBe(200);
     expect(removed.data).toEqual({ removed: true, id: REMOVABLE });
     await expectMatchesSchema(
@@ -137,10 +137,10 @@ describe("a drifted platform type", () => {
     const gone = await working.getType(REMOVABLE);
     expect(gone.status).toBe(404);
     expect(gone.error?.error.code).toBe("type_not_found");
-    const after = await manager.listPlatformTypeDrift();
+    const after = await manager.listRetiredPlatformTypes();
     expect(after.data.data.map((row) => row.id)).not.toContain(REMOVABLE);
     // The door answers the identifier as absent now.
-    const again = await manager.deletePlatformType(REMOVABLE);
+    const again = await manager.deleteRetiredPlatformType(REMOVABLE);
     expect(again.status).toBe(404);
     expect(again.error?.error.code).toBe("type_not_found");
 
@@ -156,7 +156,7 @@ describe("a drifted platform type", () => {
     ).toEqual([["type", managementKey.data.id]]);
   });
 
-  it("refuses a replacement and a delete of a drifted platform type through the type registry", async () => {
+  it("refuses a replacement and a delete of a retired platform type through the type registry", async () => {
     const replaced = await working.replaceType(WITH_ITEMS, {
       id: WITH_ITEMS,
       fields: { name: { type: "string" }, extra: { type: "string" } },
@@ -172,7 +172,7 @@ describe("a drifted platform type", () => {
 
     // The witness: the same forced delete takes a type registered at run
     // time that an item holds.
-    const runtime = "drift.runtime";
+    const runtime = "retired.runtime";
     expect(
       (
         await working.registerType({
@@ -188,8 +188,8 @@ describe("a drifted platform type", () => {
     expect((await working.deleteType(runtime, true)).status).toBe(200);
   });
 
-  it("refuses to remove a drifted type that items still carry", async () => {
-    const listed = await manager.listPlatformTypeDrift();
+  it("refuses to remove a retired type that items still carry", async () => {
+    const listed = await manager.listRetiredPlatformTypes();
     expect(listed.data.data.find((row) => row.id === WITH_ITEMS)).toEqual({
       id: WITH_ITEMS,
       item_count: 1,
@@ -197,7 +197,7 @@ describe("a drifted platform type", () => {
       removable: false,
     });
 
-    const refused = await manager.deletePlatformType(WITH_ITEMS);
+    const refused = await manager.deleteRetiredPlatformType(WITH_ITEMS);
     expect(refused.status).toBe(409);
     expect(refused.error?.error.code).toBe("conflict");
     expect(refused.error?.error.details?.item_count).toBe(1);
@@ -210,13 +210,13 @@ describe("a drifted platform type", () => {
     const id = items.data.data[0]!.id;
     expect((await working.deleteItem(id)).status).toBe(200);
     expect((await working.purgeItem(id)).status).toBe(200);
-    const removed = await manager.deletePlatformType(WITH_ITEMS);
+    const removed = await manager.deleteRetiredPlatformType(WITH_ITEMS);
     expect(removed.status, JSON.stringify(removed.error)).toBe(200);
     expect(removed.data).toEqual({ removed: true, id: WITH_ITEMS });
   });
 
-  it("refuses to remove a drifted type another type inherits from", async () => {
-    const listed = await manager.listPlatformTypeDrift();
+  it("refuses to remove a retired type another type inherits from", async () => {
+    const listed = await manager.listRetiredPlatformTypes();
     expect(listed.data.data.find((row) => row.id === PARENT)).toEqual({
       id: PARENT,
       item_count: 0,
@@ -224,7 +224,7 @@ describe("a drifted platform type", () => {
       removable: false,
     });
 
-    const refused = await manager.deletePlatformType(PARENT);
+    const refused = await manager.deleteRetiredPlatformType(PARENT);
     expect(refused.status).toBe(409);
     expect(refused.error?.error.code).toBe("conflict");
     expect(refused.error?.error.details?.child_types).toEqual([CHILD]);
@@ -233,7 +233,7 @@ describe("a drifted platform type", () => {
 
     // The witness: with the child gone the same removal is taken.
     expect((await working.deleteType(CHILD)).status).toBe(200);
-    const removed = await manager.deletePlatformType(PARENT);
+    const removed = await manager.deleteRetiredPlatformType(PARENT);
     expect(removed.status, JSON.stringify(removed.error)).toBe(200);
     expect(removed.data).toEqual({ removed: true, id: PARENT });
   });
