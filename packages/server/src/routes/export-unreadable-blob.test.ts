@@ -247,7 +247,7 @@ describe("an archive export of a blob it cannot read", () => {
     const ctx = await context();
     const hash = await upload(ctx, "bytes that outlive their copy");
     await noteNaming(ctx, hash);
-    // The log no longer records the copy, though the file is still there.
+    // The copy record no longer names the copy, though the file is still there.
     await ctx.storage.blobs.removeCopy(hash, ctx.blobs.disk.id);
 
     const { entries, manifest } = await exported(ctx);

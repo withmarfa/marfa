@@ -1476,8 +1476,8 @@ export interface BlobRegistry {
   detachStoresExcept(ids: readonly string[]): Promise<number>;
   listStores(): Promise<BlobStoreRow[]>;
   /**
-   * The attached stores of `kind` recorded at `locator` that the log
-   * records at least one copy in, with how many.
+   * The attached stores of `kind` recorded at `locator` that the copy
+   * record names at least one copy in, with how many.
    */
   copiesClaimedAt(
     kind: BlobStoreKind,
@@ -1490,8 +1490,8 @@ export interface BlobRegistry {
    */
   recordCopy(hash: string, storeId: string): Promise<void>;
   listCopies(hash: string): Promise<BlobCopy[]>;
-  /** For each of `hashes`, the ids of the stores the log records a copy
-   *  in, oldest copy first; a hash with no copy maps to an empty list. */
+  /** For each of `hashes`, the ids of the stores the copy record names
+   *  a copy in, oldest copy first; a hash with no copy maps to an empty list. */
   storeIdsOf(hashes: readonly string[]): Promise<Map<string, string[]>>;
   /** Durable cleanup intent, written with the copy removal and its audit. */
   queueCopyDeletion(hash: string, storeId: string): Promise<void>;
@@ -1503,10 +1503,10 @@ export interface BlobRegistry {
   /** Operational acknowledgement after bytes are removed; does not repeat the audit. */
   settleCopyDeletion(hash: string, storeId: string): Promise<void>;
 
-  /** Strike one store's copy from the log. True when a row went. */
+  /** Strike one store's copy from the copy record. True when a row went. */
   removeCopy(hash: string, storeId: string): Promise<boolean>;
   /**
-   * Remove one store's copy from the log only if at least `minCopies`
+   * Remove one store's copy from the copy record only if at least `minCopies`
    * copies in attached stores would remain, decided in the one statement
    * so no second writer can slip between the count and the removal.
    * `"dropped"`, `"below_minimum"`, or `"absent"` when no such row exists.
@@ -1580,7 +1580,7 @@ export interface BlobSizedRef {
   size_bytes: number;
 }
 
-/** One copy: a blob and the store the log says holds it. */
+/** One copy: a blob and the store the copy record says holds it. */
 export interface BlobCopyRef extends BlobSizedRef {
   store_id: string;
 }

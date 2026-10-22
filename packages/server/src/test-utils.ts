@@ -1128,7 +1128,7 @@ export function collectItemEvents(signal: AbortSignal): {
 /**
  * A second disk store beside the context's, standing in for the bucket:
  * the copy rules do not care which kind holds a copy, and a second folder
- * is a second store to the log. Attached the way the layer attaches one,
+ * is a second store to the copy record. Attached the way the layer attaches one,
  * so it has an id and a row, and added to the context's layer so the doors
  * and the housekeeping see it too.
  */

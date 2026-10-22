@@ -232,8 +232,8 @@ export function answeringFirst(
  * in and that holds the blob at its whole size, asked of the stores
  * themselves; `null` when none does. The stores are asked in the order
  * {@link answeringFirst} gives, the disk first otherwise, and a store that
- * fails or does not answer joins `unanswered`. The log is read once for the
- * lot.
+ * fails or does not answer joins `unanswered`. The copy record is read once
+ * for the lot.
  *
  * Throws `blob_store_unavailable` when no store holds a blob whole and a
  * store it asked failed or did not answer in time: a store that cannot

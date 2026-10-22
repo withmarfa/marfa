@@ -140,7 +140,7 @@ export class BlobReplicator {
       ),
     );
     if (!read) {
-      // The log names a copy the store no longer has. The integrity
+      // The copy record names a copy the store no longer has. The integrity
       // check is what strikes it; the next run finds another source.
       return false;
     }

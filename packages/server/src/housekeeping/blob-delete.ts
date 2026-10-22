@@ -66,9 +66,9 @@ export class CopyNotFound extends Error {
 
 /**
  * Drop one store's copy of a blob, when the copy record says enough live copies
- * would remain and their stores confirm they hold them. The log alone can
- * name a copy that is gone, such as one a store's late delete removed, and
- * a drop trusting it could take the last real copy. The log is asked first,
+ * would remain and their stores confirm they hold them. The copy record alone
+ * can name a copy that is gone, such as one a store's late delete removed, and
+ * a drop trusting it could take the last real copy. The copy record is asked first,
  * so a drop it refuses answers without waiting on any store. Copy
  * removal, audit and cleanup intent commit together before bytes are
  * deleted, so a store failure leaves a retryable intent and the drop still
@@ -117,7 +117,7 @@ export async function dropBlobCopy(
           ).length;
           throw new CopiesBelowMinimum(hash, live, minCopies);
         }
-        // The log allowed it; the stores must too. Thrown here, the row's
+        // The copy record allowed it; the stores must too. Thrown here, the row's
         // removal rolls back with the rest of the transaction.
         if (confirmed < minCopies) {
           throw new CopiesBelowMinimum(hash, confirmed + 1, minCopies);

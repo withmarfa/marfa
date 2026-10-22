@@ -243,8 +243,8 @@ export interface AppConfig {
    *  `MARFA_BLOB_REPLICATE_BATCH_BYTES`. */
   blobReplicateBatch?: number;
   blobReplicateBatchBytes?: number;
-  /** Cadence (ms) for `blob-integrity`, which checks the copies the log
-   *  claims, least recently checked first. A positive integer, for the
+  /** Cadence (ms) for `blob-integrity`, which checks the copies the
+   *  copy record names, least recently checked first. A positive integer, for the
    *  reason replication's is. Default 3_600_000 (1h); env override
    *  `MARFA_BLOB_INTEGRITY_INTERVAL_MS`. */
   blobIntegrityIntervalMs?: number;
