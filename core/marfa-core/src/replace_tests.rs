@@ -321,7 +321,7 @@ fn a_store_that_cannot_be_made_leaves_the_refused_one_where_it_was() {
     assert_eq!(
         listing(&path),
         names,
-        "a file of the partial store or a set-aside copy was left"
+        "a file of the store or a set-aside copy was left or lost"
     );
     no_set_aside_copy(&path);
     assert!(matches!(
@@ -441,4 +441,20 @@ fn a_store_whose_path_holds_characters_a_uri_reserves_is_read_where_it_is() {
         })
     ));
     assert_eq!(files(&moved), before);
+}
+
+#[test]
+fn a_store_with_every_set_aside_name_taken_is_refused_and_left_alone() {
+    let (_dir, path) = refused_store(false);
+    for n in 1..=1000u32 {
+        std::fs::write(beside(&path, &format!(".refused-{n}")), b"x").unwrap();
+    }
+    let before = files(&path);
+    let names = listing(&path);
+    assert!(matches!(
+        Core::replace_refused(&path, None),
+        Err(CoreError::Store(ref message)) if message.contains("1000 copies")
+    ));
+    assert_eq!(files(&path), before);
+    assert_eq!(listing(&path), names);
 }
