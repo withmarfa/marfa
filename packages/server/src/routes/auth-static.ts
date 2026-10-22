@@ -2,7 +2,6 @@
  *  the browser cache identity whenever the asset bytes change. */
 import { Hono } from "hono";
 import { createHash } from "node:crypto";
-import { AUTH_CSS } from "./auth-static/auth-css.js";
 import { PAGE_ASSETS } from "../pages/assets.js";
 
 function makeAsset(body: string, contentType: string) {
@@ -16,8 +15,6 @@ function makeAsset(body: string, contentType: string) {
   };
 }
 
-const CSS = makeAsset(AUTH_CSS, "text/css; charset=utf-8");
-
 const ASSETS = {
   "pages.css": makeAsset(
     PAGE_ASSETS["pages.css"].body,
@@ -27,7 +24,6 @@ const ASSETS = {
     PAGE_ASSETS["pages.js"].body,
     PAGE_ASSETS["pages.js"].contentType,
   ),
-  "auth.css": CSS,
 };
 
 export function authAssetUrl(name: keyof typeof ASSETS): string {

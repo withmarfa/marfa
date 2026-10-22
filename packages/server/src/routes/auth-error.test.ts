@@ -3,6 +3,7 @@ import { describe, it, expect, afterEach } from "vitest";
 import { createTestContext, request } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { renderAuthErrorPage } from "./test-render.js";
+import { visibleText } from "../pages/reading.js";
 
 /**
  * `/auth/error` page renderer + route smoke. The route exists so OAuth
@@ -20,11 +21,9 @@ afterEach(async () => {
 const ORIGIN = "http://localhost:0";
 
 describe("renderAuthErrorPage", () => {
-  it("uses the shared auth layout and links back to sign-in", () => {
+  it("uses the page system and links back to sign-in", () => {
     const html = renderAuthErrorPage("invalid_client");
-    expect(html).toContain(
-      `<link rel="stylesheet" href="${authAssetUrl("auth.css")}" nonce="test-nonce">`,
-    );
+    expect(html).toContain(`href="${authAssetUrl("pages.css")}"`);
     expect(html).toContain("Back to sign in");
     expect(html).toContain('href="/auth/sign-in"');
   });
@@ -60,7 +59,7 @@ describe("GET /auth/error", () => {
     expect(res.headers.get("content-type")).toMatch(/text\/html/);
     expect(res.headers.get("cache-control")).toContain("no-store");
     const body = await res.text();
-    expect(body).toContain("Couldn't sign you in");
+    expect(visibleText(body)).toContain("Couldn't sign you in");
     expect(body).toContain('href="/auth/sign-in"');
   });
 });

@@ -6,8 +6,7 @@
  * that asks what a page says does not have to invent what the page is allowed
  * to load.
  */
-import { renderAuthLayout as layout } from "./auth-layout.js";
-import { renderAuthErrorPage as authError } from "./auth-error.js";
+import { renderAuthErrorPage as authError } from "./auth-error-page.js";
 import { renderConsentScreen as consent } from "./consent.js";
 import {
   renderDeviceConsentScreen as deviceConsent,
@@ -25,10 +24,6 @@ import { renderAuthorizeExpiredPage as expired } from "./authorize-expired-page.
 export const TEST_NONCE = "test-nonce";
 
 type WithoutNonce<T> = Omit<T, "nonce">;
-
-export const renderAuthLayout = (
-  params: WithoutNonce<Parameters<typeof layout>[0]>,
-): string => layout({ ...params, nonce: TEST_NONCE });
 
 export const renderConsentScreen = (
   params: WithoutNonce<Parameters<typeof consent>[0]>,
