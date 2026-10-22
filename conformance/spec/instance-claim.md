@@ -486,11 +486,11 @@ The server MUST send with the picture, as its `ETag`, the quoted SHA-256 of the 
 
 ### `instance-claim/picture-read-authority`
 
-If a caller of `GET /owner/picture` is neither the signed-in owner nor a credential that holds profile read permission for `avatar`, then the server MUST refuse the request with `403 forbidden`.
+If an authenticated caller of `GET /owner/picture` is neither the signed-in owner nor a credential that holds profile read permission for `avatar`, then the server MUST refuse the request with `403 forbidden`.
 
-**Reason:** The profile page tells the owner an app sees the picture only if the owner lets it.
+**Reason:** The profile page tells the owner an app sees the picture only if the owner lets it. A request with no credential is answered `401 unauthorized` by `keys-and-oauth/no-credential`.
 
-**Tests:** `compliance/owner-picture.test.ts › serves the picture only to the owner and to a credential that may read the avatar`.
+**Tests:** `compliance/owner-picture.test.ts › serves the picture only to the owner and to a credential that may read the avatar`, `compliance/unauthenticated.test.ts › answers 401 unauthorized on each of them`.
 
 ### `instance-claim/picture-none`
 
