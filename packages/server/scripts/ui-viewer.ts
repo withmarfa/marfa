@@ -17,7 +17,7 @@
  */
 
 import { serve } from "@hono/node-server";
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { PAGE_ASSETS } from "../src/pages/assets.js";
 import { TABS, resolveVariant } from "./ui-viewer-fixtures.js";
 
@@ -96,7 +96,92 @@ app.get("/preview", (c) => {
   return c.html(decorate(resolved.variant.render(), theme));
 });
 
-app.get("/", (c) => c.html(renderShell()));
+/**
+ * Where each page lives on a real server, and the screen that shows it here,
+ * so a link or form inside a preview opens the screen it leads to. The first
+ * match wins.
+ */
+const ADDRESSES: readonly [RegExp, string, string][] = [
+  [/^\/$/, "console", "home"],
+  [/^\/auth\/owner\/items$/, "console", "items"],
+  [/^\/auth\/owner\/types\/[^/]+$/, "console", "type"],
+  [/^\/auth\/owner\/trash$/, "console", "trash"],
+  [/^\/auth\/owner\/keys$/, "console", "keys"],
+  [/^\/auth\/owner\/keys\/new$/, "console", "create-key"],
+  [/^\/auth\/owner\/keys\/[^/]+\/copy$/, "console", "gone-key"],
+  [/^\/auth\/owner\/keys\/[^/]+$/, "console", "key"],
+  [/^\/auth\/owner\/apps$/, "console", "apps"],
+  [/^\/auth\/owner\/apps\/[^/]+$/, "console", "app"],
+  [/^\/auth\/owner\/connectors$/, "console", "connectors"],
+  [/^\/auth\/owner\/connectors\/[^/]+$/, "console", "connector"],
+  [/^\/auth\/owner\/folders$/, "console", "folders"],
+  [/^\/auth\/owner\/folders\/[^/]+$/, "console", "folder"],
+  [/^\/auth\/owner\/browsers$/, "console", "browsers"],
+  [/^\/auth\/owner\/activity$/, "console", "activity"],
+  [/^\/auth\/owner\/health$/, "console", "health"],
+  [/^\/auth\/owner\/export$/, "console", "export"],
+  [/^\/auth\/owner\/settings$/, "console", "settings"],
+  [/^\/auth\/owner\/settings\/[^/]+$/, "console", "settings-group"],
+  [/^\/auth\/owner\/general$/, "console", "general"],
+  [/^\/auth\/owner\/profile$/, "console", "profile"],
+  [/^\/auth\/owner\/passkeys$/, "console", "password"],
+  [/^\/auth\/sign-in$/, "getting-in", "sign-in"],
+  [/^\/auth\/forgot-password$/, "getting-in", "forgot-password"],
+  [/^\/auth\/oauth2\/end-session$/, "getting-in", "signed-out"],
+  [/^\/auth\/error$/, "getting-in", "sign-in-error"],
+  [/^\/auth\/device$/, "getting-in", "device-code"],
+  [/^\/auth\/device\/consent$/, "getting-in", "device-approval"],
+  [/^\/setup\/passkey$/, "getting-in", "setup-passkey"],
+  [/^\/setup\/name$/, "getting-in", "setup-name"],
+  [/^\/setup\/connect$/, "getting-in", "setup-connect"],
+  [/^\/setup\/backups$/, "getting-in", "setup-backups"],
+  [/^\/setup$/, "getting-in", "claim-code"],
+];
+
+/**
+ * Opens the screen a real address leads to, in its first state and in the
+ * theme of the preview the link was followed from.
+ */
+function follow(c: Context): Response {
+  const url = new URL(c.req.url);
+  const match = ADDRESSES.find(([pattern]) => pattern.test(url.pathname));
+  const screenId =
+    match?.[2] === "claim-code" && url.searchParams.get("step") === "details"
+      ? "claim-details"
+      : match?.[2];
+  const resolved =
+    match && screenId
+      ? TABS.find((tab) => tab.id === match[1])?.screens.find(
+          (screen) => screen.id === screenId,
+        )
+      : undefined;
+  const variant = resolved?.variants[0];
+  if (!match || !resolved || !variant) {
+    return c.text(`The viewer has no screen for ${url.pathname}.`, 404);
+  }
+  const referer = c.req.header("referer");
+  const theme = parseTheme(
+    referer
+      ? (new URL(referer).searchParams.get("theme") ?? undefined)
+      : undefined,
+  );
+  const query = new URLSearchParams({
+    tab: match[1],
+    screen: resolved.id,
+    variant: variant.id,
+    theme,
+  });
+  return c.redirect(`/preview?${query.toString()}`);
+}
+
+// The console's Home is at "/", where the viewer itself is too: a frame asking
+// for it is following a link.
+app.get("/", (c) =>
+  c.req.header("sec-fetch-dest") === "iframe"
+    ? follow(c)
+    : c.html(renderShell()),
+);
+app.on(["GET", "POST"], "*", follow);
 
 /**
  * The gallery shell: a top-center tab control, a left sidebar of screens, an
@@ -989,7 +1074,27 @@ function renderShell(): string {
         applyView();
         markActive();
         updateMarkers(opts);
-        loadPreview();
+        if (!opts.keepPreview) loadPreview();
+      }
+
+      // A link inside the preview can open another screen; follow it in the
+      // sidebars without loading the preview again.
+      function syncFromFrame() {
+        var location;
+        try { location = frame.contentWindow.location; } catch (e) { return; }
+        if (location.pathname !== '/preview') return;
+        var params = new URLSearchParams(location.search);
+        var tab = params.get('tab');
+        var screen = params.get('screen');
+        var variant = params.get('variant');
+        if (!tab || !screen || !variant) return;
+        if (tab === state.tab && screen === state.screen && variant === state.variant) return;
+        var tabChanged = tab !== state.tab;
+        var screenChanged = screen !== state.screen;
+        state.tab = tab;
+        state.screen = screen;
+        state.variant = variant;
+        refresh({ rebuildScreens: tabChanged, rebuildStates: screenChanged, keepPreview: true });
       }
 
       function selectTab(tabId) {
@@ -1085,6 +1190,7 @@ function renderShell(): string {
       // Same-origin, so after each preview loads we reach in and drop that
       // focus back to the gallery. Clicking a field still focuses it normally.
       frame.addEventListener('load', function () {
+        syncFromFrame();
         try {
           var doc = frame.contentDocument;
           var el = doc && doc.activeElement;
