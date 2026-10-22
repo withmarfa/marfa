@@ -1191,7 +1191,6 @@ it.each([
   ["POST", "/items/:id/tags", { tags: ["binned"] }],
   ["DELETE", "/items/:id/tags/binned", undefined],
   ["PUT", "/items/:id/metadata", { tags: ["binned"] }],
-  ["PATCH", "/items/:id/metadata", { tags: ["binned"] }],
   ["PUT", "/items/:id/extensions/binned", { binned: true }],
   ["DELETE", "/items/:id/extensions/binned", undefined],
   ["PATCH", "/items/:id", { version: 1, properties: { title: "Binned" } }],

@@ -80,7 +80,6 @@ const DATA_PLANE = [
   "GET /search",
   "PATCH /edges/:id",
   "PATCH /items/:id",
-  "PATCH /items/:id/metadata",
   "POST /edges",
   "POST /edges/bulk",
   "POST /items",

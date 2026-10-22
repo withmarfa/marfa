@@ -226,39 +226,6 @@ export class SqliteMetadataStore implements MetadataStore {
     return this.get(itemId);
   }
 
-  async merge(itemId: string, tags?: string[]): Promise<Metadata> {
-    return await this.db.transaction(async (tx) => {
-      const row = await tx
-        .select()
-        .from(metadata)
-        .where(eq(metadata.item_id, itemId))
-        .get();
-      const current: Metadata = row
-        ? rowToMetadata(row)
-        : { item_id: itemId, tags: [], extensions: {} };
-      const mergedTags = tags
-        ? [...new Set([...current.tags, ...tags])]
-        : current.tags;
-      if (
-        mergedTags.length > MAX_TAGS_PER_ITEM &&
-        mergedTags.length > current.tags.length
-      ) {
-        // Inside the transaction that computes the set, on the same read the
-        // write uses. The note in `tag-limits.ts` says why that is the copy
-        // that holds, and why it fires only on an increase.
-        throw new MarfaError(
-          ErrorCode.VALIDATION_ERROR,
-          `Maximum ${String(MAX_TAGS_PER_ITEM)} tags per item (including existing tags)`,
-        );
-      }
-      await this.writeSidecar(tx, itemId, {
-        tags: JSON.stringify(mergedTags),
-      });
-      await this.searchStore.setTags(itemId, mergedTags);
-      return this.readBack(tx, itemId);
-    });
-  }
-
   async addTags(itemId: string, tags: string[]): Promise<Metadata> {
     return await this.db.transaction(async (tx) => {
       const row = await tx

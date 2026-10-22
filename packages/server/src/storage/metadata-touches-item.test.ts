@@ -82,7 +82,6 @@ const writes: {
   run: (itemId: string) => Promise<unknown>;
 }[] = [
   { name: "set", run: (id) => ctx.storage.metadata.set(id, ["alpha"]) },
-  { name: "merge", run: (id) => ctx.storage.metadata.merge(id, ["bravo"]) },
   {
     name: "addTags",
     run: (id) => ctx.storage.metadata.addTags(id, ["charlie"]),

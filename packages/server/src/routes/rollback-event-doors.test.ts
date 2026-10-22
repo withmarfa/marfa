@@ -652,24 +652,6 @@ const doors: Door[] = [
     survivesBreakage: false,
   },
   {
-    name: "PATCH /items/{id}/metadata merges the tags",
-    family: "metadata",
-    transactions: 1,
-
-    setup: async () => ({ item: await makeNote("tagged") }),
-    act: async (s) => {
-      const res = await request(ctx.app, "PATCH", `/items/${s.item}/metadata`, {
-        key: ctx.workingKey,
-        body: { tags: ["merged"] },
-      });
-      return res.status === 200;
-    },
-    attributable: (h, s) => itemEventsFor(h, s.item),
-    landed: async (s) =>
-      (await ctx.storage.metadata.get(s.item)).tags.includes("merged"),
-    survivesBreakage: false,
-  },
-  {
     name: "POST /items/{id}/tags adds tags",
     family: "metadata",
     transactions: 1,
@@ -1292,8 +1274,8 @@ const PUBLISHES_UNDER_GUARD: Record<string, PublishingFile> = {
     why: "every item write's own events, inside its transaction: a create and its edges, an update with the keep-both copy it may write and the edges either changed, a delete and what its cascade took, a transition, a restore and what either brought back, and a purge with the edges it took",
   },
   "routes/items.ts": {
-    sites: 4,
-    why: "the four tag and metadata doors",
+    sites: 3,
+    why: "the three tag and metadata doors",
   },
   "routes/edges.ts": { sites: 3, why: "edge create, update and delete" },
   "routes/extensions.ts": { sites: 2, why: "the two extension doors" },

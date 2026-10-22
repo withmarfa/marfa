@@ -237,7 +237,6 @@ describe("a write raced against a retype is refused on every door", () => {
   for (const [door, method, path, body] of [
     ["POST /items/{id}/tags", "POST", "tags", { tags: ["after"] }],
     ["PUT /items/{id}/metadata", "PUT", "metadata", { tags: ["after"] }],
-    ["PATCH /items/{id}/metadata", "PATCH", "metadata", { tags: ["after"] }],
     ["DELETE /items/{id}/tags/{tag}", "DELETE", "tags/before", undefined],
     [
       "PUT /items/{id}/extensions/{namespace}",

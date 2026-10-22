@@ -148,7 +148,6 @@ const NOT_A_STATE_CREATE_DOOR: Record<string, string> = {
   "POST /items/tombstones": "writes a purge's record, reaches no row's state",
   "POST /items/:id/tags": "metadata layer, reaches no state",
   "PUT /items/:id/metadata": "metadata layer, reaches no state",
-  "PATCH /items/:id/metadata": "metadata layer, reaches no state",
   "PUT /items/:id/extensions/:namespace": "extension layer, reaches no state",
   "PATCH /items/:id": "writes properties; `state` is not on its input schema",
 };

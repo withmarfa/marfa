@@ -153,7 +153,6 @@ export const PUBLIC_TAGS: readonly PublicTag[] = [
     operations: [
       "getItemMetadata",
       "replaceItemMetadata",
-      "updateItemMetadata",
       "addItemTags",
       "removeItemTag",
       "listTags",

@@ -1,9 +1,8 @@
 /**
  * An extension write reaches another subscriber.
  *
- * The four metadata doors — `PUT` and `PATCH /items/{id}/metadata`, the
- * tag add and the tag remove — publish `metadata_changed`. The two
- * extension doors wrote the same metadata row and published nothing, so
+ * The three metadata doors, `PUT /items/{id}/metadata`, the tag add and
+ * the tag remove, publish `metadata_changed`. The two extension doors wrote the same metadata row and published nothing, so
  * an app that stored sidecar state through them changed a record no
  * second device was ever told about.
  *

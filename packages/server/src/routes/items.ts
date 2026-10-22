@@ -1149,75 +1149,6 @@ const putMetadataRoute = createRoute({
   },
 });
 
-const patchMetadataRoute = createRoute({
-  operationId: "updateItemMetadata",
-  method: "patch",
-  path: "/{id}/metadata",
-  tags: ["Metadata"],
-  summary: "Merge tags into an item",
-  description:
-    "Merges the tags you send into the item's tags as a set union, and returns its metadata. Existing tags stay. To replace them, use `PUT /items/{id}/metadata`.",
-  security: [{ bearerAuth: [] }],
-  middleware: readsSomeType,
-  request: {
-    params: IdParam,
-    body: {
-      content: {
-        "application/json": {
-          schema: z.strictObject({
-            tags: z
-              .array(TagSchema)
-              .optional()
-              .describe(
-                "Tags to add: each up to 128 characters. The item can hold at most 100.",
-              ),
-          }),
-        },
-      },
-    },
-  },
-  responses: {
-    200: {
-      content: {
-        "application/json": {
-          schema: MetadataResponseSchema,
-        },
-      },
-      description: "Returns the item's metadata with the merged tags.",
-    },
-    400: {
-      content: {
-        "application/json": {
-          schema: makeErrorResponseSchema([
-            "validation_error",
-            "missing_required_field",
-            "invalid_id",
-          ]),
-        },
-      },
-      description:
-        "- `validation_error`: `tags` is not a list of valid tags or the item would hold more than 100, or the body has a field this endpoint doesn't take.\n- `invalid_id`: the ID is not a valid item ID.",
-    },
-    401: {
-      content: {
-        "application/json": {
-          schema: makeErrorResponseSchema(["unauthorized"]),
-        },
-      },
-      description: "Unauthorized",
-    },
-    403: metadataTypeRefusal("write"),
-    404: {
-      content: {
-        "application/json": {
-          schema: makeErrorResponseSchema(["item_not_found"]),
-        },
-      },
-      description: ITEM_NOT_FOUND_ON_WRITE,
-    },
-  },
-});
-
 const addTagsRoute = createRoute({
   operationId: "addItemTags",
   method: "post",
@@ -2282,79 +2213,6 @@ export function itemRoutes(storage: Storage) {
     );
   });
 
-  router.openapi(patchMetadataRoute, async (c) => {
-    const { id } = c.req.valid("param");
-    if (!isValidId(id)) {
-      throw new MarfaError(ErrorCode.INVALID_ID, "Invalid item ID");
-    }
-
-    const body = c.req.valid("json");
-    const tags = body.tags;
-    // The row is read, gated and written in one transaction, so a
-    // change to it landing in between cannot slip past the gate.
-    const { metadata } = await runAuditedTransaction(
-      storage,
-      async () => {
-        const item = requireWritableRow(
-          c,
-          await storage.items.getIncludingTrashed(id),
-          () =>
-            new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`),
-        );
-        requireTypeAccess(c, item, "write");
-        // The metadata layer reaches the same row the properties doors
-        // guard, so it answers to the same row-level rule.
-
-        // Not subsumed by the projection below, though it reads as though it
-        // should be: the projection counts a deduplicated set, so a body of 101
-        // copies of one tag projects to one and passes it. This bounds what a
-        // caller may send, that one bounds what the item may hold, and they are
-        // different questions with different messages.
-        if (Array.isArray(tags) && tags.length > MAX_TAGS_PER_ITEM) {
-          throw new MarfaError(
-            ErrorCode.VALIDATION_ERROR,
-            `Maximum ${String(MAX_TAGS_PER_ITEM)} tags per item`,
-          );
-        }
-
-        // No projection here. Reading the metadata row, unioning the incoming
-        // tags into it and refusing over the bound would read in one
-        // transaction and write in another, so it would bound nothing under
-        // concurrency, and it would cost an unconditional read on every
-        // successful request to duplicate a refusal the store makes inside
-        // the transaction that computes the set, with the same status, code
-        // and message, so nothing on the wire could tell the two apart.
-        //
-        // What is still checked above is what a caller may *send*, which is a
-        // different question and one the store cannot answer: a body of a
-        // hundred and one copies of one tag projects to one and is inside the
-        // bound.
-
-        const written = await storage.metadata.merge(id, tags);
-        // With the write, so the change and its event commit together.
-        await publish({
-          type: "metadata_changed",
-          item: await itemAfterMetadataWrite(storage, item),
-          metadata: written,
-        });
-        return { metadata: written };
-      },
-      {
-        client_ip: c.get("clientIp") ?? null,
-        key_id: requireAuth(c).id,
-        action: "item.metadata.update",
-        resource_type: "item",
-        resource_id: id,
-        details: { tags },
-      },
-    );
-
-    return c.json(
-      { metadata: readableMetadata(metadata, c.get("apiKey")) },
-      200,
-    );
-  });
-
   router.openapi(addTagsRoute, async (c) => {
     const { id } = c.req.valid("param");
     if (!isValidId(id)) {
@@ -2378,9 +2236,11 @@ export function itemRoutes(storage: Storage) {
         // The metadata layer reaches the same row the properties doors
         // guard, so it answers to the same row-level rule.
 
-        // The resulting set is bounded by the store, inside the transaction that
-        // computes it. See the sibling door above for why there is no
-        // projection here.
+        // No projection of the resulting set here: reading the row, unioning
+        // the tags into it and refusing over the bound would read in one
+        // transaction and write in another, so it would bound nothing under
+        // concurrency. The store refuses inside the transaction that computes
+        // the set, with the same status, code and message.
         const written = await storage.metadata.addTags(id, tags);
         // With the write, so the change and its event commit together.
         await publish({

@@ -55,7 +55,6 @@ const NOT_WRITING: Record<string, string> = {
   "DELETE /items/:id/extensions/:namespace": "an extension, not a property",
   "DELETE /items/:id/tags/:tag": "a tag",
   "POST /items/bulk-actions/jobs/:id/cancel": "cancels a queued job",
-  "PATCH /items/:id/metadata": "metadata",
   "PUT /items/:id/metadata": "metadata",
   "PUT /items/:id/extensions/:namespace": "an extension, not a property",
   "POST /items/:id/tags": "a tag",
