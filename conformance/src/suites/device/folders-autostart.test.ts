@@ -4,6 +4,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  renameSync,
   readFileSync,
   realpathSync,
   rmSync,
@@ -926,6 +927,65 @@ describe("folder syncing from login", () => {
     expect(sent).toContain(`Bearer ${kept}`);
     expect(sent.filter((header) => header !== `Bearer ${kept}`)).toEqual([]);
   });
+
+  it("reads the key file again when it opens a folder, and holds a folder back while the file is unsafe", async () => {
+    const harness = await folderHarness("autostart-keyfile-reread");
+    made.push(harness);
+    scriptFolderWrites(harness);
+    const root = standIn("keyfile-reread");
+    const first = "device-fixture-key-before-rotation";
+    const second = "device-fixture-key-after-rotation";
+    const path = keyFile(root, harness.server.url, first);
+    // The folder's directory is away when the watch starts, so it is opened
+    // later, after the file has changed.
+    renameSync(harness.dir, `${harness.dir}-away`);
+    const from = harness.server.requests.length;
+    parsed<Switched>(
+      autostart(root, "on", {
+        registry: harness.registry,
+        env: { MARFA_KEYCHAIN: join(root, "none.keychain-db") },
+        args: ["--key-file", path],
+      }),
+    );
+    const reason = () =>
+      parsed<Status>(
+        autostart(root, "status", { registry: harness.registry }),
+      ).record?.folders.find((folder) => folder.dir === harness.dir)?.reason;
+    await vi.waitFor(() => expect(reason()).toBe("missing"), WAIT);
+    // Rotated, and unsafe: the folder is held back with the reason.
+    keyFile(root, harness.server.url, second, 0o644);
+    renameSync(`${harness.dir}-away`, harness.dir);
+    await vi.waitFor(() => expect(reason()).toBe("invalid"), {
+      ...WAIT,
+      timeout: 90_000,
+    });
+    // Safe again: the folder is taken up with the rotated key.
+    chmodSync(path, 0o600);
+    await vi.waitFor(
+      () => {
+        const folder = parsed<Status>(
+          autostart(root, "status", { registry: harness.registry }),
+        ).record?.folders.find((entry) => entry.dir === harness.dir);
+        expect(folder?.watching).toBe(true);
+      },
+      { ...WAIT, timeout: 90_000 },
+    );
+    put(
+      harness,
+      "Rotated.md",
+      "---\ntitle: Rotated\n---\nthe new key is used\n",
+    );
+    await vi.waitFor(
+      () => expect(sentTitles(harness)).toEqual(["Rotated"]),
+      WAIT,
+    );
+    const sent = harness.server.requests
+      .slice(from)
+      .map((request) => request.headers.authorization)
+      .filter((header) => header !== undefined);
+    expect(sent).toContain(`Bearer ${second}`);
+    expect(sent).not.toContain(`Bearer ${first}`);
+  }, 240_000);
 
   it("does not send a key file's key to a folder of another server", async () => {
     const harness = await folderHarness("autostart-keyfile-other");

@@ -4672,27 +4672,65 @@ The CLI MUST NOT write into the agent a credential, a server address, a variable
 
 ### `folders/autostart-key-file`
 
-Where `folders autostart on` is given `--key-file` naming a file, the CLI MUST make the agent run `folders watch` with `--key-file` and the absolute path of that file before `--log`, and MUST write no other part of the file into the agent. Where `--key-file` is not given, the CLI MUST make the agent run the watch as `folders/autostart-runs-watch` says.
+Where `folders autostart on` is given `--key-file` naming a file, the CLI MUST make the agent run `folders watch` with `--key-file` and the absolute path of that file before `--log`, and write no other part of the file into the agent.
 
-**Reason:** A machine where nobody signs in has no keychain to unlock, so the watch takes the server and key from a file that only its owner can read. The agent holds the path alone, so a key that is rotated is read from the file at the watch's next start.
+**Reason:** A machine where nobody signs in has no keychain to unlock, so the watch takes the server and key from a file that only its owner can read. The agent holds the path alone, so a key that is rotated is read from the file when the watch next opens a folder.
 
 **Tests:** `device/folders-autostart.test.ts › writes the path of a key file into the agent and nothing from it, and says so in the status`.
 
 ### `folders/autostart-key-file-refused`
 
-If the file named by `folders autostart on --key-file` or `folders watch --key-file` does not exist, is not a regular file, is a symbolic link, has more than one name, belongs to another user, can be read by its group or by others, lacks a `MARFA_API_URL` line or a `MARFA_API_KEY` line, holds an address that is not a server address, or lies inside a folder the folder registry lists, then the CLI MUST exit 1 with `invalid`, name the file and the reason and never print a value from it, and `folders autostart on` MUST write nothing.
+If the file named by `folders autostart on --key-file` or `folders watch --key-file` does not exist, is not a regular file, is a symbolic link, has more than one name, belongs to another user, can be read by its group or by others, lacks a `MARFA_API_URL` line or a `MARFA_API_KEY` line, holds an address that is not a server address, or lies inside a folder the folder registry lists, then the CLI MUST exit 1 with `invalid`, naming the file and the reason and printing no value from it.
 
 **Reason:** A key readable by others is no safer than one on a command line, and a key file inside a folder, under any of its names, would be sent to the server as one of its files. Refusing in `on` finds the fault now and not at the next login.
 
 **Tests:** `device/folders-autostart.test.ts › refuses a key file that others can read, a link, one that lacks a name and one inside a folder, naming the reason and writing nothing`.
 
+### `folders/autostart-key-file-refused-writes-nothing`
+
+If the file named by `folders autostart on --key-file` is refused under `folders/autostart-key-file-refused`, then the CLI MUST write no agent.
+
+**Reason:** An agent that names a file the watch cannot use would fail at every login.
+
+**Tests:** `device/folders-autostart.test.ts › refuses a key file that others can read, a link, one that lacks a name and one inside a folder, naming the reason and writing nothing`.
+
 ### `folders/watch-key-file`
 
-While `folders watch` runs with `--key-file`, the CLI MUST read the file again each time it opens a folder and use the file’s address and key for each folder whose copy records that server, MUST read the keychain for no folder, and MUST NOT send the key to a folder of another server. If the file no longer meets `folders/autostart-key-file-refused` when a folder is opened, then the CLI MUST report that folder as not watched with the reason and try it again, and go on with the others.
+While `folders watch` runs with `--key-file`, the CLI MUST use the address and key of the file for each folder whose copy records that server.
 
-**Reason:** A setup that must never raise a keychain dialog has no use for one, and one key cannot serve every folder’s server. A key that is rotated in the file is the one used at the next open, and a file that has become unsafe, or lies inside a folder added since, stops being used.
+**Tests:** `device/folders-autostart.test.ts › keeps a folder in step from the agent with the key file`.
 
-**Tests:** `device/folders-autostart.test.ts › keeps a folder in step from the agent with the key file`, `› does not send a key file's key to a folder of another server`, `› reads the keychain for no folder with a key file, though it keeps a credential for the folder's server`.
+### `folders/watch-key-file-reread`
+
+While `folders watch` runs with `--key-file` over every folder, the CLI MUST read the file again each time it opens a folder.
+
+**Reason:** A key that is rotated in the file is the one used at the next open, and a file that has become unsafe, or lies inside a folder added since, stops being used.
+
+**Tests:** `device/folders-autostart.test.ts › reads the key file again when it opens a folder, and holds a folder back while the file is unsafe`.
+
+### `folders/watch-key-file-unsafe`
+
+If the file no longer meets `folders/autostart-key-file-refused` when `folders watch` opens a folder, then the CLI MUST report that folder as not watched, with the reason.
+
+**Reason:** One folder or one fault stays contained: the other folders go on, and the folder is tried again.
+
+**Tests:** `device/folders-autostart.test.ts › reads the key file again when it opens a folder, and holds a folder back while the file is unsafe`.
+
+### `folders/watch-key-file-no-keychain`
+
+While `folders watch` runs with `--key-file`, the CLI MUST NOT read the keychain for any folder.
+
+**Reason:** A setup that must never raise a keychain dialog has no use for one.
+
+**Tests:** `device/folders-autostart.test.ts › reads the keychain for no folder with a key file, though it keeps a credential for the folder's server`.
+
+### `folders/watch-key-file-other-server`
+
+While `folders watch` runs with `--key-file`, the CLI MUST NOT send the key of the file to a folder of another server.
+
+**Reason:** One key cannot serve every folder's server.
+
+**Tests:** `device/folders-autostart.test.ts › does not send a key file's key to a folder of another server`.
 
 ### `folders/autostart-file-mode`
 
