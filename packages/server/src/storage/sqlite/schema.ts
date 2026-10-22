@@ -850,7 +850,6 @@ export const auth_user = sqliteTable(
     emailVerified: integer("email_verified", { mode: "boolean" })
       .notNull()
       .default(false),
-    image: text("image"),
     createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
     updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
   },
@@ -867,9 +866,7 @@ export const owner_picture = sqliteTable("owner_picture", {
     .references(() => auth_user.id, { onDelete: "cascade" }),
   content_type: text("content_type").notNull(),
   bytes: blob("bytes", { mode: "buffer" }).notNull(),
-  size_bytes: integer("size_bytes").notNull(),
   sha256: text("sha256").notNull(),
-  updated_at: text("updated_at").notNull(),
 });
 
 export const auth_session = sqliteTable(

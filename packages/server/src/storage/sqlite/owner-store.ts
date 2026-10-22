@@ -25,9 +25,6 @@ export class SqliteOwnerStore implements OwnerStore {
       .update(auth_user)
       .set({
         ...(input.name !== undefined ? { name: input.name } : {}),
-        // The sign-in library serves `image` as the `picture` claim, so it
-        // never holds an address: the claim comes from the stored picture.
-        ...(input.avatar !== undefined ? { image: null } : {}),
         ...(input.email !== undefined && input.email !== owner.email
           ? { email: input.email, emailVerified: false }
           : {}),
@@ -52,13 +49,11 @@ export class SqliteOwnerStore implements OwnerStore {
       user_id: owner.id,
       content_type: input.contentType,
       bytes,
-      size_bytes: bytes.length,
       sha256: createHash("sha256").update(bytes).digest("hex"),
-      updated_at: clock.now().toISOString(),
     });
     await this.db
       .update(auth_user)
-      .set({ image: null, updatedAt: clock.now() })
+      .set({ updatedAt: clock.now() })
       .where(eq(auth_user.id, owner.id));
     return this.find();
   }

@@ -40,7 +40,7 @@ type Raw = typeof ctx.storage & {
 const raw = () => ctx.storage as Raw;
 const rows = () =>
   raw().__sqliteAll(
-    "SELECT user_id, content_type, size_bytes, sha256, updated_at, length(bytes) AS held FROM owner_picture",
+    "SELECT user_id, content_type, sha256, length(bytes) AS held FROM owner_picture",
   );
 
 function bytesOf(buffer: Uint8Array): Uint8Array<ArrayBuffer> {
@@ -135,7 +135,6 @@ describe("uploading a picture", () => {
     expect(stored[0]).toMatchObject({
       user_id: ctx.owner.id,
       content_type: "image/png",
-      size_bytes: file.length,
       sha256: sha(file),
       held: file.length,
     });
@@ -274,7 +273,7 @@ describe("the size cap", () => {
     expect(PICTURE_MAX_BYTES).toBe(2_097_152);
     const exact = pngPadded(PICTURE_MAX_BYTES);
     expect((await owner(bytesOf(exact))).status).toBe(200);
-    expect(await rows()).toMatchObject([{ size_bytes: PICTURE_MAX_BYTES }]);
+    expect(await rows()).toMatchObject([{ held: PICTURE_MAX_BYTES }]);
     const over = pngPadded(PICTURE_MAX_BYTES + 1);
     const refused = await owner(bytesOf(over));
     expect(refused.status).toBe(413);
@@ -282,7 +281,7 @@ describe("the size cap", () => {
       error: { code: "request_too_large" },
     });
     expect(await rows()).toMatchObject([
-      { size_bytes: PICTURE_MAX_BYTES, sha256: sha(exact) },
+      { held: PICTURE_MAX_BYTES, sha256: sha(exact) },
     ]);
   });
 

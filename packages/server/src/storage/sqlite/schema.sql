@@ -242,7 +242,6 @@ CREATE TABLE IF NOT EXISTS `auth_user` (
 	`name` text NOT NULL,
 	`email` text NOT NULL,
 	`email_verified` integer DEFAULT false NOT NULL,
-	`image` text,
 	`created_at` integer NOT NULL,
 	`updated_at` integer NOT NULL
 );
@@ -701,9 +700,7 @@ CREATE TABLE IF NOT EXISTS `owner_picture` (
 	`user_id` text PRIMARY KEY NOT NULL,
 	`content_type` text NOT NULL,
 	`bytes` blob NOT NULL,
-	`size_bytes` integer NOT NULL,
 	`sha256` text NOT NULL,
-	`updated_at` text NOT NULL,
 	FOREIGN KEY (`user_id`) REFERENCES `auth_user`(`id`) ON UPDATE no action ON DELETE cascade
 );
 
