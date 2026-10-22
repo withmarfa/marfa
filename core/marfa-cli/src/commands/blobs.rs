@@ -1,5 +1,5 @@
 use std::io::{self, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use clap::Subcommand;
 use marfa_core::mime_type_for;
@@ -84,6 +84,24 @@ pub fn orphans_request() -> Request {
     Request::get(&["blobs", "orphans"])
 }
 
+/// Copies `reader` into the file at `path`, or to stdout when there is none.
+pub(super) fn save(reader: &mut impl io::Read, path: Option<&Path>) -> Result<u64, CliError> {
+    match path {
+        Some(path) => {
+            let mut file = std::fs::File::create(path).map_err(|error| {
+                CliError::Invalid(format!("cannot write {}: {error}", path.display()))
+            })?;
+            Ok(io::copy(reader, &mut file)?)
+        }
+        None => {
+            let mut stdout = io::stdout().lock();
+            let written = io::copy(reader, &mut stdout)?;
+            stdout.flush()?;
+            Ok(written)
+        }
+    }
+}
+
 pub fn run(command: BlobsCommand, remote: &Remote, out: &Printer) -> Result<(), CliError> {
     match command {
         BlobsCommand::Upload { file, mime_type } => {
@@ -92,20 +110,7 @@ pub fn run(command: BlobsCommand, remote: &Remote, out: &Printer) -> Result<(), 
         }
         BlobsCommand::Download { hash, output } => {
             let (content_type, mut reader) = remote.stream(&download_request(&hash))?;
-            let written = match &output {
-                Some(path) => {
-                    let mut file = std::fs::File::create(path).map_err(|error| {
-                        CliError::Invalid(format!("cannot write {}: {error}", path.display()))
-                    })?;
-                    io::copy(&mut reader, &mut file)?
-                }
-                None => {
-                    let mut stdout = io::stdout().lock();
-                    let written = io::copy(&mut reader, &mut stdout)?;
-                    stdout.flush()?;
-                    written
-                }
-            };
+            let written = save(&mut reader, output.as_deref())?;
             // Bytes to stdout are the answer; a report there would corrupt it.
             if let Some(path) = output {
                 out.report(

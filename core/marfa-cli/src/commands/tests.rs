@@ -1649,3 +1649,36 @@ fn summaries_send_only_name_type_and_page_filters() {
         ]
     );
 }
+
+#[test]
+fn a_picture_is_put_to_its_door_as_the_file_itself() {
+    let dir = std::env::temp_dir().join(format!("marfa-picture-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("me.png");
+    std::fs::write(&file, b"picture bytes").unwrap();
+    for door in [["owner", "picture"], ["profile", "picture"]] {
+        let request = profile::picture_request(&door, &file).unwrap();
+        assert_eq!(request.method, Method::Put);
+        assert_eq!(request.path(), format!("/{}/picture", door[0]));
+        assert_eq!(
+            request.body,
+            Body::File {
+                path: file.clone(),
+                content_type: "application/octet-stream".into()
+            }
+        );
+    }
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn a_picture_that_cannot_be_read_is_refused_before_any_request_is_built() {
+    let missing = std::env::temp_dir().join(format!("marfa-no-picture-{}.png", std::process::id()));
+    match profile::picture_request(&["owner", "picture"], &missing) {
+        Err(CliError::Invalid(message)) => assert!(message.contains("cannot read"), "{message}"),
+        other => panic!(
+            "expected a refusal, got {:?}",
+            other.map(|request| request.path())
+        ),
+    }
+}

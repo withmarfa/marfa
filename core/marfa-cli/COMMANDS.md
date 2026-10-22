@@ -266,22 +266,34 @@ marfa owner recover [OPTIONS]
 
 ### marfa owner update
 
-Change the owner's email, display name, or avatar (private socket required).
+Change the owner's email, display name, or picture (private socket required).
 
 ```text
-marfa owner update [OPTIONS] <--email <EMAIL>|--name <NAME>|--avatar <AVATAR>|--clear-avatar>
+marfa owner update [OPTIONS] <--email <EMAIL>|--name <NAME>|--avatar <FILE>|--clear-avatar>
 ```
 
 | Option | Description |
 | --- | --- |
 | `--email <EMAIL>` | The email address the owner uses to sign in. |
 | `--name <NAME>` | The owner's display name. |
-| `--avatar <AVATAR>` | An HTTP or HTTPS avatar URL. Marfa does not fetch it. |
-| `--clear-avatar` | Clear the avatar URL. |
+| `--avatar <FILE>` | A PNG, JPEG or WebP picture file of 2 MiB or less. The server decides the kind from the bytes. |
+| `--clear-avatar` | Remove the owner's picture. |
+
+### marfa owner picture
+
+Fetch the owner's picture.
+
+```text
+marfa owner picture [OPTIONS]
+```
+
+| Option | Description |
+| --- | --- |
+| `--output <PATH>` | Where to write the picture. Omitted, its bytes go to stdout. |
 
 ## profile
 
-The owner's name and avatar, changed with a key or app's profile write permission.
+The owner's name and picture, changed with a key or app's profile write permission.
 
 ### marfa profile
 
@@ -294,14 +306,14 @@ marfa profile [OPTIONS] <COMMAND>
 Change the owner's name or avatar with profile write permission for each field.
 
 ```text
-marfa profile update [OPTIONS] <--name <NAME>|--avatar <AVATAR>|--clear-avatar>
+marfa profile update [OPTIONS] <--name <NAME>|--avatar <FILE>|--clear-avatar>
 ```
 
 | Option | Description |
 | --- | --- |
 | `--name <NAME>` | The owner's new display name. |
-| `--avatar <AVATAR>` | An HTTP or HTTPS avatar URL. Marfa does not fetch it. |
-| `--clear-avatar` | Clear the avatar URL. |
+| `--avatar <FILE>` | A PNG, JPEG or WebP picture file of 2 MiB or less. The server decides the kind from the bytes. |
+| `--clear-avatar` | Remove the owner's picture. |
 
 ## apps
 
