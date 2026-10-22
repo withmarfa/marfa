@@ -56,6 +56,10 @@ const HTTP_METHODS = ["get", "post", "put", "patch", "delete"];
 const NOT_JSON: Record<string, string> = {
   "POST /blobs": "the bytes of a blob, under their own Content-Type",
   "POST /restore": "a gzip archive streamed to disk",
+  "PUT /owner/picture":
+    "the bytes of a picture, whatever Content-Type it claims",
+  "PUT /profile/picture":
+    "the bytes of a picture, whatever Content-Type it claims",
 };
 
 /** Doors in the document that take JSON and another handler answers. */

@@ -32,7 +32,7 @@ const READS: Record<string, string> = {
   SettingsStore: "get",
   EdgeStore:
     "get listFromSource listToTarget list countsBySourceBatch countsByTargetBatch existsExactBatch findByTriple listOutboundOfType listAllByItem listFromSourcesBatched listToTargetsBatched wouldCreateCycle",
-  OwnerStore: "find",
+  OwnerStore: "find findPicture",
   BulkActionJobStore: "scanPendingPropertyPatches getById carriedItems",
   EnrichmentStore: "listCandidates get",
   HousekeepingStore: "listDue list get",
@@ -69,7 +69,7 @@ const WRITES: Record<string, string> = {
   SettingsStore: "set claim release",
   EdgeStore: "createRaw updateProperties delete deleteBySource deleteByTarget",
   AuthSessionStore: "deleteExpired",
-  OwnerStore: "update",
+  OwnerStore: "update setPicture",
   RateLimitStore: "incrementWindow incrementWindows cleanup clearSignIn",
   BulkActionJobStore:
     "create claimNext beginChunk checkpointChunk completeOwned failOwned cancel recoverStale gcExpired",

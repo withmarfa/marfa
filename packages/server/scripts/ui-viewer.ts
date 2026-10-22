@@ -19,6 +19,7 @@
 import { serve } from "@hono/node-server";
 import { Hono, type Context } from "hono";
 import { PAGE_ASSETS } from "../src/pages/assets.js";
+import { png } from "../src/test-pictures.js";
 import { TABS, resolveVariant } from "./ui-viewer-fixtures.js";
 
 const app = new Hono();
@@ -56,6 +57,15 @@ app.get("/auth/static/pages.js", (c) =>
   c.body(PAGE_ASSETS["pages.js"].body, 200, {
     "Content-Type": PAGE_ASSETS["pages.js"].contentType,
   }),
+);
+
+/**
+ * The profile page asks its own origin for `/owner/picture`; the viewer
+ * answers with a generated PNG, so the "with a picture" example draws an image
+ * without a stored picture or a request to anywhere else.
+ */
+app.get("/owner/picture", (c) =>
+  c.body(new Uint8Array(png(64, 64)), 200, { "Content-Type": "image/png" }),
 );
 
 /**

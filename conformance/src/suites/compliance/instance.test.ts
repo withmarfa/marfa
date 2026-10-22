@@ -308,13 +308,13 @@ describe("the instance", () => {
     const asBrowser = { accept: "text/html" };
     const nonces = new Set<string>();
     const pages = [
-      ["/", 200, false],
-      ["/auth/sign-in", 200, true],
-      ["/auth/owner/passkeys", 200, true],
-      ["/auth/device", 200, false],
-      ["/no-such-page", 404, false],
+      ["/", 200, false, false],
+      ["/auth/sign-in", 200, true, false],
+      ["/auth/owner/passkeys", 200, true, true],
+      ["/auth/device", 200, false, false],
+      ["/no-such-page", 404, false, false],
     ] as const;
-    for (const [path, status, connects] of pages) {
+    for (const [path, status, connects, consolePage] of pages) {
       const res =
         path === "/auth/owner/passkeys"
           ? await getOwnerClient().rawRequest(path, { headers: asBrowser })
@@ -338,6 +338,9 @@ describe("the instance", () => {
       ]);
       expect(directives.get("connect-src"), path).toEqual(
         connects ? ["'self'"] : undefined,
+      );
+      expect(directives.get("img-src"), path).toEqual(
+        consolePage ? ["'self'", "data:"] : ["data:"],
       );
       expect(policy, path).not.toContain("unsafe-inline");
       nonces.add(nonce ?? "");

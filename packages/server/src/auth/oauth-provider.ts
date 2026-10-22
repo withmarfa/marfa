@@ -68,6 +68,7 @@ import {
 import { matchesRegisteredRedirectUri } from "./redirect-uri-match.js";
 import { serverAddedResponseParam } from "./redirect-params.js";
 import { errorMessage } from "../error-text.js";
+import { ownerPictureAddress } from "../picture.js";
 
 /**
  * Minimal context shape we read off the `hooks.before` and `hooks.after`
@@ -380,6 +381,15 @@ export function makeTokenHasher(salt: string) {
     createHmac("sha256", salt).update(token).digest("hex");
 }
 
+/** Whether `userId` is the owner and holds a stored picture. */
+async function ownerHasPicture(
+  storage: Storage,
+  userId: string,
+): Promise<boolean> {
+  const owner = await storage.owner?.find();
+  return owner?.id === userId && owner.hasPicture;
+}
+
 /** Where the provider sends a person who is not signed in. */
 const SIGN_IN_PAGE = "/auth/sign-in";
 
@@ -481,7 +491,7 @@ export function buildOauthProviderPlugin(
     // id_token claims (OIDC). The same profile + email gate as
     // `customUserInfoClaims` below, because a client reading both doors
     // must not be told more on one of them than on the other.
-    customIdTokenClaims: ({ user, scopes }) => {
+    customIdTokenClaims: async ({ user, scopes }) => {
       const claims: Record<string, unknown> = {};
       // **The union with Category 2, and it is the half that makes the gate
       // real.** A caller reads if it holds the OIDC literal OR the
@@ -500,8 +510,8 @@ export function buildOauthProviderPlugin(
         scopes.includes("profile") ||
         profilePermissionCovers(profilePerms, "avatar", "read");
       if (readsName) claims.name = user.name;
-      if (readsAvatar && "image" in user && user.image) {
-        claims.picture = user.image;
+      if (readsAvatar && (await ownerHasPicture(opts.storage, user.id))) {
+        claims.picture = ownerPictureAddress(opts.baseURL);
       }
       if (readsEmail) {
         claims.email = user.email;
@@ -513,7 +523,7 @@ export function buildOauthProviderPlugin(
     },
 
     // /userinfo response shape (OIDC) — same gating as id_token.
-    customUserInfoClaims: ({ user, scopes }) => {
+    customUserInfoClaims: async ({ user, scopes }) => {
       const claims: Record<string, unknown> = {};
       // **The union with Category 2, and it is the half that makes the gate
       // real.** A caller reads if it holds the OIDC literal OR the
@@ -532,8 +542,8 @@ export function buildOauthProviderPlugin(
         scopes.includes("profile") ||
         profilePermissionCovers(profilePerms, "avatar", "read");
       if (readsName) claims.name = user.name;
-      if (readsAvatar && "image" in user && user.image) {
-        claims.picture = user.image;
+      if (readsAvatar && (await ownerHasPicture(opts.storage, user.id))) {
+        claims.picture = ownerPictureAddress(opts.baseURL);
       }
       if (readsEmail) {
         claims.email = user.email;

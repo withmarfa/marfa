@@ -19,6 +19,7 @@ import { ProfileUpdateSchema } from "../profile-fields.js";
 import { runAuditedTransaction } from "../storage/audited-transaction.js";
 import type { Storage } from "../storage/interface.js";
 import { setNoStore } from "./no-store.js";
+import { profilePictureRoutes } from "./picture.js";
 
 const updateProfileRoute = createRoute({
   operationId: "updateProfile",
@@ -27,7 +28,7 @@ const updateProfileRoute = createRoute({
   tags: ["Owner"],
   summary: "Update the owner's profile",
   description:
-    "Updates the owner's name or avatar and returns `ok: true`. Requires profile write permission for every submitted field; email cannot be changed here. All fields commit together.",
+    "Updates the owner's name or removes the picture and returns `ok: true`. Requires profile write permission for every submitted field; email cannot be changed here. All fields commit together.",
   security: [{ bearerAuth: [] }],
   middleware: standingRule("profile write on name or avatar", (c) => {
     const key = requireAuth(c);
@@ -123,5 +124,6 @@ export function profileRoutes(storage: Storage) {
     );
     return c.json({ ok: true as const }, 200);
   });
+  router.route("/picture", profilePictureRoutes(storage));
   return router;
 }

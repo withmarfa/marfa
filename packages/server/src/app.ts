@@ -427,7 +427,8 @@ export function createApp(
     "*",
     createMiddleware<AppEnv>(async (c, next) => {
       const cap = bodyCapFor(c.req.path);
-      if (cap === "none" || cap === "inbound") return next();
+      if (cap === "none" || cap === "inbound" || cap === "picture")
+        return next();
       if (cap === "bulk") return bulkBodyLimit(c, next);
       if (cap === "connector-state") return connectorStateBodyLimit(c, next);
       if (cap === "registration") return registrationBodyLimit(c, next);

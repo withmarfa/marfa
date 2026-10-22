@@ -1,5 +1,6 @@
 import { readEffectiveConfig } from "../effective-config.js";
 import { ownerPasskeyRoutes } from "./owner-passkeys.js";
+import { ownerPictureRoutes } from "./picture.js";
 import { OwnerUpdateSchema } from "../profile-fields.js";
 import { runAuditedTransaction } from "../storage/audited-transaction.js";
 import { createRoute, z } from "@hono/zod-openapi";
@@ -74,7 +75,7 @@ const updateOwnerRoute = createRoute({
   security: [{ ownerSession: [] }],
   middleware: directAuthorityOnly,
   description:
-    "Updates the owner's email, name, or picture URL and returns the owner. Requires a direct owner sign-in within five minutes or private machine authority. Changing email needs no confirmation; credentials, sessions, and grants keep their identity.",
+    "Updates the owner's email or name, or removes the picture. Requires a direct owner sign-in within five minutes or private machine authority. Changing email needs no confirmation; credentials, sessions, and grants keep their identity.",
   request: {
     body: {
       required: true,
@@ -376,7 +377,7 @@ export function ownerRoutes(storage: Storage, auth: MarfaAuth) {
         ErrorCode.OWNER_NOT_FOUND,
         "The claimed owner's account is unavailable.",
       );
-    return c.json(ownerWire(owner), 200);
+    return c.json(ownerWire(owner, c.var.config.authBaseUrl), 200);
   });
   router.openapi(updateOwnerRoute, async (c) => {
     requireRecentOwnerAuthentication(c);
@@ -400,7 +401,7 @@ export function ownerRoutes(storage: Storage, auth: MarfaAuth) {
         details: { fields: Object.keys(body) },
       },
     );
-    return c.json(ownerWire(owner), 200);
+    return c.json(ownerWire(owner, c.var.config.authBaseUrl), 200);
   });
   router.openapi(listSignInsRoute, async (c) => {
     const authority = c.get("authority");
@@ -523,8 +524,9 @@ export function ownerRoutes(storage: Storage, auth: MarfaAuth) {
       body.password,
     ))
       c.header("set-cookie", cookie, { append: true });
-    return c.json(ownerWire(owner), 201);
+    return c.json(ownerWire(owner, c.var.config.authBaseUrl), 201);
   });
   router.route("/passkeys", ownerPasskeyRoutes(storage, auth));
+  router.route("/picture", ownerPictureRoutes(storage));
   return router;
 }

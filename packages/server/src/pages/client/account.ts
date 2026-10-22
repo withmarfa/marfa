@@ -18,6 +18,7 @@ import {
   nameProblem,
   newPasswordProblem,
 } from "../account-input.js";
+import { PICTURE_MAX_BYTES } from "../../picture.js";
 import { parseWaitSeconds, waitInMinutes } from "../lockout.js";
 import { CONFIRM_REFUSALS } from "../recent-sign-in.js";
 import { SETUP_WORDS } from "../setup-words.js";
@@ -92,11 +93,11 @@ async function refusal(
 }
 
 function ownerChange(
-  field: "name" | "email" | "avatar",
+  field: "name" | "email",
   done: string,
   invalid: string,
 ): FormKind["send"] {
-  const why = `To change your ${field === "avatar" ? "picture" : field}, confirm it's you.`;
+  const why = `To change your ${field}, confirm it's you.`;
   return async (form, opener) => {
     const input = control(form, field);
     const value = input.value.trim();
@@ -106,9 +107,7 @@ function ownerChange(
           method: "PATCH",
           credentials: "same-origin",
           headers: JSON_HEADERS,
-          body: JSON.stringify({
-            [field]: field === "avatar" && value === "" ? null : value,
-          }),
+          body: JSON.stringify({ [field]: value }),
         }),
       why,
       opener,
@@ -117,6 +116,70 @@ function ownerChange(
     if (response.ok) return { kind: "done", message: done };
     return refusal(response, input, invalid);
   };
+}
+
+/** The picture the person chose, sent as it is to the door that stores it. */
+async function uploadPicture(
+  form: HTMLFormElement,
+  opener: Element | null,
+): Promise<Outcome> {
+  const input = control(form, "avatar");
+  const file = input.files?.[0];
+  if (file === undefined) return { kind: "stay" };
+  // A retry after confirming sends the same file again, so the body is the
+  // file itself and not a stream already read.
+  const response = await sendConfirmed(
+    () =>
+      fetch("/owner/picture", {
+        method: "PUT",
+        credentials: "same-origin",
+        headers: { accept: "application/json" },
+        body: file,
+      }),
+    "To change your picture, confirm it's you.",
+    opener,
+  );
+  if (response === null) return { kind: "stay" };
+  if (response.ok) return { kind: "done", message: "Picture changed" };
+  return refusal(response, input);
+}
+
+/** Removes the picture; there is nothing to choose, so no dialog asks first. */
+async function removePicture(button: Element): Promise<void> {
+  if (!(button instanceof HTMLButtonElement) || button.disabled) return;
+  button.disabled = true;
+  hideNotices(document, ["done", "error"]);
+  try {
+    const response = await sendConfirmed(
+      () =>
+        fetch("/owner", {
+          method: "PATCH",
+          credentials: "same-origin",
+          headers: JSON_HEADERS,
+          body: JSON.stringify({ avatar: null }),
+        }),
+      "To remove your picture, confirm it's you.",
+      button,
+    );
+    if (response === null) return;
+    if (!response.ok) {
+      const outcome = await refusal(response, null);
+      if (outcome.kind === "problem")
+        showNotice(document, "error", outcome.text);
+      return;
+    }
+  } catch {
+    showNotice(document, "error", SETUP_WORDS.network);
+    return;
+  } finally {
+    button.disabled = false;
+  }
+  if (!(await refresh())) {
+    location.reload();
+    return;
+  }
+  showNotice(document, "done", "Picture removed");
+  focusHook("change-avatar");
 }
 
 async function changePassword(form: HTMLFormElement): Promise<Outcome> {
@@ -252,23 +315,16 @@ const FORMS: Readonly<Record<string, FormKind>> = {
   avatar: {
     check: (form) => {
       const input = control(form, "avatar");
-      const value = input.value.trim();
-      if (value === "") return undefined;
-      if (value.length > 2048)
-        return { control: input, text: "Use 2048 characters or fewer." };
-      try {
-        if (["http:", "https:"].includes(new URL(value).protocol))
-          return undefined;
-      } catch {
-        // The server remains the authority for URL validation.
-      }
-      return { control: input, text: "Enter an http:// or https:// address." };
+      const file = input.files?.[0];
+      if (file === undefined)
+        return { control: input, text: ACCOUNT_WORDS.choosePicture };
+      // The server decides the kind from the bytes. Only a size it will
+      // refuse is caught here, before the file is sent.
+      return file.size > PICTURE_MAX_BYTES
+        ? { control: input, text: ACCOUNT_WORDS.pictureTooLarge }
+        : undefined;
     },
-    send: ownerChange(
-      "avatar",
-      "Picture changed",
-      "Enter a valid picture address.",
-    ),
+    send: uploadPicture,
   },
   password: {
     check: (form) => {
@@ -461,6 +517,13 @@ export function initAccount(): void {
     return;
   document.addEventListener("submit", (event) => {
     void submit(event);
+  });
+  document.addEventListener("click", (event) => {
+    const button =
+      event.target instanceof Element
+        ? event.target.closest('[data-hook="remove-avatar"]')
+        : null;
+    if (button) void removePicture(button);
   });
   document.addEventListener(
     "close",

@@ -9,6 +9,7 @@ import { controlRequest } from "../../utils/control-request.js";
 import { TEST_OWNER } from "../../utils/target.js";
 import { expectMatchesSchema } from "../../utils/openapi.js";
 import { withInstanceDatabase } from "../../utils/instance-database.js";
+import { png } from "../../utils/pictures.js";
 import {
   bootUnclaimedServer,
   stopServer,
@@ -99,31 +100,6 @@ describe("owner and delegated profile changes", () => {
       ).status,
     ).toBe(200);
   });
-  it("sets and clears the owner's avatar without changing other fields", async () => {
-    const before = await controlRequest(server.controlSocket, "/owner");
-    const set = await owner({ avatar: "https://example.test/portrait.png" });
-    expect(set.status).toBe(200);
-    const updated = await set.json();
-    expect(updated).toMatchObject({
-      ...before.body,
-      avatar: "https://example.test/portrait.png",
-    });
-    await expectMatchesSchema("PATCH", "/owner", 200, updated);
-    expect(
-      (await controlRequest(server.controlSocket, "/owner")).body.avatar,
-    ).toBe("https://example.test/portrait.png");
-    const cleared = await owner({ avatar: null });
-    expect(cleared.status).toBe(200);
-    expect((await cleared.json()).avatar).toBeNull();
-    expect((await controlRequest(server.controlSocket, "/owner")).body).toEqual(
-      before.body,
-    );
-    for (const avatar of [
-      "file:///picture",
-      "https://example.test/" + "a".repeat(2048),
-    ])
-      expect((await owner({ avatar })).status).toBe(400);
-  });
   it("validates fields and limits credential writes to approved name and avatar", async () => {
     for (const body of [
       {},
@@ -132,6 +108,7 @@ describe("owner and delegated profile changes", () => {
       { name: " " },
       { email: "invalid" },
       { avatar: "file:///picture" },
+      { avatar: "https://example.test/portrait.png" },
     ])
       expect((await owner(body)).status).toBe(400);
     const invalid = await owner({ name: "a".repeat(201) });
@@ -148,12 +125,8 @@ describe("owner and delegated profile changes", () => {
     expect(made.status).toBe(201);
     const before = await controlRequest(server.controlSocket, "/owner");
     expect(
-      (
-        await profile(
-          { name: "No", avatar: "https://example.test/a.png" },
-          made.body.key as string,
-        )
-      ).status,
+      (await profile({ name: "No", avatar: null }, made.body.key as string))
+        .status,
     ).toBe(403);
     expect((await controlRequest(server.controlSocket, "/owner")).body).toEqual(
       before.body,
@@ -165,7 +138,7 @@ describe("owner and delegated profile changes", () => {
       (
         await profile({
           name: "Wildcard",
-          avatar: "https://example.test/a.png",
+          avatar: null,
         })
       ).status,
     ).toBe(200);
@@ -175,6 +148,7 @@ describe("owner and delegated profile changes", () => {
       { email: "app@example.test" },
       { name: "No", email: "app@example.test" },
       { avatar: "file:///picture" },
+      { avatar: "https://example.test/portrait.png" },
     ])
       expect((await profile(body)).status).toBe(400);
     const response = await profile({ name: "Final" });
@@ -233,7 +207,7 @@ describe("owner and delegated profile changes", () => {
   });
 
   it(
-    "refuses owner and profile updates without recreating an unavailable persisted owner",
+    "refuses owner and profile updates and picture uploads without recreating an unavailable persisted owner",
     async () => {
       const missing = await bootFreshServer("profile-missing-owner");
       try {
@@ -266,6 +240,28 @@ describe("owner and delegated profile changes", () => {
         expect(
           (await controlRequest(missing.controlSocket, "/owner")).body.name,
         ).toBe("Existing profile");
+
+        // Witness: the same upload, through each door, succeeds while the
+        // owner exists, so the refusals below are the missing owner's.
+        const file = png(8, 8);
+        const putOwnerPicture = () =>
+          controlRequest(missing.controlSocket, "/owner/picture", {
+            method: "PUT",
+            body: file,
+          });
+        const putProfilePicture = () =>
+          fetch(missing.apiUrl + "/profile/picture", {
+            method: "PUT",
+            headers: { authorization: `Bearer ${missing.workingKey}` },
+            body: new Uint8Array(file),
+          });
+        expect((await putOwnerPicture()).status).toBe(200);
+        expect((await putProfilePicture()).status).toBe(200);
+        const cleared = await controlRequest(missing.controlSocket, "/owner", {
+          method: "PATCH",
+          body: { avatar: null },
+        });
+        expect(cleared.status).toBe(200);
 
         await stopServer({ state: missing.stateDir });
         withInstanceDatabase(missing.sqlitePath, (db) => {
@@ -301,6 +297,10 @@ describe("owner and delegated profile changes", () => {
               db.prepare("SELECT count(*) AS count FROM auth_user").get()
                 ?.count,
             ).toBe(0);
+            expect(
+              db.prepare("SELECT count(*) AS count FROM owner_picture").get()
+                ?.count,
+            ).toBe(0);
           });
         };
         const ownerRefused = await controlRequest(
@@ -322,6 +322,32 @@ describe("owner and delegated profile changes", () => {
           error: { code: "owner_not_found" },
         });
         await expectMatchesSchema("PATCH", "/profile", 404, profileBody);
+        await assertOwnerRemainsUnavailable();
+
+        const ownerPictureRefused = await putOwnerPicture();
+        expect(ownerPictureRefused.status).toBe(404);
+        expect(ownerPictureRefused.body).toMatchObject({
+          error: { code: "owner_not_found" },
+        });
+        await expectMatchesSchema(
+          "PUT",
+          "/owner/picture",
+          404,
+          ownerPictureRefused.body,
+        );
+        await assertOwnerRemainsUnavailable();
+        const profilePictureRefused = await putProfilePicture();
+        expect(profilePictureRefused.status).toBe(404);
+        const profilePictureBody = await profilePictureRefused.json();
+        expect(profilePictureBody).toMatchObject({
+          error: { code: "owner_not_found" },
+        });
+        await expectMatchesSchema(
+          "PUT",
+          "/profile/picture",
+          404,
+          profilePictureBody,
+        );
         await assertOwnerRemainsUnavailable();
       } finally {
         await missing.stop();

@@ -518,6 +518,14 @@ dialog.palette::backdrop {
   color: var(--fg);
   border: 1px solid var(--line);
 }
+.avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-control);
+  flex-shrink: 0;
+  object-fit: cover;
+  border: 1px solid var(--line);
+}
 .tile.marfa {
   background: var(--primary);
   color: var(--on-primary);

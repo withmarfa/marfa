@@ -130,6 +130,33 @@ export function TextField(props: TextFieldProps) {
   );
 }
 
+export interface FileFieldProps {
+  id: string;
+  name: string;
+  label: string;
+  hint?: Child;
+  /** The kinds the file picker offers, as media types. The server decides what it takes. */
+  accept: string;
+}
+
+/** A field that takes one file, which the form module reads and sends. */
+export function FileField(props: FileFieldProps) {
+  return (
+    <FieldFrame {...props}>
+      <input
+        class="input full"
+        id={props.id}
+        name={props.name}
+        type="file"
+        accept={props.accept}
+        aria-describedby={
+          props.hint !== undefined ? `${props.id}-hint` : undefined
+        }
+      />
+    </FieldFrame>
+  );
+}
+
 export interface RowInputProps {
   id: string;
   name: string;

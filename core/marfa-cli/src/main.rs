@@ -115,7 +115,7 @@ enum Command {
         #[command(subcommand)]
         command: owner::OwnerCommand,
     },
-    /// The owner's name and avatar, changed with a key or app's profile write permission.
+    /// The owner's name and picture, changed with a key or app's profile write permission.
     Profile {
         #[command(subcommand)]
         command: profile::ProfileCommand,

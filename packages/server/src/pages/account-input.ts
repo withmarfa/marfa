@@ -9,6 +9,7 @@
  */
 import { PASSWORD_MAX, PASSWORD_MIN } from "../auth/password-limits.js";
 import { hasHiddenCharacter } from "../auth/hidden-characters.js";
+import { PICTURE_TOO_LARGE_WORDS } from "../picture.js";
 
 export const NAME_MAX = 200;
 export const EMAIL_MAX = 254;
@@ -24,6 +25,8 @@ export const ACCOUNT_WORDS = {
   enterCurrentPassword: "Enter your current password.",
   newPasswordLength: `Use ${String(PASSWORD_MIN)} to ${String(PASSWORD_MAX)} characters.`,
   enterPasskeyName: "Give the passkey a name.",
+  choosePicture: "Choose a picture.",
+  pictureTooLarge: PICTURE_TOO_LARGE_WORDS,
 } as const;
 
 /** The length of `text` in Unicode code points, as the contract counts a name. */

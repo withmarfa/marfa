@@ -222,7 +222,7 @@ export function setupRoutes(storage: Storage, auth: MarfaAuth) {
       c.header("set-cookie", cookie, { append: true });
     return form
       ? c.redirect(SETUP_STEP_PATHS.passkey, 303)
-      : c.json(ownerWire(owner), 201);
+      : c.json(ownerWire(owner, c.var.config.authBaseUrl), 201);
   });
 
   /** A claim the page's own form made and the server refused, answered as the page again. */

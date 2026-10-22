@@ -678,6 +678,11 @@ const MISSED: &[&str] = &[
     "deleteOwnerPasskey",
     // `owner update`: the private-socket transport is driven by cli/profile.test.ts.
     "updateOwner",
+    // `owner update --avatar` and `profile update --avatar`: the walk gives
+    // each command one option, so it stops at the name's door. Both pictures
+    // are driven by cli/profile.test.ts.
+    "replaceOwnerPicture",
+    "replaceProfilePicture",
     // `apps narrow` reads the grant before sending the guarded update.
     "narrowAppGrant",
     // `setup claim`: secret input is driven by the child-process fixture above.

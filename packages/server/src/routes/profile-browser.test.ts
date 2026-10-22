@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { Browser } from "playwright-core";
 import { launchTestBrowser, listen, reserveOrigin } from "../test-browser.js";
+import { png } from "../test-pictures.js";
 import {
   createTestContext,
   seedOauthBearer,
@@ -53,8 +54,16 @@ inBrowser("owner and delegated profile flows", () => {
       const grant = await seedOauthBearer(ctx, ["openid", "profile:write"]);
       const changedResponse = await context.request.patch(origin + "/profile", {
         headers: { authorization: `Bearer ${grant.token}` },
-        data: { name: "App owner", avatar: "https://example.com/avatar.png" },
+        data: { name: "App owner" },
       });
+      const pictureResponse = await context.request.put(
+        origin + "/profile/picture",
+        {
+          headers: { authorization: `Bearer ${grant.token}` },
+          data: png(),
+        },
+      );
+      expect(pictureResponse.status()).toBe(200);
       const info = await context.request.get(origin + "/auth/oauth2/userinfo", {
         headers: { authorization: `Bearer ${grant.token}` },
       });
@@ -69,7 +78,7 @@ inBrowser("owner and delegated profile flows", () => {
         info: {
           name: "App owner",
           email: "browser@example.com",
-          picture: "https://example.com/avatar.png",
+          picture: `${origin}/owner/picture`,
           email_verified: false,
         },
       });

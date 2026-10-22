@@ -1649,3 +1649,79 @@ fn summaries_send_only_name_type_and_page_filters() {
         ]
     );
 }
+
+#[test]
+fn a_picture_is_put_to_its_door_as_the_file_itself() {
+    let dir = std::env::temp_dir().join(format!("marfa-picture-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("me.png");
+    std::fs::write(&file, b"picture bytes").unwrap();
+    for door in [["owner", "picture"], ["profile", "picture"]] {
+        let request = profile::picture_request(&door, &file).unwrap();
+        assert_eq!(request.method, Method::Put);
+        assert_eq!(request.path(), format!("/{}/picture", door[0]));
+        assert_eq!(
+            request.body,
+            Body::File {
+                path: file.clone(),
+                content_type: "application/octet-stream".into()
+            }
+        );
+    }
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn a_picture_that_cannot_be_read_is_refused_before_any_request_is_built() {
+    let missing = std::env::temp_dir().join(format!("marfa-no-picture-{}.png", std::process::id()));
+    match profile::picture_request(&["owner", "picture"], &missing) {
+        Err(CliError::Invalid(message)) => assert!(message.contains("cannot read"), "{message}"),
+        other => panic!(
+            "expected a refusal, got {:?}",
+            other.map(|request| request.path())
+        ),
+    }
+}
+
+#[test]
+fn a_picture_path_that_is_a_directory_is_refused_before_any_request_is_built() {
+    let dir = std::env::temp_dir().join(format!("marfa-picture-dir-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let result = profile::picture_request(&["profile", "picture"], &dir);
+    std::fs::remove_dir_all(&dir).unwrap();
+    match result {
+        Err(CliError::Invalid(message)) => {
+            assert_eq!(
+                message,
+                format!("cannot read {}: not a file", dir.display())
+            )
+        }
+        other => panic!("expected a refusal, got {:?}", other.map(|r| r.path())),
+    }
+}
+
+#[test]
+fn a_picture_over_two_mebibytes_is_refused_before_any_request_is_built() {
+    let dir = std::env::temp_dir().join(format!("marfa-picture-big-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("big.png");
+    let limit = 2 * 1024 * 1024;
+    // A sparse file: the size is what the check reads, not the bytes.
+    let handle = std::fs::File::create(&file).unwrap();
+    handle.set_len(limit + 1).unwrap();
+    let over = profile::picture_request(&["owner", "picture"], &file);
+    handle.set_len(limit).unwrap();
+    let exact = profile::picture_request(&["owner", "picture"], &file);
+    std::fs::remove_dir_all(&dir).unwrap();
+    match over {
+        Err(CliError::Invalid(message)) => assert_eq!(
+            message,
+            format!(
+                "{} is over 2 MiB; use a picture of 2 MiB or less",
+                file.display()
+            )
+        ),
+        other => panic!("expected a refusal, got {:?}", other.map(|r| r.path())),
+    }
+    assert!(exact.is_ok(), "a picture of exactly 2 MiB is allowed");
+}

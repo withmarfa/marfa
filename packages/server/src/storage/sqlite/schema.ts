@@ -850,12 +850,24 @@ export const auth_user = sqliteTable(
     emailVerified: integer("email_verified", { mode: "boolean" })
       .notNull()
       .default(false),
-    image: text("image"),
     createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
     updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
   },
   (table) => [uniqueIndex("idx_auth_user_email").on(table.email)],
 );
+
+/**
+ * The owner's profile picture: one row, kept in the database and not the blob
+ * layer, because the orphan job purges blobs and nothing else references this.
+ */
+export const owner_picture = sqliteTable("owner_picture", {
+  user_id: text("user_id")
+    .primaryKey()
+    .references(() => auth_user.id, { onDelete: "cascade" }),
+  content_type: text("content_type").notNull(),
+  bytes: blob("bytes", { mode: "buffer" }).notNull(),
+  sha256: text("sha256").notNull(),
+});
 
 export const auth_session = sqliteTable(
   "auth_session",

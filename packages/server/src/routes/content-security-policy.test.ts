@@ -18,6 +18,7 @@ import {
   renderDevicePage,
 } from "./test-render.js";
 import {
+  consoleContentSecurityPolicy,
   contentSecurityPolicy,
   pageSecurityPolicy,
 } from "./content-security-policy.js";
@@ -76,6 +77,17 @@ describe("the policy", () => {
     }
     expect(policy.get("base-uri")).toEqual(["'none'"]);
     expect(policy.get("frame-ancestors")).toEqual(["'none'"]);
+  });
+
+  it("lets only a console page load an image from its own origin, and every page load an inline one", () => {
+    const baseline = directives(contentSecurityPolicy("abc"));
+    const consolePolicy = directives(consoleContentSecurityPolicy("abc"));
+    // The witness: the console policy is the baseline with additions, so the
+    // difference in `img-src` is the one under test.
+    expect(consolePolicy.get("connect-src")).toEqual(["'self'"]);
+    expect(baseline.get("connect-src")).toBeUndefined();
+    expect(baseline.get("img-src")).toEqual(["data:"]);
+    expect(consolePolicy.get("img-src")).toEqual(["'self'", "data:"]);
   });
 });
 
@@ -209,14 +221,18 @@ describe("every page the app renders", () => {
     )?.[1];
     expect(nonce).toBeTruthy();
     // Every script tag and the stylesheet link carry the nonce: the policy
-    // allows nothing by origin.
-    const tags = [
-      ...startTagAttributes(html, "script"),
-      ...startTagAttributes(html, "link"),
-    ];
-    // Witness: the page has some, a script among them.
+    // allows nothing by origin. The empty icon link names a data address,
+    // which the policy admits for images, so it has no nonce.
+    const links = startTagAttributes(html, "link");
+    const stylesheets = links.filter((attributes) =>
+      attributes.includes('rel="stylesheet"'),
+    );
+    const tags = [...startTagAttributes(html, "script"), ...stylesheets];
+    // Witness: the page has some, a script and a stylesheet among them, and
+    // the icon link is the one link the filter leaves out.
     expect(startTagAttributes(html, "script").length).toBeGreaterThan(0);
-    expect(tags.length).toBeGreaterThan(1);
+    expect(stylesheets.length).toBeGreaterThan(0);
+    expect(links.length).toBeGreaterThan(stylesheets.length);
     for (const attributes of tags) {
       expect(attributes).toContain(`nonce="${nonce ?? ""}"`);
     }

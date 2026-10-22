@@ -1,14 +1,23 @@
 import { request } from "node:http";
 
-/** Uses the server's production local listener, without an HTTP credential. */
+/**
+ * Uses the server's production local listener, without an HTTP credential.
+ * A `Uint8Array` body is sent as it is, as `application/octet-stream`; any
+ * other body is sent as JSON.
+ */
 export function controlRequest(
   socketPath: string,
   path: string,
   init: { method?: string; body?: unknown } = {},
 ): Promise<{ status: number; body: Record<string, unknown> }> {
   return new Promise((resolve, reject) => {
-    const body =
-      init.body === undefined ? undefined : JSON.stringify(init.body);
+    const raw = init.body instanceof Uint8Array;
+    const body: string | Uint8Array | undefined =
+      init.body === undefined
+        ? undefined
+        : init.body instanceof Uint8Array
+          ? init.body
+          : JSON.stringify(init.body);
     const req = request(
       {
         socketPath,
@@ -18,7 +27,9 @@ export function controlRequest(
           body === undefined
             ? {}
             : {
-                "content-type": "application/json",
+                "content-type": raw
+                  ? "application/octet-stream"
+                  : "application/json",
                 "content-length": Buffer.byteLength(body),
               },
       },

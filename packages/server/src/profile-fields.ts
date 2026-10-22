@@ -2,11 +2,9 @@ import { z } from "@hono/zod-openapi";
 import { DisplayNameSchema } from "./display-name.js";
 
 const AvatarSchema = z
-  .url({ protocol: /^https?$/ })
-  .max(2048)
-  .nullable()
+  .null()
   .describe(
-    "The owner's picture URL. Use HTTP or HTTPS. Set `avatar` to `null` to clear it, or omit it to leave it unchanged. Marfa does not fetch the URL.",
+    "Set `avatar` to `null` to remove the owner's picture, or omit it to leave it unchanged. To set a picture, send its bytes to `PUT /owner/picture` or `PUT /profile/picture`.",
   );
 
 export const OwnerUpdateSchema = z

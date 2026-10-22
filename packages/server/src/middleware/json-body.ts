@@ -15,12 +15,12 @@ const SURROGATE_ESCAPE = /\\u[dD][89a-fA-F]/;
  * it. It reads a clone, because a door or the sign-in handler reads the
  * request's own body and a body can be read once.
  *
- * It judges every body but a `GET`'s and those of the blob, restore and
- * inbound doors (`bodyCapFor`'s `none` and `inbound`), whatever
- * `Content-Type` says. The parsers here decide by
- * that header in different ways (`application/jsonx` and a `+json` suffix
- * reach Better Auth's, and the claim page reads any header that contains
- * `application/json`), so no header test here can be known to match them all.
+ * It judges every body but a `GET`'s and those of the blob, restore, inbound
+ * and picture doors (`bodyCapFor`'s `none`, `inbound` and `picture`), whatever
+ * `Content-Type` says. The parsers here decide by that header in different
+ * ways (`application/jsonx` and a `+json` suffix reach Better Auth's, and the
+ * claim page reads any header that contains `application/json`), so no header
+ * test here can be known to match them all.
  *
  * Only an escape can carry a lone surrogate: UTF-8 has no byte sequence for
  * one, and the decoder turns a malformed sequence into U+FFFD. So the body is
@@ -29,7 +29,12 @@ const SURROGATE_ESCAPE = /\\u[dD][89a-fA-F]/;
  */
 export const jsonBodyGuard = createMiddleware<AppEnv>(async (c, next) => {
   const cap = bodyCapFor(c.req.path);
-  if (cap === "none" || cap === "inbound" || c.req.method === "GET") {
+  if (
+    cap === "none" ||
+    cap === "inbound" ||
+    cap === "picture" ||
+    c.req.method === "GET"
+  ) {
     return next();
   }
   const text = await c.req.raw.clone().text();

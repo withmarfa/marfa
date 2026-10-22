@@ -4,6 +4,7 @@ use crate::remote::{Remote, request::Request};
 use clap::{Args, Subcommand};
 use serde_json::{Value, json};
 use std::io::{IsTerminal, Read};
+use std::path::PathBuf;
 
 #[derive(Debug, Subcommand)]
 pub enum OwnerCommand {
@@ -16,8 +17,14 @@ pub enum OwnerCommand {
     },
     /// Recover the owner's password using private machine authority; revoke browser sessions.
     Recover(SecretInput),
-    /// Change the owner's email, display name, or avatar (private socket required).
+    /// Change the owner's email, display name, or picture (private socket required).
     Update(OwnerUpdateArgs),
+    /// Fetch the owner's picture.
+    Picture {
+        /// Where to write the picture. Omitted, its bytes go to stdout.
+        #[arg(long, value_name = "PATH")]
+        output: Option<PathBuf>,
+    },
 }
 
 #[derive(Debug, Args)]
@@ -29,10 +36,10 @@ pub struct OwnerUpdateArgs {
     /// The owner's display name.
     #[arg(long)]
     name: Option<String>,
-    /// An HTTP or HTTPS avatar URL. Marfa does not fetch it.
-    #[arg(long, conflicts_with = "clear_avatar")]
-    avatar: Option<String>,
-    /// Clear the avatar URL.
+    /// A PNG, JPEG or WebP picture file of 2 MiB or less. The server decides the kind from the bytes.
+    #[arg(long, value_name = "FILE", conflicts_with = "clear_avatar")]
+    avatar: Option<PathBuf>,
+    /// Remove the owner's picture.
     #[arg(long)]
     clear_avatar: bool,
 }
@@ -105,8 +112,34 @@ pub fn run(command: OwnerCommand, remote: &Remote, out: &Printer) -> Result<(), 
     match command {
         OwnerCommand::Passkeys { command } => super::owner_passkeys::run(command, remote, out),
         OwnerCommand::Show => out.value(&remote.json(&Request::get(&["owner"]))?),
+        OwnerCommand::Picture { output } => {
+            let (content_type, mut reader) =
+                remote.stream(&Request::get(&["owner", "picture"]).streamed())?;
+            let written = super::blobs::save(&mut reader, output.as_deref())?;
+            // Bytes to stdout are the answer; a report there would corrupt it.
+            if let Some(path) = output {
+                out.report(
+                    &json!({ "path": path, "size_bytes": written, "mime_type": content_type }),
+                    || {
+                        format!(
+                            "{} byte(s) of {content_type} into {}",
+                            written,
+                            path.display()
+                        )
+                    },
+                )?;
+            }
+            Ok(())
+        }
         OwnerCommand::Update(args) => {
             require_local(remote)?;
+            let picture = match &args.avatar {
+                Some(file) => Some(super::profile::picture_request(
+                    &["owner", "picture"],
+                    file,
+                )?),
+                None => None,
+            };
             let mut body = serde_json::Map::new();
             if let Some(email) = args.email {
                 body.insert("email".into(), json!(email));
@@ -114,13 +147,22 @@ pub fn run(command: OwnerCommand, remote: &Remote, out: &Printer) -> Result<(), 
             if let Some(name) = args.name {
                 body.insert("name".into(), json!(name));
             }
-            if let Some(avatar) = args.avatar {
-                body.insert("avatar".into(), json!(avatar));
-            }
             if args.clear_avatar {
                 body.insert("avatar".into(), Value::Null);
             }
-            out.value(&remote.json(&Request::patch(&["owner"]).json(Value::Object(body)))?)
+            // The picture goes first: the server may refuse it, and a refusal
+            // then leaves the email and name as they were.
+            let mut reply = None;
+            if let Some(request) = picture {
+                reply = Some(remote.json(&request)?);
+            }
+            if !body.is_empty() {
+                reply = Some(remote.json(&Request::patch(&["owner"]).json(Value::Object(body)))?);
+            }
+            match reply {
+                Some(reply) => out.value(&reply),
+                None => Ok(()),
+            }
         }
         OwnerCommand::Recover(args) => {
             require_local(remote)?;

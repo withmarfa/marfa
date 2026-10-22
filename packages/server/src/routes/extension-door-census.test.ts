@@ -479,6 +479,7 @@ const CARRYING_NONE: Record<string, { why: string; drive: Driver }> = {
 /** Opaque bodies that are not an item's data at all, each with what they are. */
 const NOT_ITEM_DATA: Record<string, string> = {
   "GET /blobs/{hash}": "a blob's bytes",
+  "GET /owner/picture": "the owner's picture bytes",
   "GET /connectors/{id}/deliveries/{delivery_id}/body":
     "the body a connector's sender posted",
 };

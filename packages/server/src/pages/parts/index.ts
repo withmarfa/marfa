@@ -25,6 +25,7 @@ export type { DialogProps } from "./dialog.js";
 export { EmptyState, Notice } from "./feedback.js";
 export type { EmptyStateProps, NoticeProps } from "./feedback.js";
 export {
+  FileField,
   FormFoot,
   PasswordField,
   RowInput,
@@ -32,6 +33,7 @@ export {
   TextField,
 } from "./fields.js";
 export type {
+  FileFieldProps,
   FormFootProps,
   PasswordFieldProps,
   RowInputProps,
