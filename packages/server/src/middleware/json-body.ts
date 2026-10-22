@@ -16,7 +16,7 @@ const SURROGATE_ESCAPE = /\\u[dD][89a-fA-F]/;
  * request's own body and a body can be read once.
  *
  * It judges every body but a `GET`'s and those of the blob, restore and
- * inbound doors (`bodyCapFor`'s `none` and `inbound`), whatever
+ * inbound and picture doors (`bodyCapFor`'s `none`, `inbound` and `picture`), whatever
  * `Content-Type` says. The parsers here decide by
  * that header in different ways (`application/jsonx` and a `+json` suffix
  * reach Better Auth's, and the claim page reads any header that contains
@@ -29,7 +29,12 @@ const SURROGATE_ESCAPE = /\\u[dD][89a-fA-F]/;
  */
 export const jsonBodyGuard = createMiddleware<AppEnv>(async (c, next) => {
   const cap = bodyCapFor(c.req.path);
-  if (cap === "none" || cap === "inbound" || c.req.method === "GET") {
+  if (
+    cap === "none" ||
+    cap === "inbound" ||
+    cap === "picture" ||
+    c.req.method === "GET"
+  ) {
     return next();
   }
   const text = await c.req.raw.clone().text();

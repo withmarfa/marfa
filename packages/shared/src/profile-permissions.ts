@@ -20,7 +20,7 @@ export const ProfilePermissionsSchema = z.strictObject({
   avatar: z
     .enum(["read", "write"])
     .optional()
-    .describe("Access to the owner's avatar URL."),
+    .describe("Access to the owner's profile picture."),
 });
 
 /** Only effective authority can pass to a newly minted credential. */

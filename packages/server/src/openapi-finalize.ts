@@ -319,7 +319,15 @@ export const PUBLIC_TAGS: readonly PublicTag[] = [
   {
     name: "Owner",
     description: "The instance's owner and their profile.",
-    operations: ["createOwner", "getOwner", "updateOwner", "updateProfile"],
+    operations: [
+      "createOwner",
+      "getOwner",
+      "updateOwner",
+      "updateProfile",
+      "replaceOwnerPicture",
+      "replaceProfilePicture",
+      "getOwnerPicture",
+    ],
   },
   {
     name: "Sign-ins and passkeys",

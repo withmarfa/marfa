@@ -28,8 +28,14 @@ const USER = {
   name: "A Name",
   email: "someone@example.test",
   emailVerified: true,
-  image: "https://example.test/avatar.png",
 };
+
+/** The store the builders ask whether the owner has a picture. */
+function storageWith(hasPicture: boolean): Storage {
+  return {
+    owner: { find: () => Promise.resolve({ id: USER.id, hasPicture }) },
+  } as unknown as Storage;
+}
 
 /**
  * The two builders, taken off the plugin the server actually installs
@@ -37,13 +43,19 @@ const USER = {
  * database to construct — the storage handle is threaded to the hooks, and
  * no hook runs on this path.
  */
-function claimBuilders(): {
-  id_token: (input: { user: typeof USER; scopes: string[] }) => unknown;
-  userinfo: (input: { user: typeof USER; scopes: string[] }) => unknown;
+function claimBuilders(hasPicture = true): {
+  id_token: (input: {
+    user: typeof USER;
+    scopes: string[];
+  }) => Promise<unknown>;
+  userinfo: (input: {
+    user: typeof USER;
+    scopes: string[];
+  }) => Promise<unknown>;
 } {
   const plugin = buildOauthProviderPlugin({
     apiKeySalt: "salt-for-this-test",
-    storage: {} as Storage,
+    storage: storageWith(hasPicture),
     baseURL: "https://instance.test",
   });
   const options = (
@@ -52,11 +64,11 @@ function claimBuilders(): {
         customIdTokenClaims: (input: {
           user: typeof USER;
           scopes: string[];
-        }) => unknown;
+        }) => Promise<unknown>;
         customUserInfoClaims: (input: {
           user: typeof USER;
           scopes: string[];
-        }) => unknown;
+        }) => Promise<unknown>;
       };
     }
   ).options;
@@ -92,11 +104,11 @@ const DOORS = ["id_token", "userinfo"] as const;
 describe("the profile claim gate", () => {
   for (const door of DOORS) {
     for (const { row, scope, claims } of ROWS) {
-      it(`serves ${claims.join(" and ")} on the ${door} when ${row} is granted, and nothing else`, () => {
-        const built = claimBuilders()[door]({
+      it(`serves ${claims.join(" and ")} on the ${door} when ${row} is granted, and nothing else`, async () => {
+        const built = (await claimBuilders()[door]({
           user: USER,
           scopes: ["openid", scope],
-        }) as Record<string, unknown>;
+        })) as Record<string, unknown>;
         // Present: the half that fails when the gate is stuck closed.
         for (const claim of claims) {
           expect(Object.hasOwn(built, claim), claim).toBe(true);
@@ -109,16 +121,16 @@ describe("the profile claim gate", () => {
         }
       });
 
-      it(`withholds ${claims.join(" and ")} on the ${door} when ${row} is not granted`, () => {
+      it(`withholds ${claims.join(" and ")} on the ${door} when ${row} is not granted`, async () => {
         // The other two rows granted, so the case is about this row rather
         // than about a client holding nothing.
         const others = ROWS.filter((entry) => entry.row !== row).map(
           (entry) => entry.scope,
         );
-        const built = claimBuilders()[door]({
+        const built = (await claimBuilders()[door]({
           user: USER,
           scopes: ["openid", ...others],
-        }) as Record<string, unknown>;
+        })) as Record<string, unknown>;
         for (const claim of claims) {
           expect(Object.hasOwn(built, claim), claim).toBe(false);
         }
@@ -131,12 +143,28 @@ describe("the profile claim gate", () => {
       });
     }
 
-    it(`serves no identity claim on the ${door} to a client holding only openid`, () => {
-      const built = claimBuilders()[door]({
+    it(`serves no identity claim on the ${door} to a client holding only openid`, async () => {
+      const built = (await claimBuilders()[door]({
         user: USER,
         scopes: ["openid"],
-      }) as Record<string, unknown>;
+      })) as Record<string, unknown>;
       expect(Object.keys(built)).toEqual([]);
+    });
+
+    it(`serves the picture on the ${door} as the instance's address, and only while there is a picture`, async () => {
+      const scopes = ["openid", "profile.avatar:read"];
+      const set = (await claimBuilders(true)[door]({
+        user: USER,
+        scopes,
+      })) as Record<string, unknown>;
+      expect(set.picture).toBe("https://instance.test/owner/picture");
+      // The witness above shows the claim producible; without a picture the
+      // same grant carries none.
+      const none = (await claimBuilders(false)[door]({
+        user: USER,
+        scopes,
+      })) as Record<string, unknown>;
+      expect(Object.hasOwn(none, "picture")).toBe(false);
     });
   }
 });

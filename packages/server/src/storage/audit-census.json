@@ -496,6 +496,13 @@
       "runAuditedTransaction": 1
     }
   },
+  "routes/picture.ts": {
+    "boundary": "A picture replaces the stored one and its audit entry shares the transaction; the profile door rechecks the credential's avatar write permission inside it.",
+    "calls": {
+      "OwnerStore.setPicture": 2,
+      "runAuditedTransaction": 2
+    }
+  },
   "routes/profile.ts": {
     "boundary": "Profile field authority is refreshed and checked for every submitted field inside the audited transaction.",
     "calls": {

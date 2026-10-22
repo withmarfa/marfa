@@ -58,7 +58,7 @@ export function controlRoutes(
       ...input.data,
       proof: { kind: "local" },
     });
-    return c.json(ownerWire(owner), 201);
+    return c.json(ownerWire(owner, baseURL), 201);
   });
   app.get("/owner/passkeys/add-url", (c) => {
     const url = new URL("/auth/sign-in", baseURL);

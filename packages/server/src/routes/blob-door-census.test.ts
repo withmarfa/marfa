@@ -111,6 +111,8 @@ const BLOB_LAYER_HOLDERS: Record<string, string> = {
   "routes/restore-archive.ts":
     "the restore, recently authenticated owner or private local authority only, writes bytes",
   "routes/health.ts": "a probe of the disk store under a fixed name",
+  "routes/picture.ts":
+    "names the blob download policy for the owner's picture, which is held in the database and is no blob",
 };
 
 function blobLayerHolders(): string[] {

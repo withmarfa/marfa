@@ -1,5 +1,6 @@
 import * as clock from "../clock.js";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { png } from "../test-pictures.js";
 import {
   createTestContext,
   request,
@@ -14,6 +15,15 @@ afterEach(async () => {
   vi.restoreAllMocks();
   await ctx.cleanup();
 });
+const origin = () => new URL(ctx.config.authBaseUrl).origin;
+const pictureAddress = () => `${origin()}/owner/picture`;
+function upload(file: Uint8Array) {
+  return ctx.app.request("/owner/picture", {
+    method: "PUT",
+    headers: { cookie: ctx.owner.cookie, origin: origin() },
+    body: new Uint8Array(file),
+  });
+}
 function owner(body: unknown) {
   return request(ctx.app, "PATCH", "/owner", {
     body,
@@ -55,16 +65,15 @@ it("refuses empty, unknown and invalid owner fields", async () => {
 });
 it("sets and clears the owner's picture without changing their other details", async () => {
   const before = await ctx.storage.owner!.find();
-  const set = await owner({ avatar: "https://example.test/portrait.png" });
+  expect(before!.hasPicture).toBe(false);
+  const set = await upload(png());
   expect(set.status).toBe(200);
-  expect(await set.json()).toMatchObject({
-    avatar: "https://example.test/portrait.png",
-  });
+  expect(await set.json()).toMatchObject({ avatar: pictureAddress() });
   expect(await ctx.storage.owner!.find()).toMatchObject({
     id: before!.id,
     email: before!.email,
     name: before!.name,
-    avatar: "https://example.test/portrait.png",
+    hasPicture: true,
   });
   const cleared = await owner({ avatar: null });
   expect(cleared.status).toBe(200);
@@ -72,7 +81,7 @@ it("sets and clears the owner's picture without changing their other details", a
   expect(await ctx.storage.owner!.find()).toMatchObject({
     email: before!.email,
     name: before!.name,
-    avatar: null,
+    hasPicture: false,
   });
 });
 it("refuses profile fields without credential write authority and never accepts email", async () => {
@@ -211,7 +220,7 @@ it("does not let bearer plus owner cookie or a forged local header update owner"
           cookie: ctx.owner.cookie,
           origin: new URL(ctx.config.authBaseUrl).origin,
         },
-        body: { avatar: "https://example.test/no.png" },
+        body: { name: "No" },
       })
     ).status,
   ).toBe(403);
@@ -239,7 +248,7 @@ it("rolls back owner and delegated updates when their audit fails", async () => 
         ? await owner({ name: "Rejected", email: "rejected@example.com" })
         : await request(ctx.app, "PATCH", "/profile", {
             key: ctx.workingKey,
-            body: { name: "Rejected", avatar: "https://example.com/p.png" },
+            body: { name: "Rejected", avatar: null },
           });
     expect(result.status).toBe(500);
     expect(await ctx.storage.owner!.find()).toEqual(before);
@@ -272,7 +281,7 @@ it("refuses a multi-field update atomically when any submitted field is not writ
     (
       await request(ctx.app, "PATCH", "/profile", {
         key,
-        body: { name: "Not committed", avatar: "https://example.com/p.png" },
+        body: { name: "Not committed", avatar: null },
       })
     ).status,
   ).toBe(403);
@@ -310,7 +319,7 @@ it("refreshes a key narrowed while its profile write waits for writer admission"
   };
   const pending = request(ctx.app, "PATCH", "/profile", {
     key: ctx.workingKey,
-    body: { name: "Not committed", avatar: "https://example.com/p.png" },
+    body: { name: "Not committed", avatar: null },
   });
   try {
     await arrived;
@@ -335,19 +344,13 @@ it("requires owner authentication at most five minutes old, and a live session",
     await raw.__sqliteAll("SELECT created_at FROM auth_session")
   )[0]!;
   vi.spyOn(clock, "nowMs").mockReturnValue(session.created_at * 1000 + 300_000);
-  expect(
-    (await owner({ avatar: "https://example.test/boundary.png" })).status,
-  ).toBe(200);
+  expect((await owner({ name: "Boundary" })).status).toBe(200);
   vi.mocked(clock.nowMs).mockReturnValue(session.created_at * 1000 + 300_001);
-  expect(
-    (await owner({ avatar: "https://example.test/late.png" })).status,
-  ).toBe(403);
+  expect((await owner({ name: "Late" })).status).toBe(403);
   vi.restoreAllMocks();
   await raw.__sqliteRun("DELETE FROM auth_session", []);
-  expect((await owner({ avatar: null })).status).toBe(401);
-  expect((await ctx.storage.owner!.find())!.avatar).toBe(
-    "https://example.test/boundary.png",
-  );
+  expect((await owner({ name: "Gone" })).status).toBe(401);
+  expect((await ctx.storage.owner!.find())!.name).toBe("Boundary");
 });
 
 it("serves changed profile values through real OAuth userinfo and keeps wildcard reads", async () => {
@@ -356,11 +359,12 @@ it("serves changed profile values through real OAuth userinfo and keeps wildcard
     "profile:write",
     "offline_access",
   ]);
+  expect((await upload(png())).status).toBe(200);
   expect(
     (
       await request(ctx.app, "PATCH", "/profile", {
         key: oauth.token,
-        body: { name: "OAuth name", avatar: "https://example.com/p.png" },
+        body: { name: "OAuth name" },
       })
     ).status,
   ).toBe(200);
@@ -371,7 +375,7 @@ it("serves changed profile values through real OAuth userinfo and keeps wildcard
   expect(await info.json()).toMatchObject({
     sub: ctx.owner.id,
     name: "OAuth name",
-    picture: "https://example.com/p.png",
+    picture: pictureAddress(),
     email: ctx.owner.email,
   });
   expect((await owner({ email: ctx.owner.email.toUpperCase() })).status).toBe(
@@ -410,7 +414,7 @@ it("serves changed profile values through real OAuth userinfo and keeps wildcard
     email: "new@example.com",
     email_verified: false,
     name: "OAuth name",
-    picture: "https://example.com/p.png",
+    picture: pictureAddress(),
   });
 });
 it("refuses an app disconnected while awaiting the profile writer", async () => {

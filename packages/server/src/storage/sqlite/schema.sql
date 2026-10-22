@@ -697,6 +697,16 @@ CREATE TABLE IF NOT EXISTS `outbound_webhooks` (
 	CONSTRAINT "outbound_webhooks_one_owner" CHECK(("outbound_webhooks"."key_id" IS NOT NULL AND "outbound_webhooks"."grant_client_id" IS NULL AND "outbound_webhooks"."grant_user_id" IS NULL) OR ("outbound_webhooks"."key_id" IS NULL AND "outbound_webhooks"."grant_client_id" IS NOT NULL AND "outbound_webhooks"."grant_user_id" IS NOT NULL))
 );
 
+CREATE TABLE IF NOT EXISTS `owner_picture` (
+	`user_id` text PRIMARY KEY NOT NULL,
+	`content_type` text NOT NULL,
+	`bytes` blob NOT NULL,
+	`size_bytes` integer NOT NULL,
+	`sha256` text NOT NULL,
+	`updated_at` text NOT NULL,
+	FOREIGN KEY (`user_id`) REFERENCES `auth_user`(`id`) ON UPDATE no action ON DELETE cascade
+);
+
 CREATE TABLE IF NOT EXISTS `rate_limit_windows` (
 	`family` text NOT NULL,
 	`window_key` text NOT NULL,

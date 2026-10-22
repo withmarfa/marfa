@@ -3,9 +3,18 @@
  * need a larger one, and connector state and registration their own. Stated
  * once so `app.ts` and the OpenAPI doc agree.
  * Inbound caps after its endpoint lookup, so an unknown address reads nothing.
+ * The picture doors take raw image bytes, not JSON, and count them as they
+ * arrive (`routes/picture.ts`), so the general limiter and the JSON guard
+ * leave them alone.
  */
 export type BodyCap =
-  "none" | "bulk" | "request" | "inbound" | "connector-state" | "registration";
+  | "none"
+  | "bulk"
+  | "request"
+  | "inbound"
+  | "connector-state"
+  | "registration"
+  | "picture";
 
 export function bodyCapFor(path: string): BodyCap {
   if (path.startsWith("/blobs") || path === "/restore") {
@@ -14,6 +23,8 @@ export function bodyCapFor(path: string): BodyCap {
   if (path === "/auth/oauth2/register") return "registration";
   if (/^\/connectors\/[^/]+\/state$/.test(path)) return "connector-state";
   if (path.startsWith("/inbound/")) return "inbound";
+  if (path === "/owner/picture" || path === "/profile/picture")
+    return "picture";
   if (
     path.startsWith("/items/bulk") ||
     path.startsWith("/edges/bulk") ||

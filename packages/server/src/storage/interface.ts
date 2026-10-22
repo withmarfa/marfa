@@ -2743,19 +2743,39 @@ export interface OwnerRecord {
   id: string;
   email: string;
   name: string;
-  avatar: string | null;
+  /** Whether the owner has a profile picture stored. */
+  hasPicture: boolean;
   createdAt: Date;
+}
+
+/** The owner's stored profile picture. */
+export interface OwnerPicture {
+  contentType: string;
+  bytes: Buffer;
+  /** Lowercase hex SHA-256 of `bytes`. */
+  sha256: string;
 }
 
 /** The owner named by the durable, completed instance claim. */
 export interface OwnerStore {
   /** The owner, or `null` on an instance that has none yet. */
   find(): Promise<OwnerRecord | null>;
-  /** Update fields on the claimed owner's existing authentication row. */
+  /** The owner's picture, or `null` when none is set. */
+  findPicture(): Promise<OwnerPicture | null>;
+  /**
+   * Update fields on the claimed owner's existing authentication row.
+   * `avatar: null` removes the picture; a picture is only ever set through
+   * `setPicture`.
+   */
   update(input: {
     email?: string;
     name?: string;
-    avatar?: string | null;
+    avatar?: null;
+  }): Promise<OwnerRecord | null>;
+  /** Replace the picture, leaving exactly one row holding the new bytes. */
+  setPicture(input: {
+    contentType: string;
+    bytes: Uint8Array;
   }): Promise<OwnerRecord | null>;
 }
 
