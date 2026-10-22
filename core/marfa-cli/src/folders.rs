@@ -575,18 +575,21 @@ pub fn run(
     done.map(|()| exit)
 }
 
-/// The server and key a key file holds, as this command's own. The keychain
-/// is turned off, so that a folder of another server is reported without a
-/// credential rather than looked up where nobody can answer a prompt.
+/// The command's own server and key, taken from a key file. The keychain is
+/// turned off, so that a folder of another server is reported without a
+/// credential rather than looked up where nobody can answer a prompt. The
+/// file is read again each time a folder is opened (see `keyfile::active`).
 fn from_key_file(path: &Path, dir: Option<&Path>, named: &Named) -> Result<Named, CliError> {
     if named.url.is_some() || named.key.is_some() {
         return Err(CliError::Usage(
             "--key-file holds the server and key, so it takes neither --url nor --key".into(),
         ));
     }
-    let path = keyfile::placed(path, dir)?;
-    let held = keyfile::read(&path)?;
+    keyfile::activate(path, dir)?;
     credentials::turn_off();
+    let held = keyfile::active().ok_or_else(|| {
+        CliError::Usage("the key file could not be made the watch's own".into())
+    })??;
     Ok(Named {
         url: Some(held.url),
         key: Some(held.key),

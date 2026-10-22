@@ -103,7 +103,23 @@ pub struct Named {
 }
 
 impl Named {
+    /// The session for this command's own server and key, or for the key
+    /// file a watch was started with, read now.
     pub fn session(&self) -> Result<Session, CliError> {
+        match crate::keyfile::active() {
+            Some(held) => Named::of(held?).own_session(),
+            None => self.own_session(),
+        }
+    }
+
+    fn of(held: crate::keyfile::KeyFile) -> Named {
+        Named {
+            url: Some(held.url),
+            key: Some(held.key),
+        }
+    }
+
+    fn own_session(&self) -> Result<Session, CliError> {
         // Opening a working copy is offline. Its transport verifies a new
         // origin before the first call, including a refused token's renewal.
         let remote = Remote::resolve_with_renewal(self, false)?;
@@ -124,13 +140,20 @@ impl Named {
     /// the keychain keeps for `origin`, so a key named for one server is never
     /// sent to another. A copy that records none takes this command's.
     pub fn session_for(&self, origin: Option<&str>) -> Result<Session, CliError> {
+        match crate::keyfile::active() {
+            Some(held) => Named::of(held?).own_session_for(origin),
+            None => self.own_session_for(origin),
+        }
+    }
+
+    fn own_session_for(&self, origin: Option<&str>) -> Result<Session, CliError> {
         let Some(origin) = origin else {
-            return self.session();
+            return self.own_session();
         };
         // A key in hand with no server named is refused here, not looked up:
         // one key cannot serve every folder's server.
         match Remote::url_for_call(self) {
-            Ok(url) if marfa_core::http::origin_of(&url)? == origin => return self.session(),
+            Ok(url) if marfa_core::http::origin_of(&url)? == origin => return self.own_session(),
             Ok(_) | Err(CliError::NoServerNamed) => {}
             Err(error) => return Err(error),
         }

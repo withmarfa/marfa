@@ -4680,19 +4680,19 @@ Where `folders autostart on` is given `--key-file` naming a file, the CLI MUST m
 
 ### `folders/autostart-key-file-refused`
 
-If the file named by `folders autostart on --key-file` or `folders watch --key-file` does not exist, is a symbolic link, belongs to another user, can be read by its group or by others, lacks a `MARFA_API_URL` line or a `MARFA_API_KEY` line, or lies inside a folder the folder registry lists, then the CLI MUST exit 1 with `invalid`, name the file and the reason and never print a value from it, and `folders autostart on` MUST write nothing.
+If the file named by `folders autostart on --key-file` or `folders watch --key-file` does not exist, is not a regular file, is a symbolic link, has more than one name, belongs to another user, can be read by its group or by others, lacks a `MARFA_API_URL` line or a `MARFA_API_KEY` line, holds an address that is not a server address, or lies inside a folder the folder registry lists, then the CLI MUST exit 1 with `invalid`, name the file and the reason and never print a value from it, and `folders autostart on` MUST write nothing.
 
-**Reason:** A key readable by others is no safer than one on a command line, and a key file inside a folder would be sent to the server as one of its files. Refusing in `on` finds the fault now and not at the next login.
+**Reason:** A key readable by others is no safer than one on a command line, and a key file inside a folder, under any of its names, would be sent to the server as one of its files. Refusing in `on` finds the fault now and not at the next login.
 
 **Tests:** `device/folders-autostart.test.ts › refuses a key file that others can read, a link, one that lacks a name and one inside a folder, naming the reason and writing nothing`.
 
 ### `folders/watch-key-file`
 
-While `folders watch` runs with `--key-file`, the CLI MUST use the file's address and key for each folder whose copy records that server, MUST read the keychain for no folder, and MUST NOT send the key to a folder of another server.
+While `folders watch` runs with `--key-file`, the CLI MUST read the file again each time it opens a folder and use the file’s address and key for each folder whose copy records that server, MUST read the keychain for no folder, and MUST NOT send the key to a folder of another server. If the file no longer meets `folders/autostart-key-file-refused` when a folder is opened, then the CLI MUST report that folder as not watched with the reason and try it again, and go on with the others.
 
-**Reason:** A setup that must never raise a keychain dialog has no use for one, and one key cannot serve every folder's server.
+**Reason:** A setup that must never raise a keychain dialog has no use for one, and one key cannot serve every folder’s server. A key that is rotated in the file is the one used at the next open, and a file that has become unsafe, or lies inside a folder added since, stops being used.
 
-**Tests:** `device/folders-autostart.test.ts › keeps a folder in step from the agent with the key file, and reads the keychain for no folder`, `› does not send a key file's key to a folder of another server`.
+**Tests:** `device/folders-autostart.test.ts › keeps a folder in step from the agent with the key file`, `› does not send a key file's key to a folder of another server`, `› reads the keychain for no folder with a key file, though it keeps a credential for the folder's server`.
 
 ### `folders/autostart-file-mode`
 
@@ -4718,7 +4718,7 @@ Where folder syncing from login is on, when the person signs in, a device MUST k
 
 ### `folders/autostart-own-credential`
 
-While the agent’s watch runs, a device MUST keep each folder in step with the credential the keychain keeps for that folder’s server.
+While the agent’s watch runs and the agent names no key file, a device MUST keep each folder in step with the credential the keychain keeps for that folder’s server.
 
 **Tests:** `device/folders-autostart.test.ts › keeps a folder in step from the agent, with the credential the keychain keeps for the folder's server`.
 
@@ -4822,7 +4822,7 @@ When `folders autostart status` finds folders in the current entry whose `reason
 
 When `folders autostart status` finds a folder in the current entry not watched for `no_credential`, `no_keychain`, `unauthorized` or `signed_out`, the CLI MUST say that the watch has no credential it can use for that folder’s server.
 
-**Reason:** On Linux the watch reads its keys from the Secret Service keychain, which must be unlocked at login for a watch started then.
+**Reason:** On Linux the watch reads its keys from the Secret Service keychain, which must be unlocked at login for a watch started then. An agent that names a key file reads no keychain.
 
 **Tests:** `device/folders-autostart.test.ts › says whether the watch runs, where it logs, and from the record which folders it has no credential for, with no server or credential of its own`.
 

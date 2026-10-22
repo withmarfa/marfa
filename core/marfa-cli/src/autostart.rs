@@ -1157,10 +1157,17 @@ fn describe_status(place: &Place, report: &Status) -> String {
             {
                 let reason = folder.reason.as_deref().unwrap_or("not tried yet");
                 lines.push(if report.credential.contains(&folder.dir) {
-                    format!(
-                        "{}: not watched ({reason}): the watch has no credential it can use for this folder's server; keep one with `marfa keys keep` or `marfa login`, and on Linux unlock the Secret Service keychain at login",
-                        folder.dir
-                    )
+                    match &report.key_file {
+                        Some(key_file) => format!(
+                            "{}: not watched ({reason}): the watch has no credential it can use for this folder's server; the key file {} must name that server, and the keychain is not read",
+                            folder.dir,
+                            key_file.display()
+                        ),
+                        None => format!(
+                            "{}: not watched ({reason}): the watch has no credential it can use for this folder's server; keep one with `marfa keys keep` or `marfa login`, and on Linux unlock the Secret Service keychain at login",
+                            folder.dir
+                        ),
+                    }
                 } else {
                     format!("{}: not watched ({reason})", folder.dir)
                 });
