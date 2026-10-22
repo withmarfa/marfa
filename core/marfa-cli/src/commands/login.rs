@@ -107,7 +107,12 @@ pub fn run(args: LoginArgs, named: &Named, out: &Printer) -> Result<(), CliError
         .verification_uri_complete
         .clone()
         .unwrap_or_else(|| code.verification_uri.clone());
-    let sentence = approval_sentence(&page, &code.user_code);
+    let stream = if args.print_token && !out.json {
+        crate::style::Stream::Err
+    } else {
+        crate::style::Stream::Out
+    };
+    let sentence = approval_sentence(&page, &code.user_code, stream);
     if args.print_token && !out.json {
         // The token set is the one document on stdout.
         eprintln!("{sentence}");
@@ -162,7 +167,7 @@ fn signed_in_text(origin: &str, scope: Option<&str>) -> String {
 /// in two groups of four, so what they read here is what they see there. The
 /// address keeps the code as the server issued it, which the page accepts in
 /// either form.
-fn approval_sentence(page: &str, user_code: &str) -> String {
+fn approval_sentence(page: &str, user_code: &str, stream: crate::style::Stream) -> String {
     let code: String = user_code
         .chars()
         .filter(char::is_ascii_alphanumeric)
@@ -174,6 +179,7 @@ fn approval_sentence(page: &str, user_code: &str) -> String {
     } else {
         code
     };
+    let shown = crate::style::bold(stream, &shown);
     format!("Open {page} and enter the code {shown}\nWaiting for the approval...")
 }
 
@@ -299,12 +305,18 @@ mod tests {
     fn the_code_is_told_in_two_groups_of_four_and_the_address_keeps_the_issued_code() {
         let page = "https://marfa.example/auth/device?user_code=SG35FYDE";
         assert_eq!(
-            approval_sentence(page, "SG35FYDE"),
+            approval_sentence(page, "SG35FYDE", crate::style::Stream::Out),
             "Open https://marfa.example/auth/device?user_code=SG35FYDE and enter the code SG35-FYDE\nWaiting for the approval..."
         );
         // Typed in lower case or already grouped, it reads the same.
-        assert!(approval_sentence(page, "sg35fyde").contains("the code SG35-FYDE\n"));
-        assert!(approval_sentence(page, "SG35-FYDE").contains("the code SG35-FYDE\n"));
+        assert!(
+            approval_sentence(page, "sg35fyde", crate::style::Stream::Out)
+                .contains("the code SG35-FYDE\n")
+        );
+        assert!(
+            approval_sentence(page, "SG35-FYDE", crate::style::Stream::Out)
+                .contains("the code SG35-FYDE\n")
+        );
     }
 
     #[test]

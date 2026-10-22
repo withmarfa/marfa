@@ -21,6 +21,7 @@ use serde_json::json;
 
 use crate::error::CliError;
 use crate::output::Printer;
+use crate::style::{self, Stream};
 use docker::Docker;
 use envfile::EnvFile;
 use prompt::Prompter;
@@ -510,7 +511,7 @@ struct Steps {
 impl Steps {
     fn say(&self, text: &str) {
         if !self.quiet {
-            eprintln!("{text}");
+            eprintln!("{}", style::bold(Stream::Err, text));
         }
     }
 }
@@ -1042,7 +1043,8 @@ fn install(args: InstallArgs, out: &Printer) -> Result<(), CliError> {
     out.report(&report, || {
         let mut text = String::new();
         text.push_str(&format!(
-            "\nMarfa {release} is running.\n\n"
+            "\n{}\n\n",
+            style::good(Stream::Out, &format!("Marfa {release} is running."))
         ));
         text.push_str(&format!("  Address   {address}\n"));
         if matches!(access, Access::Cloudflare | Access::Proxy) {
@@ -1094,7 +1096,7 @@ fn install(args: InstallArgs, out: &Printer) -> Result<(), CliError> {
             text.push_str(&format!("\n{note}\n"));
         }
         text.push_str(&format!("\n{AGENT_HINT}\n"));
-        text
+        style::labelled(Stream::Out, &text)
     })
 }
 
@@ -1351,10 +1353,10 @@ fn status(args: DirArgs, out: &Printer) -> Result<(), CliError> {
     out.report(&report, || {
         let word = match (&container, healthy) {
             (None, _) => "not created".to_string(),
-            (Some(_), true) => "running and healthy".to_string(),
-            (Some(c), false) => format!("{}, not answering", c.status),
+            (Some(_), true) => style::good(Stream::Out, "running and healthy"),
+            (Some(c), false) => style::bad(Stream::Out, &format!("{}, not answering", c.status)),
         };
-        format!(
+        let text = format!(
             "{} {}: {word}\n  Address   {}\n  Folder    {}\n  Owner     {}\n  Backup    {}{login}",
             state.name,
             state.release,
@@ -1370,7 +1372,8 @@ fn status(args: DirArgs, out: &Printer) -> Result<(), CliError> {
             } else {
                 "none"
             },
-        )
+        );
+        style::labelled(Stream::Out, &text)
     })
 }
 

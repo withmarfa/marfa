@@ -19,6 +19,7 @@ mod reference;
 mod remote;
 mod server;
 mod storage;
+mod style;
 mod telemetry;
 mod values;
 mod watch;
@@ -271,6 +272,7 @@ fn main() -> ExitCode {
         },
     };
     let json = cli.json;
+    style::set_json(json);
     let telemetry = telemetry::start(&command, json);
     // A panic is what error tracking is for. It is reported, the trace is
     // ended, and the panic then goes on unwinding, so that the message on
@@ -305,8 +307,22 @@ fn main() -> ExitCode {
 /// What `Cli::try_parse` does, and the command's names as well, which are the
 /// only part of a command line that is safe to report: the subcommands the
 /// parser matched, never an argument or a value.
+/// Whether `--json` is among the arguments, read from the raw line: a refused
+/// command line has no parsed flags.
+fn json_in(args: impl IntoIterator<Item = std::ffi::OsString>) -> bool {
+    args.into_iter()
+        .skip(1)
+        .take_while(|arg| arg != "--")
+        .any(|arg| arg == "--json")
+}
+
 fn parse() -> Result<(Cli, String), clap::Error> {
     let mut command = Cli::command();
+    // clap draws help and usage errors in color on a terminal and reads
+    // `NO_COLOR` itself; `--json` it does not know.
+    if json_in(std::env::args_os()) {
+        command = command.color(clap::ColorChoice::Never);
+    }
     let mut matches = command.try_get_matches_from_mut(std::env::args_os())?;
     let path = command_path(&matches);
     let cli =
@@ -334,7 +350,7 @@ fn print_refusal(error: &CliError, json: bool) {
     if json {
         eprintln!("{}", error.envelope());
     } else {
-        eprintln!("marfa: {error}");
+        eprintln!("{} {error}", style::bad(style::Stream::Err, "marfa:"));
     }
 }
 
@@ -351,12 +367,7 @@ fn usage(
     ) {
         return None;
     }
-    let json = args
-        .into_iter()
-        .skip(1)
-        .take_while(|arg| arg != "--")
-        .any(|arg| arg == "--json");
-    if !json {
+    if !json_in(args) {
         return None;
     }
     let message = match error.kind() {

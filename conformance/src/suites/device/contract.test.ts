@@ -2131,6 +2131,33 @@ describe("every command holds the server to the contract", () => {
     expect(server.unmatchedRequests).toEqual([]);
   });
 
+  it("writes no escape character to a stream that is not a terminal, with NO_COLOR set, or under --json", async () => {
+    const nowhere = "http://127.0.0.1:1";
+    const runs: Array<[string, string[], Record<string, string>]> = [
+      ["help", ["--help"], {}],
+      ["a command's help", ["server", "install", "--help"], {}],
+      ["a usage error", ["--no-such-option"], {}],
+      [
+        "a refusal",
+        ["server", "status", "--dir", "/marfa-no-install-here"],
+        {},
+      ],
+      [
+        "a refusal under --json",
+        ["--json", "server", "status", "--dir", "/marfa-no-install-here"],
+        {},
+      ],
+      ["no color asked for", ["--help"], { NO_COLOR: "1" }],
+      ["a dumb terminal", ["whoami", "--url", nowhere], { TERM: "dumb" }],
+    ];
+    for (const [name, args, env] of runs) {
+      const ran = await marfa(args, undefined, env);
+      expect(`${ran.stdout}${ran.stderr}`, name).not.toBe("");
+      expect(ran.stdout, name).not.toContain("\u001b");
+      expect(ran.stderr, name).not.toContain("\u001b");
+    }
+  });
+
   it("exits 3 with decoding for a docs search or topics answer that is not the JSON read, printing none of it", async () => {
     server = await ScriptedServer.start();
     // Consumed in order: a body that is not the shape read, then entries
