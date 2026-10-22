@@ -1659,7 +1659,7 @@ const passwordBase = {
   addressProblem: false,
 };
 
-const profileOwner = { ...OWNER, avatar: null as string | null };
+const profileOwner = { ...OWNER, hasPicture: false };
 
 // ---------------------------------------------------------------------------
 // Console
@@ -2566,10 +2566,10 @@ const CONSOLE: GalleryTab = {
       variant("new", "Name and email, no picture", () =>
         renderProfilePage({ ...PAGE, owner: profileOwner }),
       ),
-      variant("picture", "With a picture address", () =>
+      variant("picture", "With a picture", () =>
         renderProfilePage({
           ...PAGE,
-          owner: { ...OWNER, avatar: "https://images.example.com/jonah.png" },
+          owner: { ...OWNER, hasPicture: true },
         }),
       ),
       variant("long", "Long unbroken name and email", () =>
@@ -2578,7 +2578,7 @@ const CONSOLE: GalleryTab = {
           owner: {
             name: LONG_NAME,
             email: `${LONG_NAME}@example.com`,
-            avatar: `https://images.example.com/${LONG_NAME}.png`,
+            hasPicture: true,
           },
         }),
       ),
