@@ -33,6 +33,8 @@ mod read_view;
 mod refusal_tests;
 #[cfg(test)]
 mod relocation_tests;
+#[cfg(test)]
+mod replace_tests;
 mod scaffold;
 #[cfg(test)]
 mod scripted;
@@ -312,6 +314,48 @@ impl Core {
             owner_only(path)?;
         }
         Self::from_connection(store::open(path)?, server, Arc::new(lock), Some(cache))
+    }
+
+    /// Replaces a store `open` refuses with `wrong_schema` by an empty one of
+    /// this build's shape, and opens it as the writer. Refuses, leaving the
+    /// store as it is, while another process holds the writer role, while
+    /// the store holds a write the server has not taken or one it cannot
+    /// count, and where `open` would not refuse it. The new store is empty,
+    /// so what only the old store held, such as pins, is lost: read it
+    /// first. The blob cache is kept: it is addressed by content, not by the
+    /// store.
+    pub fn replace_refused(path: impl AsRef<Path>, server: Option<Server>) -> Result<Core> {
+        let path = path.as_ref();
+        // Held from the count to the returned core, so no write can be
+        // queued between the count and the replacement.
+        let lock = lock::WriterLock::claim(Some(path))?;
+        lock.refuse_unless_writer()?;
+        // A server `open` would refuse is refused here, before the store goes.
+        if let Some(server) = &server {
+            http::Http::new(&server.url, &server.key)?;
+        }
+        if path.symlink_metadata().is_err() {
+            return Err(CoreError::Invalid(format!(
+                "{} holds no store to replace",
+                path.display()
+            )));
+        }
+        match store::refusal(path)? {
+            Some(CoreError::WrongSchema {
+                unsent: Some(0), ..
+            }) => {}
+            Some(refused) => return Err(refused),
+            None => {
+                return Err(CoreError::Invalid(format!(
+                    "{} opens as it is, so there is nothing to replace",
+                    path.display()
+                )));
+            }
+        }
+        let conn = store::replace(path)?;
+        let cache = blob::Cache::beside(path);
+        cache.sweep_incoming(INCOMING_GRACE);
+        Self::from_connection(conn, server, Arc::new(lock), Some(cache))
     }
 
     /// Never claims the writer role, so a helper started before the app
@@ -5927,6 +5971,10 @@ mod tests {
                     "write_update",
                     "catch_up_pass",
                     "follow_from",
+                    // Makes a core rather than taking one, so no reading
+                    // handle can reach it; `replace_tests` claims the role
+                    // first and is refused.
+                    "replace_refused",
                 ][..],
             ),
             (include_str!("drain.rs"), &["drain_checked"][..]),

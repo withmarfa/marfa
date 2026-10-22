@@ -571,6 +571,23 @@ export class BindingDevice {
     await this.request({ op: "forget", handle: MAIN });
   }
 
+  /**
+   * Replaces the store the writer refuses with an empty one, and holds it in
+   * place of the core `forget` let go of.
+   */
+  async replaceRefused(url?: string, key?: string): Promise<Outcome<null>> {
+    const reply = await this.request({
+      op: "replace-refused",
+      handle: MAIN,
+      path: this.store,
+      url,
+      key,
+    });
+    return reply.ok
+      ? { ok: true, value: null }
+      : { ok: false, refusal: refusalOf(reply.error) };
+  }
+
   /** Opens the store as a writer would, and says the role it was given. */
   async tryOpen(url?: string, key?: string): Promise<OpenAttempt> {
     const reply = await this.request({

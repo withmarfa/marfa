@@ -949,6 +949,17 @@ fn sort(sort: Option<Sort>) -> marfa_core::Sort {
     }
 }
 
+fn server_of(url: Option<String>, key: Option<String>) -> Result<Option<marfa_core::Server>> {
+    match (url, key) {
+        (Some(url), Some(key)) => Ok(Some(marfa_core::Server { url, key })),
+        (None, None) => Ok(None),
+        _ => Err(Error::new(
+            napi::Status::InvalidArg,
+            "url and key go together",
+        )),
+    }
+}
+
 /// A core error as a JS error. The message starts with the error's code,
 /// `not_found: …`, `wrong_server: …`, and the error carries what the Swift
 /// binding's carries as properties: `code`, the core's own name for it, and
@@ -1770,17 +1781,29 @@ impl MarfaCore {
         url: Option<String>,
         key: Option<String>,
     ) -> Result<MarfaCore> {
-        let server = match (url, key) {
-            (Some(url), Some(key)) => Some(marfa_core::Server { url, key }),
-            (None, None) => None,
-            _ => {
-                return Err(Error::new(
-                    napi::Status::InvalidArg,
-                    "url and key go together",
-                ));
-            }
-        };
-        let core = marfa_core::Core::open(path, server).map_err(|error| failure(env, error))?;
+        let core = marfa_core::Core::open(path, server_of(url, key)?)
+            .map_err(|error| failure(env, error))?;
+        Ok(MarfaCore {
+            inner: Arc::new(core),
+        })
+    }
+
+    /// Replaces the store at `path` that `open` refuses with `wrong_schema`
+    /// by an empty one, and opens it. Refuses with `reading_handle` while
+    /// another process writes the store, with `wrong_schema` and its `unsent`
+    /// count while it holds a write the server has not taken, and with
+    /// `invalid` where `open` would not refuse it, leaving the store as it is.
+    /// The new store is empty, so what only the old store held, such as
+    /// pins, is lost: read it first.
+    #[napi(factory)]
+    pub fn replace_refused(
+        env: Env,
+        path: String,
+        url: Option<String>,
+        key: Option<String>,
+    ) -> Result<MarfaCore> {
+        let core = marfa_core::Core::replace_refused(path, server_of(url, key)?)
+            .map_err(|error| failure(env, error))?;
         Ok(MarfaCore {
             inner: Arc::new(core),
         })

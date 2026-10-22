@@ -96,6 +96,158 @@ pub fn open_to_read(path: &Path) -> Result<Connection, CoreError> {
     read_connection(conn, path)
 }
 
+/// Why a writer would refuse the store at `path`, read without changing it:
+/// `None` where a writer would open it.
+pub(crate) fn refusal(path: &Path) -> Result<Option<CoreError>, CoreError> {
+    let flags =
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX;
+    let logged = ["-wal", "-journal"]
+        .iter()
+        .any(|suffix| suffixed(path, suffix).symlink_metadata().is_ok());
+    // Without a log the file alone is the store, and the caller's writer
+    // lock keeps it so: read as immutable, SQLite makes no log beside it.
+    let conn = match path.to_str() {
+        Some(name) if !logged => Connection::open_with_flags(
+            format!(
+                "file:{}?immutable=1",
+                name.replace('%', "%25")
+                    .replace('?', "%3f")
+                    .replace('#', "%23")
+            ),
+            flags | rusqlite::OpenFlags::SQLITE_OPEN_URI,
+        )?,
+        _ => Connection::open_with_flags(path, flags)?,
+    };
+    conn.busy_timeout(std::time::Duration::from_secs(5))?;
+    match refuse_misshapen(&conn, &held_shape(&conn)?, false) {
+        Ok(()) => Ok(None),
+        Err(error @ CoreError::WrongSchema { .. }) => Ok(Some(at_path(error, path))),
+        Err(other) => Err(other),
+    }
+}
+
+/// The store file, then the logs SQLite keeps beside it. A log is read into
+/// whatever store holds its name, so each one moves with its store.
+const STORE_FILES: [&str; 4] = ["", "-journal", "-wal", "-shm"];
+
+fn suffixed(path: &Path, suffix: &str) -> std::path::PathBuf {
+    let mut name = path.as_os_str().to_owned();
+    name.push(suffix);
+    name.into()
+}
+
+/// The most set-aside copies one store's name can have beside it. Reached
+/// only where something other than a copy keeps taking the names.
+const MOST_SET_ASIDE: u32 = 1000;
+
+/// The name, `<store>.refused-<n>` for the first `n` from 1 whose store file
+/// and logs are all absent, so a copy a replacement left is never overwritten
+/// or mistaken for part of this one.
+pub(crate) fn free_set_aside(path: &Path) -> Result<std::path::PathBuf, CoreError> {
+    for n in 1..=MOST_SET_ASIDE {
+        let aside = suffixed(path, &format!(".refused-{n}"));
+        let mut free = true;
+        for suffix in STORE_FILES {
+            let name = suffixed(&aside, suffix);
+            match name.symlink_metadata() {
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => {
+                    return Err(CoreError::Store(format!(
+                        "{} cannot be replaced: {} cannot be checked: {error}",
+                        path.display(),
+                        name.display()
+                    )));
+                }
+                Ok(_) => free = false,
+            }
+        }
+        if free {
+            return Ok(aside);
+        }
+    }
+    Err(CoreError::Store(format!(
+        "{} cannot be replaced: {MOST_SET_ASIDE} copies set aside beside it are left; remove them first",
+        path.display()
+    )))
+}
+
+/// Replaces the store at `path` with an empty one of this build's shape. The
+/// caller holds the writer lock and has found nothing unsent. The old store
+/// is set aside under a name of its own (`free_set_aside`), logs first, so a
+/// log is never left beside a store that is not its own; it is put back if
+/// the new store cannot be made, and removed only once it has been.
+pub(crate) fn replace(path: &Path) -> Result<Connection, CoreError> {
+    let aside = free_set_aside(path)?;
+    let mut moved = Vec::new();
+    for suffix in STORE_FILES.iter().rev() {
+        let (from, to) = (suffixed(path, suffix), suffixed(&aside, suffix));
+        match std::fs::rename(&from, &to) {
+            Ok(()) => moved.push(*suffix),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                let unmoved = restore_set_aside(path, &aside, &moved);
+                return Err(CoreError::Store(format!(
+                    "{} cannot be set aside: {error}{unmoved}",
+                    from.display()
+                )));
+            }
+        }
+    }
+    let made = (|| -> Result<Connection, CoreError> {
+        crate::owner_only(path)?;
+        let conn = open(path)?;
+        // After the new store's files exist, so a failure leaves a partial
+        // store to clean up.
+        #[cfg(debug_assertions)]
+        if crate::fault::fails(|| "replace-refused-make") {
+            return Err(CoreError::Store("replace-refused-make".into()));
+        }
+        Ok(conn)
+    })();
+    match made {
+        Ok(conn) => {
+            for suffix in &moved {
+                let _ = std::fs::remove_file(suffixed(&aside, suffix));
+            }
+            Ok(conn)
+        }
+        Err(error) => {
+            for suffix in STORE_FILES.iter().rev() {
+                let _ = std::fs::remove_file(suffixed(path, suffix));
+            }
+            let unmoved = restore_set_aside(path, &aside, &moved);
+            Err(CoreError::Store(format!(
+                "{} cannot be replaced: {error}{unmoved}",
+                path.display()
+            )))
+        }
+    }
+}
+
+/// Moves what `replace` set aside back to `path`, the store file first.
+/// Names what could not be moved, so the store is never lost from view.
+fn restore_set_aside(path: &Path, aside: &Path, moved: &[&str]) -> String {
+    let mut order: Vec<&str> = moved.to_vec();
+    order.sort_by_key(|suffix| STORE_FILES.iter().position(|one| one == suffix));
+    let stranded: Vec<String> = order
+        .into_iter()
+        .filter_map(|suffix| {
+            let from = suffixed(aside, suffix);
+            std::fs::rename(&from, suffixed(path, suffix))
+                .err()
+                .map(|error| format!("{} ({error})", from.display()))
+        })
+        .collect();
+    if stranded.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "; the old store could not be put back and is still at {}",
+            stranded.join(", ")
+        )
+    }
+}
+
 #[cfg(unix)]
 pub(crate) fn read_directory(
     vfs: &crate::directory_vfs::DirectoryVfs,

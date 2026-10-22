@@ -29,6 +29,9 @@
 //                                         `handle` and collects it
 //   { op: "try-open", path, url?, key? }  opens the store as a writer would and
 //                                         holds it, answering the role it got
+//   { op: "replace-refused", handle, path, url?, key? }  replaces the store
+//                                         the writer refuses with an empty one
+//                                         and holds it as `handle`
 //   { op: "hook", name, point, arg? }      the debug build's testHooks
 //   { op: "clock", name, arg? }           the debug build's testClock
 //   { op: "exit" }
@@ -199,6 +202,16 @@ async function handle(message) {
     }
     case "try-open":
       return tryOpen(message);
+    case "replace-refused":
+      cores.set(
+        message.handle,
+        binding.MarfaCore.replaceRefused(
+          message.path,
+          message.url,
+          message.key,
+        ),
+      );
+      return null;
     case "reentry":
       if (message.action === "start") {
         reentryProbe = debugOnly("testHooks").probeReentry(

@@ -1646,6 +1646,30 @@ impl marfa_core::WatchListener for Telling {
     }
 }
 
+pub(crate) fn server_of(
+    url: Option<String>,
+    key: Option<String>,
+) -> Result<Option<marfa_core::Server>, MarfaError> {
+    match (url, key) {
+        (Some(url), Some(key)) => Ok(Some(marfa_core::Server { url, key })),
+        (None, None) => Ok(None),
+        _ => Err(MarfaError::Invalid {
+            message: "url and key go together".into(),
+        }),
+    }
+}
+
+impl Core {
+    fn renewing(core: marfa_core::Core, renewal: Option<Arc<renewal::Renewal>>) -> Arc<Self> {
+        if let Some(renewal) = renewal {
+            core.renew_credential_with(renewal.renew());
+        }
+        Arc::new(Core {
+            inner: Arc::new(core),
+        })
+    }
+}
+
 #[uniffi::export]
 impl Core {
     /// Opens a store another process writes, to read it only: never the
@@ -1738,23 +1762,35 @@ impl Core {
         key: Option<String>,
         renewer: Option<Arc<dyn CredentialRenewer>>,
     ) -> Result<Arc<Self>, MarfaError> {
-        let server = match (url, key) {
-            (Some(url), Some(key)) => Some(marfa_core::Server { url, key }),
-            (None, None) => None,
-            _ => {
-                return Err(MarfaError::Invalid {
-                    message: "url and key go together".into(),
-                });
-            }
-        };
+        let server = server_of(url, key)?;
         let renewal = renewal::Renewal::of(renewer, server.as_ref())?;
-        let core = marfa_core::Core::open(path, server)?;
-        if let Some(renewal) = renewal {
-            core.renew_credential_with(renewal.renew());
-        }
-        Ok(Arc::new(Core {
-            inner: Arc::new(core),
-        }))
+        Ok(Self::renewing(
+            marfa_core::Core::open(path, server)?,
+            renewal,
+        ))
+    }
+
+    /// Replaces the store at `path` that `open` refuses with `WrongSchema`
+    /// by an empty one, and opens it, taking `url`, `key` and `renewer` as
+    /// `open` does. Refuses with `ReadingHandle` while another process
+    /// writes the store, with `WrongSchema` and its `unsent` count while it
+    /// holds a write the server has not taken, and with `Invalid` where
+    /// `open` would not refuse it, leaving the store as it is. The new store
+    /// is empty, so what only the old store held, such as pins, is lost: read
+    /// it first.
+    #[uniffi::constructor(default(renewer = None))]
+    pub fn replace_refused(
+        path: String,
+        url: Option<String>,
+        key: Option<String>,
+        renewer: Option<Arc<dyn CredentialRenewer>>,
+    ) -> Result<Arc<Self>, MarfaError> {
+        let server = server_of(url, key)?;
+        let renewal = renewal::Renewal::of(renewer, server.as_ref())?;
+        Ok(Self::renewing(
+            marfa_core::Core::replace_refused(path, server)?,
+            renewal,
+        ))
     }
 
     pub fn hydrate(
