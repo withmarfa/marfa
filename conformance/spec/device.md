@@ -2530,6 +2530,44 @@ When a device refuses a store `wrong_schema`, a device MUST NOT advise deleting 
 
 **Tests:** `device/working-copy.test.ts › refuses a store another build shaped, by name, with the writes it holds unsent`.
 
+### `device/replace-refused`
+
+When a device is asked to replace a store it refuses `wrong_schema` and the store holds no write the server has not taken, a device MUST replace the store with an empty one of this build's shape and open it as the writer.
+
+**Reason:** a store another build made that has nothing left to send holds only what the server already has, and without this a person could use this build on that path only by deleting the store's files by hand.
+
+**Tests:** `device/binding-replace-refused.test.ts › replaces a refused store that holds nothing unsent with an empty one, and opens it`.
+
+### `device/replace-refused-unsent`
+
+If a device is asked to replace a store that holds a write the server has not taken, or whose writes it cannot count, then a device MUST refuse `wrong_schema`, saying how many such writes the store holds where it can count them.
+
+**Reason:** only the build that made the store can send those writes (`device/wrong-schema-no-delete`).
+
+**Tests:** `device/binding-replace-refused.test.ts › refuses to replace a refused store that holds a write the server has not taken`.
+
+### `device/replace-refused-held`
+
+While another process holds a store's writer role, a device MUST refuse to replace the store `reading_handle`.
+
+**Reason:** a count of the writes the server has not taken stays true only while no other process can queue one, so a device counts them and replaces the store under the writer role (`device/reading-handle-refuses`).
+
+**Tests:** `device/binding-replace-refused.test.ts › refuses to replace a refused store while another process holds its writer role`.
+
+### `device/replace-refused-usable`
+
+If a device is asked to replace a store it opens without refusing, then a device MUST refuse `invalid`.
+
+**Reason:** replacing is only for a store this build cannot open, never a way to empty one it can.
+
+**Tests:** `device/binding-replace-refused.test.ts › refuses to replace a store it opens`.
+
+### `device/replace-refused-kept`
+
+When a device refuses to replace a store, a device MUST leave the store's file and its write-ahead log unchanged.
+
+**Tests:** `device/binding-replace-refused.test.ts › refuses to replace a refused store that holds a write the server has not taken`, `› refuses to replace a refused store while another process holds its writer role`, `› refuses to replace a store it opens`.
+
 ### `device/writer-per-file`
 
 A device MUST give each store file its own writer role, so two stores in one directory that share a stem each have a writer.
