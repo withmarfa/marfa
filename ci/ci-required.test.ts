@@ -201,6 +201,15 @@ describe("what a change runs", () => {
       ["ci-sqlite", "workspace", ...OFFLINE, "conformance-compliance"],
     ],
     [
+      "the UI viewer, a development script",
+      [
+        "packages/server/scripts/ui-viewer.ts",
+        "packages/server/scripts/ui-viewer-fixtures.tsx",
+        "packages/server/src/routes/ui-viewer-coverage.test.ts",
+      ],
+      ["ci-sqlite", "workspace"],
+    ],
+    [
       "the page that decides whether a refusal is a page or JSON",
       ["packages/server/src/routes/http-error-page.tsx"],
       SERVER,

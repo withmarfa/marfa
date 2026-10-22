@@ -302,6 +302,12 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
     /^packages\/server\/src\/routes\/(?!http-error-page\.)[^/]+(?<!\.test)\.tsx$/,
     PAGE_MARKUP,
   ],
+  // The UI viewer, a development script no server code imports, and the test
+  // that every page has an example in it.
+  [
+    /^packages\/server\/(scripts\/ui-viewer(-fixtures)?\.tsx?|src\/routes\/ui-viewer-coverage\.test\.ts)$/,
+    PAGE_ASSETS_AND_TESTS,
+  ],
   [/^packages\/server\//, SERVER],
   [/^packages\/client\//, ["workspace", "clients-freshness"]],
 
