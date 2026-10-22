@@ -25,11 +25,29 @@ pub struct ProfileUpdateArgs {
     clear_avatar: bool,
 }
 
+/// The largest picture the server accepts, so a larger file is refused here
+/// before the upload starts and the server's reply is cut off.
+const PICTURE_LIMIT_BYTES: u64 = 2 * 1024 * 1024;
+
 /// The request that stores the picture in `file`, built only once the file
-/// opens, so an unreadable path fails before anything is sent.
+/// opens, is a regular file and fits the limit, so a bad path fails before
+/// anything is sent.
 pub(super) fn picture_request(door: &[&str], file: &Path) -> Result<Request, CliError> {
-    std::fs::File::open(file)
-        .map_err(|error| CliError::Invalid(format!("cannot read {}: {error}", file.display())))?;
+    let unreadable = |reason: &dyn std::fmt::Display| {
+        CliError::Invalid(format!("cannot read {}: {reason}", file.display()))
+    };
+    let metadata = std::fs::File::open(file)
+        .and_then(|handle| handle.metadata())
+        .map_err(|error| unreadable(&error))?;
+    if !metadata.is_file() {
+        return Err(unreadable(&"not a file"));
+    }
+    if metadata.len() > PICTURE_LIMIT_BYTES {
+        return Err(CliError::Invalid(format!(
+            "{} is over 2 MiB; use a picture of 2 MiB or less",
+            file.display()
+        )));
+    }
     Ok(Request::put(door).file(file.to_path_buf(), "application/octet-stream"))
 }
 
