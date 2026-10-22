@@ -3604,9 +3604,9 @@ fn forget_answered_once(conn: &Connection, only: Option<&str>) -> Result<usize, 
         )?)
 }
 
-/// The kinds `carries_content` names, as an SQL list.
-/// Named by the kinds that carry nothing, so a kind this build does not know,
-/// held by an earlier build's queue that it is counting, is kept as content.
+/// The kinds `carries_content` does not name, as an SQL list. Named by what
+/// carries nothing, so a kind this build does not know, held by an earlier
+/// build's queue that it is counting, is kept as content.
 fn content_free_kinds() -> String {
     WriteKind::ALL
         .into_iter()

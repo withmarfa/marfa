@@ -2,9 +2,10 @@
  * An extension write reaches another subscriber.
  *
  * The three metadata doors, `PUT /items/{id}/metadata`, the tag add and
- * the tag remove, publish `metadata_changed`. The two extension doors wrote the same metadata row and published nothing, so
- * an app that stored sidecar state through them changed a record no
- * second device was ever told about.
+ * the tag remove, publish `metadata_changed`. The two extension doors
+ * wrote the same metadata row and published nothing, so an app that
+ * stored sidecar state through them changed a record no second device was
+ * ever told about.
  *
  * The last case here is about the item the event carries rather than
  * the metadata: the doors read the item to authorize the request, and

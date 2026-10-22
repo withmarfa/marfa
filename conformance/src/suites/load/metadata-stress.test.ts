@@ -76,8 +76,6 @@ describe("metadata operations at scale", () => {
 
     for (const id of targets) {
       const { result, durationMs } = await measure(() =>
-        // The tag list replaces wholesale, so LOAD_TAG is restated to keep the
-        // sweep-by-tag cleanup backstop working on these rows.
         client.addTags(id, [LOAD_TAG, runTag]),
       );
       if (result.ok) durations.push(durationMs);

@@ -2518,7 +2518,7 @@ When a device refuses a store `wrong_schema`, a device MUST say how many writes 
 
 When a device refuses a store `wrong_schema` and its queue holds a write the server has not taken of a kind this build does not queue, a device MUST name that kind and how many such writes the store holds.
 
-**Reason:** a store an earlier build made can hold a write of a kind this build no longer sends, such as a metadata merge; naming the kind tells the person which writes no build of this core will send, and the store keeps them.
+**Reason:** a store an earlier build made can hold a write of a kind this build no longer sends, such as a metadata merge; naming the kind tells the person which writes only the build that made the store can send, and the store keeps them.
 
 **Tests:** `device/working-copy.test.ts › names a write of a kind this build does not send, among the writes a store of another shape holds`.
 

@@ -113,7 +113,6 @@ it("refuses a tag the server refuses, on every door, before it saves or queues a
     // not a stricter one.
     const served = [
       await client.addTags(row, [tag]),
-      await client.addTags(row, [tag]),
       await client.replaceMetadata(row, { tags: [tag] }),
       await client.createItem({
         type,
@@ -264,7 +263,6 @@ it("refuses a write naming more than 100 tags, or leaving a row more than 100 it
       properties: { title: "too many" },
       tags: tags(101, "sent"),
     }),
-    await client.addTags(id, ["one-more"]),
     await client.addTags(id, ["one-more"]),
     await client.replaceMetadata(id, { tags: tags(101, "sent") }),
   ]) {

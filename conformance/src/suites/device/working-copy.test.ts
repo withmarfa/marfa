@@ -1958,7 +1958,7 @@ describe("the working copy belongs to one server", () => {
       unknown,
       "the refusal did not name the kind of write this build cannot send",
     ).toContain("1 write of kind merge_metadata");
-    expect(unknown).toContain("1 write");
+    expect(unknown).toContain("1 write the server has not taken");
 
     const store = new DatabaseSync(device.store);
     try {
