@@ -4686,7 +4686,7 @@ If the file named by `folders autostart on --key-file` or `folders watch --key-f
 
 **Tests:** `device/folders-autostart.test.ts › refuses a key file that others can read, a link, one that lacks a name and one inside a folder, naming the reason and writing nothing`.
 
-### `folders/autostart-key-file-refused-writes-nothing`
+### `folders/autostart-key-file-unwritten`
 
 If the file named by `folders autostart on --key-file` is refused under `folders/autostart-key-file-refused`, then the CLI MUST write no agent.
 
