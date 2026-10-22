@@ -143,6 +143,7 @@ pub struct InstallArgs {
     /// something else, such as a secrets manager. This command then never
     /// makes or changes it: it checks that it holds the secrets, the address
     /// and the proxy setting this install needs, and says what is missing.
+    /// It reads a quoted value the way Docker Compose reads it.
     #[arg(long)]
     external_settings: bool,
     /// Start the server when you log in, even if Docker is not running yet:
@@ -265,7 +266,7 @@ impl Folder {
             return Ok(None);
         };
         let field = |name: &str| {
-            dotenv.get(name).map(str::to_string).ok_or_else(|| {
+            dotenv.get(name).ok_or_else(|| {
                 CliError::Usage(format!(
                     "{} has no {name}: it was not written by `marfa server install`",
                     self.path(files::DOTENV).display()
@@ -292,8 +293,8 @@ impl Folder {
             port,
             access,
             https_port,
-            external: dotenv.get("MARFA_SETTINGS") == Some("external"),
-            autostart: dotenv.get("MARFA_AUTOSTART") == Some("on"),
+            external: dotenv.get("MARFA_SETTINGS").as_deref() == Some("external"),
+            autostart: dotenv.get("MARFA_AUTOSTART").as_deref() == Some("on"),
         };
         Ok(Some((state, dotenv)))
     }
@@ -426,14 +427,17 @@ fn cidr_contains(range: &str, network: &str) -> bool {
 fn external_problems(settings: &EnvFile, access: Access, subnet: &str, net: &str) -> Vec<String> {
     let mut problems = Vec::new();
     for secret in ["API_KEY_SALT", "MARFA_AUTH_SECRET"] {
-        if settings.get(secret).is_none_or(str::is_empty) {
+        if settings.get(secret).is_none_or(|value| value.is_empty()) {
             problems.push(format!("{secret} is not set"));
         }
     }
-    match settings.get("MARFA_AUTH_BASE_URL") {
-        None | Some("") => problems.push("MARFA_AUTH_BASE_URL is not set".into()),
+    match settings
+        .get("MARFA_AUTH_BASE_URL")
+        .filter(|v| !v.is_empty())
+    {
+        None => problems.push("MARFA_AUTH_BASE_URL is not set".into()),
         Some(address) => {
-            let sound = url::Url::parse(address).is_ok_and(|url| {
+            let sound = url::Url::parse(&address).is_ok_and(|url| {
                 url.scheme() == "https"
                     || (url.scheme() == "http"
                         && matches!(url.host_str(), Some("localhost" | "127.0.0.1" | "[::1]")))
@@ -661,7 +665,7 @@ fn install(args: InstallArgs, out: &Printer) -> Result<(), CliError> {
     // exists, because a new secret would make every key stop working.
     if !external && let Some(file) = &have_secrets {
         for secret in ["API_KEY_SALT", "MARFA_AUTH_SECRET"] {
-            if file.get(secret).is_none_or(str::is_empty)
+            if file.get(secret).is_none_or(|value| value.is_empty())
                 && (existing.is_some() || docker.volume_exists(&volume)?)
             {
                 return Err(CliError::Usage(format!(
@@ -737,8 +741,7 @@ fn install(args: InstallArgs, out: &Printer) -> Result<(), CliError> {
         _ if external => {
             let written = have_secrets
                 .as_ref()
-                .and_then(|file| file.get("MARFA_AUTH_BASE_URL"))
-                .map(str::to_string);
+                .and_then(|file| file.get("MARFA_AUTH_BASE_URL"));
             match (&args.address, written) {
                 (Some(asked), Some(written)) if public_address(asked)? != written => {
                     return Err(CliError::Usage(format!(
@@ -774,7 +777,6 @@ fn install(args: InstallArgs, out: &Printer) -> Result<(), CliError> {
                 (None, Some((_, _))) => have_secrets
                     .as_ref()
                     .and_then(|file| file.get("MARFA_AUTH_BASE_URL"))
-                    .map(str::to_string)
                     .map_or_else(
                         || prompter.text("Address devices will use", None, "--address"),
                         Ok,
@@ -873,11 +875,11 @@ fn install(args: InstallArgs, out: &Printer) -> Result<(), CliError> {
             ));
         }
     }
-    let lacks = |name: &str| settings.get(name).is_none_or(str::is_empty);
+    let lacks = |name: &str| settings.get(name).is_none_or(|value| value.is_empty());
     let made_secrets = !external && (lacks("API_KEY_SALT") || lacks("MARFA_AUTH_SECRET"));
     if !external {
         for secret in ["API_KEY_SALT", "MARFA_AUTH_SECRET"] {
-            if settings.get(secret).is_none_or(str::is_empty) {
+            if settings.get(secret).is_none_or(|value| value.is_empty()) {
                 settings.set(secret, &envfile::secret()?)?;
             }
         }
@@ -1282,7 +1284,7 @@ fn status(args: DirArgs, out: &Printer) -> Result<(), CliError> {
     } else {
         None
     };
-    let address = settings.get("MARFA_AUTH_BASE_URL").map(str::to_string);
+    let address = settings.get("MARFA_AUTH_BASE_URL");
     let login = if boot::supported() {
         format!("\n  Login     {}", autostart_word(&state))
     } else {

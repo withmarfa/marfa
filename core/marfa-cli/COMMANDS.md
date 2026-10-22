@@ -3691,7 +3691,7 @@ marfa server install [OPTIONS]
 | `--s3-endpoint <URL>` | The bucket's address, for a store other than Amazon S3. |
 | `--s3-access-key-id <ID>` | The bucket's access key ID. |
 | `--s3-prefix <PREFIX>` | Where in the bucket this install keeps its copy. It must be this install's own. The default is the install's name. |
-| `--external-settings` | The server's settings file, `marfa.env` in `--dir`, is written by something else, such as a secrets manager. This command then never makes or changes it: it checks that it holds the secrets, the address and the proxy setting this install needs, and says what is missing. |
+| `--external-settings` | The server's settings file, `marfa.env` in `--dir`, is written by something else, such as a secrets manager. This command then never makes or changes it: it checks that it holds the secrets, the address and the proxy setting this install needs, and says what is missing. It reads a quoted value the way Docker Compose reads it. |
 | `--autostart` | Start the server when you log in, even if Docker is not running yet: a launchd agent that runs `server start`. The default on a Mac. |
 | `--no-autostart` | Do not start the server at login. |
 | `--wait <SECONDS>` | How long to wait for the server to answer, in seconds. Default: `120`. |
