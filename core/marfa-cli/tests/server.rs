@@ -848,6 +848,75 @@ fn a_settings_file_managed_elsewhere_is_used_as_it_is() {
     assert!(stdout.contains("\"settings\": \"external\""), "{stdout}");
 }
 
+const QUOTED_FILE: &str =
+    "API_KEY_SALT='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+MARFA_AUTH_SECRET='bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+MARFA_AUTH_BASE_URL='https://example.test'
+TRUSTED_PROXY_HEADER='CF-Connecting-IP'
+";
+
+#[test]
+fn a_settings_file_with_quoted_values_is_read_the_way_compose_reads_it() {
+    let rig = Rig::new("external-quoted");
+    managed_elsewhere(&rig, QUOTED_FILE);
+    let (code, stdout, stderr) = rig.install(&[
+        "--access",
+        "cloudflare",
+        "--external-settings",
+        "--address",
+        "https://example.test",
+    ]);
+    assert_eq!(code, 0, "{stderr}");
+    assert_eq!(rig.file("marfa.env"), QUOTED_FILE, "the file was changed");
+    assert!(
+        stdout.contains("https://example.test") && !stdout.contains("'https"),
+        "{stdout}"
+    );
+
+    // The address is read back without its quotes for status and a second run.
+    let (_, stdout, _) = rig.marfa(&["--json", "status"]);
+    assert!(
+        stdout.contains("\"address\": \"https://example.test\""),
+        "{stdout}"
+    );
+    rig.installed(&[]);
+    assert_eq!(rig.file("marfa.env"), QUOTED_FILE);
+}
+
+#[test]
+fn a_quoted_address_that_differs_from_the_asked_one_is_refused_without_its_quotes() {
+    let rig = Rig::new("external-quoted-differs");
+    managed_elsewhere(&rig, QUOTED_FILE);
+    let (code, _, stderr) = rig.install(&[
+        "--access",
+        "cloudflare",
+        "--external-settings",
+        "--address",
+        "https://other.test",
+    ]);
+    assert_eq!(code, 2, "{stderr}");
+    assert!(
+        stderr.contains("MARFA_AUTH_BASE_URL is https://example.test: change one"),
+        "{stderr}"
+    );
+    assert!(
+        !rig.dir.join(".env").exists(),
+        "a refused install wrote its settings"
+    );
+
+    // A quoted proxy header that is not Cloudflare's is still refused.
+    managed_elsewhere(
+        &rig,
+        &QUOTED_FILE.replace("'CF-Connecting-IP'", "'X-Real-IP'"),
+    );
+    let (code, _, stderr) = rig.install(&["--access", "cloudflare", "--external-settings"]);
+    assert_eq!(code, 2, "{stderr}");
+    assert!(
+        stderr.contains("TRUSTED_PROXY_HEADER must be CF-Connecting-IP"),
+        "{stderr}"
+    );
+}
+
 #[test]
 fn a_settings_file_that_lacks_what_the_install_needs_is_refused_without_its_values() {
     let rig = Rig::new("external-short");
