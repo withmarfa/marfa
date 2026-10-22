@@ -20,7 +20,6 @@
   "POST /auth/device/consent": "its decision",
   "GET /auth/error": "the OAuth failure page a redirect lands on",
   "GET /auth/oauth2/end-session": "the RP-initiated logout page",
-  "GET /auth/static/auth.css": "a stylesheet those pages load",
   "GET /auth/static/pages.css": "the stylesheet the console and moment pages load",
   "GET /auth/static/pages.js": "the script the console and moment pages load",
   "GET /setup": "first-party owner setup page",

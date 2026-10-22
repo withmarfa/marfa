@@ -589,10 +589,10 @@ export function createApp(
     }),
   );
 
-  // Shared auth-page stylesheet. Public — anyone landing on `/auth/sign-in`
+  // The page system's stylesheet and script. Public — anyone landing on `/auth/sign-in`
   // must be able to fetch the CSS without a session cookie. Mounted BEFORE
   // authMiddleware AND before the better-auth catch-all so
-  // `/auth/static/auth.css` resolves to the static handler rather than
+  // `/auth/static/*` resolves to the static handler rather than
   // falling through to `/auth/*`.
   app.route("/auth/static", authStaticRoutes());
 

@@ -168,7 +168,6 @@ export const SIGN_IN_ROUTE_STATUSES: Readonly<
   "POST /auth/device": [302, 403],
   "GET /auth/device/consent": [200, 302, 400],
   "POST /auth/device/consent": [200, 302, 400, 403, 404],
-  "GET /auth/static/auth.css": [200],
   "GET /auth/static/pages.css": [200],
   "GET /auth/static/pages.js": [200],
   "GET /auth/owner/trash": [200, 302, 400, 401, 403],

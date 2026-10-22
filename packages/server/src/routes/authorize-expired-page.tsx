@@ -1,3 +1,5 @@
+/** @jsxRuntime automatic */
+/** @jsxImportSource hono/jsx */
 /**
  * The page an authorization request lands on once it can no longer
  * produce a code.
@@ -34,8 +36,9 @@
  * party able to mint a fresh one is the client.
  */
 
-import { renderAuthLayout } from "./auth-layout.js";
-import { confirmIcon } from "./auth-html.js";
+import { MomentCard } from "../pages/parts/layout.js";
+import { PageShell } from "../pages/parts/shell.js";
+import { renderDocument } from "../pages/render.js";
 
 /** Why the request could not proceed: the non-valid arms of
  *  `SignedQueryVerdict`, plus the states the authorize route refuses in its
@@ -60,11 +63,9 @@ export function renderAuthorizeExpiredPage(
   failure: AuthorizeFailure = "expired",
 ): string {
   const { title, sub } = COPY[failure];
-  const bodyHtml = `
-    ${confirmIcon("alert")}
-    <h1 class="title">${title}</h1>
-    <p class="sub" role="alert">${sub}</p>
-  `;
-
-  return renderAuthLayout({ title, bodyHtml, centered: true, nonce });
+  return renderDocument(
+    <PageShell title={title} nonce={nonce} needsScript={false}>
+      <MomentCard title={title} lede={sub} ledeRole="alert" />
+    </PageShell>,
+  );
 }
