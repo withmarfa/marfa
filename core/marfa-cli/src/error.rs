@@ -602,6 +602,15 @@ pub const JSON_REFUSAL_CODES: &str = "where error.code is one of:";
 /// The width the help wraps an exit code's meaning to, continuing under its first word.
 const MEANING_WIDTH: usize = 70;
 
+/// Where the footer of `marfa --help` sends a reader for what a command does.
+pub const DOCS_HINT: &str = "Docs: run `marfa docs search <query>` to read what a command does. https://docs.marfa.so/llms.txt indexes every page.";
+
+/// The footer of `marfa --help`: where the docs are, then the exit codes.
+pub fn long_help_footer() -> &'static str {
+    static FOOTER: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    FOOTER.get_or_init(|| format!("{DOCS_HINT}\n\n{}", exit_codes_help()))
+}
+
 /// The exit codes and every code a refusal can carry, the second read from
 /// the lists the codes are made from rather than written out again.
 pub fn exit_codes_help() -> &'static str {
