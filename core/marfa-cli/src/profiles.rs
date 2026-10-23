@@ -524,11 +524,100 @@ impl Drop for Interrupts {
     }
 }
 
+/// How often the key command's process group is searched for a stopped
+/// member. Its own process is waited on more often.
+const STOPPED_SCAN: Duration = Duration::from_millis(50);
+
+const TERMINAL_STOP: &str = "tried to read from or write to the terminal, so it was stopped: a key command must print the key without asking for anything";
+
+/// Whether a process in group `group` other than `except` is stopped. A
+/// process the key command starts, such as one in a pipeline, stops on the
+/// terminal as the command itself does, and the command then waits on it
+/// for ever, unseen by `waitpid`.
+#[cfg(target_os = "macos")]
+fn another_is_stopped(group: libc::pid_t, except: libc::pid_t) -> bool {
+    let mut pids: Vec<libc::pid_t> = vec![0; 64];
+    let count = loop {
+        let bytes = libc::c_int::try_from(std::mem::size_of_val(pids.as_slice()))
+            .unwrap_or(libc::c_int::MAX);
+        // SAFETY: the buffer holds `bytes` bytes of writable pids.
+        let count = unsafe { libc::proc_listpgrppids(group, pids.as_mut_ptr().cast(), bytes) };
+        let Ok(count) = usize::try_from(count) else {
+            return false;
+        };
+        if count < pids.len() {
+            break count;
+        }
+        pids.resize(pids.len() * 2, 0);
+    };
+    pids[..count]
+        .iter()
+        .filter(|&&pid| pid > 0 && pid != except)
+        .any(|&pid| {
+            // SAFETY: an all-zero `proc_bsdinfo` is valid, and the call
+            // writes at most its size.
+            let mut info: libc::proc_bsdinfo = unsafe { std::mem::zeroed() };
+            let size = std::mem::size_of::<libc::proc_bsdinfo>() as libc::c_int;
+            // SAFETY: `info` is `size` writable bytes.
+            let written = unsafe {
+                libc::proc_pidinfo(
+                    pid,
+                    libc::PROC_PIDTBSDINFO,
+                    0,
+                    std::ptr::from_mut(&mut info).cast(),
+                    size,
+                )
+            };
+            // A pid that has gone, or been taken by a process in another
+            // group, since it was listed is not a member.
+            written == size
+                && i64::from(info.pbi_pgid) == i64::from(group)
+                && info.pbi_status == libc::SSTOP
+        })
+}
+
+#[cfg(target_os = "linux")]
+fn another_is_stopped(group: libc::pid_t, except: libc::pid_t) -> bool {
+    let Ok(entries) = std::fs::read_dir("/proc") else {
+        return false;
+    };
+    entries.flatten().any(|entry| {
+        entry
+            .file_name()
+            .to_str()
+            .and_then(|name| name.parse::<libc::pid_t>().ok())
+            .filter(|&pid| pid != except)
+            .and_then(|_| std::fs::read_to_string(entry.path().join("stat")).ok())
+            .is_some_and(|stat| stopped_in(&stat, group))
+    })
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+fn another_is_stopped(_group: libc::pid_t, _except: libc::pid_t) -> bool {
+    false
+}
+
+/// Whether a line of `/proc/<pid>/stat` is a process stopped by a signal in
+/// group `group`. The name in parentheses may hold spaces and parentheses
+/// itself, so the fields are read after the last `)`.
+#[cfg(any(target_os = "linux", test))]
+fn stopped_in(stat: &str, group: libc::pid_t) -> bool {
+    let Some((_, after)) = stat.rsplit_once(')') else {
+        return false;
+    };
+    let mut fields = after.split_whitespace();
+    let state = fields.next();
+    let pgrp = fields
+        .nth(1)
+        .and_then(|pgrp| pgrp.parse::<libc::pid_t>().ok());
+    state == Some("T") && pgrp == Some(group)
+}
+
 /// Runs a profile's key command and hands back the key it printed. The
 /// program is run without a shell, with nothing on stdin and in a process
-/// group of its own, which is stopped whole if it outlasts `limit`, if it
-/// stops itself, as reading the terminal makes it, or if a signal comes to
-/// end marfa. A refusal names the profile and the program,
+/// group of its own, which is stopped whole if it outlasts `limit`, if it or
+/// any process it started stops, as reading the terminal makes it, or if a
+/// signal comes to end marfa. A refusal names the profile and the program,
 /// and never shows what the command printed on stdout.
 pub fn run_key_command(profile: &str, argv: &[String], limit: Duration) -> Result<Secret, String> {
     let program = argv.first().map(String::as_str).unwrap_or_default();
@@ -573,6 +662,7 @@ pub fn run_key_command(profile: &str, argv: &[String], limit: Duration) -> Resul
     };
     drop(child);
     let started = Instant::now();
+    let mut scanned = started;
     let status = loop {
         let mut raw = 0;
         // SAFETY: `pid` is this process's child and `raw` is a valid int.
@@ -583,11 +673,20 @@ pub fn run_key_command(profile: &str, argv: &[String], limit: Duration) -> Resul
                 // terminal stops it, and nobody is there to continue it.
                 stop();
                 return Err(failed(match libc::WSTOPSIG(raw) {
-                    libc::SIGTTIN | libc::SIGTTOU => "tried to read from or write to the terminal, so it was stopped: a key command must print the key without asking for anything".into(),
+                    libc::SIGTTIN | libc::SIGTTOU => TERMINAL_STOP.into(),
                     signal => format!("was stopped by signal {signal}, so it was ended"),
                 }));
             }
             break std::process::ExitStatus::from_raw(raw);
+        }
+        if scanned.elapsed() >= STOPPED_SCAN {
+            scanned = Instant::now();
+            // Which signal stopped another process is not known here; the
+            // terminal is what stops one a key command starts.
+            if another_is_stopped(pid, pid) {
+                stop();
+                return Err(failed(TERMINAL_STOP.into()));
+            }
         }
         if waited == -1 {
             let error = std::io::Error::last_os_error();
@@ -1025,10 +1124,22 @@ mod tests {
     #[test]
     fn a_key_command_that_reaches_for_the_terminal_is_refused_at_once_with_everything_it_started() {
         // A program reading or writing the terminal from a process group that
-        // is not the terminal's gets these signals, and stops.
-        for signal in ["TTIN", "TTOU"] {
-            let at = folder(&format!("terminal-{signal}"));
+        // is not the terminal's gets these signals, and stops. Where it is
+        // one the command started, the command waits on it, never stopping.
+        let cases = [
+            ("TTIN", format!("kill -TTIN $$; printf {KEY}")),
+            ("TTOU", format!("kill -TTOU $$; printf {KEY}")),
+            ("child-TTIN", format!("sh -c 'kill -TTIN $$'; printf {KEY}")),
+            ("child-TTOU", format!("sh -c 'kill -TTOU $$'; printf {KEY}")),
+            (
+                "pipeline",
+                format!("sh -c 'kill -TTIN $$; printf {KEY}' | tr -d '\\n'"),
+            ),
+        ];
+        for (name, script) in cases {
+            let at = folder(&format!("terminal-{name}"));
             let marker = at.join("still-running");
+            let group = at.join("group");
             let started = Instant::now();
             let refused = run_key_command(
                 "demo",
@@ -1036,7 +1147,8 @@ mod tests {
                     "sh",
                     "-c",
                     &format!(
-                        "(sleep 2; touch '{}') & kill -{signal} $$; printf {KEY}",
+                        "echo $$ > '{}'; (sleep 2; touch '{}') & {script}",
+                        group.display(),
                         marker.display()
                     ),
                 ]),
@@ -1045,22 +1157,53 @@ mod tests {
             .unwrap_err();
             assert!(
                 started.elapsed() < Duration::from_secs(2),
-                "{signal}: {:?}: {refused}",
+                "{name}: {:?}: {refused}",
                 started.elapsed()
             );
             assert!(
                 refused.contains("tried to read from or write to the terminal"),
-                "{refused}"
+                "{name}: {refused}"
             );
             assert!(refused.contains("without asking"), "{refused}");
             assert!(!refused.contains(KEY), "{refused}");
+            let group: libc::pid_t = std::fs::read_to_string(&group)
+                .unwrap()
+                .trim()
+                .parse()
+                .unwrap();
+            // Witness: the group was there to be found.
+            assert!(group > 1);
+            // A killed process another parent has yet to reap is still in
+            // the group for a moment.
+            let gone = Instant::now();
+            // SAFETY: signal 0 only asks whether the group has a member.
+            while unsafe { libc::killpg(group, 0) } == 0 {
+                assert!(
+                    gone.elapsed() < Duration::from_secs(1),
+                    "{name}: a process of the command's group is left"
+                );
+                std::thread::sleep(Duration::from_millis(10));
+            }
             std::thread::sleep(Duration::from_millis(2500));
             assert!(
                 !marker.exists(),
-                "{signal}: a process the command started outlived it"
+                "{name}: a process the command started outlived it"
             );
             std::fs::remove_dir_all(at).unwrap();
         }
+    }
+
+    #[test]
+    fn a_stopped_process_is_read_from_proc_by_its_state_and_group() {
+        let stat = |state: &str, pgrp: &str| {
+            format!("4242 (a (tricky) name) {state} 4200 {pgrp} 4200 0 -1 4194560 0")
+        };
+        assert!(stopped_in(&stat("T", "4200"), 4200));
+        assert!(!stopped_in(&stat("S", "4200"), 4200));
+        assert!(!stopped_in(&stat("t", "4200"), 4200));
+        assert!(!stopped_in(&stat("T", "4201"), 4200));
+        assert!(!stopped_in("4242 no name T 4200 4200", 4200));
+        assert!(!stopped_in("", 4200));
     }
 
     #[test]

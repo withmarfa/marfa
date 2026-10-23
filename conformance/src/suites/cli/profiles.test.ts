@@ -368,6 +368,13 @@ describe("profiles", () => {
       // Reading the terminal from a process group that is not the
       // terminal's stops a program with SIGTTIN.
       terminal: ["sh", "-c", `kill -TTIN $$; printf ${PRINTED}`],
+      // A program the key command starts stops the same way, and the shell
+      // running the pipeline waits on it.
+      pipeline: [
+        "sh",
+        "-c",
+        `sh -c 'kill -TTIN $$; printf ${PRINTED}' | tr -d '\\n'`,
+      ],
     };
     write(
       toml(

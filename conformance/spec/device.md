@@ -1906,9 +1906,9 @@ The CLI MUST run a profile's key command at most once in a run.
 
 ### `device/profile-key-command-failed`
 
-If a profile's key command cannot be started, exits other than 0, is ended by a signal, stops, as reading from or writing to the terminal makes it, prints nothing, prints more than one line, prints more than 16 KiB or prints text that is not UTF-8, then the CLI MUST exit 5 with `key_command` and send no request that carries a key.
+If a profile's key command cannot be started, exits other than 0, is ended by a signal, stops or starts a program that stops, as reading from or writing to the terminal makes it, prints nothing, prints more than one line, prints more than 16 KiB or prints text that is not UTF-8, then the CLI MUST exit 5 with `key_command` and send no request that carries a key.
 
-**Reason:** the key command runs in a process group of its own, so a terminal it reads or writes stops it with `SIGTTIN` or `SIGTTOU`, and no one is there to continue it.
+**Reason:** the key command runs in a process group of its own, so a terminal that it, or a program it starts, reads or writes stops that process with `SIGTTIN` or `SIGTTOU`, and no one is there to continue it. A shell running a pipeline waits on a stopped program for ever.
 
 **Tests:** `cli/profiles.test.ts › refuses a key command that fails with key_command and exit 5, sending nothing and showing none of its output`.
 
