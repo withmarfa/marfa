@@ -252,6 +252,12 @@ export const PUBLIC_TAGS: readonly PublicTag[] = [
     ],
   },
   {
+    name: "Views",
+    description:
+      "Saved lists of items and how to show them, held as `system.view` items.",
+    operations: ["createView", "updateView", "deleteView"],
+  },
+  {
     name: "Connectors",
     description:
       "Processes outside the server that read and write on your behalf, with their heartbeats and runs.",

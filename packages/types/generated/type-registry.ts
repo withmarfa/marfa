@@ -584,9 +584,22 @@ const systemFolder: TypeSchema = {
   },
 };
 
+const systemView: TypeSchema = {
+  id: "system.view",
+  label: "View",
+  description: "A saved list of items, held here and shared by every app: which items, and how each layout shows them. Written only through `/views`: created, changed at a version, and deleted, which removes it at once with no trash. Lifecycle bounded to active | revoked. Has no tier.",
+  version: 0,
+  fields: {
+    title: { type: "string", description: "The view's name", required: true },
+    query: { type: "object", description: "Which items the view lists. `types`: type identifiers, each with its subtypes; empty or absent lists every type the reading key reads. `tier`: `library`, `feed` or `all`; absent is `all`. `state`: `active`, `archived` or both; absent is both. `filter`: an expression in the listing grammar's `filter`. `beneath`: an item id; the item and everything under it by `parent-of`." },
+    layouts: { type: "array", description: "How the view shows its items, in order, at least one. Each layout has an `id` unique in the view, a `kind` (`list`, `table`, `board`, `gallery`, `calendar`, `timeline`, `chart` or `map`), and an optional `title`, `sort`, `group`, `shown` and the options its kind takes. A layout never narrows which items the view lists", required: true, items_type: "object" },
+  },
+};
+
 export const ALL_SYSTEM_TYPES: TypeSchema[] = [
   systemConnection,
   systemFolder,
+  systemView,
 ];
 
 export const ALL_TYPE_IDS = [
@@ -613,6 +626,7 @@ export const ALL_TYPE_IDS = [
   "core.task",
   "system.connection",
   "system.folder",
+  "system.view",
 ] as const;
 
 export type PlatformTypeId = (typeof ALL_TYPE_IDS)[number];
@@ -1926,6 +1940,23 @@ export const SHIPPED_TYPE_SHAPES = {
         "type": "datetime"
       },
       "search": {
+        "type": "object"
+      },
+      "title": {
+        "required": true,
+        "type": "string"
+      }
+    },
+    "version": 0
+  },
+  "system.view": {
+    "fields": {
+      "layouts": {
+        "items_type": "object",
+        "required": true,
+        "type": "array"
+      },
+      "query": {
         "type": "object"
       },
       "title": {

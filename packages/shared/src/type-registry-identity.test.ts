@@ -47,7 +47,11 @@ const CORE_TYPE_IDENTIFIERS = [
   "core.task",
 ];
 
-const SYSTEM_TYPE_IDENTIFIERS = ["system.connection", "system.folder"];
+const SYSTEM_TYPE_IDENTIFIERS = [
+  "system.connection",
+  "system.folder",
+  "system.view",
+];
 
 const ALL_SHIPPED_IDENTIFIERS = [
   ...CORE_TYPE_IDENTIFIERS,

@@ -87,6 +87,16 @@ async function folder() {
   expect(res.status).toBe(201);
   return ((await res.json()) as { item: Item }).item;
 }
+const LAYOUTS = [{ id: "main", kind: "list" }];
+async function view() {
+  const res = await send({
+    method: "POST",
+    path: "/views",
+    body: { title: "Before", layouts: LAYOUTS },
+  });
+  expect(res.status).toBe(201);
+  return ((await res.json()) as { item: Item }).item;
+}
 async function connector() {
   const key = await mintWorkingKey(ctx);
   const res = await send({
@@ -256,6 +266,32 @@ const doors: [string, () => Door | Promise<Door>][] = [
     async () => ({
       method: "POST",
       path: `/folders/${(await folder()).id}/revoke`,
+    }),
+  ],
+  [
+    "view.create",
+    () => ({
+      method: "POST",
+      path: "/views",
+      body: { title: "Created", layouts: LAYOUTS },
+    }),
+  ],
+  [
+    "view.update",
+    async () => {
+      const row = await view();
+      return {
+        method: "PATCH",
+        path: `/views/${row.id}`,
+        body: { version: row.version, title: "Changed" },
+      };
+    },
+  ],
+  [
+    "view.delete",
+    async () => ({
+      method: "DELETE",
+      path: `/views/${(await view()).id}`,
     }),
   ],
   [
