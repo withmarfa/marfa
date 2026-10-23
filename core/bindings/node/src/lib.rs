@@ -189,6 +189,45 @@ pub struct CatchUpReport {
     pub catalog_changed: bool,
 }
 
+/// How the cache of fetched files chooses its budget.
+#[napi(string_enum = "snake_case")]
+pub enum FileBudgetKind {
+    /// The larger of 2 GiB and a tenth of the volume, held to what leaves a
+    /// twentieth of the volume free and never below 256 MiB.
+    Default,
+    /// `bytes` bytes.
+    Bytes,
+    /// No budget: every file fetched stays.
+    KeepAll,
+}
+
+#[napi(object)]
+pub struct FileBudget {
+    pub kind: FileBudgetKind,
+    /// The byte count, for `bytes` alone: a whole number from zero to
+    /// `Number.MAX_SAFE_INTEGER`.
+    pub bytes: Option<f64>,
+}
+
+/// The cache of fetched files as the state report gives it.
+#[napi(object)]
+pub struct FileCache {
+    /// What was chosen.
+    pub setting: FileBudget,
+    /// The budget in force, in bytes; null while every file fetched is kept.
+    pub budget: Option<i64>,
+    /// The bytes of the files kept now; null where the cache could not be
+    /// read.
+    pub held: Option<i64>,
+    /// Why `held` is unknown; absent when it is known.
+    pub held_unreadable: Option<String>,
+    /// The default budget is 2 GiB because the disk could not be read.
+    pub volume_unreadable: bool,
+    /// Why the files fetched last could not be kept out of backups; absent
+    /// once a fetched file is marked.
+    pub backup_mark_failure: Option<String>,
+}
+
 #[napi(object)]
 pub struct Status {
     pub server_origin: Option<String>,
@@ -205,6 +244,7 @@ pub struct Status {
     /// Moves each time a refresh changes the catalog; absent where the copy
     /// has never held one.
     pub catalog_version: Option<i64>,
+    pub file_cache: FileCache,
 }
 
 /// A field of an item type, or a property of an edge type.
@@ -689,6 +729,62 @@ impl From<marfa_core::Hydration> for Hydration {
             marfa_core::Hydration::InProgress => Hydration::InProgress,
             marfa_core::Hydration::Complete => Hydration::Complete,
             marfa_core::Hydration::Expired => Hydration::Expired,
+        }
+    }
+}
+
+impl From<marfa_core::FileBudget> for FileBudget {
+    fn from(budget: marfa_core::FileBudget) -> Self {
+        match budget {
+            marfa_core::FileBudget::Default => FileBudget {
+                kind: FileBudgetKind::Default,
+                bytes: None,
+            },
+            marfa_core::FileBudget::Bytes(bytes) => FileBudget {
+                kind: FileBudgetKind::Bytes,
+                bytes: Some(count(bytes) as f64),
+            },
+            marfa_core::FileBudget::KeepAll => FileBudget {
+                kind: FileBudgetKind::KeepAll,
+                bytes: None,
+            },
+        }
+    }
+}
+
+impl From<marfa_core::FileCache> for FileCache {
+    fn from(cache: marfa_core::FileCache) -> Self {
+        FileCache {
+            setting: cache.setting.into(),
+            budget: cache.budget.map(count),
+            held: cache.held.map(count),
+            held_unreadable: cache.held_unreadable,
+            volume_unreadable: cache.volume_unreadable,
+            backup_mark_failure: cache.backup_mark_failure,
+        }
+    }
+}
+
+/// The largest whole number a JavaScript number holds exactly.
+const MAX_SAFE_INTEGER: f64 = 9_007_199_254_740_991.0;
+
+impl TryFrom<FileBudget> for marfa_core::FileBudget {
+    type Error = marfa_core::CoreError;
+
+    /// Checked as a JavaScript number, before any conversion: napi's integer
+    /// conversion truncates a fraction and reads NaN and infinity as zero.
+    fn try_from(budget: FileBudget) -> std::result::Result<Self, Self::Error> {
+        match (budget.kind, budget.bytes) {
+            (FileBudgetKind::Default, None) => Ok(marfa_core::FileBudget::Default),
+            (FileBudgetKind::KeepAll, None) => Ok(marfa_core::FileBudget::KeepAll),
+            (FileBudgetKind::Bytes, Some(bytes))
+                if bytes.fract() == 0.0 && (0.0..=MAX_SAFE_INTEGER).contains(&bytes) =>
+            {
+                Ok(marfa_core::FileBudget::Bytes(bytes as u64))
+            }
+            _ => Err(marfa_core::CoreError::Invalid(
+                "a file budget is `default` or `keep_all` with no bytes, or `bytes` with a whole count from 0 to Number.MAX_SAFE_INTEGER".to_string(),
+            )),
         }
     }
 }
@@ -1617,7 +1713,9 @@ pub struct FetchBlob {
 
 #[napi]
 impl Task for FetchBlob {
-    type Output = std::path::PathBuf;
+    /// Holds the bytes from every trim until the promise resolves: the
+    /// JavaScript thread may be busy long after the work is done.
+    type Output = marfa_core::BlobPath;
     type JsValue = String;
 
     fn reject(&mut self, env: Env, error: Error) -> Result<Self::JsValue> {
@@ -1630,8 +1728,8 @@ impl Task for FetchBlob {
             .map_err(|error| record(&mut self.failed, error))
     }
 
-    fn resolve(&mut self, _: Env, path: Self::Output) -> Result<Self::JsValue> {
-        Ok(path.to_string_lossy().into_owned())
+    fn resolve(&mut self, _: Env, held: Self::Output) -> Result<Self::JsValue> {
+        Ok(held.path().to_string_lossy().into_owned())
     }
 }
 
@@ -1988,6 +2086,7 @@ impl MarfaCore {
             items: count(status.items),
             edges: count(status.edges),
             catalog_version: status.catalog_version.map(count),
+            file_cache: status.file_cache.into(),
         })
     }
 
@@ -2354,7 +2453,9 @@ impl MarfaCore {
 
     /// Where a blob's bytes are held, fetching them first where this store
     /// does not hold them yet. Refused `bytes_absent` where they can be
-    /// neither read nor fetched.
+    /// neither read nor fetched. No trim in this process takes the bytes
+    /// before the promise resolves; after that a trim may, so open the path
+    /// at once.
     #[napi(ts_return_type = "Promise<string>")]
     pub fn blob(&self, hash: String) -> AsyncTask<FetchBlob> {
         AsyncTask::new(FetchBlob {
@@ -2362,6 +2463,37 @@ impl MarfaCore {
             failed: None,
             hash,
         })
+    }
+
+    /// The cache of fetched files: its setting, the budget in force and the
+    /// bytes held.
+    #[napi]
+    pub fn file_cache(&self, env: Env) -> Result<FileCache> {
+        self.inner
+            .file_cache()
+            .map(Into::into)
+            .map_err(|error| failure(env, error))
+    }
+
+    /// Chooses the cache's budget, trims to it at once and answers the bytes
+    /// the trim took. Refused `invalid` for a budget that is not one, keeping
+    /// the setting, and refused to a reading handle.
+    #[napi]
+    pub fn set_file_budget(&self, env: Env, budget: FileBudget) -> Result<i64> {
+        marfa_core::FileBudget::try_from(budget)
+            .and_then(|budget| self.inner.set_file_budget(budget))
+            .map(count)
+            .map_err(|error| failure(env, error))
+    }
+
+    /// Trims the cache to its budget now and answers the bytes it took.
+    /// Refused to a reading handle.
+    #[napi]
+    pub fn trim_files(&self, env: Env) -> Result<i64> {
+        self.inner
+            .trim_files()
+            .map(count)
+            .map_err(|error| failure(env, error))
     }
 
     /// Whether a blob's bytes are held beside the store, with no request.

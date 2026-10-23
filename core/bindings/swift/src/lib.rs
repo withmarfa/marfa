@@ -301,6 +301,70 @@ pub enum Hydration {
     Expired,
 }
 
+/// How the cache of fetched files chooses its budget.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum FileBudget {
+    /// The larger of 2 GiB and a tenth of the volume, held to what leaves a
+    /// twentieth of the volume free.
+    Default,
+    /// This many bytes.
+    Bytes { bytes: u64 },
+    /// No budget: every file fetched stays.
+    KeepAll,
+}
+
+impl From<marfa_core::FileBudget> for FileBudget {
+    fn from(budget: marfa_core::FileBudget) -> Self {
+        match budget {
+            marfa_core::FileBudget::Default => FileBudget::Default,
+            marfa_core::FileBudget::Bytes(bytes) => FileBudget::Bytes { bytes },
+            marfa_core::FileBudget::KeepAll => FileBudget::KeepAll,
+        }
+    }
+}
+
+impl From<FileBudget> for marfa_core::FileBudget {
+    fn from(budget: FileBudget) -> Self {
+        match budget {
+            FileBudget::Default => marfa_core::FileBudget::Default,
+            FileBudget::Bytes { bytes } => marfa_core::FileBudget::Bytes(bytes),
+            FileBudget::KeepAll => marfa_core::FileBudget::KeepAll,
+        }
+    }
+}
+
+/// The cache of fetched files as the state report gives it.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct FileCache {
+    /// What was chosen.
+    pub setting: FileBudget,
+    /// The budget in force, in bytes; none while every file fetched is kept.
+    pub budget: Option<u64>,
+    /// The bytes of the files kept now; none where the cache could not be
+    /// read.
+    pub held: Option<u64>,
+    /// Why `held` is unknown; none when it is known.
+    pub held_unreadable: Option<String>,
+    /// The default budget is 2 GiB because the disk could not be read.
+    pub volume_unreadable: bool,
+    /// Why the files fetched last could not be kept out of backups; none
+    /// once a fetched file is marked.
+    pub backup_mark_failure: Option<String>,
+}
+
+impl From<marfa_core::FileCache> for FileCache {
+    fn from(cache: marfa_core::FileCache) -> Self {
+        FileCache {
+            setting: cache.setting.into(),
+            budget: cache.budget,
+            held: cache.held,
+            held_unreadable: cache.held_unreadable,
+            volume_unreadable: cache.volume_unreadable,
+            backup_mark_failure: cache.backup_mark_failure,
+        }
+    }
+}
+
 #[derive(Debug, Clone, uniffi::Record)]
 pub struct Status {
     pub server_origin: Option<String>,
@@ -317,6 +381,7 @@ pub struct Status {
     /// Moves each time a refresh changes the catalog; none where the copy has
     /// never held one.
     pub catalog_version: Option<u64>,
+    pub file_cache: FileCache,
 }
 
 /// A field of an item type, or a property of an edge type.
@@ -1492,6 +1557,21 @@ fn drained(report: marfa_core::DrainReport) -> Result<DrainReport, MarfaError> {
     })
 }
 
+/// Where a blob's bytes are held. No trim in this process takes them while
+/// this is held, so a caller that waits for it on another thread holds it
+/// until it has opened the path.
+#[derive(uniffi::Object)]
+pub struct BlobPath {
+    inner: marfa_core::BlobPath,
+}
+
+#[uniffi::export]
+impl BlobPath {
+    pub fn path(&self) -> String {
+        self.inner.path().to_string_lossy().into_owned()
+    }
+}
+
 /// A local copy of a slice of one server. Every method blocks; call from off
 /// the main thread.
 #[derive(uniffi::Object)]
@@ -1971,6 +2051,7 @@ impl Core {
             items: status.items,
             edges: status.edges,
             catalog_version: status.catalog_version,
+            file_cache: status.file_cache.into(),
         })
     }
 
@@ -2280,9 +2361,31 @@ impl Core {
 
     /// Where a blob's bytes are held, fetching them first where this store
     /// does not hold them yet. Refused `BytesAbsent` where they can be
-    /// neither read nor fetched.
-    pub fn blob(&self, hash: String) -> Result<String, MarfaError> {
-        Ok(self.inner.blob(&hash)?.to_string_lossy().into_owned())
+    /// neither read nor fetched. No trim in this process takes the bytes
+    /// until the answer is released; after that a trim may, so open the path
+    /// before releasing it.
+    pub fn blob(&self, hash: String) -> Result<Arc<BlobPath>, MarfaError> {
+        Ok(Arc::new(BlobPath {
+            inner: self.inner.blob(&hash)?,
+        }))
+    }
+
+    /// The cache of fetched files: its setting, the budget in force and the
+    /// bytes held.
+    pub fn file_cache(&self) -> Result<FileCache, MarfaError> {
+        Ok(self.inner.file_cache()?.into())
+    }
+
+    /// Chooses the cache's budget, trims to it at once and answers the bytes
+    /// the trim took. Refused to a reading handle.
+    pub fn set_file_budget(&self, budget: FileBudget) -> Result<u64, MarfaError> {
+        Ok(self.inner.set_file_budget(budget.into())?)
+    }
+
+    /// Trims the cache to its budget now and answers the bytes it took.
+    /// Refused to a reading handle.
+    pub fn trim_files(&self) -> Result<u64, MarfaError> {
+        Ok(self.inner.trim_files()?)
     }
 
     /// Whether a blob's bytes are held beside the store, with no request.
@@ -2859,6 +2962,34 @@ mod tests {
                 "{crossed:?}"
             );
         }
+    }
+
+    /// Swift waits for the answer on another thread, so the bytes are held
+    /// until the answer is released, not until the call returns.
+    #[test]
+    fn a_blob_answered_stays_until_its_answer_is_released() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("core.sqlite");
+        let core = Core::open(path.display().to_string(), None, None, None).unwrap();
+        let bytes = b"held while the answer is";
+        let hex = "2f63a37d2ed539e29e938b4460bed85e6e7152782affa23f1c34d273fa9c0bb5";
+        let blobs = dir.path().join("core.sqlite.blobs");
+        std::fs::create_dir_all(&blobs).unwrap();
+        std::fs::write(blobs.join(hex), bytes).unwrap();
+
+        let held = core.blob(format!("sha256:{hex}")).unwrap();
+        core.set_file_budget(FileBudget::Bytes { bytes: 0 })
+            .unwrap();
+        assert_eq!(
+            std::fs::read(held.path()).ok().as_deref(),
+            Some(&bytes[..]),
+            "a trim took the bytes of an answer still held"
+        );
+
+        // The witness: once the answer is released, a trim takes them.
+        drop(held);
+        assert_eq!(core.trim_files().unwrap(), bytes.len() as u64);
+        assert!(!blobs.join(hex).exists());
     }
 
     #[test]

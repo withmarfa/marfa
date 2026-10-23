@@ -16,6 +16,7 @@ mod drain;
 mod error;
 /// Public so the binary can name a fault of its own.
 pub mod fault;
+mod file_cache;
 mod filter;
 pub mod folder;
 mod folder_settings;
@@ -73,6 +74,7 @@ pub use catalog::{EdgeType, End, ItemType, ServerCatalog, TypeField, WrittenAt};
 pub use catch_up::{Change, ChangeEvent, FollowReport};
 pub use drain::{DrainReport, DrainVerdict};
 pub use error::{CODES as ERROR_CODES, CoreError, CoreErrorKind};
+pub use file_cache::{DEFAULT_FLOOR as FILE_BUDGET_FLOOR, FileBudget, FileCache};
 pub use folder::{
     CaughtUp, Confirmed, Drained, FOLDER_TYPE, FileStatus, FirstSync, Folder, Paused, PullReport,
     Removal, Restored, ScanReport, SendReport, Settings, SettingsFileReport, StatusReport,
@@ -173,6 +175,20 @@ fn one_at_a_time() -> CoreError {
          its cursor"
             .into(),
     )
+}
+
+/// Where a blob's bytes are held. No trim in this process, through any
+/// handle on the store or on any thread, takes them while this is held.
+#[derive(Debug)]
+pub struct BlobPath {
+    path: PathBuf,
+    _reading: blob::Reading,
+}
+
+impl BlobPath {
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
 }
 
 /// The key is held in memory and never written.
@@ -331,8 +347,9 @@ impl Core {
     /// the store holds a write the server has not taken or one it cannot
     /// count, and where `open` would not refuse it. The new store is empty,
     /// so what only the old store held, such as pins, is lost: read it
-    /// first. The blob cache is kept: it is addressed by content, not by the
-    /// store.
+    /// first. The file budget's setting is in the store, so it goes too, and
+    /// the new store has the default. The blob cache is kept: it is
+    /// addressed by content, not by the store.
     pub fn replace_refused(path: impl AsRef<Path>, server: Option<Server>) -> Result<Core> {
         let path = path.as_ref();
         // Held from the count to the returned core, so no write can be
@@ -2082,7 +2099,7 @@ impl Core {
             tx.commit()?;
             queued
         };
-        self.trim_blobs(None, blob::CACHE_MOST);
+        self.trim_blobs();
         Ok(queued)
     }
 
@@ -2181,17 +2198,31 @@ impl Core {
 
     /// Fetched and held when not held already. With no way to fetch, the
     /// refusal is `BytesAbsent`.
-    pub fn blob(&self, hash: &str) -> Result<PathBuf> {
+    ///
+    /// No trim in this process, through any handle on the store or on any
+    /// thread, takes the bytes from when this is called until the answer is
+    /// dropped, so a binding that hands the path on later holds the answer
+    /// until it has. After that, or for a trim in another process, the bytes
+    /// are the ones read most recently, so they are the last a trim takes,
+    /// but a trim may take them. A caller opens the path at once and reads
+    /// through the handle.
+    pub fn blob(&self, hash: &str) -> Result<BlobPath> {
         let hash = blob::named(hash)?;
         let cache = self.cache()?;
         if cache.requires_descriptor() {
             return Err(CoreError::Invalid("folder bytes are read through directory capabilities; this store cannot provide a pathname to reopen".into()));
         }
+        let reading = cache.reading(&hash)?;
         if let Some(path) = cache.held(&hash)? {
             if self.handle() == Handle::Writer {
                 cache.touch(&path);
             }
-            return Ok(path);
+            #[cfg(debug_assertions)]
+            crate::fault::hold(|| format!("blob-answered:{hash}"));
+            return Ok(BlobPath {
+                path,
+                _reading: reading,
+            });
         }
         let Some(http) = self.http.as_deref() else {
             let reason = match self.handle() {
@@ -2203,14 +2234,24 @@ impl Core {
                 reason: reason.into(),
             });
         };
-        let path = blob::fetch(cache, http, &hash)?;
-        self.trim_blobs(Some(&hash), blob::CACHE_MOST);
-        Ok(path)
+        let fetched = blob::fetch(cache, http, &hash, || self.kept_blobs())?;
+        self.write_down_backup_mark(&fetched.mark);
+        self.trim_blobs();
+        #[cfg(debug_assertions)]
+        crate::fault::hold(|| format!("blob-answered:{hash}"));
+        Ok(BlobPath {
+            path: fetched.path,
+            _reading: reading,
+        })
     }
 
+    /// No trim in this process, through any handle on the store or on any
+    /// thread, takes the bytes from when this is called until the handle is
+    /// answered; an open handle reads them after that whatever takes them.
     pub(crate) fn blob_file(&self, hash: &str) -> Result<std::fs::File> {
         let hash = blob::named(hash)?;
         let cache = self.cache()?;
+        let _reading = cache.reading(&hash)?;
         match cache.open_held(&hash) {
             Ok(file) => {
                 if self.handle() == Handle::Writer {
@@ -2227,29 +2268,80 @@ impl Core {
                 reason: "this handle cannot fetch bytes".into(),
             });
         };
-        blob::fetch(cache, http, &hash)?;
+        let fetched = blob::fetch(cache, http, &hash, || self.kept_blobs())?;
+        self.write_down_backup_mark(&fetched.mark);
         let file = cache
             .open_held(&hash)
             .map_err(|error| CoreError::Store(format!("cannot read fetched bytes: {error}")))?;
-        self.trim_blobs(Some(&hash), blob::CACHE_MOST);
+        self.trim_blobs();
         Ok(file)
     }
 
-    /// Bytes an upload still names are never taken, nor `fetched`, which a
-    /// caller is about to read. A trim that cannot read the queue takes
-    /// nothing.
-    fn trim_blobs(&self, fetched: Option<&str>, most: u64) {
-        if self.handle() != Handle::Writer {
-            return;
-        }
-        let Ok(cache) = self.cache() else {
+    /// Keeps in the store why the last bytes fetched could not be kept out
+    /// of backups, or clears it once they could, so every process's state
+    /// report says so. Best effort: a store that cannot be written loses the
+    /// note, never the bytes.
+    fn write_down_backup_mark(&self, mark: &blob::Mark) {
+        let unmarked = match mark {
+            blob::Mark::Excluded => None,
+            blob::Mark::Refused(reason) => Some(reason.as_str()),
+            blob::Mark::Kept => return,
+        };
+        let Ok(conn) = self.conn() else {
             return;
         };
-        let _held = cache.hold();
-        if let Some(mut kept) = self.kept_blobs() {
-            kept.extend(fetched.and_then(|hash| blob::hex_of(hash).ok().map(str::to_string)));
-            cache.trim(most, &kept);
+        let held = store::meta_get(&conn, file_cache::META_BACKUP_UNMARKED)
+            .ok()
+            .flatten();
+        if held.as_deref() == unmarked {
+            return;
         }
+        let _ = match unmarked {
+            Some(reason) => store::meta_set(&conn, file_cache::META_BACKUP_UNMARKED, reason),
+            None => store::meta_delete(&conn, file_cache::META_BACKUP_UNMARKED),
+        };
+    }
+
+    /// Takes the bytes read longest ago until the cache fits its budget, and
+    /// answers how many it took. Bytes an upload still names are never
+    /// taken, nor bytes a caller is reading. A trim that cannot read the
+    /// queue or the setting takes nothing.
+    fn trim_blobs(&self) -> u64 {
+        if self.handle() != Handle::Writer {
+            return 0;
+        }
+        let Ok(cache) = self.cache() else {
+            return 0;
+        };
+        let _held = cache.hold();
+        let Ok(setting) = self.file_budget() else {
+            return 0;
+        };
+        self.trim_blobs_under(cache, setting)
+    }
+
+    /// `trim_blobs` to a setting the caller has just stored under the
+    /// settling lock, which it still holds.
+    fn trim_blobs_to(&self, setting: FileBudget) -> u64 {
+        if self.handle() != Handle::Writer {
+            return 0;
+        }
+        let Ok(cache) = self.cache() else {
+            return 0;
+        };
+        self.trim_blobs_under(cache, setting)
+    }
+
+    fn trim_blobs_under(&self, cache: &blob::Cache, setting: FileBudget) -> u64 {
+        let Some(kept) = self.kept_blobs() else {
+            return 0;
+        };
+        cache.trim(&kept, |held| {
+            let volume = (setting == FileBudget::Default)
+                .then(|| cache.volume())
+                .flatten();
+            file_cache::in_force(setting, volume, held).bytes
+        })
     }
 
     pub(crate) fn let_go_blob(&self, hash: &str) {
@@ -2375,7 +2467,73 @@ impl Core {
             items: store::count(&conn, "items")?,
             edges: store::count(&conn, "edges")?,
             catalog_version: store::catalog_version(&conn)?,
+            file_cache: self.file_cache_with(&conn)?,
         })
+    }
+
+    /// How the file cache's budget is chosen. A reading handle sees the
+    /// writer's choice, since it lives in the store.
+    pub fn file_budget(&self) -> Result<FileBudget> {
+        Ok(FileBudget::stored(
+            store::meta_get(&*self.conn()?, file_cache::META_BUDGET)?.as_deref(),
+        ))
+    }
+
+    /// The cache's budget in force and the bytes it holds.
+    pub fn file_cache(&self) -> Result<FileCache> {
+        self.file_cache_with(&*self.conn()?)
+    }
+
+    fn file_cache_with(&self, conn: &Connection) -> Result<FileCache> {
+        let setting =
+            FileBudget::stored(store::meta_get(conn, file_cache::META_BUDGET)?.as_deref());
+        let (held, volume) = match &self.cache {
+            Some(cache) => (
+                cache.held_bytes(),
+                (setting == FileBudget::Default)
+                    .then(|| cache.volume())
+                    .flatten(),
+            ),
+            None => (Ok(0), None),
+        };
+        // An unknown count is worked from as none held, which is the
+        // smaller default budget.
+        let in_force = file_cache::in_force(setting, volume, *held.as_ref().unwrap_or(&0));
+        Ok(FileCache {
+            setting,
+            budget: in_force.bytes,
+            held: held.as_ref().ok().copied(),
+            held_unreadable: held.err(),
+            volume_unreadable: in_force.volume_unreadable,
+            backup_mark_failure: store::meta_get(conn, file_cache::META_BACKUP_UNMARKED)?,
+        })
+    }
+
+    /// Chooses how the cache's budget is set, and trims to it at once, so a
+    /// lowered budget gives the space back without waiting for a fetch.
+    /// Answers how many bytes the trim took. Refused to a reading handle.
+    pub fn set_file_budget(&self, setting: FileBudget) -> Result<u64> {
+        self.lock.refuse_unless_writer()?;
+        // The setting and the trim to it are one step: under the cache's
+        // settling lock, another call's setting cannot land between them.
+        let _held = self.cache.as_ref().map(blob::Cache::hold);
+        {
+            let conn = self.conn()?;
+            match setting.to_stored() {
+                Some(text) => store::meta_set(&conn, file_cache::META_BUDGET, &text)?,
+                None => store::meta_delete(&conn, file_cache::META_BUDGET)?,
+            }
+        }
+        #[cfg(debug_assertions)]
+        crate::fault::hold(|| format!("budget-stored:{:p}", self));
+        Ok(self.trim_blobs_to(setting))
+    }
+
+    /// Trims the cache to its budget now, and answers how many bytes it
+    /// took. Refused to a reading handle.
+    pub fn trim_files(&self) -> Result<u64> {
+        self.lock.refuse_unless_writer()?;
+        Ok(self.trim_blobs())
     }
 
     /// Every item type the copy holds, by id, read from the copy alone.
@@ -5417,7 +5575,7 @@ mod tests {
     fn a_thumbnail_is_read_from_the_held_row_and_never_searched() {
         use base64::Engine;
         let dir = tempfile::tempdir().unwrap();
-        let server = scripted::Scripted::start();
+        let server = crate::scripted::Scripted::start();
         let core = Core::open(
             dir.path().join("core.sqlite"),
             Some(Server {
@@ -5821,6 +5979,11 @@ mod tests {
                     .unwrap_err(),
             ),
             (
+                "set_file_budget",
+                reader.set_file_budget(FileBudget::KeepAll).unwrap_err(),
+            ),
+            ("trim_files", reader.trim_files().unwrap_err()),
+            (
                 "attach",
                 reader
                     .attach("x", Path::new("no-such-file.png"), &Attachment::default())
@@ -5943,7 +6106,7 @@ mod tests {
         );
         assert_eq!(
             refusals.len(),
-            43,
+            45,
             "an entry has gone from the list above, and a door dropped from \
              it is a door nothing here covers"
         );
@@ -6142,12 +6305,262 @@ mod tests {
             .unwrap()
             .hash;
         let held = core.blob(&hash).unwrap();
-        assert_eq!(std::fs::read(held).unwrap(), b"held here");
+        assert_eq!(std::fs::read(held.path()).unwrap(), b"held here");
         let other = blob::name_of(b"never held");
         assert!(matches!(
             core.blob(&other),
             Err(CoreError::BytesAbsent { hash, .. }) if hash == other
         ));
+    }
+
+    /// Two readers on one shared handle under a budget of zero: the second
+    /// reader's trim must not take the bytes the first has fetched and not
+    /// yet answered.
+    #[test]
+    fn a_trim_on_another_thread_keeps_the_bytes_a_caller_is_reading() {
+        let server = crate::scripted::Scripted::start();
+        let dir = tempfile::tempdir().unwrap();
+        let core = crate::stop_tests::copy_in_keyed(&server, dir.path(), "k");
+        core.set_file_budget(FileBudget::Bytes(0)).unwrap();
+        let serve = |bytes: &[u8]| {
+            let hash = blob::name_of(bytes);
+            let link = blob::tests::linking(bytes.to_vec(), false);
+            server.on(
+                &format!("/blobs/{hash}/url"),
+                vec![crate::scripted::json(
+                    200,
+                    &format!(r#"{{"url":"{link}"}}"#),
+                )],
+            );
+            hash
+        };
+        let first = serve(b"read on the first thread");
+        let second = serve(b"read on the second thread");
+        let point = format!("blob-answered:{first}");
+        crate::fault::arm(&point);
+        std::thread::scope(|scope| {
+            let reading = scope.spawn(|| core.blob(&first));
+            let waited = std::time::Instant::now();
+            while crate::fault::waiting(&point) == 0 {
+                assert!(
+                    waited.elapsed() < std::time::Duration::from_secs(10),
+                    "the first reader never reached its answer"
+                );
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            let other = core.blob(&second);
+            crate::fault::release(&point);
+            assert_eq!(
+                std::fs::read(other.unwrap().path()).unwrap(),
+                b"read on the second thread"
+            );
+            let path = reading.join().unwrap().unwrap();
+            assert_eq!(
+                std::fs::read(path.path()).ok().as_deref(),
+                Some(&b"read on the first thread"[..]),
+                "another thread's trim took the bytes a caller was about to read"
+            );
+        });
+        // The witness: once both are answered, the next trim takes them.
+        assert_eq!(core.trim_files().unwrap(), 24 + 25);
+        assert!(!core.blob_held(&first).unwrap());
+        assert!(!core.blob_held(&second).unwrap());
+    }
+
+    #[test]
+    fn a_trim_through_the_writer_keeps_the_bytes_a_reading_handle_is_reading() {
+        let server = crate::scripted::Scripted::start();
+        let dir = tempfile::tempdir().unwrap();
+        let core = crate::stop_tests::copy_in_keyed(&server, dir.path(), "k");
+        core.set_file_budget(FileBudget::KeepAll).unwrap();
+        let bytes = b"read through the reading handle";
+        let hash = blob::name_of(bytes);
+        let link = blob::tests::linking(bytes.to_vec(), false);
+        server.on(
+            &format!("/blobs/{hash}/url"),
+            vec![crate::scripted::json(
+                200,
+                &format!(r#"{{"url":"{link}"}}"#),
+            )],
+        );
+        core.blob(&hash).unwrap();
+        let reader = Core::open_reader(dir.path().join("core.sqlite")).unwrap();
+        let point = format!("blob-answered:{hash}");
+        crate::fault::arm(&point);
+        std::thread::scope(|scope| {
+            let reading = scope.spawn(|| reader.blob(&hash));
+            let waited = std::time::Instant::now();
+            while crate::fault::waiting(&point) == 0 {
+                assert!(
+                    waited.elapsed() < std::time::Duration::from_secs(10),
+                    "the reading handle never reached its answer"
+                );
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            let taken = core.set_file_budget(FileBudget::Bytes(0));
+            crate::fault::release(&point);
+            assert_eq!(taken.unwrap(), 0);
+            let path = reading.join().unwrap().unwrap();
+            assert_eq!(
+                std::fs::read(path.path()).ok().as_deref(),
+                Some(&bytes[..]),
+                "the writer's trim took the bytes a reading handle was about to read"
+            );
+        });
+        // The witness: once the reading handle is answered, a trim takes them.
+        assert_eq!(core.trim_files().unwrap(), bytes.len() as u64);
+        assert!(!core.blob_held(&hash).unwrap());
+    }
+
+    /// Bytes an upload names are the only copy until the server has them,
+    /// whether the upload is queued after they were fetched or while a fetch
+    /// of them is arriving.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn bytes_an_upload_names_stay_in_backups_whichever_comes_first() {
+        use crate::file_cache::tests::excluded;
+        // The system excludes its own temporary folders, so the witness has to
+        // sit under the home folder.
+        let home = std::env::var_os("HOME").expect("HOME");
+        let area = tempfile::Builder::new()
+            .prefix(".marfa-backup-test-")
+            .tempdir_in(home)
+            .unwrap();
+        let server = crate::scripted::Scripted::start();
+        let core = crate::stop_tests::copy_in_keyed(&server, area.path(), "k");
+        core.set_file_budget(FileBudget::KeepAll).unwrap();
+        let serve = |bytes: &[u8]| {
+            let hash = blob::name_of(bytes);
+            let link = blob::tests::linking(bytes.to_vec(), false);
+            server.on(
+                &format!("/blobs/{hash}/url"),
+                vec![crate::scripted::json(
+                    200,
+                    &format!(r#"{{"url":"{link}"}}"#),
+                )],
+            );
+            hash
+        };
+        let upload = |name: &str, bytes: &[u8]| {
+            let path = area.path().join(name);
+            std::fs::write(&path, bytes).unwrap();
+            core.put_blob(&path, Some("text/plain")).unwrap();
+        };
+
+        let fetched_first = b"fetched, then queued as an upload";
+        let hash = serve(fetched_first);
+        let path = core.blob(&hash).unwrap().path().to_path_buf();
+        assert!(
+            excluded(&path),
+            "fetched bytes were not left out of backups"
+        );
+        upload("fetched-first.txt", fetched_first);
+        assert!(
+            !excluded(&path),
+            "bytes fetched and then queued as an upload stayed out of backups"
+        );
+
+        let queued_first = b"queued while a fetch of it arrived";
+        let hash = serve(queued_first);
+        let point = format!("blob-arrived:{hash}");
+        crate::fault::arm(&point);
+        std::thread::scope(|scope| {
+            let fetching = scope.spawn(|| core.blob(&hash).map(|held| held.path().to_path_buf()));
+            let waited = std::time::Instant::now();
+            while crate::fault::waiting(&point) == 0 {
+                assert!(
+                    waited.elapsed() < std::time::Duration::from_secs(10),
+                    "the fetch never arrived"
+                );
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            upload("queued-first.txt", queued_first);
+            crate::fault::release(&point);
+            let path = fetching.join().unwrap().unwrap();
+            assert!(
+                !excluded(&path),
+                "a fetch that settled after an upload of its bytes was queued left them out of backups"
+            );
+        });
+        assert_eq!(core.file_cache().unwrap().backup_mark_failure, None);
+    }
+
+    #[test]
+    fn two_budgets_set_at_once_each_trim_to_the_one_they_stored() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = Core::open(dir.path().join("core.sqlite"), None).unwrap();
+        let path = dir.path().join("kept.txt");
+        std::fs::write(&path, b"fetched once").unwrap();
+        let hash = core
+            .cache()
+            .unwrap()
+            .take_reader(&path, std::fs::File::open(&path).unwrap())
+            .unwrap()
+            .hash;
+        core.set_file_budget(FileBudget::KeepAll).unwrap();
+        let point = &format!("budget-stored:{:p}", &core);
+        crate::fault::arm(point);
+        std::thread::scope(|scope| {
+            let zero = scope.spawn(|| core.set_file_budget(FileBudget::Bytes(0)));
+            let waited = std::time::Instant::now();
+            while crate::fault::waiting(point) == 0 {
+                assert!(
+                    waited.elapsed() < std::time::Duration::from_secs(10),
+                    "the first call never stored its budget"
+                );
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            let keep_all = scope.spawn(|| core.set_file_budget(FileBudget::KeepAll));
+            // Long enough for a second call that is not held back to store
+            // its budget over the first one's.
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            crate::fault::release(point);
+            assert_eq!(
+                zero.join().unwrap().unwrap(),
+                12,
+                "a budget of zero was stored and then never enforced"
+            );
+            assert_eq!(keep_all.join().unwrap().unwrap(), 0);
+        });
+        assert!(!core.blob_held(&hash).unwrap());
+        assert_eq!(core.file_budget().unwrap(), FileBudget::KeepAll);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_state_report_says_held_bytes_are_unknown_where_the_cache_cannot_be_read() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let core = Core::open(dir.path().join("core.sqlite"), None).unwrap();
+        let absent = core.file_cache().unwrap();
+        assert_eq!((absent.held, absent.held_unreadable), (Some(0), None));
+        let path = dir.path().join("kept.txt");
+        std::fs::write(&path, b"fetched once").unwrap();
+        let hash = core
+            .cache()
+            .unwrap()
+            .take_reader(&path, std::fs::File::open(&path).unwrap())
+            .unwrap()
+            .hash;
+        assert_eq!(core.file_cache().unwrap().held, Some(12));
+        let folder = dir.path().join("core.sqlite.blobs");
+        std::fs::set_permissions(&folder, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let sealed = std::fs::read_dir(&folder).is_err();
+        let report = core.file_cache();
+        let taken = core.set_file_budget(FileBudget::Bytes(0));
+        std::fs::set_permissions(&folder, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(sealed, "the folder could still be read");
+        let report = report.unwrap();
+        assert_eq!(
+            report.held, None,
+            "an incomplete count was reported as exact"
+        );
+        assert!(report.held_unreadable.is_some());
+        assert_eq!(taken.unwrap(), 0);
+        assert!(
+            core.blob_held(&hash).unwrap(),
+            "a trim took bytes it could not count"
+        );
     }
 
     #[test]
@@ -6167,7 +6580,7 @@ mod tests {
         let read = file("read.txt", b"fetched once");
         let upload = queue_upload(&core.conn().unwrap(), &waiting, "text/plain").unwrap();
 
-        core.trim_blobs(None, 0);
+        core.set_file_budget(FileBudget::Bytes(0)).unwrap();
         assert!(
             core.blob_held(&waiting).unwrap(),
             "the cap took bytes an upload still names, so it can never be sent"
@@ -6185,7 +6598,7 @@ mod tests {
             },
         )
         .unwrap();
-        core.trim_blobs(None, 0);
+        core.set_file_budget(FileBudget::Bytes(0)).unwrap();
         assert!(
             !core.blob_held(&waiting).unwrap(),
             "bytes the server has taken were kept past the cap"
@@ -6273,7 +6686,7 @@ mod tests {
 
     #[test]
     fn no_stream_runs_across_a_hydration() {
-        let server = scripted::Scripted::start();
+        let server = crate::scripted::Scripted::start();
         // The hydration's first read, the log's head, is never answered.
         server.on("/events", vec![scripted::Answer::Stall]);
         let dir = tempfile::tempdir().unwrap();
@@ -6422,7 +6835,7 @@ mod tests {
 
         let reader = Core::open_reader(&path).unwrap();
         let held = reader.blob(&hash).unwrap();
-        assert_eq!(std::fs::read(held).unwrap(), b"held here");
+        assert_eq!(std::fs::read(held.path()).unwrap(), b"held here");
         let other = blob::name_of(b"never held");
         let reason = |core: &Core| match core.blob(&other) {
             Err(CoreError::BytesAbsent { reason, .. }) => reason,
