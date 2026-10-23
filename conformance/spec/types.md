@@ -248,7 +248,7 @@ When a listing names a type, the server MUST answer the items of that type, of e
 
 When a type names `compatible_with`, the server MUST take it only where the type requires every field the target requires, its own or inherited, and every target field the type declares or inherits is readable as the target's: the same type, or `url`, `email`, `datetime`, `date`, `thumbnail` or `enum` where the target's is `string`, or `integer` where it is `number`; for an `array`, the same `items_type`; for an `enum`, values drawn from the target's; and, where both name a `format`, the same one.
 
-**Tests:** `compliance/type-inheritance.test.ts › accepts compatible_with: core.note when fields satisfy the structural superset`, `› takes a compatible_with claim whose fields are readable as the target's, and refuses one that is not`.
+**Tests:** `compliance/type-inheritance.test.ts › accepts compatible_with: core.note when fields satisfy the structural superset`, `› takes a compatible_with claim whose fields are readable as the target's, and refuses one that is not`, `compliance/thumbnails.test.ts › is read as the target's by a type claiming compatibility, and refused as text`.
 
 ### `types/compatible-with-refused`
 
@@ -415,6 +415,14 @@ When a field declares `searchable: false`, the server MUST leave its value out o
 ## Thumbnails
 
 A `thumbnail` field holds a small image the writer supplies; what a value may be is `items/thumbnail-format`.
+
+### `types/shipped-thumbnail`
+
+The server MUST ship `core.file.image` and `core.media` each declaring an optional field named `thumbnail` of the `thumbnail` kind, which every subtype of either inherits.
+
+**Reason:** an app lists images and works from what a device already holds, without fetching a file or a cover for each.
+
+**Tests:** `compliance/thumbnails.test.ts › shows the optional thumbnail field on a read of each type, and of a subtype`, `› takes an item without a thumbnail, and one with a valid thumbnail on a create and an update`, `› leaves a subtype of either type to add no second thumbnail`.
 
 ### `types/thumbnail-one`
 

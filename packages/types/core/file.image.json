@@ -24,6 +24,10 @@
     "altitude": {
       "type": "number",
       "description": "Altitude in meters"
+    },
+    "thumbnail": {
+      "type": "thumbnail",
+      "description": "A small preview of the image, supplied by the writer"
     }
   },
   "display_hints": {

@@ -47,6 +47,10 @@
     "notes": {
       "type": "string",
       "description": "Personal annotations"
+    },
+    "thumbnail": {
+      "type": "thumbnail",
+      "description": "A small preview of the work, supplied by the writer"
     }
   },
   "required": ["title"],

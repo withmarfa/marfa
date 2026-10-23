@@ -392,7 +392,7 @@ The server MUST answer a property whose name is the canonical decimal of an inte
 
 If a write names a `thumbnail` that is not `data:image/png;base64,`, `data:image/jpeg;base64,` or `data:image/webp;base64,` followed by canonical base64 of at most 16 KiB decoded whose leading bytes carry that format's signature, then the server MUST refuse it `invalid_properties` naming the field.
 
-**Tests:** `compliance/thumbnails.test.ts › refuses a thumbnail over the cap or not an image, naming the field`, `› refuses a thumbnail that is not an image on an update and inside a bulk page`.
+**Tests:** `compliance/thumbnails.test.ts › refuses a thumbnail over the cap or not an image, naming the field`, `› refuses a thumbnail that is not an image on an update and inside a bulk page`, `› refuses a thumbnail over the cap or not an image on a create and an update, naming the field`.
 
 ### `items/thumbnail-inline`
 
