@@ -27,7 +27,8 @@ afterEach(async () => {
   }
 });
 
-const GIB = 1024 * 1024 * 1024;
+const MIB = 1024 * 1024;
+const GIB = 1024 * MIB;
 const TB = 1_000_000_000_000;
 
 /** A harness whose device has its working copy made, as a first fetch needs. */
@@ -43,9 +44,9 @@ function ten(name: string): Buffer {
   return Buffer.from(name.padEnd(10, "."));
 }
 
-/** Runs `call` with the debug build told what its volume looks like. */
-async function onVolume<T>(volume: string, call: () => Promise<T>): Promise<T> {
-  process.env.MARFA_TEST_FAULT = volume;
+/** Runs `call` with the debug build told `fault`, such as what its volume looks like. */
+async function withFault<T>(fault: string, call: () => Promise<T>): Promise<T> {
+  process.env.MARFA_TEST_FAULT = fault;
   try {
     return await call();
   } finally {
@@ -56,6 +57,15 @@ async function onVolume<T>(volume: string, call: () => Promise<T>): Promise<T> {
 /** A volume of `size` bytes with `free` of them free. */
 function volume(size: number, free: number): string {
   return `volume=${String(size)}:${String(free)}`;
+}
+
+/**
+ * A volume of `size` bytes with `free` of them free, where the default budget
+ * may fall below its 256 MiB minimum, so a fixture can see the default trim
+ * bytes it fetched without fetching 256 MiB.
+ */
+function unbounded(size: number, free: number): string {
+  return `${volume(size, free)},budget-minimum=0`;
 }
 
 async function cacheOf(device: CliDevice): Promise<FileCache> {
@@ -87,7 +97,7 @@ describe("the file budget", () => {
     harness = await started("budget-default");
     const { device } = harness;
     const budgetOn = async (size: number, free: number): Promise<number> => {
-      const cache = await onVolume(volume(size, free), () => cacheOf(device));
+      const cache = await withFault(volume(size, free), () => cacheOf(device));
       expect(cache.setting).toBe("default");
       expect(cache.volume_unreadable).toBe(false);
       return cache.budget ?? Number.NaN;
@@ -98,14 +108,15 @@ describe("the file budget", () => {
     // Never under 2 GiB on a small one.
     expect(await budgetOn(10 * GIB, 8 * GIB)).toBe(2 * GIB);
     // Where the volume is nearly full, what leaves a twentieth of it free.
-    expect(await budgetOn(TB, TB / 20 + 7)).toBe(7);
-    // Never below zero.
-    expect(await budgetOn(TB, 1)).toBe(0);
+    expect(await budgetOn(TB, TB / 20 + 300 * MIB)).toBe(300 * MIB);
+    // Never below 256 MiB.
+    expect(await budgetOn(TB, TB / 20 + 7)).toBe(256 * MIB);
+    expect(await budgetOn(TB, 1)).toBe(256 * MIB);
 
     // The bytes the cache holds count towards what a trim can hand back. The
     // fetch happens on the machine's own volume, where the default is wide.
     await fetched(harness, ten("held"));
-    expect(await budgetOn(TB, TB / 20 + 7)).toBe(17);
+    expect(await budgetOn(TB, TB / 20 + 300 * MIB)).toBe(300 * MIB + 10);
   });
 
   it("gives 2 GiB and says so where the volume cannot be read", async () => {
@@ -115,23 +126,28 @@ describe("the file budget", () => {
     const read = await cacheOf(device);
     expect(read.volume_unreadable).toBe(false);
 
-    const unread = await onVolume("volume-unreadable", () => cacheOf(device));
+    const unread = await withFault("volume-unreadable", () => cacheOf(device));
     expect(unread.setting).toBe("default");
     expect(unread.budget).toBe(2 * GIB);
     expect(unread.volume_unreadable).toBe(true);
+
+    // A volume that answers a size of zero says nothing about itself.
+    const zero = await withFault(volume(0, 0), () => cacheOf(device));
+    expect(zero.budget).toBe(2 * GIB);
+    expect(zero.volume_unreadable).toBe(true);
   });
 
   it("gives a set budget whatever the volume, to every process that opens the store", async () => {
     harness = await started("budget-set");
     const { device } = harness;
-    const set = await onVolume(volume(TB, TB / 2), () =>
+    const set = await withFault(volume(TB, TB / 2), () =>
       device.fileBudget("100"),
     );
     expect(set.ok, JSON.stringify(set)).toBe(true);
 
     // Each command is a process of its own.
     for (const size of [TB, 10 * GIB]) {
-      const cache = await onVolume(volume(size, size / 2), () =>
+      const cache = await withFault(volume(size, size / 2), () =>
         cacheOf(device),
       );
       expect(cache.setting).toEqual({ bytes: 100 });
@@ -158,10 +174,10 @@ describe("the file budget", () => {
     const { device } = harness;
     expect((await device.fileBudget("keep-all")).ok).toBe(true);
     // A volume with no room, which the default would empty the cache for.
-    const tight = volume(TB, 1);
+    const tight = unbounded(TB, 1);
 
     const hashes: string[] = [];
-    await onVolume(tight, async () => {
+    await withFault(tight, async () => {
       for (const name of ["a", "b", "c"]) {
         hashes.push(await fetched(harness as Harness, ten(name)));
       }
@@ -169,13 +185,13 @@ describe("the file budget", () => {
     for (const hash of hashes) {
       expect(existsSync(heldAt(device, hash))).toBe(true);
     }
-    const cache = await onVolume(tight, () => cacheOf(device));
+    const cache = await withFault(tight, () => cacheOf(device));
     expect(cache.setting).toBe("keep_all");
     expect(cache.budget).toBeNull();
     expect(cache.held).toBe(30);
 
     // The witness: the same volume under the default budget empties them.
-    const back = await onVolume(tight, () => device.fileBudget("default"));
+    const back = await withFault(tight, () => device.fileBudget("default"));
     expect(back.ok && back.value.file_cache.held).toBe(0);
     for (const hash of hashes) {
       expect(existsSync(heldAt(device, hash))).toBe(false);
@@ -234,15 +250,15 @@ describe("a trim to the file budget", () => {
     const hashes: string[] = [];
     // On a volume with room, so that the machine's own disk being full cannot
     // trim the first fetch away.
-    await onVolume(volume(TB, TB / 2), async () => {
+    await withFault(volume(TB, TB / 2), async () => {
       for (const name of ["a", "b", "c"]) {
         hashes.push(await fetched(harness as Harness, ten(name)));
       }
     });
 
     // The volume has since filled to leave room for 15 of the 30 bytes.
-    const narrow = volume(TB, TB / 20 - 15);
-    const shown = await onVolume(narrow, () => cacheOf(device));
+    const narrow = unbounded(TB, TB / 20 - 15);
+    const shown = await withFault(narrow, () => cacheOf(device));
     expect(shown.budget).toBe(15);
     expect(shown.held).toBe(30);
     for (const hash of hashes) {
@@ -252,7 +268,7 @@ describe("a trim to the file budget", () => {
       ).toBe(true);
     }
 
-    const asked = await onVolume(narrow, () =>
+    const asked = await withFault(narrow, () =>
       device.fileBudget(undefined, { trim: true }),
     );
     expect(asked.ok && asked.value.trimmed_bytes).toBe(20);
@@ -268,10 +284,25 @@ describe("a trim to the file budget", () => {
     const { device } = harness;
     const a = await fetched(harness, ten("a"));
     const b = await fetched(harness, ten("b"));
-    const set = await device.fileBudget("10");
-    expect(set.ok && set.value.file_cache.held).toBe(10);
+    const c = await fetched(harness, ten("c"));
+    const set = await device.fileBudget("20");
+    expect(set.ok, JSON.stringify(set)).toBe(true);
+    if (!set.ok) return;
+    expect(set.value.trimmed_bytes).toBe(10);
+    expect(set.value.file_cache.held).toBe(20);
     expect(existsSync(heldAt(device, a))).toBe(false);
     expect(existsSync(heldAt(device, b))).toBe(true);
+
+    // Asked to trim as well, it reports what setting the budget took, since
+    // the trim after it finds nothing left to take.
+    const both = await device.fileBudget("10", { trim: true });
+    expect(both.ok && both.value.trimmed_bytes).toBe(10);
+    expect(existsSync(heldAt(device, b))).toBe(false);
+    expect(existsSync(heldAt(device, c))).toBe(true);
+
+    // The witness: showing the budget takes nothing and reports nothing.
+    const shown = await device.fileBudget();
+    expect(shown.ok && shown.value.trimmed_bytes).toBeNull();
   });
 
   it("keeps the bytes a queued upload names, under a budget of zero", async () => {
@@ -321,9 +352,17 @@ describe("a trim to the file budget", () => {
 });
 
 describe.runIf(process.platform === "darwin")(
-  "the folder of fetched files on a Mac",
+  "backups of the file cache on a Mac",
   () => {
-    it("is kept out of backups, and marked again once found unmarked", async () => {
+    const excluded = (path: string): boolean => {
+      const said = execFileSync("tmutil", ["isexcluded", path], {
+        encoding: "utf8",
+      });
+      expect(said).toMatch(/\[(In|Ex)cluded\]/);
+      return said.includes("[Excluded]");
+    };
+
+    it("keeps the bytes it fetched out of backups, and the bytes of an upload in them", async () => {
       // The system excludes its own temporary folders, so the store has to sit
       // under the home folder for the verdict to be the device's.
       const area = mkdtempSync(join(homedir(), ".marfa-conformance-backup-"));
@@ -336,32 +375,48 @@ describe.runIf(process.platform === "darwin")(
         key: KEY,
       });
       expect((await device.status()).ok).toBe(true);
-      const excluded = (path: string): boolean => {
-        const said = execFileSync("tmutil", ["isexcluded", path], {
-          encoding: "utf8",
-        });
-        expect(said).toMatch(/\[(In|Ex)cluded\]/);
-        return said.includes("[Excluded]");
-      };
 
-      const hash = scriptBlob(harness.server, ten("a"));
+      const upload = ten("upload");
+      const queued = await device.putBlob(fileOf("note.txt", upload));
+      expect(queued.ok, JSON.stringify(queued)).toBe(true);
+      const hash = scriptBlob(harness.server, ten("fetched"));
       expect((await device.blob(hash)).ok).toBe(true);
-      const folder = `${device.store}.blobs`;
-      expect(excluded(folder), "tmutil does not exclude the folder").toBe(true);
-      // The witness: a folder beside it that nothing marked is included.
-      expect(excluded(area)).toBe(false);
 
-      execFileSync("xattr", [
-        "-d",
-        "com.apple.metadata:com_apple_backup_excludeItem",
-        folder,
-      ]);
-      expect(excluded(folder)).toBe(false);
-      expect((await device.status()).ok).toBe(true);
+      // The mark is on each fetched file, which tmutil reports.
       expect(
-        excluded(folder),
-        "a folder found unmarked was not marked again",
+        excluded(heldAt(device, hash)),
+        "tmutil does not exclude the fetched file",
       ).toBe(true);
+      expect(
+        excluded(heldAt(device, hashOf(upload))),
+        "the only copy of an upload is kept out of backups",
+      ).toBe(false);
+      expect(
+        excluded(`${device.store}.blobs`),
+        "the folder that holds uploads is kept out of backups",
+      ).toBe(false);
+      expect((await cacheOf(device)).backup_mark_failure).toBeNull();
+    });
+
+    it("says in its state report when fetched bytes cannot be kept out of backups", async () => {
+      harness = await started("backup-refused");
+      const { device } = harness;
+      // The witness: a fetch that marks its file reports nothing.
+      await fetched(harness, ten("marked"));
+      expect((await cacheOf(device)).backup_mark_failure).toBeNull();
+
+      const refused = scriptBlob(harness.server, ten("refused"));
+      const got = await withFault("backup-mark-refused", () =>
+        device.blob(refused),
+      );
+      expect(got.ok, "the bytes were refused with the mark").toBe(true);
+      const said = (await cacheOf(device)).backup_mark_failure;
+      expect(said).toEqual(expect.any(String));
+      expect(said).not.toBe("");
+
+      // Until a fetch marks its file again.
+      await fetched(harness, ten("again"));
+      expect((await cacheOf(device)).backup_mark_failure).toBeNull();
     });
   },
 );

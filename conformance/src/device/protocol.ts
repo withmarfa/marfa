@@ -112,8 +112,14 @@ export interface FileCache {
   budget: number | null;
   /** The bytes of the files kept now. */
   held: number;
-  /** The default budget is its floor because the volume could not be read. */
+  /** The default budget is 2 GiB because the volume could not be read. */
   volume_unreadable: boolean;
+  /**
+   * Why the file of the bytes fetched last could not be kept out of backups;
+   * null once a file of fetched bytes is marked
+   * (`device/file-backup-failure-said`).
+   */
+  backup_mark_failure: string | null;
 }
 
 export interface Status {
@@ -567,8 +573,9 @@ export interface DeviceUnderTest {
   blob(hash: string): Promise<Outcome<{ hash: string; path: string }>>;
   /**
    * Shows the file budget, or sets it to `value`: a byte count, `keep-all`
-   * or `default`. With `trim`, also trims to the budget in force and says how
-   * many bytes it took.
+   * or `default`, and trims to it. With `trim`, also trims to the budget in
+   * force. `trimmed_bytes` is the bytes taken, null where nothing was set or
+   * trimmed.
    */
   fileBudget(
     value?: string,
