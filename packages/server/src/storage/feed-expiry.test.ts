@@ -337,8 +337,8 @@ describe("what never expires", () => {
     expect(await stateOf(archived)).toBe("archived");
   });
 
-  it("leaves the library copy of a promoted feed item untouched and active", async () => {
-    const type = uniqueType("promoted");
+  it("leaves a library item derived from a feed item untouched and active", async () => {
+    const type = uniqueType("derived");
     await declare(type, { retention_policy: { feed_days: 2 } });
     const feed = await add(type);
     const copy = await add("core.note", {

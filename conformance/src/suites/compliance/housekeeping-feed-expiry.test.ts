@@ -472,7 +472,7 @@ describe("what the move to the bin is", () => {
     expect(entry!.details.moved).toBe(1);
   });
 
-  it("leaves the library copy a feed item was promoted to active and unchanged", async () => {
+  it("leaves a library item linked from a feed item by derived-from active and unchanged", async () => {
     const type = await register({ feed_days: 1 });
     const feed = await add(type);
     const copy = await writer.createItem({

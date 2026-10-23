@@ -2655,7 +2655,7 @@ mod tests {
             )
         };
         // The copy does not hold the original. A row made from it and not
-        // tagged a conflicted copy, a promoted one, is the witness that the
+        // tagged a conflicted copy, one with only the link, is the witness that the
         // tag is asked.
         server.on(
             "/events",
@@ -2669,8 +2669,8 @@ mod tests {
                         &row("copy", &[crate::CONFLICTED_COPY_TAG]),
                     ),
                     event("12", "edge.created", &link("e1", "copy")),
-                    event("13", "item.created", &row("promoted", &[])),
-                    event("14", "edge.created", &link("e2", "promoted")),
+                    event("13", "item.created", &row("linked", &[])),
+                    event("14", "edge.created", &link("e2", "linked")),
                     stream_live(Some("14")),
                 ],
                 Then::Hold {
@@ -2685,7 +2685,7 @@ mod tests {
         let answers = |core: &Core| {
             (
                 core.original_of_conflicted_copy("copy").unwrap(),
-                core.original_of_conflicted_copy("promoted").unwrap(),
+                core.original_of_conflicted_copy("linked").unwrap(),
                 core.conflicted_copies_of("original")
                     .unwrap()
                     .into_iter()
@@ -2698,7 +2698,7 @@ mod tests {
         assert_eq!(
             core.edges_to("original").unwrap().len(),
             2,
-            "the promoted row's link was not held, so its absence above proves nothing"
+            "the linked row's link was not held, so its absence above proves nothing"
         );
         drop(core);
         let reopened = Core::open(dir.path().join("core.sqlite"), None).unwrap();
