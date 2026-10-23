@@ -170,6 +170,12 @@ pub fn is_off() -> bool {
 /// `MARFA_NO_KEYCHAIN` set to a true word; empty, unset or any other value
 /// leaves the keychain on.
 pub fn off_by_environment() -> bool {
+    // An in-process test of `run` meets the keychain as CI does, whatever the
+    // variable is in the shell that runs the suite. `tests/no_keychain.rs`
+    // holds the variable itself, in a process that sets it.
+    #[cfg(test)]
+    return false;
+    #[cfg(not(test))]
     crate::environment::flag("MARFA_NO_KEYCHAIN")
 }
 

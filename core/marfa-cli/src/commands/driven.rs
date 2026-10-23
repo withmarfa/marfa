@@ -447,6 +447,7 @@ fn remote_setup_claim_refuses_a_redirect_and_sends_the_documented_body() {
         ])
         .env_remove("MARFA_API_KEY")
         .env_remove("MARFA_API_URL")
+        .env_remove("MARFA_NO_KEYCHAIN")
         .env("MARFA_TEST_REDIRECT_CLAIM_URL", &server.url)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
