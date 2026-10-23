@@ -23,6 +23,7 @@ import { describe, it, expect, afterEach, vi } from "vitest";
 import {
   answers,
   copyItemEvent,
+  refusal,
   wireItem,
   writeAnswers,
 } from "../../device/marfa-answers.js";
@@ -37,7 +38,9 @@ import {
   scriptWrites,
 } from "./harness.js";
 import { CliFolder, type FolderSettings } from "../../device/cli-adapter.js";
+import { FolderDoor } from "../../device/folder-door.js";
 import { ScriptedServer } from "../../device/scripted-server.js";
+import type { Answer, RecordedRequest } from "../../device/scripted-server.js";
 import type { FolderHarness, FolderRow } from "./harness.js";
 import type { WireItemOptions } from "../../device/marfa-answers.js";
 import {
@@ -211,6 +214,7 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     other: FolderSettings,
     rows: Record<string, Array<{ item: WireItemOptions; tags?: string[] }>>,
     before?: (server: ScriptedServer) => void,
+    writes: Omit<Parameters<typeof scriptFolderWrites>[1], "edges"> = {},
   ): Promise<{ edges: EdgeDoor; a: FolderHarness; b: FolderHarness }> {
     const edges = new EdgeDoor();
     harness = await folderHarness(`${label}-a`, {
@@ -221,7 +225,7 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     // Before the item doors, whose read would answer for any id.
     const otherRow = scriptFolderRow(harness.server, other);
     before?.(harness.server);
-    scriptFolderWrites(harness, { edges });
+    scriptFolderWrites(harness, { ...writes, edges });
     second = await folderHarness(`${label}-b`, {
       sharing: { server: harness.server, key: KEY },
       folder: otherRow,
@@ -847,6 +851,252 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     // Its own search holds the new item, so it writes that item's file.
     const left = readdirSync(a.dir).filter((name) => name !== ".marfa");
     expect(left.map((name) => idIn(a, name))).toEqual([made]);
+  });
+
+  it.each([
+    ["before the folder between looks again", false],
+    ["after the folder between looks before the third one scans", true],
+  ])(
+    "keeps one item when a new note moves on to a third folder %s",
+    async (label, middleLooks) => {
+      const name = `new-note-moved-twice-${middleLooks ? "looked" : "unlooked"}`;
+      let third: FolderRow | undefined;
+      const { a, b } = await onOneMac(
+        name,
+        holdsNotes,
+        holdsNotes,
+        {},
+        (server) => {
+          third = scriptFolderRow(server, holdsNotes);
+        },
+      );
+      const c = await folderHarness(`${name}-c`, {
+        sharing: { server: a.server, key: KEY },
+        folder: third,
+        registry: a.registry,
+      });
+      try {
+        put(a, "Moved.md", "words\n");
+        expect((await a.folder.scan()).ok).toBe(true);
+        expect((await a.folder.device().drain()).ok).toBe(true);
+        const id = String(sentCreates(a)[0]?.id);
+        // Moved before its id line is written, and taken where it went,
+        // whose pull writes the line by replacing the file.
+        renameSync(join(a.dir, "Moved.md"), join(b.dir, "Moved.md"));
+        expect((await b.folder.push()).ok).toBe(true);
+        expect(idIn(b, "Moved.md")).toBe(id);
+        // Then on to a third folder, before the folder it was made in looks.
+        renameSync(join(b.dir, "Moved.md"), join(c.dir, "Moved.md"));
+        if (middleLooks) {
+          expect((await b.folder.push()).ok).toBe(true);
+          await pastTheGrace();
+          const looked = await b.folder.push();
+          expect(looked.ok, JSON.stringify(looked)).toBe(true);
+          if (!looked.ok) return;
+          expect(
+            looked.value.scan.moved_away,
+            "the folder between let go of its binding before the folder the note went on to took the file",
+          ).toBe(0);
+          expect(deletesOf(a.server, id)).toBe(0);
+        }
+        const from = a.server.requests.length;
+        expect((await c.folder.push()).ok).toBe(true);
+        expect(idIn(c, "Moved.md")).toBe(id);
+        if (middleLooks) {
+          const released = await b.folder.push();
+          expect(released.ok, JSON.stringify(released)).toBe(true);
+          if (!released.ok) return;
+          expect(released.value.scan.moved_away).toBe(1);
+        }
+
+        // The folder it was made in finds it where it went on to.
+        expect((await a.folder.push()).ok).toBe(true);
+        await pastTheGrace();
+        const swept = await a.folder.push();
+        expect(swept.ok, JSON.stringify(swept)).toBe(true);
+        if (!swept.ok) return;
+        expect(
+          deletesOf(a.server, id),
+          `the folder a new note was made in trashed it once it moved on to a third folder ${label}`,
+        ).toBe(0);
+        expect(swept.value.scan.moved_away).toBe(1);
+        expect(swept.value.scan.trashed).toEqual([]);
+        expect(createsSince(a.server, from)).toEqual([]);
+        expect(idIn(c, "Moved.md")).toBe(id);
+        expect(read(c, "Moved.md")).toContain("words\n");
+      } finally {
+        await c.stop();
+      }
+    },
+  );
+
+  it("keeps an edit its folder had not sent yet when a new note moves to another folder", async () => {
+    const { a, b } = await onOneMac(
+      "new-note-moved-unsent-edit",
+      holdsNotes,
+      holdsNotes,
+      {},
+    );
+    put(a, "Moved.md", "words\n");
+    expect((await a.folder.scan()).ok).toBe(true);
+    expect((await a.folder.device().drain()).ok).toBe(true);
+    const id = String(sentCreates(a)[0]?.id);
+    // Edited and read before its id line is written: the edit is queued,
+    // not sent, when the note moves.
+    writeFileSync(join(a.dir, "Moved.md"), "words, edited\n");
+    const edited = await a.folder.scan();
+    expect(edited.ok && edited.value.updated).toBe(1);
+    renameSync(join(a.dir, "Moved.md"), join(b.dir, "Moved.md"));
+
+    const taken = await b.folder.push();
+    expect(taken.ok, JSON.stringify(taken)).toBe(true);
+    if (!taken.ok) return;
+    expect(
+      read(b, "Moved.md"),
+      "the folder a note moved to wrote the server's older body over an edit not yet sent",
+    ).toContain("words, edited\n");
+    expect(
+      taken.value.scan.flagged.map((file) => [file.path, file.flag]),
+    ).toEqual([["Moved.md", "waiting"]]);
+
+    // Once both folders have sent what they hold, the item and the file
+    // hold the edit, and there is one item and one file of it.
+    expect((await a.folder.push()).ok).toBe(true);
+    expect((await b.folder.push()).ok).toBe(true);
+    expect(idIn(b, "Moved.md")).toBe(id);
+    expect(read(b, "Moved.md")).toContain("words, edited\n");
+    expect(readdirSync(b.dir).filter((name) => name !== ".marfa")).toEqual([
+      "Moved.md",
+    ]);
+    const read_ = await b.folder.device().get(id);
+    expect(read_.ok, JSON.stringify(read_)).toBe(true);
+    if (!read_.ok) return;
+    expect(
+      (read_.value.properties as { body?: string }).body,
+      "the edit made before the move did not reach the item",
+    ).toBe("words, edited\n");
+    expect(createsSince(a.server, 0).map((sent) => sent.id)).toEqual([id]);
+    expect(deletesOf(a.server, id)).toBe(0);
+  });
+
+  it("keeps an edit the server refused when a new note moves to another folder", async () => {
+    let door: FolderDoor | undefined;
+    const { a, b } = await onOneMac(
+      "new-note-moved-refused-edit",
+      holdsNotes,
+      holdsNotes,
+      {},
+      undefined,
+      {
+        door: (made: FolderDoor) => {
+          door = made;
+          const update = made.update.bind(made);
+          made.update = ((...args: Parameters<FolderDoor["update"]>) =>
+            String(
+              (args[1].properties as Record<string, unknown> | undefined)?.body,
+            ).includes("refused")
+              ? refusal(422, "validation_failed", "Refused")
+              : update(...args)) as FolderDoor["update"];
+        },
+      },
+    );
+    put(a, "Moved.md", "words\n");
+    expect((await a.folder.scan()).ok).toBe(true);
+    expect((await a.folder.device().drain()).ok).toBe(true);
+    const id = String(sentCreates(a)[0]?.id);
+    // Edited before its id line is written, and the edit refused.
+    writeFileSync(join(a.dir, "Moved.md"), "words, refused\n");
+    expect((await a.folder.scan()).ok).toBe(true);
+    expect((await a.folder.device().drain()).ok).toBe(true);
+    expect(
+      sentUpdates(a).map(
+        (sent) => (sent.body.properties as { body?: string }).body,
+      ),
+    ).toEqual(["words, refused\n"]);
+    renameSync(join(a.dir, "Moved.md"), join(b.dir, "Moved.md"));
+
+    const taken = await b.folder.push();
+    expect(taken.ok, JSON.stringify(taken)).toBe(true);
+    expect(
+      read(b, "Moved.md"),
+      "the folder a note moved to read a refused edit as agreed and wrote the server's body over it",
+    ).toBe("words, refused\n");
+    // Read as an edit there, it is sent again, and refused again.
+    expect(
+      sentUpdates(a).map(
+        (sent) => (sent.body.properties as { body?: string }).body,
+      ),
+    ).toEqual(["words, refused\n", "words, refused\n"]);
+    expect(createsSince(a.server, 0).map((sent) => sent.id)).toEqual([id]);
+    expect(door?.rows.get(id)?.properties.body).toBe("words\n");
+  });
+
+  it("makes no second item when a new note's create lands while the folder it moved to asks the server for it", async () => {
+    // Armed once the note is moved: a read of its item answered not found
+    // is let through only after the folder it was made in has sent its
+    // create, which so lands between the answer and its use.
+    let gate: { id: string; landed?: Promise<unknown> } | undefined;
+    let land: () => Promise<unknown> = () => Promise.resolve();
+    const { a, b } = await onOneMac(
+      "new-note-moved-create-lands",
+      holdsNotes,
+      holdsNotes,
+      {},
+      undefined,
+      {
+        reading: (answer: Answer, request: RecordedRequest) => {
+          if (
+            gate === undefined ||
+            gate.landed !== undefined ||
+            request.pathname !== `/items/${gate.id}` ||
+            answer.kind !== "json" ||
+            answer.status !== 404
+          ) {
+            return answer;
+          }
+          gate.landed = land();
+          return {
+            kind: "gated",
+            until: gate.landed.then(() => undefined),
+            then: answer,
+          };
+        },
+      },
+    );
+    land = () => a.folder.device().drain();
+    put(a, "Moved.md", "words\n");
+    const queued = await a.folder.scan();
+    expect(queued.ok && queued.value.created).toBe(1);
+    const queue = await a.folder.device().queue();
+    expect(queue.ok, JSON.stringify(queue)).toBe(true);
+    if (!queue.ok) return;
+    const id = String(
+      queue.value.find((write) => write.kind === "create_item")?.item_id,
+    );
+    renameSync(join(a.dir, "Moved.md"), join(b.dir, "Moved.md"));
+    gate = { id };
+
+    const asked = await b.folder.push();
+    expect(asked.ok, JSON.stringify(asked)).toBe(true);
+    if (!asked.ok) return;
+    expect(asked.value.scan.created).toBe(0);
+    expect(
+      createsSince(a.server, 0).filter((sent) => sent.id !== id),
+      "a create that landed while the folder it moved to read the item made the moved file a second item",
+    ).toEqual([]);
+    expect(
+      asked.value.scan.flagged.map((file) => [file.path, file.flag]),
+    ).toEqual([["Moved.md", "waiting"]]);
+
+    // A folder that waits without asking leaves the create to its own
+    // folder's next push; once it has landed, the file is taken as its item.
+    await (gate.landed ?? a.folder.device().drain());
+    expect(createsSince(a.server, 0).map((sent) => sent.id)).toEqual([id]);
+    const taken = await b.folder.push();
+    expect(taken.ok, JSON.stringify(taken)).toBe(true);
+    expect(idIn(b, "Moved.md")).toBe(id);
+    expect(read(b, "Moved.md")).toContain("words\n");
+    expect(createsSince(a.server, 0).map((sent) => sent.id)).toEqual([id]);
   });
 
   it("trashes a missing file found in no folder on the Mac, and says so", async () => {

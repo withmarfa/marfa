@@ -58,12 +58,31 @@ pub struct Writes {
     /// still the note's own file, moved before the line was written.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub id_carried: bool,
-    /// The identity the file had in another folder on this machine, where
-    /// this folder took it as that folder's moved file. A pull here that
-    /// writes the file anew changes its identity, so that folder finds its
-    /// file by this.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub taken_as: Option<String>,
+    /// The identities the file had in other folders on this machine, where
+    /// this folder took it as another folder's moved file, newest last. A
+    /// pull that writes the file anew changes its identity, so each folder it
+    /// passed through finds its file by these, however far it has moved on.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub taken_as: Vec<String>,
+}
+
+/// The most identities a file's binding keeps from the folders it was moved
+/// through, so a file moved round and round does not grow its binding.
+const TAKEN_AS_KEPT: usize = 16;
+
+impl Writes {
+    /// What a folder taking the file from `theirs` keeps of where it was:
+    /// every identity `theirs` kept, and the one it had there.
+    pub fn taken_from(theirs: &Bound) -> Vec<String> {
+        let mut taken = theirs.writes.taken_as.clone();
+        if let Some(identity) = &theirs.identity {
+            taken.retain(|kept| kept != identity);
+            taken.push(identity.clone());
+        }
+        let over = taken.len().saturating_sub(TAKEN_AS_KEPT);
+        taken.drain(..over);
+        taken
+    }
 }
 
 /// The title line a file went on showing, which is no edit of the title.
@@ -206,6 +225,11 @@ pub fn untaken_read_version(content_hash: &str) -> Option<i64> {
         .strip_prefix(UNTAKEN_READ_PREFIX)
         .and_then(|version| version.parse().ok())
 }
+
+/// A content hash no bytes have, for a file taken from another folder on
+/// this machine whose bytes the server never took: the file reads as
+/// changed, so its bytes are sent again rather than read as agreed.
+pub const UNAGREED: &str = "unagreed";
 
 /// Also pins the item's row, so the copy keeps it whatever the search says
 /// of it.

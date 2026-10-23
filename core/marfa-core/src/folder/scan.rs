@@ -29,6 +29,9 @@ fn kept_text(path: &Path, bytes: &[u8]) -> (String, Option<&'static str>) {
 struct Claim {
     item_id: String,
     bound: Option<state::Bound>,
+    /// For a file bound anew, as `state::Writes::taken_as`: what it keeps of
+    /// the folders on this machine it was moved through.
+    taken_as: Vec<String>,
 }
 
 enum Arrival {
@@ -756,6 +759,7 @@ impl Folder {
                 Some(Claim {
                     item_id,
                     bound: Some(bound),
+                    ..
                 }) if self.core.get(&item_id)?.is_none() => {
                     // The server has answered these bytes already; the file of
                     // an item purged or in the bin, of the folder's own bytes,
@@ -795,6 +799,7 @@ impl Folder {
                 Some(Claim {
                     item_id,
                     bound: None,
+                    taken_as,
                 }) => {
                     if self.queue_update(
                         &item_id,
@@ -813,11 +818,29 @@ impl Folder {
                     } else {
                         report.unchanged += 1;
                     }
+                    if !taken_as.is_empty() {
+                        let conn = self.core.conn()?;
+                        if let Some(bound) = state::bound_at(&conn, &file.key)?
+                            && bound.item_id == item_id
+                        {
+                            state::bind(
+                                &conn,
+                                &state::Bound {
+                                    writes: state::Writes {
+                                        taken_as,
+                                        ..bound.writes.clone()
+                                    },
+                                    ..bound
+                                },
+                            )?;
+                        }
+                    }
                     self.place(&item_id, &file.key, &withheld)?;
                 }
                 Some(Claim {
                     item_id,
                     bound: Some(bound),
+                    ..
                 }) if bound.path == file.key => {
                     if bound.content_hash == file.hash && !local_properties_refusal(&bound) {
                         let waiting = unanswered.contains(&item_id);
@@ -887,6 +910,7 @@ impl Folder {
                 Some(Claim {
                     item_id,
                     bound: Some(bound),
+                    ..
                 }) => {
                     self.unbind_if_still(&bound)?;
                     state::clear_moved_from(&*self.core.conn()?, &item_id)?;
@@ -1427,9 +1451,16 @@ impl Folder {
                     })
                 });
             if let Some(at) = keeper {
+                // A file another folder here bound before it was moved keeps
+                // where it was, so that folder still finds it once it moves on.
+                let taken_as = match bound {
+                    Some(_) => Vec::new(),
+                    None => peers.taken_as(id, files[*at].mark.as_deref()),
+                };
                 claims[*at] = Some(Claim {
                     item_id: (*id).to_string(),
                     bound: bound.cloned(),
+                    taken_as,
                 });
                 taken.insert((*id).to_string());
             }
@@ -1444,6 +1475,7 @@ impl Folder {
                 claims[at] = Some(Claim {
                     item_id: bound.item_id.clone(),
                     bound: Some((*bound).clone()),
+                    taken_as: Vec::new(),
                 });
             }
         }
@@ -1457,6 +1489,7 @@ impl Folder {
                 claims[at] = Some(Claim {
                     item_id: bound.item_id.clone(),
                     bound: Some((*bound).clone()),
+                    taken_as: Vec::new(),
                 });
             }
         }
@@ -1517,6 +1550,7 @@ impl Folder {
                         own: None,
                         writes: state::Writes::default(),
                     }),
+                    taken_as: Vec::new(),
                 });
                 break;
             }
@@ -1541,35 +1575,49 @@ impl Folder {
             if by_item.contains_key(theirs.item_id.as_str()) || taken.contains(&theirs.item_id) {
                 continue;
             }
+            // Read before the server is asked: a write that lands after a
+            // not-found answer would make the file a second item, and one that
+            // lands after the file is taken here would leave its bytes read as
+            // agreed before the server took them.
+            if peers.writing(&theirs) {
+                waiting.insert(
+                    at,
+                    "it is the file of an item another folder on this machine has a write of still to land; it is taken once that write lands".into(),
+                );
+                continue;
+            }
             match self.read_moved(&theirs.item_id)? {
                 Some(reason) => {
                     waiting.insert(at, reason);
                 }
                 None if self.core.get(&theirs.item_id)?.is_some() => {
                     taken.insert(theirs.item_id.clone());
+                    // Bytes the server did not take, held back there or
+                    // refused, are no agreement: here they read as an edit,
+                    // which is sent again.
+                    let agreed = peers.agreed(&theirs);
                     claims[at] = Some(Claim {
                         item_id: theirs.item_id.clone(),
-                        // What that folder's binding says of the bytes, and
-                        // nothing of its queue.
+                        // What that folder's binding says of the bytes,
+                        // and nothing of its queue, every write of which
+                        // has an answer.
                         bound: Some(state::Bound {
+                            content_hash: if agreed {
+                                theirs.content_hash.clone()
+                            } else {
+                                state::UNAGREED.into()
+                            },
                             edit_line: None,
                             held: None,
                             writes: state::Writes {
                                 id_carried: theirs.writes.id_carried,
-                                taken_as: theirs.identity.clone(),
+                                taken_as: state::Writes::taken_from(&theirs),
                                 ..state::Writes::default()
                             },
                             ..theirs
                         }),
+                        taken_as: Vec::new(),
                     });
-                }
-                // Made a new item now, the file would be a second one once
-                // that folder's create lands.
-                None if peers.creating(&theirs.item_id) => {
-                    waiting.insert(
-                        at,
-                        "it is the file of an item another folder on this machine is still creating; it is taken once that create lands".into(),
-                    );
                 }
                 None => {}
             }

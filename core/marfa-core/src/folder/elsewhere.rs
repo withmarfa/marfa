@@ -7,6 +7,7 @@ use super::lists::Lists;
 use super::registry::{Registered, Registry, gone};
 use super::{Catalog, Folder, STATE_DIR, carries_frontmatter, identity, plainly_inside, state};
 use crate::directory::Directory;
+use crate::model::Verdict;
 use crate::{Core, Result, store};
 
 const META_STORE: &str = "folder_store";
@@ -597,12 +598,24 @@ impl<'a> Peers<'a> {
         }
         let peers = self.all();
         let item = lost.item_id.as_str();
+        // A file this folder took from another one is that folder's to find
+        // by this binding, so the binding stays until where the file went
+        // binds it in turn and keeps what this one kept.
+        let handing_on = |peer: &Peer, file: &OnDisk| {
+            !lost.writes.taken_as.is_empty()
+                && peer
+                    .bound()
+                    .get(&file.key)
+                    .is_none_or(|(bound, _)| bound != item)
+        };
         let arrival = |peer: &Peer, file: &OnDisk, by_identity: bool| {
-            if peer.awaits(
-                file,
-                item,
-                file_item || by_identity && !lost.writes.id_carried,
-            ) {
+            if handing_on(peer, file)
+                || peer.awaits(
+                    file,
+                    item,
+                    file_item || by_identity && !lost.writes.id_carried,
+                )
+            {
                 Look::Arriving
             } else {
                 Look::Moved
@@ -621,7 +634,9 @@ impl<'a> Peers<'a> {
         if lost.identity.is_some()
             && peers.iter().any(|peer| {
                 peer.bound_to(item).is_some_and(|bound| {
-                    bound.writes.taken_as == lost.identity
+                    lost.identity
+                        .as_ref()
+                        .is_some_and(|identity| bound.writes.taken_as.contains(identity))
                         && peer.files().iter().any(|file| file.key == bound.path)
                 })
             })
@@ -642,12 +657,17 @@ impl<'a> Peers<'a> {
                     .is_some_and(|(bound, _)| bound == item)
         };
         if !file_item && carries_frontmatter(Path::new(&lost.path)) {
-            let found = peers.iter().any(|peer| {
+            let found = peers.iter().find_map(|peer| {
                 peer.files()
                     .iter()
-                    .any(|file| file.id.as_deref() == Some(item) && !theirs(peer, file))
+                    .find(|file| file.id.as_deref() == Some(item) && !theirs(peer, file))
+                    .map(|file| (peer, file))
             });
-            return if found { Look::Moved } else { Look::Nowhere };
+            return match found {
+                Some((peer, file)) if handing_on(peer, file) => Look::Arriving,
+                Some(_) => Look::Moved,
+                None => Look::Nowhere,
+            };
         }
         let mut matches = 0;
         let mut last = None;
@@ -696,16 +716,28 @@ impl<'a> Peers<'a> {
         }
     }
 
-    /// Whether another folder's own create of the item may still land, so
-    /// the server cannot show the item yet. A refused create never lands,
-    /// unless it was refused onto a row a read may yet find.
-    pub(super) fn creating(&self, item_id: &str) -> bool {
+    /// Whether a write another folder made of the file `theirs` binds there
+    /// may still land: its item's create, or a write of its bytes. One not
+    /// sent, sent with no answer yet or held behind another may; so may a
+    /// create refused onto a row no read has found yet. A store that cannot
+    /// be read may hold one.
+    pub(super) fn writing(&self, theirs: &state::Bound) -> bool {
         let may_land = |conn: &rusqlite::Connection| -> Result<bool> {
             let landings = store::pending_landings(conn)?;
-            for id in store::untaken_creates_for_item(conn, item_id)? {
-                let refused = store::queued_write(conn, &id)?
-                    .is_some_and(|write| write.verdict == Some(crate::model::Verdict::Dead));
-                if !refused || landings.contains_key(&id) {
+            let creates = store::untaken_creates_for_item(conn, &theirs.item_id)?;
+            for id in creates
+                .iter()
+                .chain(theirs.writes.queued.iter().map(|queued| &queued.id))
+            {
+                let Some(write) = store::queued_write(conn, id)? else {
+                    continue;
+                };
+                let waits = match write.verdict {
+                    None | Some(Verdict::Blocked) => true,
+                    Some(Verdict::Dead) => landings.contains_key(id),
+                    Some(_) => false,
+                };
+                if waits {
                     return Ok(true);
                 }
             }
@@ -717,9 +749,60 @@ impl<'a> Peers<'a> {
                     .core
                     .conn()
                     .ok()
-                    .is_some_and(|conn| may_land(&conn).unwrap_or(false))
+                    .is_none_or(|conn| may_land(&conn).unwrap_or(true))
             })
         })
+    }
+
+    /// Whether the server took the bytes another folder's binding holds: no
+    /// write of them held back or refused there, and every write it queued
+    /// of them answered as taken. A store that cannot be read says nothing.
+    pub(super) fn agreed(&self, theirs: &state::Bound) -> bool {
+        if theirs.held.is_some() || !theirs.writes.refused.is_empty() {
+            return false;
+        }
+        theirs.writes.queued.iter().all(|queued| {
+            self.all().iter().any(|peer| {
+                peer.folder.as_ref().is_some_and(|folder| {
+                    folder
+                        .core
+                        .conn()
+                        .ok()
+                        .and_then(|conn| store::queued_write(&conn, &queued.id).ok().flatten())
+                        .is_some_and(|write| {
+                            matches!(write.verdict, Some(Verdict::Accepted | Verdict::Merged))
+                        })
+                })
+            })
+        })
+    }
+
+    /// What a folder binding anew a file that carries `item_id`'s id line
+    /// keeps of the folders it was moved through: what another folder's
+    /// binding of the item, to a file gone from it with the same identity,
+    /// kept, and that identity.
+    pub(super) fn taken_as(&self, item_id: &str, mark: Option<&str>) -> Vec<String> {
+        let Some(mark) = mark else {
+            return Vec::new();
+        };
+        for peer in self.all() {
+            let Some(folder) = &peer.folder else {
+                continue;
+            };
+            let rows = folder
+                .core
+                .conn()
+                .ok()
+                .and_then(|conn| state::bound_with_identity(&conn, mark).ok())
+                .unwrap_or_default();
+            if let Some(found) = rows
+                .into_iter()
+                .find(|bound| bound.item_id == item_id && !peer.present(&bound.path))
+            {
+                return state::Writes::taken_from(&found);
+            }
+        }
+        Vec::new()
     }
 
     /// Whether another folder holds the item with a file of it already.
