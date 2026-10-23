@@ -439,7 +439,7 @@ When a type's `retention_policy` is replaced, the server MUST expire the type's 
 
 The server MUST NOT move an archived feed item to the bin when the `feed-expiry` job runs.
 
-**Reason:** a feed item is transitory until it is promoted or archived, so a person who archived it has kept it.
+**Reason:** a feed item is unsorted until a person or an app moves it to the library or archives it, so a person who archived it has kept it.
 
 **Tests:** `compliance/housekeeping-feed-expiry.test.ts › keeps a feed item a person archived, and the active one beside it goes`.
 
@@ -499,7 +499,7 @@ When the `feed-expiry` job moves items to the bin, the server MUST record an aud
 
 When the `feed-expiry` job moves a feed item to the bin, the server MUST leave a library item linked to it by a `derived-from` edge active and unchanged.
 
-**Tests:** `compliance/housekeeping-feed-expiry.test.ts › leaves the library copy a feed item was promoted to active and unchanged`.
+**Tests:** `compliance/housekeeping-feed-expiry.test.ts › leaves a library item linked from a feed item by derived-from active and unchanged`.
 
 ### `housekeeping/feed-expiry-cascade`
 

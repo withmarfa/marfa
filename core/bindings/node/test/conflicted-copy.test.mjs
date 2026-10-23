@@ -74,7 +74,7 @@ async function scripted() {
       // The original is not in the slice. A row made from it and not tagged
       // a conflicted copy is the witness that the tag is asked.
       json({
-        data: [row("copy", ["conflicted-copy"]), row("promoted", [])],
+        data: [row("copy", ["conflicted-copy"]), row("linked", [])],
         next_cursor: null,
       });
     } else if (path === "/events") {
@@ -111,10 +111,10 @@ test("answers a conflicted copy's original, and the copies made from an item", a
   assert.equal(core.get("original"), null);
   assert.deepEqual(
     core.edgesTo("original").map((edge) => edge.sourceId),
-    ["copy", "promoted"],
+    ["copy", "linked"],
   );
   assert.equal(core.originalOfConflictedCopy("copy"), "original");
-  assert.equal(core.originalOfConflictedCopy("promoted"), null);
+  assert.equal(core.originalOfConflictedCopy("linked"), null);
   assert.equal(core.originalOfConflictedCopy("unheld"), null);
   assert.deepEqual(
     core.conflictedCopiesOf("original").map((item) => item.id),
