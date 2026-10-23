@@ -26,6 +26,7 @@ pub mod search;
 pub mod sign_ins;
 pub mod status;
 pub mod types;
+pub mod views;
 pub mod webhooks;
 pub mod whoami;
 

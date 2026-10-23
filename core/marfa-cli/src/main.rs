@@ -36,7 +36,7 @@ use clap::{ArgMatches, CommandFactory, FromArgMatches, Parser, Subcommand};
 use crate::commands::{
     apps, audit, blobs, config, connectors, docs, edge_types, edges, events, export, extensions,
     housekeeping, items, keys, login, logout, metadata, metrics, operations, owner, profile,
-    restore, search, sign_ins, status, types, webhooks, whoami,
+    restore, search, sign_ins, status, types, views, webhooks, whoami,
 };
 use crate::device::DeviceArgs;
 use crate::error::{CliError, DOCS_HINT, Exit, long_help_footer};
@@ -268,6 +268,12 @@ enum Command {
     /// prints it and exits 1 with `blobs_missing`. Upload their bytes again
     /// with `blobs upload` to restore them.
     Restore(restore::RestoreArgs),
+    /// Views: saved lists of items, held as `system.view` and shared by every
+    /// app. Writing one needs write on `system.view`.
+    Views {
+        #[command(subcommand)]
+        command: views::ViewsCommand,
+    },
     /// Outbound subscriptions that send events out. Every command needs `webhooks.manage`.
     Webhooks {
         #[command(subcommand)]
@@ -633,6 +639,7 @@ fn run(cli: Cli) -> Result<Exit, CliError> {
         Command::Config { command } => config::run(command, &remote()?, &out),
         Command::Export(args) => export::run(args, &remote()?, &out),
         Command::Restore(args) => restore::run(args, &remote()?, &out),
+        Command::Views { command } => views::run(command, &remote()?, &out),
         Command::Webhooks { command } => webhooks::run(command, &remote()?, &out),
         Command::Audit(args) => audit::run(args, &remote()?, &out),
         Command::Events(args) => events::run(args, &remote()?, &out),
