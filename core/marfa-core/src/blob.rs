@@ -24,9 +24,10 @@ pub(crate) struct Cache {
     parent: Option<crate::directory::Directory>,
     #[cfg(unix)]
     directory: std::sync::OnceLock<crate::directory::Directory>,
-    /// Held while bytes are taken in for an upload and queued, and while the
-    /// cache is trimmed, so a trim never takes bytes an upload is about to
-    /// name.
+    /// Held while bytes are taken in for an upload and queued, while the
+    /// cache is trimmed, and while fetched bytes take their name, so a trim
+    /// never takes bytes an upload is about to name and a fetch never marks
+    /// them out of backups.
     settling: Mutex<()>,
     /// The bytes callers are reading, by name, with how many read each,
     /// shared by every handle in the process on the same folder. Held by a
