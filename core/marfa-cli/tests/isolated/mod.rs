@@ -51,6 +51,7 @@ impl Isolated {
         command
             .env_remove("MARFA_API_URL")
             .env_remove("MARFA_API_KEY")
+            .env_remove("MARFA_PROFILE")
             .env_remove("MARFA_DB")
             .env_remove("MARFA_NO_KEYCHAIN");
         #[cfg(target_os = "macos")]

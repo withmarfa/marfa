@@ -796,7 +796,7 @@ pub fn bulk_get_request(ids: &[String], include: &[String]) -> Request {
     if !include.is_empty() {
         body["include"] = json!(include);
     }
-    Request::post(&["items", "bulk-get"]).json(body)
+    Request::post(&["items", "bulk-get"]).json(body).reading()
 }
 
 fn key_selector(
@@ -832,7 +832,9 @@ pub fn lookup_request(
     if !include.is_empty() {
         body.insert("include".into(), json!(include));
     }
-    Request::post(&["items", "lookup"]).json(Value::Object(body))
+    Request::post(&["items", "lookup"])
+        .json(Value::Object(body))
+        .reading()
 }
 
 pub fn tombstones_request(
@@ -937,7 +939,10 @@ pub fn bulk_action_request(command: &BulkActionCommand) -> Result<Request, CliEr
             ]));
         }
     };
-    Ok(Request::post(&["items", "bulk-actions"]).json(body))
+    // A dry run counts what the action would change and changes nothing.
+    let dry_run = body.get("dry_run") == Some(&Value::Bool(true));
+    let request = Request::post(&["items", "bulk-actions"]).json(body);
+    Ok(if dry_run { request.reading() } else { request })
 }
 
 pub fn upload_request(path: &std::path::Path, mime_type: &str) -> Request {

@@ -10,9 +10,10 @@ Every command accepts these.
 
 | Option | Description |
 | --- | --- |
-| `--url <URL>` | The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current. A command that sends a key from --key or MARFA_API_KEY needs the URL named, and so does any command with the keychain off. |
-| `--key <KEY>` | A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is readable by other users of the machine and stays in shell history. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one, unless the keychain is off. |
-| `--no-keychain` | Treat the keychain as absent: read nothing from it and write nothing to it, so the server and the key must come from --url, --key, MARFA_API_URL or MARFA_API_KEY. A command that needs to keep something refuses. MARFA_NO_KEYCHAIN=1 does the same. |
+| `--profile <NAME>` | A profile in profiles.toml: a server, and where its key comes from. Not the owner's profile, which `marfa profile` changes. The file is ~/Library/Application Support/Marfa/profiles.toml on macOS, and $XDG_CONFIG_HOME/marfa/profiles.toml, else ~/.config/marfa/profiles.toml, elsewhere. Each profile is a section with a url line and, optionally, key_command: a program and its arguments, run without a shell, that prints the key. Without key_command, the key is the credential the keychain keeps for that server. The server and key come from the first of these that is given: --profile, which refuses --url and --key beside it and reads none of MARFA_API_URL, MARFA_API_KEY and MARFA_PROFILE; --url or --key, as below, without MARFA_PROFILE; MARFA_PROFILE, which refuses MARFA_API_URL and MARFA_API_KEY beside it; MARFA_API_URL and MARFA_API_KEY, then the keychain. A profile's key is sent only to its server, and no other key is. |
+| `--url <URL>` | The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current. MARFA_PROFILE is not read beside it. A command that sends a key from --key or MARFA_API_KEY needs the URL named, and so does any command with the keychain off. |
+| `--key <KEY>` | A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is readable by other users of the machine and stays in shell history. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one, unless the keychain is off. MARFA_PROFILE is not read beside it. |
+| `--no-keychain` | Treat the keychain as absent: read nothing from it and write nothing to it, so the server and the key must come from --url, --key, MARFA_API_URL or MARFA_API_KEY, or a profile with a key_command. A command that needs to keep something refuses. MARFA_NO_KEYCHAIN=1 does the same. |
 | `--allow-http` | Send a credential over plain http to a host that is not this machine without the warning, for a network that is private. MARFA_ALLOW_HTTP=1 does the same. |
 | `--socket <PATH>` | Use private local process authority through this Unix socket, without a keychain. Item properties, edges, tags, search, counts, events and exports still need a key. `items summaries`, `items trash`, the `blobs` commands and bulk-action job status and cancel do not. |
 | `--json` | Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning, which is one plain line. |
@@ -29,10 +30,10 @@ Every command accepts these.
 | --- | --- |
 | 0 | Done. |
 | 1 | The server refused the request (a wrong or spent setup code included), the CLI refused it before sending, the answer came from another contract, a docs page does not exist, or the archive of an export or a restore lacks blobs it names; a retry does not change it. |
-| 2 | The command line was wrong, or named no store or server. |
+| 2 | The command line or the profile file was wrong, or named no store or server. |
 | 3 | The environment failed (unreachable, timed out, a 5xx, a 429, an answer naming no contract, full local storage, a docs site that cannot be read); try again. |
 | 4 | The working copy or the queue refused under the device rules, or the keychain cannot be used (locked, missing, unreadable, or none on this system). |
-| 5 | There is no credential, the credential was refused, or the sign-in ended; run `marfa login` to start one. |
+| 5 | There is no credential, a profile's key command gave none, the credential was refused, or the sign-in ended; run `marfa login` to start one. |
 | 130 | You ended a long-lived command (`folders watch`, `events`, `device changes`) with Ctrl-C, or ended one that was still stopping with a second Ctrl-C. |
 
 `marfa device drain` prints its complete report on stdout and sets the exit code from it: 0 when the pass completed (refused writes included), 3 when writes went undelivered or the pass could not run, and 5 when a credential stopped the pass. These exits print no additional refusal on stderr. The report counts refused verdicts separately, in plain text.
@@ -45,7 +46,7 @@ With --json a refusal is one JSON object on stderr:
 {"error":{"code":...,"message":...,"server":{"status":...,"code":...,"details":...}|null,"retry_after_seconds":...},"exit":N}
 ```
 
-where error.code is one of: `not_found`, `unauthorized`, `forbidden`, `validation`, `unknown_type`, `rate_limited`, `server`, `io`, `network`, `unnamed_answer`, `decoding`, `store`, `storage_full`, `signed_out`, `no_keychain`, `redirect`, `no_server`, `no_cursor`, `hydration_incomplete`, `no_catalog`, `reading_handle`, `wrong_schema`, `copy_expired`, `stream_incomplete`, `wrong_server`, `bytes_absent`, `contract_mismatch`, `canceled`, `first_sync_waiting`, `invalid`, `not_held`, `watch`, `usage`, `install`, `no_store`, `no_credential`, `blobs_missing`, `docs_page_not_found`, `docs_section_not_found`, `docs_unreachable`, `conflict`, `too_large`.
+where error.code is one of: `not_found`, `unauthorized`, `forbidden`, `validation`, `unknown_type`, `rate_limited`, `server`, `io`, `network`, `unnamed_answer`, `decoding`, `store`, `storage_full`, `signed_out`, `no_keychain`, `redirect`, `no_server`, `no_cursor`, `hydration_incomplete`, `no_catalog`, `reading_handle`, `wrong_schema`, `copy_expired`, `stream_incomplete`, `wrong_server`, `bytes_absent`, `contract_mismatch`, `canceled`, `first_sync_waiting`, `invalid`, `not_held`, `watch`, `usage`, `install`, `no_store`, `no_credential`, `key_command`, `blobs_missing`, `docs_page_not_found`, `docs_section_not_found`, `docs_unreachable`, `conflict`, `too_large`.
 
 ## Telemetry
 
@@ -112,7 +113,7 @@ marfa login [OPTIONS]
 | --- | --- |
 | `--scope <SCOPE>` | The scopes to ask for. Defaults to everything an owner can hold that the server supports; the consent screen narrows it. |
 | `--no-browser` | Print the page to open rather than opening it. |
-| `--print-token` | Print the token set instead of keeping it in the keychain, which this leaves unread and unchanged. The server must come from --url or MARFA_API_URL. |
+| `--print-token` | Print the token set instead of keeping it in the keychain, which this leaves unread and unchanged. The server must come from --url, MARFA_API_URL or a profile. |
 | `--client-id <ID>` | The client id an earlier sign-in registered, where no keychain remembers it; without one the binary registers again. |
 | `--name <NAME>` | The name this sign-in registers under, which is sent to the server and shown to its owner among their sign-ins. Defaults to `marfa on` and this machine's host name without its domain. Giving it registers the binary again. |
 

@@ -22,6 +22,10 @@ pub fn set_json(json: bool) {
     JSON.store(json, Ordering::Relaxed);
 }
 
+pub fn json() -> bool {
+    JSON.load(Ordering::Relaxed)
+}
+
 /// no-color.org and clig.dev: an empty `NO_COLOR` is the same as unset.
 pub fn allowed(is_terminal: bool, json: bool, no_color: Option<&str>, term: Option<&str>) -> bool {
     is_terminal && !json && no_color.is_none_or(str::is_empty) && term != Some("dumb")

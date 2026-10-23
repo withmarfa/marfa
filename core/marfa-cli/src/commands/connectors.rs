@@ -404,7 +404,9 @@ pub fn agreements_write_request(
 }
 
 pub fn agreements_lookup_request(id: &str, items: &[String]) -> Request {
-    Request::post(&["connectors", id, "agreements", "lookup"]).json(json!({ "item_ids": items }))
+    Request::post(&["connectors", id, "agreements", "lookup"])
+        .json(json!({ "item_ids": items }))
+        .reading()
 }
 
 pub fn agreements_list_request(id: &str, waiting: Option<bool>, page: &PageArgs) -> Request {

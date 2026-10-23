@@ -38,6 +38,7 @@ fn credential_process_child() {
             let remote = Remote::resolve(&crate::remote::Named {
                 url: Some(origin.clone()),
                 key: None,
+                profile: None,
             })
             .unwrap();
             let kept = credentials::read(&origin).unwrap().unwrap();
@@ -48,6 +49,7 @@ fn credential_process_child() {
             let resolved = Remote::resolve(&crate::remote::Named {
                 url: Some(origin),
                 key: None,
+                profile: None,
             });
             match operation.as_str() {
                 "resolve" => {

@@ -74,9 +74,9 @@ pub enum AutostartCommand {
 }
 
 pub fn run(command: AutostartCommand, named: &Named, json: bool) -> Result<(), CliError> {
-    if named.url.is_some() || named.key.is_some() {
+    if named.on_command_line() {
         return Err(CliError::Usage(
-            "folders autostart takes neither --url nor --key: the watch it runs holds no server or credential, and each folder uses its own".into(),
+            "folders autostart takes none of --url, --key and --profile: the watch it runs holds no server or credential, and each folder uses its own".into(),
         ));
     }
     let place = Place::here()?;
@@ -812,12 +812,12 @@ fn on(place: &Place, key_file: Option<&Path>, json: bool) -> Result<(), CliError
             );
         }
         if agent.key_file.is_none()
-            && ["MARFA_API_KEY", "MARFA_API_URL"]
+            && ["MARFA_API_KEY", "MARFA_API_URL", "MARFA_PROFILE"]
                 .iter()
                 .any(|name| std::env::var_os(name).is_some_and(|value| !value.is_empty()))
         {
             lines.push(
-                "the watch reads no MARFA_API_KEY or MARFA_API_URL: each folder uses the credential the keychain keeps for its server".into(),
+                "the watch reads no MARFA_API_KEY, MARFA_API_URL or MARFA_PROFILE: each folder uses the credential the keychain keeps for its server".into(),
             );
         }
         lines.join("\n")

@@ -14,7 +14,7 @@ pub fn run(remote: &Remote, out: &Printer) -> Result<(), CliError> {
     let credential = match remote.credential() {
         None => json!(null),
         Some(source) => {
-            let bearer = remote.bearer().unwrap_or_default();
+            let bearer = remote.key_now()?.unwrap_or_default();
             let kind = if bearer.starts_with("marfa_at_") {
                 "token"
             } else if bearer.starts_with("marfa_k1_") {
@@ -51,8 +51,10 @@ pub fn run(remote: &Remote, out: &Printer) -> Result<(), CliError> {
             record
         }
     };
+    let profile = remote.profile().map(|profile| profile.name.clone());
     let report = json!({
         "server": remote.origin(),
+        "profile": profile,
         "instance": instance,
         "contract": status::contract_report(&instance),
         "credential": credential,
@@ -66,7 +68,10 @@ pub fn run(remote: &Remote, out: &Printer) -> Result<(), CliError> {
                 .to_string()
         };
         let mut lines = vec![
-            format!("server {}", remote.origin()),
+            match &profile {
+                Some(name) => format!("server {} (profile {name})", remote.origin()),
+                None => format!("server {}", remote.origin()),
+            },
             status::instance_line(&instance),
         ];
         if !held {
@@ -92,6 +97,7 @@ pub fn run(remote: &Remote, out: &Printer) -> Result<(), CliError> {
                     CredentialSource::Flag => "--key",
                     CredentialSource::Environment => "MARFA_API_KEY",
                     CredentialSource::Keychain => "the keychain",
+                    CredentialSource::KeyCommand => "the profile's key_command",
                 };
                 let line = format!("a {kind} from {from}{who}");
                 match credential.get("scope").and_then(Value::as_str) {

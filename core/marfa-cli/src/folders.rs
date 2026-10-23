@@ -580,9 +580,10 @@ pub fn run(
 /// credential rather than looked up where nobody can answer a prompt. The
 /// file is read again each time a folder is opened (see `keyfile::active`).
 fn from_key_file(path: &Path, dir: Option<&Path>, named: &Named) -> Result<Named, CliError> {
-    if named.url.is_some() || named.key.is_some() {
+    if named.on_command_line() {
         return Err(CliError::Usage(
-            "--key-file holds the server and key, so it takes neither --url nor --key".into(),
+            "--key-file holds the server and key, so it takes none of --url, --key and --profile"
+                .into(),
         ));
     }
     keyfile::activate(path, dir)?;
@@ -593,6 +594,7 @@ fn from_key_file(path: &Path, dir: Option<&Path>, named: &Named) -> Result<Named
     Ok(Named {
         url: Some(held.url),
         key: Some(held.key),
+        profile: None,
     })
 }
 
