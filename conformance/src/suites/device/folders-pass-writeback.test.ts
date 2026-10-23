@@ -300,4 +300,40 @@ describe("a file moved or deleted between a pass's scan and its pull", () => {
     expect(deletes(harness!)).toEqual([]);
     expect(sentUpdates(harness!)).toEqual([]);
   });
+
+  it("counts a file the pull wrote itself and deleted after the scan as unwritten, not unchanged", async () => {
+    const { door, edges, ids } = await sentNotNamed("folder-pass-own-gone", {
+      "gone.md": note("Gone", "words"),
+      "here.md": note("Here", "words"),
+    });
+    expect((await harness!.folder.pull()).ok).toBe(true);
+    expect((await harness!.folder.scan()).ok).toBe(true);
+    // Deleted and brought back, the file holds only what the pull rendered.
+    rmSync(join(harness!.dir, "gone.md"));
+    edges.logItem(
+      "item.updated",
+      door.update(ids.get("Gone")!, {
+        properties: { body: "their edit\n" },
+        version: 1,
+      }),
+    );
+    expect((await harness!.folder.device().catchUp()).ok).toBe(true);
+    expect((await harness!.folder.pull()).ok).toBe(true);
+    const revived = await harness!.folder.push();
+    expect(revived.ok && revived.value.pull?.revived).toBe(1);
+    expect((await harness!.folder.push()).ok).toBe(true);
+    expect(read(harness!, "gone.md")).toContain("their edit");
+    rmSync(join(harness!.dir, "gone.md"));
+
+    const pulled = await harness!.folder.pull();
+    expect(pulled.ok, JSON.stringify(pulled)).toBe(true);
+    if (!pulled.ok) return;
+    expect(existsSync(join(harness!.dir, "gone.md"))).toBe(false);
+    // The witness: the file left in place is unchanged.
+    expect([pulled.value.unwritten, pulled.value.unchanged]).toEqual([1, 1]);
+    expect(
+      pulled.value.flagged.map((flagged) => [flagged.path, flagged.flag]),
+    ).toEqual([["gone.md", "unwritten"]]);
+    expect(idIn(harness!, "here.md")).toBe(ids.get("Here"));
+  });
 });
