@@ -90,6 +90,19 @@ pub struct Http {
     /// instance at the address refuses it rather than writing it.
     instance: Option<String>,
     call_budget: Option<Duration>,
+    /// Whether a write on this transport is announced: a folder's health
+    /// report, which changes no data, is not.
+    announces: bool,
+}
+
+/// Called with the server's origin before each request that can change
+/// data, so a command line can say which server it writes to.
+static ON_WRITE: OnceLock<fn(&str)> = OnceLock::new();
+
+/// Sets what is called before each credentialed request that can change data,
+/// once for the life of the process.
+pub fn on_write(hook: fn(&str)) {
+    let _ = ON_WRITE.set(hook);
 }
 
 type KeepOrigin = Box<dyn Fn(&AtomicBool) -> Result<(), CoreError> + Send + Sync>;
@@ -385,6 +398,7 @@ impl Http {
             reach: None,
             instance: None,
             call_budget: None,
+            announces: true,
         })
     }
 
@@ -404,6 +418,7 @@ impl Http {
         Ok(Self {
             call_budget: Some(Duration::from_secs(2)),
             renew: Arc::new(OnceLock::new()),
+            announces: false,
             ..self.clone()
         })
     }
@@ -630,6 +645,14 @@ impl Http {
     }
 
     /// Identifies a server without identifying a key.
+    fn announce_write(&self) {
+        if self.announces
+            && let Some(hook) = ON_WRITE.get()
+        {
+            hook(&self.origin());
+        }
+    }
+
     pub fn origin(&self) -> String {
         origin_of_base(&self.base)
     }
@@ -1074,6 +1097,7 @@ impl Http {
     }
 
     fn write(&self, outgoing: &Outgoing<'_>, key: Option<&str>) -> Result<Answer, CoreError> {
+        self.announce_write();
         let segments: Vec<&str> = outgoing.segments.iter().map(String::as_str).collect();
         let params: Vec<(&str, &str)> = outgoing
             .params
@@ -1222,6 +1246,9 @@ impl Http {
     /// Every answer is read whole, a streamed call's included.
     pub fn call(&self, mut call: Call<'_>) -> Result<Reply<String>, CoreError> {
         call.stream = false;
+        if call.credential && call.method != Method::Get {
+            self.announce_write();
+        }
         let reply = self.fetch(call, true)?;
         let body = match reply.body {
             ReplyBody::Text(text) => text,
