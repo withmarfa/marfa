@@ -25,7 +25,7 @@ const KEEP_ALL: &str = "keep_all";
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FileBudget {
-    /// The share of the volume the contract states (`device/budget-default`).
+    /// The share of the volume the contract states (`device/file-budget-default`).
     Default,
     /// This many bytes.
     Bytes(u64),
