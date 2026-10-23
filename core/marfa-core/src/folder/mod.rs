@@ -782,6 +782,12 @@ impl Folder {
         walked
     }
 
+    /// Whether a scan that can read every directory reaches a bound file at
+    /// `path`, to read it, follow its move or journal it gone.
+    fn reaches(&self, lists: &Lists, path: &str) -> bool {
+        lists.takes(path) && !in_nested_folder(&self.root_dir, path)
+    }
+
     fn writes_at(&self, lists: &Lists, path: &str) -> bool {
         self.not_writing_at(lists, path).is_none()
     }
@@ -3773,6 +3779,50 @@ mod tests {
                 .unwrap()
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn a_file_the_pull_wrote_and_then_gone_since_the_scan_is_unwritten_not_unchanged() {
+        // Kept in place, the witness; deleted; moved.
+        for gone in [None, Some(None), Some(Some("moved.md"))] {
+            let (dir, folder) = settled_notes(&["a.md"]);
+            let item_id = landed(&folder, "a.md");
+            std::fs::remove_file(dir.path().join("a.md")).unwrap();
+            changed_elsewhere(&folder, &item_id, "from b");
+            folder.pull().unwrap();
+            assert_eq!(folder.scan().unwrap().missing, 1);
+            // Revived, the file is all the pull's: no line in it was typed.
+            assert_eq!(folder.pull().unwrap().revived, 1, "{gone:?}");
+            folder.scan().unwrap();
+            let revived = read(dir.path(), "a.md").unwrap();
+            match gone {
+                None => {}
+                Some(None) => std::fs::remove_file(dir.path().join("a.md")).unwrap(),
+                Some(Some(to)) => {
+                    std::fs::rename(dir.path().join("a.md"), dir.path().join(to)).unwrap();
+                }
+            }
+
+            let pulled = folder.pull().unwrap();
+            assert_eq!(pulled.written + pulled.rewritten, 0, "{gone:?}: {pulled:?}");
+            if gone.is_none() {
+                assert_eq!((pulled.unchanged, pulled.unwritten), (1, 0), "{pulled:?}");
+                assert!(pulled.flagged.is_empty(), "{pulled:?}");
+                assert_eq!(read(dir.path(), "a.md"), Some(revived));
+                continue;
+            }
+            assert_eq!(
+                (pulled.unchanged, pulled.unwritten),
+                (0, 1),
+                "{gone:?}: {pulled:?}"
+            );
+            assert_eq!(pulled.flagged.len(), 1, "{pulled:?}");
+            assert_eq!(
+                (pulled.flagged[0].path.as_str(), pulled.flagged[0].flag),
+                ("a.md", "unwritten")
+            );
+            assert!(!dir.path().join("a.md").exists(), "{gone:?}");
+        }
     }
 
     #[cfg(unix)]

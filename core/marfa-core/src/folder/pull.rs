@@ -43,6 +43,7 @@ struct Rendering<'a> {
     catalog: &'a Catalog,
     edge_types: &'a EdgeTypes,
     names: &'a Names,
+    lists: &'a Lists,
 }
 
 impl Rendering<'_> {
@@ -572,6 +573,7 @@ impl Folder {
             catalog: &catalog,
             edge_types: &edge_types,
             names: &names,
+            lists: &lists,
         };
         let mut refused = HashSet::new();
         for entry in placing {
@@ -826,7 +828,9 @@ impl Folder {
         // cannot be read to tell. A file gone since the scan was moved or
         // deleted, and only the next scan can tell which: written back, a
         // moved file would read as its copy. Once journaled, the change it
-        // shows may bring it back, as may a restore.
+        // shows may bring it back, as may a restore. No scan reaches a path
+        // the lists stopped taking, so a file gone from one is written where
+        // the item wants it.
         let changed = |bound: &state::Bound| -> Result<Option<&str>> {
             Ok(match self.read(self.root.join(&bound.path)) {
                 Ok(found) => (state::hash(&found) != bound.content_hash).then_some(
@@ -834,8 +838,11 @@ impl Folder {
                 ),
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => (bound.content_hash
                     != super::removal::PUT_BACK
+                    && self.reaches(rendering.lists, &bound.path)
                     && !journaled_for(&*self.core.conn()?, &bound.path, &item.id)?)
-                .then_some("the file is gone since the scan read it, and the next scan follows it"),
+                .then_some(
+                    "the file is gone since the scan read it, and the next scan tells whether it moved",
+                ),
                 Err(_) => {
                     Some("the file could not be read to tell whether it changed since the scan")
                 }
@@ -850,14 +857,17 @@ impl Folder {
                 fields::Own::of(item),
             )
         });
+        // A file the pull wrote itself renders as the scan read it, so only
+        // the disk tells whether it is still there.
         let in_place = match &bound {
-            Some(bound) if ours && bound.content_hash == hash => true,
+            Some(bound) if ours && bound.content_hash == hash && self.exists(&path) => true,
             Some(bound) => {
                 if let Some(reason) = changed(bound)? {
                     report.not_written(NotWritten::Unwritten, &item.id, &bound.path, reason);
                     return Ok(PlacementWrite::Done);
                 }
-                ours && self.behind_by_its_line_alone(item, bound, rendering)?
+                ours && (bound.content_hash == hash
+                    || self.behind_by_its_line_alone(item, bound, rendering)?)
             }
             None => false,
         };
@@ -1881,12 +1891,14 @@ mod tests {
             let catalog = Catalog::load(&folder.core.conn().unwrap()).unwrap();
             let names = Names::load(&folder.core.conn().unwrap(), &catalog, &BoundFiles).unwrap();
             let edge_types = EdgeTypes::default();
+            let lists = Lists::new(&[], &[]).unwrap();
             let context = crate::read_view::Context::capture(&folder.core.conn().unwrap()).unwrap();
             let rendering = Rendering {
                 context: std::cell::RefCell::new(context),
                 catalog: &catalog,
                 names: &names,
                 edge_types: &edge_types,
+                lists: &lists,
             };
             let entry = Placing {
                 item: &item,
@@ -1903,6 +1915,96 @@ mod tests {
             assert_eq!(folder.core.queue().unwrap(), before);
             assert!(!dir.path().join("fixture.bin").exists());
             assert_eq!(server.seen(&format!("/blobs/{hash}/url")).len(), 1);
+        }
+    }
+
+    #[test]
+    fn a_file_gone_from_a_path_no_scan_reaches_is_written_where_its_item_wants_it() {
+        use crate::store;
+        // The lists stop taking `x/`; the witness takes it still.
+        for ignored in [true, false] {
+            let dir = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+            let db = dir.path().join(STATE_DIR).join("core.sqlite");
+            std::fs::create_dir_all(db.parent().unwrap()).unwrap();
+            let core = working(Core::open(&db, None).unwrap()).unwrap();
+            settings_file::bind(&core, "folder").unwrap();
+            let item = {
+                let conn = core.conn().unwrap();
+                store::meta_set(&conn, store::META_EVENT_CURSOR, "10").unwrap();
+                store::meta_set(&conn, crate::read_view::FENCE, crate::scripted::FENCE).unwrap();
+                store::meta_set(&conn, store::META_INSTANCE_ID, crate::scripted::INSTANCE).unwrap();
+                store::meta_set(&conn, store::META_SLICE_TYPES, "[\"core.note\"]").unwrap();
+                store::meta_set(&conn, store::META_SLICE_TIER, "library").unwrap();
+                store::replace_types(
+                    &conn,
+                    &[store::testing::wire_type("core.note", None, Some("title"))],
+                )
+                .unwrap();
+                let note = store::testing::note("note", "a", "body", "2026-01-01T00:00:00Z");
+                store::upsert_item(&conn, &note, None, &Default::default()).unwrap();
+                let bound = state::Bound {
+                    path: "x/a.md".into(),
+                    item_id: "note".into(),
+                    identity: None,
+                    content_hash: state::hash(b"---\ntitle: a\n---\nbody\n"),
+                    presentation: None,
+                    written_hash: None,
+                    links: Vec::new(),
+                    lines: Vec::new(),
+                    edit_line: None,
+                    held: None,
+                    own: None,
+                    writes: state::Writes::default(),
+                };
+                state::bind(&conn, &bound).unwrap();
+                (store::item_by_id(&conn, "note").unwrap().unwrap(), bound)
+            };
+            drop(core);
+            let (item, bound) = item;
+            let folder = Folder::open(dir.path(), None).unwrap();
+            let catalog = Catalog::load(&folder.core.conn().unwrap()).unwrap();
+            let names = Names::load(&folder.core.conn().unwrap(), &catalog, &BoundFiles).unwrap();
+            let edge_types = EdgeTypes::default();
+            let ignore = if ignored { vec!["x/**".into()] } else { vec![] };
+            let lists = Lists::new(&[], &ignore).unwrap();
+            let context = crate::read_view::Context::capture(&folder.core.conn().unwrap()).unwrap();
+            let rendering = Rendering {
+                context: std::cell::RefCell::new(context),
+                catalog: &catalog,
+                names: &names,
+                edge_types: &edge_types,
+                lists: &lists,
+            };
+            let entry = Placing {
+                item: &item,
+                bound: Some(bound),
+                want: "a.md".into(),
+                rank: placement::unplaced_rank(false),
+                taken: None,
+            };
+            let mut report = PullReport::default();
+            folder
+                .write_placed(&entry, &rendering, &Default::default(), None, &mut report)
+                .unwrap();
+            let written = dir.path().join("a.md").exists();
+            if ignored {
+                assert!(written, "{report:?}");
+                assert_eq!(report.unwritten, 0, "{report:?}");
+                assert!(report.flagged.is_empty(), "{report:?}");
+            } else {
+                assert!(!written, "{report:?}");
+                assert_eq!(report.unwritten, 1, "{report:?}");
+                assert_eq!(
+                    (
+                        report.flagged[0].path.as_str(),
+                        report.flagged[0].reason.as_str()
+                    ),
+                    (
+                        "x/a.md",
+                        "the file is gone since the scan read it, and the next scan tells whether it moved"
+                    )
+                );
+            }
         }
     }
 

@@ -4,9 +4,9 @@ use super::{
     LOCAL_ADMISSION_REFUSAL, Lists, Look, OnceCell, Path, PathBuf, Peers, RENAME_GRACE, Resolver,
     Result, ScanReport, Scanned, Settings, Unsure, Value, Waiting, Walked, beside, bytes_of,
     captured_identities, carries_frontmatter, changed_within, document, embeds, executable, fields,
-    id_named, identity, in_nested_folder, is_document, landing, line_of, lines,
-    local_properties_refusal, name_of, named_by_its_file, near_limit, one_per_name, placement,
-    stat_metadata, state, suited, swap_root, text_of, typed_title,
+    id_named, identity, is_document, landing, line_of, lines, local_properties_refusal, name_of,
+    named_by_its_file, near_limit, one_per_name, placement, stat_metadata, state, suited,
+    swap_root, text_of, typed_title,
 };
 
 /// The text the scan keeps of a file. A document whose bytes are not UTF-8
@@ -1068,10 +1068,7 @@ impl Folder {
             }
             // Not reached is not gone: the item of a file the lists stopped
             // taking, or one the walk could not read or passed over, is not trashed.
-            if !lists.takes(&row.path)
-                || walked.passed_over(&row.path)
-                || in_nested_folder(&self.root_dir, &row.path)
-            {
+            if !self.reaches(lists, &row.path) || walked.passed_over(&row.path) {
                 if held {
                     let conn = self.core.conn()?;
                     state::journal_clear(&conn, &row.path)?;
