@@ -2,6 +2,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -25,6 +26,39 @@ function inStore(body) {
     rmSync(dir, { recursive: true, force: true });
   }
 }
+
+test(
+  "a cache folder that cannot be read reports its held bytes as unknown",
+  {
+    skip: process.platform === "win32",
+  },
+  () => {
+    inStore((path) => {
+      const core = MarfaCore.open(path);
+      const none = core.fileCache();
+      assert.equal(none.held, 0);
+      assert.equal(none.heldUnreadable, undefined);
+
+      const folder = `${path}.blobs`;
+      mkdirSync(folder);
+      chmodSync(folder, 0o000);
+      try {
+        // The witness: a process that can read it anyway cannot show this.
+        assert.throws(() => readFileSync(join(folder, "x")));
+        const sealed = core.fileCache();
+        assert.equal(sealed.held, undefined);
+        assert.equal(typeof sealed.heldUnreadable, "string");
+        assert.equal(
+          core.setFileBudget({ kind: FileBudgetKind.Bytes, bytes: 0 }),
+          0,
+        );
+      } finally {
+        chmodSync(folder, 0o755);
+      }
+      assert.equal(core.fileCache().held, 0);
+    });
+  },
+);
 
 test("the file budget is set, read, kept and trimmed through the module", () => {
   inStore((path) => {
@@ -84,7 +118,10 @@ test("a budget that names bytes needs a whole count, and no other kind takes one
     }
 
     // The witness: the largest whole count JavaScript holds exactly is taken.
-    const largest = { kind: FileBudgetKind.Bytes, bytes: Number.MAX_SAFE_INTEGER };
+    const largest = {
+      kind: FileBudgetKind.Bytes,
+      bytes: Number.MAX_SAFE_INTEGER,
+    };
     core.setFileBudget(largest);
     assert.deepEqual(core.fileCache().setting, largest);
   });

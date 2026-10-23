@@ -2317,6 +2317,22 @@ impl Core {
         let Ok(setting) = self.file_budget() else {
             return 0;
         };
+        self.trim_blobs_under(cache, setting)
+    }
+
+    /// `trim_blobs` to a setting the caller has just stored under the
+    /// settling lock, which it still holds.
+    fn trim_blobs_to(&self, setting: FileBudget) -> u64 {
+        if self.handle() != Handle::Writer {
+            return 0;
+        }
+        let Ok(cache) = self.cache() else {
+            return 0;
+        };
+        self.trim_blobs_under(cache, setting)
+    }
+
+    fn trim_blobs_under(&self, cache: &blob::Cache, setting: FileBudget) -> u64 {
         let Some(kept) = self.kept_blobs() else {
             return 0;
         };
@@ -2478,13 +2494,16 @@ impl Core {
                     .then(|| cache.volume())
                     .flatten(),
             ),
-            None => (0, None),
+            None => (Ok(0), None),
         };
-        let in_force = file_cache::in_force(setting, volume, held);
+        // An unknown count is worked from as none held, which is the
+        // smaller default budget.
+        let in_force = file_cache::in_force(setting, volume, *held.as_ref().unwrap_or(&0));
         Ok(FileCache {
             setting,
             budget: in_force.bytes,
-            held,
+            held: held.as_ref().ok().copied(),
+            held_unreadable: held.err(),
             volume_unreadable: in_force.volume_unreadable,
             backup_mark_failure: store::meta_get(conn, file_cache::META_BACKUP_UNMARKED)?,
         })
@@ -2495,6 +2514,9 @@ impl Core {
     /// Answers how many bytes the trim took. Refused to a reading handle.
     pub fn set_file_budget(&self, setting: FileBudget) -> Result<u64> {
         self.lock.refuse_unless_writer()?;
+        // The setting and the trim to it are one step: under the cache's
+        // settling lock, another call's setting cannot land between them.
+        let _held = self.cache.as_ref().map(blob::Cache::hold);
         {
             let conn = self.conn()?;
             match setting.to_stored() {
@@ -2502,7 +2524,9 @@ impl Core {
                 None => store::meta_delete(&conn, file_cache::META_BUDGET)?,
             }
         }
-        Ok(self.trim_blobs())
+        #[cfg(debug_assertions)]
+        crate::fault::hold(|| format!("budget-stored:{:p}", self));
+        Ok(self.trim_blobs_to(setting))
     }
 
     /// Trims the cache to its budget now, and answers how many bytes it
@@ -6459,6 +6483,84 @@ mod tests {
             );
         });
         assert_eq!(core.file_cache().unwrap().backup_mark_failure, None);
+    }
+
+    #[test]
+    fn two_budgets_set_at_once_each_trim_to_the_one_they_stored() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = Core::open(dir.path().join("core.sqlite"), None).unwrap();
+        let path = dir.path().join("kept.txt");
+        std::fs::write(&path, b"fetched once").unwrap();
+        let hash = core
+            .cache()
+            .unwrap()
+            .take_reader(&path, std::fs::File::open(&path).unwrap())
+            .unwrap()
+            .hash;
+        core.set_file_budget(FileBudget::KeepAll).unwrap();
+        let point = &format!("budget-stored:{:p}", &core);
+        crate::fault::arm(point);
+        std::thread::scope(|scope| {
+            let zero = scope.spawn(|| core.set_file_budget(FileBudget::Bytes(0)));
+            let waited = std::time::Instant::now();
+            while crate::fault::waiting(point) == 0 {
+                assert!(
+                    waited.elapsed() < std::time::Duration::from_secs(10),
+                    "the first call never stored its budget"
+                );
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            let keep_all = scope.spawn(|| core.set_file_budget(FileBudget::KeepAll));
+            // Long enough for a second call that is not held back to store
+            // its budget over the first one's.
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            crate::fault::release(point);
+            assert_eq!(
+                zero.join().unwrap().unwrap(),
+                12,
+                "a budget of zero was stored and then never enforced"
+            );
+            assert_eq!(keep_all.join().unwrap().unwrap(), 0);
+        });
+        assert!(!core.blob_held(&hash).unwrap());
+        assert_eq!(core.file_budget().unwrap(), FileBudget::KeepAll);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_state_report_says_held_bytes_are_unknown_where_the_cache_cannot_be_read() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let core = Core::open(dir.path().join("core.sqlite"), None).unwrap();
+        let absent = core.file_cache().unwrap();
+        assert_eq!((absent.held, absent.held_unreadable), (Some(0), None));
+        let path = dir.path().join("kept.txt");
+        std::fs::write(&path, b"fetched once").unwrap();
+        let hash = core
+            .cache()
+            .unwrap()
+            .take_reader(&path, std::fs::File::open(&path).unwrap())
+            .unwrap()
+            .hash;
+        assert_eq!(core.file_cache().unwrap().held, Some(12));
+        let folder = dir.path().join("core.sqlite.blobs");
+        std::fs::set_permissions(&folder, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let sealed = std::fs::read_dir(&folder).is_err();
+        let report = core.file_cache();
+        let taken = core.set_file_budget(FileBudget::Bytes(0));
+        std::fs::set_permissions(&folder, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(sealed, "the folder could still be read");
+        let report = report.unwrap();
+        assert_eq!(
+            report.held, None,
+            "an incomplete count was reported as exact"
+        );
+        assert!(report.held_unreadable.is_some());
+        assert_eq!(taken.unwrap(), 0);
+        assert!(
+            core.blob_held(&hash).unwrap(),
+            "a trim took bytes it could not count"
+        );
     }
 
     #[test]

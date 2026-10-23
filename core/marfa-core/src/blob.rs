@@ -290,10 +290,15 @@ impl Cache {
 
     /// What the cache holds: every kept blob, nothing still arriving. Each
     /// entry is read by `stat`, never opened, so a large cache costs no open
-    /// per file.
-    fn scan(&self) -> Vec<(SystemTime, u64, PathBuf)> {
-        let Ok(entries) = self.entries() else {
-            return Vec::new();
+    /// per file. A folder not made yet holds nothing, exactly; a folder or
+    /// an entry that cannot be read is an error, never a shorter list. An
+    /// entry gone between the listing and its `stat` was taken by another
+    /// trim and does not count.
+    fn scan(&self) -> std::result::Result<Vec<(SystemTime, u64, PathBuf)>, String> {
+        let entries = match self.entries() {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(error) => return Err(error.to_string()),
         };
         let mut found = Vec::new();
         for entry in entries {
@@ -301,14 +306,14 @@ impl Cache {
             if name.starts_with(".incoming-") {
                 continue;
             }
-            let Ok((file, size, read)) = self.stat_label(&entry) else {
-                continue;
-            };
-            if file {
-                found.push((read, size, entry));
+            match self.stat_label(&entry) {
+                Ok((true, size, read)) => found.push((read, size, entry)),
+                Ok(_) => {}
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error.to_string()),
             }
         }
-        found
+        Ok(found)
     }
 
     /// Whether the entry is a regular file, its length and when it was last
@@ -330,9 +335,9 @@ impl Cache {
         ))
     }
 
-    /// The bytes of every blob kept.
-    pub(crate) fn held_bytes(&self) -> u64 {
-        self.scan().iter().map(|(_, size, _)| size).sum()
+    /// The bytes of every blob kept, or why they could not all be counted.
+    pub(crate) fn held_bytes(&self) -> std::result::Result<u64, String> {
+        Ok(self.scan()?.iter().map(|(_, size, _)| size).sum())
     }
 
     /// The volume holding the cache: read through the folder held open
@@ -353,15 +358,18 @@ impl Cache {
     /// Takes the bytes read longest ago until what is left fits the budget
     /// `budget` gives for the bytes held, and answers how many it took.
     /// Bytes named in `kept`, and bytes a caller is reading, stay whatever
-    /// the budget, and `None` takes nothing. Called under `hold`, with `kept`
-    /// read under it.
+    /// the budget, and `None` takes nothing. A cache that cannot be read
+    /// takes nothing, since its bytes are not all known. Called under `hold`,
+    /// with `kept` read under it.
     pub(crate) fn trim(
         &self,
         kept: &HashSet<String>,
         budget: impl FnOnce(u64) -> Option<u64>,
     ) -> u64 {
         let reading = self.readers();
-        let found = self.scan();
+        let Ok(found) = self.scan() else {
+            return 0;
+        };
         let mut total: u64 = found.iter().map(|(_, size, _)| size).sum();
         let Some(most) = budget(total) else {
             return 0;
@@ -1216,6 +1224,45 @@ pub(crate) mod tests {
         (hex_of(&hash).unwrap().to_string(), path)
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn a_cache_that_cannot_be_read_is_unknown_and_a_trim_takes_nothing() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("anchored");
+        fs::create_dir(&root).unwrap();
+        let directory = crate::directory::Directory::open(&root.canonicalize().unwrap()).unwrap();
+        let caches = [
+            Cache::beside(&dir.path().join("store.sqlite")),
+            Cache::anchored(&directory, &root.join("core.sqlite"), true).unwrap(),
+        ];
+        for cache in caches {
+            // A folder not made yet holds nothing, exactly.
+            let absent = Cache::beside(&dir.path().join("elsewhere").join("store.sqlite"));
+            assert_eq!(absent.held_bytes(), Ok(0));
+            let (_, path) = kept(&cache, b"cannot be listed", 0);
+            let folder = path.parent().unwrap().to_path_buf();
+            // The witness: it counts and trims while the folder is readable.
+            assert_eq!(cache.held_bytes(), Ok(16));
+            fs::set_permissions(&folder, fs::Permissions::from_mode(0o000)).unwrap();
+            let sealed = fs::read_dir(&folder).is_err() && File::open(&path).is_err();
+            let counted = cache.held_bytes();
+            let taken = cache.trim(&HashSet::new(), |_| Some(0));
+            fs::set_permissions(&folder, fs::Permissions::from_mode(0o755)).unwrap();
+            assert!(sealed, "the folder could still be read");
+            assert!(
+                counted.is_err(),
+                "an unreadable cache was counted as {counted:?}"
+            );
+            assert_eq!(taken, 0);
+            assert!(
+                path.exists(),
+                "a trim of a cache it could not read took bytes"
+            );
+            assert_eq!(cache.trim(&HashSet::new(), |_| Some(0)), 16);
+        }
+    }
+
     #[test]
     fn a_trim_takes_the_bytes_read_longest_ago_until_the_rest_fit() {
         let dir = tempfile::tempdir().unwrap();
@@ -1265,7 +1312,7 @@ pub(crate) mod tests {
             let (_, readable) = kept(&cache, b"readable..", 0);
             let (_, sealed) = kept(&cache, b"sealed....", 100);
             // The witness: both count while both can be opened.
-            assert_eq!(cache.held_bytes(), 20);
+            assert_eq!(cache.held_bytes(), Ok(20));
             fs::set_permissions(&sealed, fs::Permissions::from_mode(0o000)).unwrap();
             assert!(
                 File::open(&sealed).is_err(),
@@ -1273,7 +1320,7 @@ pub(crate) mod tests {
             );
             assert_eq!(
                 cache.held_bytes(),
-                20,
+                Ok(20),
                 "a file that cannot be opened went uncounted, so it was opened"
             );
             cache.trim(&HashSet::new(), |_| Some(10));

@@ -110,8 +110,10 @@ export interface FileCache {
   setting: FileBudgetSetting;
   /** The budget in force, in bytes; null while every file fetched is kept. */
   budget: number | null;
-  /** The bytes of the files kept now. */
-  held: number;
+  /** The bytes of the files kept now; null where the cache could not be read. */
+  held: number | null;
+  /** Why `held` is unknown; null when it is known. */
+  held_unreadable: string | null;
   /** The default budget is 2 GiB because the volume could not be read. */
   volume_unreadable: boolean;
   /**

@@ -1565,10 +1565,15 @@ fn file_cache_text(cache: &marfa_core::FileCache) -> String {
     } else {
         ""
     };
-    let mut text = format!(
-        "file budget {setting}, in force {budget}{unreadable}\nfiles held {} byte(s)",
-        cache.held
-    );
+    let held = match (cache.held, &cache.held_unreadable) {
+        (Some(held), _) => format!("{held} byte(s)"),
+        (None, reason) => format!(
+            "unknown, the cache could not be read: {}",
+            reason.as_deref().unwrap_or("no reason given")
+        ),
+    };
+    let mut text =
+        format!("file budget {setting}, in force {budget}{unreadable}\nfiles held {held}");
     if let Some(failure) = &cache.backup_mark_failure {
         text.push_str(&format!(
             "\nfetched files could not be kept out of backups: {failure}"

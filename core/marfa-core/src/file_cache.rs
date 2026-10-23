@@ -68,8 +68,12 @@ pub struct FileCache {
     /// The budget in force, in bytes; `None` while every file fetched is
     /// kept.
     pub budget: Option<u64>,
-    /// The bytes of the files kept now.
-    pub held: u64,
+    /// The bytes of the files kept now; `None` where the cache could not be
+    /// read, and `held_unreadable` says why. A cache not made yet holds 0.
+    pub held: Option<u64>,
+    /// Why `held` is unknown: the cache's folder or an entry in it could not
+    /// be read.
+    pub held_unreadable: Option<String>,
     /// Whether the default budget is the floor because the volume holding
     /// the cache could not be read, or read as a size of zero.
     pub volume_unreadable: bool,

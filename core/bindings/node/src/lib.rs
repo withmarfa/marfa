@@ -216,8 +216,11 @@ pub struct FileCache {
     pub setting: FileBudget,
     /// The budget in force, in bytes; null while every file fetched is kept.
     pub budget: Option<i64>,
-    /// The bytes of the files kept now.
-    pub held: i64,
+    /// The bytes of the files kept now; null where the cache could not be
+    /// read.
+    pub held: Option<i64>,
+    /// Why `held` is unknown; absent when it is known.
+    pub held_unreadable: Option<String>,
     /// The default budget is 2 GiB because the disk could not be read.
     pub volume_unreadable: bool,
     /// Why the files fetched last could not be kept out of backups; absent
@@ -754,7 +757,8 @@ impl From<marfa_core::FileCache> for FileCache {
         FileCache {
             setting: cache.setting.into(),
             budget: cache.budget.map(count),
-            held: count(cache.held),
+            held: cache.held.map(count),
+            held_unreadable: cache.held_unreadable,
             volume_unreadable: cache.volume_unreadable,
             backup_mark_failure: cache.backup_mark_failure,
         }

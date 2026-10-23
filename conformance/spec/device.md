@@ -1488,7 +1488,11 @@ While the file budget is to keep every file, a device MUST NOT take away bytes i
 
 A device MUST report in its state report the setting, the budget in force, which is none while every file is kept, and the bytes the cache holds.
 
-**Tests:** `device/file-cache.test.ts › gives the default budget from the volume's size and free space, counting what it holds`, `› keeps every file fetched when told to, and reports no budget`.
+If the cache's folder, or an entry in it, cannot be read, a device MUST report the bytes held as unknown, with the reason, and MUST NOT report a count that leaves out what it could not read. A cache not made yet holds 0 bytes, exactly. A device MUST NOT take away any bytes on account of a budget while it cannot read the cache.
+
+**Reason:** a count that skips what could not be read looks exact, so an app would show a full cache as empty and a trim would work from a total that is too small.
+
+**Tests:** `device/file-cache.test.ts › reports the bytes held as unknown, and trims nothing, where the cache cannot be read`, `device/file-cache.test.ts › gives the default budget from the volume's size and free space, counting what it holds`, `› keeps every file fetched when told to, and reports no budget`.
 
 ### `device/file-trim-after-fetch`
 

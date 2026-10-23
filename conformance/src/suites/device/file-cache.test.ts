@@ -1,5 +1,11 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+} from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -167,6 +173,37 @@ describe("the file budget", () => {
     const back = await device.fileBudget("default");
     expect(back.ok && back.value.file_cache.setting).toBe("default");
     expect((await cacheOf(device)).budget).not.toBe(100);
+  });
+
+  it("reports the bytes held as unknown, and trims nothing, where the cache cannot be read", async () => {
+    harness = await started("budget-unreadable");
+    const { device } = harness;
+    // A cache not made yet holds nothing, exactly.
+    const none = await cacheOf(device);
+    expect(none.held).toBe(0);
+    expect(none.held_unreadable).toBeNull();
+
+    const hash = await fetched(harness, ten("a"));
+    const folder = `${device.store}.blobs`;
+    // The witness: the same cache is counted while it can be read.
+    expect((await cacheOf(device)).held).toBe(10);
+    chmodSync(folder, 0o000);
+    try {
+      const sealed = await cacheOf(device);
+      expect(sealed.held).toBeNull();
+      expect(sealed.held_unreadable).toEqual(expect.any(String));
+
+      const set = await device.fileBudget("0");
+      expect(set.ok, JSON.stringify(set)).toBe(true);
+      if (!set.ok) return;
+      expect(set.value.trimmed_bytes).toBe(0);
+      expect(set.value.file_cache.held).toBeNull();
+    } finally {
+      chmodSync(folder, 0o755);
+    }
+    expect(existsSync(heldAt(device, hash))).toBe(true);
+    const back = await device.fileBudget("0", { trim: true });
+    expect(back.ok && back.value.trimmed_bytes).toBe(10);
   });
 
   it("keeps every file fetched when told to, and reports no budget", async () => {
