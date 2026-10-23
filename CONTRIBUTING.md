@@ -30,14 +30,14 @@ Open `http://localhost:8600/setup` and enter the code from the server's terminal
 
 ```bash
 cargo install --locked --path core/marfa-cli
-unset MARFA_API_URL MARFA_API_KEY
+unset MARFA_API_URL MARFA_API_KEY MARFA_PROFILE
 marfa_socket="$(pwd -P)/packages/server/data/control/marfa.sock"
 marfa --socket "$marfa_socket" setup claim --email owner@example.com
 ```
 
 The command prompts for the password without echoing it. `setup claim --stdin` instead accepts a JSON object containing `email`, `password` and optional `name`. A remote claim uses `--url https://marfa.example.com setup claim --email owner@example.com` and prompts for both password and setup code; its JSON input also requires `code`. Supply secrets through the prompt or standard input, never command-line arguments.
 
-The socket command must run under the server's operating-system account. Linux requires the `acl` package. `--socket` cannot be combined with `--url`, `--key`, `MARFA_API_URL` or `MARFA_API_KEY`, and an unavailable socket never falls back to HTTP or the keychain.
+The socket command must run under the server's operating-system account. Linux requires the `acl` package. `--socket` cannot be combined with `--url`, `--key`, `--profile`, `MARFA_API_URL`, `MARFA_API_KEY` or `MARFA_PROFILE`, and an unavailable socket never falls back to HTTP or the keychain.
 
 Sign in at `http://localhost:8600/auth/sign-in` and open `/auth/owner/keys` to create a key with the access you need. To create a content key from the machine instead:
 
@@ -53,7 +53,7 @@ marfa status
 
 The key has the five maps named above and no additional permissions. Use narrower maps for an app that needs only part of the dataset. Add named permissions only when needed; [the glossary](./GLOSSARY.md#permissions) lists all twelve. `keys.mint` permits delegation within the caller's own access; `keys.manage` permits key administration but does not grant content access or unrestricted minting.
 
-On a system without a keychain, supply the ordinary key through `MARFA_API_KEY` and skip `keys keep`. Owner password recovery requires the private socket; see [Recovering the owner](./deploy/README.md#recovering-the-owner). Creating, changing, or revoking keys through an owner browser session requires a sign-in within the last five minutes.
+On a system without a keychain, supply the ordinary key through `MARFA_API_KEY`, or through the `key_command` of a profile in `profiles.toml` (see [the core README](./core/README.md#the-binary)), and skip `keys keep`. Owner password recovery requires the private socket; see [Recovering the owner](./deploy/README.md#recovering-the-owner). Creating, changing, or revoking keys through an owner browser session requires a sign-in within the last five minutes.
 
 ## Code style
 
