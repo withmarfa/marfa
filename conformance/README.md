@@ -599,7 +599,7 @@ a second, the bytes a row crosses the wire as, the copy's size, the server's
 time to serve a page of 200, and the time of one listing and one search on the
 filled copy. It is a measurement, not a gate: it fails only when a hydration
 fails or brings fewer rows than were seeded. Unset, the row count is small
-enough for a laptop; the nightly run sets the larger one.
+enough for a laptop; the nightly run sets 100,000.
 
 ## Architecture
 
