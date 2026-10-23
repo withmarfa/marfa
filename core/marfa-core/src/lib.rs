@@ -565,8 +565,8 @@ impl Core {
     }
 
     /// `hydrate_with`, ended with `Canceled` soon after `stop` is raised. The
-    /// copy is then unfinished and refuses reads, as after any hydration that
-    /// failed part way; the queue is untouched.
+    /// copy is then unfinished, as after a hydration that failed part way: it
+    /// answers lists and searches marked partial and refuses writes; the queue is untouched.
     pub fn hydrate_until(
         &self,
         types: &[String],

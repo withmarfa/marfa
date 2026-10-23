@@ -109,8 +109,10 @@ pub struct FolderRow {
 
 #[uniffi::export]
 impl Core {
-    /// `None` where the copy does not hold it. A row that is not a folder,
-    /// or one naming a setting no folder follows, is `MarfaError.Invalid`.
+    /// `None` where a whole copy does not hold it; part way through a
+    /// hydration, one that has not arrived is `MarfaError.HydrationIncomplete`.
+    /// A row that is not a folder, or one naming a setting no folder follows,
+    /// is `MarfaError.Invalid`.
     pub fn folder(&self, id: String) -> Result<Option<FolderRow>, MarfaError> {
         self.inner.folder(&id)?.map(row).transpose()
     }

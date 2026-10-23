@@ -1493,8 +1493,8 @@ pub struct MarfaCore {
 
 /// Raised to end a `hydrate`, `catchUp` or `drain` it was given to, soon
 /// after, with an error coded `canceled`. What the call had taken is
-/// consistent: a hydration left unfinished refuses reads, a catch-up keeps
-/// the cursor it reached, and a drain leaves what it had not sent queued, and
+/// consistent: a hydration left unfinished answers lists and searches marked
+/// partial and refuses writes, a catch-up keeps the cursor it reached, and a drain leaves what it had not sent queued, and
 /// an upload or item or edge write it had in flight queued as sent, for the
 /// next drain to send again under the same key. A raised `Stop` stays raised, so a call given one
 /// afterwards ends at once.

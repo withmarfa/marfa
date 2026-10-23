@@ -44,9 +44,10 @@ impl FolderRow {
 }
 
 impl Core {
-    /// `None` where the copy does not hold the row. A row that is not a
-    /// folder, or whose settings name something no folder follows, is
-    /// refused `Invalid`.
+    /// `None` where a whole copy does not hold the row; part way through a
+    /// hydration, one that has not arrived is refused `HydrationIncomplete`.
+    /// A row that is not a folder, or whose settings name something no folder
+    /// follows, is refused `Invalid`.
     pub fn folder(&self, id: &str) -> Result<Option<FolderRow>> {
         self.get(id)?.as_ref().map(FolderRow::of).transpose()
     }
