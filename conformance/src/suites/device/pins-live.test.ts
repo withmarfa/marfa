@@ -129,7 +129,9 @@ async function recording(): Promise<{
 
 /** A read of one row by id, which a hydration must not send for a pin. */
 const readById = (request: Sent): boolean =>
-  request.method === "GET" && /^\/items\/[^/]+$/.test(request.path);
+  request.method === "GET" &&
+  /^\/items\/[^/]+$/.test(request.path) &&
+  request.path !== "/items/stats";
 
 const bulkReads = (sent: Sent[]): Sent[] =>
   sent.filter(
