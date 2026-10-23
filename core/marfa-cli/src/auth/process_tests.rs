@@ -201,6 +201,7 @@ impl Fixture {
                 ])
                 .env_remove("MARFA_API_KEY")
                 .env_remove("MARFA_API_URL")
+                .env_remove("MARFA_NO_KEYCHAIN")
                 .env("MARFA_TEST_CREDENTIAL_OPERATION", operation)
                 .env("MARFA_TEST_CREDENTIAL_STORE", self.folder.join("store"))
                 .env("MARFA_TEST_ORIGIN", &self.origin)
