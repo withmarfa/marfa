@@ -671,7 +671,7 @@ fn an_endpoint_that_cannot_be_used_is_ignored_with_one_line_that_does_not_show_i
             format!("ftp://user:{SECRET}@host/"),
         ),
     ] {
-        // With --json, standard error stays one JSON object: no line at all.
+        // With --json, the telemetry line is not printed.
         let ran = run(&[(variable, bad.as_str())], &args);
         assert_eq!(ran.code, plain.code);
         assert_eq!(ran.stdout, plain.stdout);
@@ -1311,7 +1311,7 @@ fn a_host_without_a_token_or_a_token_without_a_host_is_said_once_without_its_val
         assert_eq!((ran.code, &ran.stdout), (plain.code, &plain.stdout));
         assert_eq!(ran.stderr, format!("{said}{}", plain.stderr));
         assert!(!ran.stderr.contains(SECRET));
-        // Standard error is one JSON object under --json: no line at all.
+        // Under --json the line is not printed.
         let json = run(&env, &catch_up(&store));
         same_output(&json, &plain_json, "--json");
     }
