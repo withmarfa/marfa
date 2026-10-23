@@ -8,7 +8,7 @@ use crate::model::ItemState;
 
 /// A content hash no bytes have, so the pull after a restore writes the file
 /// back rather than taking the missing file as in place.
-const PUT_BACK: &str = "put-back";
+pub(super) const PUT_BACK: &str = "put-back";
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
 pub struct Confirmed {

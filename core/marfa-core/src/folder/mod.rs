@@ -3603,4 +3603,218 @@ mod tests {
         );
         assert_eq!(pulled.elsewhere, 0, "{pulled:?}");
     }
+
+    /// As if another device had changed the item's body to `body`.
+    fn changed_elsewhere(folder: &Folder, item_id: &str, body: &str) {
+        folder
+            .core
+            .conn()
+            .unwrap()
+            .execute(
+                "UPDATE items SET version = version + 1,
+                   properties = json_set(properties, '$.body', ?2)
+                 WHERE id = ?1",
+                [item_id, body],
+            )
+            .unwrap();
+    }
+
+    /// The files in the folder, its own state left out, with what each holds.
+    fn files_in(dir: &Path) -> Vec<(String, String)> {
+        let mut files: Vec<_> = walkdir(dir)
+            .into_iter()
+            .map(|path| {
+                let text = std::fs::read_to_string(&path).unwrap();
+                let name = path
+                    .strip_prefix(dir)
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned();
+                (name, text)
+            })
+            .collect();
+        files.sort();
+        files
+    }
+
+    fn walkdir(dir: &Path) -> Vec<std::path::PathBuf> {
+        let mut found = Vec::new();
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.file_name().is_some_and(|name| name == STATE_DIR) {
+                continue;
+            }
+            if path.is_dir() {
+                found.extend(walkdir(&path));
+            } else {
+                found.push(path);
+            }
+        }
+        found
+    }
+
+    fn bound_paths(folder: &Folder) -> Vec<(String, String)> {
+        state::every_bound(&folder.core.conn().unwrap())
+            .unwrap()
+            .into_iter()
+            .map(|bound| (bound.path, bound.item_id))
+            .collect()
+    }
+
+    #[test]
+    fn a_pull_writes_back_no_file_moved_since_the_scan() {
+        // Where the file goes, and the edit the person made in it as it went.
+        for (to, edit) in [
+            ("moved.md", None),
+            ("sub/moved.md", None),
+            ("moved.md", Some("mine")),
+        ] {
+            let (dir, folder) = settled_notes(&["a.md"]);
+            let item_id = landed(&folder, "a.md");
+            if let Some(parent) = Path::new(to).parent() {
+                std::fs::create_dir_all(dir.path().join(parent)).unwrap();
+            }
+            std::fs::rename(dir.path().join("a.md"), dir.path().join(to)).unwrap();
+            if let Some(edit) = edit {
+                let text = read(dir.path(), to).unwrap().replace("body", edit);
+                std::fs::write(dir.path().join(to), text).unwrap();
+            }
+
+            let pulled = folder.pull().unwrap();
+            assert!(
+                !dir.path().join("a.md").exists(),
+                "{to} {edit:?}: the pull wrote back a file moved since the scan: {pulled:?}"
+            );
+            assert_eq!(pulled.written + pulled.rewritten, 0, "{to}: {pulled:?}");
+            assert_eq!(pulled.unwritten, 1, "{to}: {pulled:?}");
+
+            let scanned = folder.scan().unwrap();
+            assert_eq!(
+                (scanned.created, scanned.renamed, scanned.missing),
+                (0, 1, 0),
+                "{to}: {scanned:?}"
+            );
+            folder.pull().unwrap();
+            folder.scan().unwrap();
+            let files = files_in(dir.path());
+            assert_eq!(files.len(), 1, "{to}: {files:?}");
+            assert_eq!(files[0].0, to);
+            assert!(files[0].1.contains(&format!("marfa_id: {item_id}")));
+            assert_eq!(bound_paths(&folder), [(to.to_string(), item_id.clone())]);
+            // The item followed the move: its title is the new name.
+            let item = folder.core.get(&item_id).unwrap().unwrap();
+            assert_eq!(item.properties["title"], "moved", "{to}");
+            if let Some(edit) = edit {
+                assert!(files[0].1.contains(edit), "{to}: {files:?}");
+                assert!(body_of(&folder, to).starts_with(edit));
+            }
+        }
+    }
+
+    #[test]
+    fn a_pull_writes_back_no_file_deleted_since_the_scan_and_the_delete_stands() {
+        // A note the pull has written into, and one deleted before the
+        // folder wrote its own lines into it.
+        for written in [true, false] {
+            let (dir, folder) = settled_notes(&["a.md"]);
+            let item_id = landed(&folder, "a.md");
+            if written {
+                // Shown before the delete, so the item has moved on in
+                // nothing the file shows once it is gone.
+                changed_elsewhere(&folder, &item_id, "from b");
+                folder.pull().unwrap();
+                folder.scan().unwrap();
+                assert!(read(dir.path(), "a.md").unwrap().contains("from b"));
+            }
+            std::fs::remove_file(dir.path().join("a.md")).unwrap();
+
+            let pulled = folder.pull().unwrap();
+            assert!(!dir.path().join("a.md").exists(), "{written}: {pulled:?}");
+            assert_eq!(pulled.unwritten, 1, "{written}: {pulled:?}");
+
+            assert_eq!(folder.scan().unwrap().missing, 1);
+            let pulled = folder.pull().unwrap();
+            assert_eq!(pulled.revived, 0, "{written}: {pulled:?}");
+            assert!(!dir.path().join("a.md").exists(), "{written}");
+            past_the_grace(&folder, "a.md");
+            let swept = folder.scan().unwrap();
+            assert_eq!(swept.deleted, 1, "{written}: {swept:?}");
+            assert_eq!(swept.trashed, ["a.md"], "{written}");
+            assert!(files_in(dir.path()).is_empty());
+            folder.pull().unwrap();
+            assert!(files_in(dir.path()).is_empty());
+            assert!(bound_paths(&folder).is_empty(), "{written}");
+        }
+    }
+
+    #[test]
+    fn a_file_deleted_since_the_scan_comes_back_once_journaled_for_a_change_it_shows() {
+        let (dir, folder) = settled_notes(&["a.md"]);
+        let item_id = landed(&folder, "a.md");
+        std::fs::remove_file(dir.path().join("a.md")).unwrap();
+        changed_elsewhere(&folder, &item_id, "from b");
+
+        let pulled = folder.pull().unwrap();
+        assert!(!dir.path().join("a.md").exists(), "{pulled:?}");
+        assert_eq!(pulled.unwritten, 1, "{pulled:?}");
+
+        // The scan journals it, and the pull after revives it inside the grace.
+        assert_eq!(folder.scan().unwrap().missing, 1);
+        let revived = folder.pull().unwrap();
+        assert_eq!(revived.revived, 1, "{revived:?}");
+        let files = files_in(dir.path());
+        assert_eq!(files.len(), 1, "{files:?}");
+        assert!(files[0].1.contains("from b"));
+        assert!(files[0].1.contains(&format!("marfa_id: {item_id}")));
+        let scanned = folder.scan().unwrap();
+        assert_eq!((scanned.created, scanned.missing), (0, 0), "{scanned:?}");
+        assert!(
+            state::journaled(&folder.core.conn().unwrap())
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_pull_writes_nothing_over_a_file_it_cannot_read() {
+        use std::os::unix::fs::PermissionsExt;
+        let (dir, folder) = settled_notes(&["a.md"]);
+        let item_id = landed(&folder, "a.md");
+        changed_elsewhere(&folder, &item_id, "from b");
+        let path = dir.path().join("a.md");
+        let before = std::fs::read(&path).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o000)).unwrap();
+        if std::fs::read(&path).is_ok() {
+            // Run as a user every file is readable to.
+            return;
+        }
+
+        let pulled = folder.pull().unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert_eq!(pulled.unwritten, 1, "{pulled:?}");
+        assert_eq!(pulled.written + pulled.rewritten, 0, "{pulled:?}");
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+        assert_eq!(bound_paths(&folder), [("a.md".to_string(), item_id)]);
+        assert!(
+            state::journaled(&folder.core.conn().unwrap())
+                .unwrap()
+                .is_empty()
+        );
+        // The witness: readable again, the same pull writes the change.
+        folder.pull().unwrap();
+        assert!(read(dir.path(), "a.md").unwrap().contains("from b"));
+    }
+
+    #[test]
+    fn a_pull_writes_into_a_present_file_changed_elsewhere() {
+        // The witness for the tests above: the same pull with the file in
+        // place writes the change.
+        let (dir, folder) = settled_notes(&["a.md"]);
+        let item_id = landed(&folder, "a.md");
+        changed_elsewhere(&folder, &item_id, "from b");
+        let pulled = folder.pull().unwrap();
+        assert_eq!(pulled.unwritten, 0, "{pulled:?}");
+        assert!(read(dir.path(), "a.md").unwrap().contains("from b"));
+    }
 }

@@ -822,10 +822,24 @@ impl Folder {
         }
 
         // The bytes on the disk, not the mapping's memory of them: a file
-        // changed since the scan read it is the person's.
-        let changed = |bound: &state::Bound| {
-            self.read(self.root.join(&bound.path))
-                .is_ok_and(|found| state::hash(&found) != bound.content_hash)
+        // changed since the scan read it is the person's, and so is one that
+        // cannot be read to tell. A file gone since the scan was moved or
+        // deleted, and only the next scan can tell which: written back, a
+        // moved file would read as its copy. Once journaled, the change it
+        // shows may bring it back, as may a restore.
+        let changed = |bound: &state::Bound| -> Result<Option<&str>> {
+            Ok(match self.read(self.root.join(&bound.path)) {
+                Ok(found) => (state::hash(&found) != bound.content_hash).then_some(
+                    "the file changed since the scan read it, and the next scan sends it",
+                ),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => (bound.content_hash
+                    != super::removal::PUT_BACK
+                    && !journaled_for(&*self.core.conn()?, &bound.path, &item.id)?)
+                .then_some("the file is gone since the scan read it, and the next scan follows it"),
+                Err(_) => {
+                    Some("the file could not be read to tell whether it changed since the scan")
+                }
+            })
         };
         // What this file's own-field lines say at this version, for an old
         // buffer of it saved later.
@@ -838,17 +852,14 @@ impl Folder {
         });
         let in_place = match &bound {
             Some(bound) if ours && bound.content_hash == hash => true,
-            Some(bound) if changed(bound) => {
-                report.not_written(
-                    NotWritten::Unwritten,
-                    &item.id,
-                    &bound.path,
-                    "the file changed since the scan read it, and the next scan sends it",
-                );
-                return Ok(PlacementWrite::Done);
+            Some(bound) => {
+                if let Some(reason) = changed(bound)? {
+                    report.not_written(NotWritten::Unwritten, &item.id, &bound.path, reason);
+                    return Ok(PlacementWrite::Done);
+                }
+                ours && self.behind_by_its_line_alone(item, bound, rendering)?
             }
-            Some(bound) if ours => self.behind_by_its_line_alone(item, bound, rendering)?,
-            _ => false,
+            None => false,
         };
         // Read before a move queues the placement, which is no edit the
         // file holds.
@@ -1550,10 +1561,22 @@ impl Folder {
         } else {
             document::read_body(&text)
         };
-        Ok(bound
-            .presentation
-            .as_ref()
-            .is_some_and(|agreed| agreed.agrees(&presented.presentation(), rendering.edge_types)))
+        Ok(bound.presentation.as_ref().is_some_and(|agreed| {
+            // A file deleted before the folder first wrote its own lines into
+            // it never showed them.
+            let presented = [
+                fields::ID_FIELD,
+                fields::VERSION_FIELD,
+                fields::TYPE_FIELD,
+                fields::TIER_FIELD,
+            ]
+            .into_iter()
+            .filter(|field| !agreed.front().contains_key(*field))
+            .fold(presented.presentation(), |presented, field| {
+                presented.with(field, None)
+            });
+            agreed.agrees(&presented, rendering.edge_types)
+        }))
     }
 
     /// Whether a file differs from its item's render in its version line
