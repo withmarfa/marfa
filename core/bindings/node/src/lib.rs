@@ -193,7 +193,7 @@ pub struct CatchUpReport {
 #[napi(string_enum = "snake_case")]
 pub enum FileBudgetKind {
     /// The larger of 2 GiB and a tenth of the volume, held to what leaves a
-    /// twentieth of the volume free.
+    /// twentieth of the volume free and never below 256 MiB.
     Default,
     /// `bytes` bytes.
     Bytes,
@@ -204,8 +204,9 @@ pub enum FileBudgetKind {
 #[napi(object)]
 pub struct FileBudget {
     pub kind: FileBudgetKind,
-    /// The byte count, for `bytes` alone.
-    pub bytes: Option<i64>,
+    /// The byte count, for `bytes` alone: a whole number from zero to
+    /// `Number.MAX_SAFE_INTEGER`.
+    pub bytes: Option<f64>,
 }
 
 /// The cache of fetched files as the state report gives it.
@@ -217,8 +218,11 @@ pub struct FileCache {
     pub budget: Option<i64>,
     /// The bytes of the files kept now.
     pub held: i64,
-    /// The default budget is its floor because the disk could not be read.
+    /// The default budget is 2 GiB because the disk could not be read.
     pub volume_unreadable: bool,
+    /// Why the files fetched last could not be kept out of backups; absent
+    /// once a fetched file is marked.
+    pub backup_mark_failure: Option<String>,
 }
 
 #[napi(object)]
@@ -735,7 +739,7 @@ impl From<marfa_core::FileBudget> for FileBudget {
             },
             marfa_core::FileBudget::Bytes(bytes) => FileBudget {
                 kind: FileBudgetKind::Bytes,
-                bytes: Some(count(bytes)),
+                bytes: Some(count(bytes) as f64),
             },
             marfa_core::FileBudget::KeepAll => FileBudget {
                 kind: FileBudgetKind::KeepAll,
@@ -752,23 +756,30 @@ impl From<marfa_core::FileCache> for FileCache {
             budget: cache.budget.map(count),
             held: count(cache.held),
             volume_unreadable: cache.volume_unreadable,
+            backup_mark_failure: cache.backup_mark_failure,
         }
     }
 }
 
-impl TryFrom<FileBudget> for marfa_core::FileBudget {
-    type Error = Error;
+/// The largest whole number a JavaScript number holds exactly.
+const MAX_SAFE_INTEGER: f64 = 9_007_199_254_740_991.0;
 
-    fn try_from(budget: FileBudget) -> Result<Self> {
+impl TryFrom<FileBudget> for marfa_core::FileBudget {
+    type Error = marfa_core::CoreError;
+
+    /// Checked as a JavaScript number, before any conversion: napi's integer
+    /// conversion truncates a fraction and reads NaN and infinity as zero.
+    fn try_from(budget: FileBudget) -> std::result::Result<Self, Self::Error> {
         match (budget.kind, budget.bytes) {
             (FileBudgetKind::Default, None) => Ok(marfa_core::FileBudget::Default),
             (FileBudgetKind::KeepAll, None) => Ok(marfa_core::FileBudget::KeepAll),
-            (FileBudgetKind::Bytes, Some(bytes)) if bytes >= 0 => {
-                Ok(marfa_core::FileBudget::Bytes(bytes.unsigned_abs()))
+            (FileBudgetKind::Bytes, Some(bytes))
+                if bytes.fract() == 0.0 && (0.0..=MAX_SAFE_INTEGER).contains(&bytes) =>
+            {
+                Ok(marfa_core::FileBudget::Bytes(bytes as u64))
             }
-            _ => Err(Error::new(
-                napi::Status::InvalidArg,
-                "a file budget is `default` or `keep_all` with no bytes, or `bytes` with a count of zero or more",
+            _ => Err(marfa_core::CoreError::Invalid(
+                "a file budget is `default` or `keep_all` with no bytes, or `bytes` with a whole count from 0 to Number.MAX_SAFE_INTEGER".to_string(),
             )),
         }
     }
@@ -2436,7 +2447,9 @@ impl MarfaCore {
 
     /// Where a blob's bytes are held, fetching them first where this store
     /// does not hold them yet. Refused `bytes_absent` where they can be
-    /// neither read nor fetched.
+    /// neither read nor fetched. No trim in this process takes the bytes
+    /// before the path is answered; after that a trim may, so open the path
+    /// at once.
     #[napi(ts_return_type = "Promise<string>")]
     pub fn blob(&self, hash: String) -> AsyncTask<FetchBlob> {
         AsyncTask::new(FetchBlob {
@@ -2456,13 +2469,14 @@ impl MarfaCore {
             .map_err(|error| failure(env, error))
     }
 
-    /// Chooses the cache's budget and trims to it at once. Refused to a
-    /// reading handle.
+    /// Chooses the cache's budget, trims to it at once and answers the bytes
+    /// the trim took. Refused `invalid` for a budget that is not one, keeping
+    /// the setting, and refused to a reading handle.
     #[napi]
-    pub fn set_file_budget(&self, env: Env, budget: FileBudget) -> Result<FileCache> {
-        self.inner
-            .set_file_budget(budget.try_into()?)
-            .map(Into::into)
+    pub fn set_file_budget(&self, env: Env, budget: FileBudget) -> Result<i64> {
+        marfa_core::FileBudget::try_from(budget)
+            .and_then(|budget| self.inner.set_file_budget(budget))
+            .map(count)
             .map_err(|error| failure(env, error))
     }
 

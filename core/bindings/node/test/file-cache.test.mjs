@@ -22,14 +22,20 @@ test("the file budget is set, read, kept and trimmed through the module", () => 
     assert.equal(core.fileCache().setting.kind, FileBudgetKind.Default);
     assert.equal(core.status().fileCache.held, 0);
 
-    const set = core.setFileBudget({ kind: FileBudgetKind.Bytes, bytes: 100 });
+    assert.equal(core.fileCache().backupMarkFailure, undefined);
+
+    // Nothing is held, so setting the budget takes nothing.
+    assert.equal(
+      core.setFileBudget({ kind: FileBudgetKind.Bytes, bytes: 100 }),
+      0,
+    );
+    const set = core.fileCache();
     assert.deepEqual(set.setting, { kind: FileBudgetKind.Bytes, bytes: 100 });
     assert.equal(set.budget, 100);
-    assert.equal(core.fileCache().budget, 100);
     assert.equal(core.trimFiles(), 0);
 
-    const all = core.setFileBudget({ kind: FileBudgetKind.KeepAll });
-    assert.equal(all.budget, undefined);
+    core.setFileBudget({ kind: FileBudgetKind.KeepAll });
+    assert.equal(core.fileCache().budget, undefined);
 
     // A reading handle sees the setting and cannot change it.
     const reader = MarfaCore.openReader(path);
@@ -42,17 +48,34 @@ test("the file budget is set, read, kept and trimmed through the module", () => 
   });
 });
 
-test("a budget that names bytes needs a count, and no other kind takes one", () => {
+test("a budget that names bytes needs a whole count, and no other kind takes one", () => {
   inStore((path) => {
     const core = MarfaCore.open(path);
+    const kept = { kind: FileBudgetKind.Bytes, bytes: 100 };
+    core.setFileBudget(kept);
     for (const budget of [
       { kind: FileBudgetKind.Bytes },
       { kind: FileBudgetKind.Bytes, bytes: -1 },
+      { kind: FileBudgetKind.Bytes, bytes: 1.5 },
+      { kind: FileBudgetKind.Bytes, bytes: -0.5 },
+      { kind: FileBudgetKind.Bytes, bytes: Number.NaN },
+      { kind: FileBudgetKind.Bytes, bytes: Number.POSITIVE_INFINITY },
+      { kind: FileBudgetKind.Bytes, bytes: Number.NEGATIVE_INFINITY },
+      { kind: FileBudgetKind.Bytes, bytes: Number.MAX_SAFE_INTEGER + 1 },
       { kind: FileBudgetKind.Default, bytes: 1 },
       { kind: FileBudgetKind.KeepAll, bytes: 1 },
     ]) {
-      assert.throws(() => core.setFileBudget(budget), /file budget/);
+      assert.throws(
+        () => core.setFileBudget(budget),
+        { code: "invalid" },
+        `${String(budget.bytes)} was taken`,
+      );
+      assert.deepEqual(core.fileCache().setting, kept);
     }
-    assert.equal(core.fileCache().setting.kind, FileBudgetKind.Default);
+
+    // The witness: the largest whole count JavaScript holds exactly is taken.
+    const largest = { kind: FileBudgetKind.Bytes, bytes: Number.MAX_SAFE_INTEGER };
+    core.setFileBudget(largest);
+    assert.deepEqual(core.fileCache().setting, largest);
   });
 });
