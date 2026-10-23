@@ -9,7 +9,7 @@ use serde_json::{Map, Value};
 
 use crate::folder::{FOLDER_TYPE, Settings};
 use crate::http::{Method, Outgoing};
-use crate::model::{Item, ItemState, SearchHit, Shown, Sort, Tier};
+use crate::model::{Completeness, Item, ItemState, Rows, SearchHit, Shown, Sort, Tier};
 use crate::store::Unreadable;
 use crate::wire::{WireItem, WireItemWithMetadata};
 use crate::{Core, CoreError, Result, catalog, query, reach, search, store};
@@ -52,17 +52,19 @@ impl Core {
     }
 
     /// The items the folder's search holds, as its own pass holds them. A
-    /// search the copy cannot answer whole is refused `Invalid`, never
+    /// search the slice cannot answer whole is refused `Invalid`, never
     /// answered in part: a type or tier outside the slice, `beneath` without
     /// `parent-of` held whole, and a `backref` condition, which no copy
-    /// holds the edges to answer.
+    /// holds the edges to answer. Part way through a hydration it answers
+    /// from the rows that have arrived, marked `Partial`, and a folder row
+    /// that has not arrived is refused `HydrationIncomplete`.
     pub fn list_in_folder(
         &self,
         id: &str,
         sort: Sort,
         limit: Option<u32>,
         offset: Option<u32>,
-    ) -> Result<Vec<(Item, Shown)>> {
+    ) -> Result<Rows<(Item, Shown)>> {
         self.list_in_folder_with(id, sort, limit, offset, &mut Unreadable::Refuse)
     }
 
@@ -74,7 +76,7 @@ impl Core {
         sort: Sort,
         limit: Option<u32>,
         offset: Option<u32>,
-    ) -> Result<Vec<(Item, Shown)>> {
+    ) -> Result<Rows<(Item, Shown)>> {
         self.list_in_folder_with(
             id,
             sort,
@@ -91,17 +93,16 @@ impl Core {
         limit: Option<u32>,
         offset: Option<u32>,
         unreadable: &mut Unreadable,
-    ) -> Result<Vec<(Item, Shown)>> {
-        let (conn, catalog, clauses, values) = self.folder_scope(id)?;
-        let items =
-            query::list_where_with(&conn, &clauses, &values, sort, limit, offset, unreadable)?;
-        Ok(items
-            .into_iter()
-            .map(|item| {
+    ) -> Result<Rows<(Item, Shown)>> {
+        store::read_marked(&mut *self.conn()?, |conn, completeness| {
+            let (catalog, clauses, values) = folder_scope(conn, id, completeness)?;
+            let rows =
+                query::list_where_with(conn, &clauses, &values, sort, limit, offset, unreadable)?;
+            Ok(Rows { rows, completeness }.map(|item| {
                 let shown = catalog.shown_unreadable(&item, unreadable);
                 (item, shown)
-            })
-            .collect())
+            }))
+        })
     }
 
     /// A local search narrowed to what the folder holds, refused as
@@ -111,7 +112,7 @@ impl Core {
         text: &str,
         id: &str,
         limit: usize,
-    ) -> Result<Vec<(SearchHit, Shown)>> {
+    ) -> Result<Rows<(SearchHit, Shown)>> {
         self.search_in_folder_with(text, id, limit, &mut Unreadable::Refuse)
     }
 
@@ -122,7 +123,7 @@ impl Core {
         text: &str,
         id: &str,
         limit: usize,
-    ) -> Result<Vec<(SearchHit, Shown)>> {
+    ) -> Result<Rows<(SearchHit, Shown)>> {
         self.search_in_folder_with(text, id, limit, &mut Unreadable::Keep(HashMap::new()))
     }
 
@@ -132,16 +133,15 @@ impl Core {
         id: &str,
         limit: usize,
         unreadable: &mut Unreadable,
-    ) -> Result<Vec<(SearchHit, Shown)>> {
-        let (conn, catalog, clauses, values) = self.folder_scope(id)?;
-        let hits = search::search_where(&conn, text, &clauses, values, limit, unreadable)?;
-        Ok(hits
-            .into_iter()
-            .map(|hit| {
+    ) -> Result<Rows<(SearchHit, Shown)>> {
+        store::read_marked(&mut *self.conn()?, |conn, completeness| {
+            let (catalog, clauses, values) = folder_scope(conn, id, completeness)?;
+            let rows = search::search_where(conn, text, &clauses, values, limit, unreadable)?;
+            Ok(Rows { rows, completeness }.map(|hit| {
                 let shown = catalog.shown_unreadable(&hit.item, unreadable);
                 (hit, shown)
-            })
-            .collect())
+            }))
+        })
     }
 
     /// What a folder's own pass holds; its slice is made from the settings,
@@ -153,34 +153,6 @@ impl Core {
         let (mut clauses, mut values) = (Vec::new(), Vec::new());
         settings.narrow(&catalog, &mut clauses, &mut values)?;
         query::list_where(&conn, &clauses, &values, Sort::default(), None, None)
-    }
-
-    #[allow(clippy::type_complexity)]
-    fn folder_scope(
-        &self,
-        id: &str,
-    ) -> Result<(
-        std::sync::MutexGuard<'_, rusqlite::Connection>,
-        catalog::Catalog,
-        Vec<String>,
-        Vec<Value>,
-    )> {
-        let conn = self.conn()?;
-        store::refuse_unless_usable(&conn)?;
-        let Some(row) = store::item_by_id(&conn, id)? else {
-            return Err(CoreError::NotFound {
-                code: "not_held".into(),
-                message: format!(
-                    "{id} is not held in this working copy: pin it, or hydrate with {FOLDER_TYPE} in the slice"
-                ),
-            });
-        };
-        let settings = Settings::of(&row)?;
-        let catalog = catalog::Catalog::load(&conn)?;
-        settings.refuse_unless_answerable(&conn, &catalog)?;
-        let (mut clauses, mut values) = (Vec::new(), Vec::new());
-        settings.narrow(&catalog, &mut clauses, &mut values)?;
-        Ok((conn, catalog, clauses, values))
     }
 
     /// `settings` must carry a `title`. Settings no folder could follow are
@@ -336,6 +308,27 @@ impl Core {
     }
 }
 
+fn folder_scope(
+    conn: &rusqlite::Connection,
+    id: &str,
+    completeness: Completeness,
+) -> Result<(catalog::Catalog, Vec<String>, Vec<Value>)> {
+    let Some(row) = store::held_or_refused(store::item_by_id(conn, id)?, completeness)? else {
+        return Err(CoreError::NotFound {
+            code: "not_held".into(),
+            message: format!(
+                "{id} is not held in this working copy: pin it, or hydrate with {FOLDER_TYPE} in the slice"
+            ),
+        });
+    };
+    let settings = Settings::of(&row)?;
+    let catalog = catalog::Catalog::load(conn)?;
+    settings.refuse_unless_answerable(conn, &catalog)?;
+    let (mut clauses, mut values) = (Vec::new(), Vec::new());
+    settings.narrow(&catalog, &mut clauses, &mut values)?;
+    Ok((catalog, clauses, values))
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;
@@ -413,7 +406,7 @@ mod tests {
 
     fn listed(core: &Core) -> Result<Vec<String>> {
         core.list_in_folder(FOLDER, Sort::default(), None, None)
-            .map(|found| ids(found.into_iter().map(|(item, _)| item).collect()))
+            .map(|found| ids(found.rows.into_iter().map(|(item, _)| item).collect()))
     }
 
     #[test]
@@ -455,7 +448,7 @@ mod tests {
         assert_eq!(held.settings.types(), ["core.note".to_string()]);
         assert_eq!(core.folder("absent").unwrap(), None);
 
-        let hits = core.search_in_folder("pasta", FOLDER, 20).unwrap();
+        let hits = core.search_in_folder("pasta", FOLDER, 20).unwrap().rows;
         let mut found: Vec<&str> = hits.iter().map(|(hit, _)| hit.item.id.as_str()).collect();
         found.sort_unstable();
         assert_eq!(found, expected);
@@ -468,7 +461,8 @@ mod tests {
         assert_eq!(listed(&core).unwrap(), ["archived"]);
         let page = core
             .list_in_folder(FOLDER, Sort::default(), Some(1), Some(0))
-            .unwrap();
+            .unwrap()
+            .rows;
         assert_eq!(page.len(), 1);
     }
 

@@ -55,6 +55,14 @@ pub enum Hydration {
     Expired,
 }
 
+/// Whether a local list or search was read from a whole copy, or from one a
+/// hydration is still filling, which holds only the rows that have arrived.
+#[napi(string_enum = "snake_case")]
+pub enum Completeness {
+    Complete,
+    Partial,
+}
+
 #[napi(object)]
 pub struct Item {
     pub id: String,
@@ -144,6 +152,21 @@ pub struct SearchHit {
     pub score: f64,
     /// An excerpt as HTML: the text escaped and each match in `<mark>` tags.
     pub snippet: String,
+}
+
+/// The items a local list answers, and whether the copy was whole.
+#[napi(object)]
+pub struct Listing {
+    pub items: Vec<Item>,
+    pub completeness: Completeness,
+}
+
+/// The hits a local search answers, best match first, and whether the copy
+/// was whole.
+#[napi(object)]
+pub struct Found {
+    pub hits: Vec<SearchHit>,
+    pub completeness: Completeness,
 }
 
 #[napi(object)]
@@ -240,6 +263,9 @@ pub struct Status {
     pub event_cursor: Option<String>,
     pub hydration: Hydration,
     pub items: i64,
+    /// While a hydration fills the copy, how many items its slice held on the
+    /// server when it started; absent where the server did not count them.
+    pub items_expected: Option<i64>,
     pub edges: i64,
     /// Moves each time a refresh changes the catalog; absent where the copy
     /// has never held one.
@@ -785,6 +811,15 @@ impl TryFrom<FileBudget> for marfa_core::FileBudget {
             _ => Err(marfa_core::CoreError::Invalid(
                 "a file budget is `default` or `keep_all` with no bytes, or `bytes` with a whole count from 0 to Number.MAX_SAFE_INTEGER".to_string(),
             )),
+        }
+    }
+}
+
+impl From<marfa_core::Completeness> for Completeness {
+    fn from(completeness: marfa_core::Completeness) -> Self {
+        match completeness {
+            marfa_core::Completeness::Complete => Completeness::Complete,
+            marfa_core::Completeness::Partial => Completeness::Partial,
         }
     }
 }
@@ -1976,12 +2011,15 @@ impl MarfaCore {
         env: Env,
         filters: Option<ListFilters>,
         sort: Option<Sort>,
-    ) -> Result<Vec<Item>> {
-        let items = self
+    ) -> Result<Listing> {
+        let listed = self
             .inner
             .list(&self::filters(filters), self::sort(sort))
             .map_err(|error| failure(env, error))?;
-        Ok(items.into_iter().map(item).collect())
+        Ok(Listing {
+            completeness: listed.completeness.into(),
+            items: listed.rows.into_iter().map(item).collect(),
+        })
     }
 
     #[napi]
@@ -2055,20 +2093,24 @@ impl MarfaCore {
         query: String,
         filters: Option<SearchFilters>,
         limit: Option<u32>,
-    ) -> Result<Vec<SearchHit>> {
+    ) -> Result<Found> {
         let filters = filters.unwrap_or_default();
-        let hits = self
+        let found = self
             .inner
             .search(&query, &filters.into(), limit.unwrap_or(20) as usize)
             .map_err(|error| failure(env, error))?;
-        Ok(hits
-            .into_iter()
-            .map(|hit| SearchHit {
-                item: item(hit.item),
-                score: hit.score,
-                snippet: hit.snippet,
-            })
-            .collect())
+        Ok(Found {
+            completeness: found.completeness.into(),
+            hits: found
+                .rows
+                .into_iter()
+                .map(|hit| SearchHit {
+                    item: item(hit.item),
+                    score: hit.score,
+                    snippet: hit.snippet,
+                })
+                .collect(),
+        })
     }
 
     #[napi]
@@ -2084,6 +2126,7 @@ impl MarfaCore {
             event_cursor: status.event_cursor,
             hydration: status.hydration.into(),
             items: count(status.items),
+            items_expected: status.items_expected.map(count),
             edges: count(status.edges),
             catalog_version: status.catalog_version.map(count),
             file_cache: status.file_cache.into(),

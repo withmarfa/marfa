@@ -194,7 +194,7 @@ test("sends each write once however many drains run at once", async (t) => {
     "the drains counted writes they did not have answered",
   );
   assert.equal(
-    core.list({ type: "core.note" }).length,
+    core.list({ type: "core.note" }).items.length,
     6,
     "the fresh reads did not reconcile every accepted create into the copy",
   );

@@ -212,6 +212,7 @@ pub(crate) fn expire(conn: &Connection) -> Result<()> {
     advance_generation(conn)?;
     store::meta_delete(conn, store::META_EVENT_CURSOR)?;
     store::meta_delete(conn, store::META_HYDRATE_STATE)?;
+    store::meta_delete(conn, store::META_ITEMS_EXPECTED)?;
     store::meta_delete(conn, FENCE)
 }
 

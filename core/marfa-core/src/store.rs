@@ -9,7 +9,8 @@ use crate::catalog::Indexing;
 use crate::error::CoreError;
 use crate::js;
 use crate::model::{
-    BlockedReason, Edge, Item, ItemState, QueuedWrite, SliceTier, Subject, Tier, Verdict, WriteKind,
+    BlockedReason, Completeness, Edge, Item, ItemState, QueuedWrite, SliceTier, Subject, Tier,
+    Verdict, WriteKind,
 };
 use crate::wire::{WireCatalog, WireEdge, WireItem, WireType};
 
@@ -24,6 +25,9 @@ pub const META_EVENT_CURSOR: &str = "event_cursor";
 /// The instance the copy was hydrated from, as the server's root names it.
 pub const META_INSTANCE_ID: &str = "instance_id";
 pub const META_HYDRATE_STATE: &str = "hydrate_state";
+/// Set by a hydration from the server's count of its slice when it started,
+/// and absent where the server did not answer one.
+pub const META_ITEMS_EXPECTED: &str = "items_expected";
 /// Absent until a catalog is first held, which is how a copy that has never
 /// held one is told from an instance with no types.
 pub const META_CATALOG_VERSION: &str = "catalog_version";
@@ -610,7 +614,8 @@ pub fn never_synced(conn: &Connection) -> Result<bool, CoreError> {
     Ok(hydration_complete(conn)? && !holds_slice(conn)?)
 }
 
-/// For what a copy can do on its own: read what it holds and queue writes. A
+/// For what a copy can do on its own but answer a list, a search or a read by
+/// id (`read_completeness`): queue writes, follow edges, run a folder's pass. A
 /// copy part way through a hydration, or one whose cursor has gone, is refused,
 /// since what it holds is a piece of a copy or a copy that cannot be kept
 /// current.
@@ -619,6 +624,45 @@ pub fn refuse_unless_usable(conn: &Connection) -> Result<(), CoreError> {
         Ok(())
     } else {
         Err(CoreError::HydrationIncomplete)
+    }
+}
+
+/// For a local list, search or read by id: a whole copy answers complete, and
+/// one a hydration has started and not completed answers from the rows that
+/// have arrived, as partial. A copy whose cursor has gone is still refused.
+pub fn read_completeness(conn: &Connection) -> Result<Completeness, CoreError> {
+    if hydrated(conn)? || never_synced(conn)? {
+        Ok(Completeness::Complete)
+    } else if !hydration_complete(conn)? {
+        Ok(Completeness::Partial)
+    } else {
+        Err(CoreError::HydrationIncomplete)
+    }
+}
+
+/// Runs a local read under one snapshot with the completeness it is marked
+/// with, so a hydration another handle commits between the two cannot pair a
+/// mark with rows from another state.
+pub fn read_marked<T>(
+    conn: &mut Connection,
+    read: impl FnOnce(&Connection, Completeness) -> Result<T, CoreError>,
+) -> Result<T, CoreError> {
+    let tx = conn.transaction()?;
+    let completeness = read_completeness(&tx)?;
+    let answer = read(&tx, completeness)?;
+    tx.commit()?;
+    Ok(answer)
+}
+
+/// A row a partial copy does not hold may still be arriving, so its absence
+/// is refused rather than answered.
+pub fn held_or_refused<T>(
+    found: Option<T>,
+    completeness: Completeness,
+) -> Result<Option<T>, CoreError> {
+    match (found, completeness) {
+        (None, Completeness::Partial) => Err(CoreError::HydrationIncomplete),
+        (found, _) => Ok(found),
     }
 }
 

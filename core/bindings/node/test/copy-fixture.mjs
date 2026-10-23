@@ -13,16 +13,18 @@ export const INSTANCE = "00000000-0000-7000-8000-000000000000";
 export const FENCE = "a".repeat(64);
 
 /**
- * The scripted JSON reads below model a single certified reach. Writes and
- * root descriptions carry no read proof; the bulk read by id is a read sent
- * as a `POST`. Item listing flags remain explicit in each fixture's body.
+ * The scripted JSON reads below model a single certified reach. Writes, root
+ * descriptions and the count of items by type carry no read proof; the bulk
+ * read by id is a read sent as a `POST`. Item listing flags remain explicit in
+ * each fixture's body.
  * @param {import("node:http").IncomingMessage} req
  */
 export function readProof(req) {
   const read =
     req.method === "GET" ||
     (req.method === "POST" && req.url === "/items/bulk-get");
-  if (!read || req.url === "/") return {};
+  const path = new URL(req.url ?? "", "http://fixture").pathname;
+  if (!read || path === "/" || path === "/items/stats") return {};
   assert.equal(req.headers["x-marfa-reach"], FENCE);
   return { "x-marfa-reach": FENCE };
 }

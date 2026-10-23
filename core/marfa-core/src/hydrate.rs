@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::io::BufReader;
 use std::sync::atomic::AtomicBool;
 use std::time::Duration;
@@ -5,7 +6,7 @@ use std::time::Duration;
 use crate::catalog::Catalog;
 use crate::error::CoreError;
 use crate::http::{Http, ItemsQuery, Registration};
-use crate::model::{Draft, EdgeDraft, HydrateReport, SliceTier, UnregisteredType, WriteKind};
+use crate::model::{Draft, EdgeDraft, HydrateReport, SliceTier, Tier, UnregisteredType, WriteKind};
 use crate::sse::{Frame, Frames};
 use crate::store;
 use crate::wire::{WireCatalog, WireEdge, WireEdgeBlock, WireItemWithMetadata};
@@ -62,6 +63,7 @@ fn hydrate_inner(
         under_reach = http.for_reach(&fence);
         catalog_rows = under_reach.catalog()?;
     }
+    let plain = http;
     let http = &under_reach;
     {
         let mut conn = core.conn()?;
@@ -85,6 +87,7 @@ fn hydrate_inner(
         )?;
     }
     refuse_unheld(&catalog_rows, &types, &edge_types)?;
+    let counts = counted(plain, &types, tier);
     crate::catch_up::refuse_if_stopped(stop)?;
     {
         let mut conn = core.conn()?;
@@ -109,6 +112,22 @@ fn hydrate_inner(
         crate::body::rule::before_rebuild(&tx)?;
         store::clear_slice(&tx)?;
         store::replace_catalog(&tx, &catalog_rows)?;
+        // A copy filling up answers reads, so it shows what is waiting from
+        // the start, as each row that arrives does.
+        lay_queue_over(
+            &tx,
+            &Catalog::load(&tx)?,
+            &edge_types,
+            Some(&store::credential_digest(&http.authorization())),
+        )?;
+        match &counts {
+            Some(counts) => store::meta_set(
+                &tx,
+                store::META_ITEMS_EXPECTED,
+                &expected(&Catalog::load(&tx)?, &types, counts).to_string(),
+            )?,
+            None => store::meta_delete(&tx, store::META_ITEMS_EXPECTED)?,
+        }
         tx.commit()?;
     }
     #[cfg(debug_assertions)]
@@ -153,9 +172,7 @@ fn hydrate_inner(
                         &row.item.id,
                         row.listed.ok_or_else(crate::reach::invalid)?,
                     )?;
-                    // Put, not taken: the queue is laid over once, after the
-                    // build catches up.
-                    store::put_server_item(&tx, &row.item, Some(&row.metadata.tags), &catalog)?;
+                    store::take_server_item(&tx, &row.item, Some(&row.metadata.tags), &catalog)?;
                     for block in row.item.edges.iter().flat_map(|blocks| blocks.values()) {
                         for edge in &block.data {
                             store::put_server_edge(&tx, edge)?;
@@ -234,8 +251,7 @@ fn hydrate_inner(
                     &row.item.id,
                     row.listed.ok_or_else(crate::reach::invalid)?,
                 )?;
-                // Put, not taken, as for a page.
-                store::put_server_item(&tx, &row.item, Some(&row.metadata.tags), &catalog)?;
+                store::take_server_item(&tx, &row.item, Some(&row.metadata.tags), &catalog)?;
                 for block in row.item.edges.iter().flat_map(|blocks| blocks.values()) {
                     for edge in &block.data {
                         store::put_server_edge(&tx, edge)?;
@@ -269,6 +285,7 @@ fn hydrate_inner(
                 Some(&store::credential_digest(&http.authorization())),
             )?;
             store::meta_delete(&tx, store::META_HYDRATE_STATE)?;
+            store::meta_delete(&tx, store::META_ITEMS_EXPECTED)?;
             let counts = (store::count(&tx, "items")?, store::count(&tx, "edges")?);
             tx.commit()?;
             counts
@@ -458,6 +475,35 @@ pub(crate) fn type_pattern(name: &str) -> Result<bool> {
 /// A type identifier the server's grammar takes, and no namespace pattern.
 pub(crate) fn type_id(name: &str) -> Result<bool> {
     Ok(!name.ends_with(".*") && type_pattern(name)?)
+}
+
+/// The server's count of the rows the slice takes, by type, read once as a
+/// hydration starts so a copy filling up can say how far it has come. `None`
+/// where the server does not answer, and where one count cannot say it: a
+/// slice at one tier that names a `system.*` type lists that type at both.
+fn counted(http: &Http, types: &[String], tier: SliceTier) -> Option<HashMap<String, u64>> {
+    let system = types.iter().any(|declared| store::is_system(declared));
+    if system && tier != SliceTier::All {
+        return None;
+    }
+    http.counts_by_type(tier, system).ok()
+}
+
+/// The counts were read at the slice's tier, so only the types are matched.
+fn expected(catalog: &Catalog, types: &[String], counts: &HashMap<String, u64>) -> u64 {
+    counts
+        .iter()
+        .filter(|(row_type, _)| {
+            store::slice_takes(
+                catalog,
+                types,
+                SliceTier::All,
+                row_type,
+                Some(Tier::Library),
+            )
+        })
+        .map(|(_, count)| count)
+        .sum()
 }
 
 /// A `system.*` type is listed at both tiers, as the slice takes it
@@ -762,7 +808,7 @@ mod tests {
 
     use crate::scripted::{self, Answer, Scripted, Then};
     use crate::stop_tests::copy;
-    use crate::{Core, CoreError, SliceTier, store};
+    use crate::{Core, CoreError, Hydration, SliceTier, store};
 
     /// A copy whose slice lists nothing, holding `count` pins, and a server
     /// whose head and replay end live.
@@ -1259,8 +1305,10 @@ mod tests {
             1,
             "a read of pinned rows was sent after the stop"
         );
+        assert_eq!(core.status().unwrap().hydration, Hydration::InProgress);
+        assert_eq!(core.get("pin-000").unwrap().unwrap().id, "pin-000");
         assert!(matches!(
-            core.get("pin-000"),
+            core.get("pin-100"),
             Err(CoreError::HydrationIncomplete)
         ));
     }
@@ -1444,5 +1492,154 @@ mod tests {
             }
             other => panic!("a key reading nothing under the type was not refused: {other:?}"),
         }
+    }
+
+    /// A page of the listing holding the notes named, naming the page after
+    /// it by `next`.
+    fn page(ids: &[&str], next: Option<&str>) -> Answer {
+        let data: Vec<Value> = ids
+            .iter()
+            .map(|id| {
+                let payload: Value = serde_json::from_str(&scripted::item_payload(
+                    "item.updated",
+                    id,
+                    "core.note",
+                    1,
+                ))
+                .unwrap();
+                json!({"item": payload["item"], "metadata": payload["metadata"], "listed": true})
+            })
+            .collect();
+        let body = json!({"data": data, "next_cursor": next});
+        scripted::certified(scripted::json(200, &body.to_string()))
+    }
+
+    /// A copy holding `first` with a tag queued on it, hydrating again in a
+    /// thread whose second page waits for the signal returned, once the
+    /// first page is in the copy.
+    fn filling(
+        server: &Scripted,
+    ) -> (
+        std::sync::Arc<Core>,
+        std::sync::Arc<AtomicBool>,
+        std::thread::JoinHandle<crate::Result<crate::HydrateReport>>,
+    ) {
+        let core = copy(server);
+        {
+            let conn = core.conn().unwrap();
+            store::replace_catalog(&conn, &crate::builtin::catalog().unwrap()).unwrap();
+            store::put_server_item(
+                &conn,
+                &store::testing::note("first", "first", "body", "2026-01-01T00:00:00Z"),
+                Some(&[]),
+                &crate::catalog::Catalog::load(&conn).unwrap(),
+            )
+            .unwrap();
+        }
+        core.add_tag("first", "kept").unwrap();
+        let ready = std::sync::Arc::new(AtomicBool::new(false));
+        server.on(
+            "/items",
+            vec![
+                page(&["first"], Some("2")),
+                Answer::WaitFor {
+                    ready: std::sync::Arc::clone(&ready),
+                    answer: Box::new(page(&["second", "third"], None)),
+                },
+            ],
+        );
+        server.on(
+            "/events",
+            vec![
+                scripted::stream(
+                    vec![scripted::copy_marker("stream_cursor", "10")],
+                    Then::End,
+                ),
+                scripted::stream(
+                    vec![
+                        scripted::copy_marker("stream_cursor", "10"),
+                        scripted::copy_marker("stream_live", "10"),
+                    ],
+                    Then::End,
+                ),
+            ],
+        );
+        let hydrating = {
+            let core = std::sync::Arc::clone(&core);
+            std::thread::spawn(move || hydrate(&core))
+        };
+        server.wait_for("/items", 2, std::time::Duration::from_secs(10));
+        (core, ready, hydrating)
+    }
+
+    #[test]
+    fn a_copy_filling_up_answers_what_it_holds_and_says_it_is_partial() {
+        let server = Scripted::start();
+        server.on(
+            "/items/stats",
+            vec![scripted::json(200, r#"{"core.note":3}"#)],
+        );
+        let (core, ready, hydrating) = filling(&server);
+
+        let listed = core
+            .list(&crate::ListFilters::default(), crate::Sort::default())
+            .unwrap();
+        assert_eq!(listed.completeness, crate::Completeness::Partial);
+        assert_eq!(
+            listed
+                .rows
+                .iter()
+                .map(|item| item.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["first"]
+        );
+        let found = core
+            .search("first", &crate::SearchFilters::default(), 10)
+            .unwrap();
+        assert_eq!(found.completeness, crate::Completeness::Partial);
+        assert_eq!(found.rows.len(), 1);
+        let held = core.get("first").unwrap().unwrap();
+        assert_eq!(
+            held.tags,
+            vec!["kept".to_string()],
+            "a row taken while the copy fills did not show the tag waiting on it"
+        );
+        assert_eq!(
+            core.get("second"),
+            Err(CoreError::HydrationIncomplete),
+            "a row not given yet was answered as absent"
+        );
+        let status = core.status().unwrap();
+        assert_eq!(status.items, 1);
+        assert_eq!(status.items_expected, Some(3));
+
+        ready.store(true, Ordering::SeqCst);
+        assert_eq!(hydrating.join().unwrap().unwrap().items, 3);
+
+        let listed = core
+            .list(&crate::ListFilters::default(), crate::Sort::default())
+            .unwrap();
+        assert_eq!(listed.completeness, crate::Completeness::Complete);
+        assert_eq!(listed.rows.len(), 3);
+        assert_eq!(
+            core.get("first").unwrap().unwrap().tags,
+            vec!["kept".to_string()],
+            "the queue laid over the row more than once"
+        );
+        // The witness for the refusal above: a whole copy answers a row it
+        // does not hold as absent.
+        assert_eq!(core.get("fourth"), Ok(None));
+        assert_eq!(core.status().unwrap().items_expected, None);
+    }
+
+    #[test]
+    fn a_copy_filling_up_reports_no_expected_count_where_the_server_gave_none() {
+        let server = Scripted::start();
+        let (core, ready, hydrating) = filling(&server);
+        let status = core.status().unwrap();
+        assert_eq!(status.hydration, crate::Hydration::InProgress);
+        assert_eq!(status.items_expected, None);
+        ready.store(true, Ordering::SeqCst);
+        assert!(hydrating.join().unwrap().is_ok());
     }
 }

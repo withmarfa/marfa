@@ -438,8 +438,35 @@ pub enum Hydration {
     /// catch-up, a held stream, a drain, a pin or a folder's settings edit)
     /// found another instance at the origin. Set only on that answer: a store
     /// whose cursor aged out and has not asked since still reports
-    /// `Complete`. Reads are refused as for `Never`.
+    /// `Complete`. Local reads are refused, where `Never` answers them.
     Expired,
+}
+
+/// Whether a local list or search was read from a whole copy, or from one a
+/// hydration has started and not completed, which holds only the rows that
+/// have arrived.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Completeness {
+    Complete,
+    Partial,
+}
+
+/// The rows a local list or search answers, and whether the copy they were
+/// read from is whole.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Rows<T> {
+    pub rows: Vec<T>,
+    pub completeness: Completeness,
+}
+
+impl<T> Rows<T> {
+    pub fn map<U>(self, f: impl FnMut(T) -> U) -> Rows<U> {
+        Rows {
+            rows: self.rows.into_iter().map(f).collect(),
+            completeness: self.completeness,
+        }
+    }
 }
 
 impl Hydration {
@@ -1189,6 +1216,10 @@ pub struct Status {
     pub event_cursor: Option<String>,
     pub hydration: Hydration,
     pub items: u64,
+    /// While a hydration fills the copy, how many items its slice held on the
+    /// server when it started; `None` where the server did not count them.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub items_expected: Option<u64>,
     pub edges: u64,
     /// Moves each time a refresh changes the catalog; `None` where the copy
     /// has never held one.

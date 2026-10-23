@@ -72,7 +72,8 @@ fn hydrate_list_search_and_catch_up_against_a_live_server() {
             },
             Sort::default(),
         )
-        .unwrap();
+        .unwrap()
+        .rows;
     for id in [&first, &second, &third] {
         assert!(
             notes.iter().any(|note| &note.id == id),
@@ -87,7 +88,8 @@ fn hydrate_list_search_and_catch_up_against_a_live_server() {
             },
             Sort::default(),
         )
-        .unwrap();
+        .unwrap()
+        .rows;
     assert!(files.iter().any(|item| item.id == file));
     let tagged = core
         .list(
@@ -97,7 +99,8 @@ fn hydrate_list_search_and_catch_up_against_a_live_server() {
             },
             Sort::default(),
         )
-        .unwrap();
+        .unwrap()
+        .rows;
     assert_eq!(
         tagged
             .iter()
@@ -106,7 +109,10 @@ fn hydrate_list_search_and_catch_up_against_a_live_server() {
         vec![first.as_str()]
     );
 
-    let hits = core.search(&marker, &SearchFilters::default(), 20).unwrap();
+    let hits = core
+        .search(&marker, &SearchFilters::default(), 20)
+        .unwrap()
+        .rows;
     let hit_ids: Vec<&str> = hits.iter().map(|hit| hit.item.id.as_str()).collect();
     let mut found = hit_ids.clone();
     found.sort_unstable();
@@ -138,7 +144,10 @@ fn hydrate_list_search_and_catch_up_against_a_live_server() {
         core.get(&first).unwrap().is_none(),
         "a trashed row is still readable by id, where the server answers 404"
     );
-    let visible = core.list(&ListFilters::default(), Sort::default()).unwrap();
+    let visible = core
+        .list(&ListFilters::default(), Sort::default())
+        .unwrap()
+        .rows;
     assert!(!visible.iter().any(|item| item.id == first));
     let with_bin = core
         .list(
@@ -148,7 +157,8 @@ fn hydrate_list_search_and_catch_up_against_a_live_server() {
             },
             Sort::default(),
         )
-        .unwrap();
+        .unwrap()
+        .rows;
     let binned = with_bin
         .iter()
         .find(|item| item.id == first)
@@ -165,7 +175,8 @@ fn hydrate_list_search_and_catch_up_against_a_live_server() {
             },
             Sort::default(),
         )
-        .unwrap();
+        .unwrap()
+        .rows;
     assert!(
         !after_purge.iter().any(|item| item.id == first),
         "the purge left the row in the store, where the server has deleted it"
@@ -180,7 +191,10 @@ fn hydrate_list_search_and_catch_up_against_a_live_server() {
     assert_eq!(status.hydration, Hydration::Complete);
     assert_eq!(status.event_cursor.as_deref(), Some(quiet.cursor.as_str()));
 
-    let before_rows = core.list(&ListFilters::default(), Sort::default()).unwrap();
+    let before_rows = core
+        .list(&ListFilters::default(), Sort::default())
+        .unwrap()
+        .rows;
     let before_queue = core.queue().unwrap();
     drop(core);
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
@@ -200,7 +214,8 @@ fn hydrate_list_search_and_catch_up_against_a_live_server() {
     assert_eq!(
         moved
             .list(&ListFilters::default(), Sort::default())
-            .unwrap(),
+            .unwrap()
+            .rows,
         before_rows
     );
 }

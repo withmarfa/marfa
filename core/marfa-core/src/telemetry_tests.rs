@@ -456,13 +456,13 @@ fn a_search_records_its_hit_count_and_a_refused_one_its_code() {
 
     let (hits, log) = recorded(|| core.search("b", &filters, 10));
     let hits = hits.unwrap();
-    assert_eq!(hits.len(), 1);
+    assert_eq!(hits.rows.len(), 1);
     let span = log.one("search");
     assert_eq!(span.fields["outcome"], "ok");
     assert_eq!(span.fields["hits"], "1");
 
     let (shown, log) = recorded(|| core.search_shown("b", &filters, 10));
-    assert_eq!(shown.unwrap().len(), 1);
+    assert_eq!(shown.unwrap().rows.len(), 1);
     assert_eq!(log.one("search").fields["hits"], "1");
 
     let bad = SearchFilters {
@@ -739,7 +739,7 @@ fn no_content_key_or_credential_reaches_a_span_or_an_event() {
     never_hydrated.create_item(&draft).unwrap();
 
     let (outcomes, log) = recorded(|| {
-        let found = core.search(SECRETS[6], &filters, 10).unwrap();
+        let found = core.search(SECRETS[6], &filters, 10).unwrap().rows;
         let refused_search = core.search(SECRETS[6], &bad, 10).unwrap_err();
         let drained = core.drain().unwrap();
         let refused_drain = never_hydrated.drain().unwrap_err();

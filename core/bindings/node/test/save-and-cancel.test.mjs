@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
-import { Handle, Hydration, MarfaCore, Stop, SliceTier } from "../index.js";
+import { Completeness, Handle, Hydration, MarfaCore, Stop, SliceTier } from "../index.js";
 import {
   CONTRACT,
   INSTANCE,
@@ -212,9 +212,13 @@ test("a hydration given a stop that is raised in flight ends canceled and leaves
   assert.equal(server.seen.filter((line) => line === "GET /items").length, 1);
   assert.notEqual(core.status().hydration, Hydration.Complete);
   assert.throws(() => core.get("x"), /hydration_incomplete/);
+  assert.equal(core.list({ type: "core.note" }).completeness, Completeness.Partial);
+  assert.equal(core.search("x").completeness, Completeness.Partial);
   // The witness: the same copy hydrates when it is not stopped.
   await core.hydrate(["core.note"], SliceTier.Library);
   assert.equal(core.status().hydration, Hydration.Complete);
+  assert.equal(core.list({ type: "core.note" }).completeness, Completeness.Complete);
+  assert.equal(core.search("x").completeness, Completeness.Complete);
 });
 
 test("a catch-up given a stop that is raised in flight ends canceled", async (t) => {

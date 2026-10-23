@@ -9,7 +9,7 @@ use marfa_core::folder::settings::{
 };
 use serde_json::{Map, Value};
 
-use crate::{Core, Item, ItemState, JsonObject, MarfaError, SearchHit, Sort, Tier};
+use crate::{Core, Found, ItemState, JsonObject, Listing, MarfaError, Sort, Tier};
 
 /// What a folder holds and what a new file in it takes: the settings a
 /// `system.folder` carries.
@@ -116,23 +116,23 @@ impl Core {
     }
 
     /// What the folder's search holds, as a folder on disk holds it. A
-    /// search the copy cannot answer whole is `MarfaError.Invalid`, never
+    /// search the slice cannot answer whole is `MarfaError.Invalid`, never
     /// answered in part; a folder the copy does not hold is
-    /// `MarfaError.NotFound` with the code `not_held`.
+    /// `MarfaError.NotFound` with the code `not_held`. While a hydration
+    /// fills the copy, the answer is marked partial.
     pub fn list_in_folder(
         &self,
         id: String,
         sort: Sort,
         limit: Option<u32>,
         offset: Option<u32>,
-    ) -> Result<Vec<Item>, MarfaError> {
-        let items = self
-            .inner
-            .list_in_folder_kept(&id, sort.into(), limit, offset)?;
-        Ok(items
-            .into_iter()
-            .map(|(found, shown)| crate::item(found, shown))
-            .collect())
+    ) -> Result<Listing, MarfaError> {
+        Ok(crate::listing(self.inner.list_in_folder_kept(
+            &id,
+            sort.into(),
+            limit,
+            offset,
+        )?))
     }
 
     /// Refused as `list_in_folder` refuses.
@@ -141,18 +141,12 @@ impl Core {
         query: String,
         id: String,
         limit: u32,
-    ) -> Result<Vec<SearchHit>, MarfaError> {
-        let hits = self
-            .inner
-            .search_in_folder_kept(&query, &id, limit as usize)?;
-        Ok(hits
-            .into_iter()
-            .map(|(hit, shown)| SearchHit {
-                item: crate::item(hit.item, shown),
-                score: hit.score,
-                snippet: hit.snippet,
-            })
-            .collect())
+    ) -> Result<Found, MarfaError> {
+        Ok(crate::found(self.inner.search_in_folder_kept(
+            &query,
+            &id,
+            limit as usize,
+        )?))
     }
 
     /// Sent to the folder door at once and never queued: with no server
