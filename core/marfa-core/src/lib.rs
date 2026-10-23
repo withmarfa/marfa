@@ -2443,46 +2443,55 @@ impl Core {
     }
 
     pub fn status(&self) -> Result<Status> {
-        let conn = self.conn()?;
-        let slice_types = match store::meta_get(&conn, store::META_SLICE_TYPES)? {
+        // One snapshot: a hydration another handle completes between two
+        // reads would pair `in_progress` with counts it has already cleared.
+        let mut conn = self.conn()?;
+        let tx = conn.transaction()?;
+        let slice_types = match store::meta_get(&tx, store::META_SLICE_TYPES)? {
             Some(json) => serde_json::from_str(&json)?,
             None => Vec::new(),
         };
-        let slice_tier = match store::meta_get(&conn, store::META_SLICE_TIER)? {
+        let slice_tier = match store::meta_get(&tx, store::META_SLICE_TIER)? {
             Some(text) => Some(store::slice_tier(&text)?),
             None => None,
         };
-        let event_cursor = store::meta_get(&conn, store::META_EVENT_CURSOR)?;
-        let hydration = if !store::hydration_complete(&conn)? {
+        let event_cursor = store::meta_get(&tx, store::META_EVENT_CURSOR)?;
+        let hydration = if !store::hydration_complete(&tx)? {
             Hydration::InProgress
-        } else if store::hydrated(&conn)? {
+        } else if store::hydrated(&tx)? {
             Hydration::Complete
-        } else if store::holds_slice(&conn)? {
+        } else if store::holds_slice(&tx)? {
             // A slice and no cursor: the log aged past the cursor.
             Hydration::Expired
         } else {
             Hydration::Never
         };
-        let items_expected = match hydration {
-            Hydration::InProgress => store::meta_get(&conn, store::META_ITEMS_EXPECTED)?
-                .and_then(|count| count.parse().ok()),
-            _ => None,
+        let filling = |key| -> Result<Option<u64>> {
+            Ok(match hydration {
+                Hydration::InProgress => {
+                    store::meta_get(&tx, key)?.and_then(|count| count.parse().ok())
+                }
+                _ => None,
+            })
         };
-        Ok(Status {
-            server_origin: store::meta_get(&conn, store::META_SERVER_ORIGIN)?,
-            instance_id: store::meta_get(&conn, store::META_INSTANCE_ID)?,
+        let status = Status {
+            server_origin: store::meta_get(&tx, store::META_SERVER_ORIGIN)?,
+            instance_id: store::meta_get(&tx, store::META_INSTANCE_ID)?,
             slice_types,
             slice_tier,
-            slice_edge_types: store::whole_edge_types(&conn)?,
-            pinned: store::pins(&conn)?,
+            slice_edge_types: store::whole_edge_types(&tx)?,
+            pinned: store::pins(&tx)?,
             event_cursor,
             hydration,
-            items: store::count(&conn, "items")?,
-            items_expected,
-            edges: store::count(&conn, "edges")?,
-            catalog_version: store::catalog_version(&conn)?,
-            file_cache: self.file_cache_with(&conn)?,
-        })
+            items: store::count(&tx, "items")?,
+            items_expected: filling(store::META_ITEMS_EXPECTED)?,
+            items_listed: filling(store::META_ITEMS_LISTED)?,
+            edges: store::count(&tx, "edges")?,
+            catalog_version: store::catalog_version(&tx)?,
+            file_cache: self.file_cache_with(&tx)?,
+        };
+        tx.commit()?;
+        Ok(status)
     }
 
     /// How the file cache's budget is chosen. A reading handle sees the

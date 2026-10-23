@@ -140,6 +140,9 @@ export interface Status {
   /** While a hydration fills the copy, the items its slice held on the
    *  server when it started, where the server counted them. */
   items_expected?: number;
+  /** While a hydration fills the copy, the rows its listings have brought,
+   *  the figure a caller sets against `items_expected`. */
+  items_listed?: number;
   edges: number;
   /** Moves each time a refresh changes the catalog the copy holds, and is
    *  null where the copy has never held one. */

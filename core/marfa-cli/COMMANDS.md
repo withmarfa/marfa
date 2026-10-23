@@ -2966,7 +2966,7 @@ Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 
 What the local copy holds and where it came from.
 
-While a hydration fills the copy, the report also gives the items the server counted for the slice when the hydration started, where it counted them: `items_expected` under --json.
+While a hydration fills the copy, the report also gives the rows its listings have brought, `items_listed` under --json, and the items the server counted for the slice when the hydration started, where it counted them, `items_expected`. Set the first against the second to show how far it has come; the item count also holds pinned rows and writes still waiting.
 
 ```text
 marfa device status [OPTIONS]

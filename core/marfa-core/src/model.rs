@@ -1220,6 +1220,11 @@ pub struct Status {
     /// server when it started; `None` where the server did not count them.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub items_expected: Option<u64>,
+    /// While a hydration fills the copy, how many rows its listings have
+    /// brought: the figure to set against `items_expected`, which `items`
+    /// is not, since `items` also counts pinned rows and queued creates.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub items_listed: Option<u64>,
     pub edges: u64,
     /// Moves each time a refresh changes the catalog; `None` where the copy
     /// has never held one.

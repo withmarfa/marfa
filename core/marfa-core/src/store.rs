@@ -28,6 +28,9 @@ pub const META_HYDRATE_STATE: &str = "hydrate_state";
 /// Set by a hydration from the server's count of its slice when it started,
 /// and absent where the server did not answer one.
 pub const META_ITEMS_EXPECTED: &str = "items_expected";
+/// How many rows the listings of the hydration under way have brought, set
+/// with each page so it reads against `META_ITEMS_EXPECTED`.
+pub const META_ITEMS_LISTED: &str = "items_listed";
 /// Absent until a catalog is first held, which is how a copy that has never
 /// held one is told from an instance with no types.
 pub const META_CATALOG_VERSION: &str = "catalog_version";

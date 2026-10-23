@@ -2511,9 +2511,13 @@ describe("the working copy says what it is", () => {
     if (!filling.ok) return;
     expect(filling.value.hydration).toBe("in_progress");
     expect(
-      [filling.value.items, filling.value.items_expected],
-      "a copy part way through a hydration did not report what it holds against what the server counted",
-    ).toEqual([1, 3]);
+      [
+        filling.value.items,
+        filling.value.items_listed,
+        filling.value.items_expected,
+      ],
+      "a copy part way through a hydration did not report what it holds and what its listings brought against what the server counted",
+    ).toEqual([1, 1, 3]);
     const counted = server.requests.filter(
       (request) => request.pathname === "/items/stats",
     );
@@ -2527,9 +2531,36 @@ describe("the working copy says what it is", () => {
     const complete = await device.status();
     expect(complete.ok && complete.value.items).toBe(3);
     expect(
-      complete.ok && "items_expected" in complete.value,
+      complete.ok &&
+        ("items_expected" in complete.value ||
+          "items_listed" in complete.value),
       "a complete copy still reported a count from the hydration that filled it",
     ).toBe(false);
+  });
+
+  it("reports the rows its listings brought apart from a write still waiting while a hydration fills the copy", async () => {
+    harness = await startHarness("partial-listed");
+    const { server, device } = harness;
+    // The report makes the copy a create needs.
+    expect((await device.status()).ok).toBe(true);
+    const queued = await device.create({
+      type: "core.note",
+      properties: { title: "zqwaiting", body: "not sent" },
+    });
+    expect(queued.ok, JSON.stringify(queued)).toBe(true);
+    scriptPartial(server, () => true);
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(false);
+    const filling = await device.status();
+    expect(filling.ok, JSON.stringify(filling)).toBe(true);
+    if (!filling.ok) return;
+    expect(filling.value.hydration).toBe("in_progress");
+    // The witness: the waiting write is a row the copy holds, so `items`
+    // counts it, and a caller setting `items` against the count misreads.
+    expect(filling.value.items).toBe(2);
+    expect(
+      [filling.value.items_listed, filling.value.items_expected],
+      "the rows the listings brought counted the waiting write, so the progress against the server's count can pass the whole",
+    ).toEqual([1, 3]);
   });
 
   it("leaves the expected count out of its report where the server did not count the slice", async () => {

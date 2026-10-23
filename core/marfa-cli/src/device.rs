@@ -237,9 +237,12 @@ pub enum DeviceCommand {
     },
     /// What the local copy holds and where it came from.
     ///
-    /// While a hydration fills the copy, the report also gives the items the
+    /// While a hydration fills the copy, the report also gives the rows its
+    /// listings have brought, `items_listed` under --json, and the items the
     /// server counted for the slice when the hydration started, where it
-    /// counted them: `items_expected` under --json.
+    /// counted them, `items_expected`. Set the first against the second to
+    /// show how far it has come; the item count also holds pinned rows and
+    /// writes still waiting.
     Status,
     /// The item types the copy holds, read from it alone, the ones an app
     /// declares for it, and the server's.
@@ -1388,7 +1391,7 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
                     }
                 };
                 format!(
-                    "server {}\ninstance {}\nslice {} at {}\nedge types held whole {}\npinned {}\ncursor {}\nhydration {}\ncatalog version {}\n{} item(s){}, {} edge(s)",
+                    "server {}\ninstance {}\nslice {} at {}\nedge types held whole {}\npinned {}\ncursor {}\nhydration {}\ncatalog version {}\n{} item(s), {} edge(s){}",
                     status.server_origin.as_deref().unwrap_or("(none)"),
                     status.instance_id.as_deref().unwrap_or("(none)"),
                     listed(&status.slice_types),
@@ -1404,10 +1407,14 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
                         .catalog_version
                         .map_or_else(|| "(none)".into(), |version| version.to_string()),
                     status.items,
-                    status
-                        .items_expected
-                        .map_or_else(String::new, |expected| format!(" of {expected}")),
-                    status.edges
+                    status.edges,
+                    match (status.items_listed, status.items_expected) {
+                        (Some(listed), Some(expected)) => {
+                            format!("\nlisted {listed} of {expected}")
+                        }
+                        (Some(listed), None) => format!("\nlisted {listed}"),
+                        _ => String::new(),
+                    }
                 ) + &format!("\n{}", file_cache_text(&status.file_cache))
             })
         }

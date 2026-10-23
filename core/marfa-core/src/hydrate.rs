@@ -128,6 +128,7 @@ fn hydrate_inner(
             )?,
             None => store::meta_delete(&tx, store::META_ITEMS_EXPECTED)?,
         }
+        store::meta_set(&tx, store::META_ITEMS_LISTED, "0")?;
         tx.commit()?;
     }
     #[cfg(debug_assertions)]
@@ -140,6 +141,9 @@ fn hydrate_inner(
         };
 
         let mut pages = 0u64;
+        // The expected count is of the slice's listings, so pinned rows and
+        // queued creates, which `items` also counts, stay out of this one.
+        let mut listed_rows = std::collections::HashSet::new();
         let listings: Vec<Option<&str>> = types
             .iter()
             .map(|declared| (declared != store::EVERY_TYPE).then_some(declared.as_str()))
@@ -182,6 +186,12 @@ fn hydrate_inner(
                 for edge in &overflow {
                     store::put_server_edge(&tx, edge)?;
                 }
+                listed_rows.extend(page.data.iter().map(|row| row.item.id.clone()));
+                store::meta_set(
+                    &tx,
+                    store::META_ITEMS_LISTED,
+                    &listed_rows.len().to_string(),
+                )?;
                 tx.commit()?;
                 let Some(next) = page.next_cursor.clone() else {
                     break;
@@ -222,12 +232,14 @@ fn hydrate_inner(
         }
 
         // A pin the answer leaves out names no row the key may read outside
-        // the bin, and stays without one (`device/pin-gone-kept`).
+        // the bin, and stays without one (`device/pin-gone-kept`). A pin the
+        // queue alone holds is a create whose answer may have been lost after
+        // the server took it, so only a row the listings brought is skipped.
         let pinned: Vec<String> = {
             let conn = core.conn()?;
             let mut unheld = Vec::new();
             for id in store::pins(&conn)? {
-                if !store::item_held(&conn, &id)? {
+                if !crate::reach::answered(&conn, &id)? {
                     unheld.push(id);
                 }
             }
@@ -286,6 +298,7 @@ fn hydrate_inner(
             )?;
             store::meta_delete(&tx, store::META_HYDRATE_STATE)?;
             store::meta_delete(&tx, store::META_ITEMS_EXPECTED)?;
+            store::meta_delete(&tx, store::META_ITEMS_LISTED)?;
             let counts = (store::count(&tx, "items")?, store::count(&tx, "edges")?);
             tx.commit()?;
             counts
@@ -1611,6 +1624,7 @@ mod tests {
         );
         let status = core.status().unwrap();
         assert_eq!(status.items, 1);
+        assert_eq!(status.items_listed, Some(1));
         assert_eq!(status.items_expected, Some(3));
 
         ready.store(true, Ordering::SeqCst);
@@ -1630,6 +1644,108 @@ mod tests {
         // does not hold as absent.
         assert_eq!(core.get("fourth"), Ok(None));
         assert_eq!(core.status().unwrap().items_expected, None);
+    }
+
+    /// The queue is laid over the copy before the walk of pins, so a pinned
+    /// create the server committed, whose answer never came back, is held as
+    /// its queued placeholder when the walk asks which pins it holds.
+    #[test]
+    fn a_pinned_create_whose_answer_was_lost_is_read_from_the_server() {
+        let server = Scripted::start();
+        let (core, _) = pinned_copy(&server, 0);
+        let queued = core
+            .create_item(&crate::Draft {
+                r#type: "core.note".into(),
+                properties: serde_json::from_value(json!({"title": "sent", "body": "kept"}))
+                    .unwrap(),
+                ..Default::default()
+            })
+            .unwrap();
+        let id = queued.item_id.unwrap();
+        store::pin(&core.conn().unwrap(), &id).unwrap();
+        let committed: Value =
+            serde_json::from_str(&scripted::item_payload("item.updated", &id, "core.note", 2))
+                .unwrap();
+        let body = json!({
+            "items": [committed["item"]],
+            "metadata": [{"item_id": id, "tags": [], "extensions": {}}],
+            "listed": [false],
+        });
+        server.on(
+            "/items/bulk-get",
+            vec![scripted::certified(scripted::json(200, &body.to_string()))],
+        );
+
+        hydrate(&core).unwrap();
+
+        assert_eq!(
+            server.seen("/items/bulk-get").len(),
+            1,
+            "the pinned create was not read"
+        );
+        assert_eq!(core.get(&id).unwrap().unwrap().version, 2);
+    }
+
+    #[test]
+    fn a_copy_filling_up_reports_the_rows_its_listings_brought_apart_from_pins_and_the_queue() {
+        let server = Scripted::start();
+        let core = copy(&server);
+        store::replace_catalog(&core.conn().unwrap(), &crate::builtin::catalog().unwrap()).unwrap();
+        core.create_item(&crate::Draft {
+            r#type: "core.note".into(),
+            properties: serde_json::from_value(json!({"title": "waiting", "body": "unsent"}))
+                .unwrap(),
+            ..Default::default()
+        })
+        .unwrap();
+        store::pin(&core.conn().unwrap(), "pinned").unwrap();
+        server.on(
+            "/items/stats",
+            vec![scripted::json(200, r#"{"core.note":2}"#)],
+        );
+        server.on("/items", vec![page(&["first", "second"], None)]);
+        server.on("/items/bulk-get", vec![bulk(&[("pinned", false)])]);
+        let ready = std::sync::Arc::new(AtomicBool::new(false));
+        server.on(
+            "/events",
+            vec![
+                scripted::stream(
+                    vec![scripted::copy_marker("stream_cursor", "10")],
+                    Then::End,
+                ),
+                Answer::WaitFor {
+                    ready: std::sync::Arc::clone(&ready),
+                    answer: Box::new(scripted::stream(
+                        vec![
+                            scripted::copy_marker("stream_cursor", "10"),
+                            scripted::copy_marker("stream_live", "10"),
+                        ],
+                        Then::End,
+                    )),
+                },
+            ],
+        );
+        let hydrating = {
+            let core = std::sync::Arc::clone(&core);
+            std::thread::spawn(move || hydrate(&core))
+        };
+        server.wait_for("/events", 2, std::time::Duration::from_secs(10));
+
+        let status = core.status().unwrap();
+        assert_eq!(status.hydration, Hydration::InProgress);
+        // The witness: `items` counts the pin and the waiting create, so set
+        // against the server's count it passes the whole.
+        assert_eq!(status.items, 4);
+        assert_eq!(
+            (status.items_listed, status.items_expected),
+            (Some(2), Some(2)),
+            "the rows the listings brought counted a pin or a waiting create"
+        );
+
+        ready.store(true, Ordering::SeqCst);
+        hydrating.join().unwrap().unwrap();
+        let status = core.status().unwrap();
+        assert_eq!((status.items_listed, status.items_expected), (None, None));
     }
 
     #[test]

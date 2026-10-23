@@ -436,7 +436,7 @@ While its copy has never hydrated, a device MUST answer a local read from what t
 
 ### `device/report-fields`
 
-A device MUST report its state as the origin it is bound to, the instance it was hydrated from, its slice's types and tier, the edge types it holds whole, the rows it holds pinned, its cursor, how many items and edges it holds, the version of the catalog it holds and its hydration, with the items expected under `device/report-items-expected`.
+A device MUST report its state as the origin it is bound to, the instance it was hydrated from, its slice's types and tier, the edge types it holds whole, the rows it holds pinned, its cursor, how many items and edges it holds, the version of the catalog it holds and its hydration, with the items expected under `device/report-items-expected` and the items listed under `device/report-items-listed`.
 
 **Tests:** `device/working-copy.test.ts › reports its slice, cursor and hydration state before it has hydrated`, `› holds a named edge type whole, whichever end it holds`, `device/catch-up.test.ts › keeps a pinned row outside the slice current`, `› refuses reads after the cursor ages out, until a hydration`, `device/queue.test.ts › sends nothing to another instance at the same address, keeping the queue`, `device/catalog.test.ts › moves the catalog version when a catch-up reads a changed catalog, and only then`.
 
@@ -472,7 +472,23 @@ While a hydration has started and not completed, whether it still runs or was in
 
 Where the server counted the items of its slice when a hydration started, while that hydration has not completed, a device MUST report the count as `items_expected`.
 
-**Reason:** a caller shows how far a long hydration has come by setting `items` against it.
+**Reason:** a caller shows how far a long hydration has come by setting `items_listed` against it. `items` is not that figure: it also counts the rows the copy holds pinned outside the slice and the creates still waiting, so set against the count it can pass the whole.
+
+**Tests:** `device/working-copy.test.ts › reports the items it holds and the items the server counted while a hydration fills the copy`.
+
+### `device/report-items-listed`
+
+While a hydration has started and not completed, a device MUST report as `items_listed` how many rows the listings of that hydration have brought to the copy.
+
+**Reason:** it counts what `items_expected` counts, the rows the slice's listings answer, so the two set against each other say how far the hydration has come.
+
+**Tests:** `device/working-copy.test.ts › reports the items it holds and the items the server counted while a hydration fills the copy`, `› reports the rows its listings brought apart from a write still waiting while a hydration fills the copy`.
+
+### `device/report-items-listed-absent`
+
+If no hydration has started and not completed, then a device MUST leave `items_listed` out of its state report.
+
+**Reason:** a count from a finished hydration says nothing about the copy now.
 
 **Tests:** `device/working-copy.test.ts › reports the items it holds and the items the server counted while a hydration fills the copy`.
 

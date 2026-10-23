@@ -412,6 +412,9 @@ pub struct Status {
     /// While a hydration fills the copy, how many items its slice held on the
     /// server when it started; none where the server did not count them.
     pub items_expected: Option<u64>,
+    /// While a hydration fills the copy, how many rows its listings have
+    /// brought, the figure to set against `items_expected`.
+    pub items_listed: Option<u64>,
     pub edges: u64,
     /// Moves each time a refresh changes the catalog; none where the copy has
     /// never held one.
@@ -2101,6 +2104,7 @@ impl Core {
             },
             items: status.items,
             items_expected: status.items_expected,
+            items_listed: status.items_listed,
             edges: status.edges,
             catalog_version: status.catalog_version,
             file_cache: status.file_cache.into(),

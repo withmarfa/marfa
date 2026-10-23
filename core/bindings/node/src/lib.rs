@@ -266,6 +266,9 @@ pub struct Status {
     /// While a hydration fills the copy, how many items its slice held on the
     /// server when it started; absent where the server did not count them.
     pub items_expected: Option<i64>,
+    /// While a hydration fills the copy, how many rows its listings have
+    /// brought, the figure to set against `items_expected`.
+    pub items_listed: Option<i64>,
     pub edges: i64,
     /// Moves each time a refresh changes the catalog; absent where the copy
     /// has never held one.
@@ -2127,6 +2130,7 @@ impl MarfaCore {
             hydration: status.hydration.into(),
             items: count(status.items),
             items_expected: status.items_expected.map(count),
+            items_listed: status.items_listed.map(count),
             edges: count(status.edges),
             catalog_version: status.catalog_version.map(count),
             file_cache: status.file_cache.into(),
