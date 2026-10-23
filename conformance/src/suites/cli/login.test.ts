@@ -176,6 +176,8 @@ describe("the owner", () => {
     // The binary's poll answers the token set, printed after the code line.
     const code = await once(login, "close");
     expect(code, stderr).toBe(0);
+    // Asking for a device code and for the token changes no data.
+    expect(stderr).not.toContain("marfa: writing to");
     const rest = stdout.slice(stdout.indexOf("\n") + 1);
     const token = JSON.parse(rest) as {
       access_token: string;

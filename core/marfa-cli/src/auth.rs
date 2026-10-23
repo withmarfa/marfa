@@ -1210,6 +1210,72 @@ mod tests {
     }
 
     #[test]
+    fn no_step_of_signing_in_is_announced_as_a_write() {
+        let root = format!(
+            r#"{{"name":"marfa","contract":{}}}"#,
+            marfa_core::contract::CONTRACT_VERSION
+        );
+        let door = Door::open(vec![
+            Answer::json("201 Created", r#"{"client_id":"issued"}"#),
+            Answer::json(
+                "200 OK",
+                r#"{"device_code":"dc","user_code":"ABCD1234","verification_uri":"http://door.invalid/auth/device","expires_in":600,"interval":1}"#,
+            ),
+            Answer::json(
+                "200 OK",
+                r#"{"access_token":"marfa_at_1","refresh_token":"marfa_rt_1","token_type":"Bearer","expires_in":3600}"#,
+            ),
+            Answer::json("200 OK", &root),
+            Answer::json(
+                "200 OK",
+                r#"{"access_token":"marfa_at_2","refresh_token":"marfa_rt_2","token_type":"Bearer","expires_in":3600}"#,
+            ),
+            Answer::json("200 OK", "{}"),
+            Answer::json("201 Created", r#"{"id":"i"}"#),
+        ]);
+        let origin = door.url.clone();
+        let discovery = waiting_discovery(&origin);
+        let client = register(&discovery, Some("studio")).unwrap();
+        let code = device_code(&discovery, &client, "*:read").unwrap();
+        assert!(matches!(
+            poll(&discovery, &client, &code.device_code).unwrap(),
+            Poll::Token(_)
+        ));
+        let _keychain = credentials::hold(&origin);
+        credentials::keep(&origin, &stale_token(&discovery.token_endpoint)).unwrap();
+        let mut kept = refresh(&origin, None).unwrap();
+        if let Kept::Token {
+            revocation_endpoint,
+            ..
+        } = &mut kept
+        {
+            revocation_endpoint.clone_from(&discovery.revocation_endpoint);
+        }
+        assert!(revoke(&kept).unwrap());
+        assert_eq!(crate::writing::announced(), Vec::<String>::new());
+        // Witness: a write to the same server is announced.
+        Remote::public_at(&origin)
+            .unwrap()
+            .json(&Request::post(&["items"]).public())
+            .unwrap();
+        assert_eq!(crate::writing::announced(), vec![origin]);
+        let received = door.received();
+        let paths: Vec<&str> = received.iter().map(|sent| sent.path()).collect();
+        assert_eq!(
+            paths,
+            [
+                "/auth/oauth2/register",
+                "/auth/device/code",
+                "/auth/oauth2/token",
+                "/",
+                "/auth/oauth2/token",
+                "/auth/oauth2/revoke",
+                "/items",
+            ]
+        );
+    }
+
+    #[test]
     fn no_debug_shows_a_token_or_a_device_code() {
         let tokens = TokenSet {
             access_token: "access-witness".into(),

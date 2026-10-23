@@ -1952,9 +1952,11 @@ When a command is about to send a server, with a key or without one, or the priv
 
 ### `device/command-read-no-line`
 
-When a command sends a server only requests that change no data, including a read sent as `POST`, the CLI MUST NOT print `marfa: writing to`.
+When a command sends a server only requests that change no data, including a read sent as `POST` and each step of signing in (registering the client, asking for a device code, asking for a token, refreshing it and revoking it), the CLI MUST NOT print `marfa: writing to`.
 
-**Tests:** `cli/profiles.test.ts › names the server and profile on stderr before the first write, under --json too, and nothing for a read`.
+**Reason:** signing in changes no data the server holds, so the line would warn of a write that is not made.
+
+**Tests:** `cli/profiles.test.ts › names the server and profile on stderr before the first write, under --json too, and nothing for a read`, `cli/login.test.ts › signs in with a device code approved in a browser session, and the token reaches the data plane`.
 
 ### `device/command-json-refusal-last`
 
