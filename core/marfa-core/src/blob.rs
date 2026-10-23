@@ -502,8 +502,7 @@ const LINK_IDLE: Duration = Duration::from_secs(60);
 /// ends it.
 const LINK_BODY_MOST: Duration = Duration::from_secs(6 * 60 * 60);
 
-/// What a link sends is bounded by what the cache holds: a body past it would
-/// be trimmed the moment it was kept.
+/// What a link sends is bounded by `most`, the most one fetch pulls.
 fn pull(cache: &Cache, hash: &str, link: &str, most: u64, idle: Duration) -> Result<PathBuf> {
     let bytes = open(link).map_err(|reason| CoreError::BytesAbsent {
         hash: hash.to_string(),
