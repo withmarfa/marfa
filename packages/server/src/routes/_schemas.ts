@@ -348,7 +348,7 @@ const THE_ITEM = "The item.";
 
 /** `listed`, on every item a conditional read returns. */
 const LISTED_TEXT =
-  "`true` if listings show you this item, `false` if `source_filter` leaves it out of them and you can read it only by ID. Present only when you send `X-Marfa-Read-View`.";
+  "`true` if listings show you this item, `false` if `source_filter` leaves it out of them and you can read it only by ID. Present only when you send `X-Marfa-Reach`.";
 const THE_ITEMS_METADATA = "The item's metadata.";
 
 export const ItemWithMetadataSchema = z

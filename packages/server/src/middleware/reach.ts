@@ -7,10 +7,10 @@ import { shapedError } from "./error-handler.js";
 import type { Storage } from "../storage/interface.js";
 import { holdArmed, holdAt } from "../control/faults.js";
 import {
-  READ_VIEW_HEADER,
-  READ_VIEW_PATTERN,
-  readViewAuthority,
-} from "../storage/read-view.js";
+  REACH_HEADER,
+  REACH_PATTERN,
+  reachAuthority,
+} from "../storage/reach.js";
 
 export const CONDITIONAL_READ_OPERATIONS = new Set([
   "listItems",
@@ -29,14 +29,14 @@ const ATTRIBUTED_REFUSALS = new Set<string>([
   ErrorCode.TYPE_NOT_PERMITTED,
   ErrorCode.EDGE_PERMISSION_DENIED,
 ]);
-export function invalidReadViewRequest(message: string): MarfaError {
+export function invalidReachRequest(message: string): MarfaError {
   return new MarfaError(ErrorCode.VALIDATION_ERROR, message);
 }
-export function requestReadView(c: Context<AppEnv>): string | undefined {
-  const raw = c.req.header(READ_VIEW_HEADER);
-  if (raw !== undefined && !READ_VIEW_PATTERN.test(raw))
-    throw invalidReadViewRequest(
-      "X-Marfa-Read-View must be exactly one 64-character lowercase hexadecimal value",
+export function requestReach(c: Context<AppEnv>): string | undefined {
+  const raw = c.req.header(REACH_HEADER);
+  if (raw !== undefined && !REACH_PATTERN.test(raw))
+    throw invalidReachRequest(
+      "X-Marfa-Reach must be exactly one 64-character lowercase hexadecimal value",
     );
   return raw;
 }
@@ -50,7 +50,7 @@ export const conditionalReadBoundary = createMiddleware<AppEnv>(
   async (c, next) => {
     if (
       (c.req.method !== "GET" && c.req.method !== "POST") ||
-      c.req.header(READ_VIEW_HEADER) === undefined
+      c.req.header(REACH_HEADER) === undefined
     )
       return next();
     return c.get("copyReadBoundary")(c, next);
@@ -63,7 +63,7 @@ export function copyReadBoundary(
   signingKey: Buffer,
 ) {
   return createMiddleware<AppEnv>(async (c, next) => {
-    const expected = requestReadView(c);
+    const expected = requestReach(c);
     if (expected === undefined) return next();
     if (
       c.req.path.replace(/\/$/, "") === "/items" &&
@@ -72,7 +72,7 @@ export function copyReadBoundary(
         .map((part) => part.trim())
         .includes("metadata")
     ) {
-      throw invalidReadViewRequest(
+      throw invalidReachRequest(
         "Conditional item pages require include=metadata",
       );
     }
@@ -82,7 +82,7 @@ export function copyReadBoundary(
       throw new MarfaError(ErrorCode.UNAUTHORIZED, "Authentication required");
     const result = await storage.runInReadSnapshot(
       async (pin) => {
-        const authority = await readViewAuthority(
+        const authority = await reachAuthority(
           storage,
           bound,
           pin,
@@ -102,7 +102,7 @@ export function copyReadBoundary(
               }
             : undefined,
         );
-        c.set("readViewAuthority", authority);
+        c.set("reachAuthority", authority);
         if (holdArmed("read-snapshot")) await holdAt("read-snapshot");
         await next();
         const error = shapedError(c.error);
@@ -111,7 +111,7 @@ export function copyReadBoundary(
           (ATTRIBUTED_REFUSALS.has(error.code) ||
             (c.req.path === "/keys/current" && error.code === "forbidden"));
         return {
-          readView: authority.readView,
+          reach: authority.reach,
           response: c.res,
           certify: (c.res.status >= 200 && c.res.status < 300) || attributed,
         };
@@ -119,7 +119,7 @@ export function copyReadBoundary(
       { signal: c.req.raw.signal },
     );
     if (result.certify) {
-      result.response.headers.set(READ_VIEW_HEADER, result.readView);
+      result.response.headers.set(REACH_HEADER, result.reach);
       result.response.headers.set("Cache-Control", "no-store");
       c.res = result.response;
     }

@@ -32,7 +32,7 @@ pub(crate) fn library_copy(server: &Scripted, dir: &Path) -> Core {
         )
         .unwrap();
         store::meta_set(&conn, store::META_EVENT_CURSOR, "10").unwrap();
-        store::meta_set(&conn, crate::read_view::FENCE, scripted::FENCE).unwrap();
+        store::meta_set(&conn, crate::reach::FENCE, scripted::FENCE).unwrap();
         store::meta_set(&conn, store::META_INSTANCE_ID, scripted::INSTANCE).unwrap();
         store::meta_set(&conn, store::META_SLICE_TYPES, "[\"core.note\"]").unwrap();
         store::meta_set(&conn, store::META_SLICE_TIER, "library").unwrap();
@@ -258,7 +258,7 @@ fn a_lookup_another_instance_refuses_expires_the_copy_and_sends_nothing() {
     assert!(bodies(&server, "/items").is_empty(), "the create was sent");
     let conn = core.conn().unwrap();
     assert!(
-        crate::read_view::expired(&conn).unwrap(),
+        crate::reach::expired(&conn).unwrap(),
         "the drain told of another instance and left the copy current"
     );
     let row = crate::store::queued_write(&conn, &queued.id)

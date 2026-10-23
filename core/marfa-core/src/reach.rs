@@ -2,7 +2,7 @@ use rusqlite::Connection;
 
 use crate::{Core, Result, error::CoreError, http::Http, store};
 
-pub(crate) const FENCE: &str = "read_view";
+pub(crate) const FENCE: &str = "reach";
 const GENERATION: &str = "copy_generation";
 const PINS: &str = "pin_revision";
 
@@ -25,7 +25,7 @@ pub(crate) fn cursor(value: &str) -> Option<u64> {
 
 pub(crate) fn invalid() -> CoreError {
     CoreError::CopyExpired {
-        reason: "read_view_invalid".into(),
+        reason: "reach_invalid".into(),
     }
 }
 
@@ -35,7 +35,7 @@ pub(crate) fn event_payload(
     data: &str,
 ) -> Result<crate::wire::EventPayload> {
     // Data that does not parse as JSON says nothing against the copy's read
-    // view, and reading it again fails the same way. JSON that is not an
+    // reach, and reading it again fails the same way. JSON that is not an
     // event is a frame the copy cannot accept, whatever field fails first.
     // Read straight from the text, so a member named twice is refused as a
     // shape error rather than collapsed to its last value.
@@ -58,7 +58,7 @@ pub(crate) fn event_payload(
         if id.is_some()
             || name != Some(payload.event_type.as_str())
             || fields.len() != 4
-            || !["event_type", "cursor", "instance_id", "read_view"]
+            || !["event_type", "cursor", "instance_id", "reach"]
                 .iter()
                 .all(|key| fields.contains_key(*key))
         {
@@ -131,7 +131,7 @@ impl Context {
     }
 
     pub(crate) fn http(&self, http: &Http) -> Http {
-        http.for_view(&self.fence)
+        http.for_reach(&self.fence)
     }
 
     pub(crate) fn same_copy(&self, conn: &Connection) -> Result<()> {
@@ -196,7 +196,7 @@ impl Context {
     pub(crate) fn marker(&self, payload: &crate::wire::EventPayload, kind: &str) -> Result<u64> {
         if payload.event_type != kind
             || payload.instance_id.as_deref() != Some(&self.instance)
-            || payload.read_view.as_deref() != Some(&self.fence)
+            || payload.reach.as_deref() != Some(&self.fence)
         {
             return Err(invalid());
         }
@@ -284,7 +284,7 @@ mod tests {
         );
         let fence = "a".repeat(64);
         let marker = format!(
-            r#"{{"event_type":"stream_cursor","cursor":"1","cursor":"2","instance_id":"i","read_view":"{fence}"}}"#
+            r#"{{"event_type":"stream_cursor","cursor":"1","cursor":"2","instance_id":"i","reach":"{fence}"}}"#
         );
         assert_eq!(
             event_payload(Some("stream_cursor"), None, &marker).unwrap_err(),
@@ -292,7 +292,7 @@ mod tests {
         );
         // The witness: the same marker naming its cursor once is accepted.
         let once = format!(
-            r#"{{"event_type":"stream_cursor","cursor":"2","instance_id":"i","read_view":"{fence}"}}"#
+            r#"{{"event_type":"stream_cursor","cursor":"2","instance_id":"i","reach":"{fence}"}}"#
         );
         assert!(event_payload(Some("stream_cursor"), None, &once).is_ok());
     }
@@ -338,7 +338,7 @@ mod tests {
     }
 
     #[test]
-    fn read_view_malformed_copy_markers_must_expire() {
+    fn reach_malformed_copy_markers_must_expire() {
         use crate::scripted::*;
         let mut accepted = Vec::new();
         for (label, frames) in [
@@ -382,7 +382,7 @@ mod tests {
     }
 
     #[test]
-    fn read_view_late_instance_reply_must_not_expire_rebuilt_copy() {
+    fn reach_late_instance_reply_must_not_expire_rebuilt_copy() {
         use crate::scripted::*;
         let server = Scripted::start();
         let (_dir, core) = core(&server);
@@ -412,7 +412,7 @@ mod tests {
     }
 
     #[test]
-    fn read_view_identity_adoption_must_change_pin_revision() {
+    fn reach_identity_adoption_must_change_pin_revision() {
         let server = crate::scripted::Scripted::start();
         let (_dir, core) = core(&server);
         ready(&core);
@@ -429,7 +429,7 @@ mod tests {
     }
 
     #[test]
-    fn read_view_unpin_does_not_stop_held_stream() {
+    fn reach_unpin_does_not_stop_held_stream() {
         use crate::scripted::*;
         let server = Scripted::start();
         let (_dir, core) = core(&server);
@@ -481,10 +481,10 @@ mod tests {
     }
 
     #[test]
-    fn read_view_http_requires_proof_only_after_status_and_renewal_classification() {
+    fn reach_http_requires_proof_only_after_status_and_renewal_classification() {
         use crate::scripted::*;
         let server = Scripted::start();
-        let http = Http::new(&server.url(), "k").unwrap().for_view(FENCE);
+        let http = Http::new(&server.url(), "k").unwrap().for_reach(FENCE);
         let item = serde_json::from_str::<serde_json::Value>(&item_payload(
             "item.updated",
             "x",
@@ -497,7 +497,7 @@ mod tests {
             .to_string();
         server.on("/items/x", vec![certified(json(200, &body))]);
         assert_eq!(http.item("x").unwrap().unwrap().listed, Some(false));
-        assert_eq!(server.seen("/items/x")[0].read_view.as_deref(), Some(FENCE));
+        assert_eq!(server.seen("/items/x")[0].reach.as_deref(), Some(FENCE));
         for answer in [
             json(200, &body),
             certified(json(200, &body.replace(",\"listed\":false", ""))),
@@ -517,11 +517,11 @@ mod tests {
             server.on("/items/x", vec![answer]);
             assert!(http.item("x").unwrap_err().is_environmental());
         }
-        server.on("/items/x", vec![refusal(409, "read_view_changed")]);
+        server.on("/items/x", vec![refusal(409, "reach_changed")]);
         assert_eq!(
             http.item("x").unwrap_err(),
             CoreError::CopyExpired {
-                reason: "read_view_changed".into()
+                reason: "reach_changed".into()
             }
         );
         server.on("/items/x", vec![refusal(401, "unauthorized")]);
@@ -534,7 +534,7 @@ mod tests {
     }
 
     #[test]
-    fn read_view_catch_up_requires_real_live_with_complete_matching_tuple() {
+    fn reach_catch_up_requires_real_live_with_complete_matching_tuple() {
         use crate::scripted::*;
         let server = Scripted::start();
         let (_dir, core) = core(&server);
@@ -554,7 +554,7 @@ mod tests {
         let request = &server.seen("/events")[0];
         assert_eq!(request.query, "edges=all&copy=1");
         assert_eq!(request.last_event_id.as_deref(), Some("10"));
-        assert_eq!(request.read_view.as_deref(), Some(FENCE));
+        assert_eq!(request.reach.as_deref(), Some(FENCE));
         server.on(
             "/events",
             vec![stream(vec![copy_marker("stream_cursor", "10")], Then::End)],
@@ -583,7 +583,7 @@ mod tests {
     }
 
     #[test]
-    fn read_view_malformed_edge_type_expires_while_ordinary_decode_stays_typed() {
+    fn reach_malformed_edge_type_expires_while_ordinary_decode_stays_typed() {
         use crate::scripted::*;
         let server = Scripted::start();
         server.on(
@@ -593,13 +593,13 @@ mod tests {
         let http = Http::new(&server.url(), "k").unwrap();
         assert!(matches!(http.edge_types(), Err(CoreError::Decoding(_))));
         assert!(matches!(
-            http.for_view(FENCE).edge_types(),
+            http.for_reach(FENCE).edge_types(),
             Err(CoreError::CopyExpired { .. })
         ));
     }
 
     #[test]
-    fn read_view_local_pin_change_keeps_guard_but_external_change_refuses_it() {
+    fn reach_local_pin_change_keeps_guard_but_external_change_refuses_it() {
         let server = crate::scripted::Scripted::start();
         let (_dir, core) = core(&server);
         ready(&core);
@@ -623,7 +623,7 @@ mod tests {
     }
 
     #[test]
-    fn read_view_pin_aba_and_old_generation_reply_cannot_change_rebuilt_copy() {
+    fn reach_pin_aba_and_old_generation_reply_cannot_change_rebuilt_copy() {
         let server = crate::scripted::Scripted::start();
         let (_dir, core) = core(&server);
         ready(&core);
@@ -636,13 +636,13 @@ mod tests {
             assert!(old.same_copy(&conn).is_ok());
             advance_generation(&conn).unwrap();
         }
-        old.expire(&core, "read_view_changed").unwrap();
+        old.expire(&core, "reach_changed").unwrap();
         assert!(store::hydrated(&core.conn().unwrap()).unwrap());
         assert!(old.same_copy(&core.conn().unwrap()).is_err());
     }
 
     #[test]
-    fn read_view_hydration_keeps_build_unreadable_until_replay_live() {
+    fn reach_hydration_keeps_build_unreadable_until_replay_live() {
         use crate::scripted::*;
         let server = Scripted::start();
         let (_dir, core) = core(&server);
@@ -689,9 +689,9 @@ mod tests {
         assert_eq!(report.cursor, "11");
         assert!(store::hydrated(&core.conn().unwrap()).unwrap());
         let requests = server.seen("/events");
-        assert_eq!(requests[0].read_view, None);
+        assert_eq!(requests[0].reach, None);
         assert_eq!(requests[0].last_event_id, None);
-        assert_eq!(requests[1].read_view.as_deref(), Some(FENCE));
+        assert_eq!(requests[1].reach.as_deref(), Some(FENCE));
         assert_eq!(requests[1].last_event_id.as_deref(), Some("10"));
     }
 
@@ -883,7 +883,7 @@ mod tests {
     }
 
     #[test]
-    fn read_view_reader_refuses_missing_proof_without_mutating_writer_generation() {
+    fn reach_reader_refuses_missing_proof_without_mutating_writer_generation() {
         let server = crate::scripted::Scripted::start();
         let (dir, core) = core(&server);
         ready(&core);
@@ -907,7 +907,7 @@ mod tests {
     }
 
     #[test]
-    fn read_view_missing_instance_is_not_a_complete_offline_copy() {
+    fn reach_missing_instance_is_not_a_complete_offline_copy() {
         let server = crate::scripted::Scripted::start();
         let (_dir, core) = core(&server);
         ready(&core);
@@ -918,7 +918,7 @@ mod tests {
     }
 
     #[test]
-    fn read_view_source_excluded_pin_leaves_on_unpin_and_late_reply_cannot_restore_it() {
+    fn reach_source_excluded_pin_leaves_on_unpin_and_late_reply_cannot_restore_it() {
         use crate::scripted::*;
         let server = Scripted::start();
         let (_dir, core) = core(&server);
@@ -959,7 +959,7 @@ mod tests {
     }
 
     #[test]
-    fn read_view_environmental_preflight_preserves_existing_certified_copy() {
+    fn reach_environmental_preflight_preserves_existing_certified_copy() {
         use crate::scripted::*;
         let server = Scripted::start();
         let (_dir, core) = core(&server);
@@ -978,7 +978,7 @@ mod tests {
         assert_eq!(revision(&core.conn().unwrap(), GENERATION).unwrap(), 0);
     }
     #[test]
-    fn read_view_refused_overlay_is_removed_after_a_certified_older_read() {
+    fn reach_refused_overlay_is_removed_after_a_certified_older_read() {
         use crate::scripted::*;
         let server = Scripted::start();
         let (_dir, core) = core(&server);
@@ -1033,7 +1033,7 @@ mod tests {
     }
 
     #[test]
-    fn read_view_accepted_retry_removes_overlay_over_a_newer_event_baseline() {
+    fn reach_accepted_retry_removes_overlay_over_a_newer_event_baseline() {
         use crate::scripted::*;
         let server = Scripted::start();
         let (_dir, core) = core(&server);
@@ -1104,7 +1104,7 @@ mod tests {
     }
 
     #[test]
-    fn read_view_own_create_outside_listing_is_held_only_while_local_work_waits() {
+    fn reach_own_create_outside_listing_is_held_only_while_local_work_waits() {
         use crate::scripted::*;
         let server = Scripted::start();
         let (_dir, core) = core(&server);

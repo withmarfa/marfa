@@ -23,7 +23,7 @@ pub(crate) fn hydrate(
     every_type: bool,
     stop: &AtomicBool,
 ) -> Result<HydrateReport> {
-    let previous = crate::read_view::Context::capture_build(&*core.conn()?).ok();
+    let previous = crate::reach::Context::capture_build(&*core.conn()?).ok();
     let result = hydrate_inner(core, http, types, tier, edge_types, every_type, stop);
     let result = result.map_err(|error| match previous {
         Some(context) => context.failed(core, error).unwrap_or_else(|error| error),
@@ -51,26 +51,26 @@ fn hydrate_inner(
     // raised before then leaves it as it was.
     crate::catch_up::refuse_if_stopped(stop)?;
     let (mut instance, mut cursor, mut fence) = read_head(http, stop)?;
-    let mut view = http.for_view(&fence);
+    let mut under_reach = http.for_reach(&fence);
     crate::catch_up::refuse_if_stopped(stop)?;
     let (mut catalog_rows, registered_types, unregistered_types, registered_any) =
-        register_declared(core, &view, view.catalog()?, stop)?;
+        register_declared(core, &under_reach, under_reach.catalog()?, stop)?;
     if registered_any {
-        // A registration changes what the instance's read view certifies, so
-        // the head and the catalog read before it are of a view that has gone.
+        // A registration changes what the instance's reach certifies, so
+        // the head and the catalog read before it are of a reach that has gone.
         (instance, cursor, fence) = read_head(http, stop)?;
-        view = http.for_view(&fence);
-        catalog_rows = view.catalog()?;
+        under_reach = http.for_reach(&fence);
+        catalog_rows = under_reach.catalog()?;
     }
-    let http = &view;
+    let http = &under_reach;
     {
         let mut conn = core.conn()?;
         if store::hydrated(&conn)?
-            && (store::meta_get(&conn, crate::read_view::FENCE)?.as_deref() != Some(&fence)
+            && (store::meta_get(&conn, crate::reach::FENCE)?.as_deref() != Some(&fence)
                 || store::meta_get(&conn, store::META_INSTANCE_ID)?.as_deref() != Some(&instance))
         {
             let tx = conn.transaction()?;
-            crate::read_view::expire(&tx)?;
+            crate::reach::expire(&tx)?;
             tx.commit()?;
         }
     }
@@ -89,10 +89,10 @@ fn hydrate_inner(
     {
         let mut conn = core.conn()?;
         let tx = conn.transaction()?;
-        crate::read_view::advance_generation(&tx)?;
+        crate::reach::advance_generation(&tx)?;
         store::meta_set(&tx, store::META_HYDRATE_STATE, store::HYDRATE_IN_PROGRESS)?;
         store::meta_set(&tx, store::META_EVENT_CURSOR, &cursor)?;
-        store::meta_set(&tx, crate::read_view::FENCE, &fence)?;
+        store::meta_set(&tx, crate::reach::FENCE, &fence)?;
         store::meta_set(&tx, store::META_INSTANCE_ID, &instance)?;
         store::meta_set(&tx, store::META_SERVER_ORIGIN, &http.origin())?;
         store::meta_set(
@@ -113,7 +113,7 @@ fn hydrate_inner(
     }
     #[cfg(debug_assertions)]
     crate::fault::hold(|| "hydration-replacing");
-    let context = crate::read_view::Context::capture_build(&*core.conn()?)?;
+    let context = crate::reach::Context::capture_build(&*core.conn()?)?;
     let result = (|| {
         let catalog = {
             let conn = core.conn()?;
@@ -148,10 +148,10 @@ fn hydrate_inner(
                 let tx = conn.transaction()?;
                 context.check(&tx)?;
                 for row in &page.data {
-                    crate::read_view::set_listed(
+                    crate::reach::set_listed(
                         &tx,
                         &row.item.id,
-                        row.listed.ok_or_else(crate::read_view::invalid)?,
+                        row.listed.ok_or_else(crate::reach::invalid)?,
                     )?;
                     // Put, not taken: the queue is laid over once, after the
                     // build catches up.
@@ -173,7 +173,7 @@ fn hydrate_inner(
                 // without this check a hydration spins forever.
                 let next = Some(next);
                 if !seen.insert(next.clone()) {
-                    return Err(crate::read_view::invalid());
+                    return Err(crate::reach::invalid());
                 }
                 page_cursor = next;
             }
@@ -198,7 +198,7 @@ fn hydrate_inner(
                     break;
                 };
                 if !seen.insert(next.clone()) {
-                    return Err(crate::read_view::invalid());
+                    return Err(crate::reach::invalid());
                 }
                 page_cursor = Some(next);
             }
@@ -229,10 +229,10 @@ fn hydrate_inner(
             let tx = conn.transaction()?;
             context.check(&tx)?;
             for row in &rows {
-                crate::read_view::set_listed(
+                crate::reach::set_listed(
                     &tx,
                     &row.item.id,
-                    row.listed.ok_or_else(crate::read_view::invalid)?,
+                    row.listed.ok_or_else(crate::reach::invalid)?,
                 )?;
                 // Put, not taken, as for a page.
                 store::put_server_item(&tx, &row.item, Some(&row.metadata.tags), &catalog)?;
@@ -662,10 +662,10 @@ pub(crate) fn hold_row(
     row: &WireItemWithMetadata,
     edges: &[WireEdge],
 ) -> Result<()> {
-    crate::read_view::set_listed(
+    crate::reach::set_listed(
         conn,
         &row.item.id,
-        row.listed.ok_or_else(crate::read_view::invalid)?,
+        row.listed.ok_or_else(crate::reach::invalid)?,
     )?;
     store::take_server_item(conn, &row.item, Some(&row.metadata.tags), catalog)?;
     for edge in edges {
@@ -686,13 +686,13 @@ pub(crate) fn fetch_overflow(
     let mut seen = std::collections::HashSet::new();
     while let Some(asked_for) = cursor {
         if !seen.insert(asked_for.clone()) {
-            return Err(crate::read_view::invalid());
+            return Err(crate::reach::invalid());
         }
         let page = http.item_edges_page(item_id, edge_type, Some(&asked_for))?;
         edges.extend(page.data);
         // A repeated cursor would loop forever.
         if page.next_cursor.as_deref() == Some(asked_for.as_str()) {
-            return Err(crate::read_view::invalid());
+            return Err(crate::reach::invalid());
         }
         cursor = page.next_cursor;
     }
@@ -716,33 +716,33 @@ fn read_head(http: &Http, stop: &AtomicBool) -> Result<(String, String, String)>
                 Ok(Some(Frame::Comment(_))) => continue,
                 Ok(Some(Frame::Event { id, name, data })) => {
                     let payload =
-                        crate::read_view::event_payload(name.as_deref(), id.as_deref(), &data)?;
+                        crate::reach::event_payload(name.as_deref(), id.as_deref(), &data)?;
                     if id.is_some() || name.as_deref() != Some(payload.event_type.as_str()) {
-                        return Err(crate::read_view::invalid());
+                        return Err(crate::reach::invalid());
                     }
                     if payload.event_type == "stream_incomplete" {
                         return Err(CoreError::StreamIncomplete {
                             reason: payload.reason.unwrap_or_default(),
                         });
                     }
-                    if payload.event_type == "read_view_changed" {
+                    if payload.event_type == "reach_changed" {
                         return Err(CoreError::CopyExpired {
-                            reason: "read_view_changed".into(),
+                            reason: "reach_changed".into(),
                         });
                     }
                     if payload.event_type != "stream_cursor" {
-                        return Err(crate::read_view::invalid());
+                        return Err(crate::reach::invalid());
                     }
-                    let cursor = payload.cursor.ok_or_else(crate::read_view::invalid)?;
+                    let cursor = payload.cursor.ok_or_else(crate::reach::invalid)?;
                     let instance = payload
                         .instance_id
                         .filter(|s| !s.is_empty())
-                        .ok_or_else(crate::read_view::invalid)?;
+                        .ok_or_else(crate::reach::invalid)?;
                     let fence = payload
-                        .read_view
-                        .filter(|s| crate::read_view::valid_fence(s))
-                        .ok_or_else(crate::read_view::invalid)?;
-                    crate::read_view::cursor(&cursor).ok_or_else(crate::read_view::invalid)?;
+                        .reach
+                        .filter(|s| crate::reach::valid_fence(s))
+                        .ok_or_else(crate::reach::invalid)?;
+                    crate::reach::cursor(&cursor).ok_or_else(crate::reach::invalid)?;
                     return Ok((instance, cursor, fence));
                 }
                 Ok(None) | Err(_) => break,
@@ -934,7 +934,7 @@ mod tests {
     }
 
     #[test]
-    fn a_hydration_reads_pinned_rows_a_hundred_to_a_request_under_its_read_view() {
+    fn a_hydration_reads_pinned_rows_a_hundred_to_a_request_under_its_reach() {
         let server = Scripted::start();
         let (core, pinned) = pinned_copy(&server, 250);
         server.on(
@@ -951,7 +951,7 @@ mod tests {
         let asked = server.seen("/items/bulk-get");
         let mut named = Vec::new();
         for seen in &asked {
-            assert_eq!(seen.read_view.as_deref(), Some(scripted::FENCE));
+            assert_eq!(seen.reach.as_deref(), Some(scripted::FENCE));
             let body: Value = serde_json::from_slice(&seen.body).unwrap();
             assert_eq!(body["include"], json!(["edges", "metadata", "system"]));
             named.extend(
@@ -991,9 +991,9 @@ mod tests {
         ] {
             assert_eq!(store::item_held(&conn, id).unwrap(), held, "{id}");
         }
-        assert!(crate::read_view::listed(&conn, "pin-000").unwrap());
+        assert!(crate::reach::listed(&conn, "pin-000").unwrap());
         assert!(
-            !crate::read_view::listed(&conn, "pin-001").unwrap(),
+            !crate::reach::listed(&conn, "pin-001").unwrap(),
             "the answer's listed was not kept for the row it pairs with"
         );
     }
@@ -1025,7 +1025,7 @@ mod tests {
     }
 
     /// Each is an answer the hydration cannot take as the server's word on
-    /// its read view, so the copy expires as on any other conditional read.
+    /// its reach, so the copy expires as on any other conditional read.
     #[test]
     fn a_bulk_answer_of_pinned_rows_that_cannot_be_trusted_expires_the_copy() {
         let mut short = bulk_body(&[("pin-000", true), ("pin-001", true)]);
@@ -1038,37 +1038,37 @@ mod tests {
             (
                 "listed shorter than items",
                 scripted::certified(scripted::json(200, &short.to_string())),
-                "read_view_invalid",
+                "reach_invalid",
             ),
             (
                 "no listed",
                 scripted::certified(scripted::json(200, &unlisted.to_string())),
-                "read_view_invalid",
+                "reach_invalid",
             ),
             (
                 "metadata of another row",
                 scripted::certified(scripted::json(200, &unpaired.to_string())),
-                "read_view_invalid",
+                "reach_invalid",
             ),
             (
                 "a row not asked for",
                 bulk(&[("stranger", true)]),
-                "read_view_invalid",
+                "reach_invalid",
             ),
             (
                 "a row twice",
                 bulk(&[("pin-000", true), ("pin-000", true)]),
-                "read_view_invalid",
+                "reach_invalid",
             ),
             (
                 "no certificate",
                 scripted::json(200, &bulk_body(&[("pin-000", true)]).to_string()),
-                "read_view_invalid",
+                "reach_invalid",
             ),
             (
-                "a changed view",
-                scripted::refusal(409, "read_view_changed"),
-                "read_view_changed",
+                "a changed reach",
+                scripted::refusal(409, "reach_changed"),
+                "reach_changed",
             ),
         ];
         for (case, answer, reason) in cases {
@@ -1083,7 +1083,7 @@ mod tests {
                 "{case}"
             );
             let conn = core.conn().unwrap();
-            assert!(crate::read_view::expired(&conn).unwrap(), "{case}");
+            assert!(crate::reach::expired(&conn).unwrap(), "{case}");
             assert_eq!(store::pins(&conn).unwrap(), pinned, "{case}");
         }
         // The witness: the same copy hydrates on an answer it can trust.
@@ -1116,7 +1116,7 @@ mod tests {
         text[..text.len() / 2].to_string()
     }
 
-    /// An answer that is not JSON says nothing against the copy's read view,
+    /// An answer that is not JSON says nothing against the copy's reach,
     /// and reading it again fails the same way, so the hydration ends
     /// `decoding` and does not expire the copy.
     #[test]
@@ -1155,7 +1155,7 @@ mod tests {
                 other => panic!("{case}: ended {other:?}"),
             }
             let conn = core.conn().unwrap();
-            assert!(!crate::read_view::expired(&conn).unwrap(), "{case}");
+            assert!(!crate::reach::expired(&conn).unwrap(), "{case}");
             assert_eq!(store::pins(&conn).unwrap(), pinned, "{case}");
             drop(conn);
 
@@ -1220,11 +1220,11 @@ mod tests {
             assert_eq!(
                 hydrate(&core).unwrap_err(),
                 CoreError::CopyExpired {
-                    reason: "read_view_invalid".into()
+                    reason: "reach_invalid".into()
                 },
                 "{path}: {body}"
             );
-            assert!(crate::read_view::expired(&core.conn().unwrap()).unwrap());
+            assert!(crate::reach::expired(&core.conn().unwrap()).unwrap());
         }
     }
 

@@ -1,7 +1,7 @@
 import { EVENT_LIMITS } from "./_event-limits.js";
 import { buildCopyStream, copyStreamRequest } from "./events-copy.js";
 import { trackStream } from "./open-streams.js";
-import { invalidReadViewRequest } from "../middleware/read-view.js";
+import { invalidReachRequest } from "../middleware/reach.js";
 import { OpenAPIHono } from "@hono/zod-openapi";
 import { type Context, type MiddlewareHandler } from "hono";
 import { EventQuerySchema, eventStreamRoute } from "./events-schema.js";
@@ -265,7 +265,7 @@ const MAX_HELD_FRAMES = REPLAY_BATCH_SIZE;
 type HeldFrame = LiveFrame;
 
 export interface EventRoutesOptions {
-  readView?: { instanceId: string; signingKey: Buffer };
+  reach?: { instanceId: string; signingKey: Buffer };
   /** Override for the head-read budget; tests drive the degraded path —
    *  no announcement, hold released — with a short one. Default is
    *  `HEAD_READ_TIMEOUT_MS`. */
@@ -511,10 +511,10 @@ export function eventRoutes(
 
   // After the type check, so a credential that may read nothing is told so
   // first, as the copy stream tells it.
-  const refuseReadViewHeader: MiddlewareHandler<AppEnv> = async (c, next) => {
-    if (c.req.header("X-Marfa-Read-View") !== undefined) {
+  const refuseReachHeader: MiddlewareHandler<AppEnv> = async (c, next) => {
+    if (c.req.header("X-Marfa-Reach") !== undefined) {
       requireAuth(c);
-      throw invalidReadViewRequest("X-Marfa-Read-View requires copy=1");
+      throw invalidReachRequest("X-Marfa-Reach requires copy=1");
     }
     await next();
   };
@@ -523,7 +523,7 @@ export function eventRoutes(
     "/",
     copyMode,
     readsSomeType,
-    refuseReadViewHeader,
+    refuseReachHeader,
     refuseUndeclaredEventKeys,
     (c) => {
       const apiKey = requireAuth(c);

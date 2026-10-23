@@ -6,7 +6,7 @@ use crate::stop_tests::{copy, holding_a_catalog, note};
 use crate::{Core, CoreError, ListFilters, Server, SliceTier, Sort, store};
 
 #[test]
-fn a_drain_on_a_copy_without_its_read_view_sends_nothing() {
+fn a_drain_on_a_copy_without_its_reach_sends_nothing() {
     let server = Scripted::start();
     let core = Core::open_in_memory(Some(Server {
         url: server.url(),

@@ -11,7 +11,7 @@ import {
   StaleVersionSchema,
 } from "./_item-conflict.js";
 import { runAuditedTransaction } from "../storage/audited-transaction.js";
-import { itemListed } from "../storage/read-view.js";
+import { itemListed } from "../storage/reach.js";
 import { faultsArmed, holdAt } from "../control/faults.js";
 import { createRoute, z } from "@hono/zod-openapi";
 import {
@@ -630,7 +630,7 @@ const listItemsRoute = createRoute({
         },
       },
       description:
-        "- `validation_error`: a query parameter is unknown or invalid, `updated_after` comes with a different `sort` or `direction`, `cursor` came from another ordering or listing, or `X-Marfa-Read-View` comes without `include=metadata`.\n- `unknown_type`: `type` is a concrete type that nothing registers.",
+        "- `validation_error`: a query parameter is unknown or invalid, `updated_after` comes with a different `sort` or `direction`, `cursor` came from another ordering or listing, or `X-Marfa-Reach` comes without `include=metadata`.\n- `unknown_type`: `type` is a concrete type that nothing registers.",
     },
     401: {
       content: {
@@ -1756,7 +1756,7 @@ export function itemRoutes(storage: Storage) {
         {
           data: rows.map((item) => ({
             item: decorate(item),
-            ...(c.get("readViewAuthority") && { listed: true }),
+            ...(c.get("reachAuthority") && { listed: true }),
             metadata: readableMetadata(
               metadataMap.get(item.id) ?? {
                 item_id: item.id,
@@ -1926,7 +1926,7 @@ export function itemRoutes(storage: Storage) {
       }
     }
 
-    const readAuthority = c.get("readViewAuthority");
+    const readAuthority = c.get("reachAuthority");
     return c.json(
       {
         item: { ...item, edges },

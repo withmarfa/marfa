@@ -82,7 +82,7 @@ impl Folder {
         let settings = self.settings()?;
         let lists = settings.lists()?;
         let members = self.members(&settings)?;
-        let mut context = crate::read_view::Context::capture(&*self.core.conn()?)?;
+        let mut context = crate::reach::Context::capture(&*self.core.conn()?)?;
         let mut unmatched: Vec<String> = state::unmatched(&*self.core.conn()?)?;
         for path in paths {
             let Some(row) = state::bound_at(&*self.core.conn()?, path)? else {

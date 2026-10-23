@@ -214,7 +214,7 @@ When a page creates a write, a device MUST read it back through `POST /items/bul
 
 **Reason:** a read for each created row would spend the request limit the page saved; the server takes at most 100 ids to a request (`items/bulk-get-cap`).
 
-**Tests:** `device/pages.test.ts › sends the creates that wait in pages, edges after both their ends, and reads them back a hundred at a time`, `› ends the drain where the read of a page meets a changed read view, with no write answered`, `› sends an edge the read of its source does not hold on its own door, under its key, answered as a repeat`.
+**Tests:** `device/pages.test.ts › sends the creates that wait in pages, edges after both their ends, and reads them back a hundred at a time`, `› ends the drain where the read of a page meets a changed reach, with no write answered`, `› sends an edge the read of its source does not hold on its own door, under its key, answered as a repeat`.
 
 ### `queue-and-verdicts/page-read-back-failed`
 
@@ -2384,7 +2384,7 @@ When the server refuses a move of an edge, a device MUST hold the edge where the
 
 When the server takes a move of an edge's source, a device MUST expire the copy, whatever rows the copy holds.
 
-**Reason:** a move of a source changes the read view (`read-views/view-moves-edge-source`) on the move alone, and nothing the server answers tells a device whether the move touched a row its copy holds, so the next hydration holds the edge where the server does.
+**Reason:** a move of a source changes the reach (`reach/moves-edge-source`) on the move alone, and nothing the server answers tells a device whether the move touched a row its copy holds, so the next hydration holds the edge where the server does.
 
 **Tests:** `device/edge-move-live.test.ts › re-parents a note offline in one write a real server takes, never leaving it without a parent`, `› holds a move onto its own unanswered create, and sends it naming the row the create landed on`, `› re-parents several notes in one drain a real server takes, and one hydration covers them`, `device/edge-move.test.ts › sends every move queued and expires the copy once, at the end`.
 
@@ -2398,9 +2398,9 @@ When a device expires the copy for a move of an edge's source, a device MUST sen
 
 ### `queue-and-verdicts/edge-source-move-reads-owed`
 
-While a drain goes on after a move of an edge's source changed the read view, a device MUST leave the read after each answer owed, asking the server for none.
+While a drain goes on after a move of an edge's source changed the reach, a device MUST leave the read after each answer owed, asking the server for none.
 
-**Reason:** the server refuses each such read under the view the move changed, and the hydration that follows reads every row again.
+**Reason:** the server refuses each such read under the reach the move changed, and the hydration that follows reads every row again.
 
 **Tests:** `device/edge-move.test.ts › sends every move queued and expires the copy once, at the end`, `› judges each write behind the move as it would have been`.
 
@@ -2408,7 +2408,7 @@ While a drain goes on after a move of an edge's source changed the read view, a 
 
 When a drain has sent a move of an edge's source that the server took, and ends with no wait, no unavailable server, no credential stop and no write left undelivered, a device MUST end the drain `copy_expired` once, after the last write it sent.
 
-**Reason:** one hydration then covers the batch (`device/view-changed`).
+**Reason:** one hydration then covers the batch (`device/reach-changed`).
 
 **Tests:** `device/edge-move.test.ts › sends every move queued and expires the copy once, at the end`, `device/edge-move-live.test.ts › re-parents several notes in one drain a real server takes, and one hydration covers them`.
 
@@ -2432,17 +2432,17 @@ If a drain that expired the copy for a move of an edge's source ends in an error
 
 If the server refuses every move of an edge's source a drain sends, then a device MUST NOT expire the copy on account of those moves.
 
-**Reason:** a refused move changes nothing on the server, so its read view stands (`read-views/view-moves-edge-source`). A change made by another client is met by the rule that ends the drain (`queue-and-verdicts/view-change-ends-drain`).
+**Reason:** a refused move changes nothing on the server, so its reach stands (`reach/moves-edge-source`). A change made by another client is met by the rule that ends the drain (`queue-and-verdicts/reach-change-ends-drain`).
 
 **Tests:** `device/edge-move.test.ts › leaves the copy current where the server refuses every move`.
 
-### `queue-and-verdicts/view-change-ends-drain`
+### `queue-and-verdicts/reach-change-ends-drain`
 
-If a drain meets a changed read view anywhere but in the read after the answer it has just had to a move of an edge's source, then a device MUST end the drain `copy_expired` at once, sending no further write.
+If a drain meets a changed reach anywhere but in the read after the answer it has just had to a move of an edge's source, then a device MUST end the drain `copy_expired` at once, sending no further write.
 
-**Reason:** only a move of a source answered in the drain at hand is known to have changed the view; a change from any other cause, or met by a read an earlier drain left owed, is news the drain had no part in, and the caller learns of it before more is sent.
+**Reason:** only a move of a source answered in the drain at hand is known to have changed the reach; a change from any other cause, or met by a read an earlier drain left owed, is news the drain had no part in, and the caller learns of it before more is sent.
 
-**Tests:** `device/edge-move.test.ts › ends at once where the read of a write that moves no source meets a changed read view`, `› ends at once where a read owed from an earlier drain meets a changed read view`, `› expires the copy where another client changed the read view during a drain whose moves were all refused`.
+**Tests:** `device/edge-move.test.ts › ends at once where the read of a write that moves no source meets a changed reach`, `› ends at once where a read owed from an earlier drain meets a changed reach`, `› expires the copy where another client changed the reach during a drain whose moves were all refused`.
 
 ### `queue-and-verdicts/edge-move-waits-new-end`
 

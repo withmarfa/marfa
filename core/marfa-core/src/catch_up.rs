@@ -14,7 +14,7 @@ use crate::drain::DrainReport;
 use crate::error::CoreError;
 use crate::http::Http;
 use crate::model::{CatchUpReport, SliceTier, Subject, Tier};
-use crate::read_view::{self, Context};
+use crate::reach::{self, Context};
 use crate::sse::{Frame, Frames};
 use crate::store;
 use crate::telemetry::Carried;
@@ -254,7 +254,7 @@ fn start(core: &Core) -> Result<(Slice, String)> {
     start_build(&conn)
 }
 
-/// A copy talks to its server only under the read view a completed hydration
+/// A copy talks to its server only under the reach a completed hydration
 /// gave it: refused `HydrationIncomplete` part way through one, `NoCursor`
 /// where none has completed, and expired where its cursor has gone. Asked
 /// before anything is sent, so the refusal is the same offline. A copy
@@ -266,12 +266,12 @@ pub(crate) fn refuse_unless_current(conn: &mut rusqlite::Connection) -> Result<(
     }
     if !store::hydrated(conn)? {
         if store::holds_slice(conn)? {
-            if !read_view::expired(conn)? {
+            if !reach::expired(conn)? {
                 let tx = conn.transaction()?;
-                read_view::expire(&tx)?;
+                reach::expire(&tx)?;
                 tx.commit()?;
             }
-            return Err(read_view::invalid());
+            return Err(reach::invalid());
         }
         return Err(CoreError::NoCursor);
     }
@@ -279,9 +279,9 @@ pub(crate) fn refuse_unless_current(conn: &mut rusqlite::Connection) -> Result<(
 }
 
 fn start_build(conn: &rusqlite::Connection) -> Result<(Slice, String)> {
-    let cursor = store::meta_get(conn, store::META_EVENT_CURSOR)?.ok_or_else(read_view::invalid)?;
-    read_view::cursor(&cursor).ok_or_else(read_view::invalid)?;
-    let (types, tier) = store::slice(conn)?.ok_or_else(read_view::invalid)?;
+    let cursor = store::meta_get(conn, store::META_EVENT_CURSOR)?.ok_or_else(reach::invalid)?;
+    reach::cursor(&cursor).ok_or_else(reach::invalid)?;
+    let (types, tier) = store::slice(conn)?.ok_or_else(reach::invalid)?;
     let whole = store::whole_edge_types(conn)?;
     Ok((Slice { types, tier, whole }, cursor))
 }
@@ -363,11 +363,11 @@ fn take(
     let mut conn = core.conn()?;
     let tx = conn.transaction()?;
     operation.check(&tx)?;
-    read_view::cursor(id).ok_or_else(read_view::invalid)?;
+    reach::cursor(id).ok_or_else(reach::invalid)?;
     if ITEM_CHANGES.contains(&kind) || kind == "item.purged" {
-        let listed = payload.listed.ok_or_else(read_view::invalid)?;
-        let item = payload.item.as_ref().ok_or_else(read_view::invalid)?;
-        read_view::set_listed(&tx, &item.id, listed)?;
+        let listed = payload.listed.ok_or_else(reach::invalid)?;
+        let item = payload.item.as_ref().ok_or_else(reach::invalid)?;
+        reach::set_listed(&tx, &item.id, listed)?;
     }
     let applied = apply(&tx, catalog, slice, kind, payload)?;
     if applied {
@@ -486,7 +486,7 @@ pub(crate) fn replay_build(
     };
     let mut reached_head = false;
     let mut head: Option<u64> = None;
-    let mut greatest = read_view::cursor(&cursor).ok_or_else(read_view::invalid)?;
+    let mut greatest = reach::cursor(&cursor).ok_or_else(reach::invalid)?;
     let mut connected = false;
     let mut prologue_seen = false;
     loop {
@@ -516,35 +516,33 @@ pub(crate) fn replay_build(
             Frame::Event { id, name, data } => {
                 connected = true;
                 prologue_seen = true;
-                let payload = read_view::event_payload(name.as_deref(), id.as_deref(), &data)?;
+                let payload = reach::event_payload(name.as_deref(), id.as_deref(), &data)?;
                 let kind = name.as_deref().unwrap_or(&payload.event_type);
                 if let Some(reason) = diverged(kind, &payload, &report.cursor) {
                     return Err(CoreError::CopyExpired { reason });
                 }
                 match kind {
-                    "read_view_changed" => {
+                    "reach_changed" => {
                         return Err(CoreError::CopyExpired {
-                            reason: "read_view_changed".into(),
+                            reason: "reach_changed".into(),
                         });
                     }
                     "stream_cursor" => {
                         if id.is_some() || head.is_some() {
-                            return Err(read_view::invalid());
+                            return Err(reach::invalid());
                         }
                         head = Some(context.marker(&payload, kind)?);
                     }
                     "stream_live" => {
                         if id.is_some() {
-                            return Err(read_view::invalid());
+                            return Err(reach::invalid());
                         }
                         let live = context.marker(&payload, kind)?;
                         if head.is_none_or(|head| live < head)
                             || live < greatest
-                            || live
-                                < read_view::cursor(&report.cursor)
-                                    .ok_or_else(read_view::invalid)?
+                            || live < reach::cursor(&report.cursor).ok_or_else(reach::invalid)?
                         {
-                            return Err(read_view::invalid());
+                            return Err(reach::invalid());
                         }
                         if let Some(cursor) =
                             pass_withheld(core, context, &report.cursor, payload.cursor.as_deref())?
@@ -561,13 +559,12 @@ pub(crate) fn replay_build(
                     }
                     kind => {
                         let Some(id) = id else {
-                            return Err(read_view::invalid());
+                            return Err(reach::invalid());
                         };
-                        if head.is_none() || read_view::cursor(&id).is_none() {
-                            return Err(read_view::invalid());
+                        if head.is_none() || reach::cursor(&id).is_none() {
+                            return Err(reach::invalid());
                         }
-                        greatest =
-                            greatest.max(read_view::cursor(&id).ok_or_else(read_view::invalid)?);
+                        greatest = greatest.max(reach::cursor(&id).ok_or_else(reach::invalid)?);
                         let pinned = pinned_row(core, &payload)?;
                         while let Some(named) =
                             unexplained(&catalog, &slice, kind, &payload, &refreshed, pinned)
@@ -648,7 +645,7 @@ pub(crate) fn refuse_another_instance_until(
         if store::meta_get(&conn, store::META_INSTANCE_ID)?.is_none() {
             return Ok(());
         }
-        read_view::generation(&conn)?
+        reach::generation(&conn)?
     };
     let served = ask_unless_stopped(stop, http, Http::instance_id)?;
     same_instance(core, &served, generation)
@@ -698,7 +695,7 @@ pub(crate) fn ask_unless_stopped<T: Send + 'static>(
 /// one, and the generation of the copy that was read from.
 pub(crate) fn naming_instance(core: &Core, http: &Http) -> Result<(Http, u64)> {
     let conn = core.conn()?;
-    let generation = read_view::generation(&conn)?;
+    let generation = reach::generation(&conn)?;
     let named = match store::meta_get(&conn, store::META_INSTANCE_ID)? {
         Some(instance) if !instance.is_empty() => http.naming(&instance),
         _ => http.clone(),
@@ -713,10 +710,10 @@ pub(crate) fn expire_for_another_instance(
     tx: &rusqlite::Transaction<'_>,
     generation: u64,
 ) -> Result<CoreError> {
-    if read_view::generation(tx)? != generation {
+    if reach::generation(tx)? != generation {
         return Ok(Context::changed());
     }
-    read_view::expire(tx)?;
+    reach::expire(tx)?;
     Ok(CoreError::CopyExpired {
         reason: crate::http::INSTANCE_CHANGED.into(),
     })
@@ -746,7 +743,7 @@ pub(crate) fn write_naming_instance<T>(
 fn same_instance(core: &Core, served: &str, generation: u64) -> Result<()> {
     let mut conn = core.conn()?;
     let tx = conn.transaction()?;
-    if read_view::generation(&tx)? != generation {
+    if reach::generation(&tx)? != generation {
         return Err(Context::changed());
     }
     let held = store::meta_get(&tx, store::META_INSTANCE_ID)?;
@@ -761,7 +758,7 @@ fn same_instance(core: &Core, served: &str, generation: u64) -> Result<()> {
             "this copy does not name the instance it was built from, and the server at this address is instance {served}"
         ),
     };
-    read_view::expire(&tx)?;
+    reach::expire(&tx)?;
     tx.commit()?;
     Err(CoreError::CopyExpired { reason })
 }
@@ -1105,7 +1102,7 @@ fn read_stream(
     let mut heard = now();
     let mut head = None;
     let mut live_confirmed = false;
-    let mut greatest = read_view::cursor(&report.cursor).unwrap_or(0);
+    let mut greatest = reach::cursor(&report.cursor).unwrap_or(0);
     loop {
         if stop.load(Ordering::Relaxed) {
             return Ok(Ended::Stopped);
@@ -1128,20 +1125,20 @@ fn read_stream(
         let Frame::Event { id, name, data } = frame else {
             continue;
         };
-        let payload = read_view::event_payload(name.as_deref(), id.as_deref(), &data)?;
+        let payload = reach::event_payload(name.as_deref(), id.as_deref(), &data)?;
         let kind = name.as_deref().unwrap_or(&payload.event_type);
         if let Some(reason) = diverged(kind, &payload, &report.cursor) {
             return Err(CoreError::CopyExpired { reason });
         }
         match kind {
-            "read_view_changed" => {
+            "reach_changed" => {
                 return Err(CoreError::CopyExpired {
-                    reason: "read_view_changed".into(),
+                    reason: "reach_changed".into(),
                 });
             }
             "stream_cursor" => {
                 if id.is_some() || head.is_some() {
-                    return Err(read_view::invalid());
+                    return Err(reach::invalid());
                 }
                 head = Some(context.marker(&payload, kind)?);
             }
@@ -1150,29 +1147,28 @@ fn read_stream(
                 if id.is_some()
                     || head.is_none_or(|head| live < head)
                     || live < greatest
-                    || live < read_view::cursor(&report.cursor).ok_or_else(read_view::invalid)?
+                    || live < reach::cursor(&report.cursor).ok_or_else(reach::invalid)?
                 {
-                    return Err(read_view::invalid());
+                    return Err(reach::invalid());
                 }
                 if let Some(cursor) =
                     pass_withheld(core, context, &report.cursor, payload.cursor.as_deref())?
                 {
                     report.cursor = cursor;
                 }
-                live_confirmed =
-                    read_view::cursor(&report.cursor).is_some_and(|cursor| cursor >= live);
+                live_confirmed = reach::cursor(&report.cursor).is_some_and(|cursor| cursor >= live);
                 on_live(live_confirmed);
             }
             "stream_incomplete" => return Ok(Ended::Over),
             kind => {
                 on_live(false);
                 let Some(id) = id else {
-                    return Err(read_view::invalid());
+                    return Err(reach::invalid());
                 };
-                if head.is_none() || read_view::cursor(&id).is_none() {
-                    return Err(read_view::invalid());
+                if head.is_none() || reach::cursor(&id).is_none() {
+                    return Err(reach::invalid());
                 }
-                greatest = greatest.max(read_view::cursor(&id).ok_or_else(read_view::invalid)?);
+                greatest = greatest.max(reach::cursor(&id).ok_or_else(reach::invalid)?);
                 // Left untaken with the cursor before it, so the reopened
                 // stream replays it after reading the catalog.
                 let pinned = pinned_row(core, &payload)?;
@@ -1443,7 +1439,7 @@ mod tests {
                 vec![crate::scripted::certified(crate::scripted::edge_types(&[]))],
             );
             store::meta_set(&conn, store::META_EVENT_CURSOR, "10").unwrap();
-            store::meta_set(&conn, read_view::FENCE, &"a".repeat(64)).unwrap();
+            store::meta_set(&conn, reach::FENCE, &"a".repeat(64)).unwrap();
             store::meta_set(&conn, store::META_INSTANCE_ID, crate::scripted::INSTANCE).unwrap();
             store::meta_set(&conn, store::META_SLICE_TYPES, "[\"core.note\"]").unwrap();
             store::meta_set(&conn, store::META_SLICE_TIER, "library").unwrap();
@@ -3092,7 +3088,7 @@ mod tests {
             ended
         });
         assert_eq!(core.status().unwrap().hydration, crate::Hydration::Expired);
-        let generation = read_view::generation(&core.conn().unwrap()).unwrap();
+        let generation = reach::generation(&core.conn().unwrap()).unwrap();
         (generation, server.seen("/events").len(), ended)
     }
 
@@ -3235,7 +3231,7 @@ mod tests {
         let server = Scripted::start();
         let (_dir, core) = hydrated(&server);
         store::meta_delete(&core.conn().unwrap(), store::META_EVENT_CURSOR).unwrap();
-        let generation = || read_view::generation(&core.conn().unwrap()).unwrap();
+        let generation = || reach::generation(&core.conn().unwrap()).unwrap();
         let held = generation();
         let followed = || {
             let (stop, done) = follow_for_real(&core);
@@ -3247,7 +3243,7 @@ mod tests {
             );
         };
         followed();
-        // The witness: a copy that still held its read view is expired.
+        // The witness: a copy that still held its reach is expired.
         let expired = generation();
         assert_ne!(expired, held);
         followed();
@@ -3558,7 +3554,7 @@ mod tests {
 
         {
             let conn = core.conn().unwrap();
-            store::meta_set(&conn, read_view::FENCE, crate::scripted::FENCE).unwrap();
+            store::meta_set(&conn, reach::FENCE, crate::scripted::FENCE).unwrap();
             store::meta_set(&conn, store::META_EVENT_CURSOR, "10").unwrap();
         }
         let asked = renewing(&core);
@@ -3671,7 +3667,7 @@ mod tests {
         event("11", "item.created", payload)
     }
 
-    /// An event that is not JSON says nothing against the copy's read view,
+    /// An event that is not JSON says nothing against the copy's reach,
     /// and reading it again fails the same way, so the run ends `decoding`
     /// and leaves the copy and its cursor as they were.
     #[test]
@@ -3693,7 +3689,7 @@ mod tests {
             other => panic!("an event that is not JSON ended {other:?}"),
         }
         assert_eq!(stored_cursor(&core).as_deref(), Some("10"));
-        assert!(!read_view::expired(&core.conn().unwrap()).unwrap());
+        assert!(!reach::expired(&core.conn().unwrap()).unwrap());
 
         // The witness: the whole event is applied.
         server.on(
@@ -3730,7 +3726,7 @@ mod tests {
             other => panic!("an event that is not JSON ended the follow {other:?}"),
         }
         assert_eq!(stored_cursor(&core).as_deref(), Some("10"));
-        assert!(!read_view::expired(&core.conn().unwrap()).unwrap());
+        assert!(!reach::expired(&core.conn().unwrap()).unwrap());
 
         // The witness: the whole event is applied.
         server.on(
@@ -3777,7 +3773,7 @@ mod tests {
             vec![stream_cursor("11"), listed("yes".into())],
             vec![stream_cursor("11"), listed(1.into())],
         ];
-        for field in ["read_view", "instance_id", "cursor"] {
+        for field in ["reach", "instance_id", "cursor"] {
             frames.push(vec![marker("stream_cursor", field)]);
             frames.push(vec![stream_cursor("11"), marker("stream_live", field)]);
         }
@@ -3788,7 +3784,7 @@ mod tests {
             sent.extend(frames.clone());
             server.on("/events", vec![stream(sent, Then::End)]);
             let (_dir, core) = hydrated(&server);
-            expired(core.catch_up(), &core, "read_view_invalid");
+            expired(core.catch_up(), &core, "reach_invalid");
         }
     }
 
@@ -3866,14 +3862,14 @@ mod tests {
                 Then::End,
             )],
         );
-        expired(core.catch_up(), &core, "read_view_invalid");
+        expired(core.catch_up(), &core, "reach_invalid");
         {
             let conn = core.conn().unwrap();
-            store::meta_set(&conn, read_view::FENCE, crate::scripted::FENCE).unwrap();
+            store::meta_set(&conn, reach::FENCE, crate::scripted::FENCE).unwrap();
             store::meta_set(&conn, store::META_EVENT_CURSOR, "40").unwrap();
         }
         let run = follow_on(&core, QUICK, None);
-        expired(run.ended(), &core, "read_view_invalid");
+        expired(run.ended(), &core, "reach_invalid");
     }
 
     #[test]

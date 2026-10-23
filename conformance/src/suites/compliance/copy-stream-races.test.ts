@@ -13,14 +13,14 @@ import {
 } from "../../utils/stream-tap.js";
 
 /**
- * A copy stream is certified by the read view it opened under. A change to
- * that view while the stream replays, holds a frame, or is about to announce
- * `stream_live` ends it with `read_view_changed`, and nothing past the change
- * reaches it (`read-views/terminal-races`, `read-views/terminal-races-silent`).
+ * A copy stream is certified by the reach it opened under. A change to
+ * that reach while the stream replays, holds a frame, or is about to announce
+ * `stream_live` ends it with `reach_changed`, and nothing past the change
+ * reaches it (`reach/terminal-races`, `reach/terminal-races-silent`).
  *
  * The fixtures hold the stream at its replay or its final drain
  * (`hold:stream-replay`, `hold:stream-drain`), narrow the key it reads with,
- * which changes its read view and publishes no event of its own, and let it
+ * which changes its reach and publishes no event of its own, and let it
  * go. The same case with the key left alone ends live, which shows the stream
  * would have gone on.
  */
@@ -104,35 +104,35 @@ const named =
 
 async function proofFor(
   key: string,
-): Promise<{ cursor: string; read_view: string }> {
+): Promise<{ cursor: string; reach: string }> {
   const tap = await open(key);
   const events = await tap.until(named("stream_live"), "the copy stream live");
   await tap.close();
   return events.find((event) => event.event === "stream_live")!.data as {
     cursor: string;
-    read_view: string;
+    reach: string;
   };
 }
 
 function expectChanged(tap: StreamTap): void {
   expect(tap.events.map((event) => event.event)).toEqual([
     "stream_cursor",
-    "read_view_changed",
+    "reach_changed",
   ]);
   const terminal = tap.events.at(-1)!;
   expect(terminal.id).toBeUndefined();
-  expect(terminal.data).toEqual({ event_type: "read_view_changed" });
+  expect(terminal.data).toEqual({ event_type: "reach_changed" });
 }
 
-describe("a copy stream replaying when its read view changes", () => {
-  it("ends with read_view_changed and sends no replayed frame and no stream_live", async () => {
+describe("a copy stream replaying when its reach changes", () => {
+  it("ends with reach_changed and sends no replayed frame and no stream_live", async () => {
     const who = await reader("replay-race");
     const proof = await proofFor(who.key);
     const replayable = await note("replayable");
     await server.setFault("hold:stream-replay");
     const tap = await open(who.key, {
       lastEventId: proof.cursor,
-      readView: proof.read_view,
+      reach: proof.reach,
     });
     await server.waitForHold("hold:stream-replay");
     await who.narrow();
@@ -142,14 +142,14 @@ describe("a copy stream replaying when its read view changes", () => {
     expect(tap.events.some(announces(replayable))).toBe(false);
   });
 
-  it("goes live when the view does not change, which shows the replay would have gone on", async () => {
+  it("goes live when the reach does not change, which shows the replay would have gone on", async () => {
     const who = await reader("replay-no-race");
     const proof = await proofFor(who.key);
     const replayable = await note("replayable-unchanged");
     await server.setFault("hold:stream-replay");
     const tap = await open(who.key, {
       lastEventId: proof.cursor,
-      readView: proof.read_view,
+      reach: proof.reach,
     });
     await server.waitForHold("hold:stream-replay");
     await server.clearFault("hold:stream-replay");
@@ -158,14 +158,14 @@ describe("a copy stream replaying when its read view changes", () => {
   });
 });
 
-describe("a copy stream holding a frame when its read view changes", () => {
-  it("ends with read_view_changed and sends neither the held frame nor stream_live", async () => {
+describe("a copy stream holding a frame when its reach changes", () => {
+  it("ends with reach_changed and sends neither the held frame nor stream_live", async () => {
     const who = await reader("hold-race");
     await server.setFault("hold:stream-drain");
     const tap = await open(who.key);
     await server.waitForHold("hold:stream-drain");
     const held = await note("held-frame");
-    // The frame reaches the stream's hold before the view changes, so the
+    // The frame reaches the stream's hold before the reach changes, so the
     // end is the drain's to decide and not the arrival of a frame's.
     await new Promise((resolve) => setTimeout(resolve, 500));
     await who.narrow();
@@ -175,7 +175,7 @@ describe("a copy stream holding a frame when its read view changes", () => {
     expect(tap.events.some(announces(held))).toBe(false);
   });
 
-  it("sends the held frame and goes live when the view does not change", async () => {
+  it("sends the held frame and goes live when the reach does not change", async () => {
     const who = await reader("hold-no-race");
     await server.setFault("hold:stream-drain");
     const tap = await open(who.key);
@@ -188,8 +188,8 @@ describe("a copy stream holding a frame when its read view changes", () => {
   });
 });
 
-describe("a copy stream about to announce stream_live when its read view changes", () => {
-  it("ends with read_view_changed and does not announce stream_live", async () => {
+describe("a copy stream about to announce stream_live when its reach changes", () => {
+  it("ends with reach_changed and does not announce stream_live", async () => {
     const who = await reader("announce-race");
     await server.setFault("hold:stream-drain");
     const tap = await open(who.key);

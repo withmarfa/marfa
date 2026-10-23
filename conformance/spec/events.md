@@ -2,7 +2,7 @@
 
 `GET /events` is a server-sent event stream of every mutation, resumable by cursor, and outbound webhooks deliver the same events to a URL. The audit log, which records the writes the events announce, closes the chapter.
 
-Every rule about a stream is about the plain stream unless it says otherwise. The copy stream, `GET /events?edges=all&copy=1`, is `read-views/copy-bootstrap` and the rules after it in `read-views.md`. What a stream does when the server stops is `instance/stop-ends-streams` and the rules after it. The answer to a viewer past the instance's cap is `errors/stream-capacity`.
+Every rule about a stream is about the plain stream unless it says otherwise. The copy stream, `GET /events?edges=all&copy=1`, is `reach/copy-bootstrap` and the rules after it in `reach.md`. What a stream does when the server stops is `instance/stop-ends-streams` and the rules after it. The answer to a viewer past the instance's cap is `errors/stream-capacity`.
 
 ## Event types
 
@@ -20,14 +20,14 @@ Every event and stream frame the server sends is a row of the table below, which
 | `item.state_changed` | Streams and webhooks | An item moves to another lifecycle state.                                                                   |
 | `metadata.changed`   | Streams and webhooks | An item's tags or extensions change.                                                                        |
 | `edge.created`       | Streams and webhooks | An edge is created.                                                                                         |
-| `edge.updated`       | Streams and webhooks | An edge's properties change.                                                                                |
+| `edge.updated`       | Streams and webhooks | An edge's properties change, or one of its ends moves to another item.                                      |
 | `edge.deleted`       | Streams and webhooks | An edge is deleted.                                                                                         |
 | `stream_cursor`      | Streams              | First, when the stream read the log as it opened: where the log stood then.                                 |
 | `stream_live`        | Streams              | Once the catch-up is over: everything up to its cursor has been sent or withheld, and what follows is live. |
 | `stream_incomplete`  | Streams              | Last, when the stream can no longer deliver what it opened with.                                            |
 | `catchup_too_old`    | Streams              | Last, when the log no longer holds the events after the `Last-Event-ID` the client sent.                    |
 | `cursor_ahead`       | Streams              | Last, when the `Last-Event-ID` the client sent is past the latest event in the log.                         |
-| `read_view_changed`  | Streams              | Last on a copy stream, when its read view changes.                                                          |
+| `reach_changed`      | Streams              | Last on a copy stream, when its reach changes.                                                              |
 
 <!-- event-types-table:end -->
 
@@ -63,7 +63,7 @@ If `GET /events` names a query key the operation does not declare and that does 
 
 ### `events/stream-refusal-order`
 
-When one `GET /events` request meets more than one refusal, the server MUST answer the first of these: no usable credential, `401`; a credential whose type map reaches no type, `403`; `X-Marfa-Read-View`, `400`; a query key the operation does not declare and that does not start with an underscore, `400`; `type`, `400` or `403`; `edges`, `400`; `Last-Event-ID`, `400`; and a viewer past the instance's cap, `503`.
+When one `GET /events` request meets more than one refusal, the server MUST answer the first of these: no usable credential, `401`; a credential whose type map reaches no type, `403`; `X-Marfa-Reach`, `400`; a query key the operation does not declare and that does not start with an underscore, `400`; `type`, `400` or `403`; `edges`, `400`; `Last-Event-ID`, `400`; and a viewer past the instance's cap, `503`.
 
 **Reason:** a caller is told of a fault it can fix before it is told to wait.
 
@@ -615,7 +615,7 @@ If an edge event carries no `source_type`, then the server MUST NOT send it to a
 
 ## A stream and the source filter
 
-The source filter is `enforcement.source_filter` as it holds for the stream's credential: its own override's if the override names one, and else the instance's (`types/source-filter`). A copy stream is held to `read-views/frame-excluded` instead.
+The source filter is `enforcement.source_filter` as it holds for the stream's credential: its own override's if the override names one, and else the instance's (`types/source-filter`). A copy stream is held to `reach/frame-excluded` instead.
 
 ### `events/source-filter-item`
 
@@ -643,7 +643,7 @@ When the source filter that holds for an open stream's credential changes, the s
 
 Where the source filter leaves out an item the credential may read, the server MUST still send the item's events on a copy stream, with `listed` `false`.
 
-**Reason:** `read-views/frame-excluded` holds the copy stream to every row a device may hold.
+**Reason:** `reach/frame-excluded` holds the copy stream to every row a device may hold.
 
 **Tests:** `compliance/stream-source-filter.test.ts › still sends a row the filter hides on a copy stream, with listed false`.
 

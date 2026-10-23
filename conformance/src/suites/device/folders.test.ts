@@ -2598,13 +2598,13 @@ describe("files and items", () => {
     }
   });
 
-  describe("a copy whose read view changes under a push", () => {
+  describe("a copy whose reach changes under a push", () => {
     /**
      * A folder of notes whose server, at the read after the first write it
-     * answers, says the copy's read view has changed, as it does once the
+     * answers, says the copy's reach has changed, as it does once the
      * folder's key is replaced. A hydration lists every note created since,
      * as the server would, and reads the catalog through `catalog` once the
-     * view has changed. Where `again`, every read by id is refused. The create
+     * reach has changed. Where `again`, every read by id is refused. The create
      * of the note titled `refused` is refused `validation_error`, and the read
      * its refusal owes is answered.
      */
@@ -2620,7 +2620,7 @@ describe("files and items", () => {
       const made = await folderHarness(label, { rows: { "core.note": notes } });
       let changed = false;
       // The refused create's row, which the door must not hold, and whose
-      // read the refusal owes is answered before the view changes.
+      // read the refusal owes is answered before the reach changes.
       const refusedIds = new Set<string>();
       const held = scriptFolderWrites(made, {
         creating: (answer, request) => {
@@ -2652,7 +2652,7 @@ describe("files and items", () => {
             return answer;
           }
           changed = true;
-          return refusal(409, "read_view_changed", "The read view has changed");
+          return refusal(409, "reach_changed", "The reach has changed");
         },
       });
       made.server.copyAnswer("GET", "/types", () =>
@@ -2668,7 +2668,7 @@ describe("files and items", () => {
           request.method === "GET" &&
           request.pathname === "/events" &&
           request.headers["last-event-id"] === undefined &&
-          request.headers["x-marfa-read-view"] === undefined,
+          request.headers["x-marfa-reach"] === undefined,
       ).length;
     }
 
@@ -2679,7 +2679,7 @@ describe("files and items", () => {
       "builds the copy again and delivers every waiting write in the same $run",
       async ({ sendOnly }) => {
         const made = await rekeyed(
-          `folder-push-view-changed${sendOnly ? "-send-only" : ""}`,
+          `folder-push-reach-changed${sendOnly ? "-send-only" : ""}`,
         );
         harness = made.harness;
         for (const title of ["One", "Two"]) {
@@ -2691,7 +2691,7 @@ describe("files and items", () => {
           : await harness.folder.push();
         expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
         if (!pushed.ok) return;
-        // The witness: the server did say the view changed, under this push.
+        // The witness: the server did say the reach changed, under this push.
         expect(made.changed()).toBe(true);
         expect(
           hydrations(harness) - before,
@@ -2714,8 +2714,8 @@ describe("files and items", () => {
       },
     );
 
-    it("reports a refusal from before the view changed with the writes sent after the rebuild", async () => {
-      const made = await rekeyed("folder-push-view-changed-after-refusal", {
+    it("reports a refusal from before the reach changed with the writes sent after the rebuild", async () => {
+      const made = await rekeyed("folder-push-reach-changed-after-refusal", {
         refused: "Alpha",
       });
       harness = made.harness;
@@ -2726,7 +2726,7 @@ describe("files and items", () => {
       const pushed = await harness.folder.push();
       expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
       if (!pushed.ok) return;
-      // The witness: the view changed under this push, after the refusal.
+      // The witness: the reach changed under this push, after the refusal.
       expect(made.changed()).toBe(true);
       expect(hydrations(harness) - before).toBe(1);
       const refusals = pushed.value.drain.verdicts.filter(
@@ -2757,9 +2757,9 @@ describe("files and items", () => {
       ).toEqual(["validation_error"]);
     });
 
-    it("builds the copy again where the drain after the pull meets the changed view, and finishes the push", async () => {
+    it("builds the copy again where the drain after the pull meets the changed reach, and finishes the push", async () => {
       const edges = new EdgeDoor();
-      harness = await folderHarness("folder-push-view-changed-after-pull", {
+      harness = await folderHarness("folder-push-reach-changed-after-pull", {
         rows: {
           "core.note": [
             {
@@ -2783,7 +2783,7 @@ describe("files and items", () => {
       edges.reading = () => {
         if (changed) return undefined;
         changed = true;
-        return refusal(409, "read_view_changed", "The read view has changed");
+        return refusal(409, "reach_changed", "The reach has changed");
       };
       scriptFolderWrites(harness, { edges });
       const before = hydrations(harness);
@@ -2819,7 +2819,7 @@ describe("files and items", () => {
     });
 
     it("builds the copy again while watching and delivers every waiting write, still watching", async () => {
-      const made = await rekeyed("folder-watch-view-changed");
+      const made = await rekeyed("folder-watch-reach-changed");
       harness = made.harness;
       for (const title of ["One", "Two"]) {
         put(harness, `${title}.md`, `---\ntitle: ${title}\n---\n${title}\n`);
@@ -2844,8 +2844,8 @@ describe("files and items", () => {
       expect(sentTitles(harness).sort()).toEqual(["One", "Two"]);
     });
 
-    it("builds the copy again only once in a push, and ends it copy_expired where the view changes again", async () => {
-      const made = await rekeyed("folder-push-view-changes-twice", {
+    it("builds the copy again only once in a push, and ends it copy_expired where the reach changes again", async () => {
+      const made = await rekeyed("folder-push-reach-changes-twice", {
         again: true,
       });
       harness = made.harness;
@@ -2857,10 +2857,10 @@ describe("files and items", () => {
       expect(pushed.ok, JSON.stringify(pushed)).toBe(false);
       if (pushed.ok) return;
       expect(pushed.refusal.code).toBe("copy_expired");
-      expect(pushed.refusal.raw).toContain("read_view_changed");
+      expect(pushed.refusal.raw).toContain("reach_changed");
       expect(hydrations(harness) - before).toBe(1);
       // The witness: the drain after the rebuild went, and read the answered
-      // write back under the new view, which was refused again.
+      // write back under the new reach, which was refused again.
       const settingsId = harness.settings.id;
       expect(
         harness.server.requests.filter(
@@ -2868,7 +2868,7 @@ describe("files and items", () => {
             request.method === "GET" &&
             /^\/items\/[^/]+$/.test(request.pathname) &&
             request.pathname !== `/items/${settingsId}` &&
-            request.headers["x-marfa-read-view"] !== undefined,
+            request.headers["x-marfa-reach"] !== undefined,
         ),
       ).toHaveLength(2);
       expect(sentTitles(harness)).toEqual(["One"]);
@@ -2876,7 +2876,7 @@ describe("files and items", () => {
 
     it("ends the push with the rebuild's own failure, keeping the writes for the next push", async () => {
       let failing = true;
-      const made = await rekeyed("folder-push-view-changed-rebuild-fails", {
+      const made = await rekeyed("folder-push-reach-changed-rebuild-fails", {
         catalog: () => (failing ? answers.serverFault() : typeCatalog()),
       });
       harness = made.harness;
@@ -2893,7 +2893,7 @@ describe("files and items", () => {
         "the push said the copy expired rather than why the rebuild failed",
       ).toBe("server");
       expect(pushed.refusal.raw).toContain('"exit":3');
-      // The first create was taken before the view changed; the second waits.
+      // The first create was taken before the reach changed; the second waits.
       expect(sentTitles(harness)).toHaveLength(1);
       const queued = await harness.folder.device().queue();
       expect(queued.ok, JSON.stringify(queued)).toBe(true);
@@ -2916,7 +2916,7 @@ describe("files and items", () => {
       ).toEqual(["One", "Two"]);
     });
 
-    it("reports a placement refused where its own read meets the changed view, and does not send it again", async () => {
+    it("reports a placement refused where its own read meets the changed reach, and does not send it again", async () => {
       const edges = new EdgeDoor();
       edges.placing = (edge) =>
         edge.edge_type === "in-folder"
@@ -2932,9 +2932,9 @@ describe("files and items", () => {
       edges.reading = () => {
         if (changed) return undefined;
         changed = true;
-        return refusal(409, "read_view_changed", "The read view has changed");
+        return refusal(409, "reach_changed", "The reach has changed");
       };
-      harness = await folderHarness("folder-push-view-changed-refused-read", {
+      harness = await folderHarness("folder-push-reach-changed-refused-read", {
         rows: {
           "core.note": [
             {
@@ -2950,7 +2950,7 @@ describe("files and items", () => {
       const pushed = await harness.folder.push();
       expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
       if (!pushed.ok) return;
-      // The witness: the refusal's own read was refused under the new view.
+      // The witness: the refusal's own read was refused under the new reach.
       expect(changed).toBe(true);
       expect(pushed.value.rebuilt).not.toBeNull();
       expect(
@@ -2959,7 +2959,7 @@ describe("files and items", () => {
           entry.verdict,
           entry.refusal?.code,
         ]),
-        "the refusal whose read met the changed view left the push's report",
+        "the refusal whose read met the changed reach left the push's report",
       ).toEqual([["create_edge", "refused", "edge_permission_denied"]]);
       expect(placedPaths(edges)).toEqual([]);
 
@@ -2971,7 +2971,7 @@ describe("files and items", () => {
       );
     });
 
-    it("pulls again after a rebuild at the drain after the pull, writing what the new view holds and keeping a file it no longer reads", async () => {
+    it("pulls again after a rebuild at the drain after the pull, writing what the new reach holds and keeping a file it no longer reads", async () => {
       const edges = new EdgeDoor();
       const one = "01a00000-0000-7000-8000-0000000099c1";
       const two = "01a00000-0000-7000-8000-0000000099c2";
@@ -2980,11 +2980,11 @@ describe("files and items", () => {
         { item: { id: one, properties: { title: "One", body: "one\n" } } },
         { item: { id: two, properties: { title: "Two", body: "two\n" } } },
       ];
-      harness = await folderHarness("folder-push-view-changed-pull-again", {
+      harness = await folderHarness("folder-push-reach-changed-pull-again", {
         rows: { "core.note": notes },
       });
       const rows = scriptFolderWrites(harness, { edges });
-      // At the read of the first placement the pull queued, the view changes:
+      // At the read of the first placement the pull queued, the reach changes:
       // the new key reads Three and no longer reads Two.
       let changed = false;
       edges.reading = () => {
@@ -2995,7 +2995,7 @@ describe("files and items", () => {
         const held = rows.get(two);
         rows.delete(two);
         if (held !== undefined) rows.set(three, { ...held, properties });
-        return refusal(409, "read_view_changed", "The read view has changed");
+        return refusal(409, "reach_changed", "The reach has changed");
       };
       const pushed = await harness.folder.push();
       expect(pushed.ok, JSON.stringify(pushed)).toBe(true);

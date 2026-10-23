@@ -28,10 +28,7 @@ import type { AppConfig } from "./config.js";
 import { DEFAULT_KEYS_RATE_LIMIT, getPermissionBundles } from "./config.js";
 import type { Context } from "hono";
 import type { AppEnv } from "./middleware/auth.js";
-import {
-  copyReadBoundary,
-  invalidReadViewRequest,
-} from "./middleware/read-view.js";
+import { copyReadBoundary, invalidReachRequest } from "./middleware/reach.js";
 import { deriveKey, SECRET_INFO } from "./crypto/derive-key.js";
 import { authMiddleware, hashApiKey } from "./middleware/auth.js";
 import { createErrorHandler } from "./middleware/error-handler.js";
@@ -203,8 +200,8 @@ export function createApp(
   }
 
   const app = new OpenAPIHono<AppEnv>();
-  const readViewKey = deriveKey(config.authSecret, SECRET_INFO.readView);
-  const readBoundary = copyReadBoundary(storage, instanceId, readViewKey);
+  const reachKey = deriveKey(config.authSecret, SECRET_INFO.reach);
+  const readBoundary = copyReadBoundary(storage, instanceId, reachKey);
 
   // Global error handler. Held in a variable because the idempotency
   // middleware renders a thrown error through this same handler rather
@@ -228,11 +225,8 @@ export function createApp(
   // every other error: a page for a browser, the documented JSON shape for
   // everything else.
   app.notFound((c) => {
-    if (
-      c.req.method === "GET" &&
-      c.req.header("X-Marfa-Read-View") !== undefined
-    )
-      throw invalidReadViewRequest(
+    if (c.req.method === "GET" && c.req.header("X-Marfa-Reach") !== undefined)
+      throw invalidReachRequest(
         "This door does not support conditional copy reads",
       );
     const body = {
@@ -291,12 +285,12 @@ export function createApp(
   app.use("*", async (c, next) => {
     if (
       c.req.method === "GET" &&
-      c.req.header("X-Marfa-Read-View") !== undefined &&
+      c.req.header("X-Marfa-Reach") !== undefined &&
       !/^(?:\/items(?:\/[^/]+(?:\/edges)?)?|\/edges(?:\/[^/]+)?|\/types|\/edge-types|\/keys\/current|\/events)\/?$/.test(
         c.req.path,
       )
     )
-      throw invalidReadViewRequest(
+      throw invalidReachRequest(
         "This door does not support conditional copy reads",
       );
     await next();
@@ -958,7 +952,7 @@ export function createApp(
   app.route(
     "/events",
     eventRoutes(storage, {
-      readView: { instanceId, signingKey: readViewKey },
+      reach: { instanceId, signingKey: reachKey },
       maxViewers: config.sseMaxViewers ?? 0,
     }),
   );

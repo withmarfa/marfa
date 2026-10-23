@@ -1399,7 +1399,7 @@ const settingsShape = {
   MARFA_AUTH_SECRET: grouped(
     { group: "Sign-in and access", label: "Sign-in secret" },
     secretSetting(
-      "The secret that signs sign-in cookies, authorize queries, read-view tokens and credential-free blob links. It must be at least 32 characters. Outside production, an unset secret falls back to a random one for each process.",
+      "The secret that signs sign-in cookies, authorize queries, reach proofs and credential-free blob links. It must be at least 32 characters. Outside production, an unset secret falls back to a random one for each process.",
       "None. Required in production.",
       SECRET_MIN_LENGTH,
     ),

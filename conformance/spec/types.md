@@ -810,7 +810,7 @@ The server MUST NOT apply `enforcement.source_filter` to the item or edge a read
 
 **Reason:** the filter narrows what a key's reads return, not whether a key can fetch a row it names, so what that row carries is narrowed as any read narrows it (`edges/read-source-filter`).
 
-**Tests:** `compliance/schema-enforcement.test.ts › does not narrow a read by id`, `compliance/read-views.test.ts › certifies a bulk read by id and answers listed for each item it returns, in order, false for a source-excluded one`, `compliance/edge-source-filter.test.ts › answers an edge by id whose source item the filter hides`.
+**Tests:** `compliance/schema-enforcement.test.ts › does not narrow a read by id`, `compliance/reach.test.ts › certifies a bulk read by id and answers listed for each item it returns, in order, false for a source-excluded one`, `compliance/edge-source-filter.test.ts › answers an edge by id whose source item the filter hides`.
 
 ## Shipped types
 

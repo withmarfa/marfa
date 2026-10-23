@@ -20,15 +20,15 @@ import {
   sourceFilterIncludesItem,
 } from "./filter-sql.js";
 
-export const READ_VIEW_HEADER = "X-Marfa-Read-View";
-export const READ_VIEW_PATTERN = /^[0-9a-f]{64}$/;
-export interface ReadViewAuthority {
+export const REACH_HEADER = "X-Marfa-Reach";
+export const REACH_PATTERN = /^[0-9a-f]{64}$/;
+export interface ReachAuthority {
   readonly key: ApiKey;
   readonly permissions: readonly string[];
   readonly bound: BoundCredential;
   readonly enforcement: EnforcementSettings;
   readonly instanceId: string;
-  readonly readView: string;
+  readonly reach: string;
 }
 
 function canonicalPatterns(
@@ -52,7 +52,7 @@ function canonicalPatterns(
   for (const [name, level] of [...wildcards, ...exact]) {
     const probe =
       name === "*"
-        ? "readview_probe"
+        ? "reach_probe"
         : name.endsWith(".*")
           ? name.slice(0, -2)
           : name;
@@ -113,33 +113,33 @@ export function canonicalReadProjection(
   };
 }
 
-export function readViewChanged(): MarfaError {
+export function reachChanged(): MarfaError {
   return new MarfaError(
-    ErrorCode.READ_VIEW_CHANGED,
-    "The read view changed. Rebuild the working copy.",
+    ErrorCode.REACH_CHANGED,
+    "The reach changed. Rebuild the working copy.",
   );
 }
-export function sameReadView(a: string, b: string): boolean {
+export function sameReach(a: string, b: string): boolean {
   return (
-    READ_VIEW_PATTERN.test(a) &&
-    READ_VIEW_PATTERN.test(b) &&
+    REACH_PATTERN.test(a) &&
+    REACH_PATTERN.test(b) &&
     timingSafeEqual(Buffer.from(a, "hex"), Buffer.from(b, "hex"))
   );
 }
 
 /** Called only inside Storage.runInReadSnapshot. */
-export async function readViewAuthority(
+export async function reachAuthority(
   storage: Storage,
   bound: BoundCredential,
   pin: Readonly<{ instanceId: string; structuralGeneration: string }>,
   instanceId: string,
   signingKey: Buffer,
   expected?: string,
-): Promise<ReadViewAuthority> {
+): Promise<ReachAuthority> {
   const live = await resolveBoundCredential(storage, bound);
   if (!live)
     throw new MarfaError(ErrorCode.UNAUTHORIZED, "Authentication required");
-  if (pin.instanceId !== instanceId) throw readViewChanged();
+  if (pin.instanceId !== instanceId) throw reachChanged();
   const enforcement = resolveEnforcement(
     await readInstanceConfig(storage.settings),
     live.key,
@@ -150,20 +150,20 @@ export async function readViewAuthority(
     pin.structuralGeneration,
     canonicalReadProjection(live.key, bound, enforcement),
   ]);
-  const readView = createHmac("sha256", signingKey).update(input).digest("hex");
-  if (expected !== undefined && !sameReadView(expected, readView))
-    throw readViewChanged();
+  const reach = createHmac("sha256", signingKey).update(input).digest("hex");
+  if (expected !== undefined && !sameReach(expected, reach))
+    throw reachChanged();
   return Object.freeze({
     key: live.key,
     permissions: live.permissions,
     bound,
     enforcement,
     instanceId: pin.instanceId,
-    readView,
+    reach,
   });
 }
 export function itemListed(
-  authority: ReadViewAuthority,
+  authority: ReachAuthority,
   item: { type: string; source: string },
 ): boolean {
   return sourceFilterIncludesItem(authority.enforcement.source_filter, item);

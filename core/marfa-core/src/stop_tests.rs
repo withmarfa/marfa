@@ -41,7 +41,7 @@ fn scripted_copy(server: &Scripted, core: Core) -> Arc<Core> {
     {
         let conn = core.conn().unwrap();
         store::meta_set(&conn, store::META_EVENT_CURSOR, "10").unwrap();
-        store::meta_set(&conn, crate::read_view::FENCE, scripted::FENCE).unwrap();
+        store::meta_set(&conn, crate::reach::FENCE, scripted::FENCE).unwrap();
         store::meta_set(&conn, store::META_INSTANCE_ID, scripted::INSTANCE).unwrap();
         store::meta_set(&conn, store::META_SLICE_TYPES, "[\"core.note\"]").unwrap();
         store::meta_set(&conn, store::META_SLICE_TIER, "library").unwrap();
@@ -589,7 +589,7 @@ fn copy_at(url: &str) -> Arc<Core> {
     {
         let conn = core.conn().unwrap();
         store::meta_set(&conn, store::META_EVENT_CURSOR, "10").unwrap();
-        store::meta_set(&conn, crate::read_view::FENCE, scripted::FENCE).unwrap();
+        store::meta_set(&conn, crate::reach::FENCE, scripted::FENCE).unwrap();
         store::meta_set(&conn, store::META_INSTANCE_ID, scripted::INSTANCE).unwrap();
         store::meta_set(&conn, store::META_SLICE_TYPES, "[\"core.note\"]").unwrap();
         store::meta_set(&conn, store::META_SLICE_TIER, "library").unwrap();

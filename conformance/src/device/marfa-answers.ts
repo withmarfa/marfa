@@ -577,7 +577,7 @@ export function cursorAhead(requested: string, head: string): SseFrame {
   };
 }
 
-export const SCRIPTED_READ_VIEW = "a".repeat(64);
+export const SCRIPTED_REACH = "a".repeat(64);
 
 export function copyFrame(frame: SseFrame): SseFrame {
   const data = frame.data;
@@ -592,7 +592,7 @@ export function copyFrame(frame: SseFrame): SseFrame {
       data: {
         ...payload,
         instance_id: SCRIPTED_INSTANCE,
-        read_view: SCRIPTED_READ_VIEW,
+        reach: SCRIPTED_REACH,
       },
     };
   }
@@ -751,7 +751,7 @@ export function certifiedRead(
     body,
     headers: {
       ...answer.headers,
-      "X-Marfa-Read-View": SCRIPTED_READ_VIEW,
+      "X-Marfa-Reach": SCRIPTED_REACH,
       "Cache-Control": "no-store",
     },
   };
@@ -764,12 +764,12 @@ export function certifiedRead(
  * id out (`items/bulk-get` and `items/bulk-get-omits`), but for a `system.*`
  * row, which it leaves out unless `include` names `system`
  * (`items/bulk-get-system`). Any other answer is the whole request's. Under a
- * read view the answer is certified only where every read was, and then
- * carries `listed` beside `items` (`read-views/listed-bulk-get`).
+ * reach the answer is certified only where every read was, and then
+ * carries `listed` beside `items` (`reach/listed-bulk-get`).
  */
 export function bulkGetOf(
   reads: Answer[],
-  options: { viewed: boolean; system: boolean },
+  options: { withReach: boolean; system: boolean },
 ): Answer {
   const gated = reads.filter((read) => read.kind === "gated");
   if (gated.length > 0)
@@ -784,16 +784,16 @@ export function bulkGetOf(
   const items: unknown[] = [];
   const metadata: unknown[] = [];
   const listed: unknown[] = [];
-  let certified = options.viewed;
+  let certified = options.withReach;
   let contract: string | string[] | null | undefined;
   for (const read of reads) {
     if (read.kind !== "json" || (read.status !== 200 && read.status !== 404))
       return read;
     contract ??= read.contract;
     const proof = Object.entries(read.headers ?? {}).find(
-      ([name]) => name.toLowerCase() === "x-marfa-read-view",
+      ([name]) => name.toLowerCase() === "x-marfa-reach",
     )?.[1];
-    if (proof !== SCRIPTED_READ_VIEW) certified = false;
+    if (proof !== SCRIPTED_REACH) certified = false;
     if (read.status === 404) continue;
     const row = read.body as {
       item: Record<string, unknown>;
@@ -820,7 +820,7 @@ export function bulkGetOf(
     ...(certified
       ? {
           headers: {
-            "X-Marfa-Read-View": SCRIPTED_READ_VIEW,
+            "X-Marfa-Reach": SCRIPTED_REACH,
             "Cache-Control": "no-store",
           },
         }

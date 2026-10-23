@@ -16,7 +16,7 @@ use std::sync::atomic::AtomicBool;
 use serde::Deserialize;
 
 use super::{
-    Bin, Classified, DrainReport, ReadBack, Readiness, Settled, Shape, Unreadable, ViewChange,
+    Bin, Classified, DrainReport, ReachChange, ReadBack, Readiness, Settled, Shape, Unreadable,
     apply_read_back, classify, committed, ends_the_drain, failure_of, not_the_writes,
     park_for_credential, put_verdict, rate_limited, read_owed, readiness, receipt_key,
     same_attempt, settle_success, store_fault, unavailable, unavailable_by, verdict_of, waited,
@@ -26,7 +26,7 @@ use crate::http::{Answer, BULK_GET_LIMIT, Http, INSTANCE_CHANGED, REQUEST_LIMIT}
 use crate::model::{QueuedWrite, Subject, Verdict, WriteKind};
 use crate::wire::{WireEdge, WireItemWithMetadata};
 use crate::{Core, Result};
-use crate::{read_view, store, telemetry};
+use crate::{reach, store, telemetry};
 
 /// Below this many creates of one kind, a pass sends them on their own doors:
 /// a handful costs no more than a page, and the walk's answers are the ones
@@ -158,7 +158,7 @@ pub(super) struct Standing<'a, 'b> {
 /// an edge goes in a page only once both its ends are answered.
 pub(super) fn send(
     sender: &Sender<'_>,
-    pass: &mut ViewChange,
+    pass: &mut ReachChange,
     report: &mut DrainReport,
     standing: &mut Standing<'_, '_>,
     confirm: &mut dyn FnMut(&mut DrainReport) -> Result<bool>,
@@ -295,7 +295,7 @@ struct PageResult {
 /// parked the queue.
 fn send_page(
     sender: &Sender<'_>,
-    pass: &mut ViewChange,
+    pass: &mut ReachChange,
     report: &mut DrainReport,
     standing: &mut Standing<'_, '_>,
     lane: Lane,
@@ -489,9 +489,9 @@ fn capture(
     core: &Core,
     lane: Lane,
     rows: &[&QueuedWrite],
-) -> Result<(read_view::Context, HashMap<String, Option<store::Stamp>>)> {
+) -> Result<(reach::Context, HashMap<String, Option<store::Stamp>>)> {
     let conn = core.conn()?;
-    let context = read_view::Context::capture(&conn)?;
+    let context = reach::Context::capture(&conn)?;
     let mut before = HashMap::new();
     for row in rows {
         if let Some(id) = lane.minted(row) {
@@ -505,7 +505,7 @@ fn capture(
 fn read(
     core: &Core,
     stop: &AtomicBool,
-    context: &read_view::Context,
+    context: &reach::Context,
     lane: Lane,
     rows: &[&QueuedWrite],
 ) -> Result<Held> {
@@ -532,7 +532,7 @@ fn found(
     lane: Lane,
     row: &QueuedWrite,
     held: &Held,
-    context: &read_view::Context,
+    context: &reach::Context,
     before: &HashMap<String, Option<store::Stamp>>,
 ) -> Option<(serde_json::Value, ReadBack)> {
     let id = lane.minted(row)?;
@@ -578,7 +578,7 @@ fn found(
 fn settle(
     core: &Core,
     stop: &AtomicBool,
-    pass: &mut ViewChange,
+    pass: &mut ReachChange,
     report: &mut DrainReport,
     standing: &mut Standing<'_, '_>,
     lane: Lane,
@@ -684,7 +684,7 @@ pub(super) fn owed_by_a_page(receipt: &str) -> bool {
 pub(super) fn settle_owed(
     core: &Core,
     stop: &AtomicBool,
-    pass: &mut ViewChange,
+    pass: &mut ReachChange,
     waiting: &[(QueuedWrite, String)],
 ) -> Result<Option<Unreadable>> {
     for lane in [Lane::Items, Lane::Edges] {
@@ -768,7 +768,7 @@ pub(super) fn settle_owed(
 /// applied as a read owed is, and its receipt goes.
 fn alone(
     core: &Core,
-    pass: &mut ViewChange,
+    pass: &mut ReachChange,
     lane: Lane,
     row: &QueuedWrite,
 ) -> Result<Option<(serde_json::Value, ReadBack)>> {
@@ -821,7 +821,7 @@ fn edge_in(
 
 fn settle_one(
     core: &Core,
-    pass: &mut ViewChange,
+    pass: &mut ReachChange,
     report: &mut DrainReport,
     standing: &mut Standing<'_, '_>,
     lane: Lane,
@@ -891,7 +891,7 @@ mod tests {
         {
             let conn = core.conn().unwrap();
             store::meta_set(&conn, store::META_EVENT_CURSOR, "10").unwrap();
-            store::meta_set(&conn, read_view::FENCE, &"a".repeat(64)).unwrap();
+            store::meta_set(&conn, reach::FENCE, &"a".repeat(64)).unwrap();
             store::meta_set(&conn, store::META_INSTANCE_ID, scripted::INSTANCE).unwrap();
             store::meta_set(&conn, store::META_SLICE_TYPES, "[\"core.note\"]").unwrap();
             store::meta_set(&conn, store::META_SLICE_TIER, "library").unwrap();

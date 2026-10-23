@@ -8,10 +8,7 @@ import {
   mayReadType,
   requireAuth,
 } from "../middleware/auth.js";
-import {
-  invalidReadViewRequest,
-  requestReadView,
-} from "../middleware/read-view.js";
+import { invalidReachRequest, requestReach } from "../middleware/reach.js";
 import { deriveKey, SECRET_INFO } from "../crypto/derive-key.js";
 import {
   frameFor,
@@ -24,9 +21,9 @@ import { withPreparedHeaders } from "../prepared-headers.js";
 import { trackStream } from "./open-streams.js";
 import {
   itemListed,
-  readViewAuthority,
-  type ReadViewAuthority,
-} from "../storage/read-view.js";
+  reachAuthority,
+  type ReachAuthority,
+} from "../storage/reach.js";
 import type { PersistedEvent, Storage } from "../storage/interface.js";
 import { announcedEdgeReadable } from "./_edge-visibility.js";
 import {
@@ -57,18 +54,16 @@ export function copyStreamRequest(c: Context<AppEnv>): {
     query.getAll("copy").length !== 1 ||
     query.get("copy") !== "1"
   )
-    throw invalidReadViewRequest(
-      "Copy streams require exactly edges=all&copy=1",
-    );
-  const expected = requestReadView(c);
+    throw invalidReachRequest("Copy streams require exactly edges=all&copy=1");
+  const expected = requestReach(c);
   const raw = c.req.header("Last-Event-ID");
   if ((expected === undefined) !== (raw === undefined))
-    throw invalidReadViewRequest(
-      "Copy resume requires both Last-Event-ID and X-Marfa-Read-View",
+    throw invalidReachRequest(
+      "Copy resume requires both Last-Event-ID and X-Marfa-Reach",
     );
   if (raw === undefined) return { after: null };
   if (!/^(?:0|[1-9][0-9]{0,18})$/.test(raw) || BigInt(raw) > MAX_EVENT_ID)
-    throw invalidReadViewRequest(
+    throw invalidReachRequest(
       "Last-Event-ID must be exactly one canonical decimal event ID",
     );
   return { after: BigInt(raw), expected };
@@ -76,7 +71,7 @@ export function copyStreamRequest(c: Context<AppEnv>): {
 
 function project(
   stored: Record<string, unknown>,
-  authority: ReadViewAuthority,
+  authority: ReachAuthority,
 ): string | null {
   if (
     typeof stored.event_type !== "string" ||
@@ -116,7 +111,7 @@ function project(
 }
 function projectLive(
   frame: LiveFrame,
-  authority: ReadViewAuthority,
+  authority: ReachAuthority,
 ): string | null {
   return project(storedFrame(frame.event), authority);
 }
@@ -134,9 +129,9 @@ export async function buildCopyStream(
   if (!bound)
     throw new MarfaError(ErrorCode.UNAUTHORIZED, "Authentication required");
   const signingKey =
-    options.readView?.signingKey ??
-    deriveKey(c.get("config").authSecret, SECRET_INFO.readView);
-  let instanceId = options.readView?.instanceId;
+    options.reach?.signingKey ??
+    deriveKey(c.get("config").authSecret, SECRET_INFO.reach);
+  let instanceId = options.reach?.instanceId;
   let expected = requested;
   const abort = new AbortController();
   const frames = subscribeAll({
@@ -168,7 +163,7 @@ export async function buildCopyStream(
   let head = 0n;
   let initialMin: bigint | null = null;
   const replayTarget = (): bigint => state.replayReach ?? head;
-  let openingAuthority: ReadViewAuthority | undefined;
+  let openingAuthority: ReachAuthority | undefined;
   const encoder = new TextEncoder();
 
   let untrack: () => void = () => undefined;
@@ -227,11 +222,8 @@ export async function buildCopyStream(
   };
   const failed = (error: unknown, reason: StreamIncompleteReason): void => {
     if (isClosed()) return;
-    if (
-      error instanceof MarfaError &&
-      error.code === ErrorCode.READ_VIEW_CHANGED
-    )
-      terminal("read_view_changed", {});
+    if (error instanceof MarfaError && error.code === ErrorCode.REACH_CHANGED)
+      terminal("reach_changed", {});
     else if (
       error instanceof MarfaError &&
       error.code === ErrorCode.UNAUTHORIZED
@@ -268,7 +260,7 @@ export async function buildCopyStream(
     return false;
   };
   const decide = <T>(
-    read: (authority: ReadViewAuthority) => Promise<T> | T,
+    read: (authority: ReachAuthority) => Promise<T> | T,
     disclose: (value: T) => void,
     reason: StreamIncompleteReason = "live_delivery_failed",
   ): Promise<void> => {
@@ -278,7 +270,7 @@ export async function buildCopyStream(
         const value = await storage.runInReadSnapshot(
           async (pin) => {
             if (faultsArmed()) failRead("stream-credential");
-            const authority = await readViewAuthority(
+            const authority = await reachAuthority(
               storage,
               bound,
               pin,
@@ -381,7 +373,7 @@ export async function buildCopyStream(
   try {
     const captured = await storage.runInReadSnapshot(
       async (pin) => {
-        const authority = await readViewAuthority(
+        const authority = await reachAuthority(
           storage,
           bound,
           pin,
@@ -409,7 +401,7 @@ export async function buildCopyStream(
     );
     openingAuthority = captured.authority;
     instanceId = captured.authority.instanceId;
-    expected = captured.authority.readView;
+    expected = captured.authority.reach;
     head = captured.head;
     initialMin = captured.min;
   } catch (error) {
@@ -512,7 +504,7 @@ export async function buildCopyStream(
           if (held.length === 0 && state.pending === 0 && hasRoom()) {
             if (state.cursor < head) state.cursor = head;
             send(
-              `event: stream_live\ndata: ${JSON.stringify({ event_type: "stream_live", cursor: String(state.cursor), instance_id: authority.instanceId, read_view: authority.readView })}\n\n`,
+              `event: stream_live\ndata: ${JSON.stringify({ event_type: "stream_live", cursor: String(state.cursor), instance_id: authority.instanceId, reach: authority.reach })}\n\n`,
             );
             state.holding = false;
           }
@@ -538,7 +530,7 @@ export async function buildCopyStream(
         }
         send(": connected\n\n");
         send(
-          `event: stream_cursor\ndata: ${JSON.stringify({ event_type: "stream_cursor", cursor: String(head), instance_id: openingAuthority.instanceId, read_view: openingAuthority.readView })}\n\n`,
+          `event: stream_cursor\ndata: ${JSON.stringify({ event_type: "stream_cursor", cursor: String(head), instance_id: openingAuthority.instanceId, reach: openingAuthority.reach })}\n\n`,
         );
         openingDone();
         keepAlive = setInterval(() => {

@@ -221,11 +221,11 @@ describe("version history answers only the snapshots a key may read", () => {
     }
   });
 
-  it("answers 400 validation_error to the X-Marfa-Read-View header on a history", async () => {
+  it("answers 400 validation_error to the X-Marfa-Reach header on a history", async () => {
     const created = await client.createItem({
       type: "core.note",
       source: ctx.source,
-      properties: { body: "read view header" },
+      properties: { body: "reach header" },
     });
     expect(created.status).toBe(201);
     trackItem(ctx, created.data.item.id);
@@ -234,11 +234,11 @@ describe("version history answers only the snapshots a key may read", () => {
     expect((await client.rawRequest(path)).status).toBe(200);
 
     const refused = await client.rawRequest(path, {
-      headers: { "X-Marfa-Read-View": "a".repeat(64) },
+      headers: { "X-Marfa-Reach": "a".repeat(64) },
     });
     expect(refused.status).toBe(400);
     expect(refused.error?.error.code).toBe("validation_error");
-    expect(refused.headers.get("X-Marfa-Read-View")).toBeNull();
+    expect(refused.headers.get("X-Marfa-Reach")).toBeNull();
   });
 
   it("answers a stale update naming an unreadable snapshot ancestor_unavailable", async () => {

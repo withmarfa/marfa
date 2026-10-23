@@ -2788,7 +2788,7 @@ export interface components {
         ItemListRow: components["schemas"]["Item"] | components["schemas"]["ItemReadWithMetadata"];
         /** @description An item with its metadata, as a read returns it. */
         ItemReadWithMetadata: components["schemas"]["ItemWithMetadata"] & {
-            /** @description `true` if listings show you this item, `false` if `source_filter` leaves it out of them and you can read it only by ID. Present only when you send `X-Marfa-Read-View`. */
+            /** @description `true` if listings show you this item, `false` if `source_filter` leaves it out of them and you can read it only by ID. Present only when you send `X-Marfa-Reach`. */
             listed?: boolean;
         };
         /** @description An error response. */
@@ -2816,7 +2816,7 @@ export interface components {
             backrefs?: {
                 [key: string]: components["schemas"]["EdgePage"];
             };
-            /** @description `true` if listings show you this item, `false` if `source_filter` leaves it out of them and you can read it only by ID. Present only when you send `X-Marfa-Read-View`. */
+            /** @description `true` if listings show you this item, `false` if `source_filter` leaves it out of them and you can read it only by ID. Present only when you send `X-Marfa-Reach`. */
             listed?: boolean;
             /** @description The items you can read at the far end of `item.edges`, and of `backrefs` if you asked for both, with their metadata. Leaves out `system.*` items without counting them in `neighbors_omitted`. Present with `include=neighbors`. */
             neighbors?: components["schemas"]["ItemReadWithMetadata"][];
@@ -5415,14 +5415,14 @@ export interface components {
             };
         };
         /** @description An error response. */
-        ReadViewChangedRefusal: {
+        ReachChangedRefusal: {
             /** @description What went wrong. */
             error: {
                 /**
                  * @description A machine-readable code for the error. Use it in your logic.
                  * @enum {string}
                  */
-                code: "read_view_changed";
+                code: "reach_changed";
                 /** @description A description of the error for a person to read. It can change, so don't match on it. */
                 message: string;
                 /** @description More about the error, such as the field it concerns. Each code defines its own details. */
@@ -5521,8 +5521,8 @@ export interface components {
             cursor: string;
             /** @description Only on a copy stream: the instance's ID, as `GET /` returns it. */
             instance_id?: string;
-            /** @description Only on a copy stream: the read view to send as `X-Marfa-Read-View`, to resume or to read the working copy's data. */
-            read_view?: string;
+            /** @description Only on a copy stream: the reach to send as `X-Marfa-Reach`, to resume or to read the working copy's data. */
+            reach?: string;
         };
         /** @description Sent once, with no `id:`, when the catch-up is over: everything up to `cursor` has been sent or withheld, and what follows is live. A stream that ends early never sends it. */
         StreamLiveFrame: {
@@ -5535,8 +5535,8 @@ export interface components {
             cursor: string | null;
             /** @description Only on a copy stream: the instance's ID, as `GET /` returns it. */
             instance_id?: string;
-            /** @description Only on a copy stream: the read view to send as `X-Marfa-Read-View`, to resume or to read the working copy's data. */
-            read_view?: string;
+            /** @description Only on a copy stream: the reach to send as `X-Marfa-Reach`, to resume or to read the working copy's data. */
+            reach?: string;
         };
         /** @description The last frame, with no `id:`, when the stream can no longer deliver what it opened with. Marfa sends nothing past the gap, so reconnect with the last `id:` you received. `reader_behind` comes when 4 MiB of frames wait unread, or when you take none for 30 seconds during the catch-up. */
         StreamIncompleteFrame: {
@@ -5577,16 +5577,16 @@ export interface components {
             /** @description The ID of the latest event in the log. */
             head: string;
         };
-        /** @description The last frame of a copy stream, with no `id:`, when its read view changes, such as after a retype or a narrowed key. Rebuild the working copy. */
-        ReadViewChangedFrame: {
+        /** @description The last frame of a copy stream, with no `id:`, when its reach changes, such as after a retype or a narrowed key. Rebuild the working copy. */
+        ReachChangedFrame: {
             /**
              * @description The frame's name, which is also its `event:`.
              * @constant
              */
-            event_type: "read_view_changed";
+            event_type: "reach_changed";
         };
         /** @description One frame of `GET /events`. Its `event_type` is also its `event:`. */
-        EventStreamFrame: components["schemas"]["StreamCursorFrame"] | components["schemas"]["ItemEventFrame"] | components["schemas"]["EdgeEventFrame"] | components["schemas"]["StreamLiveFrame"] | components["schemas"]["StreamIncompleteFrame"] | components["schemas"]["CatchupTooOldFrame"] | components["schemas"]["CursorAheadFrame"] | components["schemas"]["ReadViewChangedFrame"];
+        EventStreamFrame: components["schemas"]["StreamCursorFrame"] | components["schemas"]["ItemEventFrame"] | components["schemas"]["EdgeEventFrame"] | components["schemas"]["StreamLiveFrame"] | components["schemas"]["StreamIncompleteFrame"] | components["schemas"]["CatchupTooOldFrame"] | components["schemas"]["CursorAheadFrame"] | components["schemas"]["ReachChangedFrame"];
         /** @description The body of a webhook delivery of an item event. */
         WebhookItemEvent: components["schemas"]["ItemEventFrame"] & {
             /** @description The event's ID in the log, the same as its `id:` on `GET /events`. */
@@ -5614,8 +5614,8 @@ export interface components {
     headers: {
         /** @description The contract version this server speaks, the same integer as the document's `info.version` and the root's `contract`. Sent on every response the application gives, refusals included, so a client can check the answer it is about to read. A client generated for another number cannot trust the body. A request refused by the HTTP layer before it reaches the application, such as one with a malformed host, is answered without it. */
         "X-Marfa-Contract": number;
-        /** @description A matching opaque read-view certificate, supplied only after a conditional copy read and its snapshot have completed. Successful conditional reads and snapshot-attributed resource refusals carry it with Cache-Control: no-store. Ordinary reads and write receipts carry none. */
-        "X-Marfa-Read-View": string;
+        /** @description The matching opaque reach, supplied only after a conditional copy read and its snapshot have completed. Successful conditional reads and snapshot-attributed resource refusals carry it with Cache-Control: no-store. Ordinary reads and write receipts carry none. */
+        "X-Marfa-Reach": string;
         /** @description This request's identifier, the same one written to the server's request log. Echoes the caller's own `X-Request-ID` when it sends one matching `[A-Za-z0-9_-]{1,128}`, and is a generated UUIDv7 otherwise, so a client can either adopt the server's id or impose its own. Quote it when reporting a problem: it is the one value that finds the request again. */
         "X-Request-ID": string;
         /** @description The machine-readable error code, identical to `error.code` in the body and drawn from the same enum the response schema lists. Read it rather than matching on `error.message`, which is prose written for a person and may be reworded. Present on every error the server renders, including one served from an idempotency record. */
@@ -5670,8 +5670,8 @@ export interface operations {
                 include?: string;
             };
             header?: {
-                /** @description A read-view certificate from a copy stream, for a working copy. Marfa reads the current data and checks the view in one snapshot, and returns `409 read_view_changed` if the view has changed. Leave it out for an ordinary read. */
-                "X-Marfa-Read-View"?: string;
+                /** @description The reach from a copy stream, for a working copy. Marfa reads the current data and checks the reach in one snapshot, and returns `409 reach_changed` if it has changed. Leave it out for an ordinary read. */
+                "X-Marfa-Reach"?: string;
             };
             path?: never;
             cookie?: never;
@@ -5686,7 +5686,7 @@ export interface operations {
                     "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
                     "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
                     "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
-                    "X-Marfa-Read-View": components["headers"]["X-Marfa-Read-View"];
+                    "X-Marfa-Reach": components["headers"]["X-Marfa-Reach"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -5694,7 +5694,7 @@ export interface operations {
                 };
             };
             /**
-             * @description - `validation_error`: a query parameter is unknown or invalid, `updated_after` comes with a different `sort` or `direction`, `cursor` came from another ordering or listing, or `X-Marfa-Read-View` comes without `include=metadata`.
+             * @description - `validation_error`: a query parameter is unknown or invalid, `updated_after` comes with a different `sort` or `direction`, `cursor` came from another ordering or listing, or `X-Marfa-Reach` comes without `include=metadata`.
              *     - `unknown_type`: `type` is a concrete type that nothing registers.
              */
             400: {
@@ -5738,14 +5738,14 @@ export interface operations {
                     "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
                     "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
-                    "X-Marfa-Read-View": components["headers"]["X-Marfa-Read-View"];
+                    "X-Marfa-Reach": components["headers"]["X-Marfa-Reach"];
                     [name: string]: unknown;
                 };
                 content: {
                     "application/json": components["schemas"]["EdgePermissionDeniedOrTypeNotPermittedRefusal"];
                 };
             };
-            /** @description `read_view_changed`: the read view in `X-Marfa-Read-View` has changed. Rebuild the working copy. */
+            /** @description `reach_changed`: the reach in `X-Marfa-Reach` has changed. Rebuild the working copy. */
             409: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -5757,7 +5757,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ReadViewChangedRefusal"];
+                    "application/json": components["schemas"]["ReachChangedRefusal"];
                 };
             };
             /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
@@ -6110,8 +6110,8 @@ export interface operations {
                 include?: string;
             };
             header?: {
-                /** @description A read-view certificate from a copy stream, for a working copy. Marfa reads the current data and checks the view in one snapshot, and returns `409 read_view_changed` if the view has changed. Leave it out for an ordinary read. */
-                "X-Marfa-Read-View"?: string;
+                /** @description The reach from a copy stream, for a working copy. Marfa reads the current data and checks the reach in one snapshot, and returns `409 reach_changed` if it has changed. Leave it out for an ordinary read. */
+                "X-Marfa-Reach"?: string;
             };
             path: {
                 /** @description The ID of the item. */
@@ -6129,7 +6129,7 @@ export interface operations {
                     "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
                     "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
                     "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
-                    "X-Marfa-Read-View": components["headers"]["X-Marfa-Read-View"];
+                    "X-Marfa-Reach": components["headers"]["X-Marfa-Reach"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -6178,7 +6178,7 @@ export interface operations {
                     "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
                     "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
-                    "X-Marfa-Read-View": components["headers"]["X-Marfa-Read-View"];
+                    "X-Marfa-Reach": components["headers"]["X-Marfa-Reach"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -6194,14 +6194,14 @@ export interface operations {
                     "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
                     "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
-                    "X-Marfa-Read-View": components["headers"]["X-Marfa-Read-View"];
+                    "X-Marfa-Reach": components["headers"]["X-Marfa-Reach"];
                     [name: string]: unknown;
                 };
                 content: {
                     "application/json": components["schemas"]["ItemNotFoundRefusal"];
                 };
             };
-            /** @description `read_view_changed`: the read view in `X-Marfa-Read-View` has changed. Rebuild the working copy. */
+            /** @description `reach_changed`: the reach in `X-Marfa-Reach` has changed. Rebuild the working copy. */
             409: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -6213,7 +6213,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ReadViewChangedRefusal"];
+                    "application/json": components["schemas"]["ReachChangedRefusal"];
                 };
             };
             /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
@@ -7788,8 +7788,8 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                /** @description A read-view certificate from a copy stream, for a working copy. Marfa reads the current data and checks the view in one snapshot, and returns `409 read_view_changed` if the view has changed. Leave it out for an ordinary read. */
-                "X-Marfa-Read-View"?: string;
+                /** @description The reach from a copy stream, for a working copy. Marfa reads the current data and checks the reach in one snapshot, and returns `409 reach_changed` if it has changed. Leave it out for an ordinary read. */
+                "X-Marfa-Reach"?: string;
                 /** @description The ID of the instance you expect, as `GET /` returns it. If another instance answers at this address, Marfa returns `409 instance_changed` and doesn't write. Leave it out to send the request to whichever instance answers. */
                 "X-Marfa-Instance-Id"?: string;
             };
@@ -7807,7 +7807,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Returns the items you can read, `metadata` if you asked for it, and `listed` if you sent `X-Marfa-Read-View`. */
+            /** @description Returns the items you can read, `metadata` if you asked for it, and `listed` if you sent `X-Marfa-Reach`. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -7815,7 +7815,7 @@ export interface operations {
                     "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
                     "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
                     "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
-                    "X-Marfa-Read-View": components["headers"]["X-Marfa-Read-View"];
+                    "X-Marfa-Reach": components["headers"]["X-Marfa-Reach"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -7824,7 +7824,7 @@ export interface operations {
                         items: components["schemas"]["Item"][];
                         /** @description The metadata of each item returned, in the same order. Present only when `include` has `metadata`. */
                         metadata?: components["schemas"]["Metadata"][];
-                        /** @description For each item returned, in the same order: `true` if listings show you the item, `false` if `source_filter` leaves it out of them. Present only when you send `X-Marfa-Read-View`. */
+                        /** @description For each item returned, in the same order: `true` if listings show you the item, `false` if `source_filter` leaves it out of them. Present only when you send `X-Marfa-Reach`. */
                         listed?: boolean[];
                     };
                 };
@@ -7872,14 +7872,14 @@ export interface operations {
                     "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
                     "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
-                    "X-Marfa-Read-View": components["headers"]["X-Marfa-Read-View"];
+                    "X-Marfa-Reach": components["headers"]["X-Marfa-Reach"];
                     [name: string]: unknown;
                 };
                 content: {
                     "application/json": components["schemas"]["TypeNotPermittedRefusal"];
                 };
             };
-            /** @description `read_view_changed`: the read view in `X-Marfa-Read-View` has changed. Rebuild the working copy. */
+            /** @description `reach_changed`: the reach in `X-Marfa-Reach` has changed. Rebuild the working copy. */
             409: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -7891,7 +7891,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ReadViewChangedRefusal"] | components["schemas"]["InstanceChangedRefusal"];
+                    "application/json": components["schemas"]["ReachChangedRefusal"] | components["schemas"]["InstanceChangedRefusal"];
                 };
             };
             /** @description `request_too_large`: the request body is larger than this instance accepts. */
@@ -12047,8 +12047,8 @@ export interface operations {
                 cursor?: string;
             };
             header?: {
-                /** @description A read-view certificate from a copy stream, for a working copy. Marfa reads the current data and checks the view in one snapshot, and returns `409 read_view_changed` if the view has changed. Leave it out for an ordinary read. */
-                "X-Marfa-Read-View"?: string;
+                /** @description The reach from a copy stream, for a working copy. Marfa reads the current data and checks the reach in one snapshot, and returns `409 reach_changed` if it has changed. Leave it out for an ordinary read. */
+                "X-Marfa-Reach"?: string;
             };
             path?: never;
             cookie?: never;
@@ -12063,7 +12063,7 @@ export interface operations {
                     "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
                     "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
                     "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
-                    "X-Marfa-Read-View": components["headers"]["X-Marfa-Read-View"];
+                    "X-Marfa-Reach": components["headers"]["X-Marfa-Reach"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -12109,14 +12109,14 @@ export interface operations {
                     "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
                     "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
-                    "X-Marfa-Read-View": components["headers"]["X-Marfa-Read-View"];
+                    "X-Marfa-Reach": components["headers"]["X-Marfa-Reach"];
                     [name: string]: unknown;
                 };
                 content: {
                     "application/json": components["schemas"]["TypeNotPermittedRefusal"];
                 };
             };
-            /** @description `read_view_changed`: the read view in `X-Marfa-Read-View` has changed. Rebuild the working copy. */
+            /** @description `reach_changed`: the reach in `X-Marfa-Reach` has changed. Rebuild the working copy. */
             409: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -12128,7 +12128,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ReadViewChangedRefusal"];
+                    "application/json": components["schemas"]["ReachChangedRefusal"];
                 };
             };
             /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
@@ -12456,8 +12456,8 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                /** @description A read-view certificate from a copy stream, for a working copy. Marfa reads the current data and checks the view in one snapshot, and returns `409 read_view_changed` if the view has changed. Leave it out for an ordinary read. */
-                "X-Marfa-Read-View"?: string;
+                /** @description The reach from a copy stream, for a working copy. Marfa reads the current data and checks the reach in one snapshot, and returns `409 reach_changed` if it has changed. Leave it out for an ordinary read. */
+                "X-Marfa-Reach"?: string;
             };
             path: {
                 /** @description The ID of the edge. */
@@ -12475,7 +12475,7 @@ export interface operations {
                     "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
                     "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
                     "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
-                    "X-Marfa-Read-View": components["headers"]["X-Marfa-Read-View"];
+                    "X-Marfa-Reach": components["headers"]["X-Marfa-Reach"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -12521,7 +12521,7 @@ export interface operations {
                     "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
                     "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
-                    "X-Marfa-Read-View": components["headers"]["X-Marfa-Read-View"];
+                    "X-Marfa-Reach": components["headers"]["X-Marfa-Reach"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -12537,14 +12537,14 @@ export interface operations {
                     "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
                     "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
-                    "X-Marfa-Read-View": components["headers"]["X-Marfa-Read-View"];
+                    "X-Marfa-Reach": components["headers"]["X-Marfa-Reach"];
                     [name: string]: unknown;
                 };
                 content: {
                     "application/json": components["schemas"]["EdgeNotFoundRefusal"];
                 };
             };
-            /** @description `read_view_changed`: the read view in `X-Marfa-Read-View` has changed. Rebuild the working copy. */
+            /** @description `reach_changed`: the reach in `X-Marfa-Reach` has changed. Rebuild the working copy. */
             409: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -12556,7 +12556,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ReadViewChangedRefusal"];
+                    "application/json": components["schemas"]["ReachChangedRefusal"];
                 };
             };
             /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
@@ -13297,8 +13297,8 @@ export interface operations {
                 cursor?: string;
             };
             header?: {
-                /** @description A read-view certificate from a copy stream, for a working copy. Marfa reads the current data and checks the view in one snapshot, and returns `409 read_view_changed` if the view has changed. Leave it out for an ordinary read. */
-                "X-Marfa-Read-View"?: string;
+                /** @description The reach from a copy stream, for a working copy. Marfa reads the current data and checks the reach in one snapshot, and returns `409 reach_changed` if it has changed. Leave it out for an ordinary read. */
+                "X-Marfa-Reach"?: string;
             };
             path: {
                 /** @description The ID of the item. */
@@ -13316,7 +13316,7 @@ export interface operations {
                     "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
                     "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
                     "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
-                    "X-Marfa-Read-View": components["headers"]["X-Marfa-Read-View"];
+                    "X-Marfa-Reach": components["headers"]["X-Marfa-Reach"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -13365,7 +13365,7 @@ export interface operations {
                     "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
                     "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
-                    "X-Marfa-Read-View": components["headers"]["X-Marfa-Read-View"];
+                    "X-Marfa-Reach": components["headers"]["X-Marfa-Reach"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -13381,14 +13381,14 @@ export interface operations {
                     "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
                     "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
-                    "X-Marfa-Read-View": components["headers"]["X-Marfa-Read-View"];
+                    "X-Marfa-Reach": components["headers"]["X-Marfa-Reach"];
                     [name: string]: unknown;
                 };
                 content: {
                     "application/json": components["schemas"]["ItemNotFoundRefusal"];
                 };
             };
-            /** @description `read_view_changed`: the read view in `X-Marfa-Read-View` has changed. Rebuild the working copy. */
+            /** @description `reach_changed`: the reach in `X-Marfa-Reach` has changed. Rebuild the working copy. */
             409: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -13400,7 +13400,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ReadViewChangedRefusal"];
+                    "application/json": components["schemas"]["ReachChangedRefusal"];
                 };
             };
             /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
@@ -13790,8 +13790,8 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                /** @description A read-view certificate from a copy stream, for a working copy. Marfa reads the current data and checks the view in one snapshot, and returns `409 read_view_changed` if the view has changed. Leave it out for an ordinary read. */
-                "X-Marfa-Read-View"?: string;
+                /** @description The reach from a copy stream, for a working copy. Marfa reads the current data and checks the reach in one snapshot, and returns `409 reach_changed` if it has changed. Leave it out for an ordinary read. */
+                "X-Marfa-Reach"?: string;
             };
             path?: never;
             cookie?: never;
@@ -13806,7 +13806,7 @@ export interface operations {
                     "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
                     "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
                     "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
-                    "X-Marfa-Read-View": components["headers"]["X-Marfa-Read-View"];
+                    "X-Marfa-Reach": components["headers"]["X-Marfa-Reach"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -13843,7 +13843,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description `read_view_changed`: the read view in `X-Marfa-Read-View` has changed. Rebuild the working copy. */
+            /** @description `reach_changed`: the reach in `X-Marfa-Reach` has changed. Rebuild the working copy. */
             409: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -13855,7 +13855,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ReadViewChangedRefusal"];
+                    "application/json": components["schemas"]["ReachChangedRefusal"];
                 };
             };
             /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
@@ -14849,8 +14849,8 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                /** @description A read-view certificate from a copy stream, for a working copy. Marfa reads the current data and checks the view in one snapshot, and returns `409 read_view_changed` if the view has changed. Leave it out for an ordinary read. */
-                "X-Marfa-Read-View"?: string;
+                /** @description The reach from a copy stream, for a working copy. Marfa reads the current data and checks the reach in one snapshot, and returns `409 reach_changed` if it has changed. Leave it out for an ordinary read. */
+                "X-Marfa-Reach"?: string;
             };
             path?: never;
             cookie?: never;
@@ -14865,7 +14865,7 @@ export interface operations {
                     "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
                     "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
                     "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
-                    "X-Marfa-Read-View": components["headers"]["X-Marfa-Read-View"];
+                    "X-Marfa-Reach": components["headers"]["X-Marfa-Reach"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -14902,7 +14902,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description `read_view_changed`: the read view in `X-Marfa-Read-View` has changed. Rebuild the working copy. */
+            /** @description `reach_changed`: the reach in `X-Marfa-Reach` has changed. Rebuild the working copy. */
             409: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -14914,7 +14914,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ReadViewChangedRefusal"];
+                    "application/json": components["schemas"]["ReachChangedRefusal"];
                 };
             };
             /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
@@ -16492,7 +16492,7 @@ export interface operations {
     streamEvents: {
         parameters: {
             query?: {
-                /** @description Set to `1` for a copy stream, which a working copy follows. It takes `edges=all` and no other parameter. Its `stream_cursor` and `stream_live` carry `instance_id` and `read_view`, and its item frames carry `listed`. */
+                /** @description Set to `1` for a copy stream, which a working copy follows. It takes `edges=all` and no other parameter. Its `stream_cursor` and `stream_live` carry `instance_id` and `reach`, and its item frames carry `listed`. */
                 copy?: "1";
                 /** @description Only send item events for these types and their subtypes: a comma-separated list of up to 10, such as `core.note,app.*`. A pattern matches the types you can read. Edge events aren't filtered. Leave it out for every type. */
                 type?: string;
@@ -16500,8 +16500,8 @@ export interface operations {
                 edges?: "all" | "none";
             };
             header?: {
-                /** @description On a copy stream, the `read_view` from the last `stream_cursor` or `stream_live` you received. Send it with `Last-Event-ID` to resume, and leave both out to start a new copy. */
-                "X-Marfa-Read-View"?: string;
+                /** @description On a copy stream, the `reach` from the last `stream_cursor` or `stream_live` you received. Send it with `Last-Event-ID` to resume, and leave both out to start a new copy. */
+                "X-Marfa-Reach"?: string;
                 /** @description The ID of the last event you received. Marfa replays every event after it that the log still holds, then goes live. Send it as the stream wrote it. Empty means none, except on a copy stream. */
                 "Last-Event-ID"?: string;
             };
@@ -16515,7 +16515,7 @@ export interface operations {
              *     - `stream_cursor`: first, where the log stands.
              *     - An event, such as `item.created`, with its event ID as `id:`.
              *     - `stream_live`: once the catch-up is over.
-             *     - `stream_incomplete`, `catchup_too_old`, `cursor_ahead` or `read_view_changed`: last, before the stream closes.
+             *     - `stream_incomplete`, `catchup_too_old`, `cursor_ahead` or `reach_changed`: last, before the stream closes.
              */
             200: {
                 headers: {
@@ -16544,7 +16544,7 @@ export interface operations {
                 };
             };
             /**
-             * @description - `validation_error`: a parameter or header is invalid, or not one this endpoint takes. For example, `type` has more than 10 entries or is `*`, or `Last-Event-ID` isn't an event ID. A copy stream takes only `copy=1` and `edges=all`, and both resume headers or neither; another stream takes no `X-Marfa-Read-View`.
+             * @description - `validation_error`: a parameter or header is invalid, or not one this endpoint takes. For example, `type` has more than 10 entries or is `*`, or `Last-Event-ID` isn't an event ID. A copy stream takes only `copy=1` and `edges=all`, and both resume headers or neither; another stream takes no `X-Marfa-Reach`.
              *     - `unknown_type`: a `type` entry isn't registered.
              */
             400: {
@@ -16591,7 +16591,7 @@ export interface operations {
                     "application/json": components["schemas"]["TypeNotPermittedRefusal"];
                 };
             };
-            /** @description `read_view_changed`: the read view in `X-Marfa-Read-View` has changed. Rebuild the working copy. */
+            /** @description `reach_changed`: the reach in `X-Marfa-Reach` has changed. Rebuild the working copy. */
             409: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -16603,7 +16603,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ReadViewChangedRefusal"];
+                    "application/json": components["schemas"]["ReachChangedRefusal"];
                 };
             };
             /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
@@ -22990,8 +22990,8 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                /** @description A read-view certificate from a copy stream, for a working copy. Marfa reads the current data and checks the view in one snapshot, and returns `409 read_view_changed` if the view has changed. Leave it out for an ordinary read. */
-                "X-Marfa-Read-View"?: string;
+                /** @description The reach from a copy stream, for a working copy. Marfa reads the current data and checks the reach in one snapshot, and returns `409 reach_changed` if it has changed. Leave it out for an ordinary read. */
+                "X-Marfa-Reach"?: string;
             };
             path?: never;
             cookie?: never;
@@ -23006,7 +23006,7 @@ export interface operations {
                     "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
                     "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
                     "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
-                    "X-Marfa-Read-View": components["headers"]["X-Marfa-Read-View"];
+                    "X-Marfa-Reach": components["headers"]["X-Marfa-Reach"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -23052,14 +23052,14 @@ export interface operations {
                     "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
                     "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
-                    "X-Marfa-Read-View": components["headers"]["X-Marfa-Read-View"];
+                    "X-Marfa-Reach": components["headers"]["X-Marfa-Reach"];
                     [name: string]: unknown;
                 };
                 content: {
                     "application/json": components["schemas"]["ForbiddenRefusal"];
                 };
             };
-            /** @description `read_view_changed`: the read view in `X-Marfa-Read-View` has changed. Rebuild the working copy. */
+            /** @description `reach_changed`: the reach in `X-Marfa-Reach` has changed. Rebuild the working copy. */
             409: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -23071,7 +23071,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ReadViewChangedRefusal"];
+                    "application/json": components["schemas"]["ReachChangedRefusal"];
                 };
             };
             /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */

@@ -300,11 +300,11 @@ fn copy_expired(reason: &str) -> String {
         "credential_ended" => {
             "the credential it reads with has ended; sign in or approve this app again, or use a new key, then rebuild the copy from the server (changes not yet sent are kept)".to_string()
         }
-        "read_view_changed" => "what the credential may read, or how the server arranges items and types, has changed; rebuild the copy from the server (changes not yet sent are kept)".to_string(),
+        "reach_changed" => "what the credential may read, or how the server arranges items and types, has changed; rebuild the copy from the server (changes not yet sent are kept)".to_string(),
         crate::http::INSTANCE_CHANGED => {
             "another Marfa now answers at this address; rebuild the copy from it".to_string()
         }
-        "read_view_invalid" => "this copy holds no proof it can accept of what the credential may read; rebuild the copy from the server".to_string(),
+        "reach_invalid" => "this copy holds no proof it can accept of what the credential may read; rebuild the copy from the server".to_string(),
         sentence => {
             return format!(
                 "this working copy can no longer be kept current: {sentence}; rebuild the copy from the server"
@@ -378,7 +378,7 @@ mod tests {
                 && ended.contains("then rebuild the copy from the server"),
             "{ended}"
         );
-        let changed = said("read_view_changed");
+        let changed = said("reach_changed");
         assert!(
             changed.contains("what the credential may read")
                 && changed.contains("rebuild the copy from the server")
@@ -387,11 +387,11 @@ mod tests {
         );
         assert!(
             !changed.contains("sign in"),
-            "a changed view needs no new approval: {changed}"
+            "a changed reach needs no new approval: {changed}"
         );
         let other = said("instance_changed");
         assert!(other.contains("another Marfa now answers"), "{other}");
-        let invalid = said("read_view_invalid");
+        let invalid = said("reach_invalid");
         assert!(
             invalid.contains("holds no proof it can accept"),
             "{invalid}"
@@ -399,9 +399,9 @@ mod tests {
         // The reason is named, so a caller can tell why the copy expired.
         for reason in [
             "credential_ended",
-            "read_view_changed",
+            "reach_changed",
             "instance_changed",
-            "read_view_invalid",
+            "reach_invalid",
         ] {
             assert!(said(reason).contains(&format!("({reason})")), "{reason}");
         }
@@ -418,8 +418,8 @@ mod tests {
     fn an_expired_copy_never_shows_the_word_hydrate_to_a_person() {
         for reason in [
             "credential_ended",
-            "read_view_changed",
-            "read_view_invalid",
+            "reach_changed",
+            "reach_invalid",
             "instance_changed",
             "the event log no longer holds the cursor 4",
         ] {

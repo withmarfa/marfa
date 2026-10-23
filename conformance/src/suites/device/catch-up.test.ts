@@ -4450,7 +4450,7 @@ describe("a server that is not the one the copy followed", () => {
     await expectExpired(
       harness,
       await device.catchUp(),
-      ["read_view_invalid"],
+      ["reach_invalid"],
       waiting,
     );
 

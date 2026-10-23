@@ -23,7 +23,7 @@ pub struct SyncReport {
     /// drain included.
     pub drain: Drained,
     /// The hydration the drain took where the server said the copy's read
-    /// view had changed, before it sent the writes still waiting.
+    /// reach had changed, before it sent the writes still waiting.
     pub rebuilt: Option<HydrateReport>,
     /// Why the catch-up could not reach the server, where it could not; the
     /// sync goes on to write out the copy it holds.
@@ -52,7 +52,7 @@ impl Folder {
     /// an edit of the settings file, scans, drains, catches up, pulls, and
     /// drains again where the pull queued the placement of a file it wrote, or
     /// the end of one. Where that drain rebuilt the copy for a changed read
-    /// view, pulls once more, and drains again where that pull placed a file.
+    /// reach, pulls once more, and drains again where that pull placed a file.
     /// A folder whose first sync waits to be confirmed is only read, and says
     /// what the sync will do.
     pub fn sync(&self) -> Result<Synced> {
@@ -168,7 +168,7 @@ impl Folder {
             let rebuilt_before = rebuilt.is_some();
             let later = self.drain_rebuilding(&mut rebuilt)?;
             self.absorb(&mut drain, later)?;
-            // The rebuild read the copy under the new view after the pull
+            // The rebuild read the copy under the new reach after the pull
             // wrote it out, so the directory is brought to it once more. The
             // run has rebuilt already, so a change at the drain after this
             // pull ends it.
@@ -196,7 +196,7 @@ impl Folder {
         })
     }
 
-    /// A drain that the server ends by saying the copy's read view changed,
+    /// A drain that the server ends by saying the copy's reach changed,
     /// as it does once the folder's key is replaced or narrowed, builds the
     /// copy again into `rebuilt` and drains once more, so the writes still
     /// waiting go out in this run rather than the next. What the first drain
@@ -209,7 +209,7 @@ impl Folder {
             Err(Cut {
                 error: CoreError::CopyExpired { reason },
                 settled,
-            }) if reason == "read_view_changed" && rebuilt.is_none() => {
+            }) if reason == "reach_changed" && rebuilt.is_none() => {
                 *rebuilt = Some(self.hydrate()?);
                 let mut drained = *settled;
                 self.absorb(&mut drained, self.drain()?)?;

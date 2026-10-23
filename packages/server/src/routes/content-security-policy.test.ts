@@ -195,10 +195,10 @@ describe("every page the app renders", () => {
   });
 
   it("carries the policy on a page a later middleware refused before any door ran", async () => {
-    // A read-view header the app refuses is answered by middleware mounted
+    // A reach header the app refuses is answered by middleware mounted
     // well before the doors, and as a page when asked for one.
     const res = await ctx.app.request("/auth/sign-in", {
-      headers: { ...HTML, "X-Marfa-Read-View": "x" },
+      headers: { ...HTML, "X-Marfa-Reach": "x" },
     });
     expect(res.status).toBe(400);
     expect(res.headers.get("content-type")).toContain("text/html");

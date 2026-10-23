@@ -458,7 +458,7 @@ impl Folder {
 
     fn health_send_inner(&self) -> Result<()> {
         // An expired copy, whether another instance answered at its origin or
-        // its view changed, sends nothing until it is built again; the report
+        // its reach changed, sends nothing until it is built again; the report
         // waits for that.
         if !store::hydrated(&*self.core.conn()?)? {
             return Ok(());
@@ -769,7 +769,7 @@ mod tests {
                 (store::META_SLICE_TYPES, "[\"core.note\"]"),
                 (store::META_SLICE_TIER, "library"),
                 (store::META_EVENT_CURSOR, "1"),
-                (crate::read_view::FENCE, crate::scripted::FENCE),
+                (crate::reach::FENCE, crate::scripted::FENCE),
                 (store::META_INSTANCE_ID, crate::scripted::INSTANCE),
             ] {
                 store::meta_set(&conn, key, value).unwrap();

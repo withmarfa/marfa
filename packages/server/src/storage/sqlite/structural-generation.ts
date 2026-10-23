@@ -1,6 +1,6 @@
 import type { Client, Transaction } from "@libsql/client";
 
-export const STRUCTURAL_GENERATION_KEY = "read_view.structural_generation";
+export const STRUCTURAL_GENERATION_KEY = "reach.structural_generation";
 const MAX_GENERATION = 9_223_372_036_854_775_807n;
 
 export function structuralGeneration(value: unknown): string {

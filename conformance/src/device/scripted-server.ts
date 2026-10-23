@@ -10,7 +10,7 @@ import {
   answers,
   bulkGetOf,
   certifiedRead,
-  SCRIPTED_READ_VIEW,
+  SCRIPTED_REACH,
 } from "./marfa-answers.js";
 
 /**
@@ -289,7 +289,7 @@ export class ScriptedServer {
           typeof responder === "function" ? responder(request) : responder;
         if (
           method !== "GET" ||
-          request.headers["x-marfa-read-view"] !== SCRIPTED_READ_VIEW ||
+          request.headers["x-marfa-reach"] !== SCRIPTED_REACH ||
           !/^\/(items(?:\/[^/]+(?:\/edges)?)?|edges(?:\/[^/]+)?|types|edge-types|keys\/current)$/.test(
             request.pathname,
           )
@@ -429,7 +429,7 @@ export class ScriptedServer {
         reads.push(read);
       }
       return bulkGetOf(reads, {
-        viewed: recorded.headers["x-marfa-read-view"] === SCRIPTED_READ_VIEW,
+        withReach: recorded.headers["x-marfa-reach"] === SCRIPTED_REACH,
         system: include?.includes("system") ?? false,
       });
     }

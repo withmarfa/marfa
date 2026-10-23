@@ -36,7 +36,7 @@ const LINK = "01a00000-0000-7000-8000-0000000000e3";
 
 /**
  * A move of a target, which the server answers without changing its read
- * view (`read-views/view-keeps-edge-writes`), so the copy reads the moved edge back. A move of
+ * reach (`reach/keeps-edge-writes`), so the copy reads the moved edge back. A move of
  * a source expires the copy once answered; `edge-move-live.test.ts` holds
  * that against the real server.
  */
@@ -523,7 +523,7 @@ function hydrations(started: Harness): number {
   ).length;
 }
 
-/** The writes sent to an edge's door, and the reads of it made under the copy's read view. */
+/** The writes sent to an edge's door, and the reads of it made under the copy's reach. */
 function edgeCalls(started: Harness, edge: string) {
   const asked = started.server.requests.filter(
     (request) => request.pathname === `/edges/${edge}`,
@@ -533,7 +533,7 @@ function edgeCalls(started: Harness, edge: string) {
     reads: asked.filter(
       (request) =>
         request.method === "GET" &&
-        request.headers["x-marfa-read-view"] !== undefined,
+        request.headers["x-marfa-reach"] !== undefined,
     ),
   };
 }
@@ -546,12 +546,12 @@ describe("a drain that sends moves of an edge's source", () => {
       server.answer("PATCH", `/edges/${id}`, () =>
         writeAnswers.edge(childEdge(at, PARENT_B, 2), 200),
       );
-      // The read of the edge a move was answered with is made under the view
-      // the move changed (`read-views/view-moves-edge-source`), and refused.
+      // The read of the edge a move was answered with is made under the reach
+      // the move changed (`reach/moves-edge-source`), and refused.
       server.answer(
         "GET",
         `/edges/${id}`,
-        refusal(409, "read_view_changed", "the read view has changed"),
+        refusal(409, "reach_changed", "the reach has changed"),
       );
     });
     const moves: QueuedWrite[] = [];
@@ -576,12 +576,12 @@ describe("a drain that sends moves of an edge's source", () => {
     if (!drained.ok) expect(drained.refusal.code).toBe("copy_expired");
     expect(
       value(await device.queue()).map((row) => [row.id, row.verdict]),
-      "a move queued behind the one that changed the view was not judged",
+      "a move queued behind the one that changed the reach was not judged",
     ).toEqual(moves.map((row) => [row.id, "accepted"]));
     for (const [at, id] of CHILD_EDGES.entries()) {
       const calls = edgeCalls(harness, id);
       expect(calls.writes, `the move of child ${String(at)}`).toHaveLength(1);
-      // The witness is the first: the move that changed the view was read
+      // The witness is the first: the move that changed the reach was read
       // back under it, and the server refused. The reads after it were left
       // unmade, since the server would refuse each the same way.
       expect(calls.reads, `the read of child ${String(at)}`).toHaveLength(
@@ -625,7 +625,7 @@ describe("a drain that sends moves of an edge's source", () => {
     server.answer(
       "GET",
       `/edges/${first}`,
-      refusal(409, "read_view_changed", "the read view has changed"),
+      refusal(409, "reach_changed", "the reach has changed"),
     );
     server.answer(
       "PATCH",
@@ -672,7 +672,7 @@ describe("a drain that sends moves of an edge's source", () => {
     ).toEqual([1, 2]);
     expect(
       CHILD_EDGES.map((id) => edgeCalls(harness!, id).reads.length),
-      "a read was made under a view already known to have changed",
+      "a read was made under a reach already known to have changed",
     ).toEqual([1, 0, 0]);
   });
 
@@ -712,7 +712,7 @@ describe("a drain that sends moves of an edge's source", () => {
     ).toBe("complete");
   });
 
-  it("expires the copy where another client changed the read view during a drain whose moves were all refused", async () => {
+  it("expires the copy where another client changed the reach during a drain whose moves were all refused", async () => {
     harness = await reparentable("edge-source-move-refused-elsewhere");
     const { server, device } = harness;
     const [first] = CHILD_EDGES;
@@ -721,12 +721,12 @@ describe("a drain that sends moves of an edge's source", () => {
       `/edges/${first}`,
       refusal(404, "item_not_found", "no such item"),
     );
-    // The refusal changed nothing; the read after it meets a view that
+    // The refusal changed nothing; the read after it meets a reach that
     // another client changed.
     server.answer(
       "GET",
       `/edges/${first}`,
-      refusal(409, "read_view_changed", "the read view has changed"),
+      refusal(409, "reach_changed", "the reach has changed"),
     );
     value(
       queuedEdit(
@@ -757,7 +757,7 @@ describe("a drain that sends moves of an edge's source", () => {
     server.answer(
       "GET",
       `/edges/${first}`,
-      refusal(409, "read_view_changed", "the read view has changed"),
+      refusal(409, "reach_changed", "the reach has changed"),
     );
     server.answer("PATCH", `/edges/${second}`, {
       kind: "json",
@@ -803,7 +803,7 @@ describe("a drain that sends moves of an edge's source", () => {
     server.answer(
       "GET",
       `/edges/${first}`,
-      refusal(409, "read_view_changed", "the read view has changed"),
+      refusal(409, "reach_changed", "the reach has changed"),
     );
     server.answer("PATCH", `/edges/${second}`, {
       kind: "json",
@@ -845,7 +845,7 @@ describe("a drain that sends moves of an edge's source", () => {
     server.answer(
       "GET",
       `/edges/${first}`,
-      refusal(409, "read_view_changed", "the read view has changed"),
+      refusal(409, "reach_changed", "the reach has changed"),
     );
     server.answer("PATCH", `/edges/${second}`, () => ({
       kind: "gated",
@@ -888,7 +888,7 @@ describe("a drain that sends moves of an edge's source", () => {
     ).toBe("expired");
   });
 
-  it("ends at once where a read owed from an earlier drain meets a changed read view", async () => {
+  it("ends at once where a read owed from an earlier drain meets a changed reach", async () => {
     harness = await reparentable("edge-source-move-earlier");
     const { server, device } = harness;
     const [first, second] = CHILD_EDGES;
@@ -899,7 +899,7 @@ describe("a drain that sends moves of an edge's source", () => {
       "GET",
       `/edges/${first}`,
       refusal(503, "unavailable", "busy"),
-      refusal(409, "read_view_changed", "the read view has changed"),
+      refusal(409, "reach_changed", "the reach has changed"),
     );
     server.answer("PATCH", `/edges/${second}`, () =>
       writeAnswers.edge(childEdge(1, PARENT_B, 2), 200),
@@ -924,7 +924,7 @@ describe("a drain that sends moves of an edge's source", () => {
     if (!drained.ok) expect(drained.refusal.code).toBe("copy_expired");
     expect(
       edgeCalls(harness, second).writes,
-      "a write was sent after a read owed from an earlier drain met a changed view",
+      "a write was sent after a read owed from an earlier drain met a changed reach",
     ).toHaveLength(0);
   });
 
@@ -938,7 +938,7 @@ describe("a drain that sends moves of an edge's source", () => {
     server.answer(
       "GET",
       `/edges/${moved}`,
-      refusal(409, "read_view_changed", "the read view has changed"),
+      refusal(409, "reach_changed", "the reach has changed"),
     );
     server.answer(
       "PATCH",
@@ -995,7 +995,7 @@ describe("a drain that sends moves of an edge's source", () => {
     expect(value(await device.status()).hydration).toBe("expired");
   });
 
-  it("ends at once where the read of a write that moves no source meets a changed read view", async () => {
+  it("ends at once where the read of a write that moves no source meets a changed reach", async () => {
     harness = await reparentable("edge-source-move-other");
     const { server, device } = harness;
     const [first, second] = CHILD_EDGES;
@@ -1008,7 +1008,7 @@ describe("a drain that sends moves of an edge's source", () => {
     server.answer(
       "GET",
       `/edges/${first}`,
-      refusal(409, "read_view_changed", "the read view has changed"),
+      refusal(409, "reach_changed", "the reach has changed"),
     );
     server.answer("PATCH", `/edges/${second}`, () =>
       writeAnswers.edge(
@@ -1032,7 +1032,7 @@ describe("a drain that sends moves of an edge's source", () => {
     if (!drained.ok) expect(drained.refusal.code).toBe("copy_expired");
     expect(
       value(await device.queue()).map((row) => row.verdict),
-      "a write was sent behind one whose answer showed the view changed under no source move",
+      "a write was sent behind one whose answer showed the reach changed under no source move",
     ).toEqual(["accepted", null]);
     expect(edgeCalls(harness, second).writes).toHaveLength(0);
     // The witness: the read was made and refused, so it is the refusal that

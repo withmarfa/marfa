@@ -28,7 +28,7 @@ import type { ApiKey, Permission, TypeFilter } from "@withmarfa/shared";
 import type { OauthAccessTokenRow, Storage } from "../storage/interface.js";
 import type { AppConfig } from "../config.js";
 import type { BoundCredential } from "../auth/live-credential.js";
-import type { ReadViewAuthority } from "../storage/read-view.js";
+import type { ReachAuthority } from "../storage/reach.js";
 import {
   RECENT_SIGN_IN_MS,
   SIGN_IN_AGAIN_MESSAGE,
@@ -55,7 +55,7 @@ export interface AppEnv extends Record<string, unknown> {
         }
       | undefined;
     boundCredential: BoundCredential | undefined;
-    readViewAuthority: ReadViewAuthority | undefined;
+    reachAuthority: ReachAuthority | undefined;
     copyReadBoundary: MiddlewareHandler<AppEnv>;
     requestId: string;
     /**

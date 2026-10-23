@@ -222,14 +222,14 @@ const reached = () => ({
   read: spies.read.mock.calls.length,
 });
 
-/** The cursor and read view a copy stream announces once it is live. */
+/** The cursor and reach a copy stream announces once it is live. */
 async function copyProof(): Promise<Record<string, string>> {
   const text = await streamRead(copy, {}, "event: stream_live");
   const live = /event: stream_live\ndata: (.*)\n/.exec(text)?.[1];
-  const proof = JSON.parse(live!) as { cursor: string; read_view: string };
+  const proof = JSON.parse(live!) as { cursor: string; reach: string };
   return {
     "Last-Event-ID": proof.cursor,
-    "X-Marfa-Read-View": proof.read_view,
+    "X-Marfa-Reach": proof.reach,
   };
 }
 
@@ -398,12 +398,12 @@ it("announces a write by the original code with no fault set, and through the ho
 
 it("reads a conditional read by the original code with no fault set, and through the hold once one is", async () => {
   const opened = await streamRead(copy, {}, "event: stream_live");
-  const view = /"read_view":"([0-9a-f]{64})"/.exec(opened)?.[1];
-  expect(view).toBeDefined();
+  const reach = /"reach":"([0-9a-f]{64})"/.exec(opened)?.[1];
+  expect(reach).toBeDefined();
   const read = () =>
     request(ctx.app, "GET", "/items?include=metadata&limit=1", {
       key: ctx.workingKey,
-      headers: { "X-Marfa-Read-View": view! },
+      headers: { "X-Marfa-Reach": reach! },
     });
   expect((await read()).status).toBe(200);
   expect(spies.hold).not.toHaveBeenCalled();

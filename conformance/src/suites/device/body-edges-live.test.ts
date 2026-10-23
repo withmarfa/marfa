@@ -473,7 +473,7 @@ describe("links", () => {
       "a body the retype only moved changed its edges",
     ).toEqual(["update_item"]);
     // The witness: the event's description is its body now. Neither write
-    // is sent: a retype the server takes changes the read view, which
+    // is sent: a retype the server takes changes the reach, which
     // expires the copy.
     held = value(await events.get(host.id));
     expect(held.type).toBe("core.event");

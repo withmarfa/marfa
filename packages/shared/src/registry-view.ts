@@ -447,7 +447,7 @@ function guardedCache(guard: () => void): Map<string, ZodType> {
   });
   return facade;
 }
-export function createRegistryReadView(
+export function createGuardedRegistryView(
   view: RegistryView,
   guard: () => void,
 ): RegistryView {

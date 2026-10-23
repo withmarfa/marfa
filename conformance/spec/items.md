@@ -508,7 +508,7 @@ If `GET /items/{id}` names an id no item holds, an item in the bin or an item of
 
 When a key sends `POST /items/bulk-get` with `ids`, the server MUST answer `200` with each item it may read that is not in the bin, and is not a `system.*` item unless the request's `include` holds `system`, once each, in the order the request named them.
 
-**Tests:** `compliance/bulk-get.test.ts › returns the requested items by id`, `› omits ids that do not resolve rather than erroring`, `compliance/links.test.ts › looks rows up by id in every state, where bulk-get leaves the bin out, and leaves a system row out`, `compliance/read-views.test.ts › answers a system row to a bulk read under a read view only when include names system`.
+**Tests:** `compliance/bulk-get.test.ts › returns the requested items by id`, `› omits ids that do not resolve rather than erroring`, `compliance/links.test.ts › looks rows up by id in every state, where bulk-get leaves the bin out, and leaves a system row out`, `compliance/reach.test.ts › answers a system row to a bulk read under a reach only when include names system`.
 
 ### `items/bulk-get-omits`
 
@@ -554,7 +554,7 @@ When `POST /items/bulk-get` names `metadata` in `include`, the server MUST answe
 
 If `POST /items/bulk-get` names a `system.*` item and its `include` does not hold `system`, then the server MUST leave the item out of the answer.
 
-**Tests:** `compliance/read-views.test.ts › answers a system row to a bulk read under a read view only when include names system`.
+**Tests:** `compliance/reach.test.ts › answers a system row to a bulk read under a reach only when include names system`.
 
 ## Updating an item
 

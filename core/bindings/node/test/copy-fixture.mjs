@@ -13,7 +13,7 @@ export const INSTANCE = "00000000-0000-7000-8000-000000000000";
 export const FENCE = "a".repeat(64);
 
 /**
- * The scripted JSON reads below model a single certified view. Writes and
+ * The scripted JSON reads below model a single certified reach. Writes and
  * root descriptions carry no read proof; the bulk read by id is a read sent
  * as a `POST`. Item listing flags remain explicit in each fixture's body.
  * @param {import("node:http").IncomingMessage} req
@@ -23,13 +23,13 @@ export function readProof(req) {
     req.method === "GET" ||
     (req.method === "POST" && req.url === "/items/bulk-get");
   if (!read || req.url === "/") return {};
-  assert.equal(req.headers["x-marfa-read-view"], FENCE);
-  return { "x-marfa-read-view": FENCE };
+  assert.equal(req.headers["x-marfa-reach"], FENCE);
+  return { "x-marfa-reach": FENCE };
 }
 
 /** @param {"stream_cursor" | "stream_live"} type @param {string} cursor */
 export function marker(type, cursor) {
-  return `event: ${type}\ndata: ${JSON.stringify({ event_type: type, cursor, instance_id: INSTANCE, read_view: FENCE })}\n\n`;
+  return `event: ${type}\ndata: ${JSON.stringify({ event_type: type, cursor, instance_id: INSTANCE, reach: FENCE })}\n\n`;
 }
 
 /**
@@ -42,7 +42,7 @@ export function streamHead(req, res) {
   assert.equal(new URL(req.url ?? "", "http://fixture").searchParams.get("copy"), "1");
   const cursor = req.headers["last-event-id"];
   assert.ok(cursor === undefined || typeof cursor === "string");
-  assert.equal(req.headers["x-marfa-read-view"], cursor === undefined ? undefined : FENCE);
+  assert.equal(req.headers["x-marfa-reach"], cursor === undefined ? undefined : FENCE);
   res.writeHead(200, {
     "content-type": "text/event-stream",
     "x-marfa-contract": CONTRACT,

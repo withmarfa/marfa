@@ -1331,7 +1331,7 @@ mod tests {
     #[test]
     fn a_copy_changing_under_the_pull_is_told_once_for_each_run() {
         let mut telling = Telling::default();
-        let changed = crate::read_view::Context::changed();
+        let changed = crate::reach::Context::changed();
         assert!(matches!(
             telling.unsettled(&changed),
             Some(WatchEvent::Retrying { .. })
