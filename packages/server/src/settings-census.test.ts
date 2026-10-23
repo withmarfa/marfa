@@ -83,6 +83,8 @@ const NOT_SERVER_SETTINGS: Record<string, string> = {
   MARFA_FOLDER_REGISTRY: "the device's folder registry, read by the CLI",
   MARFA_API_KEY: "the credential a client or the conformance run holds",
   MARFA_API_URL: "the server a client names, read by the CLI",
+  MARFA_PROFILE:
+    "the profile in profiles.toml that names the server and key, read by the CLI",
   MARFA_DOCS_URL: "the docs site `marfa docs` reads, read by the CLI",
   MARFA_ALLOW_HTTP:
     "states that a credential may go over plain http, read by the CLI",
@@ -91,7 +93,7 @@ const NOT_SERVER_SETTINGS: Record<string, string> = {
   MARFA_AUTOSTART_ROOT:
     "the directory that stands in for the home directory when the CLI writes a login agent, read by the CLI",
   XDG_CONFIG_HOME:
-    "the directory the CLI writes a systemd user unit under on Linux, read by the CLI",
+    "the directory the CLI writes a systemd user unit under, and reads profiles.toml from, on Linux, read by the CLI",
   NO_COLOR:
     "the standard variable that asks a program for no color, read by the CLI",
   VERSION_RELEASE:
