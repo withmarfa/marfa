@@ -4,6 +4,11 @@
 //! A debug build also holds a call, or makes it fail, where a fixture in its
 //! own process says, which a fault in the environment cannot do. A release
 //! build has none.
+//!
+//! A fixture in its own process (the Node binding) makes a point fail for
+//! the whole process with `set_failing`. A unit test shares its process with
+//! every other test, so it makes a point fail for its own thread with
+//! `fail_on_this_thread`, which no test running beside it can see.
 
 /// The argument of the named fault, empty where it takes none.
 #[cfg(debug_assertions)]
@@ -32,12 +37,30 @@ pub fn hold<S: AsRef<str>>(point: impl FnOnce() -> S) {
     }
 }
 
-/// Whether the fixture has made `point` fail, for the engine to answer with
-/// the error that point's failure is. Counts the call only while observing.
+/// Whether the fixture, or the calling thread's own test, has made `point`
+/// fail, for the engine to answer with the error that point's failure is.
+/// Counts the call only while observing.
 #[cfg(debug_assertions)]
 #[inline]
 pub fn fails<S: AsRef<str>>(point: impl FnOnce() -> S) -> bool {
-    holds::active() && holds::fails(point().as_ref())
+    let (everywhere, here) = (holds::active(), scoped::active());
+    if !everywhere && !here {
+        return false;
+    }
+    let point = point();
+    (here && scoped::fails(point.as_ref())) || (everywhere && holds::fails(point.as_ref()))
+}
+
+#[cfg(debug_assertions)]
+pub use scoped::Failing;
+
+/// Makes `fails(point)` answer true on the calling thread alone, until the
+/// returned guard is dropped. A thread's other callers, and every other
+/// thread, see the point as it was. A debug build only.
+#[cfg(debug_assertions)]
+#[must_use = "the point stops failing when the guard is dropped"]
+pub fn fail_on_this_thread(point: &str) -> Failing {
+    scoped::fail(point)
 }
 
 /// Enables or disables reach counters without resetting their values.
@@ -75,6 +98,83 @@ pub fn reached(point: &str) -> usize {
 #[cfg(debug_assertions)]
 pub fn waiting(point: &str) -> usize {
     holds::waiting(point)
+}
+
+#[cfg(debug_assertions)]
+mod scoped {
+    use std::cell::RefCell;
+    use std::marker::PhantomData;
+
+    thread_local! {
+        static FAILING: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+    }
+
+    /// A point made to fail on the thread that made it, until dropped.
+    pub struct Failing {
+        point: String,
+        // The point lives in the creating thread's storage, so the guard
+        // must be dropped there.
+        _thread: PhantomData<*const ()>,
+    }
+
+    /// Whether this thread has a point made to fail. Another thread's guard
+    /// never makes a call here evaluate its name.
+    #[inline]
+    pub(super) fn active() -> bool {
+        FAILING.with(|failing| !failing.borrow().is_empty())
+    }
+
+    pub(super) fn fail(point: &str) -> Failing {
+        FAILING.with(|failing| failing.borrow_mut().push(point.to_string()));
+        Failing {
+            point: point.to_string(),
+            _thread: PhantomData,
+        }
+    }
+
+    pub(super) fn fails(point: &str) -> bool {
+        FAILING.with(|failing| failing.borrow().iter().any(|one| one == point))
+    }
+
+    impl Drop for Failing {
+        fn drop(&mut self) {
+            FAILING.with(|failing| {
+                let mut failing = failing.borrow_mut();
+                if let Some(at) = failing.iter().rposition(|one| *one == self.point) {
+                    failing.remove(at);
+                }
+            });
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::super::{fail_on_this_thread, fails};
+        use std::sync::mpsc;
+        use std::thread;
+
+        #[test]
+        fn a_point_made_to_fail_on_this_thread_fails_here_alone_and_until_dropped() {
+            let fault = fail_on_this_thread("scoped-test-here");
+            assert!(fails(|| "scoped-test-here"));
+            assert!(!fails(|| "scoped-test-other-point"));
+            let (asked, answer) = mpsc::channel();
+            thread::spawn(move || asked.send(fails(|| "scoped-test-here")).unwrap());
+            assert!(!answer.recv().unwrap(), "another thread saw the fault");
+            drop(fault);
+            assert!(!fails(|| "scoped-test-here"));
+        }
+
+        #[test]
+        fn two_guards_for_one_point_on_a_thread_fail_until_both_are_dropped() {
+            let first = fail_on_this_thread("scoped-test-twice");
+            let second = fail_on_this_thread("scoped-test-twice");
+            drop(first);
+            assert!(fails(|| "scoped-test-twice"));
+            drop(second);
+            assert!(!fails(|| "scoped-test-twice"));
+        }
+    }
 }
 
 #[cfg(debug_assertions)]

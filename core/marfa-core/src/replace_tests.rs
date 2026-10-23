@@ -305,9 +305,10 @@ fn a_store_that_cannot_be_made_leaves_the_refused_one_where_it_was() {
     let names = listing(&path);
     // The fault fires once the new store's file has been made, so what the
     // call removes is a real partial store.
-    crate::fault::set_failing("replace-refused-make", true);
-    let failed = Core::replace_refused(&path, None);
-    crate::fault::set_failing("replace-refused-make", false);
+    let failed = {
+        let _fault = crate::fault::fail_on_this_thread("replace-refused-make");
+        Core::replace_refused(&path, None)
+    };
     assert!(
         matches!(&failed, Err(CoreError::Store(message)) if message.contains("replace-refused-make")),
         "{:?}",
