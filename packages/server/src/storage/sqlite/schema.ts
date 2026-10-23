@@ -142,6 +142,25 @@ export const items = sqliteTable(
     // because the keyset cursor compares both to page through the rows
     // that share a millisecond, and a bulk write produces many.
     index("idx_items_updated_at_id").on(table.updated_at, table.id),
+    // Serve a listing of a type in each system order. A listing reads one
+    // type, or a slice of a subtree, in `(<column>, id)` order and stops at the
+    // page; the indexes above lead with the column alone, so a typed read would
+    // sort every row of the type to answer a page of it.
+    index("idx_items_type_created_at").on(
+      table.type,
+      table.created_at,
+      table.id,
+    ),
+    index("idx_items_type_updated_at").on(
+      table.type,
+      table.updated_at,
+      table.id,
+    ),
+    index("idx_items_type_occurred_at").on(
+      table.type,
+      table.occurred_at,
+      table.id,
+    ),
     // Provenance identity: one row per upstream record.
     uniqueIndex("idx_items_source_dedup")
       .on(table.source, table.source_id)

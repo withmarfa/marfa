@@ -105,6 +105,7 @@ import {
   propertySortValue,
 } from "../property-sort.js";
 import { closedToNewEdge } from "../edge-constraints.js";
+import { typeSlices, typeSliceSql, type TypeSlice } from "../type-slices.js";
 import {
   ancestorUnavailable,
   attachResolution,
@@ -457,8 +458,15 @@ async function insertConflictedSibling(
  *
  * One builder for the listing and the counts, so a count asked with a
  * listing's filters is the number of rows that listing would walk.
+ *
+ * `ordered` is for a read that walks the rows in a sort order. `typeSliced`
+ * is for a read that applies the `type` filter itself, one slice at a time
+ * (`typeSlices`), so the filter's own term is left out.
  */
-function itemFilterConditions(filters: ItemFilters): SQL[] {
+function itemFilterConditions(
+  filters: ItemFilters,
+  { ordered = false, typeSliced = false } = {},
+): SQL[] {
   // Every bound is re-spelled to the shape the stored columns carry
   // before it reaches a comparison: they are text columns and the
   // comparison is lexical, so a valid RFC 3339 instant at the wrong
@@ -498,8 +506,11 @@ function itemFilterConditions(filters: ItemFilters): SQL[] {
     (filters.allowed_types !== undefined &&
       filters.allowed_types.length > 0 &&
       !filters.allowed_types.includes(GLOBAL_TYPE_WILDCARD));
+  // An ordered read of the active state never wants the state index either:
+  // it holds nearly every item, and walking it leaves a sort of all of them,
+  // where the sort column's index would stop at the page.
   const stateIs = (value: string): SQL =>
-    narrowsByType && value === "active"
+    (narrowsByType || ordered) && value === "active"
       ? sql`+${items.state} = ${value}`
       : eq(items.state, value);
 
@@ -526,7 +537,7 @@ function itemFilterConditions(filters: ItemFilters): SQL[] {
     }
   }
 
-  if (typeClause) conditions.push(typeClause);
+  if (typeClause && !typeSliced) conditions.push(typeClause);
 
   if (filters.source) {
     conditions.push(sql`${sourceColumnSql(items.source)} = ${filters.source}`);
@@ -1313,7 +1324,24 @@ export class SqliteItemStore implements ItemStore {
         ? buildPropertySortExpr(items.properties, sort.field)
         : null;
 
-    const conditions: (SQL | undefined)[] = itemFilterConditions(filters);
+    // A listing in a system order reads each slice of the type predicate in
+    // that order and merges the slices, so a page reads about its own rows.
+    const slices =
+      sort.kind === "system"
+        ? typeSlices({
+            type: filters.type,
+            allowed_types: filters.allowed_types,
+            repeatedTerms:
+              (filters.allowed_types?.length ?? 0) +
+              (filters.excluded_types?.length ?? 0) +
+              (filters.source_filter?.types.length ?? 0) +
+              (filters.source_filter?.sources.length ?? 0),
+          })
+        : undefined;
+    const conditions: (SQL | undefined)[] = itemFilterConditions(filters, {
+      ordered: sort.kind === "system",
+      typeSliced: slices !== undefined,
+    });
 
     const systemSortCol =
       sort.kind === "system"
@@ -1346,19 +1374,14 @@ export class SqliteItemStore implements ItemStore {
         }
       } else if (systemSortCol && v !== null) {
         // System columns are NOT NULL, so the cursor value is always present.
-        if (dir === "desc") {
-          const clause = or(
-            lt(systemSortCol, v),
-            and(eq(systemSortCol, v), lt(items.id, id)),
-          );
-          if (clause) conditions.push(clause);
-        } else {
-          const clause = or(
-            gt(systemSortCol, v),
-            and(eq(systemSortCol, v), gt(items.id, id)),
-          );
-          if (clause) conditions.push(clause);
-        }
+        // One row-value comparison rather than its expansion into `OR`: an
+        // index on the column and `id` answers it as a single range, where
+        // the expansion is a range on the column and a test of every row in it.
+        conditions.push(
+          dir === "desc"
+            ? sql`(${systemSortCol}, ${items.id}) < (${v}, ${id})`
+            : sql`(${systemSortCol}, ${items.id}) > (${v}, ${id})`,
+        );
       }
     }
 
@@ -1377,10 +1400,16 @@ export class SqliteItemStore implements ItemStore {
           : [asc(col), asc(items.id)];
     }
 
-    const rows = await this.db
-      .select(itemColumns)
-      .from(items)
-      .where(and(...conditions))
+    const read = (slice?: TypeSlice) =>
+      this.db
+        .select(itemColumns)
+        .from(items)
+        .where(and(...conditions, slice && typeSliceSql(items.type, slice)))
+        .$dynamic();
+    let merged = read(slices?.[0]);
+    for (const slice of slices?.slice(1) ?? [])
+      merged = merged.unionAll(read(slice));
+    const rows = await merged
       .orderBy(...orderBy)
       .limit(limit + 1)
       .all();
