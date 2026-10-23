@@ -1906,7 +1906,9 @@ The CLI MUST run a profile's key command at most once in a run.
 
 ### `device/profile-key-command-failed`
 
-If a profile's key command cannot be started, exits other than 0, is ended by a signal, prints nothing, prints more than one line, prints more than 16 KiB or prints text that is not UTF-8, then the CLI MUST exit 5 with `key_command` and send no request.
+If a profile's key command cannot be started, exits other than 0, is ended by a signal, stops, as reading from or writing to the terminal makes it, prints nothing, prints more than one line, prints more than 16 KiB or prints text that is not UTF-8, then the CLI MUST exit 5 with `key_command` and send no request that carries a key.
+
+**Reason:** the key command runs in a process group of its own, so a terminal it reads or writes stops it with `SIGTTIN` or `SIGTTOU`, and no one is there to continue it.
 
 **Tests:** `cli/profiles.test.ts › refuses a key command that fails with key_command and exit 5, sending nothing and showing none of its output`.
 
@@ -1926,7 +1928,7 @@ If the CLI refuses a profile's key command, then the CLI MUST NOT print anything
 
 ### `device/profile-file-writable`
 
-If the profile file, or the folder that holds it, can be written by its group or by others, then the CLI MUST exit 2 with `usage` and print nothing the file holds.
+If the profile file, or the folder that holds it, can be written by anyone but its owner, through its group or other mode bits or, on macOS, through an allow entry of its access control list, then the CLI MUST exit 2 with `usage` and print nothing the file holds.
 
 **Reason:** whoever can change the file can name a key command, which the CLI runs as the person.
 
@@ -1942,25 +1944,23 @@ If a profile in the file holds a field the CLI does not know, then the CLI MUST 
 
 ### `device/command-write-line`
 
-Where `--json` is not given, when a command is about to send a server the first request in its run that can change data, the CLI MUST first print `marfa: writing to <origin>` on standard error, followed by ` (profile <name>)` where a profile named that server.
+When a command is about to send a server, with a key or without one, or the private socket that `--socket` names, the first request in its run that can change data, the CLI MUST first print `marfa: writing to <origin>` on standard error as one plain line, with `unix:<path>` as the origin of the socket, followed by ` (profile <name>)` where a profile named that server.
 
-**Reason:** a person with a test server and a real one sees which one a write goes to before it is made.
+**Reason:** a person or an agent with a test server and a real one sees which one a write goes to before it is made.
 
-**Tests:** `cli/profiles.test.ts › names the server and profile on stderr before the first write, and nothing for a read or under --json`.
+**Tests:** `cli/profiles.test.ts › names the server and profile on stderr before the first write, under --json too, and nothing for a read`.
 
 ### `device/command-read-no-line`
 
 When a command sends a server only requests that change no data, including a read sent as `POST`, the CLI MUST NOT print `marfa: writing to`.
 
-**Tests:** `cli/profiles.test.ts › names the server and profile on stderr before the first write, and nothing for a read or under --json`.
+**Tests:** `cli/profiles.test.ts › names the server and profile on stderr before the first write, under --json too, and nothing for a read`.
 
-### `device/command-write-line-json`
+### `device/command-json-refusal-last`
 
-While `--json` is given, the CLI MUST NOT print `marfa: writing to`.
+While `--json` is given, if a command is refused, then the CLI MUST print the refusal as one JSON object on the last line of standard error, after any plain line such as a warning or the line of `device/command-write-line`.
 
-**Reason:** under `--json`, standard error holds a refusal alone, as one JSON object.
-
-**Tests:** `cli/profiles.test.ts › names the server and profile on stderr before the first write, and nothing for a read or under --json`.
+**Tests:** `cli/profiles.test.ts › names the server and profile on stderr before the first write, under --json too, and nothing for a read`.
 
 ### `device/profile-socket-refused`
 

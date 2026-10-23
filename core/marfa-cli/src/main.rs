@@ -1,4 +1,6 @@
 mod access;
+#[cfg(target_os = "macos")]
+mod acl;
 mod auth;
 mod autostart;
 mod cleartext;
@@ -118,8 +120,8 @@ struct Cli {
     #[arg(long, global = true, value_name = "PATH", conflicts_with_all = ["url", "key", "profile"], help_heading = "Server")]
     socket: Option<std::path::PathBuf>,
 
-    /// Print the answer as JSON, and a refusal as one JSON object on stderr,
-    /// after any warning, which is one plain line.
+    /// Print the answer as JSON. A refusal is the last line of stderr, one
+    /// JSON object, after any plain lines such as a warning or the write line.
     #[arg(long, global = true, help_heading = "Output")]
     json: bool,
 

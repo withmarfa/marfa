@@ -9,6 +9,7 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
@@ -76,9 +77,13 @@ function profiles(more: Record<string, Entry> = {}): Record<string, Entry> {
   };
 }
 
-/** Records every request and answers a 503 naming no contract. */
+/**
+ * Records every request and answers a 503 naming no contract, or, for the
+ * root while `root` is set, the real server's root document.
+ */
 class Listener {
   readonly bearers: (string | undefined)[] = [];
+  root: { contract: string; body: string } | undefined;
   private constructor(
     private readonly server: Server,
     readonly url: string,
@@ -86,9 +91,23 @@ class Listener {
 
   static async start(): Promise<Listener> {
     const bearers: (string | undefined)[] = [];
+    let started: Listener | undefined;
     const server = createServer((request, response) => {
       bearers.push(request.headers.authorization);
       request.resume();
+      const root = started?.root;
+      if (
+        root !== undefined &&
+        request.method === "GET" &&
+        request.url === "/"
+      ) {
+        response.writeHead(200, {
+          "content-type": "application/json",
+          "x-marfa-contract": root.contract,
+        });
+        response.end(root.body);
+        return;
+      }
       response.writeHead(503, { "content-type": "application/json" });
       response.end("{}");
     });
@@ -96,9 +115,9 @@ class Listener {
       server.listen(0, "127.0.0.1", resolve),
     );
     const { port } = server.address() as AddressInfo;
-    const listener = new Listener(server, `http://127.0.0.1:${String(port)}`);
-    Object.assign(listener, { bearers });
-    return listener;
+    started = new Listener(server, `http://127.0.0.1:${String(port)}`);
+    Object.assign(started, { bearers });
+    return started;
   }
 
   clear(): void {
@@ -346,6 +365,9 @@ describe("profiles", () => {
       lines: ["printf", `${PRINTED}\\nsecond`],
       large: ["sh", "-c", "head -c 20000 /dev/zero | tr '\\0' a"],
       binary: ["printf", "\\377\\376"],
+      // Reading the terminal from a process group that is not the
+      // terminal's stops a program with SIGTTIN.
+      terminal: ["sh", "-c", `kill -TTIN $$; printf ${PRINTED}`],
     };
     write(
       toml(
@@ -362,6 +384,7 @@ describe("profiles", () => {
     try {
       listener.clear();
       for (const [name, argv] of Object.entries(failing)) {
+        const started = Date.now();
         const ran = await base.run([
           "--json",
           "--profile",
@@ -370,6 +393,8 @@ describe("profiles", () => {
           "get",
           "i1",
         ]);
+        // Well within the 60 seconds after which a key command is stopped.
+        expect(Date.now() - started, name).toBeLessThan(10_000);
         expect(ran.code, `${name}: ${ran.stderr}`).toBe(5);
         expect(ran.stdout).toBe("");
         expect(ran.stderr).not.toContain(PRINTED);
@@ -382,10 +407,27 @@ describe("profiles", () => {
       }
       expect(listener.bearers).toEqual([]);
 
+      // `whoami` asks the root, which carries no key, before the key command
+      // runs, and sends nothing after the key command fails.
+      const root = await fetch(new URL("/", c.apiUrl));
+      listener.root = {
+        contract: root.headers.get("x-marfa-contract") ?? "",
+        body: await root.text(),
+      };
+      const who = await base.run(["--json", "--profile", "failed", "whoami"]);
+      expect(who.code, who.stderr).toBe(5);
+      expect(JSON.parse(who.stderr) as unknown).toMatchObject({
+        error: { code: "key_command" },
+      });
+      expect(listener.bearers).toEqual([undefined]);
+      listener.root = undefined;
+
       // Witness: a key command that works reaches the same listener.
+      listener.clear();
       await base.run(["--json", "--profile", "example", "items", "get", "i1"]);
       expect(listener.bearers).toEqual([`Bearer ${EXAMPLE_KEY}`]);
     } finally {
+      listener.root = undefined;
       write(toml(profiles()));
     }
   });
@@ -416,6 +458,40 @@ describe("profiles", () => {
       expect(JSON.stringify(folder.envelope)).not.toContain(marker);
       chmodSync(dirname(file), 0o700);
 
+      if (process.platform === "darwin") {
+        // On macOS an access control entry can let others write what the
+        // mode keeps to its owner; a deny entry takes rights away, as the
+        // one macOS ships on the home folder's Library does.
+        const acl = (path: string, ...args: string[]) =>
+          execFileSync("/bin/chmod", [...args, path]);
+        try {
+          for (const path of [file, dirname(file)]) {
+            acl(path, "+a", "everyone deny delete");
+          }
+          const denied = await base.json<ItemEnvelope>(get);
+          expect(denied.item.id).toBe(id);
+
+          acl(file, "+a", "everyone allow write");
+          const allowed = await base.refused(get);
+          expect(allowed.code).toBe(2);
+          expect(allowed.envelope.error.code).toBe("usage");
+          expect(allowed.envelope.error.message).toContain(
+            "access control entry",
+          );
+          expect(JSON.stringify(allowed.envelope)).not.toContain(marker);
+          acl(file, "-N");
+
+          acl(dirname(file), "+a", "everyone allow add_file");
+          const held = await base.refused(get);
+          expect(held.code).toBe(2);
+          expect(held.envelope.error.message).toContain("folder");
+          expect(held.envelope.error.message).toContain("access control entry");
+        } finally {
+          acl(file, "-N");
+          acl(dirname(file), "-N");
+        }
+      }
+
       write(
         toml(
           profiles(),
@@ -444,7 +520,7 @@ describe("profiles", () => {
     }
   });
 
-  it("names the server and profile on stderr before the first write, and nothing for a read or under --json", async () => {
+  it("names the server and profile on stderr before the first write, under --json too, and nothing for a read", async () => {
     const origin = new URL(c.apiUrl).origin;
     const id = await note();
     const tag = (word: string) => ["items", "tag", id, word];
@@ -468,14 +544,43 @@ describe("profiles", () => {
       expect(ran.stderr, read.join(" ")).toBe("");
     }
 
-    const quiet = await base.run([
+    const json = await base.run([
       "--json",
       "--profile",
       "demo",
-      ...tag("quiet"),
+      ...tag("json"),
     ]);
-    expect(quiet.code, quiet.stderr).toBe(0);
-    expect(quiet.stderr).toBe("");
+    expect(json.code, json.stderr).toBe(0);
+    expect(json.stderr).toBe(`marfa: writing to ${origin} (profile demo)\n`);
+    expect(JSON.parse(json.stdout) as unknown).toBeTruthy();
+
+    const jsonRead = await base.run([
+      "--json",
+      "--profile",
+      "demo",
+      "items",
+      "bulk-get",
+      id,
+    ]);
+    expect(jsonRead.code, jsonRead.stderr).toBe(0);
+    expect(jsonRead.stderr).toBe("");
+
+    // A refused write prints the line, then the refusal as the last line.
+    const refused = await base.run([
+      "--json",
+      "--profile",
+      "demo",
+      "items",
+      "delete",
+      "00000000-0000-7000-8000-000000000000",
+    ]);
+    expect(refused.code).not.toBe(0);
+    const lines = refused.stderr.trimEnd().split("\n");
+    expect(lines[0]).toBe(`marfa: writing to ${origin} (profile demo)`);
+    expect(lines).toHaveLength(2);
+    expect(JSON.parse(lines[1]!) as unknown).toMatchObject({
+      error: { code: "not_found" },
+    });
   });
 
   it("refuses --profile and MARFA_PROFILE beside --socket, and --profile on server commands", async () => {

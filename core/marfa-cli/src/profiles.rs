@@ -253,6 +253,13 @@ fn read(path: &Path) -> Result<String, String> {
     permitted(path, opened.uid(), opened.mode(), unsafe {
         libc::geteuid()
     })?;
+    if acl_lets_others_write(&file, opened.uid())
+        .map_err(|error| format!("the profile file {shown} cannot be read: {error}"))?
+    {
+        return Err(format!(
+            "the profile file {shown} has an access control entry that lets other users change it, so it is not read: run `chmod -N '{shown}'`"
+        ));
+    }
     // A link is followed, so the folder checked is the one that holds the
     // file it leads to, and that file must be the one opened.
     let target = std::fs::canonicalize(path)
@@ -265,13 +272,21 @@ fn read(path: &Path) -> Result<String, String> {
         ));
     }
     if let Some(folder) = target.parent() {
-        let held = std::fs::metadata(folder).map_err(|error| {
+        let unreadable = |error: std::io::Error| {
             format!(
                 "the folder {} that holds the profile file cannot be read: {error}",
                 folder.display()
             )
-        })?;
+        };
+        let opened_folder = std::fs::File::open(folder).map_err(unreadable)?;
+        let held = opened_folder.metadata().map_err(unreadable)?;
         folder_permitted(folder, held.mode())?;
+        if acl_lets_others_write(&opened_folder, held.uid()).map_err(unreadable)? {
+            let shown = folder.display();
+            return Err(format!(
+                "the folder {shown} that holds the profile file has an access control entry that lets other users change it, so the file is not read: run `chmod -N '{shown}'`"
+            ));
+        }
     }
     if opened.len() > FILE_LIMIT {
         return Err(format!(
@@ -298,6 +313,19 @@ fn permitted(path: &Path, owner: u32, mode: u32, user: u32) -> Result<(), String
         ));
     }
     Ok(())
+}
+
+/// On macOS an extended ACL can let others write a file its mode keeps to its
+/// owner. Elsewhere a POSIX ACL's mask shows in the group bits, which the mode
+/// check reads.
+#[cfg(target_os = "macos")]
+fn acl_lets_others_write(file: &std::fs::File, owner: u32) -> std::io::Result<bool> {
+    crate::acl::others_may_write(file, owner)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn acl_lets_others_write(_file: &std::fs::File, _owner: u32) -> std::io::Result<bool> {
+    Ok(false)
 }
 
 fn folder_permitted(folder: &Path, mode: u32) -> Result<(), String> {
@@ -498,8 +526,9 @@ impl Drop for Interrupts {
 
 /// Runs a profile's key command and hands back the key it printed. The
 /// program is run without a shell, with nothing on stdin and in a process
-/// group of its own, which is stopped whole if it outlasts `limit` or a
-/// signal comes to end marfa. A refusal names the profile and the program,
+/// group of its own, which is stopped whole if it outlasts `limit`, if it
+/// stops itself, as reading the terminal makes it, or if a signal comes to
+/// end marfa. A refusal names the profile and the program,
 /// and never shows what the command printed on stdout.
 pub fn run_key_command(profile: &str, argv: &[String], limit: Duration) -> Result<Secret, String> {
     let program = argv.first().map(String::as_str).unwrap_or_default();
@@ -519,11 +548,20 @@ pub fn run_key_command(profile: &str, argv: &[String], limit: Duration) -> Resul
                 _ => format!("could not be started: {error}"),
             })
         })?;
-    let group = child.id() as libc::pid_t;
-    let stop = |child: &mut std::process::Child| {
-        // SAFETY: the group is the child's own, made by `process_group(0)`.
-        unsafe { libc::killpg(group, libc::SIGKILL) };
-        let _ = child.wait();
+    let pid = child.id() as libc::pid_t;
+    // The child is reaped here with `waitpid`, never through `child`, which
+    // cannot report a stopped process.
+    let stop = || {
+        // SAFETY: the group is the child's own, made by `process_group(0)`,
+        // and `pid` is a child not yet reaped.
+        unsafe {
+            libc::killpg(pid, libc::SIGKILL);
+            let mut status = 0;
+            while libc::waitpid(pid, &mut status, 0) == -1
+                && std::io::Error::last_os_error().kind() == std::io::ErrorKind::Interrupted
+            {
+            }
+        }
     };
     let (out, out_done) = match child.stdout.take() {
         Some(stdout) => capture(stdout, KEY_LIMIT, false),
@@ -533,26 +571,41 @@ pub fn run_key_command(profile: &str, argv: &[String], limit: Duration) -> Resul
         Some(stderr) => capture(stderr, STDERR_KEPT, true),
         None => (Arc::default(), mpsc::channel().1),
     };
+    drop(child);
     let started = Instant::now();
     let status = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => break status,
-            Ok(None) => {}
-            Err(error) => {
-                stop(&mut child);
+        let mut raw = 0;
+        // SAFETY: `pid` is this process's child and `raw` is a valid int.
+        let waited = unsafe { libc::waitpid(pid, &mut raw, libc::WNOHANG | libc::WUNTRACED) };
+        if waited == pid {
+            if libc::WIFSTOPPED(raw) {
+                // Its process group is not the terminal's, so reading the
+                // terminal stops it, and nobody is there to continue it.
+                stop();
+                return Err(failed(match libc::WSTOPSIG(raw) {
+                    libc::SIGTTIN | libc::SIGTTOU => "tried to read from or write to the terminal, so it was stopped: a key command must print the key without asking for anything".into(),
+                    signal => format!("was stopped by signal {signal}, so it was ended"),
+                }));
+            }
+            break std::process::ExitStatus::from_raw(raw);
+        }
+        if waited == -1 {
+            let error = std::io::Error::last_os_error();
+            if error.kind() != std::io::ErrorKind::Interrupted {
+                stop();
                 return Err(failed(format!("could not be waited for: {error}")));
             }
         }
         if interrupts.arrived() {
-            stop(&mut child);
+            stop();
             return Err(failed("was stopped by a signal to marfa".into()));
         }
         if crate::interrupt::asked_to_stop() {
-            stop(&mut child);
+            stop();
             return Err(failed("was stopped because marfa was asked to stop".into()));
         }
         if started.elapsed() >= limit {
-            stop(&mut child);
+            stop();
             return Err(failed(format!(
                 "did not finish within {} seconds, so it was stopped",
                 limit.as_secs().max(1)
@@ -626,6 +679,8 @@ fn last_line(bytes: &[u8]) -> Option<String> {
 mod tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt;
+    #[cfg(target_os = "macos")]
+    use std::process::Command;
 
     const KEY: &str = "marfa_k1_profile_witness_7f3a";
 
@@ -751,6 +806,48 @@ mod tests {
         );
         std::fs::remove_dir_all(real).unwrap();
         std::fs::remove_dir_all(linked).unwrap();
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn an_access_control_entry_that_lets_others_write_is_refused_and_one_that_denies_is_not() {
+        let chmod = |entry: &str, path: &Path| {
+            let status = Command::new("/bin/chmod")
+                .args(["+a", entry])
+                .arg(path)
+                .status()
+                .unwrap();
+            assert!(status.success(), "{entry}");
+        };
+        let clear = |path: &Path| {
+            let status = Command::new("/bin/chmod")
+                .arg("-N")
+                .arg(path)
+                .status()
+                .unwrap();
+            assert!(status.success());
+        };
+        let at = folder("acl");
+        let path = file(&at, 0o600, DEMO);
+        // Witness: macOS ships `~/Library` with a deny entry like these.
+        chmod("everyone deny delete", &path);
+        chmod("everyone deny delete", &at);
+        assert!(read(&path).is_ok());
+        chmod("everyone allow write", &path);
+        let refused = read(&path).unwrap_err();
+        assert!(refused.contains("access control entry"), "{refused}");
+        assert!(refused.contains("profile file"), "{refused}");
+        assert!(refused.contains("chmod -N"), "{refused}");
+        assert!(!refused.contains("127.0.0.1"), "{refused}");
+        clear(&path);
+        assert!(read(&path).is_ok());
+        chmod("everyone allow add_file,delete_child", &at);
+        let refused = read(&path).unwrap_err();
+        assert!(refused.contains("folder"), "{refused}");
+        assert!(refused.contains("access control entry"), "{refused}");
+        // The deny entry keeps even the owner from deleting.
+        clear(&at);
+        std::fs::remove_dir_all(at).unwrap();
     }
 
     #[test]
@@ -923,6 +1020,47 @@ mod tests {
             "a process the command started outlived it"
         );
         std::fs::remove_dir_all(at).unwrap();
+    }
+
+    #[test]
+    fn a_key_command_that_reaches_for_the_terminal_is_refused_at_once_with_everything_it_started() {
+        // A program reading or writing the terminal from a process group that
+        // is not the terminal's gets these signals, and stops.
+        for signal in ["TTIN", "TTOU"] {
+            let at = folder(&format!("terminal-{signal}"));
+            let marker = at.join("still-running");
+            let started = Instant::now();
+            let refused = run_key_command(
+                "demo",
+                &argv(&[
+                    "sh",
+                    "-c",
+                    &format!(
+                        "(sleep 2; touch '{}') & kill -{signal} $$; printf {KEY}",
+                        marker.display()
+                    ),
+                ]),
+                Duration::from_secs(10),
+            )
+            .unwrap_err();
+            assert!(
+                started.elapsed() < Duration::from_secs(2),
+                "{signal}: {:?}: {refused}",
+                started.elapsed()
+            );
+            assert!(
+                refused.contains("tried to read from or write to the terminal"),
+                "{refused}"
+            );
+            assert!(refused.contains("without asking"), "{refused}");
+            assert!(!refused.contains(KEY), "{refused}");
+            std::thread::sleep(Duration::from_millis(2500));
+            assert!(
+                !marker.exists(),
+                "{signal}: a process the command started outlived it"
+            );
+            std::fs::remove_dir_all(at).unwrap();
+        }
     }
 
     #[test]
