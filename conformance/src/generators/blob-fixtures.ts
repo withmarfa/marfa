@@ -88,7 +88,7 @@ function generatePng(
 
 // --- JPEG generation ---
 
-function generateJpeg(
+export function generateJpeg(
   width: number,
   height: number,
   targetBytes: number,

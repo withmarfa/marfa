@@ -373,6 +373,7 @@ describe("what a change runs", () => {
       [
         "conformance/src/suites/load/seed.ts",
         "conformance/src/suites/performance/items.test.ts",
+        "conformance/src/suites/hydration/hydration.test.ts",
       ],
       ["ci-sqlite", "workspace", ...OFFLINE],
     ],

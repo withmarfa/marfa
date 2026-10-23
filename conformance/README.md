@@ -135,8 +135,9 @@ corrupts a copy under it.
 | `MARFA_FIXTURE_AUTH_SECRET` | Launcher state used to keep cookie signatures valid across restarts; it does not configure other instances.    |
 | `MARFA_OWNER_COOKIE`        | The owner's production sign-in session, used for direct-owner fixtures.                                        |
 | `MARFA_CONTROL_SOCKET`      | Absolute path to the fixture server's private socket.                                                          |
-| `MARFA_DEVICE_BIN`          | The built `marfa` binary the device fixtures and scenario suite drive.                                         |
+| `MARFA_DEVICE_BIN`          | The built `marfa` binary the device fixtures, scenario suite and hydration benchmark drive.                    |
 | `MARFA_DEVICE_MODULE`       | The built Node module, a debug build, the binding fixtures (`binding-*.test.ts`) drive.                        |
+| `MARFA_HYDRATION_ROWS`      | Rows in each set of the hydration benchmark. 2,000 when unset.                                                 |
 | `MARFA_LOAD_PROFILE`        | Sizes the load suites. `smoke` when unset; `src/suites/load/profiles.ts` has the rest.                         |
 
 `pnpm marfa:up` writes the server URL, both ordinary keys, owner cookie and private socket path. Set `MARFA_DEVICE_BIN` to the binary and `MARFA_DEVICE_MODULE` to the module you built before running `pnpm test:conformance`. Required fixture credentials, the binary and the module fail explicitly when missing; they do not skip tests. The state file contains credentials and must remain private to the test account.
@@ -584,9 +585,21 @@ and a diff cannot select them; the list is `scripts/whole-tree-tests.ts`.
 `test:conformance` script decides which projects a local run of the gate runs;
 CI runs the same projects as shards.
 `test:cli` is the scenario suite's own gate, run by its own job.
-`test:performance` and `test:load` sit off the gate, and run every night and
-on request in `.github/workflows/benchmarks.yml`, the load suites at the
-`smoke` profile.
+`test:performance`, `test:load` and `test:hydration` sit off the gate, and run
+every night and on request in `.github/workflows/benchmarks.yml`, the load
+suites at the `smoke` profile.
+
+`test:hydration` is a device filling a large image library, driven with a
+release build of the `marfa` binary (`MARFA_DEVICE_BIN`; a debug build would
+measure the build) against the server the run booted. It seeds
+`MARFA_HYDRATION_ROWS` rows of one shape twice, with a thumbnail in every row
+and with none, hydrates a working copy of each, and writes
+`reports/load/hydration.json`: for each set the hydration's wall time and rows
+a second, the bytes a row crosses the wire as, the copy's size, the server's
+time to serve a page of 200, and the time of one listing and one search on the
+filled copy. It is a measurement, not a gate: it fails only when a hydration
+fails or brings fewer rows than were seeded. Unset, the row count is small
+enough for a laptop; the nightly run sets 100,000.
 
 ## Architecture
 

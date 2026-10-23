@@ -67,7 +67,7 @@ export function computeMetrics(
   };
 }
 
-const REPORTS_DIR = "reports/load";
+export const REPORTS_DIR = "reports/load";
 
 export async function saveLoadResult(result: LoadResult): Promise<string> {
   if (!existsSync(REPORTS_DIR)) {

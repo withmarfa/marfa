@@ -1,10 +1,10 @@
 name: Benchmarks
 
-# The conformance suite's performance and load projects, off the gate: their
-# budgets measure a shared runner as much as the server, so a slow night
-# should not block a merge, but a failure still has to land somewhere it is
-# seen. A scheduled run that fails opens an issue, or comments on the one
-# that is open.
+# The conformance suite's performance, load and hydration projects, off the
+# gate: their budgets measure a shared runner as much as the server, so a
+# slow night should not block a merge, but a failure still has to land
+# somewhere it is seen. A scheduled run that fails opens an issue, or
+# comments on the one that is open.
 on:
   schedule:
     - cron: "43 4 * * *"
@@ -19,8 +19,8 @@ permissions:
 
 jobs:
   benchmarks:
-    name: Performance and load
-    timeout-minutes: 60
+    name: Performance, load and hydration
+    timeout-minutes: 120
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -51,6 +51,34 @@ jobs:
         if: ${{ !cancelled() }}
         working-directory: conformance
         run: pnpm test:load
+
+      # After the load suites, which share the server, and apart from the
+      # build above: the binary is a release build, since a debug build would
+      # measure the build, and a failed compile must not keep the server's
+      # own benchmarks from reporting.
+      - uses: dtolnay/rust-toolchain@stable
+        if: ${{ !cancelled() }}
+      - uses: Swatinem/rust-cache@v2
+        if: ${{ !cancelled() }}
+        with:
+          workspaces: core
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Build the device
+        if: ${{ !cancelled() }}
+        working-directory: core
+        run: cargo build --locked --release -p marfa-cli
+
+      # A device filling a large image library, not a gate: it fails only
+      # when a hydration fails. Its report, `hydration.json`, lands beside
+      # the load reports. Each set is 100,000 rows; the set with thumbnails
+      # takes most of the time, which the job's timeout allows for.
+      - name: Hydration
+        if: ${{ !cancelled() }}
+        working-directory: conformance
+        env:
+          MARFA_DEVICE_BIN: ${{ github.workspace }}/core/target/release/marfa
+          MARFA_HYDRATION_ROWS: "100000"
+        run: pnpm test:hydration
 
       - name: Keep the load reports
         if: ${{ !cancelled() }}
