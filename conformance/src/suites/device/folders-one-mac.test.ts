@@ -2114,6 +2114,111 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     });
   });
 
+  it("writes back a file deleted while another folder could not be read, once that folder holds no copy, when another device changed its item inside the grace", async () => {
+    const changed = {
+      id: "01a00000-0000-7000-8000-0000000043d1",
+      properties: { title: "Changed", body: "the person's words\n" },
+    };
+    const plain = {
+      id: "01a00000-0000-7000-8000-0000000043d2",
+      properties: { title: "Plain", body: "p\n" },
+    };
+    const before = Buffer.from([
+      0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 3,
+    ]);
+    const after = Buffer.from([
+      0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 4,
+    ]);
+    const photo = "01a00000-0000-7000-8000-0000000043d3";
+    const { a, b, door, edges } = await onOneMac(
+      "delete-unreadable-changed-elsewhere",
+      { search: { types: ["core.note", "core.file"] } },
+      { search: { types: ["core.bookmark"] } },
+      {
+        "core.note": [{ item: changed }, { item: plain }],
+        "core.file": [
+          {
+            item: {
+              id: photo,
+              type: "core.file.image",
+              properties: {
+                title: "photo.png",
+                blob_ref: hashOf(before),
+                mime_type: "image/png",
+              },
+            },
+          },
+        ],
+      },
+    );
+    scriptBlob(a.server, before);
+    scriptBlob(a.server, after);
+    expect((await a.folder.pull()).ok).toBe(true);
+    const names = ["Changed.md", "Plain.md", "photo.png"];
+    for (const name of names) {
+      rmSync(join(a.dir, name));
+    }
+    chmodSync(b.dir, 0o000);
+    try {
+      const journaled = await a.folder.push();
+      expect(journaled.ok && journaled.value.scan.missing).toBe(3);
+      edges.logItem(
+        "item.updated",
+        door.update(changed.id, {
+          properties: { notes: "their annotation" },
+          version: 1,
+        }),
+      );
+      edges.logItem(
+        "item.updated",
+        door.update(photo, {
+          properties: { blob_ref: hashOf(after) },
+          version: 1,
+        }),
+      );
+      const heard = await a.folder.device().catchUp();
+      expect(heard.ok && heard.value.applied).toBe(2);
+      const pulled = await a.folder.push();
+      expect(pulled.ok, JSON.stringify(pulled)).toBe(true);
+      if (!pulled.ok) return;
+      expect(existsSync(join(a.dir, "Changed.md"))).toBe(false);
+      expect(existsSync(join(a.dir, "photo.png"))).toBe(false);
+
+      await pastTheGrace();
+      const held = await a.folder.push();
+      expect(held.ok, JSON.stringify(held)).toBe(true);
+      if (!held.ok) return;
+      expect(held.value.scan.unsure.map((file) => file.path).sort()).toEqual(
+        names,
+      );
+    } finally {
+      chmodSync(b.dir, 0o755);
+    }
+
+    // Readable again and holding none of the files, the folder trashes the
+    // item nobody changed, the witness, and writes the changed ones back.
+    const swept = await a.folder.push();
+    expect(swept.ok, JSON.stringify(swept)).toBe(true);
+    if (!swept.ok) return;
+    expect(swept.value.scan.trashed).toEqual(["Plain.md"]);
+    expect(deletesOf(a.server, plain.id)).toBe(1);
+    for (const id of [changed.id, photo]) {
+      expect(
+        deletesOf(a.server, id),
+        "an item another device changed inside the grace went to the bin",
+      ).toBe(0);
+    }
+    expect(swept.value.pull?.revived).toBe(2);
+    expect(read(a, "Changed.md")).toContain("their annotation");
+    expect(idIn(a, "Changed.md")).toBe(changed.id);
+    expect(readFileSync(join(a.dir, "photo.png"))).toEqual(after);
+
+    expect((await a.folder.push()).ok).toBe(true);
+    expect(deletesOf(a.server, changed.id)).toBe(0);
+    expect(deletesOf(a.server, photo)).toBe(0);
+    expect(read(a, "Changed.md")).toContain("their annotation");
+  });
+
   it("refuses a folder inside another, and walks past a folder inside it", async () => {
     harness = await folderHarness("nested-outer", {
       settings: {
@@ -3544,6 +3649,54 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     for (const n of [0, 1, 2]) expect(deletesOf(a.server, ids[n]!)).toBe(0);
     // The witness: the file found nowhere is trashed by the same confirm.
     expect(deletesOf(a.server, ids[3]!)).toBe(1);
+  });
+
+  it("trashes no item of a confirmed removal that another device changed since its file went, and writes the file back", async () => {
+    const ids = [0, 1, 2, 3, 4, 5].map(
+      (n) => `01a00000-0000-7000-8000-0000000043e${String(n)}`,
+    );
+    const { a, door, edges } = await onOneMac(
+      "confirm-changed-elsewhere",
+      {
+        search: { types: ["core.note"] },
+        removal_threshold: { files: 2, fraction: 0.25 },
+      },
+      { search: { types: ["core.bookmark"] } },
+      {
+        "core.note": ids.map((id, n) => ({
+          item: { id, properties: { title: `Note ${String(n)}`, body: "b\n" } },
+        })),
+      },
+    );
+    expect((await a.folder.pull()).ok).toBe(true);
+    for (const n of [0, 1, 2]) rmSync(join(a.dir, `Note ${String(n)}.md`));
+    const paused = await a.folder.push();
+    expect(paused.ok && paused.value.scan.paused).toBe(3);
+    edges.logItem(
+      "item.updated",
+      door.update(ids[0]!, {
+        properties: { notes: "their annotation" },
+        version: 1,
+      }),
+    );
+    const heard = await a.folder.device().catchUp();
+    expect(heard.ok && heard.value.applied).toBe(1);
+
+    const confirmed = await a.folder.confirm();
+    expect(confirmed.ok, JSON.stringify(confirmed)).toBe(true);
+    if (!confirmed.ok) return;
+    // The witness: the two nobody changed are trashed by the same confirm.
+    expect(confirmed.value.deleted).toBe(2);
+    const pulled = await a.folder.push();
+    expect(pulled.ok, JSON.stringify(pulled)).toBe(true);
+    if (!pulled.ok) return;
+    for (const n of [1, 2]) expect(deletesOf(a.server, ids[n]!)).toBe(1);
+    expect(
+      deletesOf(a.server, ids[0]!),
+      "a confirmed removal trashed an item another device changed since its file went",
+    ).toBe(0);
+    expect(pulled.value.pull?.revived).toBe(1);
+    expect(read(a, "Note 0.md")).toContain("their annotation");
   });
 
   it("confirms a large removal while another folder holds files that are not text", async () => {

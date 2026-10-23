@@ -3206,7 +3206,7 @@ When a file returns at its own path or a new name within the rename grace, a dev
 
 When another device changes a deleted item in content its file shows during the rename grace and no other registered folder holds the file's move, a device MUST restore the file from the changed item.
 
-**Reason:** A file another folder holds as this one moved is the item's file there, and written back here it would read there as a copy (`folders/moved-not-revived`, `folders/uncertain-move-no-replacement`). A file whose folders both hold its item is not a move (`folders/two-folders-delete`), so it is written back.
+**Reason:** A file another folder holds as this one moved is the item's file there, and written back here it would read there as a copy (`folders/moved-not-revived`, `folders/uncertain-move-no-replacement`). A file whose move cannot be told yet comes back once no folder holds it (`folders/missing-file-changed-revives`). A file whose folders both hold its item is not a move (`folders/two-folders-delete`), so it is written back.
 
 **Tests:** `device/folders-identity.test.ts › writes a deleted file back when another device changes its item inside the grace, and sends no delete`, `device/folders-pass-writeback.test.ts › writes a remote change into a file in place, and brings back a file deleted after the scan once its delete is journaled`, `device/folders-one-mac.test.ts › still writes back a file deleted where both folders hold its item when another device changes it`.
 
@@ -3220,7 +3220,7 @@ When a deleted file is revived by a visible remote change, a device MUST cancel 
 
 When a deleted file is revived by a visible remote change, a device MUST count it `revived`.
 
-**Tests:** `device/folders-identity.test.ts › writes a deleted file back when another device changes its item inside the grace, and sends no delete`.
+**Tests:** `device/folders-identity.test.ts › writes a deleted file back when another device changes its item inside the grace, and sends no delete`, `device/folders-one-mac.test.ts › writes back a file deleted while another folder could not be read, once that folder holds no copy, when another device changed its item inside the grace`.
 
 ### `folders/delete-unshown-change`
 
@@ -4114,15 +4114,23 @@ When two folder searches both hold an item and each folder has its own bound fil
 
 ### `folders/missing-file-trashed`
 
-When a missing folder file’s deletion grace expires and no other folder holds the moved file, a device MUST queue deletion of its item.
+When a missing folder file’s deletion grace expires, no other folder holds the moved file and `folders/missing-file-changed-revives` does not restore the file, a device MUST queue deletion of its item.
 
 **Tests:** `device/folders-one-mac.test.ts › trashes a missing file found in no folder on the Mac, and says so`, `device/folders-one-mac.test.ts › takes a file item at a document name moved to another folder as that item, and trashes it only where no folder holds it`.
 
 ### `folders/missing-file-trashed-path-reported`
 
-When a missing folder file’s deletion grace expires and no other folder holds the moved file, a device MUST name the path in the scan report’s `trashed`.
+When a missing folder file’s deletion grace expires, no other folder holds the moved file and `folders/missing-file-changed-revives` does not restore the file, a device MUST name the path in the scan report’s `trashed`.
 
 **Tests:** `device/folders-one-mac.test.ts › trashes a missing file found in no folder on the Mac, and says so`, `device/folders-one-mac.test.ts › takes a file item at a document name moved to another folder as that item, and trashes it only where no folder holds it`.
+
+### `folders/missing-file-changed-revives`
+
+When a device finds a missing folder file in no other registered folder past its rename grace, or on confirming its paused removal, and another device has changed the file's item in content the file showed while the folder's search still holds the item, a device MUST restore the file from the changed item.
+
+**Reason:** The change is newer than the person's deletion, which no other device has heard of yet, so it wins as it does inside the grace (`folders/delete-remote-revives`). A pull writes no file back while its move cannot be told (`folders/uncertain-move-no-replacement`), so a change made inside the grace may show only once the move is told.
+
+**Tests:** `device/folders-one-mac.test.ts › writes back a file deleted while another folder could not be read, once that folder holds no copy, when another device changed its item inside the grace`, `device/folders-one-mac.test.ts › trashes no item of a confirmed removal that another device changed since its file went, and writes the file back`.
 
 ### `folders/missing-file-said`
 
@@ -4146,7 +4154,7 @@ When a missing folder file could be in unreadable registered folders or several 
 
 While a missing folder file could be in unreadable registered folders or among several files elsewhere with its bytes, a device MUST NOT write the file again.
 
-**Reason:** written again here, the moved file would read as a copy there and become a new item. Within the rename grace, the grace sweep then tells a move from a deletion (`folders/uncertain-move-deferred`, `folders/missing-file-trashed`), and a full pass looks for the file again.
+**Reason:** written again here, the moved file would read as a copy there and become a new item. Within the rename grace, the grace sweep then tells a move from a deletion (`folders/uncertain-move-deferred`, `folders/missing-file-trashed`), and a full pass looks for the file again. A file found nowhere whose item changed elsewhere comes back then (`folders/missing-file-changed-revives`).
 
 **Tests:** `device/folders-one-mac.test.ts › writes no file back for a held delete when another device changes its item`, `device/folders-one-mac.test.ts › writes back no file moved to a folder it cannot read when another device changes its item inside the grace`.
 
@@ -5636,7 +5644,7 @@ When a paused disk removal is confirmed but an unavailable peer folder prevents 
 
 ### `folders/confirm-deletes-queued`
 
-When a paused disk removal is confirmed and a missing file is found in no other folder, a device MUST queue deletion of the item for the next push.
+When a paused disk removal is confirmed, a missing file is found in no other folder and `folders/missing-file-changed-revives` does not restore the file, a device MUST queue deletion of the item for the next push.
 
 **Tests:** `device/folders.test.ts › lets a paused removal go once confirmed, or puts it back`, `device/folders-one-mac.test.ts › looks for a paused removal's files in the other folders before confirming it`.
 

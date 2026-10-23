@@ -1228,8 +1228,9 @@ export interface PullReport {
   skipped: number;
   unwritten: number;
   /** Files the person deleted, written back because their item changed
-   *  elsewhere inside the grace and no other folder on the machine holds
-   *  their move (`folders/delete-remote-revives`). */
+   *  elsewhere before their delete was sent and no other folder on the
+   *  machine holds their move (`folders/delete-remote-revives`,
+   *  `folders/missing-file-changed-revives`). */
   revived: number;
   /** Items whose placement another item holds, written at a free path
    *  beside it (`folders/placement-collision-number`). */

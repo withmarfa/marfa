@@ -1,8 +1,6 @@
 use serde::Serialize;
 
-use std::cell::OnceCell;
-
-use super::{Departing, Flagged, Folder, Missing, PullReport, Unsure, state};
+use super::{Departing, Flagged, Folder, Missing, PullReport, Sweep, Unsure, state};
 use crate::Result;
 use crate::model::ItemState;
 
@@ -47,16 +45,16 @@ impl Folder {
         };
         let mut confirmed = Confirmed::default();
         let peers = self.peers();
-        let members = OnceCell::new();
+        let sweep = Sweep::default();
         for path in &disk {
             // A file put back since is not gone, whatever the pause recorded.
             if self.exists(self.root.join(path)) {
                 continue;
             }
             if let Some(row) = journaled.iter().find(|row| &row.path == path) {
-                match self.let_go_missing(path, &row.item_id, &settings, &peers, &members)? {
+                match self.let_go_missing(path, &row.item_id, &settings, &peers, &sweep)? {
                     Missing::Moved => confirmed.moved += 1,
-                    Missing::Arriving => {}
+                    Missing::Arriving | Missing::Changed => {}
                     Missing::Unsure(reason) => confirmed.unsure.push(Unsure {
                         path: path.clone(),
                         reason,

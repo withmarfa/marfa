@@ -82,7 +82,7 @@ pub use placement::PLACEMENT_EDGE;
 use placement::{beside, cleaned, path_of, suited};
 use pull::{Departing, PullPlan};
 pub use registry::{REGISTRY_ENV, Registered, Registry};
-use scan::Missing;
+use scan::{Missing, Sweep};
 
 pub use settings::{FOLDER_TYPE, Settings};
 pub use settings_file::SettingsFileReport;

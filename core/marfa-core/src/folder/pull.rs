@@ -7,6 +7,9 @@ use super::{
     transfer,
 };
 
+/// What a render of an item's file reads besides the item.
+pub(super) type Basis<'a> = (&'a Catalog, &'a EdgeTypes, &'a Names);
+
 /// Bounded, so a copy that keeps changing ends the pull with
 /// `local_copy_changed` rather than holding it for good.
 const PULL_ATTEMPTS: usize = 3;
@@ -829,7 +832,11 @@ impl Folder {
         // the scan's, and its journaled delete stands.
         if let Some(bound) = &bound
             && bytes_of(item, catalog).is_none()
-            && self.deleted_as_agreed(item, bound, rendering)?
+            && self.deleted_as_agreed(
+                item,
+                bound,
+                (rendering.catalog, rendering.edge_types, rendering.names),
+            )?
         {
             return Ok(PlacementWrite::Done);
         }
@@ -1570,11 +1577,35 @@ impl Folder {
         Ok(Some(ended))
     }
 
+    /// Whether another device changed a missing file's item in what the file
+    /// showed, so the file comes back rather than the item going to the bin
+    /// (`folders/delete-remote-revives`, `folders/missing-file-changed-revives`).
+    /// `None` where the item's bytes cannot be read to tell.
+    pub(super) fn changed_while_missing(
+        &self,
+        item: &Item,
+        bound: &state::Bound,
+        basis: Basis<'_>,
+    ) -> Result<Option<bool>> {
+        let Some(blob) = bytes_of(item, basis.0) else {
+            return Ok(Some(!self.deleted_as_agreed(item, bound, basis)?));
+        };
+        match self.core.blob_file(blob).map(|file| read_file(&file)) {
+            Ok(Ok(found)) => Ok(Some(state::hash(&found) != bound.content_hash)),
+            Err(
+                error @ (CoreError::Unauthorized { .. }
+                | CoreError::RenewalFailed(_)
+                | CoreError::Redirected { .. }),
+            ) => Err(error),
+            Ok(Err(_)) | Err(_) => Ok(None),
+        }
+    }
+
     fn deleted_as_agreed(
         &self,
         item: &Item,
         bound: &state::Bound,
-        rendering: &Rendering<'_>,
+        (catalog, edge_types, names): Basis<'_>,
     ) -> Result<bool> {
         if self.exists(self.root.join(&bound.path))
             || !journaled_for(&*self.core.conn()?, &bound.path, &item.id)?
@@ -1592,9 +1623,9 @@ impl Folder {
             item,
             &bound.path,
             line,
-            rendering.catalog,
-            rendering.edge_types,
-            (rendering.names, previous.as_ref(), &bound.lines),
+            catalog,
+            edge_types,
+            (names, previous.as_ref(), &bound.lines),
         )?;
         let Ok(text) = rendered.text else {
             return Ok(false);
@@ -1618,7 +1649,7 @@ impl Folder {
             .fold(presented.presentation(), |presented, field| {
                 presented.with(field, None)
             });
-            agreed.agrees(&presented, rendering.edge_types)
+            agreed.agrees(&presented, edge_types)
         }))
     }
 

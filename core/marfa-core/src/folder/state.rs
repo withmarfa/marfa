@@ -532,16 +532,18 @@ pub struct Journaled {
     pub kept: Option<Kept>,
 }
 
-/// Records what a sweep decided for a journaled file whose binding it kept.
+/// Records what a sweep decided for a journaled file whose binding it kept,
+/// or with `None` that it is any pull's to write.
 pub fn journal_keep(
     conn: &Connection,
     path: &str,
     item_id: &str,
-    kept: &Kept,
+    kept: Option<&Kept>,
 ) -> Result<(), CoreError> {
     let (kind, reason) = match kept {
-        Kept::Arriving => ("arriving", None),
-        Kept::Unsure(reason) => ("unsure", Some(reason.as_str())),
+        Some(Kept::Arriving) => (Some("arriving"), None),
+        Some(Kept::Unsure(reason)) => (Some("unsure"), Some(reason.as_str())),
+        None => (None, None),
     };
     conn.execute(
         "UPDATE folder_journal SET kept = ?3, reason = ?4 WHERE path = ?1 AND item_id = ?2",
