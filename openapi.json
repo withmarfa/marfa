@@ -6919,6 +6919,45 @@
         "additionalProperties": false,
         "description": "One way a view shows its items. A layout takes only the options its `kind` takes, and never narrows which items the view lists."
       },
+      "InvalidIdOrInvalidTransitionOrMissingRequiredFieldOrUnknownTypeOrValidationErrorRefusal": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
+                  "invalid_id",
+                  "invalid_transition",
+                  "missing_required_field",
+                  "unknown_type",
+                  "validation_error"
+                ],
+                "description": "A machine-readable code for the error. Use it in your logic."
+              },
+              "message": {
+                "type": "string",
+                "description": "A description of the error for a person to read. It can change, so don't match on it."
+              },
+              "details": {
+                "type": "object",
+                "additionalProperties": {},
+                "description": "More about the error, such as the field it concerns. Each code defines its own details."
+              }
+            },
+            "required": [
+              "code",
+              "message"
+            ],
+            "description": "What went wrong."
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "description": "An error response."
+      },
       "KeyResponse": {
         "type": "object",
         "properties": {
@@ -37567,11 +37606,11 @@
             }
           },
           "400": {
-            "description": "- `validation_error`: a setting is malformed or undeclared, such as a repeated layout `id`. `details.errors[0].path` or `details.unknown_body_fields` names it. Also returned for no setting.\n- `missing_required_field`: `version` or a part a layout requires is missing. `details.field` names it.\n- `unknown_type`: `query.types` names a type that isn't registered.\n- `invalid_id`: the ID is invalid.",
+            "description": "- `validation_error`: no setting, or a malformed or undeclared setting; `details` names it.\n- `missing_required_field`: `version` or a required layout part is missing; `details.field` names it.\n- `unknown_type`: `query.types` names a type that isn't registered.\n- `invalid_id`: the ID is invalid.\n- `invalid_transition`: the view is revoked.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/InvalidIdOrMissingRequiredFieldOrUnknownTypeOrValidationErrorRefusal"
+                  "$ref": "#/components/schemas/InvalidIdOrInvalidTransitionOrMissingRequiredFieldOrUnknownTypeOrValidationErrorRefusal"
                 }
               }
             },
@@ -37935,7 +37974,7 @@
           "Views"
         ],
         "summary": "Delete a view",
-        "description": "Deletes a view permanently, with no trash. Marfa announces it as `item.purged`, so every app drops it. The items it listed don't change.",
+        "description": "Deletes an active or revoked view permanently, with no trash. Marfa announces it as `item.purged`, so every app drops it. The items it listed don't change.",
         "security": [
           {
             "bearerAuth": []

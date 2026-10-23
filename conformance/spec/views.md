@@ -84,19 +84,19 @@ If a request to `POST /views` or `PATCH /views/{id}` carries a key that its body
 
 ### `views/change`
 
-When `PATCH /views/{id}` names the `version` the view holds and one or more settings, the server MUST replace each setting named whole, `layouts` included, and advance the version.
+When `PATCH /views/{id}` names the `version` an active view holds and one or more settings, the server MUST replace each setting named whole, `layouts` included, and advance the version.
 
 **Tests:** `compliance/views.test.ts › changes a view at its version, merges a stale change to another setting, and refuses one to the same`.
 
 ### `views/change-stale`
 
-When `PATCH /views/{id}` names a version the view no longer holds and changes only settings nobody changed since, the server MUST apply it.
+When `PATCH /views/{id}` names a version an active view no longer holds and changes only settings nobody changed since, the server MUST apply it.
 
 **Tests:** `compliance/views.test.ts › changes a view at its version, merges a stale change to another setting, and refuses one to the same`.
 
 ### `views/change-conflict`
 
-If `PATCH /views/{id}` names a version the view no longer holds and changes a setting changed since, then the server MUST answer `409 version_conflict` with `conflicting_fields` naming each such setting.
+If `PATCH /views/{id}` names a version an active view no longer holds and changes a setting changed since, then the server MUST answer `409 version_conflict` with `conflicting_fields` naming each such setting.
 
 **Tests:** `compliance/views.test.ts › changes a view at its version, merges a stale change to another setting, and refuses one to the same`.
 
@@ -112,6 +112,18 @@ If `PATCH /views/{id}` names no setting, then the server MUST answer `400 valida
 
 **Tests:** `compliance/views.test.ts › refuses a change naming no version or no setting, and a change or delete of an id that is not a view`.
 
+### `views/change-revoked`
+
+If a valid `PATCH /views/{id}` names a revoked view, then the server MUST answer `400 invalid_transition`.
+
+**Tests:** `compliance/views.test.ts › refuses to change a view revoked by its parent's deletion`.
+
+### `views/change-revoked-unchanged`
+
+If `PATCH /views/{id}` is refused because the view is revoked, then the server MUST leave the view unchanged.
+
+**Tests:** `compliance/views.test.ts › refuses to change a view revoked by its parent's deletion`.
+
 ### `views/not-found`
 
 If `PATCH /views/{id}` or `DELETE /views/{id}` names an id that holds no `system.view`, then the server MUST answer `404 item_not_found`.
@@ -120,11 +132,17 @@ If `PATCH /views/{id}` or `DELETE /views/{id}` names an id that holds no `system
 
 ## Deleting a view
 
+### `views/parent-deleted`
+
+When deleting a parent item cascades through `parent-of` to an active view, the server MUST move the view to `revoked`.
+
+**Tests:** `compliance/views.test.ts › deletes a view revoked by its parent's deletion`, `› refuses to change a view revoked by its parent's deletion`.
+
 ### `views/delete`
 
-When a key sends `DELETE /views/{id}` for a view, the server MUST answer `200` with `ok: true` and remove the view at once, with no trash, so that `GET /items/{id}` answers `404 item_not_found` and no listing holds it.
+When a key sends `DELETE /views/{id}` for an active or revoked view, the server MUST answer `200` with `ok: true` and remove the view at once, with no trash, so that `GET /items/{id}` answers `404 item_not_found` and no listing holds it.
 
-**Tests:** `compliance/views.test.ts › deletes a view at once, and a deleted view is no longer readable or changed`.
+**Tests:** `compliance/views.test.ts › deletes a view at once, and a deleted view is no longer readable or changed`, `› deletes a view revoked by its parent's deletion`.
 
 ### `views/delete-announced`
 

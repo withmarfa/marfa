@@ -1188,7 +1188,7 @@ export interface paths {
         post?: never;
         /**
          * Delete a view
-         * @description Deletes a view permanently, with no trash. Marfa announces it as `item.purged`, so every app drops it. The items it listed don't change.
+         * @description Deletes an active or revoked view permanently, with no trash. Marfa announces it as `item.purged`, so every app drops it. The items it listed don't change.
          */
         delete: operations["deleteView"];
         options?: never;
@@ -4695,6 +4695,23 @@ export interface components {
             };
             /** @description For a `map`, the property that holds each item's place. */
             location?: string;
+        };
+        /** @description An error response. */
+        InvalidIdOrInvalidTransitionOrMissingRequiredFieldOrUnknownTypeOrValidationErrorRefusal: {
+            /** @description What went wrong. */
+            error: {
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
+                code: "invalid_id" | "invalid_transition" | "missing_required_field" | "unknown_type" | "validation_error";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
+                message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
+                details?: {
+                    [key: string]: unknown;
+                };
+            };
         };
         /** @description A new API key, with its plaintext `key`. */
         KeyResponse: {
@@ -19604,10 +19621,11 @@ export interface operations {
                 };
             };
             /**
-             * @description - `validation_error`: a setting is malformed or undeclared, such as a repeated layout `id`. `details.errors[0].path` or `details.unknown_body_fields` names it. Also returned for no setting.
-             *     - `missing_required_field`: `version` or a part a layout requires is missing. `details.field` names it.
+             * @description - `validation_error`: no setting, or a malformed or undeclared setting; `details` names it.
+             *     - `missing_required_field`: `version` or a required layout part is missing; `details.field` names it.
              *     - `unknown_type`: `query.types` names a type that isn't registered.
              *     - `invalid_id`: the ID is invalid.
+             *     - `invalid_transition`: the view is revoked.
              */
             400: {
                 headers: {
@@ -19621,7 +19639,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["InvalidIdOrMissingRequiredFieldOrUnknownTypeOrValidationErrorRefusal"];
+                    "application/json": components["schemas"]["InvalidIdOrInvalidTransitionOrMissingRequiredFieldOrUnknownTypeOrValidationErrorRefusal"];
                 };
             };
             /** @description `unauthorized`: the request has no credential, or its credential is not valid. */

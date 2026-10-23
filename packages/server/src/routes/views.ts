@@ -535,10 +535,11 @@ const updateViewRoute = createRoute({
             "missing_required_field",
             "unknown_type",
             "invalid_id",
+            "invalid_transition",
           ]),
         },
       },
-      description: `${SETTING_MALFORMED} Also returned for no setting.\n- \`missing_required_field\`: \`version\` or a part a layout requires is missing. \`details.field\` names it.\n${SETTING_TYPE_UNKNOWN}\n- \`invalid_id\`: the ID is invalid.`,
+      description: `- \`validation_error\`: no setting, or a malformed or undeclared setting; \`details\` names it.\n- \`missing_required_field\`: \`version\` or a required layout part is missing; \`details.field\` names it.\n${SETTING_TYPE_UNKNOWN}\n- \`invalid_id\`: the ID is invalid.\n- \`invalid_transition\`: the view is revoked.`,
     },
     ...unauthorized,
     ...notPermitted,
@@ -562,7 +563,7 @@ const deleteViewRoute = createRoute({
   tags: ["Views"],
   summary: "Delete a view",
   description:
-    "Deletes a view permanently, with no trash. Marfa announces it as `item.purged`, so every app drops it. The items it listed don't change.",
+    "Deletes an active or revoked view permanently, with no trash. Marfa announces it as `item.purged`, so every app drops it. The items it listed don't change.",
   security: [{ bearerAuth: [] }],
   middleware: writesViews,
   request: { params: IdParam },
@@ -646,6 +647,12 @@ export function viewRoutes(storage: Storage) {
       async () => {
         requireViewWrite(c);
         const view = await requireView(storage, id);
+        if (view.state === "revoked") {
+          throw new MarfaError(
+            ErrorCode.INVALID_TRANSITION,
+            `View ${id} is revoked, and a revoked view does not change`,
+          );
+        }
         rememberItemSubject(view, "write", true);
         return await writeItem(
           storage,
@@ -688,7 +695,7 @@ export function viewRoutes(storage: Storage) {
 
   router.openapi(deleteViewRoute, async (c) => {
     const { id } = c.req.valid("param");
-    // A purge takes only a row already out of `active`, so the view passes
+    // A purge takes only a row already out of `active`, so an active view passes
     // through `revoked` unannounced and the purge alone is announced.
     await runAuditedTransaction(
       storage,
@@ -697,12 +704,14 @@ export function viewRoutes(storage: Storage) {
         const view = await requireView(storage, id);
         rememberItemSubject(view, "write", true);
         const writer = { kind: "platform", by: requestWriter(c) } as const;
-        await writeItem(
-          storage,
-          writer,
-          { op: "transition", id, state: "revoked" },
-          { announce: false },
-        );
+        if (view.state !== "revoked") {
+          await writeItem(
+            storage,
+            writer,
+            { op: "transition", id, state: "revoked" },
+            { announce: false },
+          );
+        }
         await writeItem(storage, writer, { op: "purge", id });
       },
       {

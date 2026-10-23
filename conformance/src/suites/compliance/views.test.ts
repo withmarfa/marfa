@@ -9,6 +9,7 @@ import type { TestContext } from "../../client/types.js";
 import {
   createTestContext,
   trackItem,
+  trackEdge,
   trackKey,
   trackView,
   cleanup,
@@ -73,6 +74,25 @@ async function view(
   expect(r.status, JSON.stringify(r.error)).toBe(201);
   trackView(ctx, r.data.item.id);
   return { id: r.data.item.id, version: r.data.item.version };
+}
+
+async function parentedView(): Promise<{ parentId: string; id: string }> {
+  const parent = await client.createItem({
+    type: "core.note",
+    properties: { title: "Parent", body: "Parent of a view" },
+  });
+  expect(parent.status, JSON.stringify(parent.error)).toBe(201);
+  const parentId = parent.data.item.id;
+  trackItem(ctx, parentId);
+  const { id } = await view();
+  const edge = await client.createEdge({
+    source_id: parentId,
+    target_id: id,
+    edge_type: "parent-of",
+  });
+  expect(edge.status).toBe(201);
+  trackEdge(ctx, edge.data.edge.id);
+  return { parentId, id };
 }
 
 describe("the view door", () => {
@@ -272,6 +292,54 @@ describe("the view door", () => {
       expect(r.status).toBe(404);
       expect(r.error?.error.code).toBe("item_not_found");
     }
+  });
+
+  it("deletes a view revoked by its parent's deletion", async () => {
+    const { parentId, id } = await parentedView();
+    expect((await client.getItem(id)).data.item.state).toBe("active");
+    expect((await client.deleteItem(parentId)).status).toBe(200);
+    const revoked = await client.getItem(id);
+    expect(revoked.status).toBe(200);
+    expect(revoked.data.item.state).toBe("revoked");
+    const list = () =>
+      client.rawRequest<{ data: { id: string }[] }>(
+        `/items?type=system.view&state=any&source=${ctx.source}&limit=200`,
+      );
+    const before = await list();
+    expect(before.status).toBe(200);
+    expect(before.data.data.map((row) => row.id)).toContain(id);
+
+    const deleted = await client.deleteView(id);
+    expect(deleted.status, JSON.stringify(deleted.error)).toBe(200);
+    expect(deleted.data).toEqual({ ok: true });
+    const read = await client.getItem(id);
+    expect(read.status).toBe(404);
+    expect(read.error?.error.code).toBe("item_not_found");
+    const after = await list();
+    expect(after.status).toBe(200);
+    expect(after.data.data.map((row) => row.id)).not.toContain(id);
+  });
+
+  it("refuses to change a view revoked by its parent's deletion", async () => {
+    const { parentId, id } = await parentedView();
+    expect(
+      (await client.updateView(id, { version: 1, title: "Renamed" })).status,
+    ).toBe(200);
+    expect((await client.deleteItem(parentId)).status).toBe(200);
+    const revoked = await client.getItem(id);
+    expect(revoked.status).toBe(200);
+    expect(revoked.data.item.state).toBe("revoked");
+
+    const changed = await client.updateView(id, {
+      version: revoked.data.item.version,
+      title: "Changed after revocation",
+    });
+    expect(changed.status, JSON.stringify(changed.data)).toBe(400);
+    expect(changed.error?.error.code).toBe("invalid_transition");
+    await expectMatchesSchema("PATCH", "/views/{id}", 400, changed.error);
+    const unchanged = await client.getItem(id);
+    expect(unchanged.status).toBe(200);
+    expect(unchanged.data.item).toEqual(revoked.data.item);
   });
 
   it("admits a key minted with write on system.view alone, and refuses one whose map does not grant it", async () => {
