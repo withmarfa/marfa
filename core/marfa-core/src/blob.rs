@@ -1,8 +1,8 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs::{self, File};
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard, Weak};
 use std::time::{Duration, SystemTime};
 
 use sha2::{Digest, Sha256};
@@ -28,6 +28,62 @@ pub(crate) struct Cache {
     /// cache is trimmed, so a trim never takes bytes an upload is about to
     /// name.
     settling: Mutex<()>,
+    /// The bytes callers are reading, by name, with how many read each,
+    /// shared by every handle in the process on the same folder. Held by a
+    /// removal from the moment it reads the set until it is done, so a caller
+    /// that joins the set either is seen or finds its bytes gone and fetches
+    /// them again.
+    reading: Readers,
+}
+
+type ReadingSet = Mutex<HashMap<String, usize>>;
+type Readers = Arc<ReadingSet>;
+
+/// Which folder of fetched files a set of readers is for.
+#[derive(PartialEq, Eq)]
+enum Folder {
+    /// The device and inode of the folder holding the store, and the store's
+    /// file name.
+    In(u64, u64, std::ffi::OsString),
+    /// Where the folder holding the store cannot be read.
+    Named(PathBuf),
+}
+
+/// The set of readers every handle on `folder` shares.
+fn readers_of(folder: Folder) -> Readers {
+    static SHARED: Mutex<Vec<(Folder, Weak<ReadingSet>)>> = Mutex::new(Vec::new());
+    let mut shared = SHARED
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    shared.retain(|(_, readers)| readers.strong_count() > 0);
+    if let Some(readers) = shared
+        .iter()
+        .find(|(held, _)| *held == folder)
+        .and_then(|(_, readers)| readers.upgrade())
+    {
+        return readers;
+    }
+    let readers = Readers::default();
+    shared.push((folder, Arc::downgrade(&readers)));
+    readers
+}
+
+/// Keeps a caller's bytes from every removal until it is dropped.
+pub(crate) struct Reading<'a> {
+    cache: &'a Cache,
+    name: String,
+}
+
+impl Drop for Reading<'_> {
+    fn drop(&mut self) {
+        let mut reading = self.cache.readers();
+        if let Some(count) = reading.get_mut(&self.name) {
+            *count -= 1;
+            if *count == 0 {
+                reading.remove(&self.name);
+            }
+        }
+    }
 }
 
 /// Bytes taken in for an upload: the name they are held under and their
@@ -35,6 +91,14 @@ pub(crate) struct Cache {
 pub(crate) struct Taken {
     pub(crate) hash: String,
     pub(crate) size: u64,
+}
+
+/// Bytes fetched and kept.
+#[derive(Debug)]
+pub(crate) struct Fetched {
+    pub(crate) path: PathBuf,
+    /// Why the bytes could not be kept out of backups, where they could not.
+    pub(crate) unmarked: Option<String>,
 }
 
 /// Why bytes did not arrive whole: the source failed, or the cache did.
@@ -45,6 +109,25 @@ enum Copy {
 
 impl Cache {
     pub(crate) fn beside(store: &Path) -> Cache {
+        let holder = store
+            .parent()
+            .filter(|holder| !holder.as_os_str().is_empty())
+            .unwrap_or(Path::new("."));
+        let folder = match (fs::metadata(holder), store.file_name()) {
+            #[cfg(unix)]
+            (Ok(held), Some(name)) => {
+                use std::os::unix::fs::MetadataExt;
+                Folder::In(held.dev(), held.ino(), name.to_owned())
+            }
+            _ => Folder::Named(fs::canonicalize(holder).map_or_else(
+                |_| store.to_path_buf(),
+                |holder| holder.join(store.file_name().unwrap_or_default()),
+            )),
+        };
+        Self::for_folder(store, folder)
+    }
+
+    fn for_folder(store: &Path, folder: Folder) -> Cache {
         let mut name = store.as_os_str().to_owned();
         name.push(".blobs");
         Cache {
@@ -54,6 +137,7 @@ impl Cache {
             #[cfg(unix)]
             directory: std::sync::OnceLock::new(),
             settling: Mutex::new(()),
+            reading: readers_of(folder),
         }
     }
 
@@ -63,7 +147,12 @@ impl Cache {
         label: &Path,
         create: bool,
     ) -> Result<Self> {
-        let mut cache = Self::beside(label);
+        use std::os::unix::fs::MetadataExt;
+        let folder = match parent.metadata() {
+            Ok(held) => Folder::In(held.dev(), held.ino(), "core.sqlite".into()),
+            Err(_) => Folder::Named(label.to_path_buf()),
+        };
+        let mut cache = Self::for_folder(label, folder);
         cache.parent = Some(parent.clone());
         match parent.child(Path::new("core.sqlite.blobs"), create) {
             Ok(directory) => {
@@ -148,6 +237,20 @@ impl Cache {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
+    fn readers(&self) -> MutexGuard<'_, HashMap<String, usize>> {
+        self.reading
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    /// Keeps `hash`'s bytes from every removal while the answer is held. Taken
+    /// before the bytes are looked for or fetched.
+    pub(crate) fn reading(&self, hash: &str) -> Result<Reading<'_>> {
+        let name = hex_of(hash)?.to_string();
+        *self.readers().entry(name.clone()).or_default() += 1;
+        Ok(Reading { cache: self, name })
+    }
+
     /// Marks held bytes as just read, so a trim takes the bytes read longest
     /// ago first.
     pub(crate) fn touch(&self, path: &Path) {
@@ -156,37 +259,58 @@ impl Cache {
             .and_then(|file| file.set_modified(SystemTime::now()));
     }
 
-    /// Called under `hold`, with `kept` read under it.
+    /// Called under `hold`, with `kept` read under it. Bytes a caller is
+    /// reading stay too.
     pub(crate) fn let_go(&self, hash: &str, kept: &HashSet<String>) {
         let Ok(hex) = hex_of(hash) else {
             return;
         };
-        if !kept.contains(hex) {
+        let reading = self.readers();
+        if !kept.contains(hex) && !reading.contains_key(hex) {
             let _ = self.unlink_label(&self.dir.join(hex));
         }
     }
 
-    /// What the cache holds: every kept blob, nothing still arriving.
+    /// What the cache holds: every kept blob, nothing still arriving. Each
+    /// entry is read by `stat`, never opened, so a large cache costs no open
+    /// per file.
     fn scan(&self) -> Vec<(SystemTime, u64, PathBuf)> {
         let Ok(entries) = self.entries() else {
             return Vec::new();
         };
         let mut found = Vec::new();
         for entry in entries {
-            let Ok(metadata) = self
-                .open_label(&entry, false, false)
-                .and_then(|file| file.metadata())
-            else {
-                continue;
-            };
             let name = entry.file_name().unwrap_or_default().to_string_lossy();
-            if !metadata.is_file() || name.starts_with(".incoming-") {
+            if name.starts_with(".incoming-") {
                 continue;
             }
-            let read = metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH);
-            found.push((read, metadata.len(), entry));
+            let Ok((file, size, read)) = self.stat_label(&entry) else {
+                continue;
+            };
+            if file {
+                found.push((read, size, entry));
+            }
         }
         found
+    }
+
+    /// Whether the entry is a regular file, its length and when it was last
+    /// read, following no link.
+    fn stat_label(&self, label: &Path) -> io::Result<(bool, u64, SystemTime)> {
+        #[cfg(unix)]
+        if let Some(directory) = self.capability(false)? {
+            let relative = label.strip_prefix(&self.dir).map_err(|_| {
+                io::Error::new(io::ErrorKind::InvalidInput, "not a cache entry label")
+            })?;
+            let (kind, size, read) = directory.entry_stat(relative)?;
+            return Ok((kind == crate::directory::FileType::RegularFile, size, read));
+        }
+        let metadata = fs::symlink_metadata(label)?;
+        Ok((
+            metadata.is_file(),
+            metadata.len(),
+            metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH),
+        ))
     }
 
     /// The bytes of every blob kept.
@@ -194,20 +318,32 @@ impl Cache {
         self.scan().iter().map(|(_, size, _)| size).sum()
     }
 
-    /// The volume holding the cache.
+    /// The volume holding the cache: read through the folder held open
+    /// where the cache is anchored, so a path that now names another place
+    /// does not change the answer.
     pub(crate) fn volume(&self) -> Option<crate::file_cache::Volume> {
-        crate::file_cache::read_volume(&self.dir)
+        use crate::file_cache::{Place, read_volume};
+        #[cfg(unix)]
+        if let Some(parent) = &self.parent {
+            return match self.capability(false) {
+                Ok(Some(directory)) => read_volume(Place::Held(directory.file())),
+                _ => read_volume(Place::Held(parent.file())),
+            };
+        }
+        read_volume(Place::Named(&self.dir))
     }
 
     /// Takes the bytes read longest ago until what is left fits the budget
     /// `budget` gives for the bytes held, and answers how many it took.
-    /// Bytes named in `kept` stay whatever the budget, and `None` takes
-    /// nothing. Called under `hold`, with `kept` read under it.
+    /// Bytes named in `kept`, and bytes a caller is reading, stay whatever
+    /// the budget, and `None` takes nothing. Called under `hold`, with `kept`
+    /// read under it.
     pub(crate) fn trim(
         &self,
         kept: &HashSet<String>,
         budget: impl FnOnce(u64) -> Option<u64>,
     ) -> u64 {
+        let reading = self.readers();
         let found = self.scan();
         let mut total: u64 = found.iter().map(|(_, size, _)| size).sum();
         let Some(most) = budget(total) else {
@@ -216,12 +352,8 @@ impl Cache {
         let mut held: Vec<_> = found
             .into_iter()
             .filter(|(_, _, path)| {
-                !kept.contains(
-                    path.file_name()
-                        .unwrap_or_default()
-                        .to_string_lossy()
-                        .as_ref(),
-                )
+                let name = path.file_name().unwrap_or_default().to_string_lossy();
+                !kept.contains(name.as_ref()) && !reading.contains_key(name.as_ref())
             })
             .collect();
         held.sort();
@@ -275,24 +407,6 @@ impl Cache {
         false
     }
 
-    /// Every byte in the cache can be fetched again, so no backup needs it.
-    /// Best effort: a mark that cannot be made costs a larger backup and
-    /// loses nothing. Marks the folder where it exists and is not marked, so
-    /// a folder made before, or one whose mark was lost, is marked on the
-    /// next write.
-    pub(crate) fn keep_out_of_backups(&self) {
-        #[cfg(unix)]
-        if self.parent.is_some() {
-            if let Ok(Some(directory)) = self.capability(false) {
-                let _ = crate::file_cache::exclude_from_backup(directory.file());
-            }
-            return;
-        }
-        if let Ok(folder) = File::open(&self.dir) {
-            let _ = crate::file_cache::exclude_from_backup(&folder);
-        }
-    }
-
     /// A process that ended mid-copy leaves its file behind, and only its age
     /// tells it from a copy still being written.
     pub(crate) fn sweep_incoming(&self, older_than: Duration) {
@@ -315,7 +429,7 @@ impl Cache {
         }
     }
 
-    fn keep(&self, hash: &str, bytes: impl Read) -> Result<PathBuf> {
+    pub(crate) fn keep(&self, hash: &str, bytes: impl Read) -> Result<Fetched> {
         let (found, _, incoming) = self.copy_in(bytes).map_err(|error| match error {
             Copy::Source(error) => CoreError::BytesAbsent {
                 hash: hash.to_string(),
@@ -329,7 +443,19 @@ impl Cache {
                 "the bytes fetched for {hash} hash to {found}, so they are not the blob asked for"
             )));
         }
-        self.settle(&incoming, hash)
+        // Fetched bytes can be fetched again, so no backup needs them. They
+        // are marked before they take their name: an upload of the same
+        // bytes replaces the file, and its copy, the only one until the
+        // server has it, is never marked.
+        let unmarked = self
+            .open_label(&incoming, false, false)
+            .and_then(|file| crate::file_cache::exclude_from_backup(&file))
+            .err()
+            .map(|error| error.to_string());
+        Ok(Fetched {
+            path: self.settle(&incoming, hash)?,
+            unmarked,
+        })
     }
 
     fn copy_in(&self, mut from: impl Read) -> std::result::Result<(String, u64, PathBuf), Copy> {
@@ -348,7 +474,6 @@ impl Cache {
             std::os::unix::fs::DirBuilderExt::mode(&mut made, 0o700);
             made.create(&self.dir).map_err(Copy::Cache)?;
         }
-        self.keep_out_of_backups();
         let incoming = self.dir.join(format!(".incoming-{}", uuid::Uuid::now_v7()));
         let copied = (|| {
             let mut to = self
@@ -443,7 +568,7 @@ pub(crate) fn hex_of(hash: &str) -> Result<&str> {
         })
 }
 
-pub(crate) fn fetch(cache: &Cache, http: &Http, hash: &str) -> Result<PathBuf> {
+pub(crate) fn fetch(cache: &Cache, http: &Http, hash: &str) -> Result<Fetched> {
     let absent = |reason: String| CoreError::BytesAbsent {
         hash: hash.to_string(),
         reason,
@@ -503,7 +628,7 @@ const LINK_IDLE: Duration = Duration::from_secs(60);
 const LINK_BODY_MOST: Duration = Duration::from_secs(6 * 60 * 60);
 
 /// What a link sends is bounded by `most`, the most one fetch pulls.
-fn pull(cache: &Cache, hash: &str, link: &str, most: u64, idle: Duration) -> Result<PathBuf> {
+fn pull(cache: &Cache, hash: &str, link: &str, most: u64, idle: Duration) -> Result<Fetched> {
     let bytes = open(link).map_err(|reason| CoreError::BytesAbsent {
         hash: hash.to_string(),
         reason,
@@ -672,7 +797,7 @@ pub fn file_type_for(mime_type: &str, given: Option<&str>) -> String {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     #[test]
     fn admitted_cache_does_not_remove_a_replacement_roots_bytes() {
         let temp = tempfile::tempdir().unwrap();
@@ -801,7 +926,7 @@ mod tests {
 
     /// A link on a port of its own that sends `body` and then, if asked,
     /// goes quiet with the connection open.
-    fn linking(body: Vec<u8>, then_silent: bool) -> String {
+    pub(crate) fn linking(body: Vec<u8>, then_silent: bool) -> String {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let url = format!("http://{}/bytes", listener.local_addr().unwrap());
         std::thread::spawn(move || {
@@ -896,7 +1021,7 @@ mod tests {
             ),
         ] {
             assert_eq!(name_of(bytes), expected);
-            let held = cache.keep(expected, bytes).unwrap();
+            let held = cache.keep(expected, bytes).unwrap().path;
             assert_eq!(held.file_name().unwrap(), hex_of(expected).unwrap());
             assert_eq!(fs::read(held).unwrap(), bytes);
         }
@@ -929,7 +1054,7 @@ mod tests {
             Err(CoreError::Decoding(_))
         ));
         assert_eq!(cache.held(&other).unwrap(), None);
-        let kept = cache.keep(EMPTY, &b""[..]).unwrap();
+        let kept = cache.keep(EMPTY, &b""[..]).unwrap().path;
         assert_eq!(cache.held(EMPTY).unwrap(), Some(kept));
         let names: Vec<_> = fs::read_dir(&cache.dir)
             .unwrap()
@@ -984,7 +1109,7 @@ mod tests {
         fs::create_dir_all(&cache.dir).unwrap();
         let left = cache.dir.join(".incoming-left-by-a-crash");
         fs::write(&left, b"half").unwrap();
-        let held = cache.keep(EMPTY, &b""[..]).unwrap();
+        let held = cache.keep(EMPTY, &b""[..]).unwrap().path;
         cache.sweep_incoming(Duration::from_secs(3600));
         assert!(left.exists());
         cache.sweep_incoming(Duration::ZERO);
@@ -998,7 +1123,7 @@ mod tests {
     /// Bytes kept under their name, read `ago` seconds ago.
     fn kept(cache: &Cache, bytes: &[u8], ago: u64) -> (String, PathBuf) {
         let hash = name_of(bytes);
-        let path = cache.keep(&hash, bytes).unwrap();
+        let path = cache.keep(&hash, bytes).unwrap().path;
         File::options()
             .append(true)
             .open(&path)
@@ -1037,6 +1162,41 @@ mod tests {
             !named.exists(),
             "the trim took something other than the bytes read longest ago"
         );
+    }
+
+    /// A cache's size is read without opening its files, so a file that
+    /// cannot be opened still counts and can still be taken.
+    #[cfg(unix)]
+    #[test]
+    fn the_bytes_held_are_read_without_opening_each_file() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("anchored");
+        fs::create_dir(&root).unwrap();
+        let directory = crate::directory::Directory::open(&root.canonicalize().unwrap()).unwrap();
+        let caches = [
+            Cache::beside(&dir.path().join("store.sqlite")),
+            Cache::anchored(&directory, &root.join("core.sqlite"), true).unwrap(),
+        ];
+        for cache in caches {
+            let (_, readable) = kept(&cache, b"readable..", 0);
+            let (_, sealed) = kept(&cache, b"sealed....", 100);
+            // The witness: both count while both can be opened.
+            assert_eq!(cache.held_bytes(), 20);
+            fs::set_permissions(&sealed, fs::Permissions::from_mode(0o000)).unwrap();
+            assert!(
+                File::open(&sealed).is_err(),
+                "the file could still be opened"
+            );
+            assert_eq!(
+                cache.held_bytes(),
+                20,
+                "a file that cannot be opened went uncounted, so it was opened"
+            );
+            cache.trim(&HashSet::new(), |_| Some(10));
+            assert!(!sealed.exists(), "the trim could not see a sealed file");
+            assert!(readable.exists());
+        }
     }
 
     #[test]

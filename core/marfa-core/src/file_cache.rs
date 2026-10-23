@@ -17,9 +17,16 @@ const GIB: u64 = 1024 * 1024 * 1024;
 /// cannot be read.
 pub const DEFAULT_FLOOR: u64 = 2 * GIB;
 
+/// What the default budget is never below, however full the volume.
+pub(crate) const DEFAULT_MINIMUM: u64 = 256 * 1024 * 1024;
+
 /// The setting in the store's `meta` table; absent for the default.
 pub(crate) const META_BUDGET: &str = "file_budget";
 const KEEP_ALL: &str = "keep_all";
+
+/// Why the last bytes fetched could not be kept out of backups; absent once
+/// they could.
+pub(crate) const META_BACKUP_UNMARKED: &str = "file_backup_unmarked";
 
 /// How the cache's budget is chosen.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -54,7 +61,7 @@ impl FileBudget {
 }
 
 /// The cache as the state report gives it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct FileCache {
     /// What was chosen.
     pub setting: FileBudget,
@@ -64,8 +71,11 @@ pub struct FileCache {
     /// The bytes of the files kept now.
     pub held: u64,
     /// Whether the default budget is the floor because the volume holding
-    /// the cache could not be read.
+    /// the cache could not be read, or read as a size of zero.
     pub volume_unreadable: bool,
+    /// Why the last bytes fetched could not be kept out of backups; `None`
+    /// once they could, and off Apple platforms, where nothing is marked.
+    pub backup_mark_failure: Option<String>,
 }
 
 /// The figures of the volume that holds the cache.
@@ -89,13 +99,24 @@ pub(crate) struct InForce {
 ///
 /// The share is a tenth of the volume, never under the floor. A trim that
 /// reaches it must also leave a twentieth of the volume free, which the
-/// bytes already held count towards, since a trim hands them back.
+/// bytes already held count towards, since a trim hands them back. On a
+/// volume too full for that, the minimum still stands, so a fetch does not
+/// take every other file.
 pub(crate) fn default_budget(volume: Volume, held: u64) -> u64 {
     let share = (volume.size / 10).max(DEFAULT_FLOOR);
     let room = held
         .saturating_add(volume.free)
         .saturating_sub(volume.size / 20);
-    share.min(room)
+    share.min(room).max(minimum())
+}
+
+/// A debug build reads `MARFA_TEST_FAULT` first: `budget-minimum=<bytes>`
+/// stands for the minimum, since a fixture cannot fetch 256 MiB to see the
+/// default budget trim.
+fn minimum() -> u64 {
+    crate::fault::named("budget-minimum")
+        .and_then(|bytes| bytes.parse().ok())
+        .unwrap_or(DEFAULT_MINIMUM)
 }
 
 pub(crate) fn in_force(setting: FileBudget, volume: Option<Volume>, held: u64) -> InForce {
@@ -121,108 +142,128 @@ pub(crate) fn in_force(setting: FileBudget, volume: Option<Volume>, held: u64) -
     }
 }
 
-/// The volume holding `directory`, or the nearest of its parents that
-/// exists, since the cache's own folder is made by the first fetch.
+/// Where the cache is, for reading its volume.
+pub(crate) enum Place<'a> {
+    /// A directory held open: the cache's own folder, or the folder it is
+    /// made in before the first fetch makes it.
+    Held(&'a File),
+    /// A path, or the nearest of its parents that exists, since the cache's
+    /// own folder is made by the first fetch.
+    Named(&'a Path),
+}
+
+/// The volume at `place`; `None` where it cannot be read.
 ///
 /// A debug build reads `MARFA_TEST_FAULT` first: `volume=<size>:<free>` in
 /// bytes stands for the volume, and `volume-unreadable` for a volume that
 /// cannot be read, since no fixture can choose its runner's disk.
-pub(crate) fn read_volume(directory: &Path) -> Option<Volume> {
+pub(crate) fn read_volume(place: Place<'_>) -> Option<Volume> {
     if crate::fault::named("volume-unreadable").is_some() {
         return None;
     }
     if let Some(figures) = crate::fault::named("volume") {
         let (size, free) = figures.split_once(':')?;
-        return Some(Volume {
-            size: size.parse().ok()?,
-            free: free.parse().ok()?,
-        });
+        return volume_from(size.parse().ok()?, free.parse().ok()?, 1);
     }
-    statvfs(directory)
+    statvfs(place)
 }
 
 #[cfg(unix)]
-fn statvfs(directory: &Path) -> Option<Volume> {
-    directory.ancestors().find_map(|ancestor| {
-        let ancestor = if ancestor.as_os_str().is_empty() {
-            Path::new(".")
-        } else {
-            ancestor
-        };
-        let figures = rustix::fs::statvfs(ancestor).ok()?;
-        let unit = figures.f_frsize;
-        Some(Volume {
-            size: figures.f_blocks.saturating_mul(unit),
-            free: figures.f_bavail.saturating_mul(unit),
-        })
-    })
+fn statvfs(place: Place<'_>) -> Option<Volume> {
+    let read = |figures: rustix::fs::StatVfs| {
+        volume_from(figures.f_blocks, figures.f_bavail, figures.f_frsize)
+    };
+    match place {
+        Place::Held(directory) => rustix::fs::fstatvfs(directory).ok().and_then(read),
+        Place::Named(path) => path.ancestors().find_map(|ancestor| {
+            let ancestor = if ancestor.as_os_str().is_empty() {
+                Path::new(".")
+            } else {
+                ancestor
+            };
+            rustix::fs::statvfs(ancestor).ok().map(read)
+        })?,
+    }
 }
 
+/// Windows is neither built nor tested in CI, so it reports a volume that
+/// cannot be read and the default is 2 GiB.
 #[cfg(not(unix))]
-fn statvfs(_directory: &Path) -> Option<Volume> {
+fn statvfs(_place: Place<'_>) -> Option<Volume> {
     None
 }
 
-/// The extended attribute `NSURL`'s `isExcludedFromBackup` writes, which
-/// Time Machine and the device backup read. Its value is not part of the
-/// documented interface, so these are the bytes the Foundation of each
-/// platform wrote for the resource value, read back with `xattr`.
+/// Some FUSE and network mounts answer a size of zero, which says nothing
+/// of the volume, so it counts as one that cannot be read.
+fn volume_from(blocks: u64, available: u64, unit: u64) -> Option<Volume> {
+    let size = blocks.saturating_mul(unit);
+    (size > 0).then(|| Volume {
+        size,
+        free: available.saturating_mul(unit),
+    })
+}
+
+/// Marks the file `file` is open on as excluded from backups, through the
+/// resource value `isExcludedFromBackup` documents
+/// (`kCFURLIsExcludedFromBackupKey`). Does nothing off Apple platforms,
+/// where no backup reads the mark.
+///
+/// A debug build refuses the mark where `MARFA_TEST_FAULT` names
+/// `backup-mark-refused`, since no fixture can make the system refuse it.
 #[cfg(any(target_os = "macos", target_os = "ios"))]
-const EXCLUDE_ATTRIBUTE: &std::ffi::CStr = c"com.apple.metadata:com_apple_backup_excludeItem";
+pub(crate) fn exclude_from_backup(file: &File) -> io::Result<()> {
+    use std::os::unix::ffi::OsStrExt;
+    use std::os::unix::fs::MetadataExt;
 
-#[cfg(target_os = "macos")]
-const EXCLUDE_VALUE: &[u8] = &[
-    0x62, 0x70, 0x6c, 0x69, 0x73, 0x74, 0x30, 0x30, 0x5f, 0x10, 0x11, b'c', b'o', b'm', b'.', b'a',
-    b'p', b'p', b'l', b'e', b'.', b'b', b'a', b'c', b'k', b'u', b'p', b'd', 0x08, 0, 0, 0, 0, 0, 0,
-    1, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x1c,
-];
+    use core_foundation::base::TCFType;
+    use core_foundation::boolean::CFBoolean;
+    use core_foundation::error::CFError;
+    use core_foundation::string::CFString;
+    use core_foundation::url::{
+        CFURL, CFURLSetResourcePropertyForKey, kCFURLIsExcludedFromBackupKey,
+    };
 
-#[cfg(target_os = "ios")]
-const EXCLUDE_VALUE: &[u8] = b"com.apple.MobileBackup";
-
-/// Marks the directory `folder` is open on as excluded from backups, where
-/// it is not marked already. Does nothing off Apple platforms, where no
-/// backup reads the mark.
-#[cfg(any(target_os = "macos", target_os = "ios"))]
-pub(crate) fn exclude_from_backup(folder: &File) -> io::Result<()> {
-    use std::os::fd::AsRawFd;
-    let fd = folder.as_raw_fd();
-    let held = unsafe {
-        libc::fgetxattr(
-            fd,
-            EXCLUDE_ATTRIBUTE.as_ptr(),
-            std::ptr::null_mut(),
-            0,
-            0,
-            0,
+    if crate::fault::named("backup-mark-refused").is_some() {
+        return Err(io::Error::other("the system refused the mark"));
+    }
+    // The resource value is set by URL, and the file is held by descriptor:
+    // the URL is the path the descriptor has now, checked to still name it.
+    let path = rustix::fs::getpath(file)?;
+    let path = Path::new(std::ffi::OsStr::from_bytes(path.to_bytes()));
+    let held = file.metadata()?;
+    let named = std::fs::symlink_metadata(path)?;
+    if (held.dev(), held.ino()) != (named.dev(), named.ino()) {
+        return Err(io::Error::other("the file moved before it could be marked"));
+    }
+    let url = CFURL::from_path(path, false)
+        .ok_or_else(|| io::Error::other("the file's path is not a file URL"))?;
+    // The key is a constant of CoreFoundation, held by it for the process.
+    let key = unsafe { CFString::wrap_under_get_rule(kCFURLIsExcludedFromBackupKey) };
+    let mut error = std::ptr::null_mut();
+    let set = unsafe {
+        CFURLSetResourcePropertyForKey(
+            url.as_concrete_TypeRef(),
+            key.as_concrete_TypeRef(),
+            CFBoolean::true_value().as_CFTypeRef(),
+            &mut error,
         )
     };
-    if held >= 0 {
+    if set != 0 {
         return Ok(());
     }
-    let error = io::Error::last_os_error();
-    if error.raw_os_error() != Some(libc::ENOATTR) {
-        return Err(error);
-    }
-    let set = unsafe {
-        libc::fsetxattr(
-            fd,
-            EXCLUDE_ATTRIBUTE.as_ptr(),
-            EXCLUDE_VALUE.as_ptr().cast(),
-            EXCLUDE_VALUE.len(),
-            0,
-            0,
-        )
-    };
-    if set == 0 {
-        Ok(())
+    let reason = if error.is_null() {
+        "the system gave no reason".to_string()
     } else {
-        Err(io::Error::last_os_error())
-    }
+        // Returned under the create rule, so it is released here.
+        unsafe { CFError::wrap_under_create_rule(error) }
+            .description()
+            .to_string()
+    };
+    Err(io::Error::other(reason))
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "ios")))]
-pub(crate) fn exclude_from_backup(_folder: &File) -> io::Result<()> {
+pub(crate) fn exclude_from_backup(_file: &File) -> io::Result<()> {
     Ok(())
 }
 
@@ -256,14 +297,34 @@ mod tests {
             size: TB,
             free: TB / 20 + 7,
         };
-        assert_eq!(default_budget(volume, 0), 7);
-        assert_eq!(default_budget(volume, 5), 12);
+        assert_eq!(default_budget(volume, DEFAULT_MINIMUM), DEFAULT_MINIMUM + 7);
+        assert_eq!(
+            default_budget(volume, DEFAULT_MINIMUM + 5),
+            DEFAULT_MINIMUM + 12
+        );
     }
 
     #[test]
-    fn the_default_is_never_below_zero() {
+    fn the_default_is_never_below_its_minimum_on_a_volume_with_no_room() {
         let volume = Volume { size: TB, free: 1 };
-        assert_eq!(default_budget(volume, 0), 0);
+        assert_eq!(default_budget(volume, 0), DEFAULT_MINIMUM);
+        let volume = Volume {
+            size: TB,
+            free: TB / 20 + DEFAULT_MINIMUM + 1,
+        };
+        assert_eq!(default_budget(volume, 0), DEFAULT_MINIMUM + 1);
+    }
+
+    #[test]
+    fn a_volume_whose_size_reads_as_zero_cannot_be_read() {
+        assert_eq!(volume_from(0, 0, 4096), None);
+        assert_eq!(
+            volume_from(10, 4, 4096),
+            Some(Volume {
+                size: 40960,
+                free: 16384
+            })
+        );
     }
 
     #[test]
@@ -299,13 +360,33 @@ mod tests {
     #[test]
     fn the_volume_of_a_folder_not_made_yet_is_its_parents() {
         let dir = tempfile::tempdir().unwrap();
-        let volume = read_volume(&dir.path().join("not-yet.blobs")).expect("a volume");
+        let volume =
+            read_volume(Place::Named(&dir.path().join("not-yet.blobs"))).expect("a volume");
         assert!(volume.size > 0 && volume.free <= volume.size);
     }
 
+    /// Whether `tmutil` says Time Machine leaves `path` out.
+    #[cfg(target_os = "macos")]
+    pub(crate) fn excluded(path: &Path) -> bool {
+        let said = std::process::Command::new("tmutil")
+            .arg("isexcluded")
+            .arg(path)
+            .output()
+            .unwrap();
+        let said = String::from_utf8_lossy(&said.stdout).into_owned();
+        assert!(
+            said.contains("[Included]") || said.contains("[Excluded]"),
+            "{said}"
+        );
+        said.contains("[Excluded]")
+    }
+
+    /// Fetched bytes are left out of backups, and the bytes of an upload,
+    /// the only copy until the server has them, never are, nor the folder
+    /// that holds both.
     #[cfg(target_os = "macos")]
     #[test]
-    fn a_folder_is_excluded_from_time_machine_and_again_once_found_unmarked() {
+    fn fetched_bytes_are_kept_out_of_backups_and_upload_bytes_are_not() {
         // The system excludes its own temporary folders, so the witness has to
         // sit under the home folder.
         let home = std::env::var_os("HOME").expect("HOME");
@@ -313,47 +394,49 @@ mod tests {
             .prefix(".marfa-backup-test-")
             .tempdir_in(home)
             .unwrap();
-        let included = area.path().join("included");
-        let folder = area.path().join("excluded");
-        std::fs::create_dir(&included).unwrap();
-        std::fs::create_dir(&folder).unwrap();
-        let excluded = |path: &Path| {
-            let said = std::process::Command::new("tmutil")
-                .arg("isexcluded")
-                .arg(path)
-                .output()
+        let root = area.path().join("anchored");
+        std::fs::create_dir(&root).unwrap();
+        let directory = crate::directory::Directory::open(&root.canonicalize().unwrap()).unwrap();
+        let caches = [
+            crate::blob::Cache::beside(&area.path().join("core.sqlite")),
+            crate::blob::Cache::anchored(&directory, &root.join("core.sqlite"), true).unwrap(),
+        ];
+        for cache in caches {
+            let source = area.path().join("upload.txt");
+            std::fs::write(&source, b"only copy").unwrap();
+            let taken = cache
+                .take_reader(&source, File::open(&source).unwrap())
                 .unwrap();
-            let said = String::from_utf8_lossy(&said.stdout).into_owned();
+            let upload = cache.held(&taken.hash).unwrap().unwrap();
             assert!(
-                said.contains("[Included]") || said.contains("[Excluded]"),
-                "{said}"
+                !excluded(&upload),
+                "the bytes of an upload were left out of backups"
             );
-            said.contains("[Excluded]")
-        };
-        assert!(
-            !excluded(&included),
-            "the witness folder was excluded before anything marked it"
-        );
-        assert!(!excluded(&folder));
-        let open = File::open(&folder).unwrap();
-        exclude_from_backup(&open).unwrap();
-        assert!(
-            excluded(&folder),
-            "tmutil does not see the folder as excluded"
-        );
-        assert!(!excluded(&included));
+            assert!(
+                !excluded(upload.parent().unwrap()),
+                "the folder that holds upload bytes was left out of backups"
+            );
 
-        let status = std::process::Command::new("xattr")
-            .args(["-d", "com.apple.metadata:com_apple_backup_excludeItem"])
-            .arg(&folder)
-            .status()
-            .unwrap();
-        assert!(status.success());
-        assert!(!excluded(&folder));
-        exclude_from_backup(&open).unwrap();
-        assert!(
-            excluded(&folder),
-            "a folder found unmarked was not marked again"
-        );
+            let bytes = b"fetched again whenever";
+            let fetched = cache
+                .keep(&crate::blob::name_of(bytes), &bytes[..])
+                .unwrap();
+            assert_eq!(fetched.unmarked, None);
+            assert!(
+                excluded(&fetched.path),
+                "tmutil does not see fetched bytes as excluded"
+            );
+
+            // Bytes fetched and then queued as an upload are an upload's again.
+            let again = area.path().join("again.txt");
+            std::fs::write(&again, bytes).unwrap();
+            cache
+                .take_reader(&again, File::open(&again).unwrap())
+                .unwrap();
+            assert!(
+                !excluded(&fetched.path),
+                "bytes an upload names stayed out of backups"
+            );
+        }
     }
 }

@@ -334,7 +334,7 @@ impl From<FileBudget> for marfa_core::FileBudget {
 }
 
 /// The cache of fetched files as the state report gives it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Record)]
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct FileCache {
     /// What was chosen.
     pub setting: FileBudget,
@@ -342,8 +342,11 @@ pub struct FileCache {
     pub budget: Option<u64>,
     /// The bytes of the files kept now.
     pub held: u64,
-    /// The default budget is its floor because the disk could not be read.
+    /// The default budget is 2 GiB because the disk could not be read.
     pub volume_unreadable: bool,
+    /// Why the files fetched last could not be kept out of backups; none
+    /// once a fetched file is marked.
+    pub backup_mark_failure: Option<String>,
 }
 
 impl From<marfa_core::FileCache> for FileCache {
@@ -353,6 +356,7 @@ impl From<marfa_core::FileCache> for FileCache {
             budget: cache.budget,
             held: cache.held,
             volume_unreadable: cache.volume_unreadable,
+            backup_mark_failure: cache.backup_mark_failure,
         }
     }
 }
@@ -2338,7 +2342,9 @@ impl Core {
 
     /// Where a blob's bytes are held, fetching them first where this store
     /// does not hold them yet. Refused `BytesAbsent` where they can be
-    /// neither read nor fetched.
+    /// neither read nor fetched. No trim in this process takes the bytes
+    /// before the path is answered; after that a trim may, so open the path
+    /// at once.
     pub fn blob(&self, hash: String) -> Result<String, MarfaError> {
         Ok(self.inner.blob(&hash)?.to_string_lossy().into_owned())
     }
@@ -2349,10 +2355,10 @@ impl Core {
         Ok(self.inner.file_cache()?.into())
     }
 
-    /// Chooses the cache's budget and trims to it at once. Refused to a
-    /// reading handle.
-    pub fn set_file_budget(&self, budget: FileBudget) -> Result<FileCache, MarfaError> {
-        Ok(self.inner.set_file_budget(budget.into())?.into())
+    /// Chooses the cache's budget, trims to it at once and answers the bytes
+    /// the trim took. Refused to a reading handle.
+    pub fn set_file_budget(&self, budget: FileBudget) -> Result<u64, MarfaError> {
+        Ok(self.inner.set_file_budget(budget.into())?)
     }
 
     /// Trims the cache to its budget now and answers the bytes it took.

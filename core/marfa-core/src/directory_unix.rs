@@ -232,6 +232,27 @@ impl Directory {
             .metadata()
     }
 
+    /// The kind, length and modification time of the entry at `relative`,
+    /// read without opening it or following a link.
+    pub(crate) fn entry_stat(
+        &self,
+        relative: &Path,
+    ) -> io::Result<(fs::FileType, u64, std::time::SystemTime)> {
+        let (parent, name) = self.parent(relative, false)?;
+        let stat = fs::statat(parent.file(), &name, AtFlags::SYMLINK_NOFOLLOW)?;
+        let modified = u64::try_from(stat.st_mtime)
+            .ok()
+            .zip(u32::try_from(stat.st_mtime_nsec).ok())
+            .map_or(std::time::UNIX_EPOCH, |(seconds, nanos)| {
+                std::time::UNIX_EPOCH + std::time::Duration::new(seconds, nanos)
+            });
+        Ok((
+            fs::FileType::from_raw_mode(stat.st_mode),
+            u64::try_from(stat.st_size).unwrap_or(0),
+            modified,
+        ))
+    }
+
     pub(crate) fn entry_kind(&self, relative: &Path) -> io::Result<fs::FileType> {
         let (parent, name) = self.parent(relative, false)?;
         let stat = fs::statat(parent.file(), &name, AtFlags::SYMLINK_NOFOLLOW)?;

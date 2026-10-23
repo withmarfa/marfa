@@ -293,10 +293,12 @@ pub enum BlobsCommand {
     Budget {
         /// A byte count, `keep-all` to keep every file fetched, or `default`
         /// for the larger of 2 GiB and a tenth of the volume, held to what
-        /// leaves a twentieth of the volume free. Omit it to show the budget
-        /// in force.
+        /// leaves a twentieth of the volume free and never below 256 MiB.
+        /// Omit it to show the budget in force. Setting one also removes
+        /// files to fit it, and reports the bytes removed.
         value: Option<String>,
-        /// Also remove the files read longest ago until the budget holds.
+        /// Remove the files read longest ago until the budget holds, and
+        /// report the bytes removed.
         #[arg(long)]
         trim: bool,
     },
@@ -1146,10 +1148,13 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
             }
             BlobsCommand::Budget { value, trim } => {
                 let core = store.open(None)?;
-                if let Some(value) = value {
-                    core.set_file_budget(parse_file_budget(&value)?)?;
+                let mut taken = match value {
+                    Some(value) => Some(core.set_file_budget(parse_file_budget(&value)?)?),
+                    None => None,
+                };
+                if trim {
+                    taken = Some(taken.unwrap_or(0) + core.trim_files()?);
                 }
-                let taken = if trim { Some(core.trim_files()?) } else { None };
                 let cache = core.file_cache()?;
                 output::report(
                     &serde_json::json!({ "file_cache": cache, "trimmed_bytes": taken }),
@@ -1555,14 +1560,20 @@ fn file_cache_text(cache: &marfa_core::FileCache) -> String {
         .budget
         .map_or_else(|| "none".to_string(), |bytes| format!("{bytes} byte(s)"));
     let unreadable = if cache.volume_unreadable {
-        " (the disk could not be read, so the default is its floor)"
+        " (the disk could not be read, so the default is 2 GiB)"
     } else {
         ""
     };
-    format!(
+    let mut text = format!(
         "file budget {setting}, in force {budget}{unreadable}\nfiles held {} byte(s)",
         cache.held
-    )
+    );
+    if let Some(failure) = &cache.backup_mark_failure {
+        text.push_str(&format!(
+            "\nfetched files could not be kept out of backups: {failure}"
+        ));
+    }
+    text
 }
 
 fn type_line(held: &marfa_core::ItemType) -> String {

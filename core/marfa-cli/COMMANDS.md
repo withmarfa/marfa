@@ -3336,11 +3336,11 @@ marfa device blobs budget [OPTIONS] [VALUE]
 
 | Argument | Description |
 | --- | --- |
-| `[VALUE]` | A byte count, `keep-all` to keep every file fetched, or `default` for the larger of 2 GiB and a tenth of the volume, held to what leaves a twentieth of the volume free. Omit it to show the budget in force. |
+| `[VALUE]` | A byte count, `keep-all` to keep every file fetched, or `default` for the larger of 2 GiB and a tenth of the volume, held to what leaves a twentieth of the volume free and never below 256 MiB. Omit it to show the budget in force. Setting one also removes files to fit it, and reports the bytes removed. |
 
 | Option | Description |
 | --- | --- |
-| `--trim` | Also remove the files read longest ago until the budget holds. |
+| `--trim` | Remove the files read longest ago until the budget holds, and report the bytes removed. |
 
 Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 
