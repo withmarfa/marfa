@@ -22,6 +22,9 @@ pub struct Request {
     pub credential: bool,
     pub stream: bool,
     pub mints: bool,
+    /// Whether the request can change data, which every method but `GET`
+    /// can unless it is marked `reading`.
+    pub writes: bool,
 }
 
 impl Request {
@@ -35,6 +38,7 @@ impl Request {
             credential: true,
             stream: false,
             mints: false,
+            writes: method != Method::Get,
         }
     }
 
@@ -112,6 +116,13 @@ impl Request {
 
     pub fn public(mut self) -> Request {
         self.credential = false;
+        self
+    }
+
+    /// A `POST` that changes no data: a question asked in its body, or a step
+    /// of signing in.
+    pub fn reading(mut self) -> Request {
+        self.writes = false;
         self
     }
 

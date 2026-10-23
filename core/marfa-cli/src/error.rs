@@ -60,14 +60,22 @@ pub enum CliError {
         .0.display()
     )]
     NoStoreAt(std::path::PathBuf),
-    #[error("no server named: pass --url or set MARFA_API_URL")]
+    #[error("no server named: pass --url or --profile, or set MARFA_API_URL or MARFA_PROFILE")]
     NoServerNamed,
     #[error(
         "a key from --key or MARFA_API_KEY needs its server named: pass --url or set MARFA_API_URL"
     )]
     NoServerForKey,
-    #[error("no credential for {origin}: {}", crate::credentials::advice())]
-    NoCredential { origin: String },
+    #[error("no credential for {origin}: {}", crate::credentials::advice_for(profile.as_deref()))]
+    NoCredential {
+        origin: String,
+        /// The profile that named the server, whose own advice differs.
+        profile: Option<String>,
+    },
+    /// A profile's key command gave no key. The message names the profile and
+    /// the program, and never what the program printed on stdout.
+    #[error("{0}")]
+    KeyCommand(String),
     #[error("the keychain cannot be used: {0}")]
     NoKeychain(String),
     #[error("signed out of {origin}: run `marfa login`")]
@@ -256,7 +264,9 @@ impl Exit {
             Exit::Refused => {
                 "the server refused the request (a wrong or spent setup code included), the CLI refused it before sending, the answer came from another contract, a docs page does not exist, or the archive of an export or a restore lacks blobs it names; a retry does not change it"
             }
-            Exit::Usage => "the command line was wrong, or named no store or server",
+            Exit::Usage => {
+                "the command line or the profile file was wrong, or named no store or server"
+            }
             Exit::Environment => {
                 "the environment failed (unreachable, timed out, a 5xx, a 429, an answer naming no contract, full local storage, a docs site that cannot be read); try again"
             }
@@ -264,7 +274,7 @@ impl Exit {
                 "the working copy or the queue refused under the device rules, or the keychain cannot be used (locked, missing, unreadable, or none on this system)"
             }
             Exit::Credential => {
-                "there is no credential, the credential was refused, or the sign-in ended; run `marfa login` to start one"
+                "there is no credential, a profile's key command gave none, the credential was refused, or the sign-in ended; run `marfa login` to start one"
             }
             Exit::Interrupted => {
                 "you ended a long-lived command (`folders watch`, `events`, `device changes`) with Ctrl-C, or ended one that was still stopping with a second Ctrl-C"
@@ -304,6 +314,7 @@ own_codes! {
     CliError::NoStoreNamed | CliError::NoStoreAt(_) => "no_store",
     CliError::NoServerNamed | CliError::NoServerForKey => "no_server",
     CliError::NoCredential { .. } => "no_credential",
+    CliError::KeyCommand(_) => "key_command",
     CliError::NoKeychain(_) => "no_keychain",
     CliError::SignedOut { .. } => "signed_out",
     CliError::CredentialEnded => "unauthorized",
@@ -424,6 +435,7 @@ impl CliError {
             | CliError::NoServerNamed
             | CliError::NoServerForKey => Exit::Usage,
             CliError::NoCredential { .. }
+            | CliError::KeyCommand(_)
             | CliError::SignedOut { .. }
             | CliError::CredentialEnded => Exit::Credential,
             CliError::NoKeychain(_)
@@ -603,7 +615,7 @@ pub const CATCH_UP_FAILED: &str = "When `marfa device catch-up` fails, the refus
 
 /// The refusal `--json` prints, said after the drain and the catch-up: what
 /// it is, its shape, and the words before the codes its `error.code` can be.
-pub const JSON_REFUSAL: &str = "With --json a refusal is one JSON object on stderr:";
+pub const JSON_REFUSAL: &str = "With --json a refusal is the last line of stderr, one JSON object, after any plain lines such as a warning or the write line:";
 pub const JSON_REFUSAL_SHAPE: &str = r#"{"error":{"code":...,"message":...,"server":{"status":...,"code":...,"details":...}|null,"retry_after_seconds":...},"exit":N}"#;
 pub const JSON_REFUSAL_CODES: &str = "where error.code is one of:";
 
@@ -796,6 +808,7 @@ mod tests {
             "watch",
             "no_store",
             "no_credential",
+            "key_command",
             "docs_page_not_found",
             "docs_section_not_found",
             "docs_unreachable",
@@ -836,7 +849,9 @@ mod tests {
             CliError::NoServerForKey,
             CliError::NoCredential {
                 origin: String::new(),
+                profile: None,
             },
+            CliError::KeyCommand(String::new()),
             CliError::NoKeychain(String::new()),
             CliError::SignedOut {
                 origin: String::new(),
@@ -991,7 +1006,8 @@ mod tests {
         assert_eq!(CliError::NoServerForKey.exit(), Exit::Usage);
         assert_eq!(
             CliError::NoCredential {
-                origin: String::new()
+                origin: String::new(),
+                profile: None,
             }
             .exit(),
             Exit::Credential

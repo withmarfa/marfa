@@ -517,12 +517,13 @@ describe("folder syncing from login", () => {
     });
   });
 
-  it("refuses --url and --key, and writes nothing", () => {
+  it("refuses --url, --key and --profile, and writes nothing", () => {
     const root = standIn("flags");
     const registry = registryOf(root);
     for (const flags of [
       ["--url", "http://127.0.0.1:9"],
       ["--key", "device-fixture-key"],
+      ["--profile", "demo"],
     ]) {
       const ran = spawnSync(
         requireBinary(),
@@ -542,7 +543,7 @@ describe("folder syncing from login", () => {
     }
     expect(existsSync(agentFile(root))).toBe(false);
     expect(managerState(root).calls).toEqual([]);
-    // The witness: the same command with neither flag writes the agent.
+    // The witness: the same command with none of the flags writes the agent.
     expect(autostart(root, "on", { registry }).status).toBe(0);
     expect(existsSync(agentFile(root))).toBe(true);
   });

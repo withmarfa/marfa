@@ -24,8 +24,8 @@ pub struct LoginArgs {
     #[arg(long)]
     pub no_browser: bool,
     /// Print the token set instead of keeping it in the keychain, which this
-    /// leaves unread and unchanged. The server must come from --url or
-    /// MARFA_API_URL.
+    /// leaves unread and unchanged. The server must come from --url,
+    /// MARFA_API_URL or a profile.
     #[arg(long)]
     pub print_token: bool,
     /// The client id an earlier sign-in registered, where no keychain
@@ -287,6 +287,7 @@ mod tests {
         let named = Named {
             url: Some(door.url.clone()),
             key: None,
+            profile: None,
         };
         let given = LoginArgs {
             client_id: None,
@@ -360,6 +361,7 @@ mod tests {
         let named = Named {
             url: Some(door.url.clone()),
             key: None,
+            profile: None,
         };
         run(args(true), &named, &Printer { json: true }).unwrap();
         let sent = door.received();
@@ -396,6 +398,7 @@ mod tests {
         let named = Named {
             url: Some(door.url.clone()),
             key: None,
+            profile: None,
         };
         let outcome = run(args(true), &named, &Printer { json: true });
         assert!(
@@ -423,6 +426,7 @@ mod tests {
         let named = Named {
             url: Some(door.url.clone()),
             key: None,
+            profile: None,
         };
         let outcome = run(args(false), &named, &Printer { json: true });
         assert!(
@@ -464,6 +468,7 @@ mod tests {
         let named = Named {
             url: Some(door.url.clone()),
             key: None,
+            profile: None,
         };
         let given = LoginArgs {
             client_id: None,
@@ -494,6 +499,7 @@ mod tests {
         let named = Named {
             url: Some(door.url.clone()),
             key: None,
+            profile: None,
         };
         let given = LoginArgs {
             client_id: None,
@@ -515,6 +521,7 @@ mod tests {
         let named = Named {
             url: Some(door.url.clone()),
             key: None,
+            profile: None,
         };
         let outcome = run(args(false), &named, &Printer { json: true });
         assert!(

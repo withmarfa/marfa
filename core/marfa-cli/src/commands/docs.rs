@@ -591,9 +591,9 @@ fn describe_topics(topics: &Topics) -> String {
 }
 
 pub fn run(args: DocsArgs, named: &Named, out: &Printer) -> Result<(), CliError> {
-    if named.url.is_some() || named.key.is_some() {
+    if named.on_command_line() {
         return Err(CliError::Usage(format!(
-            "docs reads the docs site and takes neither --url nor --key; {SITE_VARIABLE} names another site"
+            "docs reads the docs site and takes none of --url, --key and --profile; {SITE_VARIABLE} names another site"
         )));
     }
     let site = Site::from_environment()?;

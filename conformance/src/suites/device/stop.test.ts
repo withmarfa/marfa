@@ -18,6 +18,7 @@ import {
   typeCatalog,
   wireItem,
 } from "../../device/marfa-answers.js";
+import { refusalLine } from "../../device/cli-adapter.js";
 import type { Answer, Responder } from "../../device/scripted-server.js";
 import type { ScriptedServer } from "../../device/scripted-server.js";
 
@@ -394,7 +395,9 @@ describe("stopping a drain", () => {
         "the stopped drain waited on the write in flight",
       ).toBeLessThan(3_000);
       expect(draining.exitCode(), draining.stderr).toBe(UNFINISHED);
-      expect(JSON.parse(draining.stderr).error.code).toBe("canceled");
+      expect(JSON.parse(refusalLine(draining.stderr)).error.code).toBe(
+        "canceled",
+      );
     } finally {
       await draining.stop();
     }
@@ -482,7 +485,9 @@ describe("stopping a drain", () => {
         "the stopped drain waited on the tag write in flight",
       ).toBeLessThan(3_000);
       expect(draining.exitCode(), draining.stderr).toBe(UNFINISHED);
-      expect(JSON.parse(draining.stderr).error.code).toBe("canceled");
+      expect(JSON.parse(refusalLine(draining.stderr)).error.code).toBe(
+        "canceled",
+      );
     } finally {
       await draining.stop();
     }

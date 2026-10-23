@@ -30,7 +30,7 @@ import {
   ScriptedServer,
   type Answer,
 } from "../../device/scripted-server.js";
-import type { HeldCommand } from "../../device/cli-adapter.js";
+import { refusalLine, type HeldCommand } from "../../device/cli-adapter.js";
 import { keychainEnv } from "../../utils/keychain.js";
 import {
   KEY,
@@ -148,7 +148,7 @@ function refusal(stderr: string): {
   };
   exit: number;
 } {
-  return JSON.parse(stderr) as {
+  return JSON.parse(refusalLine(stderr)) as {
     error: {
       code: string;
       message: string;
@@ -2281,11 +2281,12 @@ describe("every command holds the server to the contract", () => {
     expect(sent(server)).toEqual(["GET /r0.md", "GET /r1.md", "GET /r2.md"]);
   });
 
-  it("refuses --url and --key on docs with usage, sending nothing", async () => {
+  it("refuses --url, --key and --profile on docs with usage, sending nothing", async () => {
     server = await ScriptedServer.start();
     for (const flags of [
       ["--url", server.url],
       ["--key", KEY],
+      ["--profile", "demo"],
     ]) {
       for (const command of [["topics"], ["search", "files"], ["files"]]) {
         const outcome = await marfa(
@@ -3428,7 +3429,7 @@ describe("the contract the working copy was built for", () => {
     const drained = await device.drain();
     expect(drained.ok).toBe(false);
     if (drained.ok) return;
-    const written = JSON.parse(drained.refusal.raw) as {
+    const written = JSON.parse(refusalLine(drained.refusal.raw)) as {
       error: { code: string; message: string };
     };
     expect(written.error.code).toBe("contract_mismatch");

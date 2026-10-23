@@ -17,6 +17,7 @@ use crate::credentials::{self, Kept};
 use crate::error::CliError;
 #[cfg(test)]
 use crate::error::Exit;
+use crate::profiles::{Chosen, ChosenBy, Profile};
 use request::{Body, Request};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -24,6 +25,9 @@ pub enum CredentialSource {
     Flag,
     Environment,
     Keychain,
+    /// A profile's key command, which runs the first time a request sends
+    /// the key.
+    KeyCommand,
 }
 
 impl CredentialSource {
@@ -32,6 +36,7 @@ impl CredentialSource {
             CredentialSource::Flag => "--key",
             CredentialSource::Environment => "MARFA_API_KEY",
             CredentialSource::Keychain => "keychain",
+            CredentialSource::KeyCommand => "key_command",
         }
     }
 }
@@ -43,6 +48,11 @@ pub struct Remote {
     credential: Option<CredentialSource>,
     held: Arc<Held>,
     local: bool,
+    /// The profile that named this server, if one did.
+    profile: Option<Arc<Profile>>,
+    /// The transport that carries a key command's key, made when a request
+    /// first sends it.
+    keyed: Mutex<Option<Http>>,
 }
 
 /// How long a command waits for a server to answer, and to send an answer
@@ -96,13 +106,45 @@ fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
         .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
-#[derive(Debug, Default, Clone)]
+/// Where a command's server and key come from. `profile` is set only where
+/// neither `--url` nor `--key` is, and then the other two are not read.
+#[derive(Default, Clone)]
 pub struct Named {
     pub url: Option<String>,
     pub key: Option<String>,
+    pub profile: Option<Chosen>,
+}
+
+impl std::fmt::Debug for Named {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("Named")
+            .field("url", &self.url)
+            .field("key", &self.key.as_ref().map(|_| ".."))
+            .field("profile", &self.profile)
+            .finish()
+    }
 }
 
 impl Named {
+    /// Whether `--url`, `--key` or `--profile` is on the command line, for a
+    /// command that takes none of them. `MARFA_PROFILE` is not: such a
+    /// command does not read it.
+    pub fn on_command_line(&self) -> bool {
+        self.url.is_some()
+            || self.key.is_some()
+            || self
+                .profile
+                .as_ref()
+                .is_some_and(|chosen| chosen.by == ChosenBy::Flag)
+    }
+
+    /// The chosen profile, read from its file, for a command that refuses one
+    /// whose key comes from a key command.
+    pub fn chosen_profile(&self) -> Result<Option<Arc<Profile>>, CliError> {
+        self.profile.as_ref().map(Chosen::profile).transpose()
+    }
+
     /// The session for this command's own server and key, or for the key
     /// file a watch was started with, read now.
     pub fn session(&self) -> Result<Session, CliError> {
@@ -116,6 +158,7 @@ impl Named {
         Named {
             url: Some(held.url),
             key: Some(held.key),
+            profile: None,
         }
     }
 
@@ -123,9 +166,7 @@ impl Named {
         // Opening a working copy is offline. Its transport verifies a new
         // origin before the first call, including a refused token's renewal.
         let remote = Remote::resolve_with_renewal(self, false)?;
-        let key = remote.bearer().ok_or_else(|| CliError::NoCredential {
-            origin: remote.origin().to_string(),
-        })?;
+        let key = remote.key_now()?.ok_or_else(|| remote.no_credential())?;
         Ok(Session {
             server: Server {
                 url: remote.url().to_string(),
@@ -160,6 +201,7 @@ impl Named {
         let kept =
             auth::resolve_credential(origin, false)?.ok_or_else(|| CliError::NoCredential {
                 origin: origin.to_string(),
+                profile: None,
             })?;
         let bearer = kept.bearer().to_string();
         let remote = Remote::keeping(
@@ -298,6 +340,9 @@ impl Remote {
     }
 
     fn resolve_with_renewal(named: &Named, renew_stale: bool) -> Result<Remote, CliError> {
+        if let Some(chosen) = &named.profile {
+            return Self::for_profile(chosen.profile()?, renew_stale);
+        }
         let url = Self::url_for_call(named)?;
         let origin = marfa_core::http::origin_of(&url)?;
         let mut kept = None;
@@ -317,6 +362,31 @@ impl Remote {
             },
         };
         Remote::keeping(&url, origin, credential, key, kept)
+    }
+
+    /// A profile's server, with the credential the keychain keeps for it or
+    /// its key command, and never a key from anywhere else.
+    fn for_profile(profile: Arc<Profile>, renew_stale: bool) -> Result<Remote, CliError> {
+        let (url, origin) = (profile.url.as_str(), profile.origin.clone());
+        let mut remote = if profile.has_key_command() {
+            Remote::keeping(url, origin, Some(CredentialSource::KeyCommand), None, None)?
+        } else {
+            match auth::resolve_credential(&origin, renew_stale)? {
+                Some(found) => {
+                    let bearer = found.bearer().to_string();
+                    Remote::keeping(
+                        url,
+                        origin,
+                        Some(CredentialSource::Keychain),
+                        Some(bearer),
+                        Some(found),
+                    )?
+                }
+                None => Remote::keeping(url, origin, None, None, None)?,
+            }
+        };
+        remote.profile = Some(profile);
+        Ok(remote)
     }
 
     fn keeping(
@@ -342,6 +412,8 @@ impl Remote {
             credential,
             held: Held::of(bearer, kept),
             local: false,
+            profile: None,
+            keyed: Mutex::new(None),
         };
         if let Some(renew) = renewal(&remote) {
             remote.http.renew_with(renew);
@@ -357,6 +429,8 @@ impl Remote {
             credential: None,
             held: Held::of(None, None),
             local: true,
+            profile: None,
+            keyed: Mutex::new(None),
         })
     }
 
@@ -364,9 +438,10 @@ impl Remote {
         self.local
     }
 
-    /// For a command that sends no key: `--url`, then `MARFA_API_URL`, then
-    /// the server a kept credential made current. A keychain that is off has
-    /// none to find, so the command is told to name a server.
+    /// For a command that sends no key: a profile's server, or else `--url`,
+    /// then `MARFA_API_URL`, then the server a kept credential made current. A
+    /// keychain that is off has none to find, so the command is told to name a
+    /// server.
     pub fn url_named(named: &Named) -> Result<String, CliError> {
         Self::url_named_with(named, non_empty(std::env::var("MARFA_API_URL").ok()), false)
     }
@@ -387,6 +462,9 @@ impl Remote {
         environment_url: Option<String>,
         environment_key: bool,
     ) -> Result<String, CliError> {
+        if let Some(chosen) = &named.profile {
+            return Ok(chosen.profile()?.url.clone());
+        }
         if let Some(url) = named.url.clone().or(environment_url) {
             return Ok(url);
         }
@@ -409,6 +487,51 @@ impl Remote {
 
     pub fn kept(&self) -> Option<Kept> {
         self.held.kept()
+    }
+
+    /// The key a request would send, running a profile's key command if no
+    /// request has yet.
+    pub fn key_now(&self) -> Result<Option<String>, CliError> {
+        self.transport(true)?;
+        Ok(self.bearer())
+    }
+
+    /// The profile that named this server, if one did.
+    pub fn profile(&self) -> Option<&Profile> {
+        self.profile.as_deref()
+    }
+
+    fn no_credential(&self) -> CliError {
+        CliError::NoCredential {
+            origin: self.origin.clone(),
+            profile: self.profile.as_ref().map(|profile| profile.name.clone()),
+        }
+    }
+
+    /// The transport a request goes out on. A key command's key is fetched
+    /// the first time a request sends a key, and only then, so a command that
+    /// sends none never runs it.
+    fn transport(&self, credential: bool) -> Result<Http, CliError> {
+        let Some(profile) = self
+            .profile
+            .as_ref()
+            .filter(|profile| credential && !self.local && profile.has_key_command())
+        else {
+            return Ok(self.http.clone());
+        };
+        let mut keyed = lock(&self.keyed);
+        if let Some(http) = keyed.as_ref() {
+            return Ok(http.clone());
+        }
+        let Some(key) = profile.key_from_command() else {
+            return Ok(self.http.clone());
+        };
+        let key = key?;
+        cleartext::guard(&self.url);
+        let http = Http::with_timeouts(&self.url, key.expose(), ANSWER_BUDGET, ANSWER_BUDGET)?;
+        *lock(&self.held.bearer) = Some(key.expose().to_string());
+        *keyed = Some(http.clone());
+        Ok(http)
     }
 
     #[cfg(test)]
@@ -444,6 +567,8 @@ impl Remote {
             credential: None,
             held: Held::of(bearer.map(str::to_string), None),
             local: false,
+            profile: None,
+            keyed: Mutex::new(None),
         }
     }
 
@@ -505,10 +630,13 @@ impl Remote {
     }
 
     fn send_once(&self, request: &Request, held: bool) -> Result<Reply, CliError> {
-        if request.credential && !self.local && self.bearer().is_none() {
-            return Err(CliError::NoCredential {
-                origin: self.origin.clone(),
-            });
+        let sends_key = request.credential && !self.local;
+        let http = self.transport(sends_key)?;
+        if sends_key && self.bearer().is_none() {
+            return Err(self.no_credential());
+        }
+        if request.writes {
+            crate::writing::announce(&self.origin);
         }
         let segments: Vec<&str> = request.segments.iter().map(String::as_str).collect();
         let params: Vec<(&str, &str)> = request
@@ -548,8 +676,7 @@ impl Remote {
                 CallBody::Text(&form_text)
             }
         };
-        let reply = self
-            .http
+        let reply = http
             .fetch(
                 Call {
                     method: request.method,
@@ -1048,6 +1175,109 @@ mod tests {
         assert_eq!(cleartext::guarded(), Vec::<String>::new());
         Remote::keyed(&door.url, "marfa_k1_x").unwrap();
         assert_eq!(cleartext::guarded(), vec![door.url.clone()]);
+    }
+
+    fn with_key_command(door: &Door, script: &str) -> Remote {
+        let profile =
+            crate::profiles::for_test("example", &door.url, Some(&["sh", "-c", script][..]));
+        let mut remote = Remote::keeping(
+            &door.url,
+            profile.origin.clone(),
+            Some(CredentialSource::KeyCommand),
+            None,
+            None,
+        )
+        .unwrap();
+        remote.profile = Some(profile);
+        remote
+    }
+
+    #[test]
+    fn a_key_command_runs_once_and_only_when_a_request_sends_the_key() {
+        let folder = std::env::temp_dir().join(format!(
+            "marfa-remote-key-command-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(&folder).unwrap();
+        let count = folder.join("count");
+        let _ = std::fs::remove_file(&count);
+        let door = Door::open(vec![
+            Answer::json("200 OK", r#"{"name":"marfa"}"#),
+            Answer::json("200 OK", r#"{"data":[]}"#),
+            Answer::json("200 OK", r#"{"data":[]}"#),
+        ]);
+        let remote = with_key_command(
+            &door,
+            &format!(
+                "echo x >> '{}'; printf marfa_k1_from_command",
+                count.display()
+            ),
+        );
+        assert_eq!(remote.credential(), Some(CredentialSource::KeyCommand));
+        remote.json(&Request::get(&[]).public()).unwrap();
+        assert!(
+            !count.exists(),
+            "a request that sends no key ran the key command"
+        );
+        remote.json(&Request::get(&["items"])).unwrap();
+        remote.json(&Request::get(&["items"])).unwrap();
+        assert_eq!(std::fs::read_to_string(&count).unwrap(), "x\n");
+        let received = door.received();
+        assert_eq!(received[0].header("authorization"), None);
+        for sent in &received[1..] {
+            assert_eq!(
+                sent.header("authorization"),
+                Some("Bearer marfa_k1_from_command")
+            );
+        }
+        std::fs::remove_dir_all(folder).unwrap();
+    }
+
+    #[test]
+    fn a_failing_key_command_sends_nothing_and_names_the_profile() {
+        let door = Door::open(vec![]);
+        let remote = with_key_command(&door, "printf marfa_k1_not_a_key; exit 1");
+        match remote.json(&Request::get(&["items"])) {
+            Err(CliError::KeyCommand(message)) => {
+                assert!(message.contains("profile example (sh)"), "{message}");
+                assert!(!message.contains("marfa_k1_not_a_key"), "{message}");
+            }
+            other => panic!("{other:?}"),
+        }
+        assert!(door.received().is_empty());
+    }
+
+    #[test]
+    fn only_a_request_that_can_change_data_is_announced_with_a_key_or_without() {
+        let door = Door::open(vec![
+            Answer::json("200 OK", r#"{"data":[]}"#),
+            Answer::json("200 OK", r#"{"data":[]}"#),
+            Answer::json("200 OK", r#"{"access_token":"t"}"#),
+            Answer::json("201 Created", r#"{"name":"marfa"}"#),
+            Answer::json("201 Created", r#"{"id":"i"}"#),
+        ]);
+        let remote = remote_at(&door, Some("marfa_k1_x"));
+        remote.json(&Request::get(&["items"])).unwrap();
+        remote
+            .json(&Request::post(&["items", "lookup"]).reading())
+            .unwrap();
+        remote
+            .json(&Request::post(&["auth", "token"]).public().reading())
+            .unwrap();
+        assert_eq!(crate::writing::announced(), Vec::<String>::new());
+        remote
+            .json(&Request::post(&["owner", "setup"]).public())
+            .unwrap();
+        assert_eq!(
+            crate::writing::announced(),
+            vec![remote.origin().to_string()]
+        );
+        remote.json(&Request::post(&["items"])).unwrap();
+        assert_eq!(
+            crate::writing::announced(),
+            vec![remote.origin().to_string(); 2]
+        );
     }
 
     #[test]
@@ -1809,6 +2039,7 @@ mod tests {
         let named = |url: Option<&str>, key: Option<&str>| Named {
             url: url.map(str::to_string),
             key: key.map(str::to_string),
+            profile: None,
         };
         let from = |named: &Named, environment: Option<&str>, key: bool| {
             Remote::url_named_with(named, environment.map(str::to_string), key)
@@ -1879,6 +2110,7 @@ mod tests {
         let named = |key: Option<&str>| Named {
             url: None,
             key: key.map(str::to_string),
+            profile: None,
         };
 
         // The witnesses: with no key in hand, the same calls find the kept

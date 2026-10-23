@@ -68,7 +68,7 @@ pub struct Discovery {
     pub scopes_supported: Vec<String>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Clone, Deserialize)]
 pub struct DeviceCode {
     pub device_code: String,
     pub user_code: String,
@@ -83,12 +83,34 @@ fn default_interval() -> u64 {
     5
 }
 
-#[derive(Debug, Clone, Deserialize)]
+impl std::fmt::Debug for DeviceCode {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("DeviceCode")
+            .field("user_code", &self.user_code)
+            .field("verification_uri", &self.verification_uri)
+            .field("expires_in", &self.expires_in)
+            .field("interval", &self.interval)
+            .finish_non_exhaustive()
+    }
+}
+
+#[derive(Clone, Deserialize)]
 pub struct TokenSet {
     pub access_token: String,
     pub refresh_token: Option<String>,
     pub expires_in: Option<u64>,
     pub scope: Option<String>,
+}
+
+impl std::fmt::Debug for TokenSet {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("TokenSet")
+            .field("expires_in", &self.expires_in)
+            .field("scope", &self.scope)
+            .finish_non_exhaustive()
+    }
 }
 
 pub fn now_seconds() -> u64 {
@@ -210,14 +232,19 @@ pub fn register(discovery: &Discovery, name: Option<&str>) -> Result<String, Cli
         None => client_name(machine_name().as_deref()),
     };
     let door = Remote::public_at(&discovery.registration_endpoint)?;
-    let answer = door.json(&Request::post(&[]).public().json(serde_json::json!({
-        "client_name": name,
-        "software_id": SOFTWARE_ID,
-        "application_type": "native",
-        "grant_types": [DEVICE_CODE_GRANT, "refresh_token"],
-        "response_types": [],
-        "token_endpoint_auth_method": "none",
-    })))?;
+    let answer = door.json(
+        &Request::post(&[])
+            .public()
+            .reading()
+            .json(serde_json::json!({
+                "client_name": name,
+                "software_id": SOFTWARE_ID,
+                "application_type": "native",
+                "grant_types": [DEVICE_CODE_GRANT, "refresh_token"],
+                "response_types": [],
+                "token_endpoint_auth_method": "none",
+            })),
+    )?;
     answer
         .get("client_id")
         .and_then(Value::as_str)
@@ -234,6 +261,7 @@ pub fn device_code(
     let answer = door.json(
         &Request::post(&[])
             .public()
+            .reading()
             .form(&[("client_id", client_id), ("scope", scope)]),
     )?;
     serde_json::from_value(answer).map_err(|error| {
@@ -270,7 +298,7 @@ fn is_blip(error: &CliError) -> bool {
 pub fn poll(discovery: &Discovery, client_id: &str, device_code: &str) -> Result<Poll, CliError> {
     cleartext::guard(&discovery.token_endpoint);
     let door = Remote::public_at(&discovery.token_endpoint)?;
-    let answer = door.json(&Request::post(&[]).public().form(&[
+    let answer = door.json(&Request::post(&[]).public().reading().form(&[
         ("grant_type", DEVICE_CODE_GRANT),
         ("device_code", device_code),
         ("client_id", client_id),
@@ -431,7 +459,7 @@ fn refresh_locked(origin: &str, refused: Option<&str>) -> Result<Kept, CliError>
     Remote::public_at(origin)?.hold_root()?;
     cleartext::guard(&token_endpoint);
     let door = Remote::public_at(&token_endpoint)?;
-    let answer = door.json(&Request::post(&[]).public().form(&[
+    let answer = door.json(&Request::post(&[]).public().reading().form(&[
         ("grant_type", "refresh_token"),
         ("refresh_token", &refresh_token),
         ("client_id", &client_id),
@@ -638,7 +666,7 @@ pub fn revoke(kept: &Kept) -> Result<bool, CliError> {
             Some(refresh_token) => (refresh_token.as_str(), "refresh_token"),
             None => (access_token.as_str(), "access_token"),
         };
-        door.json(&Request::post(&[]).public().form(&[
+        door.json(&Request::post(&[]).public().reading().form(&[
             ("token", token),
             ("token_type_hint", hint),
             ("client_id", client_id),
@@ -1179,6 +1207,107 @@ mod tests {
             Some(origin.as_str()),
             "the origin stays current so the next command names the server it lost"
         );
+    }
+
+    #[test]
+    fn no_step_of_signing_in_is_announced_as_a_write() {
+        let root = format!(
+            r#"{{"name":"marfa","contract":{}}}"#,
+            marfa_core::contract::CONTRACT_VERSION
+        );
+        let door = Door::open(vec![
+            Answer::json("201 Created", r#"{"client_id":"issued"}"#),
+            Answer::json(
+                "200 OK",
+                r#"{"device_code":"dc","user_code":"ABCD1234","verification_uri":"http://door.invalid/auth/device","expires_in":600,"interval":1}"#,
+            ),
+            Answer::json(
+                "200 OK",
+                r#"{"access_token":"marfa_at_1","refresh_token":"marfa_rt_1","token_type":"Bearer","expires_in":3600}"#,
+            ),
+            Answer::json("200 OK", &root),
+            Answer::json(
+                "200 OK",
+                r#"{"access_token":"marfa_at_2","refresh_token":"marfa_rt_2","token_type":"Bearer","expires_in":3600}"#,
+            ),
+            Answer::json("200 OK", "{}"),
+            Answer::json("201 Created", r#"{"id":"i"}"#),
+        ]);
+        let origin = door.url.clone();
+        let discovery = waiting_discovery(&origin);
+        let client = register(&discovery, Some("studio")).unwrap();
+        let code = device_code(&discovery, &client, "*:read").unwrap();
+        assert!(matches!(
+            poll(&discovery, &client, &code.device_code).unwrap(),
+            Poll::Token(_)
+        ));
+        let _keychain = credentials::hold(&origin);
+        credentials::keep(&origin, &stale_token(&discovery.token_endpoint)).unwrap();
+        let mut kept = refresh(&origin, None).unwrap();
+        if let Kept::Token {
+            revocation_endpoint,
+            ..
+        } = &mut kept
+        {
+            revocation_endpoint.clone_from(&discovery.revocation_endpoint);
+        }
+        assert!(revoke(&kept).unwrap());
+        assert_eq!(crate::writing::announced(), Vec::<String>::new());
+        // Witness: a write to the same server is announced.
+        Remote::public_at(&origin)
+            .unwrap()
+            .json(&Request::post(&["items"]).public())
+            .unwrap();
+        assert_eq!(crate::writing::announced(), vec![origin]);
+        let received = door.received();
+        let paths: Vec<&str> = received.iter().map(|sent| sent.path()).collect();
+        assert_eq!(
+            paths,
+            [
+                "/auth/oauth2/register",
+                "/auth/device/code",
+                "/auth/oauth2/token",
+                "/",
+                "/auth/oauth2/token",
+                "/auth/oauth2/revoke",
+                "/items",
+            ]
+        );
+    }
+
+    #[test]
+    fn no_debug_shows_a_token_or_a_device_code() {
+        let tokens = TokenSet {
+            access_token: "access-witness".into(),
+            refresh_token: Some("refresh-witness".into()),
+            expires_in: Some(3600),
+            scope: Some("openid".into()),
+        };
+        let device = DeviceCode {
+            device_code: "device-witness".into(),
+            user_code: "ABCD-EFGH".into(),
+            verification_uri: "https://marfa.example/device".into(),
+            verification_uri_complete: None,
+            expires_in: 600,
+            interval: 5,
+        };
+        let shown = [
+            format!("{tokens:?}"),
+            format!("{:?}", Poll::Token(tokens.clone())),
+            format!("{device:?}"),
+        ];
+        for text in &shown {
+            for secret in ["access-witness", "refresh-witness", "device-witness"] {
+                assert!(!text.contains(secret), "{text}");
+            }
+        }
+        // Witness: what is not secret is still shown.
+        assert!(
+            shown[1].contains("Token(TokenSet { expires_in: Some(3600)"),
+            "{}",
+            shown[1]
+        );
+        assert!(shown[2].contains("ABCD-EFGH"), "{}", shown[2]);
     }
 
     #[test]

@@ -30,6 +30,7 @@ pub fn error(error: &CliError) -> &'static str {
         }
         CliError::NoServerNamed | CliError::NoServerForKey => "no server was named",
         CliError::NoCredential { .. } => "no credential was available for the server",
+        CliError::KeyCommand(_) => "a profile's key command gave no key",
         CliError::NoKeychain(_) => "the system's credential storage is unavailable",
         CliError::SignedOut { .. } => "the sign-in has ended",
         CliError::CredentialEnded => "the credential that held the stream has ended",

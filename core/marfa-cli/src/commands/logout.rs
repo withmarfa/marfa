@@ -70,6 +70,7 @@ mod keychain_off_tests {
         let named = Named {
             url: Some("https://marfa.example".into()),
             key: None,
+            profile: None,
         };
         let outcome = run(&named, &Printer { json: true });
         assert!(

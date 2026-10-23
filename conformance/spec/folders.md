@@ -4842,9 +4842,9 @@ If the service manager cannot be asked, or cannot stop the watch, when `folders 
 
 ### `folders/autostart-flags-refused`
 
-If `folders autostart` is given `--url` or `--key`, then the CLI MUST refuse it with `usage` and write nothing.
+If `folders autostart` is given `--url`, `--key` or `--profile`, then the CLI MUST refuse it with `usage` and write nothing.
 
-**Tests:** `device/folders-autostart.test.ts › refuses --url and --key, and writes nothing`.
+**Tests:** `device/folders-autostart.test.ts › refuses --url, --key and --profile, and writes nothing`.
 
 ### `folders/autostart-status`
 

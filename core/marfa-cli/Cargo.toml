@@ -29,6 +29,7 @@ url = "2"
 getrandom = "0.4"
 tracing = { version = "0.1", default-features = false, features = ["std"] }
 tracing-subscriber = { version = "0.3", default-features = false, features = ["registry"] }
+toml = { version = "1.1.8", default-features = false, features = ["std", "parse", "serde"] }
 
 # keyring reaches only the login keychain; a keychain file by path needs this.
 [target.'cfg(target_os = "macos")'.dependencies]

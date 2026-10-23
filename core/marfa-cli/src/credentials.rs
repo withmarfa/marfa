@@ -198,7 +198,21 @@ pub fn advice() -> &'static str {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// `advice`, or for a server a profile named, which takes its key from the
+/// keychain alone, what that profile needs.
+pub fn advice_for(profile: Option<&str>) -> String {
+    match profile {
+        None => advice().to_string(),
+        Some(name) if is_off() => format!(
+            "the profile {name} takes its key from the keychain, which is off; give the profile a key_command"
+        ),
+        Some(name) => format!(
+            "the profile {name} takes its key from the keychain: sign in with `marfa login --profile {name}`, keep a key with `marfa keys keep --profile {name}`, or give the profile a key_command"
+        ),
+    }
+}
+
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Kept {
     Key {
@@ -214,6 +228,30 @@ pub enum Kept {
         token_endpoint: String,
         revocation_endpoint: Option<String>,
     },
+}
+
+/// Leaves out the key and both tokens.
+impl std::fmt::Debug for Kept {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Kept::Key { .. } => formatter.debug_struct("Key").finish_non_exhaustive(),
+            Kept::Token {
+                expires_at,
+                client_id,
+                scope,
+                token_endpoint,
+                revocation_endpoint,
+                ..
+            } => formatter
+                .debug_struct("Token")
+                .field("expires_at", expires_at)
+                .field("client_id", client_id)
+                .field("scope", scope)
+                .field("token_endpoint", token_endpoint)
+                .field("revocation_endpoint", revocation_endpoint)
+                .finish_non_exhaustive(),
+        }
+    }
 }
 
 impl Kept {
@@ -592,6 +630,25 @@ mod isolated {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_kept_credential_debug_shows_no_key_and_no_token() {
+        let key = Kept::Key {
+            key: "marfa_k1_debug_witness".into(),
+        };
+        let token = Kept::Token {
+            access_token: "marfa_at_debug_witness".into(),
+            refresh_token: Some("marfa_rt_debug_witness".into()),
+            expires_at: Some(1),
+            client_id: "client-1".into(),
+            scope: None,
+            token_endpoint: "https://marfa.example/auth/oauth2/token".into(),
+            revocation_endpoint: None,
+        };
+        let shown = format!("{key:?} {token:?} {token:#?} {:?}", Some(&token));
+        assert!(shown.contains("client-1"), "{shown}");
+        assert!(!shown.contains("debug_witness"), "{shown}");
+    }
 
     #[test]
     fn keeps_reads_and_forgets_a_credential_for_one_origin() {

@@ -10,7 +10,7 @@ import { createTestContext } from "../../utils/setup.js";
  *
  * Every scenario here is a person or an agent at a terminal: the binary is
  * spawned with `--json`, its stdout is the answer, its exit code is the
- * verdict, and a refusal is the one JSON object it prints on stderr. The
+ * verdict, and a refusal is the JSON object on the last line of stderr. The
  * server is reached directly only for a witness (the root document, the
  * published document) or for the person's half of a sign-in, never for the
  * thing a scenario asserts the binary did.
@@ -180,8 +180,9 @@ export class Cli {
 
   /**
    * Runs with `--json` expecting a refusal, and answers the envelope and the
-   * exit code. A zero exit throws: a scenario asserting a refusal must not
-   * pass on a success.
+   * exit code. The envelope is the last line of stderr, after any plain
+   * line such as a warning or the write line. A zero exit throws: a scenario
+   * asserting a refusal must not pass on a success.
    */
   async refused(
     args: string[],
@@ -193,7 +194,7 @@ export class Cli {
         `marfa ${args.join(" ")} succeeded where a refusal was expected: ${outcome.stdout.slice(0, 300)}`,
       );
     }
-    const text = outcome.stderr.trim();
+    const text = outcome.stderr.trim().split("\n").at(-1) ?? "";
     let envelope: Refusal;
     try {
       envelope = JSON.parse(text) as Refusal;

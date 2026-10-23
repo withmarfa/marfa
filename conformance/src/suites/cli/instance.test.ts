@@ -73,12 +73,15 @@ async function runHousekeepingJob(
     if (outcome.code === 0) {
       return JSON.parse(outcome.stdout) as { name: string; outcome: string };
     }
-    // A refusal the binary makes is one JSON object on stderr. Anything
-    // else there is the binary failing outside the envelope, and that text
-    // is the finding rather than a parse error over it.
+    // A refusal the binary makes is one JSON object on the last line of
+    // stderr, after the write line. Anything else there is the binary
+    // failing outside the envelope, and that text is the finding rather than
+    // a parse error over it.
     let envelope: { error: { server: { status: number | null } | null } };
     try {
-      envelope = JSON.parse(outcome.stderr.trim()) as typeof envelope;
+      envelope = JSON.parse(
+        outcome.stderr.trim().split("\n").at(-1) ?? "",
+      ) as typeof envelope;
     } catch {
       throw new Error(`marfa housekeeping run ${name}: ${outcome.stderr}`);
     }

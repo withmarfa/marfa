@@ -71,7 +71,7 @@ describe("the exit codes", () => {
       .as("marfa_k1_refused_fixture")
       .run(["--json", ...device, "drain"]);
     expect(stopped.code).toBe(5);
-    expect(stopped.stderr).toBe("");
+    expect(stopped.stderr).toMatch(/^marfa: writing to [^\n]+\n$/);
     const report = JSON.parse(stopped.stdout);
     expect(report.stopped).toBeTruthy();
     expect(report.verdicts[0].id).toBe(pending.id);

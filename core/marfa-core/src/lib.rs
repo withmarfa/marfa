@@ -176,10 +176,19 @@ fn one_at_a_time() -> CoreError {
 }
 
 /// The key is held in memory and never written.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Server {
     pub url: String,
     pub key: String,
+}
+
+impl std::fmt::Debug for Server {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("Server")
+            .field("url", &self.url)
+            .finish_non_exhaustive()
+    }
 }
 
 pub struct Core {
@@ -3116,6 +3125,17 @@ pub(crate) fn fault_said(fault: &(dyn std::any::Any + Send)) -> String {
 mod tests {
     use super::*;
     use crate::validation::MAX_TAG_LENGTH;
+
+    #[test]
+    fn a_server_debug_shows_its_url_and_never_its_key() {
+        let server = Server {
+            url: "https://marfa.example".into(),
+            key: "marfa_k1_debug_witness".into(),
+        };
+        let shown = format!("{server:?} {server:#?}");
+        assert!(shown.contains("https://marfa.example"), "{shown}");
+        assert!(!shown.contains("marfa_k1_debug_witness"), "{shown}");
+    }
 
     fn server_held_item(core: &Core, type_id: &str, properties: Value) -> String {
         let id = uuid::Uuid::now_v7().to_string();

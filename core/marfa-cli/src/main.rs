@@ -1,4 +1,6 @@
 mod access;
+#[cfg(target_os = "macos")]
+mod acl;
 mod auth;
 mod autostart;
 mod cleartext;
@@ -15,6 +17,7 @@ mod keyfile;
 mod local;
 mod logfile;
 mod output;
+mod profiles;
 #[cfg(test)]
 mod reference;
 mod remote;
@@ -24,6 +27,7 @@ mod style;
 mod telemetry;
 mod values;
 mod watch;
+mod writing;
 
 use std::process::ExitCode;
 
@@ -43,7 +47,7 @@ use crate::remote::{Named, Remote};
 /// Marfa from the command line: every operation of one instance, a working
 /// copy of a slice of it under `device`, and folders that hold a slice as
 /// files.
-#[derive(Debug, Parser)]
+#[derive(Parser)]
 #[command(
     name = "marfa",
     version,
@@ -52,8 +56,36 @@ use crate::remote::{Named, Remote};
     after_long_help = long_help_footer()
 )]
 struct Cli {
+    /// A profile in profiles.toml: a server, and where its key comes from.
+    /// Not the owner's profile, which `marfa profile` changes.
+    ///
+    /// The file is ~/Library/Application Support/Marfa/profiles.toml on
+    /// macOS, and $XDG_CONFIG_HOME/marfa/profiles.toml, else
+    /// ~/.config/marfa/profiles.toml, elsewhere. Each profile is a section
+    /// with a url line and, optionally, key_command: a program and its
+    /// arguments, run without a shell, that prints the key. Without
+    /// key_command, the key is the credential the keychain keeps for that
+    /// server.
+    ///
+    /// The server and key come from the first of these that is given:
+    /// --profile, which refuses --url and --key beside it and reads none of
+    /// MARFA_API_URL, MARFA_API_KEY and MARFA_PROFILE; --url or --key, as
+    /// below, without MARFA_PROFILE; MARFA_PROFILE, which refuses
+    /// MARFA_API_URL and MARFA_API_KEY beside it; MARFA_API_URL and
+    /// MARFA_API_KEY, then the keychain. A profile's key is sent only to its
+    /// server, and no other key is.
+    #[arg(
+        long,
+        global = true,
+        value_name = "NAME",
+        conflicts_with_all = ["url", "key"],
+        help_heading = "Server"
+    )]
+    profile: Option<String>,
+
     /// The server's base URL. Falls back to MARFA_API_URL, then to the
-    /// server a kept credential made current. A command that sends a key
+    /// server a kept credential made current. MARFA_PROFILE is not read
+    /// beside it. A command that sends a key
     /// from --key or MARFA_API_KEY needs the URL named, and so does any
     /// command with the keychain off.
     #[arg(long, global = true, value_name = "URL", help_heading = "Server")]
@@ -63,14 +95,15 @@ struct Cli {
     /// keychain: a command line is readable by other users of the machine and
     /// stays in shell history. Falls back to MARFA_API_KEY, then to the
     /// keychain: the file MARFA_KEYCHAIN names, where it names one, unless
-    /// the keychain is off.
+    /// the keychain is off. MARFA_PROFILE is not read beside it.
     #[arg(long, global = true, value_name = "KEY", help_heading = "Server")]
     key: Option<String>,
 
     /// Treat the keychain as absent: read nothing from it and write nothing
     /// to it, so the server and the key must come from --url, --key,
-    /// MARFA_API_URL or MARFA_API_KEY. A command that needs to keep something
-    /// refuses. MARFA_NO_KEYCHAIN=1 does the same.
+    /// MARFA_API_URL or MARFA_API_KEY, or a profile with a key_command. A
+    /// command that needs to keep something refuses. MARFA_NO_KEYCHAIN=1
+    /// does the same.
     #[arg(long, global = true, help_heading = "Server")]
     no_keychain: bool,
 
@@ -84,16 +117,31 @@ struct Cli {
     /// Item properties, edges, tags, search, counts, events and exports still need a key.
     /// `items summaries`, `items trash`, the `blobs` commands and bulk-action job status and
     /// cancel do not.
-    #[arg(long, global = true, value_name = "PATH", conflicts_with_all = ["url", "key"], help_heading = "Server")]
+    #[arg(long, global = true, value_name = "PATH", conflicts_with_all = ["url", "key", "profile"], help_heading = "Server")]
     socket: Option<std::path::PathBuf>,
 
-    /// Print the answer as JSON, and a refusal as one JSON object on stderr,
-    /// after any warning, which is one plain line.
+    /// Print the answer as JSON. A refusal is the last line of stderr, one
+    /// JSON object, after any plain lines such as a warning or the write line.
     #[arg(long, global = true, help_heading = "Output")]
     json: bool,
 
     #[command(subcommand)]
     command: Command,
+}
+
+impl std::fmt::Debug for Cli {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("Cli")
+            .field("profile", &self.profile)
+            .field("url", &self.url)
+            .field("no_keychain", &self.no_keychain)
+            .field("allow_http", &self.allow_http)
+            .field("socket", &self.socket)
+            .field("json", &self.json)
+            .field("command", &self.command)
+            .finish_non_exhaustive()
+    }
 }
 
 #[derive(Debug, Subcommand)]
@@ -421,6 +469,29 @@ fn socket_refusal(command: &Command) -> Option<CliError> {
     None
 }
 
+/// The commands that sign in, sign out, keep or forget a credential in the
+/// keychain, which a profile whose key comes from a key command never reads.
+fn keychain_profile_refusal(command: &Command, named: &Named) -> Result<(), CliError> {
+    let what = match command {
+        Command::Login(args) if !args.print_token => "login",
+        Command::Logout => "logout",
+        Command::Keys {
+            command: keys::KeysCommand::Keep,
+        } => "keys keep",
+        Command::Keys {
+            command: keys::KeysCommand::Forget,
+        } => "keys forget",
+        _ => return Ok(()),
+    };
+    match named.chosen_profile()? {
+        Some(profile) if profile.has_key_command() => Err(CliError::Usage(format!(
+            "the profile {} takes its key from its key_command, not the keychain, so `{what}` has nothing to do for it; remove key_command from the profile to use the keychain",
+            profile.name
+        ))),
+        _ => Ok(()),
+    }
+}
+
 fn run(cli: Cli) -> Result<Exit, CliError> {
     #[cfg(debug_assertions)]
     if let Ok(message) = std::env::var("MARFA_TEST_PANIC") {
@@ -432,14 +503,15 @@ fn run(cli: Cli) -> Result<Exit, CliError> {
     if cli.no_keychain || credentials::off_by_environment() {
         credentials::turn_off();
     }
+    marfa_core::http::on_write(writing::announce);
     let out = Printer { json: cli.json };
     if cli.socket.is_some()
-        && ["MARFA_API_URL", "MARFA_API_KEY"]
+        && ["MARFA_API_URL", "MARFA_API_KEY", profiles::ENVIRONMENT]
             .iter()
             .any(|name| std::env::var(name).is_ok_and(|value| !value.is_empty()))
     {
         return Err(CliError::Usage(
-            "--socket cannot be combined with MARFA_API_URL or MARFA_API_KEY; unset them first"
+            "--socket cannot be combined with MARFA_API_URL, MARFA_API_KEY or MARFA_PROFILE; unset them first"
                 .into(),
         ));
     }
@@ -471,21 +543,33 @@ fn run(cli: Cli) -> Result<Exit, CliError> {
         Command::Types {
             command: types::TypesCommand::Scaffold(_)
         }
-    ) && (cli.url.is_some() || cli.key.is_some())
+    ) && (cli.url.is_some() || cli.key.is_some() || cli.profile.is_some())
     {
         return Err(CliError::Usage(
-            "types scaffold contacts no server and takes neither --url nor --key".into(),
+            "types scaffold contacts no server and takes none of --url, --key and --profile".into(),
         ));
     }
-    if matches!(cli.command, Command::Server { .. }) && (cli.url.is_some() || cli.key.is_some()) {
+    if matches!(cli.command, Command::Server { .. })
+        && (cli.url.is_some() || cli.key.is_some() || cli.profile.is_some())
+    {
         return Err(CliError::Usage(
-            "server commands run Docker on this machine and take neither --url nor --key".into(),
+            "server commands run Docker on this machine and take none of --url, --key and --profile"
+                .into(),
         ));
     }
+    let profile = match cli.profile {
+        Some(name) => Some(profiles::Chosen::new(name, profiles::ChosenBy::Flag)),
+        None if cli.url.is_none() && cli.key.is_none() && cli.socket.is_none() => {
+            profiles::Chosen::from_environment()
+        }
+        None => None,
+    };
     let named = Named {
         url: cli.url,
         key: cli.key,
+        profile,
     };
+    keychain_profile_refusal(&cli.command, &named)?;
     if matches!(
         cli.command,
         Command::Keys {
@@ -632,6 +716,32 @@ mod tests {
         ] {
             assert!(socket_refusal(&command(words)).is_none(), "{words:?}");
         }
+    }
+
+    #[test]
+    fn no_debug_of_a_command_line_shows_a_key_or_a_secret() {
+        let cli = Cli::try_parse_from([
+            "marfa",
+            "--url",
+            "https://marfa.example",
+            "--key",
+            "key-witness",
+            "webhooks",
+            "create",
+            "--to",
+            "https://receiver.example/hook",
+            "--event",
+            "item.created",
+            "--secret",
+            "secret-witness",
+        ])
+        .unwrap();
+        let shown = format!("{cli:?}");
+        assert!(!shown.contains("key-witness"), "{shown}");
+        assert!(!shown.contains("secret-witness"), "{shown}");
+        // Witness: the rest of the line is shown.
+        assert!(shown.contains("marfa.example"), "{shown}");
+        assert!(shown.contains("receiver.example"), "{shown}");
     }
 
     #[test]

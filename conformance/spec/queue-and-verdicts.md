@@ -594,7 +594,7 @@ What the CLI prints and exits with for a drain.
 
 ### `queue-and-verdicts/command-drain-report`
 
-When a drain ends with a report and the CLI prints JSON, the CLI MUST print the whole report on standard output and nothing on standard error but the warning of `device/command-cleartext-warning`.
+When a drain ends with a report and the CLI prints JSON, the CLI MUST print the whole report on standard output and nothing on standard error but the warning of `device/command-cleartext-warning` and the line of `device/command-write-line`.
 
 **Tests:** `device/cli-outcomes.test.ts › keeps the complete $label drain report with exit $exit`, `› preserves answered writes before an interrupted later write`.
 

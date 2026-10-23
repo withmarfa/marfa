@@ -178,7 +178,9 @@ describe("an archive that lacks a blob it names", () => {
     expect(outcome.code, outcome.stderr).toBe(1);
     const answer = JSON.parse(outcome.stdout) as { blobs_missing: string[] };
     expect(answer.blobs_missing).toEqual([lost]);
-    const envelope = JSON.parse(outcome.stderr) as {
+    const envelope = JSON.parse(
+      outcome.stderr.trim().split("\n").at(-1) ?? "",
+    ) as {
       error: { code: string; message: string };
     };
     expect(envelope.error.code).toBe("blobs_missing");

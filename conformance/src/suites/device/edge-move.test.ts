@@ -12,6 +12,7 @@ import type {
   Outcome,
   QueuedWrite,
 } from "../../device/protocol.js";
+import { refusalLine } from "../../device/cli-adapter.js";
 import type { Responder } from "../../device/scripted-server.js";
 import {
   queuedEdit,
@@ -877,7 +878,9 @@ describe("a drain that sends moves of an edge's source", () => {
       draining.interrupt();
       await draining.exited();
       expect(draining.exitCode(), draining.stderr).toBe(3);
-      expect(JSON.parse(draining.stderr).error.code).toBe("canceled");
+      expect(JSON.parse(refusalLine(draining.stderr)).error.code).toBe(
+        "canceled",
+      );
     } finally {
       await draining.stop();
       release();

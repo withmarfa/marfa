@@ -128,7 +128,9 @@ pub fn register_request(definition: serde_json::Value) -> Request {
 }
 
 pub fn normalize_request(definition: serde_json::Value) -> Request {
-    Request::post(&["types", "normalize"]).json(definition)
+    Request::post(&["types", "normalize"])
+        .json(definition)
+        .reading()
 }
 
 pub fn replace_request(id: &str, definition: serde_json::Value) -> Request {
