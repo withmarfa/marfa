@@ -10,6 +10,33 @@ use crate::directory::Directory;
 use crate::model::Verdict;
 use crate::{Core, Result, store};
 
+pub(super) fn unsent_writes(
+    conn: &rusqlite::Connection,
+    item: &str,
+) -> Result<Vec<crate::model::QueuedWrite>> {
+    Ok(store::queued_writes(conn)?
+        .into_iter()
+        .filter(|write| {
+            write.item_id.as_deref() == Some(item)
+                && !matches!(
+                    write.verdict,
+                    Some(Verdict::Accepted | Verdict::Merged | Verdict::Conflicted)
+                )
+        })
+        .collect())
+}
+
+fn unwritten(conn: &rusqlite::Connection, bound: &state::Bound) -> Result<bool> {
+    Ok(!bound.writes.id_carried
+        && !bound.writes.adopted
+        && bound.held.is_none()
+        && bound.writes.refused.is_empty()
+        && unsent_writes(conn, &bound.item_id)?.is_empty()
+        && store::items_by_ids(conn, std::slice::from_ref(&bound.item_id))?
+            .first()
+            .is_some_and(|item| item.version > 0 && item.state != crate::ItemState::Trashed))
+}
+
 const META_STORE: &str = "folder_store";
 const META_LISTED_IN: &str = "folder_listed_in";
 /// The other folders it last found, kept for a registry that loses them.
@@ -202,15 +229,14 @@ impl Peer {
     /// Whether its next scan takes `file`, which carries no id and which it
     /// has not bound, as `item_id` by the missing file's binding: it holds no
     /// file of the item already, and its lists take the file. Only that
-    /// binding names the item to it (`left_behind`). `bare` is whether that
-    /// scan takes a Markdown file without an id line for the item.
-    fn awaits(&self, file: &OnDisk, item_id: &str, bare: bool) -> bool {
+    /// binding names the item to it (`left_behind`).
+    fn awaits(&self, file: &OnDisk, item_id: &str, file_item: bool) -> bool {
         let Some(folder) = &self.folder else {
             return false;
         };
         let bound = self.bound();
         file.id.is_none()
-            && (bare || !carries_frontmatter(&file.path))
+            && (file_item || !carries_frontmatter(&file.path))
             && !bound.contains_key(&file.key)
             && !bound.values().any(|(bound, _)| bound == item_id)
             && folder
@@ -223,6 +249,18 @@ impl Peer {
         self.root_dir.as_ref().is_some_and(|root| {
             plainly_inside(root, key) && root.entry_metadata(Path::new(key)).is_ok()
         })
+    }
+
+    fn missing(&self, key: &str) -> bool {
+        self.folder
+            .as_ref()
+            .is_some_and(|folder| folder.root_gone().is_none())
+            && self.root_dir.as_ref().is_some_and(|root| {
+                plainly_inside(root, key)
+                    && root
+                        .entry_metadata(Path::new(key))
+                        .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound)
+            })
     }
 
     fn walked(&self) -> &Walked {
@@ -534,11 +572,10 @@ impl<'a> Peers<'a> {
     /// or unique bytes, its path given whole. `markdown` is whether the
     /// arriving file is at a Markdown name.
     ///
-    /// A note's Markdown file carries its id line once that folder wrote it,
-    /// so an arriving Markdown file without one is then a file item's or a
-    /// new item; before, only its identity follows it. A note's missing
-    /// Markdown file is not known by its bytes, which a template's copies
-    /// share. A file item's file is its bytes whatever its name.
+    /// A note's Markdown file carries its id line, so an arriving Markdown
+    /// file without one is a file item's or a new item, and a note's missing
+    /// Markdown file is not known by its bytes. A file item's file is its
+    /// bytes whatever its name.
     pub(super) fn left_behind(
         &self,
         mark: Option<&str>,
@@ -566,11 +603,7 @@ impl<'a> Peers<'a> {
             };
             let takes = |bound: &state::Bound, by_bytes: bool| {
                 peer.file_item(&bound.item_id)
-                    || if by_bytes {
-                        !(markdown || carries_frontmatter(Path::new(&bound.path)))
-                    } else {
-                        !markdown || !bound.writes.id_carried
-                    }
+                    || !(markdown || by_bytes && carries_frontmatter(Path::new(&bound.path)))
             };
             if let Some(found) = mark
                 .and_then(|mark| read(state::bound_with_identity, mark))
@@ -589,6 +622,121 @@ impl<'a> Peers<'a> {
         (same_bytes.len() == 1).then(|| same_bytes.remove(0))
     }
 
+    /// The server read precedes the locked checks: a read can drain another
+    /// folder, and a cached row can predate the bytes that folder agreed to.
+    pub(super) fn bind_unwritten(
+        &self,
+        file: &super::Scanned,
+        taken: &HashSet<String>,
+    ) -> Result<Option<state::Bound>> {
+        if !carries_frontmatter(&file.path) || file.id.is_some() {
+            return Ok(None);
+        }
+        let Some(mark) = file.mark.as_deref() else {
+            return Ok(None);
+        };
+        let mut candidates = Vec::new();
+        for peer in self.all() {
+            let Some(folder) = &peer.folder else { continue };
+            let Ok(conn) = folder.core.conn() else {
+                continue;
+            };
+            for bound in state::bound_with_identity(&conn, mark).unwrap_or_default() {
+                if peer.missing(&bound.path) {
+                    candidates.push((peer, bound));
+                }
+            }
+        }
+        let [(peer, candidate)] = candidates.as_slice() else {
+            return Ok(None);
+        };
+        let source = peer.folder.as_ref().unwrap();
+        if taken.contains(&candidate.item_id)
+            || peer.file_item(&candidate.item_id)
+            || !source
+                .core
+                .conn()
+                .ok()
+                .is_some_and(|conn| unwritten(&conn, candidate).unwrap_or(false))
+            || self.of.core.pin(&candidate.item_id).is_err()
+        {
+            return Ok(None);
+        }
+        // A busy source falls back to a new item; it never waits for a writer.
+        let Ok(lock) = Core::claim_directory(&source.state_dir) else {
+            return Ok(None);
+        };
+        if lock.handle() != crate::Handle::Writer {
+            return Ok(None);
+        }
+        let Ok(source_conn) = source.core.conn() else {
+            return Ok(None);
+        };
+        let Some(bound) = state::bound_at(&source_conn, &candidate.path)
+            .ok()
+            .flatten()
+        else {
+            return Ok(None);
+        };
+        if bound.item_id != candidate.item_id
+            || bound.identity.as_deref() != Some(mark)
+            || !peer.missing(&bound.path)
+            || !unwritten(&source_conn, &bound).unwrap_or(false)
+        {
+            return Ok(None);
+        }
+        let mut conn = self.of.core.conn()?;
+        let tx = conn.transaction()?;
+        if state::bound_to_item(&tx, &bound.item_id)?.is_some()
+            || state::bound_at(&tx, &file.key)?.is_some()
+            || !unsent_writes(&tx, &bound.item_id)?.is_empty()
+        {
+            return Ok(None);
+        }
+        let origin = store::items_by_ids(&source_conn, std::slice::from_ref(&bound.item_id))
+            .unwrap_or_default();
+        let here = store::items_by_ids(&tx, std::slice::from_ref(&bound.item_id))?;
+        if !here
+            .first()
+            .zip(origin.first())
+            .is_some_and(|(here, origin)| {
+                here.version >= origin.version && here.state != crate::ItemState::Trashed
+            })
+        {
+            return Ok(None);
+        }
+        if self
+            .of
+            .metadata(&file.path)
+            .ok()
+            .and_then(|metadata| identity::of(&metadata))
+            .is_none_or(|identity| identity.key() != mark)
+            || !self
+                .of
+                .read(&file.path)
+                .is_ok_and(|bytes| state::hash(&bytes) == file.hash)
+        {
+            return Ok(None);
+        }
+        let adopted = state::Bound {
+            path: file.key.clone(),
+            writes: state::Writes {
+                adopted: true,
+                inferred: bound.writes.inferred.clone(),
+                ..state::Writes::default()
+            },
+            edit_line: None,
+            held: None,
+            ..bound.clone()
+        };
+        state::bind(&tx, &adopted)?;
+        tx.commit()?;
+        Ok(Some(state::Bound {
+            path: peer.root.join(&bound.path).display().to_string(),
+            ..adopted
+        }))
+    }
+
     /// `file_item` is whether this folder's copy holds the lost file's item
     /// as bytes: a note's Markdown file is followed by its id line, and a
     /// file item's file by its bytes whatever its name.
@@ -598,24 +746,21 @@ impl<'a> Peers<'a> {
         }
         let peers = self.all();
         let item = lost.item_id.as_str();
-        // A file this folder took from another one is that folder's to find
-        // by this binding, so the binding stays until where the file went
-        // binds it in turn and keeps what this one kept.
-        let handing_on = |peer: &Peer, file: &OnDisk| {
-            !lost.writes.taken_as.is_empty()
-                && peer
-                    .bound()
-                    .get(&file.key)
-                    .is_none_or(|(bound, _)| bound != item)
-        };
-        let arrival = |peer: &Peer, file: &OnDisk, by_identity: bool| {
-            if handing_on(peer, file)
-                || peer.awaits(
-                    file,
-                    item,
-                    file_item || by_identity && !lost.writes.id_carried,
-                )
-            {
+        let arrival = |peer: &Peer, file: &OnDisk| {
+            let bare = file.mark == lost.identity
+                && lost.identity.is_some()
+                && self
+                    .of
+                    .core
+                    .conn()
+                    .ok()
+                    .is_some_and(|conn| unwritten(&conn, lost).unwrap_or(false))
+                && peer.folder.as_ref().is_some_and(|folder| {
+                    folder.core.conn().ok().is_some_and(|conn| {
+                        unsent_writes(&conn, item).is_ok_and(|writes| writes.is_empty())
+                    })
+                });
+            if peer.awaits(file, item, file_item || bare) {
                 Look::Arriving
             } else {
                 Look::Moved
@@ -629,10 +774,14 @@ impl<'a> Peers<'a> {
                     .map(|file| (peer, file))
             })
         {
-            return arrival(peer, file, true);
+            return arrival(peer, file);
         }
-        // Where both folders hold the item, the other's file of it is its
-        // own, not this one moved.
+        if let Some(why) = peers.iter().find_map(|peer| peer.walked().partial.clone()) {
+            return Look::Unsure(why);
+        }
+        // A file that never carried the ID can be the one the other folder
+        // adopted and rewrote. Its current ID is evidence; a path alone is not.
+        // Once both files carried the ID, the other's bound file is its own.
         let theirs = |peer: &Peer, file: &OnDisk| {
             held_here
                 && peer.holds(item) == Some(true)
@@ -641,63 +790,19 @@ impl<'a> Peers<'a> {
                     .get(&file.key)
                     .is_some_and(|(bound, _)| bound == item)
         };
-        // A folder that took the file by an identity it had is a step on its
-        // way. Where the file is gone from there too, it went on with the
-        // identity it had there and, once that folder wrote it, its id line.
-        let mut known: Vec<String> = lost.identity.iter().cloned().collect();
-        let mut passed: Vec<usize> = Vec::new();
-        let mut carried = false;
-        while let Some((at, peer, bound)) = peers
-            .iter()
-            .enumerate()
-            .filter(|(at, _)| !passed.contains(at))
-            .find_map(|(at, peer)| {
-                peer.bound_to(item)
-                    .filter(|bound| {
-                        bound
-                            .writes
-                            .taken_as
-                            .iter()
-                            .any(|identity| known.contains(identity))
-                    })
-                    .map(|bound| (at, peer, bound))
-            })
-        {
-            if peer.files().iter().any(|file| file.key == bound.path) {
+        if !file_item {
+            let found = peers.iter().any(|peer| {
+                peer.files().iter().any(|file| {
+                    file.id.as_deref() == Some(item)
+                        && (!lost.writes.id_carried || !theirs(peer, file))
+                })
+            });
+            if found {
                 return Look::Moved;
             }
-            passed.push(at);
-            carried |= bound.writes.id_carried;
-            known.extend(bound.identity.into_iter().chain(bound.writes.taken_as));
-        }
-        if !passed.is_empty()
-            && let Some((peer, file)) = peers.iter().find_map(|peer| {
-                peer.files()
-                    .iter()
-                    .find(|file| {
-                        file.mark.as_ref().is_some_and(|mark| known.contains(mark))
-                            || carried && file.id.as_deref() == Some(item) && !theirs(peer, file)
-                    })
-                    .map(|file| (peer, file))
-            })
-        {
-            return arrival(peer, file, true);
-        }
-        if let Some(why) = peers.iter().find_map(|peer| peer.walked().partial.clone()) {
-            return Look::Unsure(why);
-        }
-        if !file_item && carries_frontmatter(Path::new(&lost.path)) {
-            let found = peers.iter().find_map(|peer| {
-                peer.files()
-                    .iter()
-                    .find(|file| file.id.as_deref() == Some(item) && !theirs(peer, file))
-                    .map(|file| (peer, file))
-            });
-            return match found {
-                Some((peer, file)) if handing_on(peer, file) => Look::Arriving,
-                Some(_) => Look::Moved,
-                None => Look::Nowhere,
-            };
+            if carries_frontmatter(Path::new(&lost.path)) {
+                return Look::Nowhere;
+            }
         }
         let mut matches = 0;
         let mut last = None;
@@ -737,102 +842,13 @@ impl<'a> Peers<'a> {
             }
         }
         match (matches, last) {
-            (1, Some((peer, file))) => arrival(peer, file, false),
+            (1, Some((peer, file))) => arrival(peer, file),
             (0, _) => Look::Nowhere,
             _ => Look::Unsure(format!(
                 "{} files in other folders have its bytes, and which it became cannot be told",
                 matches
             )),
         }
-    }
-
-    /// Whether a write another folder made of the file `theirs` binds there
-    /// may still land: its item's create, or a write of its bytes. One not
-    /// sent, sent with no answer yet or held behind another may; so may a
-    /// create refused onto a row no read has found yet. A store that cannot
-    /// be read may hold one.
-    pub(super) fn writing(&self, theirs: &state::Bound) -> bool {
-        let may_land = |conn: &rusqlite::Connection| -> Result<bool> {
-            let landings = store::pending_landings(conn)?;
-            let creates = store::untaken_creates_for_item(conn, &theirs.item_id)?;
-            for id in creates
-                .iter()
-                .chain(theirs.writes.queued.iter().map(|queued| &queued.id))
-            {
-                let Some(write) = store::queued_write(conn, id)? else {
-                    continue;
-                };
-                let waits = match write.verdict {
-                    None | Some(Verdict::Blocked) => true,
-                    Some(Verdict::Dead) => landings.contains_key(id),
-                    Some(_) => false,
-                };
-                if waits {
-                    return Ok(true);
-                }
-            }
-            Ok(false)
-        };
-        self.all().iter().any(|peer| {
-            peer.folder.as_ref().is_some_and(|folder| {
-                folder
-                    .core
-                    .conn()
-                    .ok()
-                    .is_none_or(|conn| may_land(&conn).unwrap_or(true))
-            })
-        })
-    }
-
-    /// Whether the server took the bytes another folder's binding holds: no
-    /// write of them held back or refused there, and every write it queued
-    /// of them answered as taken. A store that cannot be read says nothing.
-    pub(super) fn agreed(&self, theirs: &state::Bound) -> bool {
-        if theirs.held.is_some() || !theirs.writes.refused.is_empty() {
-            return false;
-        }
-        theirs.writes.queued.iter().all(|queued| {
-            self.all().iter().any(|peer| {
-                peer.folder.as_ref().is_some_and(|folder| {
-                    folder
-                        .core
-                        .conn()
-                        .ok()
-                        .and_then(|conn| store::queued_write(&conn, &queued.id).ok().flatten())
-                        .is_some_and(|write| {
-                            matches!(write.verdict, Some(Verdict::Accepted | Verdict::Merged))
-                        })
-                })
-            })
-        })
-    }
-
-    /// What a folder binding anew a file that carries `item_id`'s id line
-    /// keeps of the folders it was moved through: what another folder's
-    /// binding of the item, to a file gone from it with the same identity,
-    /// kept, and that identity.
-    pub(super) fn taken_as(&self, item_id: &str, mark: Option<&str>) -> Vec<String> {
-        let Some(mark) = mark else {
-            return Vec::new();
-        };
-        for peer in self.all() {
-            let Some(folder) = &peer.folder else {
-                continue;
-            };
-            let rows = folder
-                .core
-                .conn()
-                .ok()
-                .and_then(|conn| state::bound_with_identity(&conn, mark).ok())
-                .unwrap_or_default();
-            if let Some(found) = rows
-                .into_iter()
-                .find(|bound| bound.item_id == item_id && !peer.present(&bound.path))
-            {
-                return state::Writes::taken_from(&found);
-            }
-        }
-        Vec::new()
     }
 
     /// Whether another folder holds the item with a file of it already.

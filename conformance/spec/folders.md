@@ -4068,19 +4068,19 @@ When a file is saved back at a path whose binding remains after another folder t
 
 When a missing folder file is found in another registered folder as the same file by identity, carried ID or unambiguous bytes, a device MUST release the missing file’s binding, unless `folders/moved-binding-kept` keeps it.
 
-**Tests:** `device/folders-one-mac.test.ts › does not trash a file moved to another folder`, `device/folders-one-mac.test.ts › finds a file moved into a dot-led directory the other folder includes`, `device/folders-one-mac.test.ts › follows a move by copy and delete, by id and by bytes`, `device/folders-one-mac.test.ts › takes a file moved in by copy and delete by the bytes the folder it left bound`, `device/folders-one-mac.test.ts › does not trash a file moved to another folder and saved there anew`, `device/folders-one-mac.test.ts › does not trash an unmatched file moved by copy and delete into a folder that holds its item`, `device/folders-one-mac.test.ts › follows identical files moved by identity, and makes identical copies new items`, `device/folders-one-mac.test.ts › takes a file item at a document name moved to another folder as that item, and trashes it only where no folder holds it`, `device/folders-one-mac.test.ts › keeps one item when a file item both folders hold moves between them and the %s folder scans first`, `› keeps one item when a new note moves before its id line is written to another folder whose search %s`, `› keeps one item when a new note moves to another folder while its create waits offline`.
+**Tests:** `device/folders-one-mac.test.ts › does not trash a file moved to another folder`, `device/folders-one-mac.test.ts › finds a file moved into a dot-led directory the other folder includes`, `device/folders-one-mac.test.ts › follows a move by copy and delete, by id and by bytes`, `device/folders-one-mac.test.ts › takes a file moved in by copy and delete by the bytes the folder it left bound`, `device/folders-one-mac.test.ts › does not trash a file moved to another folder and saved there anew`, `device/folders-one-mac.test.ts › does not trash an unmatched file moved by copy and delete into a folder that holds its item`, `device/folders-one-mac.test.ts › follows identical files moved by identity, and makes identical copies new items`, `device/folders-one-mac.test.ts › takes a file item at a document name moved to another folder as that item, and trashes it only where no folder holds it`, `device/folders-one-mac.test.ts › keeps one item when a file item both folders hold moves between them and the %s folder scans first`, `› keeps one item when a new note moves before its id line is written to another folder whose search %s`.
 
 ### `folders/moved-file-not-trashed-item-preserved`
 
 When a missing folder file is found in another registered folder as the same file by identity, carried ID or unambiguous bytes, a device MUST NOT trash the item.
 
-**Tests:** `device/folders-one-mac.test.ts › does not trash a file moved to another folder`, `device/folders-one-mac.test.ts › finds a file moved into a dot-led directory the other folder includes`, `device/folders-one-mac.test.ts › follows a move by copy and delete, by id and by bytes`, `device/folders-one-mac.test.ts › takes a file moved in by copy and delete by the bytes the folder it left bound`, `device/folders-one-mac.test.ts › does not trash a file moved to another folder and saved there anew`, `device/folders-one-mac.test.ts › does not trash an unmatched file moved by copy and delete into a folder that holds its item`, `device/folders-one-mac.test.ts › follows identical files moved by identity, and makes identical copies new items`, `device/folders-one-mac.test.ts › takes a file item at a document name moved to another folder as that item, and trashes it only where no folder holds it`, `device/folders-one-mac.test.ts › keeps one item when a file item both folders hold moves between them and the %s folder scans first`, `› keeps one item when a new note moves before its id line is written to another folder whose search %s`, `› keeps one item when a new note moves to another folder while its create waits offline`.
+**Tests:** `device/folders-one-mac.test.ts › does not trash a file moved to another folder`, `device/folders-one-mac.test.ts › finds a file moved into a dot-led directory the other folder includes`, `device/folders-one-mac.test.ts › follows a move by copy and delete, by id and by bytes`, `device/folders-one-mac.test.ts › takes a file moved in by copy and delete by the bytes the folder it left bound`, `device/folders-one-mac.test.ts › does not trash a file moved to another folder and saved there anew`, `device/folders-one-mac.test.ts › does not trash an unmatched file moved by copy and delete into a folder that holds its item`, `device/folders-one-mac.test.ts › follows identical files moved by identity, and makes identical copies new items`, `device/folders-one-mac.test.ts › takes a file item at a document name moved to another folder as that item, and trashes it only where no folder holds it`, `device/folders-one-mac.test.ts › keeps one item when a file item both folders hold moves between them and the %s folder scans first`, `› keeps one item when a new note moves before its id line is written to another folder whose search %s`.
 
 ### `folders/moved-file-count`
 
 When a scan releases a missing folder file’s binding because it found the file in another registered folder, a device MUST count the file as `moved_away`.
 
-**Tests:** `device/folders-one-mac.test.ts › does not trash a file moved to another folder`, `device/folders-one-mac.test.ts › follows a move by copy and delete, by id and by bytes`, `device/folders-one-mac.test.ts › takes a file item at a document name moved to another folder as that item, and trashes it only where no folder holds it`, `device/folders-one-mac.test.ts › keeps one item when a file item both folders hold moves between them and the %s folder scans first`, `› keeps one item when a new note moves before its id line is written to another folder whose search %s`, `› keeps one item when a new note moves to another folder while its create waits offline`.
+**Tests:** `device/folders-one-mac.test.ts › does not trash a file moved to another folder`, `device/folders-one-mac.test.ts › follows a move by copy and delete, by id and by bytes`, `device/folders-one-mac.test.ts › takes a file item at a document name moved to another folder as that item, and trashes it only where no folder holds it`, `device/folders-one-mac.test.ts › keeps one item when a file item both folders hold moves between them and the %s folder scans first`, `› keeps one item when a new note moves before its id line is written to another folder whose search %s`, `› does not report a moved note for a different item at the adopted path`.
 
 ### `folders/moved-carried-id-utf16`
 
@@ -4104,13 +4104,21 @@ When two folder searches both hold an item and each folder has its own bound fil
 
 ### `folders/missing-file-trashed`
 
-When a missing folder file’s deletion grace expires and no other folder holds the moved file, a device MUST queue deletion of its item.
+When a missing folder file’s deletion grace expires, no other folder holds the moved file, and deletion is not held under `folders/missing-held-edit-preserved`, a device MUST queue deletion of its item.
 
-**Tests:** `device/folders-one-mac.test.ts › trashes a missing file found in no folder on the Mac, and says so`, `device/folders-one-mac.test.ts › takes a file item at a document name moved to another folder as that item, and trashes it only where no folder holds it`, `› makes a new item of a new note moved to another folder and saved there anew before that folder scans, and keeps its words`, `› follows a text note moved to another folder as Markdown when it then %s`.
+**Tests:** `device/folders-one-mac.test.ts › trashes a missing file found in no folder on the Mac, and says so`, `device/folders-one-mac.test.ts › takes a file item at a document name moved to another folder as that item, and trashes it only where no folder holds it`, `› follows a text note moved to another folder as Markdown when it then %s`.
+
+### `folders/missing-held-edit-preserved`
+
+While a missing file's item has a server version and either an unresolved item create or update or a held or refused file edit, a device MUST NOT delete the item.
+
+**Reason:** the file can have become a new item in another folder, and deleting the original would hide the edit that still needs a verdict.
+
+**Tests:** `device/folders-one-mac.test.ts › keeps an edit the server refused when a new note moves to another folder whose search %s`.
 
 ### `folders/missing-file-trashed-path-reported`
 
-When a missing folder file’s deletion grace expires and no other folder holds the moved file, a device MUST name the path in the scan report’s `trashed`.
+When a device queues deletion under `folders/missing-file-trashed`, a device MUST name the path in the scan report’s `trashed`.
 
 **Tests:** `device/folders-one-mac.test.ts › trashes a missing file found in no folder on the Mac, and says so`, `device/folders-one-mac.test.ts › takes a file item at a document name moved to another folder as that item, and trashes it only where no folder holds it`.
 
@@ -4166,59 +4174,19 @@ When a file at a name other than `.md` or `.markdown` (in any letter case) arriv
 
 ### `folders/moved-arrival-markdown-new`
 
-When a file at a `.md` or `.markdown` name (in any letter case) that carries no ID arrives from another folder whose missing-file binding of a note identifies it by bytes, or by identity in a file the device has written the note's ID line into, a device MUST admit the arriving file as a new item.
+When an ID-less Markdown file arriving from another registered folder does not meet the conditions in `folders/moved-arrival-markdown-unwritten` and is not a file item's file, a device MUST admit it as a new item.
 
-**Reason:** once a device writes a note's ID line into its Markdown file, the file carries it, so a Markdown file without one is not that note's file. Copies of a template share their bytes, so bytes never tell which note a Markdown file is.
+**Reason:** file identity, not matching bytes, distinguishes a moved note from a copied template; when identity or the state needed for adoption is uncertain, a duplicate preserves the file's edits.
 
-**Tests:** `device/folders-one-mac.test.ts › keeps the note of a text note moved to another folder as Markdown, makes a copy a new item, and keeps its words`, `› makes separate items of identical new notes moved to another folder`, `› keeps one item when a new note moves before its id line is written to another folder whose search %s`.
+**Tests:** `device/folders-one-mac.test.ts › keeps both live items and every edit when a note moves before its offline create lands`, `device/folders-one-mac.test.ts › keeps every live item and unsent edit when an unwritten note moves as %s`, `device/folders-one-mac.test.ts › rechecks unsent writes after reading the moved item from the server`, `device/folders-one-mac.test.ts › keeps an edit the server refused when a new note moves to another folder whose search %s`, `device/folders-one-mac.test.ts › makes separate items of identical new notes moved to another folder`, `device/folders-one-mac.test.ts › keeps a pending edit in the receiving folder when an unwritten note arrives`, `device/folders-one-mac.test.ts › makes a safe duplicate when an adopted unwritten note moves to a third folder`, `› keeps separate files when the receiving scan already claims the moved note's item`, `› makes a new item of a new note moved to another folder and saved there anew before that folder scans, and keeps its words`.
 
 ### `folders/moved-arrival-markdown-unwritten`
 
-When a file at a `.md` or `.markdown` name (in any letter case) that carries no ID arrives from another folder whose missing-file binding of a note identifies it by identity, and no device has written the note's ID line into that file, a device MUST bind the arriving file to that note.
+When an ID-less Markdown file matches exactly one other registered folder's missing binding by device, file number and birth time, no device has written its ID line, that binding was not adopted from another folder, its item has a server version and no queued, held or refused writes in the source folder, the receiving folder binds no file and holds no pending write for that item, and a server read confirms a live version at least as new as the source's, a device MUST bind the file to that item using the state in which these conditions hold.
 
-**Reason:** a note's file carries no ID line until a pull writes it, and a `.txt` note's file never does, so only its identity follows a file moved before then.
+**Reason:** the source's create has landed and every edit it sent has an answer, so the arriving file can safely share its item; a server read before binding can change the queues, so an earlier check does not establish eligibility.
 
-**Tests:** `device/folders-one-mac.test.ts › keeps one item when a new note moves before its id line is written to another folder whose search %s`, `› keeps one item when a new note moves to another folder while its create waits offline`, `› makes separate items of identical new notes moved to another folder`, `› keeps the note of a text note moved to another folder as Markdown, makes a copy a new item, and keeps its words`.
-
-### `folders/moved-arrival-create-pending`
-
-While another registered folder's create of the item a moved file is bound to may still reach the server, a device MUST NOT admit the moved file as a new item.
-
-**Reason:** until the create lands, the server does not show the item, and a file admitted as a new item then would be a second one once it does. A device reads the other folder's queue before it asks the server for the item, since a create that lands between the server's answer and a later read would leave both the answer and the queue saying the item is not there. The file waits, flagged `waiting`, and is bound to the item at the first scan after the create lands. A create the server refused never lands, so the file then is a new item (`folders/cross-folder-hidden-item`).
-
-**Tests:** `device/folders-one-mac.test.ts › keeps one item when a new note moves to another folder while its create waits offline`, `› makes no second item when a new note's create lands while the folder it moved to asks the server for it`.
-
-### `folders/moved-arrival-write-pending`
-
-While another registered folder's write of its file of the item a moved file is bound to may still reach the server, a device MUST NOT bind the moved file.
-
-**Reason:** until the write's verdict is known, the folder cannot tell whether the item holds the file's bytes, and a binding that took them as the item's would let a pull write the item's older body over them. The file waits, flagged `waiting`, and is bound at the first scan after the write's verdict is known.
-
-**Tests:** `device/folders-one-mac.test.ts › keeps an edit its folder had not sent yet when a new note moves to another folder`.
-
-### `folders/moved-arrival-unsent-bytes`
-
-When a device binds a moved file whose bytes the server did not take from the folder the file left, a device MUST send those bytes to the item.
-
-**Reason:** a refused or held write leaves the person's edit only in the file, so a binding that took those bytes as the item's would drop the edit at the next pull.
-
-**Tests:** `device/folders-one-mac.test.ts › keeps an edit the server refused when a new note moves to another folder`.
-
-### `folders/moved-rewritten-found`
-
-When a missing folder file has the identity that another registered folder recorded for a file it bound as that file's move, and that folder still has its file of the item, a device MUST identify that file as the missing file's move.
-
-**Reason:** the pull there writes the item's ID line into the file by replacing it, which changes its identity, so the folder it left would otherwise find the file nowhere and trash its item (`folders/missing-file-trashed`). A folder that binds a file moved from a folder that had itself bound the file as a move records the identities that folder recorded as well, so every folder the file passed through finds it.
-
-**Tests:** `device/folders-one-mac.test.ts › keeps one item when a new note moves before its id line is written to another folder whose search %s`, `› keeps one item when a new note moves on to a third folder %s`, `› keeps one item when a new note moves to another folder while its create waits offline`, `› keeps the note of a text note moved to another folder as Markdown, makes a copy a new item, and keeps its words`.
-
-### `folders/moved-followed-onward`
-
-When a missing folder file has the identity that another registered folder recorded for a file it bound as that file's move, and that folder's file of the item is missing too, a device MUST identify as the missing file's move a file in another registered folder that has the identity that folder's file had, or that carries the item's ID where that folder's file carried it.
-
-**Reason:** the file can move on before the folder it first left looks again, and a text file never carries an ID line, so that folder finds it only through the folders it passed through. Each binding on the way records the identity its file had there and whether the file carried the ID line, so the file is followed however far it went. A file found in none of the folders is a deletion (`folders/missing-file-trashed`).
-
-**Tests:** `device/folders-one-mac.test.ts › follows a text note moved to another folder as Markdown when it then %s`.
+**Tests:** `device/folders-one-mac.test.ts › keeps one item when a new note moves before its id line is written to another folder whose search %s`, `device/folders-one-mac.test.ts › keeps the newer edit when the receiving folder holds an older server version`, `device/folders-one-mac.test.ts › rechecks unsent writes after reading the moved item from the server`, `device/folders-one-mac.test.ts › keeps every live item and unsent edit when an unwritten note moves as %s`, `device/folders-one-mac.test.ts › keeps both live items and every edit when a note moves before its offline create lands`, `device/folders-one-mac.test.ts › keeps the note of a text note moved to another folder as Markdown, makes a copy a new item, and keeps its words`, `device/folders-one-mac.test.ts › keeps a pending edit in the receiving folder when an unwritten note arrives`, `device/folders-one-mac.test.ts › makes a safe duplicate when an adopted unwritten note moves to a third folder`.
 
 ### `folders/moved-file-item-bytes`
 
@@ -4234,31 +4202,23 @@ While a missing folder file is found in another registered folder in a file that
 
 **Reason:** the other folder knows a file that carries no ID as the item only by this binding (`folders/moved-arrival-bytes`, `folders/moved-arrival-text-note`, `folders/moved-arrival-markdown-unwritten`). Released before that folder scans, the binding cannot name the item there, and a folder whose search still holds the item writes its file again, so the moved file becomes a new item. A Markdown file without an ID line that a device wrote into it before is a new item there (`folders/moved-arrival-markdown-new`), so its binding is not kept.
 
-**Tests:** `device/folders-one-mac.test.ts › keeps one item when a file item both folders hold moves between them and the %s folder scans first`, `device/folders-one-mac.test.ts › follows a move by copy and delete, by id and by bytes`, `› keeps one item when a new note moves before its id line is written to another folder whose search %s`, `› keeps one item when a new note moves to another folder while its create waits offline`.
-
-### `folders/moved-binding-kept-onward`
-
-While a missing folder file that this folder bound as a move from another registered folder is found in a third registered folder that has not bound it to the item, a device MUST keep the missing file's binding.
-
-**Reason:** the folder the file first left finds it only by the identities this binding records (`folders/moved-rewritten-found`, `folders/moved-followed-onward`). Released before the third folder binds the file and records them, the binding leaves the first folder finding the file nowhere, and it trashes the item (`folders/missing-file-trashed`).
-
-**Tests:** `device/folders-one-mac.test.ts › keeps one item when a new note moves on to a third folder %s`.
+**Tests:** `device/folders-one-mac.test.ts › keeps one item when a file item both folders hold moves between them and the %s folder scans first`, `device/folders-one-mac.test.ts › follows a move by copy and delete, by id and by bytes`, `› keeps one item when a new note moves before its id line is written to another folder whose search %s`.
 
 ### `folders/moved-awaiting-peer`
 
-While a scan keeps a missing folder file’s binding under `folders/moved-binding-kept` or `folders/moved-binding-kept-onward`, or another registered folder holds a file that carries the ID of an item this folder has not bound and that folder has not bound the file, a device MUST count the item as `elsewhere`.
+While a scan keeps a missing folder file’s binding under `folders/moved-binding-kept`, or another registered folder holds a file that carries the ID of an item this folder has not bound and that folder has not bound the file, a device MUST count the item as `elsewhere`.
 
 **Reason:** a pull runs at every pass of a watch, so it reads where a scan past the rename grace found the missing file instead of looking in the other folders itself. Within the grace, the item counts as any missing file does (`folders/delete-grace`, `folders/delete-remote-revives`). A quick pass keeps the last scan’s finding and a full pass looks again, so a watch releases the binding at its first full pass after the other folder binds the file.
 
-**Tests:** `device/folders-one-mac.test.ts › does not trash a file moved to another folder`, `device/folders-one-mac.test.ts › keeps one item when a file item both folders hold moves between them and the %s folder scans first`, `device/folders-one-mac.test.ts › follows a move by copy and delete, by id and by bytes`, `› keeps one item when a new note moves before its id line is written to another folder whose search %s`, `› keeps one item when a new note moves to another folder while its create waits offline`, `› keeps one item when a new note moves on to a third folder %s`.
+**Tests:** `device/folders-one-mac.test.ts › does not trash a file moved to another folder`, `device/folders-one-mac.test.ts › keeps one item when a file item both folders hold moves between them and the %s folder scans first`, `device/folders-one-mac.test.ts › follows a move by copy and delete, by id and by bytes`, `› keeps one item when a new note moves before its id line is written to another folder whose search %s`.
 
 ### `folders/moved-awaiting-peer-no-replacement`
 
-While a scan keeps a missing folder file’s binding under `folders/moved-binding-kept` or `folders/moved-binding-kept-onward`, or another registered folder holds a file that carries the ID of an item this folder has not bound and that folder has not bound the file, a device MUST NOT write a replacement file.
+While a scan keeps a missing folder file’s binding under `folders/moved-binding-kept`, or another registered folder holds a file that carries the ID of an item this folder has not bound and that folder has not bound the file, a device MUST NOT write a replacement file.
 
 **Reason:** written anew, the file would make the moved file read as a copy in the other folder. Within the rename grace, a device treats the missing file as any other (`folders/delete-remote-revives`, `folders/moved-awaiting-peer`).
 
-**Tests:** `device/folders-one-mac.test.ts › does not trash a file moved to another folder`, `device/folders-one-mac.test.ts › keeps one item when a file item both folders hold moves between them and the %s folder scans first`, `› keeps one item when a new note moves before its id line is written to another folder whose search %s`, `› keeps one item when a new note moves to another folder while its create waits offline`.
+**Tests:** `device/folders-one-mac.test.ts › does not trash a file moved to another folder`, `device/folders-one-mac.test.ts › keeps one item when a file item both folders hold moves between them and the %s folder scans first`, `› keeps one item when a new note moves before its id line is written to another folder whose search %s`.
 
 ## Moving a file between folders
 
@@ -4266,29 +4226,23 @@ A move is a bound file found again in another registered folder on the device. A
 
 ### `folders/move-keeps-item`
 
-When a bound file moves to another registered folder on the device and that folder binds no other file to the item, a device MUST bind the moved file to the item it was bound to before the move.
+When a bound note moves to another registered folder on the device, a device MUST preserve every live item whose edits the move carries.
 
-**Tests:** `device/folders-one-mac.test.ts › does not trash a file moved to another folder`, `› follows a move by copy and delete, by id and by bytes`, `› keeps one item when a file item both folders hold moves between them and the %s folder scans first`, `› keeps one item when a new note moves before its id line is written to another folder whose search %s`, `› keeps one item when a new note moves to another folder while its create waits offline`, `› makes separate items of identical new notes moved to another folder`, `› keeps the note of a text note moved to another folder as Markdown, makes a copy a new item, and keeps its words`, `› keeps one item when a new note moves on to a third folder %s`.
-
-### `folders/move-chain-keeps-item`
-
-When a file that moved to another registered folder on the device moves again to a third registered folder, a device MUST bind the file in the third folder to the item it was bound to before the first move.
-
-**Reason:** the first folder can still be looking for its missing file when the file reaches the third folder, so every folder the file passed through has to find it there (`folders/moved-rewritten-found`, `folders/moved-followed-onward`, `folders/moved-binding-kept-onward`).
-
-**Tests:** `device/folders-one-mac.test.ts › keeps one item when a new note moves on to a third folder %s`, `› follows a text note moved to another folder as Markdown when it then %s`.
+**Tests:** `device/folders-one-mac.test.ts › keeps one item when a new note moves before its id line is written to another folder whose search %s`, `device/folders-one-mac.test.ts › keeps every live item and unsent edit when an unwritten note moves as %s`, `device/folders-one-mac.test.ts › keeps both live items and every edit when a note moves before its offline create lands`, `device/folders-one-mac.test.ts › keeps live notes after an unwritten move followed by copy and delete into a third folder (receiving scan first: %s)`, `device/folders-one-mac.test.ts › keeps a pending edit in the receiving folder when an unwritten note arrives`, `device/folders-one-mac.test.ts › makes a safe duplicate when an adopted unwritten note moves to a third folder`, `› keeps live notes when a new note moves on to a third folder %s`.
 
 ### `folders/move-no-second-item`
 
-When a bound file moves to another registered folder on the device, a device MUST NOT create an item for the moved file, unless the receiving folder binds another file to the item.
+When an ID-less Markdown arrival meets the conditions in `folders/moved-arrival-markdown-unwritten`, a device MUST NOT create a second item for that file.
 
-**Tests:** `device/folders-one-mac.test.ts › does not trash a file moved to another folder`, `› follows a move by copy and delete, by id and by bytes`, `› keeps one item when a file item both folders hold moves between them and the %s folder scans first`, `› tells a copy into another folder from a move`, `› keeps one item when a new note moves before its id line is written to another folder whose search %s`, `› keeps one item when a new note moves to another folder while its create waits offline`, `› makes separate items of identical new notes moved to another folder`, `› keeps the note of a text note moved to another folder as Markdown, makes a copy a new item, and keeps its words`, `› keeps one item when a new note moves on to a third folder %s`, `› makes no second item when a new note's create lands while the folder it moved to asks the server for it`.
+**Reason:** a note moved before its create landed or while it has unsent writes may become a second item, which keeps every edit.
+
+**Tests:** `device/folders-one-mac.test.ts › keeps one item when a new note moves before its id line is written to another folder whose search %s`, `device/folders-one-mac.test.ts › makes separate items of identical new notes moved to another folder`.
 
 ### `folders/move-keeps-edits`
 
-When a bound file moves to another registered folder on the device, a device MUST deliver to the item every change the person made to the file before and after the move.
+When a bound note moves to another registered folder on the device, a device MUST preserve each edit made before or after the move in a live item or in the file and its unsent writes until the server accepts it.
 
-**Tests:** `device/folders-one-mac.test.ts › does not trash a file moved to another folder`, `› keeps one item when a new note moves before its id line is written to another folder whose search %s`, `› keeps one item when a new note moves to another folder while its create waits offline`, `› keeps an edit its folder had not sent yet when a new note moves to another folder`, `› keeps an edit the server refused when a new note moves to another folder`.
+**Tests:** `device/folders-one-mac.test.ts › keeps one item when a new note moves before its id line is written to another folder whose search %s`, `device/folders-one-mac.test.ts › keeps every live item and unsent edit when an unwritten note moves as %s`, `device/folders-one-mac.test.ts › keeps both live items and every edit when a note moves before its offline create lands`, `device/folders-one-mac.test.ts › keeps the newer edit when the receiving folder holds an older server version`, `device/folders-one-mac.test.ts › rechecks unsent writes after reading the moved item from the server`, `device/folders-one-mac.test.ts › keeps an edit the server refused when a new note moves to another folder whose search %s`, `device/folders-one-mac.test.ts › keeps a pending edit in the receiving folder when an unwritten note arrives`, `device/folders-one-mac.test.ts › makes a safe duplicate when an adopted unwritten note moves to a third folder`.
 
 ## Watching every folder
 

@@ -3668,6 +3668,19 @@ mod tests {
     }
 
     #[test]
+    fn a_binding_without_id_history_cannot_prove_the_file_was_unwritten() {
+        let writes = state::Writes::default();
+        let saved = serde_json::to_value(&writes).unwrap();
+        let read: state::Writes = serde_json::from_value(saved.clone()).unwrap();
+        assert!(!read.id_carried);
+
+        let mut unknown = saved;
+        unknown.as_object_mut().unwrap().remove("id_carried");
+        let read: state::Writes = serde_json::from_value(unknown).unwrap();
+        assert!(read.id_carried);
+    }
+
+    #[test]
     fn a_pull_writes_back_no_file_moved_since_the_scan() {
         // Where the file goes, and the edit the person made in it as it went.
         for (to, edit) in [
@@ -3724,6 +3737,15 @@ mod tests {
         for written in [true, false] {
             let (dir, folder) = settled_notes(&["a.md"]);
             let item_id = landed(&folder, "a.md");
+            folder
+                .core
+                .conn()
+                .unwrap()
+                .execute(
+                    "UPDATE queue SET verdict = 'accepted', sent = 1 WHERE item_id = ?1",
+                    [&item_id],
+                )
+                .unwrap();
             if written {
                 // Shown before the delete, so the item has moved on in
                 // nothing the file shows once it is gone.

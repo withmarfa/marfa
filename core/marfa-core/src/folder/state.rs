@@ -55,15 +55,13 @@ pub struct Writes {
     pub deferred_title: Option<DeferredTitle>,
     /// Set once the file carried its item's `marfa_id` line, as a pull wrote
     /// it or a scan read it. Until then a Markdown file without the line is
-    /// still the note's own file, moved before the line was written.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    /// still the note's own file, moved before the line was written. Missing
+    /// history cannot prove this, so only an explicit false permits adoption.
+    #[serde(default = "unknown_id_history")]
     pub id_carried: bool,
-    /// The identities the file had in other folders on this machine, where
-    /// this folder took it as another folder's moved file, newest last. A
-    /// pull that writes the file anew changes its identity, so each folder it
-    /// passed through finds its file by these, however far it has moved on.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub taken_as: Vec<String>,
+    /// Prevents a second id-less adoption through this folder.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub adopted: bool,
     /// The properties the scan that made the item gave it beside what the
     /// file showed: the title it took from the file's name and the folder's
     /// defaults. A file deleted before a pull first wrote them into it never
@@ -73,23 +71,8 @@ pub struct Writes {
     pub inferred: serde_json::Map<String, serde_json::Value>,
 }
 
-/// The most identities a file's binding keeps from the folders it was moved
-/// through, so a file moved round and round does not grow its binding.
-const TAKEN_AS_KEPT: usize = 16;
-
-impl Writes {
-    /// What a folder taking the file from `theirs` keeps of where it was:
-    /// every identity `theirs` kept, and the one it had there.
-    pub fn taken_from(theirs: &Bound) -> Vec<String> {
-        let mut taken = theirs.writes.taken_as.clone();
-        if let Some(identity) = &theirs.identity {
-            taken.retain(|kept| kept != identity);
-            taken.push(identity.clone());
-        }
-        let over = taken.len().saturating_sub(TAKEN_AS_KEPT);
-        taken.drain(..over);
-        taken
-    }
+fn unknown_id_history() -> bool {
+    true
 }
 
 /// The title line a file went on showing, which is no edit of the title.
@@ -232,11 +215,6 @@ pub fn untaken_read_version(content_hash: &str) -> Option<i64> {
         .strip_prefix(UNTAKEN_READ_PREFIX)
         .and_then(|version| version.parse().ok())
 }
-
-/// A content hash no bytes have, for a file taken from another folder on
-/// this machine whose bytes the server never took: the file reads as
-/// changed, so its bytes are sent again rather than read as agreed.
-pub const UNAGREED: &str = "unagreed";
 
 /// Also pins the item's row, so the copy keeps it whatever the search says
 /// of it.
