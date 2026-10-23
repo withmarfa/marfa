@@ -3134,14 +3134,14 @@ mod tests {
                     }
                     let fence = "a".repeat(64);
                     let instance = "00000000-0000-7000-8000-000000000000";
-                    let proof = if head.to_ascii_lowercase().contains("x-marfa-read-view:") {
-                        format!("X-Marfa-Read-View: {fence}\r\nCache-Control: no-store\r\n")
+                    let proof = if head.to_ascii_lowercase().contains("x-marfa-reach:") {
+                        format!("X-Marfa-Reach: {fence}\r\nCache-Control: no-store\r\n")
                     } else {
                         String::new()
                     };
                     let marker = |kind: &str| {
                         format!(
-                            "event: {kind}\ndata: {{\"event_type\":\"{kind}\",\"cursor\":\"10\",\"instance_id\":\"{instance}\",\"read_view\":\"{fence}\"}}\n\n"
+                            "event: {kind}\ndata: {{\"event_type\":\"{kind}\",\"cursor\":\"10\",\"instance_id\":\"{instance}\",\"reach\":\"{fence}\"}}\n\n"
                         )
                     };
                     let json = |body: &str| {
@@ -3167,7 +3167,7 @@ mod tests {
                                 counted.fetch_add(1, Ordering::SeqCst);
                                 while stream.write_all(b": keepalive\n\n").is_ok() {
                                     if changed.load(Ordering::SeqCst) {
-                                        let _ = stream.write_all(b"event: read_view_changed\ndata: {\"event_type\":\"read_view_changed\"}\n\n");
+                                        let _ = stream.write_all(b"event: reach_changed\ndata: {\"event_type\":\"reach_changed\"}\n\n");
                                         break;
                                     }
                                     std::thread::sleep(std::time::Duration::from_millis(50));
@@ -4355,7 +4355,7 @@ mod tests {
     }
 
     #[test]
-    fn read_view_expiry_ends_subscription_once_with_typed_error() {
+    fn reach_expiry_ends_subscription_once_with_typed_error() {
         let server = quiet();
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("core.sqlite").display().to_string();
@@ -4376,7 +4376,7 @@ mod tests {
             .recv_timeout(std::time::Duration::from_secs(5))
             .unwrap();
         assert!(
-            matches!(error, Some(MarfaError::CopyExpired { reason, .. }) if reason == "read_view_changed")
+            matches!(error, Some(MarfaError::CopyExpired { reason, .. }) if reason == "reach_changed")
         );
         assert!(matches!(
             reader.status().unwrap().hydration,

@@ -16,8 +16,8 @@ export interface EventStream {
 export interface OpenEventStreamOptions {
   /** Sent as the `Last-Event-ID` request header when set. */
   lastEventId?: string;
-  /** The copy stream's expected read view. */
-  readView?: string;
+  /** The copy stream's expected reach. */
+  reach?: string;
   /** Additional raw headers, retaining duplicates for grammar assertions. */
   headers?: Array<[string, string]>;
   /**
@@ -78,8 +78,8 @@ export async function openEventStream(
   if (options.lastEventId !== undefined) {
     headers.push(["Last-Event-ID", options.lastEventId]);
   }
-  if (options.readView !== undefined) {
-    headers.push(["X-Marfa-Read-View", options.readView]);
+  if (options.reach !== undefined) {
+    headers.push(["X-Marfa-Reach", options.reach]);
   }
   headers.push(...(options.headers ?? []));
   const connectGuard =

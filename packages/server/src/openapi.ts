@@ -10,8 +10,8 @@ import { MarfaError, ErrorCode } from "@withmarfa/shared";
 import {
   conditionalReadBoundary,
   CONDITIONAL_READ_OPERATIONS,
-  invalidReadViewRequest,
-} from "./middleware/read-view.js";
+  invalidReachRequest,
+} from "./middleware/reach.js";
 import type { MiddlewareHandler } from "hono";
 import type { AppEnv } from "./middleware/auth.js";
 import { requireDeclaredCredential } from "./middleware/auth.js";
@@ -59,9 +59,9 @@ function withRouteGuards<R extends RouteConfig>(route: R): R {
       : async (c, next) => {
           if (
             c.req.method === "GET" &&
-            c.req.header("X-Marfa-Read-View") !== undefined
+            c.req.header("X-Marfa-Reach") !== undefined
           )
-            throw invalidReadViewRequest(
+            throw invalidReachRequest(
               "This door does not support conditional copy reads",
             );
           await next();

@@ -255,15 +255,15 @@ describe("the API description follows API-STYLE.md", () => {
   });
 
   it("gives each shared parameter one text everywhere", () => {
-    // On the stream the read view resumes a copy rather than certifying one
+    // On the stream the reach resumes a copy rather than certifying one
     // read, so it carries its own text, as API-STYLE.md allows.
-    const ownMeaning = new Set(["GET /events X-Marfa-Read-View"]);
+    const ownMeaning = new Set(["GET /events X-Marfa-Reach"]);
     const texts = new Map<string, Set<string>>();
     for (const { key, operation } of operations()) {
       for (const parameter of (operation.parameters ?? []) as Json[]) {
         const name = String(parameter.name);
         if (
-          !["limit", "cursor", "Idempotency-Key", "X-Marfa-Read-View"].includes(
+          !["limit", "cursor", "Idempotency-Key", "X-Marfa-Reach"].includes(
             name,
           )
         )

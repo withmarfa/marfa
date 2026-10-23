@@ -861,7 +861,7 @@ describe("how a hydration completes", () => {
     );
     if (!hydrated.ok) {
       expect(hydrated.refusal.code).toBe("copy_expired");
-      expect(hydrated.refusal.raw).toContain("read_view_invalid");
+      expect(hydrated.refusal.raw).toContain("reach_invalid");
     }
     expect(
       server.requests.filter((request) => request.pathname === "/items").length,

@@ -74,7 +74,7 @@ fn ask(http: &Http, door: usize) -> crate::Result<()> {
                 true,
             )
             .map(|_| ()),
-        7 => http.for_view(scripted::FENCE).types().map(|_| ()),
+        7 => http.for_reach(scripted::FENCE).types().map(|_| ()),
         8 => http.to_let_go().clone().types().map(|_| ()),
         _ => unreachable!(),
     }
@@ -134,7 +134,7 @@ fn relocation_gates_every_transport_door_and_clone_with_an_anonymous_identity() 
     assert_eq!(server.asked(), 9);
     for request in server.seen("/") {
         assert_eq!(request.authorization, None);
-        assert_eq!(request.read_view, None);
+        assert_eq!(request.reach, None);
         assert!(request.body.is_empty());
     }
     assert_eq!(core.queue().unwrap(), before);
@@ -198,7 +198,7 @@ fn relocation_refused_or_malformed_identity_never_renews_or_sends_credentials() 
             server
                 .seen("/")
                 .iter()
-                .all(|request| request.authorization.is_none() && request.read_view.is_none())
+                .all(|request| request.authorization.is_none() && request.reach.is_none())
         );
         assert_eq!(origin(&core), OLD_ORIGIN);
         assert_eq!(core.queue().unwrap(), before);
@@ -524,7 +524,7 @@ fn relocation_can_cancel_a_waiter_while_another_clone_confirms() {
 pub(crate) fn current_copy(core: &Core) {
     let conn = core.conn().unwrap();
     store::meta_set(&conn, store::META_EVENT_CURSOR, "10").unwrap();
-    store::meta_set(&conn, crate::read_view::FENCE, scripted::FENCE).unwrap();
+    store::meta_set(&conn, crate::reach::FENCE, scripted::FENCE).unwrap();
     store::meta_set(&conn, store::META_SLICE_TYPES, "[\"core.note\"]").unwrap();
     store::meta_set(&conn, store::META_SLICE_TIER, "library").unwrap();
 }

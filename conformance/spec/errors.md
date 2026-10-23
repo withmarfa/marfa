@@ -1,6 +1,6 @@
 # Errors
 
-What every refusal looks like, and the refusals no other chapter owns. A refusal that belongs to one operation is stated with that operation, under its code. This chapter states the envelope, the closed set of codes, the headers a refusal carries, the answers to a request that is not read as JSON, to a path no operation serves, to a write that meets contention, to a volume with no room, to a fault and to an `Idempotency-Key` that cannot be served, what a refusal names of a missing grant or of an item in the bin, the limits a stream and a housekeeping job meet, a type whose parent chain cannot be resolved, and what the server reports of a failed database statement. The `409` envelopes of a stale write are `versions.md`'s, the answer to a read view that has changed is `read-views.md`'s, and the answer to a write naming another instance is `instance.md`'s.
+What every refusal looks like, and the refusals no other chapter owns. A refusal that belongs to one operation is stated with that operation, under its code. This chapter states the envelope, the closed set of codes, the headers a refusal carries, the answers to a request that is not read as JSON, to a path no operation serves, to a write that meets contention, to a volume with no room, to a fault and to an `Idempotency-Key` that cannot be served, what a refusal names of a missing grant or of an item in the bin, the limits a stream and a housekeeping job meet, a type whose parent chain cannot be resolved, and what the server reports of a failed database statement. The `409` envelopes of a stale write are `versions.md`'s, the answer to a reach that has changed is `reach.md`'s, and the answer to a write naming another instance is `instance.md`'s.
 
 ## The envelope
 
@@ -276,9 +276,9 @@ When the server answers `422 idempotency_result_not_retained`, the server MUST N
 
 ### `errors/unmatched-path`
 
-When a request other than `OPTIONS` names a path no operation serves, and is neither a `GET` or `POST` under `/auth/`, which the sign-in library answers, nor a `GET` that carries `X-Marfa-Read-View`, the server MUST answer `404 not_found`, to a caller with a credential and to one without.
+When a request other than `OPTIONS` names a path no operation serves, and is neither a `GET` or `POST` under `/auth/`, which the sign-in library answers, nor a `GET` that carries `X-Marfa-Reach`, the server MUST answer `404 not_found`, to a caller with a credential and to one without.
 
-**Tests:** `compliance/unmatched-paths.test.ts › answers a GET to a path no door serves 404 not_found in the envelope, to a caller with a credential and to one without`, `› answers a method other than GET to a path no door serves 404 not_found even when it carries X-Marfa-Read-View`, `compliance/instance.test.ts › answers 404 not_found in the standard envelope for a path it does not serve`.
+**Tests:** `compliance/unmatched-paths.test.ts › answers a GET to a path no door serves 404 not_found in the envelope, to a caller with a credential and to one without`, `› answers a method other than GET to a path no door serves 404 not_found even when it carries X-Marfa-Reach`, `compliance/instance.test.ts › answers 404 not_found in the standard envelope for a path it does not serve`.
 
 ### `errors/unmatched-method`
 
@@ -286,13 +286,13 @@ When a request other than `OPTIONS` names a method no operation serves on a path
 
 **Tests:** `compliance/unmatched-paths.test.ts › answers a method no door serves on a path another method serves 404 not_found, not 405`, `› answers a PATCH to an item's metadata 404 not_found, under an Idempotency-Key it then keeps no record of, and writes nothing`.
 
-### `errors/unmatched-read-view`
+### `errors/unmatched-reach`
 
-When a `GET` that names a path no operation serves carries `X-Marfa-Read-View`, the server MUST answer `400 validation_error`, whether or not the request carries a credential.
+When a `GET` that names a path no operation serves carries `X-Marfa-Reach`, the server MUST answer `400 validation_error`, whether or not the request carries a credential.
 
-**Reason:** the header is refused where no conditional read exists, before the credential is asked for. It is the first step of `read-views/conditional-order`.
+**Reason:** the header is refused where no conditional read exists, before the credential is asked for. It is the first step of `reach/conditional-order`.
 
-**Tests:** `compliance/unmatched-paths.test.ts › answers a GET to a path no door serves 400 validation_error when it carries X-Marfa-Read-View, to a caller with a credential and to one without`.
+**Tests:** `compliance/unmatched-paths.test.ts › answers a GET to a path no door serves 400 validation_error when it carries X-Marfa-Reach, to a caller with a credential and to one without`.
 
 ## Contention on the write lock
 
@@ -754,7 +754,7 @@ Every code the server can answer is a row of the table below, which is written f
 | `instance_changed`                | 409                 | A request names another instance in `X-Marfa-Instance-Id`. Nothing is written. Rebuild the working copy from the instance at this address.                                                     |
 | `link_taken`                      | 409                 | A write would give an item a link that another item of its type holds.                                                                                                                         |
 | `owner_exists`                    | 409                 | The instance already has an owner.                                                                                                                                                             |
-| `read_view_changed`               | 409                 | A conditional copy read or copy stream carries a proof for a read view that has since changed. Rebuild the working copy.                                                                       |
+| `reach_changed`                   | 409                 | A conditional copy read or copy stream carries a proof for a reach that has since changed. Rebuild the working copy.                                                                           |
 | `source_id_conflict`              | 409                 | A change to `source_id` names a natural key that another item already holds under the same source.                                                                                             |
 | `type_already_exists`             | 409                 | A type is already registered under this identifier.                                                                                                                                            |
 | `type_chain_unresolvable`         | 409                 | The stored parent chain of a type is circular or too deep to resolve. `PUT /types/{id}` still accepts a corrected schema.                                                                      |

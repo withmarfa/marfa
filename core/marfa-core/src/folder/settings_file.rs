@@ -360,7 +360,7 @@ impl Folder {
             }
             Err(error) => return Err(error),
         }
-        let context = crate::read_view::Context::capture(&*self.core.conn()?)?;
+        let context = crate::reach::Context::capture(&*self.core.conn()?)?;
         let answer =
             crate::catch_up::write_naming_instance(&self.core, self.core.http()?, |http| {
                 http.send(&Outgoing {
@@ -418,7 +418,7 @@ impl Folder {
             })?
             .ok_or_else(|| CoreError::NotFound {
                 code: "item_not_found".into(),
-                message: "The accepted folder settings are not returned to this read view.".into(),
+                message: "The accepted folder settings are not returned to this reach.".into(),
             })?;
         {
             let mut conn = self.core.conn()?;

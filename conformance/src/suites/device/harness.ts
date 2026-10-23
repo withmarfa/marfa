@@ -30,7 +30,7 @@ import {
   edgesPage,
   copyHeadRead,
   copyReplay,
-  SCRIPTED_READ_VIEW,
+  SCRIPTED_REACH,
   itemsPage,
   typeCatalog,
   wireEdge,
@@ -368,7 +368,7 @@ export function scriptHydration(
       if (
         request.query.toString() !== "edges=all&copy=1" ||
         request.headers["last-event-id"] !== undefined ||
-        request.headers["x-marfa-read-view"] !== undefined
+        request.headers["x-marfa-reach"] !== undefined
       )
         return refusal(
           400,
@@ -379,7 +379,7 @@ export function scriptHydration(
     },
     (request) => {
       const cursor = request.headers["last-event-id"];
-      const fence = request.headers["x-marfa-read-view"];
+      const fence = request.headers["x-marfa-reach"];
       if (request.query.toString() !== "edges=all&copy=1")
         return refusal(400, "validation_error", "invalid copy stream query");
       if (cursor === undefined && fence === undefined)
@@ -388,7 +388,7 @@ export function scriptHydration(
         cursor === undefined ||
         !/^(0|[1-9][0-9]*)$/.test(cursor) ||
         BigInt(cursor) > 9223372036854775807n ||
-        fence !== SCRIPTED_READ_VIEW
+        fence !== SCRIPTED_REACH
       )
         return refusal(400, "validation_error", "invalid copy replay request");
       return copyInstance(copyReplay(options.head, []));

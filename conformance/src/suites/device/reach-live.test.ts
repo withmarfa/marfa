@@ -17,7 +17,7 @@ let client: MarfaClient;
 let ctx: TestContext;
 let apiUrl: string;
 beforeAll(async () => {
-  ({ client, ctx, apiUrl } = await createTestContext("device", "read-view"));
+  ({ client, ctx, apiUrl } = await createTestContext("device", "reach"));
 });
 afterAll(async () => {
   if (ctx) await cleanup(ctx);
@@ -50,7 +50,7 @@ it.each(["retyping", "grant narrowing"])(
     });
     expect(seed.ok, JSON.stringify(seed.error)).toBe(true);
     trackItem(ctx, seed.data.item.id);
-    const store = newStore("read-view-live");
+    const store = newStore("reach-live");
     const device = new CliDevice({
       binary: requireBinary(),
       store,
@@ -105,7 +105,7 @@ it.each(["retyping", "grant narrowing"])(
       expect(caught.ok).toBe(false);
       if (!caught.ok) {
         expect(caught.refusal.code).toBe("copy_expired");
-        expect(caught.refusal.raw).toContain("read_view_changed");
+        expect(caught.refusal.raw).toContain("reach_changed");
       }
       expect(value(await device.status()).hydration).toBe("expired");
       expect((await device.list()).ok).toBe(false);
@@ -176,7 +176,7 @@ it("keeps real direct pins separate from source-filtered listing membership", as
     trackItem(ctx, made.data.item.id);
     ids.push(made.data.item.id);
   }
-  const store = newStore("read-view-pins");
+  const store = newStore("reach-pins");
   const device = new CliDevice({
     binary: requireBinary(),
     store,
@@ -226,7 +226,7 @@ it("ends a real held stream when grants narrow, keeping unsent work", async () =
   });
   expect(seed.ok, JSON.stringify(seed.error)).toBe(true);
   trackItem(ctx, seed.data.item.id);
-  const store = newStore("read-view-follow");
+  const store = newStore("reach-follow");
   const device = new CliDevice({
     binary: requireBinary(),
     store,

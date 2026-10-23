@@ -38,9 +38,9 @@ function app(options: EventRoutesOptions = {}): Hono<AppEnv> {
   app.route(
     "/events",
     eventRoutes(ctx.storage, {
-      readView: {
+      reach: {
         instanceId,
-        signingKey: deriveKey(ctx.config.authSecret, SECRET_INFO.readView),
+        signingKey: deriveKey(ctx.config.authSecret, SECRET_INFO.reach),
       },
       ...options,
     }),
@@ -85,7 +85,7 @@ async function fence(key = ctx.workingKey): Promise<string> {
   const { text } = await readSse(res, {
     until: (text) => text.includes("event: stream_live"),
   });
-  return marker(text, "stream_live").read_view as string;
+  return marker(text, "stream_live").reach as string;
 }
 async function workingKey() {
   const stored = await ctx.storage.keys.validate(
@@ -109,7 +109,7 @@ describe("copy stream snapshot decisions", () => {
     const { text: ordinary } = await readSse(normal, {
       until: (text) => text.includes("event: stream_live"),
     });
-    expect(marker(ordinary, "stream_live")).not.toHaveProperty("read_view");
+    expect(marker(ordinary, "stream_live")).not.toHaveProperty("reach");
     expect(await fence()).toMatch(/^[a-f0-9]{64}$/);
   });
   it("emits only incomplete when the opening head times out, including a late completion", async () => {
@@ -155,7 +155,7 @@ describe("copy stream snapshot decisions", () => {
     let change: Promise<unknown> | undefined;
     try {
       const { text } = await readSse(res, {
-        until: (text) => text.includes("event: read_view_changed"),
+        until: (text) => text.includes("event: reach_changed"),
         onChunk: (text) => {
           if (!change && text.includes("event: stream_live"))
             change = ctx.storage.keys.update(stored.id, {
@@ -164,8 +164,8 @@ describe("copy stream snapshot decisions", () => {
         },
       });
       await change;
-      expect(marker(text, "read_view_changed")).toEqual({
-        event_type: "read_view_changed",
+      expect(marker(text, "reach_changed")).toEqual({
+        event_type: "reach_changed",
       });
       expect(text.split("event: stream_live")).toHaveLength(2);
     } finally {
@@ -184,17 +184,17 @@ describe("copy stream snapshot decisions", () => {
       "/events?edges=all&copy=1",
       {
         key: ctx.workingKey,
-        headers: { "Last-Event-ID": "0", "X-Marfa-Read-View": proof },
+        headers: { "Last-Event-ID": "0", "X-Marfa-Reach": proof },
       },
     );
     try {
       await note("writer completes with replay queue blocked");
       await ctx.storage.keys.update(stored.id, { type_permissions: {} });
       const { text } = await readSse(res, {
-        until: (text) => text.includes("event: read_view_changed"),
+        until: (text) => text.includes("event: reach_changed"),
       });
-      expect(marker(text, "read_view_changed")).toEqual({
-        event_type: "read_view_changed",
+      expect(marker(text, "reach_changed")).toEqual({
+        event_type: "reach_changed",
       });
       expect(text).not.toContain("event: stream_live");
       expect(text).not.toContain("writer completes with replay queue blocked");
@@ -258,7 +258,7 @@ describe("copy stream snapshot decisions", () => {
         "/events?edges=all&copy=1",
         {
           key: ctx.workingKey,
-          headers: { "Last-Event-ID": "0", "X-Marfa-Read-View": proof },
+          headers: { "Last-Event-ID": "0", "X-Marfa-Reach": proof },
         },
       );
       expect(res.status).toBe(409);
@@ -288,7 +288,7 @@ describe("copy stream snapshot decisions", () => {
     try {
       const opening = request(viewer, "GET", "/events?edges=all&copy=1", {
         key: ctx.workingKey,
-        headers: { "Last-Event-ID": "0", "X-Marfa-Read-View": proof },
+        headers: { "Last-Event-ID": "0", "X-Marfa-Reach": proof },
       });
       await parked.reached;
       await note("arrived before capture");
@@ -309,7 +309,7 @@ describe("copy stream snapshot decisions", () => {
       const { text } = await readSse(fresh, {
         until: (text) => text.includes("event: stream_live"),
       });
-      expect(marker(text, "stream_live").read_view).toBe(proof);
+      expect(marker(text, "stream_live").reach).toBe(proof);
     } finally {
       parked.open();
       ctx.storage.runInReadSnapshot = real;
@@ -335,18 +335,18 @@ describe("copy stream snapshot decisions", () => {
     try {
       const res = await request(app(), "GET", "/events?edges=all&copy=1", {
         key: ctx.workingKey,
-        headers: { "Last-Event-ID": String(head), "X-Marfa-Read-View": proof },
+        headers: { "Last-Event-ID": String(head), "X-Marfa-Reach": proof },
       });
       const reading = readSse(res, {
-        until: (text) => text.includes("event: read_view_changed"),
+        until: (text) => text.includes("event: reach_changed"),
       });
       await parked.reached;
       expect(await ctx.storage.eventLog.getAfter(head, 500)).toEqual([]);
       await ctx.storage.keys.update(stored.id, { type_permissions: {} });
       parked.open();
       const { text } = await reading;
-      expect(marker(text, "read_view_changed")).toEqual({
-        event_type: "read_view_changed",
+      expect(marker(text, "reach_changed")).toEqual({
+        event_type: "reach_changed",
       });
       expect(text).not.toContain("event: stream_live");
       expect(text).not.toMatch(/^id:/m);
@@ -403,12 +403,12 @@ describe("copy stream snapshot decisions", () => {
       classified.open();
       ctx.storage.keys.validate = realKey;
       const { text } = await readSse(res, {
-        until: (text) => text.includes("event: read_view_changed"),
+        until: (text) => text.includes("event: reach_changed"),
       });
       expect(text).not.toContain("held release witness");
       expect(text).not.toContain("event: stream_live");
-      expect(marker(text, "read_view_changed")).toEqual({
-        event_type: "read_view_changed",
+      expect(marker(text, "reach_changed")).toEqual({
+        event_type: "reach_changed",
       });
     } finally {
       parkedHead.open();
@@ -494,7 +494,7 @@ describe("copy stream snapshot decisions", () => {
     try {
       const res = await request(app(), "GET", "/events?edges=all&copy=1", {
         key: ctx.workingKey,
-        headers: { "Last-Event-ID": String(after), "X-Marfa-Read-View": proof },
+        headers: { "Last-Event-ID": String(after), "X-Marfa-Reach": proof },
       });
       const reading = readSse(res, {
         until: (text) => text.includes("event: stream_live"),
@@ -585,8 +585,8 @@ describe("copy stream snapshot decisions", () => {
       hashApiKey(seeded.token.slice("marfa_at_".length), "test-salt"),
     );
     if (!row?.userId) throw new Error("Seeded bearer missing");
-    const original = "marfa_at_read_view_original";
-    const refresh = "marfa_rt_read_view_original";
+    const original = "marfa_at_reach_original";
+    const refresh = "marfa_rt_reach_original";
     await ctx.storage.oauthProvider!.mintTokenPair({
       accessTokenHash: hashApiKey(
         original.slice("marfa_at_".length),
@@ -637,10 +637,10 @@ describe("copy stream snapshot decisions", () => {
     try {
       const read = await request(ctx.app, "GET", "/types", {
         key: body.access_token!,
-        headers: { "X-Marfa-Read-View": proof },
+        headers: { "X-Marfa-Reach": proof },
       });
       expect(read.status).toBe(200);
-      expect(read.headers.get("X-Marfa-Read-View")).toBe(proof);
+      expect(read.headers.get("X-Marfa-Reach")).toBe(proof);
       expect(adapterReads).toBe(0);
     } finally {
       Object.defineProperty(ctx.storage, "betterAuthDb", descriptor);

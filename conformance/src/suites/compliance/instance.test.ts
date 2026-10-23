@@ -241,9 +241,9 @@ describe("the instance", () => {
     const refusals: [string, string, Record<string, string>, number][] = [
       ["a request with no credential", "/items", {}, 401],
       [
-        "a read view the sign-in page refuses",
+        "a reach the sign-in page refuses",
         "/auth/sign-in",
-        { "X-Marfa-Read-View": "x" },
+        { "X-Marfa-Reach": "x" },
         400,
       ],
       ["a query key the root does not take", "/?not_a_key=1", {}, 400],

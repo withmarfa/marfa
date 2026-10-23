@@ -10,12 +10,12 @@ import { tapStream } from "../../utils/stream-tap.js";
 
 /**
  * A conditional read answers from one moment: a write that changes the read
- * view while the read waits is either wholly before the answer or wholly
+ * reach while the read waits is either wholly before the answer or wholly
  * after it, and the certificate on the answer says which
- * (`read-views/conditional-coherent`).
+ * (`reach/conditional-coherent`).
  *
  * The fixture holds a conditional read inside its snapshot, after the read
- * view has been judged and before the door reads (`hold:read-snapshot`), lands
+ * reach has been judged and before the door reads (`hold:read-snapshot`), lands
  * writes that retype an item and tag it, and lets the read go. The answer
  * may be `409`; an answer of `200` must show the item as one state or the
  * other, whichever its certificate names, and never as a mixture.
@@ -25,7 +25,7 @@ let server: FreshServer;
 let working: MarfaClient;
 
 beforeAll(async () => {
-  server = await bootFreshServer("read-view-coherent");
+  server = await bootFreshServer("reach-coherent");
   working = new MarfaClient({
     baseUrl: server.apiUrl,
     apiKey: server.workingKey,
@@ -36,7 +36,7 @@ afterAll(async () => {
   await server.stop();
 }, FRESH_SERVER_TIMEOUT_MS);
 
-async function readView(): Promise<string> {
+async function reach(): Promise<string> {
   const tap = await tapStream(server.apiUrl, server.workingKey, {
     query: [
       ["edges", "all"],
@@ -50,9 +50,9 @@ async function readView(): Promise<string> {
     );
     return (
       events.find((event) => event.event === "stream_live")!.data as {
-        read_view: string;
+        reach: string;
       }
-    ).read_view;
+    ).reach;
   } finally {
     await tap.close();
   }
@@ -65,22 +65,19 @@ interface Page {
   }>;
 }
 
-function conditionalList(
-  readViewHeader: string,
-  tag: string,
-): Promise<Response> {
+function conditionalList(reachHeader: string, tag: string): Promise<Response> {
   return fetch(
     `${server.apiUrl}/items?include=metadata&tags=${tag}&limit=100`,
     {
       headers: {
         Authorization: `Bearer ${server.workingKey}`,
-        "X-Marfa-Read-View": readViewHeader,
+        "X-Marfa-Reach": reachHeader,
       },
     },
   );
 }
 
-describe("a conditional read while a write that changes the read view lands", () => {
+describe("a conditional read while a write that changes the reach lands", () => {
   it("answers 409, or an answer that is wholly before the write or wholly after it", async () => {
     const tag = "coherence";
     const made = await working.createItem({
@@ -96,7 +93,7 @@ describe("a conditional read while a write that changes the read view lands", ()
       tags: [tag],
     });
     expect(sibling.ok).toBe(true);
-    const before = await readView();
+    const before = await reach();
 
     await server.setFault("hold:read-snapshot");
     const reading = conditionalList(before, tag);
@@ -111,18 +108,18 @@ describe("a conditional read while a write that changes the read view lands", ()
     expect(moved.ok, JSON.stringify(moved.error)).toBe(true);
     const tagged = await working.addTags(item.id, ["after"]);
     expect(tagged.ok, JSON.stringify(tagged.error)).toBe(true);
-    const after = await readView();
-    // The witness: the write did change the read view.
+    const after = await reach();
+    // The witness: the write did change the reach.
     expect(after).not.toBe(before);
 
     await server.clearFault("hold:read-snapshot");
     const answer = await reading;
     if (answer.status === 409) {
-      expect(answer.headers.get("X-Marfa-Read-View")).toBeNull();
+      expect(answer.headers.get("X-Marfa-Reach")).toBeNull();
       return;
     }
     expect(answer.status).toBe(200);
-    const certificate = answer.headers.get("X-Marfa-Read-View");
+    const certificate = answer.headers.get("X-Marfa-Reach");
     const page = (await answer.json()) as Page;
     const row = page.data.find((candidate) => candidate.item.id === item.id);
     expect(

@@ -703,7 +703,7 @@ fn asks_to_remove(dir: &Path, going: &[String]) -> Result<bool, CliError> {
 fn rebuilt_line(rebuilt: Option<&marfa_core::HydrateReport>) -> Option<String> {
     rebuilt.map(|rebuilt| {
         format!(
-            "the server's read view changed, so the copy was hydrated again ({} item(s)) before the waiting writes were sent",
+            "the server's reach changed, so the copy was hydrated again ({} item(s)) before the waiting writes were sent",
             rebuilt.items
         )
     })

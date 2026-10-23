@@ -37,7 +37,7 @@ async function tcp(path: string, proof?: string): Promise<Response> {
   return fetch(`${origin}${path}`, {
     headers: {
       Authorization: `Bearer ${ctx.workingKey}`,
-      ...(proof === undefined ? {} : { "X-Marfa-Read-View": proof }),
+      ...(proof === undefined ? {} : { "X-Marfa-Reach": proof }),
     },
   });
 }
@@ -53,28 +53,28 @@ async function proof(): Promise<string> {
   const tuple = JSON.parse(line!.slice(6)) as {
     cursor: string;
     instance_id: string;
-    read_view: string;
+    reach: string;
   };
   expect(tuple.instance_id).toBe(
     ((await (await tcp("/")).json()) as { instance_id: string }).instance_id,
   );
-  expect(tuple.read_view).toMatch(/^[0-9a-f]{64}$/);
-  return tuple.read_view;
+  expect(tuple.reach).toMatch(/^[0-9a-f]{64}$/);
+  return tuple.reach;
 }
-describe("certified read views over TCP", () => {
+describe("certified reaches over TCP", () => {
   it("refuses copy grammar that an ordinary stream accepts", async () => {
     const res = await tcp("/events?copy=1");
     expect(res.status).toBe(400);
     expect(await res.json()).toMatchObject({
       error: { code: "validation_error" },
     });
-    expect(res.headers.has("X-Marfa-Read-View")).toBe(false);
+    expect(res.headers.has("X-Marfa-Reach")).toBe(false);
   });
   it("certifies pages and resource absence only on supported conditional doors", async () => {
     const fence = await proof();
     const page = await tcp("/items?include=metadata", fence);
     expect(page.status).toBe(200);
-    expect(page.headers.get("X-Marfa-Read-View")).toBe(fence);
+    expect(page.headers.get("X-Marfa-Reach")).toBe(fence);
     expect(page.headers.get("Cache-Control")).toBe("no-store");
     expect(await page.json()).toMatchObject({ data: [], next_cursor: null });
     const missing = await tcp(
@@ -82,11 +82,11 @@ describe("certified read views over TCP", () => {
       fence,
     );
     expect(missing.status).toBe(404);
-    expect(missing.headers.get("X-Marfa-Read-View")).toBe(fence);
+    expect(missing.headers.get("X-Marfa-Reach")).toBe(fence);
     for (const path of ["/items", "/search", "/types/core.note", "/missing"]) {
       const invalid = await tcp(path, fence);
       expect(invalid.status, path).toBe(400);
-      expect(invalid.headers.has("X-Marfa-Read-View"), path).toBe(false);
+      expect(invalid.headers.has("X-Marfa-Reach"), path).toBe(false);
     }
   });
   it("compares before no-type refusal and emits no certificate on mismatch", async () => {
@@ -104,11 +104,11 @@ describe("certified read views over TCP", () => {
       expect(changed.status).toBe(409);
       expect(await changed.json()).toEqual({
         error: {
-          code: "read_view_changed",
-          message: "The read view changed. Rebuild the working copy.",
+          code: "reach_changed",
+          message: "The reach changed. Rebuild the working copy.",
         },
       });
-      expect(changed.headers.has("X-Marfa-Read-View")).toBe(false);
+      expect(changed.headers.has("X-Marfa-Reach")).toBe(false);
     } finally {
       await ctx.storage.keys.update(key.id, {
         type_permissions: key.type_permissions,

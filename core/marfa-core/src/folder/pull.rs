@@ -17,7 +17,7 @@ fn refuse_unless_held(conn: &rusqlite::Connection, item_id: &str) -> Result<()> 
     if crate::store::item_held(conn, item_id)? {
         Ok(())
     } else {
-        Err(crate::read_view::Context::changed())
+        Err(crate::reach::Context::changed())
     }
 }
 
@@ -39,7 +39,7 @@ fn journaled_for(conn: &rusqlite::Connection, path: &str, item_id: &str) -> Resu
 }
 
 struct Rendering<'a> {
-    context: std::cell::RefCell<crate::read_view::Context>,
+    context: std::cell::RefCell<crate::reach::Context>,
     catalog: &'a Catalog,
     edge_types: &'a EdgeTypes,
     names: &'a Names,
@@ -264,7 +264,7 @@ impl Folder {
             report.root_gone = Some(gone);
             return Ok(());
         }
-        let context = crate::read_view::Context::capture(&*self.core.conn()?)?;
+        let context = crate::reach::Context::capture(&*self.core.conn()?)?;
         state::settle_landings(&*self.core.conn()?, &self.root_dir)?;
         let settings = self.settings()?;
         let lists = settings.lists()?;
@@ -567,7 +567,7 @@ impl Folder {
             .collect();
         let mut waiting = Vec::new();
         context.same_copy(&*self.core.conn()?)?;
-        let filesystem = crate::read_view::Context::capture(&*self.core.conn()?)?;
+        let filesystem = crate::reach::Context::capture(&*self.core.conn()?)?;
         let rendering = Rendering {
             context: std::cell::RefCell::new(filesystem),
             catalog: &catalog,
@@ -600,7 +600,7 @@ impl Folder {
         if crate::fault::named("copy-changes-after-pull-effects").is_some() {
             static CALLS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
             if CALLS.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
-                crate::read_view::pins_changed(&*self.core.conn()?)?;
+                crate::reach::pins_changed(&*self.core.conn()?)?;
                 context.check(&*self.core.conn()?)?;
             }
         }
@@ -638,7 +638,7 @@ impl Folder {
         &self,
         item: &Item,
         want: &str,
-        context: &crate::read_view::Context,
+        context: &crate::reach::Context,
     ) -> Result<()> {
         if !self.keeps_permissions() {
             return Ok(());
@@ -689,7 +689,7 @@ impl Folder {
                 "second" => call == 1,
                 _ => true,
             } {
-                crate::read_view::pins_changed(&*self.core.conn()?)?;
+                crate::reach::pins_changed(&*self.core.conn()?)?;
             }
         }
         rendering.context.borrow().check(&*self.core.conn()?)?;
@@ -1350,7 +1350,7 @@ impl Folder {
         &self,
         item_id: &str,
         peers: &Peers<'_>,
-        context: &crate::read_view::Context,
+        context: &crate::reach::Context,
         report: &mut PullReport,
     ) -> Result<LetGo> {
         let Some(bound) = state::bound_to_item(&*self.core.conn()?, item_id)? else {
@@ -1422,7 +1422,7 @@ impl Folder {
         refused: &HashSet<String>,
         report: &mut PullReport,
     ) -> Result<()> {
-        let mut context = crate::read_view::Context::capture(&*self.core.conn()?)?;
+        let mut context = crate::reach::Context::capture(&*self.core.conn()?)?;
         let (bound, of) = {
             let conn = self.core.conn()?;
             (state::every_bound(&conn)?, state::bound_count(&conn)?)
@@ -1512,7 +1512,7 @@ impl Folder {
     pub(super) fn take_away(
         &self,
         row: &state::Bound,
-        context: &mut crate::read_view::Context,
+        context: &mut crate::reach::Context,
     ) -> Result<Option<usize>> {
         // First: a failure leaves the file and its binding, and the next pass
         // finds no placement left to end and takes the file away.
@@ -1817,7 +1817,7 @@ mod tests {
             {
                 let conn = core.conn().unwrap();
                 store::meta_set(&conn, store::META_EVENT_CURSOR, "10").unwrap();
-                store::meta_set(&conn, crate::read_view::FENCE, crate::scripted::FENCE).unwrap();
+                store::meta_set(&conn, crate::reach::FENCE, crate::scripted::FENCE).unwrap();
                 store::meta_set(&conn, store::META_INSTANCE_ID, crate::scripted::INSTANCE).unwrap();
                 store::meta_set(
                     &conn,
@@ -1892,7 +1892,7 @@ mod tests {
             let names = Names::load(&folder.core.conn().unwrap(), &catalog, &BoundFiles).unwrap();
             let edge_types = EdgeTypes::default();
             let lists = Lists::new(&[], &[]).unwrap();
-            let context = crate::read_view::Context::capture(&folder.core.conn().unwrap()).unwrap();
+            let context = crate::reach::Context::capture(&folder.core.conn().unwrap()).unwrap();
             let rendering = Rendering {
                 context: std::cell::RefCell::new(context),
                 catalog: &catalog,
@@ -1931,7 +1931,7 @@ mod tests {
             let item = {
                 let conn = core.conn().unwrap();
                 store::meta_set(&conn, store::META_EVENT_CURSOR, "10").unwrap();
-                store::meta_set(&conn, crate::read_view::FENCE, crate::scripted::FENCE).unwrap();
+                store::meta_set(&conn, crate::reach::FENCE, crate::scripted::FENCE).unwrap();
                 store::meta_set(&conn, store::META_INSTANCE_ID, crate::scripted::INSTANCE).unwrap();
                 store::meta_set(&conn, store::META_SLICE_TYPES, "[\"core.note\"]").unwrap();
                 store::meta_set(&conn, store::META_SLICE_TIER, "library").unwrap();
@@ -1967,7 +1967,7 @@ mod tests {
             let edge_types = EdgeTypes::default();
             let ignore = if ignored { vec!["x/**".into()] } else { vec![] };
             let lists = Lists::new(&[], &ignore).unwrap();
-            let context = crate::read_view::Context::capture(&folder.core.conn().unwrap()).unwrap();
+            let context = crate::reach::Context::capture(&folder.core.conn().unwrap()).unwrap();
             let rendering = Rendering {
                 context: std::cell::RefCell::new(context),
                 catalog: &catalog,

@@ -53,7 +53,7 @@ function value<T>(answer: Outcome<T>): T {
 interface Sent {
   method: string;
   path: string;
-  readView: string | undefined;
+  reach: string | undefined;
   body: string;
 }
 
@@ -82,11 +82,11 @@ async function recording(): Promise<{
         )
           headers.set(name, Array.isArray(header) ? header.join(", ") : header);
       }
-      const view = request.headers["x-marfa-read-view"];
+      const reach = request.headers["x-marfa-reach"];
       sent.push({
         method: request.method ?? "GET",
         path: request.url?.split("?")[0] ?? "/",
-        readView: Array.isArray(view) ? view.join(", ") : view,
+        reach: Array.isArray(reach) ? reach.join(", ") : reach,
         body: body.toString("utf8"),
       });
       const upstream = await fetch(
@@ -157,7 +157,7 @@ async function bookmarks(count: number, label: string): Promise<string[]> {
   return ids;
 }
 
-it("reads the pinned rows outside its slice 100 to a request under its read view, not one request each", async () => {
+it("reads the pinned rows outside its slice 100 to a request under its reach, not one request each", async () => {
   const pinned = await bookmarks(250, "pinned");
   const proxy = await recording();
   const store = newStore("pins-batched");
@@ -191,8 +191,8 @@ it("reads the pinned rows outside its slice 100 to a request under its read view
       expect(body.ids.length).toBeLessThanOrEqual(100);
       named.push(...body.ids);
       expect(
-        read.readView,
-        "a bulk read of pinned rows was sent outside the copy's read view",
+        read.reach,
+        "a bulk read of pinned rows was sent outside the copy's reach",
       ).toMatch(/^[0-9a-f]{64}$/);
     }
     expect(named.sort()).toEqual([...pinned].sort());

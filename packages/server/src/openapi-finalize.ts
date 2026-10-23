@@ -5,7 +5,7 @@ import { OpenAPIHono } from "@hono/zod-openapi";
  * The live and committed documents use this same shaping step.
  */
 
-import { CONDITIONAL_READ_OPERATIONS } from "./middleware/read-view.js";
+import { CONDITIONAL_READ_OPERATIONS } from "./middleware/reach.js";
 import { IDEMPOTENT_WRITE_DOORS } from "./middleware/idempotency.js";
 import {
   IDEMPOTENCY_IN_FLIGHT,
@@ -422,9 +422,9 @@ const RESPONSE_HEADER_COMPONENTS: Record<string, unknown> = {
       "The contract version this server speaks, the same integer as the document's `info.version` and the root's `contract`. Sent on every response the application gives, refusals included, so a client can check the answer it is about to read. A client generated for another number cannot trust the body. A request refused by the HTTP layer before it reaches the application, such as one with a malformed host, is answered without it.",
     schema: { type: "integer", minimum: 0 },
   },
-  "X-Marfa-Read-View": {
+  "X-Marfa-Reach": {
     description:
-      "A matching opaque read-view certificate, supplied only after a conditional copy read and its snapshot have completed. Successful conditional reads and snapshot-attributed resource refusals carry it with Cache-Control: no-store. Ordinary reads and write receipts carry none.",
+      "The matching opaque reach, supplied only after a conditional copy read and its snapshot have completed. Successful conditional reads and snapshot-attributed resource refusals carry it with Cache-Control: no-store. Ordinary reads and write receipts carry none.",
     schema: {
       type: "string",
       pattern: "^[0-9a-f]{64}$",
@@ -602,12 +602,12 @@ export const CHAIN_REFUSALS = {
   ),
 } as const;
 
-const READ_VIEW_REFUSAL = chainRefusal(
-  ["read_view_changed"],
-  "`read_view_changed`: the read view in `X-Marfa-Read-View` has changed. Rebuild the working copy.",
+const REACH_REFUSAL = chainRefusal(
+  ["reach_changed"],
+  "`reach_changed`: the reach in `X-Marfa-Reach` has changed. Rebuild the working copy.",
 );
-const READ_VIEW_PARAMETER = {
-  name: "X-Marfa-Read-View",
+const REACH_PARAMETER = {
+  name: "X-Marfa-Reach",
   in: "header",
   required: false,
   schema: {
@@ -617,7 +617,7 @@ const READ_VIEW_PARAMETER = {
     maxLength: 64,
   },
   description:
-    "A read-view certificate from a copy stream, for a working copy. Marfa reads the current data and checks the view in one snapshot, and returns `409 read_view_changed` if the view has changed. Leave it out for an ordinary read.",
+    "The reach from a copy stream, for a working copy. Marfa reads the current data and checks the reach in one snapshot, and returns `409 reach_changed` if it has changed. Leave it out for an ordinary read.",
 };
 
 /**
@@ -853,7 +853,7 @@ function withResponseHeaders(
       CONDITIONAL_READ_OPERATIONS.has(operation.operationId) &&
       ((code >= 200 && code < 300) || code === 403 || code === 404)
     ) {
-      names.push("X-Marfa-Read-View");
+      names.push("X-Marfa-Reach");
     }
     if (
       replays &&
@@ -886,10 +886,10 @@ const COPY_INSTANCE_ID = {
   description:
     "Only on a copy stream: the instance's ID, as `GET /` returns it.",
 };
-const COPY_READ_VIEW = {
+const COPY_REACH = {
   type: "string",
   description:
-    "Only on a copy stream: the read view to send as `X-Marfa-Read-View`, to resume or to read the working copy's data.",
+    "Only on a copy stream: the reach to send as `X-Marfa-Reach`, to resume or to read the working copy's data.",
 };
 
 /**
@@ -998,7 +998,7 @@ function eventSchemas(): Record<string, unknown> {
             "The ID of the latest event in the log, or `0` if it's empty. Read state after this frame, and you can resume from this ID without missing a change.",
         },
         instance_id: COPY_INSTANCE_ID,
-        read_view: COPY_READ_VIEW,
+        reach: COPY_REACH,
       },
       required: ["event_type", "cursor"],
     },
@@ -1014,7 +1014,7 @@ function eventSchemas(): Record<string, unknown> {
             "A position you can resume from without receiving again what the catch-up covered. `null` only when Marfa couldn't read the log in time and had nothing to replay.",
         },
         instance_id: COPY_INSTANCE_ID,
-        read_view: COPY_READ_VIEW,
+        reach: COPY_REACH,
       },
       required: ["event_type", "cursor"],
     },
@@ -1072,11 +1072,11 @@ function eventSchemas(): Record<string, unknown> {
       },
       required: ["event_type", "requested", "head"],
     },
-    ReadViewChangedFrame: {
+    ReachChangedFrame: {
       type: "object",
       description:
-        "The last frame of a copy stream, with no `id:`, when its read view changes, such as after a retype or a narrowed key. Rebuild the working copy.",
-      properties: { event_type: marker("read_view_changed") },
+        "The last frame of a copy stream, with no `id:`, when its reach changes, such as after a retype or a narrowed key. Rebuild the working copy.",
+      properties: { event_type: marker("reach_changed") },
       required: ["event_type"],
     },
     EventStreamFrame: {
@@ -1090,7 +1090,7 @@ function eventSchemas(): Record<string, unknown> {
         "StreamIncompleteFrame",
         "CatchupTooOldFrame",
         "CursorAheadFrame",
-        "ReadViewChangedFrame",
+        "ReachChangedFrame",
       ].map(schemaRef),
     },
     WebhookItemEvent: {
@@ -1302,14 +1302,14 @@ export function finalizeOpenAPISpec<T extends OpenAPIDoc>(spec: T): T {
       if (conditionalRead) {
         operation.parameters = [
           ...((operation.parameters as unknown[] | undefined) ?? []),
-          READ_VIEW_PARAMETER,
+          REACH_PARAMETER,
         ];
       }
       if (conditionalRead || operation.operationId === "streamEvents") {
         responses["409"] =
           responses["409"] === undefined
-            ? READ_VIEW_REFUSAL.response
-            : withExtraBranch(responses["409"], READ_VIEW_REFUSAL);
+            ? REACH_REFUSAL.response
+            : withExtraBranch(responses["409"], REACH_REFUSAL);
       }
       if (declaresSecurity(operation)) {
         floorRefusal(responses, "401", CHAIN_REFUSALS.unauthorized);

@@ -29,8 +29,8 @@ const REFERENCES = /ErrorCode\.(TYPE_NOT_PERMITTED|EDGE_PERMISSION_DENIED)\b/;
 const CODE_REFERENCES: Record<string, string> = {
   "middleware/auth.ts":
     "the grant checks, through `grantRefusal`, and the refusals no grant opens: the reserved fence, a map reaching no type, a natural key resolving an unreadable row",
-  "middleware/read-view.ts":
-    "observes existing route refusals to certify their read view after successful snapshot closure; it builds no grant refusal",
+  "middleware/reach.ts":
+    "observes existing route refusals to certify their reach after successful snapshot closure; it builds no grant refusal",
   "routes/_blob-reach.ts":
     "an upload needs write on some type rather than on one, so there is no single grant to name",
 };

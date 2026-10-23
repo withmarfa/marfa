@@ -67,7 +67,7 @@ pub enum Then {
 pub struct Seen {
     pub path: String,
     pub query: String,
-    pub read_view: Option<String>,
+    pub reach: Option<String>,
     pub last_event_id: Option<String>,
     pub authorization: Option<String>,
     pub idempotency_key: Option<String>,
@@ -190,7 +190,7 @@ fn serve(stream: TcpStream, script: &Mutex<Script>, stopping: &AtomicBool) {
     let target = request_line.split_whitespace().nth(1).unwrap_or("/");
     let path = target.split('?').next().unwrap_or("/").to_string();
     let mut last_event_id = None;
-    let mut read_view = None;
+    let mut reach = None;
     let mut authorization = None;
     let mut idempotency_key = None;
     let mut instance = None;
@@ -206,8 +206,8 @@ fn serve(stream: TcpStream, script: &Mutex<Script>, stopping: &AtomicBool) {
             break;
         }
         if let Some((name, value)) = line.split_once(':') {
-            if name.eq_ignore_ascii_case("x-marfa-read-view") {
-                read_view = Some(value.trim().to_string());
+            if name.eq_ignore_ascii_case("x-marfa-reach") {
+                reach = Some(value.trim().to_string());
             } else if name.eq_ignore_ascii_case("last-event-id") {
                 last_event_id = Some(value.trim().to_string());
             } else if name.eq_ignore_ascii_case("authorization") {
@@ -235,7 +235,7 @@ fn serve(stream: TcpStream, script: &Mutex<Script>, stopping: &AtomicBool) {
         script.seen.push(Seen {
             path: path.clone(),
             query: target.split_once('?').map_or("", |(_, query)| query).into(),
-            read_view,
+            reach,
             last_event_id,
             authorization,
             idempotency_key,
@@ -491,7 +491,7 @@ pub const FENCE: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 pub fn certified(mut answer: Answer) -> Answer {
     match &mut answer {
         Answer::Json { headers, .. } => {
-            headers.push(("X-Marfa-Read-View".into(), FENCE.into()));
+            headers.push(("X-Marfa-Reach".into(), FENCE.into()));
             headers.push(("Cache-Control".into(), "no-store".into()));
         }
         _ => panic!("only a JSON read can carry an HTTP proof"),
@@ -501,7 +501,7 @@ pub fn certified(mut answer: Answer) -> Answer {
 
 pub fn copy_marker(kind: &str, cursor: &str) -> String {
     format!(
-        "event: {kind}\ndata: {{\"event_type\":\"{kind}\",\"cursor\":\"{cursor}\",\"instance_id\":\"{INSTANCE}\",\"read_view\":\"{FENCE}\"}}\n\n"
+        "event: {kind}\ndata: {{\"event_type\":\"{kind}\",\"cursor\":\"{cursor}\",\"instance_id\":\"{INSTANCE}\",\"reach\":\"{FENCE}\"}}\n\n"
     )
 }
 

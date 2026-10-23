@@ -63,7 +63,7 @@ export const SHARD_SECONDS: Readonly<Record<string, number>> = {
   "src/suites/device/folders-one-mac.test.ts": 420,
   "src/suites/device/folders-placement.test.ts": 325,
   "src/suites/device/folders.test.ts": 305,
-  "src/suites/device/read-view-live.test.ts": 30,
+  "src/suites/device/reach-live.test.ts": 30,
   "src/suites/device/working-copy.test.ts": 25,
 };
 

@@ -32,7 +32,7 @@ import { hydrateEdgesForItems } from "./_edges-hydrate.js";
 import { hydrateExtensionsForItems } from "./_extensions-hydrate.js";
 import { ItemSchema, MetadataSchema } from "./_schemas.js";
 import { readableMetadata } from "./_extension-reach.js";
-import { itemListed } from "../storage/read-view.js";
+import { itemListed } from "../storage/reach.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -86,7 +86,7 @@ const BulkGetResponseSchema = z.object({
     .array(z.boolean())
     .optional()
     .describe(
-      "For each item returned, in the same order: `true` if listings show you the item, `false` if `source_filter` leaves it out of them. Present only when you send `X-Marfa-Read-View`.",
+      "For each item returned, in the same order: `true` if listings show you the item, `false` if `source_filter` leaves it out of them. Present only when you send `X-Marfa-Reach`.",
     ),
 });
 
@@ -119,7 +119,7 @@ const bulkGetRoute = createRoute({
         "application/json": { schema: BulkGetResponseSchema },
       },
       description:
-        "Returns the items you can read, `metadata` if you asked for it, and `listed` if you sent `X-Marfa-Read-View`.",
+        "Returns the items you can read, `metadata` if you asked for it, and `listed` if you sent `X-Marfa-Reach`.",
     },
     400: {
       content: {
@@ -195,7 +195,7 @@ export function bulkGetRoutes(storage: Storage) {
     const includeExtensions = includeSet.has("extensions");
     const includeSystem = includeSet.has("system");
 
-    const readAuthority = c.get("readViewAuthority");
+    const readAuthority = c.get("reachAuthority");
     const listedOf = (rows: Item[]) =>
       readAuthority && {
         listed: rows.map((item) => itemListed(readAuthority, item)),

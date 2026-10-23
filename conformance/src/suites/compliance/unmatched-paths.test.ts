@@ -130,14 +130,14 @@ describe("a request no door serves", () => {
     expect([...answer.metadata.tags].sort()).toEqual(["added", "kept"]);
   });
 
-  it("answers a GET to a path no door serves 400 validation_error when it carries X-Marfa-Read-View, to a caller with a credential and to one without", async () => {
+  it("answers a GET to a path no door serves 400 validation_error when it carries X-Marfa-Reach, to a caller with a credential and to one without", async () => {
     // The witness: the same request without the header is the 404 above.
     expect((await ask("GET", "/no-such-door", asKey())).status).toBe(404);
 
     for (const headers of [{}, asKey()]) {
       const answer = await ask("GET", "/no-such-door", {
         ...headers,
-        "X-Marfa-Read-View": PROOF,
+        "X-Marfa-Reach": PROOF,
       });
       expect(answer.status).toBe(400);
       expect(answer.code).toBe("validation_error");
@@ -145,11 +145,11 @@ describe("a request no door serves", () => {
     }
   });
 
-  it("answers a method other than GET to a path no door serves 404 not_found even when it carries X-Marfa-Read-View", async () => {
+  it("answers a method other than GET to a path no door serves 404 not_found even when it carries X-Marfa-Reach", async () => {
     for (const method of ["POST", "PUT", "DELETE"]) {
       const answer = await ask(method, "/no-such-door", {
         ...asKey(),
-        "X-Marfa-Read-View": PROOF,
+        "X-Marfa-Reach": PROOF,
       });
       expect(answer.status, method).toBe(404);
       expect(answer.code, method).toBe("not_found");

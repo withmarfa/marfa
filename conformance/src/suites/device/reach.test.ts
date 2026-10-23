@@ -6,7 +6,7 @@ import {
   copyIncompleteReplay,
   copyLiveReplay,
   edgesPage,
-  SCRIPTED_READ_VIEW,
+  SCRIPTED_REACH,
   wireItem,
   withMetadata,
 } from "../../device/marfa-answers.js";
@@ -24,7 +24,7 @@ afterEach(async () => {
 });
 
 async function prepared() {
-  harness = await hydratedHarness("read-view", {
+  harness = await hydratedHarness("reach", {
     rows: { "core.note": [{ item: { id: "held" } }] },
   });
   const h = harness;
@@ -47,7 +47,7 @@ async function prepared() {
   return h;
 }
 
-describe("certified read views", () => {
+describe("certified reaches", () => {
   it.each([
     "missing proof",
     "malformed proof",
@@ -64,12 +64,12 @@ describe("certified read views", () => {
     if (fault === "malformed proof")
       response = {
         ...response,
-        headers: { "X-Marfa-Read-View": "A".repeat(64) },
+        headers: { "X-Marfa-Reach": "A".repeat(64) },
       };
     if (fault === "different proof")
       response = {
         ...response,
-        headers: { "X-Marfa-Read-View": "b".repeat(64) },
+        headers: { "X-Marfa-Reach": "b".repeat(64) },
       };
     if (fault === "missing listing") response = { ...response, body: row };
     if (fault === "nonboolean listing")
@@ -146,7 +146,7 @@ describe("certified read views", () => {
   });
 
   it("requires the actual live marker even when the announced head is already held", async () => {
-    harness = await startHarness("read-view-live");
+    harness = await startHarness("reach-live");
     const { server, device } = harness;
     scriptHydration(server, { head: "10" });
     server.answer(
@@ -171,8 +171,7 @@ describe("certified read views", () => {
     expect(resumes.length).toBeGreaterThanOrEqual(3);
     expect(
       resumes.every(
-        (request) =>
-          request.headers["x-marfa-read-view"] === SCRIPTED_READ_VIEW,
+        (request) => request.headers["x-marfa-reach"] === SCRIPTED_REACH,
       ),
     ).toBe(true);
   });

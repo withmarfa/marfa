@@ -1,6 +1,6 @@
 import {
   captureCommittedRegistryView,
-  createRegistryReadView,
+  createGuardedRegistryView,
 } from "@withmarfa/shared";
 import type { Client, InArgs, InStatement, Transaction } from "@libsql/client";
 import { drizzle } from "drizzle-orm/libsql";
@@ -150,7 +150,7 @@ export function readSnapshotRunner(captureRead: CaptureRead) {
         pin: captured.captured.pin,
         tx: drizzle(facade, { schema }),
         assertActive,
-        view: createRegistryReadView(captured.captured.view, assertActive),
+        view: createGuardedRegistryView(captured.captured.view, assertActive),
       };
       const activeScope = scope;
       const value = await lifetime.wait(

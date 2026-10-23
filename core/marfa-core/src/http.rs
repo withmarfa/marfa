@@ -85,7 +85,7 @@ pub struct Http {
     /// Raised by `let_go`: no renewal starts after it.
     let_go: Arc<AtomicBool>,
     relocation: Arc<OnceLock<Mutex<Relocation>>>,
-    view: Option<String>,
+    reach: Option<String>,
     /// The instance a write names (`X-Marfa-Instance-Id`), so another
     /// instance at the address refuses it rather than writing it.
     instance: Option<String>,
@@ -382,7 +382,7 @@ impl Http {
             renewing: Arc::new(Mutex::new(())),
             let_go: Arc::new(AtomicBool::new(false)),
             relocation: Arc::new(OnceLock::new()),
-            view: None,
+            reach: None,
             instance: None,
             call_budget: None,
         })
@@ -430,9 +430,9 @@ impl Http {
         );
     }
 
-    pub(crate) fn for_view(&self, fence: &str) -> Self {
+    pub(crate) fn for_reach(&self, fence: &str) -> Self {
         Self {
-            view: Some(fence.into()),
+            reach: Some(fence.into()),
             ..self.clone()
         }
     }
@@ -614,7 +614,7 @@ impl Http {
     ) -> CoreError {
         if named {
             let refused = refusal(status, text, retry_after_seconds);
-            if self.view.is_some() && status == 401 {
+            if self.reach.is_some() && status == 401 {
                 return CoreError::CopyExpired {
                     reason: "credential_ended".into(),
                 };
@@ -656,7 +656,7 @@ impl Http {
     fn whole_catalog(&self, next_cursor: Option<String>, what: &str) -> Result<(), CoreError> {
         match next_cursor {
             None => Ok(()),
-            Some(_) if self.view.is_some() => Err(crate::read_view::invalid()),
+            Some(_) if self.reach.is_some() => Err(crate::reach::invalid()),
             Some(_) => Err(CoreError::Decoding(format!(
                 "the server paged the {what} catalog, which answers whole"
             ))),
@@ -756,8 +756,8 @@ impl Http {
         let page: WirePage<serde_json::Value> = self.get_json(&["edge-types"], &[])?;
         for (index, row) in page.data.iter().enumerate() {
             serde_json::from_value::<WireEdgeType>(row.clone()).map_err(|error| {
-                if self.view.is_some() {
-                    crate::read_view::invalid()
+                if self.reach.is_some() {
+                    crate::reach::invalid()
                 } else {
                     crate::error::unreadable(
                         &format!("edge type {index} the server listed"),
@@ -919,7 +919,7 @@ impl Http {
 
     /// `POST /items/bulk-get` for at most `BULK_GET_LIMIT` ids, each row with
     /// its metadata, the first page of its edges of each type and, under a
-    /// read view, `listed`. It asks for `system` because a pin can name a
+    /// reach, `listed`. It asks for `system` because a pin can name a
     /// `system.*` row, which the door otherwise leaves out
     /// (`items/bulk-get-system`). An id the answer leaves out names no row
     /// the key may read outside the bin (`items/bulk-get-omits`).
@@ -965,8 +965,8 @@ impl Http {
         .to_string();
         let answer: Answer = self.read_json(&["items", "bulk-get"], &[], Some(&body))?;
         let unreadable = |why: &str| {
-            if self.view.is_some() {
-                crate::read_view::invalid()
+            if self.reach.is_some() {
+                crate::reach::invalid()
             } else {
                 CoreError::Decoding(format!("/items/bulk-get: {why}"))
             }
@@ -978,7 +978,7 @@ impl Http {
         let listed = match answer.listed {
             Some(listed) if listed.len() == answered => listed.into_iter().map(Some).collect(),
             Some(_) => return Err(unreadable("`listed` does not pair with the items")),
-            None if self.view.is_some() => return Err(unreadable("no `listed` under a read view")),
+            None if self.reach.is_some() => return Err(unreadable("no `listed` under a reach")),
             None => vec![None; answered],
         };
         let mut seen = std::collections::HashSet::new();
@@ -1194,8 +1194,8 @@ impl Http {
                 .header("Authorization", authorization);
             if let Some(cursor) = last_event_id {
                 request = request.header("Last-Event-ID", cursor);
-                if let Some(view) = &self.view {
-                    request = request.header("X-Marfa-Read-View", view);
+                if let Some(reach) = &self.reach {
+                    request = request.header("X-Marfa-Reach", reach);
                 }
             }
             request.call().map_err(|error| self.unreached(error))
@@ -1481,8 +1481,8 @@ impl Http {
     }
 
     /// A read, sent as a `GET`, or as a `POST` of `body` for a read whose
-    /// question is a body. Under a read view it is a conditional read: the
-    /// answer has to carry the view back.
+    /// question is a body. Under a reach it is a conditional read: the
+    /// answer has to carry the reach back.
     fn read_json<T: DeserializeOwned>(
         &self,
         segments: &[&str],
@@ -1490,7 +1490,7 @@ impl Http {
         body: Option<&str>,
     ) -> Result<T, CoreError> {
         let url = self.url(segments, params);
-        let conditional = self.view.as_deref().filter(|_| !segments.is_empty());
+        let conditional = self.reach.as_deref().filter(|_| !segments.is_empty());
         let response = self.authorized(|authorization| {
             let sent = match body {
                 None => {
@@ -1499,8 +1499,8 @@ impl Http {
                         .get(url.as_str())
                         .header("Accept", "application/json")
                         .header("Authorization", authorization);
-                    if let Some(view) = conditional {
-                        request = request.header("X-Marfa-Read-View", view);
+                    if let Some(reach) = conditional {
+                        request = request.header("X-Marfa-Reach", reach);
                     }
                     request.call()
                 }
@@ -1511,8 +1511,8 @@ impl Http {
                         .header("Accept", "application/json")
                         .header("Content-Type", "application/json")
                         .header("Authorization", authorization);
-                    if let Some(view) = conditional {
-                        request = request.header("X-Marfa-Read-View", view);
+                    if let Some(reach) = conditional {
+                        request = request.header("X-Marfa-Reach", reach);
                     }
                     if let Some(instance) = &self.instance {
                         request = request.header(INSTANCE_HEADER, instance);
@@ -1528,7 +1528,7 @@ impl Http {
         let retry_after = retry_after(&response);
         let proof = response
             .headers()
-            .get_all("X-Marfa-Read-View")
+            .get_all("X-Marfa-Reach")
             .iter()
             .collect::<Vec<_>>();
         let certified = conditional
@@ -1537,15 +1537,15 @@ impl Http {
         if !(200..300).contains(&status) {
             let error = self.refused(status, named, &text, retry_after);
             if conditional.is_some() && named && matches!(status, 403 | 404) && !certified {
-                return Err(crate::read_view::invalid());
+                return Err(crate::reach::invalid());
             }
             return Err(error);
         }
         if !certified {
-            return Err(crate::read_view::invalid());
+            return Err(crate::reach::invalid());
         }
         // A body that does not parse as JSON says nothing against the copy's
-        // read view, and reading it again fails the same way. A body that
+        // reach, and reading it again fails the same way. A body that
         // parses and does not fit what a certified answer carries is a proof
         // the copy cannot accept.
         if conditional.is_none() {
@@ -1566,13 +1566,13 @@ impl Http {
                     .and_then(|v| v.as_array())
                     .is_some_and(|rows| rows.iter().all(|row| valid(row) && row["listed"] == true))
                 {
-                    return Err(crate::read_view::invalid());
+                    return Err(crate::reach::invalid());
                 }
             } else if !valid(&value) {
-                return Err(crate::read_view::invalid());
+                return Err(crate::reach::invalid());
             }
         }
-        serde_json::from_value(value).map_err(|_| crate::read_view::invalid())
+        serde_json::from_value(value).map_err(|_| crate::reach::invalid())
     }
 }
 
@@ -1693,8 +1693,8 @@ fn refusal(status: u16, text: &str, retry_after_seconds: Option<u64>) -> CoreErr
         Err(_) => ("unknown".to_string(), text.chars().take(200).collect()),
     };
     match status {
-        409 if code == "read_view_changed" => CoreError::CopyExpired {
-            reason: "read_view_changed".into(),
+        409 if code == "reach_changed" => CoreError::CopyExpired {
+            reason: "reach_changed".into(),
         },
         409 if code == INSTANCE_CHANGED => CoreError::CopyExpired {
             reason: INSTANCE_CHANGED.into(),

@@ -156,7 +156,7 @@ export function scriptFolderWrites(
      *  handed: a gated one, say. */
     creating?: (answer: Answer, request: RecordedRequest) => Answer;
     /** The answer the read of a row is given in place of the door's own,
-     *  which it is handed: a refusal under a read view that changed, say. */
+     *  which it is handed: a refusal under a reach that changed, say. */
     reading?: (answer: Answer, request: RecordedRequest) => Answer;
   } = {},
 ): Map<string, DoorRow> {
@@ -320,7 +320,7 @@ export class EdgeDoor {
   /** An answer standing in for the server's to a listing of an item's
    *  edges, a refusal say; the door answers where it gives `undefined`. */
   listing?: (source: string) => Answer | undefined;
-  /** The same, for the read of one edge by id: a refusal under a read view
+  /** The same, for the read of one edge by id: a refusal under a reach
    *  that changed, say. */
   reading?: (id: string) => Answer | undefined;
   /** Edges an item's listing serves as they were, once each: a read answered

@@ -15,7 +15,7 @@ use crate::model::{BlockedReason, LastFailure, QueuedWrite, Refusal, Subject, Ve
 use crate::telemetry;
 use crate::wire::{WireEdge, WireEdgeAnswer, WireErrorEnvelope, WireItem, WireWriteAnswer};
 use crate::{Core, Result};
-use crate::{read_view, store};
+use crate::{reach, store};
 
 mod pages;
 
@@ -932,7 +932,7 @@ fn drain_checked(core: &Core, stop: &AtomicBool) -> std::result::Result<DrainRep
     if crate::folder::waiting(&*core.conn()?)? {
         return Err(crate::error::CoreError::FirstSyncWaiting.into());
     }
-    // Each answer is read back under the copy's read view, so a copy without
+    // Each answer is read back under the copy's reach, so a copy without
     // one would send a write and then fail to settle it, on every pass.
     crate::catch_up::refuse_unless_current(&mut *core.conn()?)?;
     let result = drain_inner(core, stop);
@@ -953,7 +953,7 @@ fn drain_inner(core: &Core, stop: &AtomicBool) -> std::result::Result<DrainRepor
     // so a replacement refuses them even after the pass confirmed the origin.
     // Credential renewal uses the exempt authentication endpoints.
     let (http, generation) = crate::catch_up::naming_instance(core, core.http()?)?;
-    let mut pass = ViewChange::default();
+    let mut pass = ReachChange::default();
     let mut report = DrainReport::empty();
     let result = match send_queue(core, &http, generation, stop, &mut pass, &mut report) {
         // From a request that settled nothing, a lookup among them: a write
@@ -964,7 +964,7 @@ fn drain_inner(core: &Core, stop: &AtomicBool) -> std::result::Result<DrainRepor
         }
         result => result,
     };
-    // However the pass ended, a copy whose read view moved under it is
+    // However the pass ended, a copy whose reach moved under it is
     // expired once, here. The pass's own error, if any, is the one told. So is
     // a report that has something to say a caller must act on (a wait, an
     // unavailable server, a credential stopped, a write left undelivered), and
@@ -986,7 +986,7 @@ fn drain_inner(core: &Core, stop: &AtomicBool) -> std::result::Result<DrainRepor
 fn expire_for_another_instance(core: &Core, generation: u64) -> Result<()> {
     let mut conn = core.conn()?;
     let tx = conn.transaction()?;
-    if read_view::generation(&tx)? == generation {
+    if reach::generation(&tx)? == generation {
         crate::catch_up::expire_for_another_instance(&tx, generation)?;
     }
     tx.commit()?;
@@ -998,7 +998,7 @@ fn send_queue(
     http: &Http,
     generation: u64,
     stop: &AtomicBool,
-    pass: &mut ViewChange,
+    pass: &mut ReachChange,
     report: &mut DrainReport,
 ) -> Result<()> {
     let waiting = store::waiting_writes(&*core.conn()?)?;
@@ -1488,7 +1488,7 @@ fn send_queue(
             Ok(settled) => settled,
             Err(error) => {
                 // A verdict is committed before the read it owes, and that
-                // read can end the pass, as a changed read view does. The
+                // read can end the pass, as a changed reach does. The
                 // drain began by clearing every verdict a row is sent with, so
                 // one held now is this answer's, and is told.
                 if let Some(current) = store::queued_write(&*core.conn()?, &row.id)?
@@ -2403,7 +2403,7 @@ fn settle_success(
     row: &QueuedWrite,
     answer: &Answer,
     shape: Shape,
-    pass: &mut ViewChange,
+    pass: &mut ReachChange,
     answered_now: bool,
     read: Option<ReadBack>,
 ) -> Result<Settled> {
@@ -2591,7 +2591,7 @@ fn settle(
     answer: &std::result::Result<Answer, CoreError>,
     class: Classified,
     shape: Shape,
-    pass: &mut ViewChange,
+    pass: &mut ReachChange,
 ) -> Result<Settled> {
     let envelope = answer.as_ref().ok().map(|answer| answer.body.clone());
     match class {
@@ -2742,7 +2742,7 @@ fn settle_delivered(
     core: &Core,
     row: &QueuedWrite,
     shape: Shape,
-    pass: &mut ViewChange,
+    pass: &mut ReachChange,
 ) -> Result<Settled> {
     let subject = match shape {
         Shape::Item => row.item_id.as_deref().map(|id| ("items", id)),
@@ -2755,7 +2755,7 @@ fn settle_delivered(
         // answered the same way once the copy is built again.
         Some(_) if pass.changed() => return Ok(Settled::plain(None, None, row.refusals)),
         Some((collection, id)) => {
-            let context = read_view::Context::capture(&*core.conn()?)?;
+            let context = reach::Context::capture(&*core.conn()?)?;
             match context.http(core.http()?).read_whole(&[collection, id]) {
                 Ok(found) => found,
                 Err(CoreError::Forbidden { .. }) => None,
@@ -2800,7 +2800,7 @@ fn land(
     _shape: Shape,
     id: &str,
     code: String,
-    pass: &mut ViewChange,
+    pass: &mut ReachChange,
 ) -> Result<Settled> {
     let envelope = answer.as_ref().ok().map(|answer| answer.body.clone());
     let owed = store::Owed {
@@ -2900,7 +2900,7 @@ fn finish_counted(
 /// is removed only after a fresh response passes the local context guard.
 /// A contract mismatch, redirect, failed renewal or full store ends the pass.
 /// Other unavailable reads return their reason and end the pass too.
-fn reconcile(core: &Core, row: &QueuedWrite, pass: &mut ViewChange) -> Result<Option<Unreadable>> {
+fn reconcile(core: &Core, row: &QueuedWrite, pass: &mut ReachChange) -> Result<Option<Unreadable>> {
     let Some(owed) = store::owed_of(&*core.conn()?, row)? else {
         return Ok(None);
     };
@@ -2962,7 +2962,7 @@ fn unreadable(error: &CoreError) -> Option<Unreadable> {
 fn read_owed_backs(
     core: &Core,
     stop: &AtomicBool,
-    pass: &mut ViewChange,
+    pass: &mut ReachChange,
 ) -> Result<Option<Unreadable>> {
     let pending = {
         let conn = core.conn()?;
@@ -3073,11 +3073,11 @@ fn apply_owed(core: &Core, owed: &store::Owed, read: &ReadBack) -> Result<()> {
 
 pub(crate) enum ReadBack {
     Nothing,
-    /// Not asked for: the pass had seen the copy's read view change, so the
+    /// Not asked for: the pass had seen the copy's reach change, so the
     /// server would refuse the read. The read stays owed.
     Unread,
     Item {
-        context: read_view::Context,
+        context: reach::Context,
         id: String,
         held: Option<Box<crate::wire::WireItemWithMetadata>>,
         /// The copy's stamp before the read, so a row the read did not find
@@ -3085,7 +3085,7 @@ pub(crate) enum ReadBack {
         before: Option<store::Stamp>,
     },
     Edge {
-        context: read_view::Context,
+        context: reach::Context,
         id: String,
         held: Option<Box<WireEdge>>,
         before: Option<store::Stamp>,
@@ -3096,7 +3096,7 @@ pub(crate) enum ReadBack {
 pub(crate) fn read_back(core: &Core, row: &QueuedWrite) -> Result<ReadBack> {
     let owed = store::owed_of(&*core.conn()?, row)?;
     match owed {
-        Some(owed) => read_owed(core, &owed, Bin::Held, &mut ViewChange::default(), false),
+        Some(owed) => read_owed(core, &owed, Bin::Held, &mut ReachChange::default(), false),
         None => Ok(ReadBack::Nothing),
     }
 }
@@ -3109,15 +3109,15 @@ enum Bin {
     NotFound,
 }
 
-/// What a pass has learned of the copy's read view from the answers it read.
+/// What a pass has learned of the copy's reach from the answers it read.
 #[derive(Default)]
-struct ViewChange {
-    /// The copy as it stood when the server first said its read view had
+struct ReachChange {
+    /// The copy as it stood when the server first said its reach had
     /// changed under a source move, and the reason it gave.
-    seen: Option<(read_view::Context, String)>,
+    seen: Option<(reach::Context, String)>,
 }
 
-impl ViewChange {
+impl ReachChange {
     fn changed(&self) -> bool {
         self.seen.is_some()
     }
@@ -3132,7 +3132,7 @@ impl ViewChange {
 }
 
 /// Whether a write moves an edge's source, which the server answers by
-/// changing the read view (`read-views/view-moves-edge-source`). Only a move
+/// changing the reach (`reach/moves-edge-source`). Only a move
 /// answered in the pass at hand is known to have changed it; a receipt a
 /// pass finds from an earlier one is not.
 fn moves_source(row: &QueuedWrite) -> bool {
@@ -3140,7 +3140,7 @@ fn moves_source(row: &QueuedWrite) -> bool {
 }
 
 /// Reads the row an answer or a refusal owes the copy. Where the read meets a
-/// changed read view and `source_move` says the write was a move of an edge's
+/// changed reach and `source_move` says the write was a move of an edge's
 /// source, the pass notes it and goes on, and every read after it is left
 /// unmade, since the server would refuse each the same way
 /// (`queue-and-verdicts/edge-source-move-carries-on`); any other change ends
@@ -3149,7 +3149,7 @@ fn read_owed(
     core: &Core,
     owed: &store::Owed,
     bin: Bin,
-    pass: &mut ViewChange,
+    pass: &mut ReachChange,
     source_move: bool,
 ) -> Result<ReadBack> {
     if pass.changed() {
@@ -3158,12 +3158,12 @@ fn read_owed(
     let (context, before) = {
         let conn = core.conn()?;
         (
-            read_view::Context::capture(&conn)?,
+            reach::Context::capture(&conn)?,
             store::stamp(&conn, owed.subject, &owed.id)?,
         )
     };
     match read_held(core, owed, bin, &context, before) {
-        Err(CoreError::CopyExpired { reason }) if source_move && reason == "read_view_changed" => {
+        Err(CoreError::CopyExpired { reason }) if source_move && reason == "reach_changed" => {
             pass.seen = Some((context, reason));
             Ok(ReadBack::Unread)
         }
@@ -3176,7 +3176,7 @@ fn read_held(
     core: &Core,
     owed: &store::Owed,
     bin: Bin,
-    context: &read_view::Context,
+    context: &reach::Context,
     before: Option<store::Stamp>,
 ) -> Result<ReadBack> {
     let http = context.http(core.http()?);
@@ -3294,8 +3294,8 @@ fn apply_read_back_unchecked(conn: &rusqlite::Connection, read: &ReadBack) -> Re
             held: Some(held), ..
         } => {
             let item = &held.item;
-            let listed = held.listed.ok_or_else(read_view::invalid)?;
-            read_view::set_listed(conn, &item.id, listed)?;
+            let listed = held.listed.ok_or_else(reach::invalid)?;
+            reach::set_listed(conn, &item.id, listed)?;
             if store::holds_later(
                 conn,
                 Subject::Item,
@@ -3579,7 +3579,7 @@ mod tests {
                 "dead",
             ] {
                 let dir = tempfile::tempdir().unwrap();
-                // No server and no read view: this is a correction of what a
+                // No server and no reach: this is a correction of what a
                 // queued edit read, not adoption of a server baseline.
                 let core = Core::open(dir.path().join("copy.sqlite"), None).unwrap();
                 let (ahead, follows, apart, sent, sent_before, key) = {
@@ -3644,7 +3644,7 @@ mod tests {
                     &answer,
                     classify(&answer),
                     Shape::Item,
-                    &mut ViewChange::default(),
+                    &mut ReachChange::default(),
                 )
                 .unwrap();
                 let conn = core.conn().unwrap();
@@ -3847,7 +3847,7 @@ mod tests {
         {
             let conn = core.conn().unwrap();
             store::meta_set(&conn, store::META_EVENT_CURSOR, "10").unwrap();
-            store::meta_set(&conn, read_view::FENCE, &"a".repeat(64)).unwrap();
+            store::meta_set(&conn, reach::FENCE, &"a".repeat(64)).unwrap();
             store::meta_set(&conn, store::META_INSTANCE_ID, crate::scripted::INSTANCE).unwrap();
             store::meta_set(&conn, store::META_SLICE_TYPES, "[\"core.note\"]").unwrap();
             store::meta_set(&conn, store::META_SLICE_TIER, "library").unwrap();
@@ -3863,7 +3863,7 @@ mod tests {
     }
 
     /// The server's bin as `GET /items?state=trashed` answers it under the
-    /// copy's read view: each row trashed, at `version`, stamped after the
+    /// copy's reach: each row trashed, at `version`, stamped after the
     /// copy's own.
     fn in_the_bin(rows: &[(&str, i64)]) -> crate::scripted::Answer {
         let data: Vec<serde_json::Value> = rows
@@ -3986,13 +3986,10 @@ mod tests {
         assert!(report.unavailable.is_some());
         let requests = server.seen("/items/a");
         assert!(
-            requests[0].read_view.is_none(),
+            requests[0].reach.is_none(),
             "writes do not carry read preconditions"
         );
-        assert_eq!(
-            requests[1].read_view.as_deref(),
-            Some(crate::scripted::FENCE)
-        );
+        assert_eq!(requests[1].reach.as_deref(), Some(crate::scripted::FENCE));
         let settled = store::queued_write(&core.conn().unwrap(), &original.id)
             .unwrap()
             .unwrap();
@@ -4040,7 +4037,7 @@ mod tests {
         );
         let (_dir, core) = deleting(&server, &["a"]);
         let original = core.queue().unwrap().remove(0);
-        assert_eq!(core.drain().unwrap_err(), read_view::invalid());
+        assert_eq!(core.drain().unwrap_err(), reach::invalid());
         let conn = core.conn().unwrap();
         let settled = store::queued_write(&conn, &original.id).unwrap().unwrap();
         assert_eq!(settled.verdict, Some(Verdict::Accepted));
@@ -4093,10 +4090,10 @@ mod tests {
                 .unwrap()
                 .unwrap();
             let read =
-                read_owed(&core, &owed, Bin::Held, &mut ViewChange::default(), false).unwrap();
+                read_owed(&core, &owed, Bin::Held, &mut ReachChange::default(), false).unwrap();
             {
                 let conn = core.conn().unwrap();
-                read_view::advance_generation(&conn).unwrap();
+                reach::advance_generation(&conn).unwrap();
                 let newer = store::testing::note("a", "rebuilt", "", "2026-02-01T00:00:00Z");
                 store::upsert_item(&conn, &newer, None, &Default::default()).unwrap();
                 store::owe_read_back(&conn, &owed).unwrap();
@@ -4139,7 +4136,7 @@ mod tests {
         let asked = server.seen("/items");
         assert_eq!(asked.len(), 1, "the read by id answered gone, so the bin");
         assert!(asked[0].query.contains("state=trashed"));
-        assert_eq!(asked[0].read_view.as_deref(), Some(crate::scripted::FENCE));
+        assert_eq!(asked[0].reach.as_deref(), Some(crate::scripted::FENCE));
         held_in_the_bin(&core, "a", 4);
         let conn = core.conn().unwrap();
         assert!(store::pinned(&conn, "a").unwrap());
@@ -4360,9 +4357,9 @@ mod tests {
         .unwrap()
     }
 
-    fn view_changed() -> CoreError {
+    fn reach_changed() -> CoreError {
         CoreError::CopyExpired {
-            reason: "read_view_changed".into(),
+            reason: "reach_changed".into(),
         }
     }
 
@@ -4373,16 +4370,16 @@ mod tests {
         let (_dir, core) = holding_edges(&server, &names);
         let queued: Vec<QueuedWrite> = names.iter().map(|name| moved_to_p2(&core, name)).collect();
         for name in names {
-            // The move, then the read of the edge under a view the move changed.
+            // The move, then the read of the edge under a reach the move changed.
             server.on(
                 &format!("/edges/{name}"),
                 vec![
                     edge_answered(name, "p2", 2),
-                    crate::scripted::refusal(409, "read_view_changed"),
+                    crate::scripted::refusal(409, "reach_changed"),
                 ],
             );
         }
-        assert_eq!(core.drain().unwrap_err(), view_changed());
+        assert_eq!(core.drain().unwrap_err(), reach_changed());
         let conn = core.conn().unwrap();
         for row in &queued {
             let settled = store::queued_write(&conn, &row.id).unwrap().unwrap();
@@ -4392,10 +4389,10 @@ mod tests {
             server
                 .seen(&format!("/edges/{name}"))
                 .iter()
-                .filter(|seen| seen.read_view.is_some())
+                .filter(|seen| seen.reach.is_some())
                 .count()
         };
-        // The witness: the move that changed the view was read back under it.
+        // The witness: the move that changed the reach was read back under it.
         assert_eq!(reads("e1"), 1);
         for name in ["e2", "e3"] {
             assert_eq!(
@@ -4406,10 +4403,10 @@ mod tests {
             assert_eq!(
                 reads(name),
                 0,
-                "{name} was read under a view known to have changed"
+                "{name} was read under a reach known to have changed"
             );
         }
-        assert!(read_view::expired(&conn).unwrap());
+        assert!(reach::expired(&conn).unwrap());
         assert_eq!(
             store::owed_read_backs(&conn).unwrap().len(),
             3,
@@ -4418,7 +4415,7 @@ mod tests {
     }
 
     #[test]
-    fn a_view_change_met_anywhere_but_in_a_source_move_ends_the_drain_at_once() {
+    fn a_reach_change_met_anywhere_but_in_a_source_move_ends_the_drain_at_once() {
         let server = crate::scripted::Scripted::start();
         let (_dir, core) = holding_edges(&server, &["e1", "e2"]);
         let (first, second) = (rank_edit(&core, "e1"), rank_edit(&core, "e2"));
@@ -4426,24 +4423,24 @@ mod tests {
             "/edges/e1",
             vec![
                 edge_answered("e1", "p1", 2),
-                crate::scripted::refusal(409, "read_view_changed"),
+                crate::scripted::refusal(409, "reach_changed"),
             ],
         );
         server.on("/edges/e2", vec![edge_answered("e2", "p1", 2)]);
-        assert_eq!(core.drain().unwrap_err(), view_changed());
+        assert_eq!(core.drain().unwrap_err(), reach_changed());
         let conn = core.conn().unwrap();
         let verdict = |id: &str| store::queued_write(&conn, id).unwrap().unwrap().verdict;
         assert_eq!(verdict(&first.id), Some(Verdict::Accepted));
         assert_eq!(verdict(&second.id), None);
         assert!(
             server.seen("/edges/e2").is_empty(),
-            "a write behind was sent after the view changed under a write that moved no source"
+            "a write behind was sent after the reach changed under a write that moved no source"
         );
-        assert!(read_view::expired(&conn).unwrap());
+        assert!(reach::expired(&conn).unwrap());
     }
 
     #[test]
-    fn a_verdict_whose_own_read_meets_a_changed_view_is_told_with_the_cut() {
+    fn a_verdict_whose_own_read_meets_a_changed_reach_is_told_with_the_cut() {
         // The witness: the same answers with the read let through end well
         // and tell the verdict as any drain does.
         for (verdict, answer) in [
@@ -4458,7 +4455,7 @@ mod tests {
                 let (_dir, core) = holding_edges(&server, &["e1"]);
                 let row = rank_edit(&core, "e1");
                 let read = if changed {
-                    crate::scripted::refusal(409, "read_view_changed")
+                    crate::scripted::refusal(409, "reach_changed")
                 } else {
                     crate::scripted::certified(edge_answered(
                         "e1",
@@ -4471,13 +4468,13 @@ mod tests {
                     Ok(report) => {
                         assert!(
                             !changed,
-                            "{verdict:?}: the changed view did not end the drain"
+                            "{verdict:?}: the changed reach did not end the drain"
                         );
                         report
                     }
                     Err(cut) => {
                         assert!(changed, "{verdict:?}: {:?}", cut.error);
-                        assert_eq!(cut.error, view_changed());
+                        assert_eq!(cut.error, reach_changed());
                         *cut.settled
                     }
                 };
@@ -4490,7 +4487,7 @@ mod tests {
                 );
                 assert_eq!(
                     report.answered, 1,
-                    "{verdict:?}, view changed {changed}: {report:?}"
+                    "{verdict:?}, reach changed {changed}: {report:?}"
                 );
                 assert_eq!(
                     report
@@ -4499,7 +4496,7 @@ mod tests {
                         .map(|entry| (entry.id.as_str(), entry.verdict))
                         .collect::<Vec<_>>(),
                     vec![(row.id.as_str(), Some(verdict))],
-                    "{verdict:?}, view changed {changed}: the verdict the queue holds left the report"
+                    "{verdict:?}, reach changed {changed}: the verdict the queue holds left the report"
                 );
                 if verdict == Verdict::Refused {
                     assert_eq!(
@@ -4515,11 +4512,11 @@ mod tests {
     }
 
     #[test]
-    fn a_write_refused_unsent_whose_read_meets_a_changed_view_is_told_with_the_cut() {
+    fn a_write_refused_unsent_whose_read_meets_a_changed_reach_is_told_with_the_cut() {
         let server = crate::scripted::Scripted::start();
         server.on(
             "/items/a",
-            vec![crate::scripted::refusal(409, "read_view_changed")],
+            vec![crate::scripted::refusal(409, "reach_changed")],
         );
         let (_dir, core) = deleting(&server, &["a"]);
         let row = core.queue().unwrap().pop().unwrap();
@@ -4529,7 +4526,7 @@ mod tests {
             .execute("UPDATE queue SET base_version = 0 WHERE id = ?1", [&row.id])
             .unwrap();
         let cut = drain_keeping(&core, &AtomicBool::new(false)).unwrap_err();
-        assert_eq!(cut.error, view_changed());
+        assert_eq!(cut.error, reach_changed());
         // The witness: the read the refusal owes was made, and met the change.
         assert_eq!(server.seen("/items/a").len(), 1);
         assert_eq!(
@@ -4579,7 +4576,7 @@ mod tests {
                 assert!(drained.is_ok(), "{drained:?}");
                 assert_eq!(row(&first.id).refusals, 1);
                 assert_eq!(server.seen("/edges/e2").len(), 2, "sent and read back");
-                assert!(!read_view::expired(&conn).unwrap());
+                assert!(!reach::expired(&conn).unwrap());
                 continue;
             }
             assert_eq!(drained.unwrap_err(), instance_changed());
@@ -4599,7 +4596,7 @@ mod tests {
                 server.seen("/edges/e2").is_empty(),
                 "a write was sent after another instance refused one"
             );
-            assert!(read_view::expired(&conn).unwrap());
+            assert!(reach::expired(&conn).unwrap());
         }
     }
 
@@ -4640,7 +4637,7 @@ mod tests {
             "/edges/e1",
             vec![
                 edge_answered("e1", "p2", 2),
-                crate::scripted::refusal(409, "read_view_changed"),
+                crate::scripted::refusal(409, "reach_changed"),
             ],
         );
         server.on(
@@ -4659,7 +4656,7 @@ mod tests {
             server.seen("/edges/e3").is_empty(),
             "a write was sent after another instance refused one, though a source move had deferred the expiry"
         );
-        assert!(read_view::expired(&conn).unwrap());
+        assert!(reach::expired(&conn).unwrap());
     }
 
     #[test]
@@ -4674,17 +4671,17 @@ mod tests {
                 &format!("/edges/{name}"),
                 vec![
                     edge_answered(name, "p2", 2),
-                    crate::scripted::refusal(409, "read_view_changed"),
+                    crate::scripted::refusal(409, "reach_changed"),
                 ],
             );
         }
-        assert_eq!(core.drain().unwrap_err(), view_changed());
+        assert_eq!(core.drain().unwrap_err(), reach_changed());
         // A hydration, as far as the drain can tell.
         {
             let conn = core.conn().unwrap();
-            read_view::advance_generation(&conn).unwrap();
+            reach::advance_generation(&conn).unwrap();
             store::meta_set(&conn, store::META_EVENT_CURSOR, "20").unwrap();
-            store::meta_set(&conn, read_view::FENCE, &"a".repeat(64)).unwrap();
+            store::meta_set(&conn, reach::FENCE, &"a".repeat(64)).unwrap();
         }
         for name in names {
             server.on(
@@ -4717,11 +4714,11 @@ mod tests {
             "/edges/e1",
             vec![
                 edge_answered("e1", "p2", 2),
-                crate::scripted::refusal(409, "read_view_changed"),
+                crate::scripted::refusal(409, "reach_changed"),
                 edge_answered("e1", "p2", 3),
             ],
         );
-        assert_eq!(core.drain().unwrap_err(), view_changed());
+        assert_eq!(core.drain().unwrap_err(), reach_changed());
         let conn = core.conn().unwrap();
         for row in [&moved, &edited] {
             let settled = store::queued_write(&conn, &row.id).unwrap().unwrap();
@@ -4730,7 +4727,7 @@ mod tests {
         let sent: Vec<serde_json::Value> = server
             .seen("/edges/e1")
             .iter()
-            .filter(|seen| seen.read_view.is_none())
+            .filter(|seen| seen.reach.is_none())
             .map(|seen| serde_json::from_slice(&seen.body).unwrap())
             .collect();
         assert_eq!(sent.len(), 2);
@@ -4751,7 +4748,7 @@ mod tests {
             "/edges/e1",
             vec![
                 edge_answered("e1", "p2", 2),
-                crate::scripted::refusal(409, "read_view_changed"),
+                crate::scripted::refusal(409, "reach_changed"),
             ],
         );
         server.on(
@@ -4759,7 +4756,7 @@ mod tests {
             vec![crate::scripted::refusal(404, "item_not_found")],
         );
         server.on("/edges/e3", vec![edge_answered("e3", "p2", 2)]);
-        assert_eq!(core.drain().unwrap_err(), view_changed());
+        assert_eq!(core.drain().unwrap_err(), reach_changed());
         let conn = core.conn().unwrap();
         let verdicts: Vec<Option<Verdict>> = queued
             .iter()
@@ -4783,9 +4780,9 @@ mod tests {
     /// The copy as a hydration leaves it, as far as the drain can tell.
     fn hydrated_again(core: &Core) {
         let conn = core.conn().unwrap();
-        read_view::advance_generation(&conn).unwrap();
+        reach::advance_generation(&conn).unwrap();
         store::meta_set(&conn, store::META_EVENT_CURSOR, "20").unwrap();
-        store::meta_set(&conn, read_view::FENCE, &"a".repeat(64)).unwrap();
+        store::meta_set(&conn, reach::FENCE, &"a".repeat(64)).unwrap();
     }
 
     #[test]
@@ -4799,7 +4796,7 @@ mod tests {
             "/edges/e1",
             vec![
                 edge_answered("e1", "p2", 2),
-                crate::scripted::refusal(409, "read_view_changed"),
+                crate::scripted::refusal(409, "reach_changed"),
                 crate::scripted::certified(edge_answered("e1", "p2", 2)),
             ],
         );
@@ -4810,7 +4807,7 @@ mod tests {
                 crate::scripted::certified(edge_answered("e2", "p1", 1)),
             ],
         );
-        assert_eq!(core.drain().unwrap_err(), view_changed());
+        assert_eq!(core.drain().unwrap_err(), reach_changed());
         {
             let conn = core.conn().unwrap();
             let settled = store::queued_write(&conn, &refused.id).unwrap().unwrap();
@@ -4850,7 +4847,7 @@ mod tests {
             )
             .unwrap()
         };
-        read_owed_backs(&core, &AtomicBool::new(false), &mut ViewChange::default()).unwrap();
+        read_owed_backs(&core, &AtomicBool::new(false), &mut ReachChange::default()).unwrap();
         let conn = core.conn().unwrap();
         assert_eq!(
             store::queued_write(&conn, &later.id)
@@ -4871,7 +4868,7 @@ mod tests {
             "/edges/e1",
             vec![
                 edge_answered("e1", "p2", 2),
-                crate::scripted::refusal(409, "read_view_changed"),
+                crate::scripted::refusal(409, "reach_changed"),
             ],
         );
         server.on(
@@ -4886,10 +4883,7 @@ mod tests {
         assert_eq!(report.retry_after_seconds, Some(120));
         assert!(report.unavailable.is_some());
         let conn = core.conn().unwrap();
-        assert!(
-            read_view::expired(&conn).unwrap(),
-            "the copy was left current"
-        );
+        assert!(reach::expired(&conn).unwrap(), "the copy was left current");
         let verdicts: Vec<_> = moves
             .iter()
             .map(|row| {
@@ -4908,7 +4902,7 @@ mod tests {
     }
 
     #[test]
-    fn a_read_owed_from_an_earlier_pass_ends_the_drain_at_once_where_the_view_has_changed() {
+    fn a_read_owed_from_an_earlier_pass_ends_the_drain_at_once_where_the_reach_has_changed() {
         let server = crate::scripted::Scripted::start();
         let (_dir, core) = holding_edges(&server, &["e1", "e2"]);
         moved_to_p2(&core, "e1");
@@ -4918,17 +4912,17 @@ mod tests {
             vec![
                 edge_answered("e1", "p2", 2),
                 crate::scripted::json(503, r#"{"error":{"code":"unavailable","message":"busy"}}"#),
-                crate::scripted::refusal(409, "read_view_changed"),
+                crate::scripted::refusal(409, "reach_changed"),
             ],
         );
         server.on("/edges/e2", vec![edge_answered("e2", "p2", 2)]);
         let first = core.drain().unwrap();
         assert!(first.unavailable.is_some(), "the witness: the read failed");
         assert!(server.seen("/edges/e2").is_empty());
-        assert_eq!(core.drain().unwrap_err(), view_changed());
+        assert_eq!(core.drain().unwrap_err(), reach_changed());
         assert!(
             server.seen("/edges/e2").is_empty(),
-            "a write was sent after an earlier pass's read met a changed view"
+            "a write was sent after an earlier pass's read met a changed reach"
         );
         let conn = core.conn().unwrap();
         assert_eq!(
@@ -4938,7 +4932,7 @@ mod tests {
                 .verdict,
             None
         );
-        assert!(read_view::expired(&conn).unwrap());
+        assert!(reach::expired(&conn).unwrap());
     }
 
     #[test]
@@ -4969,7 +4963,7 @@ mod tests {
             );
         }
         assert!(
-            !read_view::expired(&conn).unwrap(),
+            !reach::expired(&conn).unwrap(),
             "a refused move expired the copy"
         );
     }
@@ -4993,7 +4987,7 @@ mod tests {
                 "edge_not_found",
             ))],
         );
-        let read = read_owed(&core, &owed, Bin::Held, &mut ViewChange::default(), false).unwrap();
+        let read = read_owed(&core, &owed, Bin::Held, &mut ReachChange::default(), false).unwrap();
         apply_owed(&core, &owed, &read).unwrap();
         assert_eq!(server.seen("/edges/edge").len(), 1);
         assert!(server.seen("/items/source/edges").is_empty());
@@ -5054,7 +5048,7 @@ mod tests {
             Shape::Item,
             "server",
             "version_conflict".into(),
-            &mut ViewChange::default(),
+            &mut ReachChange::default(),
         )
         .unwrap();
         assert_eq!(settled.verdict, Some(Verdict::Refused));
@@ -5119,7 +5113,7 @@ mod tests {
             Shape::Item,
             "server",
             "version_conflict".into(),
-            &mut ViewChange::default(),
+            &mut ReachChange::default(),
         )
         .unwrap();
         assert_eq!(settled.verdict, Some(Verdict::Refused));
@@ -5137,7 +5131,7 @@ mod tests {
                 dependant
             );
             assert!(store::item_held(&conn, "local").unwrap());
-            read_view::advance_generation(&conn).unwrap();
+            reach::advance_generation(&conn).unwrap();
         }
         let mut body: serde_json::Value = serde_json::from_str(&crate::scripted::item_payload(
             "item.updated",
@@ -5155,7 +5149,7 @@ mod tests {
             ))],
         );
         assert!(
-            read_owed_backs(&core, &AtomicBool::new(false), &mut ViewChange::default())
+            read_owed_backs(&core, &AtomicBool::new(false), &mut ReachChange::default())
                 .unwrap()
                 .is_none()
         );
@@ -5243,7 +5237,7 @@ mod tests {
             Shape::Item,
             "server",
             "version_conflict".into(),
-            &mut ViewChange::default(),
+            &mut ReachChange::default(),
         )
         .unwrap();
         assert!(
@@ -5290,7 +5284,7 @@ mod tests {
         let reads = server.seen("/items/server").len();
         assert!(reads > 0);
         assert!(
-            read_owed_backs(&core, &AtomicBool::new(false), &mut ViewChange::default())
+            read_owed_backs(&core, &AtomicBool::new(false), &mut ReachChange::default())
                 .unwrap()
                 .is_none()
         );
@@ -5509,7 +5503,7 @@ mod tests {
             Shape::Item,
             "server",
             "version_conflict".into(),
-            &mut ViewChange::default(),
+            &mut ReachChange::default(),
         )
         .unwrap();
         assert_eq!(settled.verdict, Some(Verdict::Refused));
@@ -5533,7 +5527,7 @@ mod tests {
 
         // A later drain reads the target again for the landing alone.
         assert!(
-            read_owed_backs(&core, &AtomicBool::new(false), &mut ViewChange::default())
+            read_owed_backs(&core, &AtomicBool::new(false), &mut ReachChange::default())
                 .unwrap()
                 .is_none()
         );

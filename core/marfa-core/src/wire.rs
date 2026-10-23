@@ -149,7 +149,7 @@ pub struct EventPayload {
     #[serde(default)]
     pub instance_id: Option<String>,
     #[serde(default)]
-    pub read_view: Option<String>,
+    pub reach: Option<String>,
     pub event_type: String,
     #[serde(default)]
     pub item: Option<WireItem>,

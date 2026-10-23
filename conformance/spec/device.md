@@ -66,7 +66,7 @@ When a device pins a row, a device MUST say whether the row was pinned already.
 
 ### `device/pin-not-hydrated`
 
-While its copy does not hold the read view of a completed hydration, a device MUST refuse a pin `hydration_incomplete`, sending nothing.
+While its copy does not hold the reach of a completed hydration, a device MUST refuse a pin `hydration_incomplete`, sending nothing.
 
 **Tests:** `device/catch-up.test.ts › refuses a pin on a copy that has not completed a hydration, sending nothing`.
 
@@ -80,7 +80,7 @@ If the server answers a pin's read that it holds no such row and its bin holds n
 
 If the server answers a pin's read that it holds no such row and its bin holds none either, then a device MUST let go a row of that id the copy holds, unless the row is a create of this device's that the server has not answered.
 
-**Reason:** the read is certified under the copy's read view, so the server's answer is that the row is gone for this copy.
+**Reason:** the read is certified under the copy's reach, so the server's answer is that the row is gone for this copy.
 
 **Tests:** `device/catch-up.test.ts › lets a held row go when neither the server nor its bin holds a row it pins`.
 
@@ -338,9 +338,9 @@ If an answer to a request made under a copy arrives after a hydration has begun 
 
 ### `device/proof-lost`
 
-While its copy holds a slice and no valid cursor, read view or instance, a device MUST refuse a local read `hydration_incomplete`, through a reading handle as through the writer.
+While its copy holds a slice and no valid cursor, reach or instance, a device MUST refuse a local read `hydration_incomplete`, through a reading handle as through the writer.
 
-**Tests:** `device/read-view.test.ts › refuses reads of a stored copy that lost its instance, through a reader as through the writer`.
+**Tests:** `device/reach.test.ts › refuses reads of a stored copy that lost its instance, through a reader as through the writer`.
 
 ### `device/reading-handle-reads`
 
@@ -432,21 +432,21 @@ While a hydration has started and not completed, whether it still runs or was in
 
 ### `device/report-complete`
 
-While its copy holds its slice, a cursor, the read view and the instance it was hydrated under, a device MUST report its hydration as `complete`.
+While its copy holds its slice, a cursor, the reach and the instance it was hydrated under, a device MUST report its hydration as `complete`.
 
-**Tests:** `device/hydration.test.ts › refuses a type name outside the grammar, or one the server does not hold, keeping the copy it had`, `device/read-view.test.ts › keeps a certified offline copy after an uncertified %i`, `device/working-copy.test.ts › reports complete for a copy whose cursor aged out until a catch-up learns it, asking nothing to report`.
+**Tests:** `device/hydration.test.ts › refuses a type name outside the grammar, or one the server does not hold, keeping the copy it had`, `device/reach.test.ts › keeps a certified offline copy after an uncertified %i`, `device/working-copy.test.ts › reports complete for a copy whose cursor aged out until a catch-up learns it, asking nothing to report`.
 
 ### `device/report-expired`
 
-While no hydration is under way and its copy holds a slice and no valid cursor, read view or instance, a device MUST report its hydration as `expired`.
+While no hydration is under way and its copy holds a slice and no valid cursor, reach or instance, a device MUST report its hydration as `expired`.
 
 **Reason:** `expired` and `never` are the two a caller must not confuse: reads are refused on the first and answered on the second, and only the first needs a hydration to be read again.
 
-**Tests:** `device/catch-up.test.ts › refuses reads after the cursor ages out, until a hydration`, `device/queue.test.ts › sends nothing to another instance at the same address, keeping the queue`, `device/read-view.test.ts › reports a hydration that ended on an invalid page as expired, not in progress`, `› refuses reads of a stored copy that lost its instance, through a reader as through the writer`.
+**Tests:** `device/catch-up.test.ts › refuses reads after the cursor ages out, until a hydration`, `device/queue.test.ts › sends nothing to another instance at the same address, keeping the queue`, `device/reach.test.ts › reports a hydration that ended on an invalid page as expired, not in progress`, `› refuses reads of a stored copy that lost its instance, through a reader as through the writer`.
 
 ## Hydration
 
-A hydration reads the server's copy stream and listings under one certified read view (`read-views.md`) and replaces the copy with what they hold.
+A hydration reads the server's copy stream and listings under one certified reach (`reach.md`) and replaces the copy with what they hold.
 
 ### `device/hydrate-empty-refused`
 
@@ -474,7 +474,7 @@ When a hydration declares a wildcard that names no type the catalog holds, a dev
 
 ### `device/hydrate-unheld-type`
 
-While the read view is the one the copy was hydrated under, if a hydration declares a type the catalog it read does not hold, then a device MUST refuse it `unknown_type`, naming the type, before it clears the copy.
+While the reach is the one the copy was hydrated under, if a hydration declares a type the catalog it read does not hold, then a device MUST refuse it `unknown_type`, naming the type, before it clears the copy.
 
 **Reason:** the listing refuses such a type only once the copy is gone, and a mistyped name would leave the device with no copy at all.
 
@@ -482,13 +482,13 @@ While the read view is the one the copy was hydrated under, if a hydration decla
 
 ### `device/hydrate-unheld-edge-type`
 
-While the read view is the one the copy was hydrated under, if a hydration names an edge type to hold whole that the edge type catalog does not hold, then a device MUST refuse it `unknown_type`, naming the edge type, before it clears the copy.
+While the reach is the one the copy was hydrated under, if a hydration names an edge type to hold whole that the edge type catalog does not hold, then a device MUST refuse it `unknown_type`, naming the edge type, before it clears the copy.
 
 **Tests:** `device/hydration.test.ts › refuses a type name outside the grammar, or one the server does not hold, keeping the copy it had`.
 
 ### `device/hydrate-unreadable-type`
 
-While the read view is the one the copy was hydrated under, if a hydration declares a type that the key reads neither itself nor any type under it, then a device MUST refuse it `forbidden`, naming the type, before it clears the copy or changes its queue.
+While the reach is the one the copy was hydrated under, if a hydration declares a type that the key reads neither itself nor any type under it, then a device MUST refuse it `forbidden`, naming the type, before it clears the copy or changes its queue.
 
 **Reason:** the listing refuses such a type `403 type_not_permitted` (`search-and-filters/type-unreadable`) only once the copy is gone.
 
@@ -534,15 +534,15 @@ When a device hydrates, a device MUST read each item listing until a page answer
 
 ### `device/hydrate-pins-batched`
 
-When a device hydrates, a device MUST read the pinned rows its slice does not bring with `POST /items/bulk-get` under the hydration's read view, at most 100 ids to a request.
+When a device hydrates, a device MUST read the pinned rows its slice does not bring with `POST /items/bulk-get` under the hydration's reach, at most 100 ids to a request.
 
-**Reason:** a read of each pin alone would add a request to every hydration for each row an app pins, and a pin made for a create lasts until it is taken off or the server says its row is gone (`device/pin-create-lasts`). The bulk read takes at most 100 ids (`items/bulk-get-cap`) and answers each row's `listed` (`read-views/listed-bulk-get`).
+**Reason:** a read of each pin alone would add a request to every hydration for each row an app pins, and a pin made for a create lasts until it is taken off or the server says its row is gone (`device/pin-create-lasts`). The bulk read takes at most 100 ids (`items/bulk-get-cap`) and answers each row's `listed` (`reach/listed-bulk-get`).
 
-**Tests:** `device/pins-live.test.ts › reads the pinned rows outside its slice 100 to a request under its read view, not one request each`.
+**Tests:** `device/pins-live.test.ts › reads the pinned rows outside its slice 100 to a request under its reach, not one request each`.
 
 ### `device/hydrate-repeated-cursor`
 
-If a listing a hydration walks answers a `next_cursor` the hydration has already read, then a device MUST expire the copy `copy_expired` with the reason `read_view_invalid`.
+If a listing a hydration walks answers a `next_cursor` the hydration has already read, then a device MUST expire the copy `copy_expired` with the reason `reach_invalid`.
 
 **Reason:** a listing that hands back a cursor it gave before would be walked for good.
 
@@ -612,7 +612,7 @@ When a hydration or a catch-up reads a row whose text holds a surrogate pair, in
 
 ## Catch-up
 
-A device takes an event when it applies it or skips it; both move its cursor past the event. Every rule here holds within an unchanged read view; a changed one expires the copy (`device/view-changed`).
+A device takes an event when it applies it or skips it; both move its cursor past the event. Every rule here holds within an unchanged reach; a changed one expires the copy (`device/reach-changed`).
 
 ### `device/catch-up-resumes`
 
@@ -844,7 +844,7 @@ When a held stream's copy expires, a device MUST end the stream rather than ask 
 
 When a device expires its copy, a device MUST keep its queue.
 
-**Tests:** `device/catch-up.test.ts › hydrates again when the server's log ends behind its cursor, keeping the queue`, `device/queue.test.ts › sends nothing to another instance at the same address, keeping the queue`, `device/read-view.test.ts › expires on %s without losing unsent work`.
+**Tests:** `device/catch-up.test.ts › hydrates again when the server's log ends behind its cursor, keeping the queue`, `device/queue.test.ts › sends nothing to another instance at the same address, keeping the queue`, `device/reach.test.ts › expires on %s without losing unsent work`.
 
 ### `device/catch-up-incomplete`
 
@@ -858,7 +858,7 @@ If a catch-up's stream ends before its live marker, then a device MUST end the c
 
 If a catch-up's stream ends before its live marker, then a device MUST keep its cursor at the last event it took and keep its copy complete.
 
-**Tests:** `device/catch-up.test.ts › leaves the cursor at the last applied event when the stream ends early`, `device/read-view.test.ts › requires the actual live marker even when the announced head is already held`.
+**Tests:** `device/catch-up.test.ts › leaves the cursor at the last applied event when the stream ends early`, `device/reach.test.ts › requires the actual live marker even when the announced head is already held`.
 
 ### `device/catch-up-silence`
 
@@ -2460,7 +2460,7 @@ When a device opens a store to read, a device MUST NOT claim the writer role.
 
 When a device opens a store to read, a device MUST NOT change the store's file, even where it is the last to close after a writer that died.
 
-**Tests:** `device/working-copy.test.ts › opens a store to read without claiming the writer role, and is told when it saves`, `device/read-view.test.ts › refuses reads of a stored copy that lost its instance, through a reader as through the writer`.
+**Tests:** `device/working-copy.test.ts › opens a store to read without claiming the writer role, and is told when it saves`, `device/reach.test.ts › refuses reads of a stored copy that lost its instance, through a reader as through the writer`.
 
 ### `device/reader-told-of-saves`
 
@@ -2800,25 +2800,25 @@ If a catch-up fails after it changed the catalog the copy holds, then a device M
 
 ## Certified read access
 
-A device keeps its copy under the read view the server certifies (`read-views.md`): it holds the instance, cursor and read view of the copy stream that hydrated it, and presents them back on every read that fills the copy.
+A device keeps its copy under the reach the server certifies (`reach.md`): it holds the instance, cursor and reach of the copy stream that hydrated it, and presents them back on every read that fills the copy.
 
-### `device/resume-presents-view`
+### `device/resume-presents-reach`
 
-When a device resumes a copy stream, a device MUST send the cursor it holds and the read view its copy was hydrated under.
+When a device resumes a copy stream, a device MUST send the cursor it holds and the reach its copy was hydrated under.
 
-**Tests:** `device/read-view.test.ts › requires the actual live marker even when the announced head is already held`.
+**Tests:** `device/reach.test.ts › requires the actual live marker even when the announced head is already held`.
 
 ### `device/live-marker-required`
 
 If a catch-up's stream ends before a live marker, then a device MUST NOT report the catch-up complete, even where the head the stream announced is the cursor it holds.
 
-**Tests:** `device/read-view.test.ts › requires the actual live marker even when the announced head is already held`.
+**Tests:** `device/reach.test.ts › requires the actual live marker even when the announced head is already held`.
 
 ### `device/proof-invalid`
 
-If a certified answer carries a read view that is missing, malformed or not the copy's, or a listing classification that is missing or not a boolean, then a device MUST expire the copy, keeping its queue.
+If a certified answer carries a reach that is missing, malformed or not the copy's, or a listing classification that is missing or not a boolean, then a device MUST expire the copy, keeping its queue.
 
-**Tests:** `device/read-view.test.ts › expires on %s without losing unsent work`, `device/fidelity.test.ts › matches copy marker tuples and conditional listing proofs`.
+**Tests:** `device/reach.test.ts › expires on %s without losing unsent work`, `device/fidelity.test.ts › matches copy marker tuples and conditional listing proofs`.
 
 ### `device/page-termination`
 
@@ -2826,11 +2826,11 @@ If a certified page answers no `next_cursor` member, then a device MUST expire t
 
 **Reason:** a page that does not say it is the last cannot be told from a listing cut short.
 
-**Tests:** `device/read-view.test.ts › refuses a certified page without explicit termination while retaining unsent work`, `› reports a hydration that ended on an invalid page as expired, not in progress`.
+**Tests:** `device/reach.test.ts › refuses a certified page without explicit termination while retaining unsent work`, `› reports a hydration that ended on an invalid page as expired, not in progress`.
 
 ### `device/proof-invalid-reason`
 
-When a device expires its copy for a proof it cannot accept, a device MUST end the operation `copy_expired` with the reason `read_view_invalid`.
+When a device expires its copy for a proof it cannot accept, a device MUST end the operation `copy_expired` with the reason `reach_invalid`.
 
 **Reason:** a proof is what the server certifies about the copy, and a hydration asked for again can mend a copy that fails it. An answer the device cannot parse as JSON certifies nothing either way, and is not a failed proof (`device/undecodable-answer`).
 
@@ -2838,7 +2838,7 @@ When a device expires its copy for a proof it cannot accept, a device MUST end t
 
 ### `device/undecodable-answer`
 
-If a read a device makes under its copy's read view answers a body the device cannot parse as JSON, or a stream sends an event whose data the device cannot parse as JSON, then a device MUST end the operation `decoding`.
+If a read a device makes under its copy's reach answers a body the device cannot parse as JSON, or a stream sends an event whose data the device cannot parse as JSON, then a device MUST end the operation `decoding`.
 
 **Reason:** a hydration asked for again would read the same answer and fail the same way, so `copy_expired` would send the caller to a repair that cannot work. An answer that parses as JSON and is not what a certified answer carries is a proof the device cannot accept (`device/proof-invalid-reason`).
 
@@ -2848,7 +2848,7 @@ If a read a device makes under its copy's read view answers a body the device ca
 
 If a hydration, a catch-up or a follow ends `decoding` on an answer the device cannot parse as JSON, then a device MUST NOT expire the copy.
 
-**Reason:** the answer says nothing against the copy's read view, and an expired copy refuses local reads and writes until a hydration the caller asks for completes. A hydration that ends `decoding` has not completed, so its copy still refuses them (`device/read-refused-in-progress`).
+**Reason:** the answer says nothing against the copy's reach, and an expired copy refuses local reads and writes until a hydration the caller asks for completes. A hydration that ends `decoding` has not completed, so its copy still refuses them (`device/read-refused-in-progress`).
 
 **Tests:** `device/hydration.test.ts › ends a hydration decoding, and does not expire the copy, where the reader cannot decode an answer`, `device/catch-up.test.ts › ends a catch-up decoding, keeping the copy and the cursor it had, where the reader cannot decode an event`, `› ends a follow decoding, keeping the copy and the cursor it had, where the reader cannot decode an event`.
 
@@ -2860,13 +2860,13 @@ If a catch-up or a held stream ends `decoding` on an event whose data the device
 
 **Tests:** `device/catch-up.test.ts › ends a catch-up decoding, keeping the copy and the cursor it had, where the reader cannot decode an event`, `› ends a follow decoding, keeping the copy and the cursor it had, where the reader cannot decode an event`.
 
-### `device/view-changed`
+### `device/reach-changed`
 
-If the server says the copy's read view has changed, other than in the read after the answer a drain has just had to a move of an edge's source (`queue-and-verdicts/edge-source-move-carries-on`), then a device MUST end the operation `copy_expired` with the reason `read_view_changed`, expiring the copy and keeping its queue.
+If the server says the copy's reach has changed, other than in the read after the answer a drain has just had to a move of an edge's source (`queue-and-verdicts/edge-source-move-carries-on`), then a device MUST end the operation `copy_expired` with the reason `reach_changed`, expiring the copy and keeping its queue.
 
 **Reason:** a retype, a narrowed grant or a changed source filter cannot then leave old rows readable as current.
 
-**Tests:** `device/read-view-live.test.ts › expires on real %s and rebuilds without losing unsent work`, `› ends a real held stream when grants narrow, keeping unsent work`.
+**Tests:** `device/reach-live.test.ts › expires on real %s and rebuilds without losing unsent work`, `› ends a real held stream when grants narrow, keeping unsent work`.
 
 ### `device/listed-membership`
 
@@ -2874,19 +2874,19 @@ Where the server lists a row as not a member of the item listing, a device MUST 
 
 **Reason:** a pin is authorized by the direct read alone, and taking it off must not turn a row a source filter leaves out into listed data.
 
-**Tests:** `device/read-view-live.test.ts › keeps real direct pins separate from source-filtered listing membership`.
+**Tests:** `device/reach-live.test.ts › keeps real direct pins separate from source-filtered listing membership`.
 
 ### `device/uncertified-keeps-copy`
 
-If a read under the copy's read view meets a dropped connection, a rate limit, a server failure or a refusal naming no contract, then a device MUST keep the copy complete.
+If a read under the copy's reach meets a dropped connection, a rate limit, a server failure or a refusal naming no contract, then a device MUST keep the copy complete.
 
 **Reason:** a temporary inability to read does not revoke a copy already certified.
 
-**Tests:** `device/read-view.test.ts › keeps a certified offline copy after an uncertified %i`, `› keeps a certified offline copy after %s`.
+**Tests:** `device/reach.test.ts › keeps a certified offline copy after an uncertified %i`, `› keeps a certified offline copy after %s`.
 
 ### `device/credential-ended`
 
-If a read under the copy's read view is refused `401` naming the contract and the credential cannot be renewed, then a device MUST expire the copy `copy_expired` with the reason `credential_ended`.
+If a read under the copy's reach is refused `401` naming the contract and the credential cannot be renewed, then a device MUST expire the copy `copy_expired` with the reason `credential_ended`.
 
 **Tests:** `device/contract.test.ts › refuses an event stream's refusal on another contract rather than reading its envelope`.
 
@@ -4048,7 +4048,7 @@ When a device refuses a write to a `system.folder` row `type_not_permitted`, a d
 
 If a caller drains a working copy that has never completed a hydration, then a device MUST refuse the drain `no_cursor`, sending nothing and leaving the queue as it was.
 
-**Reason:** each answer is read back under the read view a hydration gives the copy (`queue-and-verdicts/success-read-again` and `queue-and-verdicts/refused-read-again`), so a copy without one would send its first write, fail to settle the answer, and fail the same way at every later drain.
+**Reason:** each answer is read back under the reach a hydration gives the copy (`queue-and-verdicts/success-read-again` and `queue-and-verdicts/refused-read-again`), so a copy without one would send its first write, fail to settle the answer, and fail the same way at every later drain.
 
 **Tests:** `device/save-before-sync-live.test.ts › refuses a drain before its first hydration, sending nothing and keeping the queue`.
 

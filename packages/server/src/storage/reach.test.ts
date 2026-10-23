@@ -1,6 +1,6 @@
 import type { ApiKey } from "@withmarfa/shared";
 import { describe, expect, it } from "vitest";
-import { canonicalReadProjection } from "./read-view.js";
+import { canonicalReadProjection } from "./reach.js";
 const bound = { kind: "api_key" as const, id: "key", hash: "hash" };
 const key = {
   id: "key",

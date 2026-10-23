@@ -97,7 +97,8 @@ const EVENT_TEXT: Readonly<Record<string, string>> = {
   "item.state_changed": "An item moves to another lifecycle state.",
   "metadata.changed": "An item's tags or extensions change.",
   "edge.created": "An edge is created.",
-  "edge.updated": "An edge's properties change.",
+  "edge.updated":
+    "An edge's properties change, or one of its ends moves to another item.",
   "edge.deleted": "An edge is deleted.",
   stream_cursor:
     "First, when the stream read the log as it opened: where the log stood then.",
@@ -109,7 +110,7 @@ const EVENT_TEXT: Readonly<Record<string, string>> = {
     "Last, when the log no longer holds the events after the `Last-Event-ID` the client sent.",
   cursor_ahead:
     "Last, when the `Last-Event-ID` the client sent is past the latest event in the log.",
-  read_view_changed: "Last on a copy stream, when its read view changes.",
+  reach_changed: "Last on a copy stream, when its reach changes.",
 };
 
 const CODE_POINT = (a: string, b: string): number =>

@@ -514,10 +514,9 @@ pub fn hydrated(conn: &Connection) -> Result<bool, CoreError> {
     }
     if meta_get(conn, META_EVENT_CURSOR)?
         .as_deref()
-        .and_then(crate::read_view::cursor)
+        .and_then(crate::reach::cursor)
         .is_none()
-        || !meta_get(conn, crate::read_view::FENCE)?
-            .is_some_and(|f| crate::read_view::valid_fence(&f))
+        || !meta_get(conn, crate::reach::FENCE)?.is_some_and(|f| crate::reach::valid_fence(&f))
         || !meta_get(conn, META_INSTANCE_ID)?.is_some_and(|instance| !instance.is_empty())
     {
         return Ok(false);
@@ -541,7 +540,7 @@ pub fn slice_holds(
     let Some((types, tier)) = slice(conn)? else {
         return Ok(false);
     };
-    Ok(crate::read_view::listed(conn, &item.id)?
+    Ok(crate::reach::listed(conn, &item.id)?
         && slice_takes(
             catalog,
             &types,
@@ -2524,7 +2523,7 @@ pub fn adopt_answered_id(conn: &Connection, local: &str, answered: &str) -> Resu
         params![local, answered],
     )? > 0
     {
-        crate::read_view::pins_changed(conn)?;
+        crate::reach::pins_changed(conn)?;
     }
     // Left where the server's row was pinned already.
     unpin(conn, local)?;
@@ -2729,7 +2728,7 @@ fn remove_item(
     edges: &str,
     kept: &[String],
 ) -> Result<bool, CoreError> {
-    crate::read_view::forget_listed(conn, id)?;
+    crate::reach::forget_listed(conn, id)?;
     drop_beneath(conn, Subject::Item, id)?;
     conn.execute(
         "DELETE FROM items_fts WHERE rowid IN (SELECT seq FROM items WHERE id = ?1)",
@@ -2816,7 +2815,7 @@ pub fn pin(conn: &Connection, id: &str) -> Result<bool, CoreError> {
     conn.execute("DELETE FROM body_pins WHERE item_id = ?1", [id])?;
     let changed = conn.execute("INSERT OR IGNORE INTO pins (item_id) VALUES (?1)", [id])? > 0;
     if changed {
-        crate::read_view::pins_changed(conn)?;
+        crate::reach::pins_changed(conn)?;
     }
     Ok(changed)
 }
@@ -2825,7 +2824,7 @@ pub fn pin(conn: &Connection, id: &str) -> Result<bool, CoreError> {
 pub fn unpin(conn: &Connection, id: &str) -> Result<bool, CoreError> {
     let changed = conn.execute("DELETE FROM pins WHERE item_id = ?1", [id])? > 0;
     if changed {
-        crate::read_view::pins_changed(conn)?;
+        crate::reach::pins_changed(conn)?;
     }
     Ok(changed)
 }
@@ -4664,7 +4663,7 @@ mod tests {
     }
 
     #[test]
-    fn a_copy_without_read_view_proof_is_unreadable() {
+    fn a_copy_without_reach_proof_is_unreadable() {
         let conn = testing::conn();
         meta_set(&conn, META_EVENT_CURSOR, "10").unwrap();
         meta_set(&conn, META_SLICE_TYPES, "[\"core.note\"]").unwrap();
@@ -5184,7 +5183,7 @@ mod tests {
             Err(CoreError::HydrationIncomplete)
         );
         meta_set(&conn, META_EVENT_CURSOR, "10").unwrap();
-        meta_set(&conn, crate::read_view::FENCE, crate::scripted::FENCE).unwrap();
+        meta_set(&conn, crate::reach::FENCE, crate::scripted::FENCE).unwrap();
         meta_set(&conn, META_INSTANCE_ID, crate::scripted::INSTANCE).unwrap();
         meta_set(&conn, META_SLICE_TYPES, "[\"core.note\"]").unwrap();
         meta_set(&conn, META_SLICE_TIER, "library").unwrap();
@@ -5208,7 +5207,7 @@ mod tests {
             Err(CoreError::HydrationIncomplete)
         );
         meta_set(&conn, META_EVENT_CURSOR, "10").unwrap();
-        meta_set(&conn, crate::read_view::FENCE, crate::scripted::FENCE).unwrap();
+        meta_set(&conn, crate::reach::FENCE, crate::scripted::FENCE).unwrap();
         assert!(refuse_unless_hydrated(&conn).is_ok());
 
         meta_set(&conn, META_HYDRATE_STATE, HYDRATE_IN_PROGRESS).unwrap();

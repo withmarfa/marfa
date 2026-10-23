@@ -392,14 +392,14 @@ describe("X-Request-ID", () => {
       for (const credential of [undefined, apiKey]) {
         // A read's proof is asked for on a read, so a read is sent with and
         // without one.
-        for (const readView of method === "GET" ? [false, true] : [false]) {
+        for (const reach of method === "GET" ? [false, true] : [false]) {
           const res = await fetch(`${apiUrl}${url}`, {
             method,
             headers: {
               ...(credential === undefined
                 ? {}
                 : { Authorization: `Bearer ${credential}` }),
-              ...(readView ? { "X-Marfa-Read-View": "not-a-proof" } : {}),
+              ...(reach ? { "X-Marfa-Reach": "not-a-proof" } : {}),
               "Content-Type": "application/json",
             },
             // Not a body any door takes, so a write door refuses it and none
@@ -409,10 +409,7 @@ describe("X-Request-ID", () => {
           });
           // The headers are the answer here; an export need not be read to its end.
           await res.body?.cancel();
-          note(
-            `${method} ${path}${readView ? " (with a read view)" : ""}`,
-            res,
-          );
+          note(`${method} ${path}${reach ? " (with a reach)" : ""}`, res);
         }
       }
     }

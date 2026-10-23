@@ -3469,7 +3469,7 @@ mod tests {
         use crate::store::{self, meta_set};
         let conn = folder.core.conn().unwrap();
         meta_set(&conn, store::META_EVENT_CURSOR, "10").unwrap();
-        meta_set(&conn, crate::read_view::FENCE, crate::scripted::FENCE).unwrap();
+        meta_set(&conn, crate::reach::FENCE, crate::scripted::FENCE).unwrap();
         meta_set(&conn, store::META_INSTANCE_ID, crate::scripted::INSTANCE).unwrap();
         meta_set(
             &conn,

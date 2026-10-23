@@ -21,7 +21,7 @@ export enum ErrorCode {
   UNKNOWN_TYPE = "unknown_type",
   INVALID_ID = "invalid_id",
   VERSION_CONFLICT = "version_conflict",
-  READ_VIEW_CHANGED = "read_view_changed",
+  REACH_CHANGED = "reach_changed",
   INSTANCE_CHANGED = "instance_changed",
   /**
    * The write was based on a version with no snapshot it may be merged
@@ -421,10 +421,10 @@ export const ERROR_CODES: Record<AnsweredCode, ErrorCodeInfo> = {
     summary:
       "The write names a version that is no longer the current one. The answer carries the current state.",
   },
-  [ErrorCode.READ_VIEW_CHANGED]: {
+  [ErrorCode.REACH_CHANGED]: {
     status: 409,
     summary:
-      "A conditional copy read or copy stream carries a proof for a read view that has since changed. Rebuild the working copy.",
+      "A conditional copy read or copy stream carries a proof for a reach that has since changed. Rebuild the working copy.",
   },
   [ErrorCode.INSTANCE_CHANGED]: {
     status: 409,

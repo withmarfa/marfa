@@ -234,7 +234,7 @@ describe("the published spec declares the headers the server sets", () => {
           reads.has(key) &&
           ((code >= 200 && code < 300) || code === 403 || code === 404);
         expect(
-          "X-Marfa-Read-View" in (response.headers ?? {}),
+          "X-Marfa-Reach" in (response.headers ?? {}),
           `${key} ${status}`,
         ).toBe(supported);
         if (supported) declared.add(key);
@@ -248,7 +248,7 @@ describe("the published spec declares the headers the server sets", () => {
       const parameters = operation.parameters as { name: string; in: string }[];
       expect(
         parameters.filter(
-          (p) => p.name === "X-Marfa-Read-View" && p.in === "header",
+          (p) => p.name === "X-Marfa-Reach" && p.in === "header",
         ),
       ).toHaveLength(1);
       expect(operations.get(key)).toHaveProperty("409");

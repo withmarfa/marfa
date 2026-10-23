@@ -861,12 +861,12 @@ interface Refusal {
 
 async function askEvents(
   credential: string | undefined,
-  options: { query?: string; cursor?: string; readView?: string } = {},
+  options: { query?: string; cursor?: string; reach?: string } = {},
 ): Promise<Refusal> {
   const headers: Record<string, string> = {};
   if (credential !== undefined) headers.Authorization = `Bearer ${credential}`;
-  if (options.readView !== undefined) {
-    headers["X-Marfa-Read-View"] = options.readView;
+  if (options.reach !== undefined) {
+    headers["X-Marfa-Reach"] = options.reach;
   }
   if (options.cursor !== undefined) headers["Last-Event-ID"] = options.cursor;
   const response = await fetch(
@@ -897,10 +897,10 @@ const FAULTS: {
   name: string;
   query?: string;
   cursor?: string;
-  readView?: string;
+  reach?: string;
 }[] = [
   { name: "an undeclared query key", query: "typ=core.note" },
-  { name: "a read view without copy=1", readView: "f".repeat(64) },
+  { name: "a reach without copy=1", reach: "f".repeat(64) },
   { name: "a wildcard type", query: "type=*" },
   { name: "an unregistered type", query: "type=core.nothing_registers_this" },
   { name: "an unknown edges value", query: "edges=bogus" },
@@ -974,11 +974,11 @@ describe("the answers of the plain stream and the order its checks run in", () =
     expect(without.details.errors?.[0]?.path).toBe("type");
   });
 
-  it("refuses X-Marfa-Read-View without copy=1 before an undeclared query key", async () => {
-    const readView = "f".repeat(64);
+  it("refuses X-Marfa-Reach without copy=1 before an undeclared query key", async () => {
+    const reach = "f".repeat(64);
     const refused = await askEvents(apiKey, {
       query: "typ=core.note",
-      readView,
+      reach,
     });
     expect(refused.status).toBe(400);
     expect(refused.code).toBe("validation_error");

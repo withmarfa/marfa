@@ -28,7 +28,7 @@ mod lock;
 mod model;
 mod names;
 mod query;
-mod read_view;
+mod reach;
 #[cfg(test)]
 mod refusal_tests;
 #[cfg(test)]
@@ -595,7 +595,7 @@ impl Core {
             let conn = self.conn()?;
             store::refuse_unless_hydrated(&conn)?;
             let added = store::pin(&conn, id)?;
-            (added, read_view::Context::capture(&conn)?)
+            (added, reach::Context::capture(&conn)?)
         };
         let mut trashed = false;
         let own_create = |conn: &Connection| -> Result<bool> {
@@ -2450,7 +2450,7 @@ impl Core {
             && !store::hydrated(&conn)?
         {
             let tx = conn.transaction()?;
-            read_view::expire(&tx)?;
+            reach::expire(&tx)?;
             tx.commit()?;
         }
         Ok(conn)
@@ -2523,7 +2523,7 @@ fn unpin_held(tx: &Connection, id: &str) -> Result<bool> {
         && let Some(held) = store::items_by_ids(tx, &[id.to_string()])?.pop()
     {
         let catalog = catalog::Catalog::load(tx)?;
-        if !read_view::listed(tx, id)?
+        if !reach::listed(tx, id)?
             || !store::slice_takes(&catalog, &types, tier, &held.r#type, held.tier)
         {
             store::evict_item(tx, id, &store::whole_edge_types(tx)?)?;
@@ -3790,7 +3790,7 @@ mod tests {
             )
             .unwrap();
             store::meta_set(&conn, store::META_EVENT_CURSOR, "10").unwrap();
-            store::meta_set(&conn, read_view::FENCE, crate::scripted::FENCE).unwrap();
+            store::meta_set(&conn, reach::FENCE, crate::scripted::FENCE).unwrap();
             store::meta_set(&conn, store::META_INSTANCE_ID, crate::scripted::INSTANCE).unwrap();
             store::meta_set(&conn, store::META_SLICE_TYPES, "[\"core.note\"]").unwrap();
             store::meta_set(&conn, store::META_SLICE_TIER, "library").unwrap();
@@ -5325,7 +5325,7 @@ mod tests {
         {
             let conn = core.conn().unwrap();
             store::meta_set(&conn, store::META_EVENT_CURSOR, "10").unwrap();
-            store::meta_set(&conn, read_view::FENCE, crate::scripted::FENCE).unwrap();
+            store::meta_set(&conn, reach::FENCE, crate::scripted::FENCE).unwrap();
             store::meta_set(&conn, store::META_INSTANCE_ID, crate::scripted::INSTANCE).unwrap();
             store::meta_set(&conn, store::META_SLICE_TYPES, "[\"core.note\"]").unwrap();
             store::meta_set(&conn, store::META_SLICE_TIER, "library").unwrap();
@@ -5409,7 +5409,7 @@ mod tests {
         {
             let conn = core.conn().unwrap();
             store::meta_set(&conn, store::META_EVENT_CURSOR, "10").unwrap();
-            store::meta_set(&conn, read_view::FENCE, crate::scripted::FENCE).unwrap();
+            store::meta_set(&conn, reach::FENCE, crate::scripted::FENCE).unwrap();
             store::meta_set(&conn, store::META_INSTANCE_ID, crate::scripted::INSTANCE).unwrap();
             store::meta_set(
                 &conn,
@@ -5539,7 +5539,7 @@ mod tests {
         {
             let conn = core.conn().unwrap();
             store::meta_set(&conn, store::META_EVENT_CURSOR, "10").unwrap();
-            store::meta_set(&conn, read_view::FENCE, crate::scripted::FENCE).unwrap();
+            store::meta_set(&conn, reach::FENCE, crate::scripted::FENCE).unwrap();
             store::meta_set(&conn, store::META_INSTANCE_ID, crate::scripted::INSTANCE).unwrap();
             store::meta_set(&conn, store::META_SLICE_TYPES, "[\"acme.photo\"]").unwrap();
             store::meta_set(&conn, store::META_SLICE_TIER, "library").unwrap();
@@ -5599,7 +5599,7 @@ mod tests {
         {
             let conn = core.conn().unwrap();
             store::meta_set(&conn, store::META_EVENT_CURSOR, "10").unwrap();
-            store::meta_set(&conn, read_view::FENCE, crate::scripted::FENCE).unwrap();
+            store::meta_set(&conn, reach::FENCE, crate::scripted::FENCE).unwrap();
             store::meta_set(&conn, store::META_INSTANCE_ID, crate::scripted::INSTANCE).unwrap();
             store::meta_set(&conn, store::META_SLICE_TYPES, "[\"acme.photo\"]").unwrap();
             store::meta_set(&conn, store::META_SLICE_TIER, "library").unwrap();
@@ -5628,7 +5628,7 @@ mod tests {
         {
             let conn = core.conn().unwrap();
             store::meta_set(&conn, store::META_EVENT_CURSOR, "10").unwrap();
-            store::meta_set(&conn, read_view::FENCE, crate::scripted::FENCE).unwrap();
+            store::meta_set(&conn, reach::FENCE, crate::scripted::FENCE).unwrap();
             store::meta_set(&conn, store::META_INSTANCE_ID, crate::scripted::INSTANCE).unwrap();
             store::meta_set(&conn, store::META_SLICE_TYPES, "[\"acme.photo\"]").unwrap();
             store::meta_set(&conn, store::META_SLICE_TIER, "library").unwrap();
@@ -5669,7 +5669,7 @@ mod tests {
             // and a case that leaned on that would pass with no lock at all.
             let conn = writer.conn().unwrap();
             store::meta_set(&conn, store::META_EVENT_CURSOR, "10").unwrap();
-            store::meta_set(&conn, read_view::FENCE, crate::scripted::FENCE).unwrap();
+            store::meta_set(&conn, reach::FENCE, crate::scripted::FENCE).unwrap();
             store::meta_set(&conn, store::META_INSTANCE_ID, crate::scripted::INSTANCE).unwrap();
             store::meta_set(&conn, store::META_SLICE_TYPES, "[\"core.note\"]").unwrap();
             store::meta_set(&conn, store::META_SLICE_TIER, "library").unwrap();
@@ -6225,7 +6225,7 @@ mod tests {
         {
             let conn = core.conn().unwrap();
             store::meta_set(&conn, store::META_EVENT_CURSOR, "10").unwrap();
-            store::meta_set(&conn, read_view::FENCE, crate::scripted::FENCE).unwrap();
+            store::meta_set(&conn, reach::FENCE, crate::scripted::FENCE).unwrap();
             store::meta_set(&conn, store::META_INSTANCE_ID, crate::scripted::INSTANCE).unwrap();
             store::meta_set(&conn, store::META_SLICE_TYPES, "[\"core.note\"]").unwrap();
             store::meta_set(&conn, store::META_SLICE_TIER, "library").unwrap();
@@ -6268,7 +6268,7 @@ mod tests {
         {
             let conn = core.conn().unwrap();
             store::meta_set(&conn, store::META_EVENT_CURSOR, "10").unwrap();
-            store::meta_set(&conn, read_view::FENCE, crate::scripted::FENCE).unwrap();
+            store::meta_set(&conn, reach::FENCE, crate::scripted::FENCE).unwrap();
             store::meta_set(&conn, store::META_INSTANCE_ID, crate::scripted::INSTANCE).unwrap();
             store::meta_set(&conn, store::META_SLICE_TYPES, "[\"core.note\"]").unwrap();
             store::meta_set(&conn, store::META_SLICE_TIER, "library").unwrap();

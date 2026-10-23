@@ -244,7 +244,7 @@ impl Folder {
     }
 
     /// The version of the settings the copy holds, read whether or not the
-    /// copy can be read: a drain that a changed read view ends remembers its
+    /// copy can be read: a drain that a changed reach ends remembers its
     /// refusals before the copy is built again.
     fn settings_version(&self) -> Result<Option<i64>> {
         store::held_version(&*self.core.conn()?, &self.folder)
@@ -458,7 +458,7 @@ impl Folder {
         let through = (answered.kind != WriteKind::CreateEdge).then_some(answered.id.as_str());
         let (context, known) = {
             let conn = self.core.conn()?;
-            let context = crate::read_view::Context::capture(&conn)?;
+            let context = crate::reach::Context::capture(&conn)?;
             let mut known = Vec::new();
             for edge in store::edges_from(&conn, source)? {
                 if edge.edge_type == PLACEMENT_EDGE && edge.target_id == self.folder {
@@ -490,7 +490,7 @@ impl Folder {
                 }
                 match page.next_cursor {
                     Some(next) if seen.insert(next.clone()) => cursor = Some(next),
-                    Some(_) => return Err(crate::read_view::invalid()),
+                    Some(_) => return Err(crate::reach::invalid()),
                     None => break,
                 }
             }
@@ -708,7 +708,7 @@ mod tests {
         {
             let conn = core.conn().unwrap();
             store::meta_set(&conn, store::META_EVENT_CURSOR, "10").unwrap();
-            store::meta_set(&conn, crate::read_view::FENCE, crate::scripted::FENCE).unwrap();
+            store::meta_set(&conn, crate::reach::FENCE, crate::scripted::FENCE).unwrap();
             store::meta_set(&conn, store::META_INSTANCE_ID, crate::scripted::INSTANCE).unwrap();
             store::meta_set(&conn, store::META_SLICE_TYPES, "[\"core.note\"]").unwrap();
             store::meta_set(&conn, store::META_SLICE_TIER, "library").unwrap();
@@ -965,7 +965,7 @@ mod tests {
         ];
         for (status, code) in refusals {
             let server = crate::scripted::Scripted::start();
-            // A refusal of a read carries the view it was asked in.
+            // A refusal of a read carries the reach it was asked in.
             let refused = || match status {
                 503 => crate::scripted::refusal(status, code),
                 _ => crate::scripted::certified(crate::scripted::refusal(status, code)),

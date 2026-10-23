@@ -1263,8 +1263,8 @@ export interface PushReport {
     failed?: string;
   };
   /** The hydration the drain took where the server said the copy's read
-   *  view had changed, before it sent the writes still waiting
-   *  (`folders/view-changed-push-rebuilds`). */
+   *  reach had changed, before it sent the writes still waiting
+   *  (`folders/reach-changed-push-rebuilds`). */
   rebuilt: HydrateReport | null;
   /** `null` where a failed catch-up left no copy to pull from. */
   pull: PullReport | null;

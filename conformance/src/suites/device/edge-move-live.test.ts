@@ -196,8 +196,8 @@ it("re-parents a note offline in one write a real server takes, never leaving it
     proxy.setOnline(true);
     await withStream(apiUrl, apiKey, {}, async (stream) => {
       await new Promise((settle) => setTimeout(settle, 200));
-      // A move of an edge's source changes the server's read view
-      // (`read-views/view-moves-edge-source`): the move is answered, and the copy expires.
+      // A move of an edge's source changes the server's reach
+      // (`reach/moves-edge-source`): the move is answered, and the copy expires.
       const drained = await device().drain();
       expect(drained.ok).toBe(false);
       if (!drained.ok) expect(drained.refusal.code).toBe("copy_expired");
@@ -287,15 +287,15 @@ it("re-parents several notes in one drain a real server takes, and one hydration
       );
     }
 
-    // Each move changes the server's read view
-    // (`read-views/view-moves-edge-source`), and the drain goes on to send
+    // Each move changes the server's reach
+    // (`reach/moves-edge-source`), and the drain goes on to send
     // the ones behind the first, ending once with the copy expired.
     const drained = await device.drain();
     expect(drained.ok).toBe(false);
     if (!drained.ok) expect(drained.refusal.code).toBe("copy_expired");
     expect(
       value(await device.queue()).map((row) => [row.id, row.verdict]),
-      "a move behind the one that changed the view was not sent",
+      "a move behind the one that changed the reach was not sent",
     ).toEqual(queued.map((row) => [row.id, "accepted"]));
     expect(value(await device.status()).hydration).toBe("expired");
     for (const child of children) {

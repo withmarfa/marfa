@@ -37,7 +37,7 @@ class KeyUsage {
     this.running ??= runInBackground(async () => {
       try {
         while (this.pending.size) {
-          // Yield outside every request's authority, read view and writer.
+          // Yield outside every request's authority, reach and writer.
           await setImmediate();
           const use = this.pending.values().next().value;
           if (!use) break;

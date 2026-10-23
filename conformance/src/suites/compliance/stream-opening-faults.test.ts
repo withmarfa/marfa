@@ -77,13 +77,13 @@ async function fired(name: string): Promise<number | undefined> {
   return (await server.faults()).find((fault) => fault.name === name)?.fired;
 }
 
-/** The position and read view a copy stream announces once it is live. */
-async function copyProof(): Promise<{ cursor: string; read_view: string }> {
+/** The position and reach a copy stream announces once it is live. */
+async function copyProof(): Promise<{ cursor: string; reach: string }> {
   const tap = await open({ query: COPY_QUERY });
   const events = await tap.until(named("stream_live"), "the copy stream live");
   const live = events.find((event) => event.event === "stream_live")!.data as {
     cursor: string;
-    read_view: string;
+    reach: string;
   };
   await tap.close();
   return live;
@@ -156,7 +156,7 @@ describe("a stream that cannot read the head of the log within its budget", () =
     // The same request, with the head readable, opens and goes live.
     await server.clearFault();
     const proof = await copyProof();
-    expect(proof.read_view).toMatch(/^[0-9a-f]{64}$/);
+    expect(proof.reach).toMatch(/^[0-9a-f]{64}$/);
   });
 });
 
@@ -221,7 +221,7 @@ describe("a stream whose read of the log fails", () => {
     const tap = await open({
       query: COPY_QUERY,
       lastEventId: proof.cursor,
-      readView: proof.read_view,
+      reach: proof.reach,
     });
     await tap.untilClosed();
     expect(tap.events.map((event) => event.event)).toEqual([
@@ -257,7 +257,7 @@ describe("a stream whose read of the log fails", () => {
     const tap = await open({
       query: COPY_QUERY,
       lastEventId: proof.cursor,
-      readView: proof.read_view,
+      reach: proof.reach,
     });
     await tap.untilClosed();
     expect(incomplete(tap.events).reason).toBe("replay_failed");

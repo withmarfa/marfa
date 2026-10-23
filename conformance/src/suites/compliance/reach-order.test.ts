@@ -23,12 +23,12 @@ const COPY_QUERY: Array<[string, string]> = [
   ["copy", "1"],
 ];
 const FRAME_BUDGET_MS = 15_000;
-/** Well formed, and not the read view of any credential. */
+/** Well formed, and not the reach of any credential. */
 const STALE = "0".repeat(64);
 const CHANGED = {
   error: {
-    code: "read_view_changed",
-    message: "The read view changed. Rebuild the working copy.",
+    code: "reach_changed",
+    message: "The reach changed. Rebuild the working copy.",
   },
 };
 
@@ -39,7 +39,7 @@ let nowhere: string;
 let ctx: TestContext;
 
 beforeAll(async () => {
-  server = await bootFreshServer("read-view-order");
+  server = await bootFreshServer("reach-order");
   client = new MarfaClient({
     baseUrl: server.apiUrl,
     apiKey: server.workingKey,
@@ -50,7 +50,7 @@ beforeAll(async () => {
   });
   ctx = {
     runId: newRunId(),
-    source: "read-view-order",
+    source: "reach-order",
     trackedItems: [],
     trackedKeys: [],
     trackedEdges: [],
@@ -62,7 +62,7 @@ beforeAll(async () => {
     provisioningClient: management,
   };
   const minted = await management.createKey({
-    label: "read-view-order-nowhere",
+    label: "reach-order-nowhere",
     source: `${ctx.source}-nowhere-${ctx.runId}`,
     permissions: [],
     type_permissions: { "*": "none" },
@@ -95,7 +95,7 @@ function request(
     method: init.method ?? "GET",
     headers: {
       ...(key === null ? {} : { Authorization: `Bearer ${key}` }),
-      ...(init.proof === undefined ? {} : { "X-Marfa-Read-View": init.proof }),
+      ...(init.proof === undefined ? {} : { "X-Marfa-Reach": init.proof }),
       ...(init.body === undefined
         ? {}
         : { "Content-Type": "application/json" }),
@@ -117,14 +117,14 @@ async function expectRefused(
 ) {
   expect(response.status, label).toBe(status);
   expect(await codeOf(response), label).toBe(code);
-  expect(response.headers.get("X-Marfa-Read-View"), label).toBeNull();
+  expect(response.headers.get("X-Marfa-Reach"), label).toBeNull();
 }
 
 async function changed(response: Response, label = "") {
   expect(response.status, label).toBe(409);
   expect(await response.json(), label).toEqual(CHANGED);
-  expect(response.headers.get("X-Error-Code"), label).toBe("read_view_changed");
-  expect(response.headers.get("X-Marfa-Read-View"), label).toBeNull();
+  expect(response.headers.get("X-Error-Code"), label).toBe("reach_changed");
+  expect(response.headers.get("X-Marfa-Reach"), label).toBeNull();
 }
 
 async function seed(body: string) {
@@ -139,10 +139,10 @@ async function seed(body: string) {
 
 interface Proof {
   cursor: string;
-  read_view: string;
+  reach: string;
 }
 
-/** The credential's read view and a cursor, from a copy stream's live marker. */
+/** The credential's reach and a cursor, from a copy stream's live marker. */
 async function bootstrap(key = server.workingKey): Promise<Proof> {
   return withStream(
     server.apiUrl,
@@ -162,28 +162,28 @@ async function bootstrap(key = server.workingKey): Promise<Proof> {
   );
 }
 
-/** The read view a credential's matching proof is certified under, or not. */
+/** The reach a credential's matching proof is certified under, or not. */
 async function holds(proof: Proof, key = server.workingKey, label = "") {
   const answer = await request("/items?include=metadata&limit=1", {
-    proof: proof.read_view,
+    proof: proof.reach,
     key,
   });
   expect(answer.status, label).toBe(200);
-  expect(answer.headers.get("X-Marfa-Read-View"), label).toBe(proof.read_view);
+  expect(answer.headers.get("X-Marfa-Reach"), label).toBe(proof.reach);
   await answer.body?.cancel();
-  expect((await bootstrap(key)).read_view, label).toBe(proof.read_view);
+  expect((await bootstrap(key)).reach, label).toBe(proof.reach);
 }
 
 async function moves(proof: Proof, key = server.workingKey, label = "") {
   await changed(
     await request("/items?include=metadata&limit=1", {
-      proof: proof.read_view,
+      proof: proof.reach,
       key,
     }),
     label,
   );
   const next = await bootstrap(key);
-  expect(next.read_view, label).not.toBe(proof.read_view);
+  expect(next.reach, label).not.toBe(proof.reach);
   return next;
 }
 
@@ -209,15 +209,15 @@ async function copyStream(
   return response;
 }
 
-describe("the read view header on a write", () => {
-  it("answers a write carrying a stale, a malformed or a matching read view as it answers one without the header", async () => {
+describe("the reach header on a write", () => {
+  it("answers a write carrying a stale, a malformed or a matching reach as it answers one without the header", async () => {
     const proof = await bootstrap();
     const row = await seed("a row for the writes");
     const headers = [
       ["stale", STALE],
-      ["matching", proof.read_view],
-      ["malformed", "not-a-read-view"],
-      ["uppercase", proof.read_view.toUpperCase()],
+      ["matching", proof.reach],
+      ["malformed", "not-a-reach"],
+      ["uppercase", proof.reach.toUpperCase()],
     ];
     // The witness: the doors are conditional reads for a GET, so the same
     // stale value answers 409 on one.
@@ -230,18 +230,18 @@ describe("the read view header on a write", () => {
         body: {
           type: "core.note",
           source: ctx.source,
-          properties: { body: `created under a ${name} view` },
+          properties: { body: `created under a ${name} reach` },
         },
       });
       expect(created.status, name).toBe(201);
-      expect(created.headers.get("X-Marfa-Read-View"), name).toBeNull();
+      expect(created.headers.get("X-Marfa-Reach"), name).toBeNull();
       const made = (await created.json()) as { item: { id: string } };
       trackItem(ctx, made.item.id);
 
       const updated = await request(`/items/${row.id}`, {
         method: "PATCH",
         proof: value,
-        body: { properties: { body: `updated under a ${name} view` } },
+        body: { properties: { body: `updated under a ${name} reach` } },
       });
       expect(updated.status, `${name} without a version`).toBe(400);
       expect(await codeOf(updated), name).toBe("missing_required_field");
@@ -252,15 +252,18 @@ describe("the read view header on a write", () => {
       const updated = await request(`/items/${row.id}`, {
         method: "PATCH",
         proof: value,
-        body: { properties: { body: `updated under a ${name} view` }, version },
+        body: {
+          properties: { body: `updated under a ${name} reach` },
+          version,
+        },
       });
       expect(updated.status, name).toBe(200);
-      expect(updated.headers.get("X-Marfa-Read-View"), name).toBeNull();
+      expect(updated.headers.get("X-Marfa-Reach"), name).toBeNull();
       version += 1;
       const read = await client.getItem(row.id);
       expect(read.data.item.version, name).toBe(version);
       expect(read.data.item.properties.body).toBe(
-        `updated under a ${name} view`,
+        `updated under a ${name} reach`,
       );
     }
 
@@ -275,7 +278,7 @@ describe("the read view header on a write", () => {
             id,
             type: "core.note",
             source: ctx.source,
-            properties: { body: "bulk under a stale view" },
+            properties: { body: "bulk under a stale reach" },
           },
         ],
       },
@@ -291,7 +294,7 @@ describe("the read view header on a write", () => {
     ).toEqual(["created"]);
   });
 
-  it("replays a write under one Idempotency-Key whatever read view header it carries, and still refuses the key for another body", async () => {
+  it("replays a write under one Idempotency-Key whatever reach header it carries, and still refuses the key for another body", async () => {
     const key = `order-${randomUUID()}`;
     const body = {
       type: "core.note",
@@ -305,15 +308,15 @@ describe("the read view header on a write", () => {
         body: payload,
       });
 
-    const first = await send({ "X-Marfa-Read-View": STALE });
+    const first = await send({ "X-Marfa-Reach": STALE });
     expect(first.status).toBe(201);
     expect(first.headers.get("Idempotency-Replayed")).toBeNull();
     const written = (await first.json()) as { item: { id: string } };
     trackItem(ctx, written.item.id);
 
     const repeats: Array<Record<string, string>> = [
-      { "X-Marfa-Read-View": "f".repeat(64) },
-      { "X-Marfa-Read-View": "not-a-read-view" },
+      { "X-Marfa-Reach": "f".repeat(64) },
+      { "X-Marfa-Reach": "not-a-reach" },
       {},
     ];
     for (const headers of repeats) {
@@ -321,14 +324,14 @@ describe("the read view header on a write", () => {
       const label = JSON.stringify(headers);
       expect(again.status, label).toBe(201);
       expect(again.headers.get("Idempotency-Replayed"), label).toBe("true");
-      expect(again.headers.get("X-Marfa-Read-View"), label).toBeNull();
+      expect(again.headers.get("X-Marfa-Reach"), label).toBeNull();
       expect(await again.json(), label).toEqual(written);
     }
 
     // The witness: the fingerprint is live, so another body under the key
     // is refused, whatever header it carries.
     const reused = await send(
-      { "X-Marfa-Read-View": STALE },
+      { "X-Marfa-Reach": STALE },
       { ...body, properties: { body: "another body" } },
     );
     await expectRefused(reused, 422, "idempotency_key_reused");
@@ -336,43 +339,43 @@ describe("the read view header on a write", () => {
 });
 
 describe("the order POST /items/bulk-get asks its refusals in", () => {
-  it("answers 401, then 400 to a malformed read view, then 409 to a stale one before it checks the ids or asks whether the key reaches any type", async () => {
+  it("answers 401, then 400 to a malformed reach, then 409 to a stale one before it checks the ids or asks whether the key reaches any type", async () => {
     const row = await seed("bulk-get order");
     const proof = await bootstrap();
     const bulkGet = (
       body: unknown,
-      view?: string,
+      reach?: string,
       key?: string | null,
     ): Promise<Response> =>
       request("/items/bulk-get", {
         method: "POST",
         body,
-        ...(view === undefined ? {} : { proof: view }),
+        ...(reach === undefined ? {} : { proof: reach }),
         ...(key === undefined ? {} : { key }),
       });
 
-    // The witness: the door is a conditional read, so the matching view is
+    // The witness: the door is a conditional read, so the matching reach is
     // certified on it.
-    const witness = await bulkGet({ ids: [row.id] }, proof.read_view);
+    const witness = await bulkGet({ ids: [row.id] }, proof.reach);
     expect(witness.status).toBe(200);
-    expect(witness.headers.get("X-Marfa-Read-View")).toBe(proof.read_view);
+    expect(witness.headers.get("X-Marfa-Reach")).toBe(proof.reach);
     await witness.body?.cancel();
 
     for (const key of [null, "invalid"]) {
-      for (const view of [STALE, "not-a-read-view"]) {
-        const anonymous = await bulkGet({ ids: "not-a-list" }, view, key);
-        expect(anonymous.status, `${String(key)} ${view}`).toBe(401);
-        expect(anonymous.headers.get("X-Marfa-Read-View")).toBeNull();
+      for (const reach of [STALE, "not-a-reach"]) {
+        const anonymous = await bulkGet({ ids: "not-a-list" }, reach, key);
+        expect(anonymous.status, `${String(key)} ${reach}`).toBe(401);
+        expect(anonymous.headers.get("X-Marfa-Reach")).toBeNull();
         await anonymous.body?.cancel();
       }
     }
 
     for (const [name, malformed] of [
-      ["uppercase", proof.read_view.toUpperCase()],
-      ["short", proof.read_view.slice(1)],
-      ["not hexadecimal", `g${proof.read_view.slice(1)}`],
+      ["uppercase", proof.reach.toUpperCase()],
+      ["short", proof.reach.slice(1)],
+      ["not hexadecimal", `g${proof.reach.slice(1)}`],
       ["empty", ""],
-      ["listed twice", `${proof.read_view}, ${proof.read_view}`],
+      ["listed twice", `${proof.reach}, ${proof.reach}`],
     ] as const) {
       await expectRefused(
         await bulkGet({ ids: [row.id] }, malformed),
@@ -393,20 +396,15 @@ describe("the order POST /items/bulk-get asks its refusals in", () => {
       ["a malformed id", { ids: ["not-an-id"] }, "invalid_id"],
     ];
     for (const [name, body, code] of bodies) {
-      // The witness: under the matching view the body is refused, and the
+      // The witness: under the matching reach the body is refused, and the
       // refusal is not certified.
-      await expectRefused(
-        await bulkGet(body, proof.read_view),
-        400,
-        code,
-        name,
-      );
+      await expectRefused(await bulkGet(body, proof.reach), 400, code, name);
       await changed(await bulkGet(body, STALE), name);
     }
 
     const capped = await bulkGet(
       { ids: Array.from({ length: 101 }, () => uuidv7()) },
-      proof.read_view,
+      proof.reach,
     );
     expect(capped.status).toBe(400);
     expect(
@@ -426,31 +424,31 @@ describe("the order POST /items/bulk-get asks its refusals in", () => {
 });
 
 describe("the order a conditional GET asks its refusals in", () => {
-  it("answers 400 to a malformed copy of a stale read view, and 409 to the stale read view itself", async () => {
+  it("answers 400 to a malformed copy of a stale reach, and 409 to the stale reach itself", async () => {
     const row = await seed("a row to retype");
     const proof = await bootstrap();
     const door = "/items?include=metadata";
-    const witness = await request(door, { proof: proof.read_view });
+    const witness = await request(door, { proof: proof.reach });
     expect(witness.status).toBe(200);
-    expect(witness.headers.get("X-Marfa-Read-View")).toBe(proof.read_view);
+    expect(witness.headers.get("X-Marfa-Reach")).toBe(proof.reach);
 
     const retyped = await client.updateItem(row.id, {
       version: row.version,
       type: "core.bookmark",
       retype: true,
-      properties: { url: "https://example.com/read-view-order" },
+      properties: { url: "https://example.com/reach-order" },
     });
     expect(retyped.ok, JSON.stringify(retyped.error)).toBe(true);
 
     // The proof is now the old one, exactly as the server issued it.
-    await changed(await request(door, { proof: proof.read_view }));
+    await changed(await request(door, { proof: proof.reach }));
     for (const [name, malformed] of [
-      ["uppercase", proof.read_view.toUpperCase()],
-      ["short", proof.read_view.slice(1)],
-      ["long", `${proof.read_view}0`],
-      ["not hexadecimal", `g${proof.read_view.slice(1)}`],
+      ["uppercase", proof.reach.toUpperCase()],
+      ["short", proof.reach.slice(1)],
+      ["long", `${proof.reach}0`],
+      ["not hexadecimal", `g${proof.reach.slice(1)}`],
       ["empty", ""],
-      ["listed twice", `${proof.read_view}, ${proof.read_view}`],
+      ["listed twice", `${proof.reach}, ${proof.reach}`],
     ] as const) {
       await expectRefused(
         await request(door, { proof: malformed }),
@@ -462,15 +460,15 @@ describe("the order a conditional GET asks its refusals in", () => {
     const repeated = await fetch(`${server.apiUrl}${door}`, {
       headers: [
         ["Authorization", `Bearer ${server.workingKey}`],
-        ["X-Marfa-Read-View", proof.read_view],
-        ["X-Marfa-Read-View", proof.read_view],
+        ["X-Marfa-Reach", proof.reach],
+        ["X-Marfa-Reach", proof.reach],
       ],
     });
     await expectRefused(repeated, 400, "validation_error", "sent twice");
   });
 
-  it("answers 400 to an item page that asks for no metadata, though its read view is stale", async () => {
-    // The witness: a stale view on a page that asks for metadata is 409.
+  it("answers 400 to an item page that asks for no metadata, though its reach is stale", async () => {
+    // The witness: a stale reach on a page that asks for metadata is 409.
     await changed(
       await request("/items?include=metadata", { proof: STALE }),
       "metadata",
@@ -492,19 +490,19 @@ describe("the order a conditional GET asks its refusals in", () => {
     // And the page with no header is an ordinary read.
     const plain = await request("/items?limit=1");
     expect(plain.status).toBe(200);
-    expect(plain.headers.get("X-Marfa-Read-View")).toBeNull();
+    expect(plain.headers.get("X-Marfa-Reach")).toBeNull();
     await plain.body?.cancel();
   });
 });
 
 describe("the order a copy stream asks its refusals in", () => {
-  it("answers 401 to a request with no credential before it asks the read view", async () => {
+  it("answers 401 to a request with no credential before it asks the reach", async () => {
     const proof = await bootstrap();
     const headers = {
       "Last-Event-ID": proof.cursor,
-      "X-Marfa-Read-View": STALE,
+      "X-Marfa-Reach": STALE,
     };
-    // The witness: with a credential the same request is a stale read view.
+    // The witness: with a credential the same request is a stale reach.
     await changed(await copyStream(server.workingKey, { headers }));
 
     for (const key of [null, "mrf_not_a_credential"]) {
@@ -517,11 +515,11 @@ describe("the order a copy stream asks its refusals in", () => {
     }
   });
 
-  it("answers 400 to a request that is not well formed before it asks the read view", async () => {
+  it("answers 400 to a request that is not well formed before it asks the reach", async () => {
     const proof = await bootstrap();
     const headers = {
       "Last-Event-ID": proof.cursor,
-      "X-Marfa-Read-View": STALE,
+      "X-Marfa-Reach": STALE,
     };
     // The witness: the same headers on a well-formed request are stale.
     await changed(await copyStream(server.workingKey, { headers }));
@@ -533,13 +531,10 @@ describe("the order a copy stream asks its refusals in", () => {
         { headers: { ...headers, "Last-Event-ID": "01" } },
       ],
       [
-        "a cursor with no read view",
+        "a cursor with no reach",
         { headers: { "Last-Event-ID": proof.cursor } },
       ],
-      [
-        "a read view with no cursor",
-        { headers: { "X-Marfa-Read-View": STALE } },
-      ],
+      ["a reach with no cursor", { headers: { "X-Marfa-Reach": STALE } }],
     ];
     for (const [name, options] of refused) {
       await expectRefused(
@@ -551,13 +546,13 @@ describe("the order a copy stream asks its refusals in", () => {
     }
   });
 
-  it("answers 409 to a stale read view before it asks whether the key reaches any type, and 403 to the same key without one", async () => {
+  it("answers 409 to a stale reach before it asks whether the key reaches any type, and 403 to the same key without one", async () => {
     const proof = await bootstrap();
     const headers = {
       "Last-Event-ID": proof.cursor,
-      "X-Marfa-Read-View": STALE,
+      "X-Marfa-Reach": STALE,
     };
-    // The witness: a request with no read view to hold is the key's own 403.
+    // The witness: a request with no reach to hold is the key's own 403.
     await expectRefused(
       await copyStream(nowhere, {}),
       403,
@@ -566,7 +561,7 @@ describe("the order a copy stream asks its refusals in", () => {
 
     await changed(await copyStream(nowhere, { headers }));
 
-    // A request refused for its grammar learns nothing of its read view, and
+    // A request refused for its grammar learns nothing of its reach, and
     // a key reaching no type is told so first.
     await expectRefused(
       await copyStream(nowhere, {
@@ -580,11 +575,11 @@ describe("the order a copy stream asks its refusals in", () => {
   });
 });
 
-describe("what a move to another type does to the read view", () => {
-  it("answers link_taken to a move onto a link another item holds and leaves the read view as it was, and changes it for a move onto a free link", async () => {
+describe("what a move to another type does to the reach", () => {
+  it("answers link_taken to a move onto a link another item holds and leaves the reach as it was, and changes it for a move onto a free link", async () => {
     const [from, to] = [
-      `user.view-from-${ctx.runId}`,
-      `user.view-to-${ctx.runId}`,
+      `user.reach-from-${ctx.runId}`,
+      `user.reach-to-${ctx.runId}`,
     ];
     for (const id of [from, to]) {
       const registered = await client.registerType({
@@ -630,7 +625,7 @@ describe("what a move to another type does to the read view", () => {
     await moves(proof, server.workingKey, "after the move");
   });
 
-  it("changes the read view for a PATCH that moves the item to another type and writes properties, and keeps it for one that writes properties alone", async () => {
+  it("changes the reach for a PATCH that moves the item to another type and writes properties, and keeps it for one that writes properties alone", async () => {
     const row = await seed("a row to move with properties");
     const proof = await bootstrap();
     const written = await client.updateItem(row.id, {
@@ -644,18 +639,18 @@ describe("what a move to another type does to the read view", () => {
       version: written.data.item.version,
       type: "core.bookmark",
       retype: true,
-      properties: { url: "https://example.com/read-view-order-move" },
+      properties: { url: "https://example.com/reach-order-move" },
     });
     expect(moved.ok, JSON.stringify(moved.error)).toBe(true);
     expect(moved.data.item.type).toBe("core.bookmark");
     expect(moved.data.item.properties.url).toBe(
-      "https://example.com/read-view-order-move",
+      "https://example.com/reach-order-move",
     );
     await moves(proof, server.workingKey, "after the move");
   });
 });
 
-describe("the read view header on an answer that is not certified", () => {
+describe("the reach header on an answer that is not certified", () => {
   it("carries none on a 400 or a 409 to a conditional read, and carries one on the same door when the read succeeds", async () => {
     const row = await seed("a row for the doors");
     const proof = await bootstrap();
@@ -676,51 +671,51 @@ describe("the read view header on an answer that is not certified", () => {
     ];
     for (const [bad, good, code] of doors) {
       // The witness: the door certifies a read it can answer.
-      const ok = await request(good, { proof: proof.read_view });
+      const ok = await request(good, { proof: proof.reach });
       expect(ok.status, good).toBe(200);
-      expect(ok.headers.get("X-Marfa-Read-View"), good).toBe(proof.read_view);
+      expect(ok.headers.get("X-Marfa-Reach"), good).toBe(proof.reach);
       await ok.body?.cancel();
 
       await expectRefused(
-        await request(bad, { proof: proof.read_view }),
+        await request(bad, { proof: proof.reach }),
         400,
         code,
-        `${bad} under the matching read view`,
+        `${bad} under the matching reach`,
       );
-      // A stale read view is the 409, and it names the read view of nobody.
+      // A stale reach is the 409, and it names the reach of nobody.
       await changed(await request(bad, { proof: STALE }), `${bad} stale`);
     }
   });
 });
 
 describe("a conditional item page that names no include", () => {
-  it("is refused as one whose include lacks metadata is, under a read view that matches", async () => {
+  it("is refused as one whose include lacks metadata is, under a reach that matches", async () => {
     const proof = await bootstrap();
-    // The witness: the same read view on a page that asks for metadata.
+    // The witness: the same reach on a page that asks for metadata.
     const ok = await request("/items?include=metadata&limit=1", {
-      proof: proof.read_view,
+      proof: proof.reach,
     });
     expect(ok.status).toBe(200);
-    expect(ok.headers.get("X-Marfa-Read-View")).toBe(proof.read_view);
+    expect(ok.headers.get("X-Marfa-Reach")).toBe(proof.reach);
     await ok.body?.cancel();
 
     const lacking = await request("/items?include=edges", {
-      proof: proof.read_view,
+      proof: proof.reach,
     });
     expect(lacking.status).toBe(400);
-    expect(lacking.headers.get("X-Marfa-Read-View")).toBeNull();
+    expect(lacking.headers.get("X-Marfa-Reach")).toBeNull();
     const expected = await lacking.json();
 
     for (const path of ["/items", "/items?limit=1", "/items?include="]) {
-      const bare = await request(path, { proof: proof.read_view });
+      const bare = await request(path, { proof: proof.reach });
       expect(bare.status, path).toBe(400);
-      expect(bare.headers.get("X-Marfa-Read-View"), path).toBeNull();
+      expect(bare.headers.get("X-Marfa-Reach"), path).toBeNull();
       expect(await bare.json(), path).toEqual(expected);
     }
   });
 });
 
-describe("the read view of an approved app", () => {
+describe("the reach of an approved app", () => {
   const OWNER = TEST_OWNER;
   const CALLBACK = "http://127.0.0.1:9/callback";
   const SCOPE = "core.note:read offline_access";
@@ -794,7 +789,7 @@ describe("the read view of an approved app", () => {
       response_type: "code",
       client_id: clientId,
       redirect_uri: CALLBACK,
-      state: "read-view-order",
+      state: "reach-order",
       code_challenge: createHash("sha256").update(verifier).digest("base64url"),
       code_challenge_method: "S256",
       scope: SCOPE,
@@ -843,7 +838,7 @@ describe("the read view of an approved app", () => {
 
   it("is the same for the access tokens an app holds before and after a refresh, and differs for another app", async () => {
     await signIn();
-    const app = await register("view-order-app");
+    const app = await register("reach-order-app");
     const first = await approve(app);
     const before = await bootstrap(first.access_token);
     await holds(before, first.access_token, "the first token");
@@ -854,20 +849,20 @@ describe("the read view of an approved app", () => {
     });
     expect(refreshed.access_token).not.toBe(first.access_token);
     const after = await bootstrap(refreshed.access_token);
-    expect(after.read_view).toBe(before.read_view);
+    expect(after.reach).toBe(before.reach);
     await holds(before, refreshed.access_token, "the refreshed token");
 
-    // The witness: the read view is the app's and not any token's, so
-    // another app of the same person holds a read view of its own.
-    const other = await approve(await register("view-order-other-app"));
+    // The witness: the reach is the app's and not any token's, so
+    // another app of the same person holds a reach of its own.
+    const other = await approve(await register("reach-order-other-app"));
     const own = await bootstrap(other.access_token);
-    expect(own.read_view).not.toBe(before.read_view);
+    expect(own.reach).not.toBe(before.reach);
     await changed(
       await request("/items?include=metadata&limit=1", {
-        proof: before.read_view,
+        proof: before.reach,
         key: other.access_token,
       }),
-      "another app under this app's read view",
+      "another app under this app's reach",
     );
   });
 });

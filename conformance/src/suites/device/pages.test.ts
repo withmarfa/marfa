@@ -457,8 +457,8 @@ describe("creates in pages", () => {
     ).toBe(true);
   });
 
-  it("ends the drain where the read of a page meets a changed read view, with no write answered", async () => {
-    const made = await start("pages-view-changed");
+  it("ends the drain where the read of a page meets a changed reach, with no write answered", async () => {
+    const made = await start("pages-reach-changed");
     harness = made.harness;
     const { door } = made;
     const { notes } = await queue(harness, 50);
@@ -466,7 +466,7 @@ describe("creates in pages", () => {
     door.reading = () => {
       if (changed) return undefined;
       changed = true;
-      return refusal(409, "read_view_changed", "The read view has changed");
+      return refusal(409, "reach_changed", "The reach has changed");
     };
 
     const drained = await harness.device.drain();
@@ -474,7 +474,7 @@ describe("creates in pages", () => {
     expect(changed).toBe(true);
     expect(drained.ok, JSON.stringify(drained)).toBe(false);
     if (drained.ok) return;
-    expect(drained.refusal.raw).toMatch(/read_view_changed/);
+    expect(drained.refusal.raw).toMatch(/reach_changed/);
     expect(door.requests("POST", "/items/bulk")).toHaveLength(1);
     expect(door.items.size).toBe(51);
     expect(notes).toHaveLength(50);

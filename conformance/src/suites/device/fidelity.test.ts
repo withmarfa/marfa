@@ -1463,7 +1463,7 @@ describe("the scripted answers match the server's", () => {
       "a row of a type the key does not hold, in a bulk read by id",
       { status: left.status, body: left.data },
       bulkGetOf([answers.itemNotFound(note.data.item.id)], {
-        viewed: false,
+        withReach: false,
         system: true,
       }),
       { same: ["items", "metadata"] },
@@ -3290,29 +3290,29 @@ it("matches copy marker tuples and conditional listing proofs", async (context) 
       type,
       { status: 200, body: observed.data },
       { kind: "json", status: 200, body: expected.data },
-      { same: ["event_type"], shape: ["cursor", "instance_id", "read_view"] },
+      { same: ["event_type"], shape: ["cursor", "instance_id", "reach"] },
     );
     const tuple = observed.data as {
       cursor: string;
       instance_id: string;
-      read_view: string;
+      reach: string;
     };
     expect(tuple.cursor).toMatch(/^(0|[1-9][0-9]*)$/);
     expect(tuple.instance_id.length).toBeGreaterThan(0);
-    expect(tuple.read_view).toMatch(/^[0-9a-f]{64}$/);
-    if (fence) expect(tuple.read_view).toBe(fence);
-    fence = tuple.read_view;
+    expect(tuple.reach).toMatch(/^[0-9a-f]{64}$/);
+    if (fence) expect(tuple.reach).toBe(fence);
+    fence = tuple.reach;
   }
   const headers = {
     Authorization: `Bearer ${apiKey}`,
-    "X-Marfa-Read-View": fence,
+    "X-Marfa-Reach": fence,
   };
   const response = await fetch(
     `${apiUrl}/items/${seeded.id}?include=metadata`,
     { headers },
   );
   expect(response.status).toBe(200);
-  expect(response.headers.get("X-Marfa-Read-View")).toBe(fence);
+  expect(response.headers.get("X-Marfa-Reach")).toBe(fence);
   expect(response.headers.get("Cache-Control")).toBe("no-store");
   const row = (await response.json()) as {
     listed: boolean;
@@ -3321,7 +3321,7 @@ it("matches copy marker tuples and conditional listing proofs", async (context) 
   expect(row.listed).toBe(true);
   expect(row.item.id).toBe(seeded.id);
   // A hydration reads its pinned rows this way: a bulk read by id under the
-  // view, which leaves out an id that names nothing.
+  // reach, which leaves out an id that names nothing.
   const gone = uuidv7();
   const bulk = await fetch(`${apiUrl}/items/bulk-get`, {
     method: "POST",
@@ -3332,19 +3332,19 @@ it("matches copy marker tuples and conditional listing proofs", async (context) 
     }),
   });
   expect(bulk.status).toBe(200);
-  expect(bulk.headers.get("X-Marfa-Read-View")).toBe(fence);
+  expect(bulk.headers.get("X-Marfa-Reach")).toBe(fence);
   expect(bulk.headers.get("Cache-Control")).toBe("no-store");
   const bulkBody = (await bulk.json()) as { items: { id: string }[] };
   expect(bulkBody.items.map((item) => item.id)).toEqual([seeded.id]);
   expectFidelity(
-    "a bulk read by id under a matching read view",
+    "a bulk read by id under a matching reach",
     { status: bulk.status, body: bulkBody },
     bulkGetOf(
       [
         certifiedRead(answers.updated(wireItem({ id: seeded.id }))),
         certifiedRead(answers.itemNotFound(gone)),
       ],
-      { viewed: true, system: true },
+      { withReach: true, system: true },
     ),
     { same: ["listed"], shape: ["items", "metadata"] },
   );
@@ -3366,7 +3366,7 @@ it("matches copy marker tuples and conditional listing proofs", async (context) 
       }),
     });
     expect(read.status).toBe(200);
-    expect(read.headers.get("X-Marfa-Read-View")).toBe(fence);
+    expect(read.headers.get("X-Marfa-Reach")).toBe(fence);
     const real = (await read.json()) as { items: { id: string }[] };
     const scripted = bulkGetOf(
       [
@@ -3376,7 +3376,7 @@ it("matches copy marker tuples and conditional listing proofs", async (context) 
           ),
         ),
       ],
-      { viewed: true, system },
+      { withReach: true, system },
     );
     expect(
       (scriptedBody(scripted) as { items: { id: string }[] }).items.map(
@@ -3396,14 +3396,14 @@ it("matches copy marker tuples and conditional listing proofs", async (context) 
     { headers: { Authorization: `Bearer ${apiKey}` } },
   );
   expect(ordinary.status).toBe(200);
-  expect(ordinary.headers.get("X-Marfa-Read-View")).toBeNull();
+  expect(ordinary.headers.get("X-Marfa-Reach")).toBeNull();
   expect(await ordinary.json()).not.toHaveProperty("listed");
   const page = await fetch(
     `${apiUrl}/items?type=core.note&include=metadata&source=${encodeURIComponent(ctx.source)}`,
     { headers },
   );
   expect(page.status).toBe(200);
-  expect(page.headers.get("X-Marfa-Read-View")).toBe(fence);
+  expect(page.headers.get("X-Marfa-Reach")).toBe(fence);
   const listed = (await page.json()) as {
     data: { listed: boolean; item: { id: string } }[];
     next_cursor: string | null;

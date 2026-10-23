@@ -12,7 +12,7 @@ use crate::http::{Method, Outgoing};
 use crate::model::{Item, ItemState, SearchHit, Shown, Sort, Tier};
 use crate::store::Unreadable;
 use crate::wire::{WireItem, WireItemWithMetadata};
-use crate::{Core, CoreError, Result, catalog, query, read_view, search, store};
+use crate::{Core, CoreError, Result, catalog, query, reach, search, store};
 
 /// A `system.folder` row and the settings it carries.
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
@@ -299,7 +299,7 @@ impl Core {
             if !store::hydrated(&conn)? {
                 return Ok(None);
             }
-            read_view::Context::capture(&conn).map(Some)
+            reach::Context::capture(&conn).map(Some)
         }) {
             Ok(Some(context)) => context,
             _ => return,
@@ -365,7 +365,7 @@ mod tests {
         )
         .unwrap();
         store::meta_set(&conn, store::META_EVENT_CURSOR, "10").unwrap();
-        store::meta_set(&conn, read_view::FENCE, scripted::FENCE).unwrap();
+        store::meta_set(&conn, reach::FENCE, scripted::FENCE).unwrap();
         store::meta_set(&conn, store::META_INSTANCE_ID, scripted::INSTANCE).unwrap();
         store::meta_set(
             &conn,

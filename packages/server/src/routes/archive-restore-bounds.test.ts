@@ -792,7 +792,7 @@ describe("POST /restore all or nothing", () => {
     });
     expect(before.status).toBe(201);
     const cursor = String((await ctx.storage.eventLog.getMaxId()) ?? 0n);
-    // The view the copy holds; notes alone leave it unchanged.
+    // The reach the copy holds; notes alone leave it unchanged.
     const fenced = await readSse(
       await request(ctx.app, "GET", "/events?edges=all&copy=1", {
         key: ctx.workingKey,
@@ -804,8 +804,8 @@ describe("POST /restore all or nothing", () => {
       .find(
         (line) => line.startsWith("data: ") && line.includes("stream_live"),
       );
-    const view = (JSON.parse(live?.slice(6) ?? "{}") as { read_view: string })
-      .read_view;
+    const reach = (JSON.parse(live?.slice(6) ?? "{}") as { reach: string })
+      .reach;
     const { items } = rows(450, "core.note", false);
     const archive = await buildArchive([MANIFEST, items]);
 
@@ -824,7 +824,7 @@ describe("POST /restore all or nothing", () => {
       expect((await restore(archive)).status).toBe(200);
       const stream = await request(ctx.app, "GET", "/events?edges=all&copy=1", {
         key: ctx.workingKey,
-        headers: { "Last-Event-ID": cursor, "X-Marfa-Read-View": view },
+        headers: { "Last-Event-ID": cursor, "X-Marfa-Reach": reach },
       });
       expect(stream.status).toBe(200);
       let wrote = false;

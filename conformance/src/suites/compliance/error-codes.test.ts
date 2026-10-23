@@ -352,7 +352,7 @@ describe("every refusal's code", () => {
       },
     ];
     const queries = ["", "?undeclared_query_key=1"];
-    const readViews: (string | undefined)[] = [undefined, "not-a-proof"];
+    const reaches: (string | undefined)[] = [undefined, "not-a-proof"];
 
     const seen = new Map<string, number>();
     const outside: string[] = [];
@@ -369,8 +369,8 @@ describe("every refusal's code", () => {
                 continue;
             }
             for (const query of queries) {
-              for (const readView of door.reads ? readViews : [undefined]) {
-                const label = `${door.method} ${door.template} (${credential.name}, ${body.name}${query === "" ? "" : ", " + query}${readView === undefined ? "" : ", read view"}${fill === "unknown" ? "" : ", " + fill + " ids"})`;
+              for (const reach of door.reads ? reaches : [undefined]) {
+                const label = `${door.method} ${door.template} (${credential.name}, ${body.name}${query === "" ? "" : ", " + query}${reach === undefined ? "" : ", reach"}${fill === "unknown" ? "" : ", " + fill + " ids"})`;
                 const res = await fetch(
                   `${apiUrl}${filled(door.template, fill)}${query}`,
                   {
@@ -378,9 +378,9 @@ describe("every refusal's code", () => {
                     headers: {
                       ...credential.headers,
                       ...body.headers,
-                      ...(readView === undefined
+                      ...(reach === undefined
                         ? {}
-                        : { "X-Marfa-Read-View": readView }),
+                        : { "X-Marfa-Reach": reach }),
                     },
                     body: door.reads ? undefined : body.body,
                     redirect: "manual",
