@@ -173,6 +173,38 @@ describe("a file moved or deleted between a pass's scan and its pull", () => {
     expect(filesIn(harness!)).toEqual(["kept.md"]);
   });
 
+  it("does not write back a file with no title line deleted after the scan, and brings it back for a new title", async () => {
+    const { door, edges, ids } = await sentNotNamed("folder-pass-untitled", {
+      "gone.md": "words\n",
+      "renamed.md": "words\n",
+    });
+    rmSync(join(harness!.dir, "gone.md"));
+    rmSync(join(harness!.dir, "renamed.md"));
+    edges.logItem(
+      "item.updated",
+      door.update(ids.get("renamed")!, {
+        properties: { title: "Retitled" },
+        version: 1,
+      }),
+    );
+    const caught = await harness!.folder.device().catchUp();
+    expect(caught.ok, JSON.stringify(caught)).toBe(true);
+    expect((await harness!.folder.pull()).ok).toBe(true);
+
+    const pushed = await harness!.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    if (!pushed.ok) return;
+    expect(pushed.value.scan.missing).toBe(2);
+    // The witness: a title the file never showed is a change it shows, and
+    // brings the file back.
+    expect(
+      pushed.value.pull?.revived,
+      "the title the folder took from a file's name read as a change, and brought back a file the person deleted",
+    ).toBe(1);
+    expect(filesIn(harness!)).toEqual(["Retitled.md"]);
+    expect(idIn(harness!, "Retitled.md")).toBe(ids.get("renamed"));
+  });
+
   it("keeps the edit of a file moved and edited after the scan, and makes no second item", async () => {
     const { ids } = await sentNotNamed("folder-pass-moved-edited", {
       "note.md": note("Note", "words"),
