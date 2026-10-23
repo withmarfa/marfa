@@ -32,7 +32,7 @@ The server (`packages/`), the Rust core every native client embeds (`core/`), an
 
 ## Versions
 
-A version exists only as a git tag, created only when a release is called for, each the previous plus 0.0.1. Every manifest carries `0.0.0` (`ci/version-fields.test.ts`), and `release.yml` stamps the tag in its own checkout.
+A version exists only as a git tag, created when a logical set of merged work is ready, by the session that finishes that set unless its brief says not to, each the previous plus 0.0.1. Releases are frequent. Every manifest carries `0.0.0` (`ci/version-fields.test.ts`), and `release.yml` stamps the tag in its own checkout.
 
 ## Commands
 
