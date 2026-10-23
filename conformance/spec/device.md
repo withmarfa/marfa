@@ -1824,6 +1824,178 @@ Where `MARFA_ALLOW_HTTP` is set to `1`, `true`, `yes` or `on`, the CLI MUST NOT 
 
 **Tests:** `cli/cleartext.test.ts › prints no warning where MARFA_ALLOW_HTTP states it is intended, and warns where it does not`.
 
+## Profiles
+
+A profile is a section of `profiles.toml`, a file a person writes by hand, that names a server and where its key comes from. It is not the owner's profile (`GLOSSARY.md`).
+
+### `device/profile-file-place`
+
+The CLI MUST read profiles from `Library/Application Support/Marfa/profiles.toml` under `HOME` on macOS, and elsewhere from `marfa/profiles.toml` under `XDG_CONFIG_HOME`, or under `HOME/.config` where `XDG_CONFIG_HOME` is not set.
+
+**Tests:** `cli/profiles.test.ts › takes the server and key from --profile, reading none of the variables`.
+
+### `device/profile-flag-first`
+
+When `--profile NAME` is given, the CLI MUST take the server and the key from that profile and read none of `MARFA_API_URL`, `MARFA_API_KEY` and `MARFA_PROFILE`.
+
+**Reason:** a profile named on the command line is the most specific choice, and a variable exported for another server must neither redirect it nor lend it a key.
+
+**Tests:** `cli/profiles.test.ts › takes the server and key from --profile, reading none of the variables`.
+
+### `device/profile-flag-alone`
+
+If `--profile` is given with `--url` or `--key`, then the CLI MUST exit 2 with `usage` and send no request.
+
+**Tests:** `cli/profiles.test.ts › refuses --profile beside --url or --key`.
+
+### `device/profile-env-below-flags`
+
+When `--url` or `--key` is given, the CLI MUST NOT read `MARFA_PROFILE`.
+
+**Tests:** `cli/profiles.test.ts › reads no MARFA_PROFILE beside --url or --key`.
+
+### `device/profile-env-alone`
+
+If `MARFA_PROFILE` is set beside a `MARFA_API_URL` or `MARFA_API_KEY` that is not empty, and none of `--profile`, `--url` and `--key` is given, then the CLI MUST exit 2 with `usage` and send no request.
+
+**Reason:** any reading of the two together either sends one server's key to the other or picks a server the person did not mean.
+
+**Tests:** `cli/profiles.test.ts › refuses MARFA_PROFILE beside MARFA_API_URL or MARFA_API_KEY, sending nothing`.
+
+### `device/profile-key-own-server`
+
+The CLI MUST NOT send a profile's key to any server but the one the profile names.
+
+**Tests:** `cli/profiles.test.ts › takes the server and key from --profile, reading none of the variables`, `› refuses MARFA_PROFILE beside MARFA_API_URL or MARFA_API_KEY, sending nothing`.
+
+### `device/profile-no-other-key`
+
+While a profile names the server, the CLI MUST NOT send that server any key but the profile's.
+
+**Tests:** `cli/profiles.test.ts › sends a profile's server no key but the profile's`.
+
+### `device/profile-key-command-key`
+
+When a profile's key command exits 0 having printed one line, the CLI MUST send that line, without the white space around it, as the profile's key.
+
+**Tests:** `cli/profiles.test.ts › takes the server and key from --profile, reading none of the variables`.
+
+### `device/profile-key-command-argv`
+
+When the CLI runs a profile's key command, the CLI MUST run the program and arguments the profile lists, without a shell.
+
+**Reason:** a shell would read quotes, variables and separators in the arguments, so a value meant literally would run as a command.
+
+**Tests:** `cli/profiles.test.ts › runs the key command once in a run, as an argument list without a shell, with no standard input`.
+
+### `device/profile-key-command-stdin`
+
+When the CLI runs a profile's key command, the CLI MUST give it no standard input.
+
+**Reason:** the CLI's standard input can carry a body or a key meant for the command the person ran.
+
+**Tests:** `cli/profiles.test.ts › runs the key command once in a run, as an argument list without a shell, with no standard input`.
+
+### `device/profile-key-command-once`
+
+The CLI MUST run a profile's key command at most once in a run.
+
+**Reason:** a key command can ask the person to approve it, and a run sends many requests.
+
+**Tests:** `cli/profiles.test.ts › runs the key command once in a run, as an argument list without a shell, with no standard input`.
+
+### `device/profile-key-command-failed`
+
+If a profile's key command cannot be started, exits other than 0, is ended by a signal, prints nothing, prints more than one line, prints more than 16 KiB or prints text that is not UTF-8, then the CLI MUST exit 5 with `key_command` and send no request.
+
+**Tests:** `cli/profiles.test.ts › refuses a key command that fails with key_command and exit 5, sending nothing and showing none of its output`.
+
+### `device/profile-key-command-names`
+
+If the CLI refuses a profile's key command, then the CLI MUST name the profile and the program in the message.
+
+**Tests:** `cli/profiles.test.ts › refuses a key command that fails with key_command and exit 5, sending nothing and showing none of its output`.
+
+### `device/profile-key-command-quiet`
+
+If the CLI refuses a profile's key command, then the CLI MUST NOT print anything the command printed on its standard output.
+
+**Reason:** what a failing key command printed may be the key, or part of it.
+
+**Tests:** `cli/profiles.test.ts › refuses a key command that fails with key_command and exit 5, sending nothing and showing none of its output`.
+
+### `device/profile-file-writable`
+
+If the profile file, or the folder that holds it, can be written by its group or by others, then the CLI MUST exit 2 with `usage` and print nothing the file holds.
+
+**Reason:** whoever can change the file can name a key command, which the CLI runs as the person.
+
+**Tests:** `cli/profiles.test.ts › refuses a profile file or folder others can write, or a field it does not know, never showing what the file holds`.
+
+### `device/profile-unknown-field`
+
+If a profile in the file holds a field the CLI does not know, then the CLI MUST exit 2 with `usage` and print no value from the file.
+
+**Reason:** a misspelled `key_command` would otherwise leave the profile taking its key from the keychain unseen.
+
+**Tests:** `cli/profiles.test.ts › refuses a profile file or folder others can write, or a field it does not know, never showing what the file holds`.
+
+### `device/command-write-line`
+
+Where `--json` is not given, when a command is about to send a server the first request in its run that can change data, the CLI MUST first print `marfa: writing to <origin>` on standard error, followed by ` (profile <name>)` where a profile named that server.
+
+**Reason:** a person with a test server and a real one sees which one a write goes to before it is made.
+
+**Tests:** `cli/profiles.test.ts › names the server and profile on stderr before the first write, and nothing for a read or under --json`.
+
+### `device/command-read-no-line`
+
+When a command sends a server only requests that change no data, including a read sent as `POST`, the CLI MUST NOT print `marfa: writing to`.
+
+**Tests:** `cli/profiles.test.ts › names the server and profile on stderr before the first write, and nothing for a read or under --json`.
+
+### `device/command-write-line-json`
+
+While `--json` is given, the CLI MUST NOT print `marfa: writing to`.
+
+**Reason:** under `--json`, standard error holds a refusal alone, as one JSON object.
+
+**Tests:** `cli/profiles.test.ts › names the server and profile on stderr before the first write, and nothing for a read or under --json`.
+
+### `device/profile-socket-refused`
+
+If `--profile`, or a `MARFA_PROFILE` that is not empty, is given with `--socket`, then the CLI MUST exit 2 with `usage`.
+
+**Tests:** `cli/profiles.test.ts › refuses --profile and MARFA_PROFILE beside --socket, and --profile on server commands`.
+
+### `device/profile-server-command-refused`
+
+If a `marfa server` command is given `--profile`, then the CLI MUST exit 2 with `usage`.
+
+**Reason:** the command runs Docker on this machine and contacts no Marfa server, so a person who gave a profile would believe it was used.
+
+**Tests:** `cli/profiles.test.ts › refuses --profile and MARFA_PROFILE beside --socket, and --profile on server commands`.
+
+### `device/profile-keychain-commands`
+
+Where a profile has a key command, if `login` without `--print-token`, `logout`, `keys keep` or `keys forget` is given that profile, then the CLI MUST exit 2 with `usage`.
+
+**Reason:** the profile never reads the keychain, so the command would change nothing the profile uses.
+
+**Tests:** `cli/profiles.test.ts › refuses keychain commands for a profile whose key comes from a key command`.
+
+### `device/whoami-profile`
+
+When `whoami` runs with a profile, the CLI MUST report the profile's name as `profile`.
+
+**Tests:** `cli/profiles.test.ts › takes the server and key from --profile, reading none of the variables`.
+
+### `device/whoami-key-command`
+
+When `whoami` runs with a profile that has a key command, the CLI MUST report `key_command` as the credential's `from`.
+
+**Tests:** `cli/profiles.test.ts › takes the server and key from --profile, reading none of the variables`.
+
 ## The working copy's contract
 
 The contract version a device speaks is the one in the document its core is built from.
@@ -4240,11 +4412,11 @@ Where `--json` is given, when `marfa docs` reads a page, the CLI MUST report in 
 
 ### `device/docs-url-key`
 
-If `--url` or `--key` is given to `marfa docs`, then the CLI MUST exit 2 with `usage` and send no request.
+If `--url`, `--key` or `--profile` is given to `marfa docs`, then the CLI MUST exit 2 with `usage` and send no request.
 
-**Reason:** both name a Marfa server and a credential for it, and the docs site takes neither, so a person who gave one would believe it was used.
+**Reason:** each names a Marfa server or a credential for it, and the docs site takes neither, so a person who gave one would believe it was used.
 
-**Tests:** `device/contract.test.ts › refuses --url and --key on docs with usage, sending nothing`.
+**Tests:** `device/contract.test.ts › refuses --url, --key and --profile on docs with usage, sending nothing`.
 
 ### `device/docs-path-refused`
 
@@ -4296,15 +4468,15 @@ When `marfa types scaffold` runs, the CLI MUST send no request, whatever `MARFA_
 
 **Reason:** a definition is written on this machine, so naming a server must not make the command contact it.
 
-**Tests:** `device/types-scaffold.test.ts › needs no server, working copy or key, and sends nothing where a server is named`, `› refuses --url, --key and --socket with usage, sending nothing`.
+**Tests:** `device/types-scaffold.test.ts › needs no server, working copy or key, and sends nothing where a server is named`, `› refuses --url, --key, --profile and --socket with usage, sending nothing`.
 
 ### `device/types-scaffold-no-server-options`
 
-If `marfa types scaffold` is given `--url`, `--key` or `--socket`, then the CLI MUST exit 2 with `usage`.
+If `marfa types scaffold` is given `--url`, `--key`, `--profile` or `--socket`, then the CLI MUST exit 2 with `usage`.
 
 **Reason:** the command uses none of them, so a person who gave one would believe it was used.
 
-**Tests:** `device/types-scaffold.test.ts › refuses --url, --key and --socket with usage, sending nothing`.
+**Tests:** `device/types-scaffold.test.ts › refuses --url, --key, --profile and --socket with usage, sending nothing`.
 
 ### `device/types-scaffold-id-refused`
 

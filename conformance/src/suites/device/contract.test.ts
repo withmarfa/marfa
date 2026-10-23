@@ -2281,11 +2281,12 @@ describe("every command holds the server to the contract", () => {
     expect(sent(server)).toEqual(["GET /r0.md", "GET /r1.md", "GET /r2.md"]);
   });
 
-  it("refuses --url and --key on docs with usage, sending nothing", async () => {
+  it("refuses --url, --key and --profile on docs with usage, sending nothing", async () => {
     server = await ScriptedServer.start();
     for (const flags of [
       ["--url", server.url],
       ["--key", KEY],
+      ["--profile", "demo"],
     ]) {
       for (const command of [["topics"], ["search", "files"], ["files"]]) {
         const outcome = await marfa(

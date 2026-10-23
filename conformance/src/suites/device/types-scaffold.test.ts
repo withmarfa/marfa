@@ -119,11 +119,12 @@ describe("a starting definition for a type", () => {
     expect(server.unmatchedRequests).toEqual([]);
   });
 
-  it("refuses --url, --key and --socket with usage, sending nothing", async () => {
+  it("refuses --url, --key, --profile and --socket with usage, sending nothing", async () => {
     server = await ScriptedServer.start();
     for (const option of [
       ["--url", server.url],
       ["--key", KEY],
+      ["--profile", "demo"],
       ["--socket", "/marfa-test-no-socket"],
     ]) {
       const ran = await marfa(
