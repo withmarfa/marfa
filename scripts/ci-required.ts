@@ -346,7 +346,7 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
   ],
   // Off the gate: `benchmarks.yml` runs them.
   [
-    /^conformance\/src\/suites\/(load|performance)\//,
+    /^conformance\/src\/suites\/(load|performance|hydration)\//,
     ["workspace", "conformance-offline"],
   ],
   [/^conformance\/src\/suites\//, ["workspace", ...CONFORMANCE]],
