@@ -543,6 +543,46 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     ).toEqual(["moved and edited\n"]);
   });
 
+  it("does not write back a file moved to another folder between a pass's scan and its pull", async () => {
+    const { a, b } = await onOneMac(
+      "pass-moved-away",
+      { search: { types: ["core.note"] } },
+      { search: { types: ["core.bookmark"] } },
+      {},
+    );
+    put(a, "Moved.md", "---\ntitle: Moved\n---\nwords\n");
+    expect((await a.folder.scan()).ok).toBe(true);
+    expect((await a.folder.device().drain()).ok).toBe(true);
+    const id = String(sentCreates(a)[0]?.id);
+    renameSync(join(a.dir, "Moved.md"), join(b.dir, "Moved.md"));
+
+    const pulled = await a.folder.pull();
+    expect(pulled.ok, JSON.stringify(pulled)).toBe(true);
+    if (!pulled.ok) return;
+    expect(
+      existsSync(join(a.dir, "Moved.md")),
+      "the pull wrote a file moved to another folder back where it was, so the note is on the Mac twice",
+    ).toBe(false);
+    expect(pulled.value.unwritten).toBe(1);
+
+    // The next pass journals it and writes nothing back. The file never
+    // carried its id, so the folder it went to makes it a new item, and the
+    // grace sweep settles the old one (`folders/delete-grace`).
+    const left = await a.folder.push();
+    expect(left.ok, JSON.stringify(left)).toBe(true);
+    if (!left.ok) return;
+    expect(left.value.scan.missing).toBe(1);
+    expect(left.value.pull?.revived).toBe(0);
+    expect(existsSync(join(a.dir, "Moved.md"))).toBe(false);
+    expect((await b.folder.push()).ok).toBe(true);
+    expect((await a.folder.push()).ok).toBe(true);
+    expect(readdirSync(a.dir).filter((name) => name !== ".marfa")).toEqual([]);
+    expect(readdirSync(b.dir).filter((name) => name !== ".marfa")).toEqual([
+      "Moved.md",
+    ]);
+    expect(deletesOf(a.server, id)).toBe(0);
+  });
+
   it("trashes a missing file found in no folder on the Mac, and says so", async () => {
     const gone = "01a00000-0000-7000-8000-0000000016e1";
     const alsoGone = "01a00000-0000-7000-8000-0000000016e2";

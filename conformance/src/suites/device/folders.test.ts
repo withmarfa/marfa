@@ -4701,7 +4701,13 @@ describe("what a folder takes", () => {
         "an incomplete inventory must hold missing paths outside the unread directory too",
       ).toEqual([0, 1]);
       expect(pushed.value.scan.deleted).toBe(0);
-      expect(pushed.value.pull?.unwritten).toBe(1);
+      // The deleted file is neither journaled nor written back: only a
+      // complete scan can tell a delete from a move into the unread directory.
+      expect(pushed.value.pull?.unwritten).toBe(2);
+      expect(
+        pushed.value.pull?.flagged.map((entry) => entry.path).sort(),
+      ).toEqual(["gone.md", "locked/inner.txt"]);
+      expect(existsSync(join(harness.dir, "gone.md"))).toBe(false);
     } finally {
       chmodSync(locked, 0o755);
     }
@@ -4712,14 +4718,11 @@ describe("what a folder takes", () => {
       [readable.value.unreached, readable.value.created],
       "the file lost its binding when the pull could not write it, and came back as a second item",
     ).toEqual([0, 0]);
+    // With the directory readable, the scan can establish absence.
+    expect(readable.value.missing).toBe(1);
     expect((await harness.folder.push()).ok).toBe(true);
     expect(read(harness, "locked/inner.txt")).toBe("changed elsewhere\n");
-    // The push restored the unjournaled item from the copy. A removal
-    // made with the directory readable can now establish absence.
-    expect(existsSync(join(harness.dir, "gone.md"))).toBe(true);
-    rmSync(join(harness.dir, "gone.md"));
-    const missing = await harness.folder.scan();
-    expect(missing.ok && missing.value.missing).toBe(1);
+    expect(existsSync(join(harness.dir, "gone.md"))).toBe(false);
     await new Promise((resolve) => setTimeout(resolve, 6000));
     const confirmed = await harness.folder.scan();
     expect(confirmed.ok && confirmed.value.deleted).toBe(1);

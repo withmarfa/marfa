@@ -1,4 +1,11 @@
-import { readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  readFileSync,
+  readdirSync,
+  renameSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { StreamFeed } from "../../device/scripted-server.js";
@@ -82,6 +89,23 @@ async function nextTurn(harness: BindingFolderHarness) {
   await device.hooks.release("folder-pass-ended");
   await untilHeld(device, "folder-watch-turn");
   await device.hooks.hold("folder-pass-ended");
+}
+
+/** Runs one more pass, past the rename grace, and holds it at its end. */
+async function nextPass(harness: BindingFolderHarness) {
+  const { device } = harness;
+  await nextTurn(harness);
+  await device.clock.advance(5_000);
+  const settings = settingsFile(harness);
+  writeFileSync(settings, readFileSync(settings));
+  await device.hooks.release("folder-watch-turn");
+  await untilHeld(device, "folder-pass-ended");
+}
+
+function notesIn(dir: string): string[] {
+  return readdirSync(dir)
+    .filter((name) => name !== ".marfa")
+    .sort();
 }
 
 describe("folder clock and scan boundaries", () => {
@@ -187,6 +211,64 @@ describe("folder clock and scan boundaries", () => {
     ).toBe(true);
     await device.hooks.release("folder-pass-ended");
     expect(readFileSync(path, "utf8")).toContain("later body with more bytes");
+  });
+
+  it("writes back no file moved between a watch pass's scan and its pull, and follows the move on the next pass", async () => {
+    const harness = await prepared("binding-pass-moved");
+    const { device, dir, served } = harness;
+    writeFileSync(join(dir, "new.md"), "---\ntitle: New\n---\nwords\n");
+    await device.hooks.hold("folder-pass-pull");
+    await startFirstPass(harness);
+    // The pass has scanned the note and sent its create.
+    await untilHeld(device, "folder-pass-pull");
+    expect(served.size).toBe(1);
+    renameSync(join(dir, "new.md"), join(dir, "moved.md"));
+    await device.hooks.release("folder-pass-pull");
+    await untilHeld(device, "folder-pass-ended");
+    expect(
+      existsSync(join(dir, "new.md")),
+      "the pull wrote a moved file back at its old path, so the note is in the folder twice",
+    ).toBe(false);
+
+    await nextPass(harness);
+    expect(notesIn(dir)).toEqual(["moved.md"]);
+    const id = [...served.keys()][0];
+    expect(readFileSync(join(dir, "moved.md"), "utf8")).toContain(
+      `marfa_id: ${id}`,
+    );
+    expect(served.size).toBe(1);
+    await device.hooks.release("folder-pass-ended");
+  });
+
+  it("writes back no file deleted between a watch pass's scan and its pull, and sends its delete after the grace", async () => {
+    const harness = await prepared("binding-pass-deleted");
+    const { device, dir, served, server } = harness;
+    writeFileSync(join(dir, "new.md"), "---\ntitle: New\n---\nwords\n");
+    await device.hooks.hold("folder-pass-pull");
+    await startFirstPass(harness);
+    await untilHeld(device, "folder-pass-pull");
+    const id = [...served.keys()][0];
+    unlinkSync(join(dir, "new.md"));
+    await device.hooks.release("folder-pass-pull");
+    await untilHeld(device, "folder-pass-ended");
+    expect(
+      existsSync(join(dir, "new.md")),
+      "the pull wrote back a file the person deleted",
+    ).toBe(false);
+
+    // The next pass journals the delete, and the one past the grace sends it.
+    await nextPass(harness);
+    expect(existsSync(join(dir, "new.md"))).toBe(false);
+    const deletes = () =>
+      server.requests.filter(
+        (request) =>
+          request.method === "DELETE" && request.pathname === `/items/${id}`,
+      ).length;
+    expect(deletes()).toBe(0);
+    await nextPass(harness);
+    expect(deletes()).toBe(1);
+    expect(notesIn(dir)).toEqual([]);
+    await device.hooks.release("folder-pass-ended");
   });
 
   it("starts a pass after five seconds even while filesystem changes keep arriving", async () => {
