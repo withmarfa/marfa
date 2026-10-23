@@ -1554,10 +1554,22 @@ impl Folder {
                         bound: Some(state::Bound {
                             edit_line: None,
                             held: None,
-                            writes: state::Writes::default(),
+                            writes: state::Writes {
+                                id_carried: theirs.writes.id_carried,
+                                taken_as: theirs.identity.clone(),
+                                ..state::Writes::default()
+                            },
                             ..theirs
                         }),
                     });
+                }
+                // Made a new item now, the file would be a second one once
+                // that folder's create lands.
+                None if peers.creating(&theirs.item_id) => {
+                    waiting.insert(
+                        at,
+                        "it is the file of an item another folder on this machine is still creating; it is taken once that create lands".into(),
+                    );
                 }
                 None => {}
             }

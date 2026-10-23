@@ -801,6 +801,7 @@ impl Folder {
         };
         rendering.context.borrow().check(&*self.core.conn()?)?;
         let hash = state::hash(&bytes);
+        let carries_id = document::id_line_of(&bytes).as_deref() == Some(item.id.as_str());
         let presentation = if bytes_of(item, catalog).is_none() {
             std::str::from_utf8(&bytes).ok().map(|text| {
                 if carries_frontmatter(Path::new(&want)) {
@@ -933,7 +934,10 @@ impl Folder {
                     edit_line: None,
                     held: None,
                     own,
-                    writes: state::Writes::default(),
+                    writes: state::Writes {
+                        id_carried: carries_id,
+                        ..state::Writes::default()
+                    },
                 },
             )?;
             state::journal_clear_for(&conn, &want, &item.id)?;
@@ -1003,6 +1007,7 @@ impl Folder {
             own: own.clone(),
             writes: state::Writes {
                 landing: None,
+                id_carried: writes.id_carried || carries_id,
                 ..writes.clone()
             },
         };
@@ -1032,7 +1037,7 @@ impl Folder {
                     landing: Some(state::Landing {
                         before: before.clone().map(Box::new),
                     }),
-                    ..writes.clone()
+                    ..binding(None).writes
                 },
                 ..binding(None)
             },
@@ -1271,7 +1276,10 @@ impl Folder {
             edit_line: None,
             held: None,
             own: theirs.own.clone(),
-            writes: state::Writes::default(),
+            writes: state::Writes {
+                id_carried: theirs.writes.id_carried,
+                ..state::Writes::default()
+            },
         };
         // Kept beside the new binding until the file is here, as a write's is.
         let conn = self.core.conn()?;
@@ -1285,7 +1293,7 @@ impl Folder {
                     landing: Some(state::Landing {
                         before: before.clone().map(Box::new),
                     }),
-                    ..state::Writes::default()
+                    ..binding(None).writes
                 },
                 ..binding(None)
             },
@@ -1571,9 +1579,13 @@ impl Folder {
         } else {
             document::read_body(&text)
         };
+        let title = fields::title_field(rendering.catalog, &item.r#type);
         Ok(bound.presentation.as_ref().is_some_and(|agreed| {
             // A file deleted before the folder first wrote its own lines into
-            // it never showed them.
+            // it never showed them, nor the title the folder took from its
+            // name.
+            let named = presented.front.get(title).and_then(Value::as_str)
+                == Some(super::title_of(&bound.path).as_str());
             let presented = [
                 fields::ID_FIELD,
                 fields::VERSION_FIELD,
@@ -1581,6 +1593,7 @@ impl Folder {
                 fields::TIER_FIELD,
             ]
             .into_iter()
+            .chain(named.then_some(title))
             .filter(|field| !agreed.front().contains_key(*field))
             .fold(presented.presentation(), |presented, field| {
                 presented.with(field, None)

@@ -1007,7 +1007,10 @@ impl Folder {
                 edit_line: kept.edit_line,
                 held: kept.held,
                 own: kept.own,
-                writes: kept.writes,
+                writes: state::Writes {
+                    id_carried: kept.writes.id_carried || file.id.as_deref() == Some(item_id),
+                    ..kept.writes
+                },
             },
         )
     }

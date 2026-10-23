@@ -201,14 +201,15 @@ impl Peer {
     /// Whether its next scan takes `file`, which carries no id and which it
     /// has not bound, as `item_id` by the missing file's binding: it holds no
     /// file of the item already, and its lists take the file. Only that
-    /// binding names the item to it (`left_behind`).
-    fn awaits(&self, file: &OnDisk, item_id: &str, file_item: bool) -> bool {
+    /// binding names the item to it (`left_behind`). `bare` is whether that
+    /// scan takes a Markdown file without an id line for the item.
+    fn awaits(&self, file: &OnDisk, item_id: &str, bare: bool) -> bool {
         let Some(folder) = &self.folder else {
             return false;
         };
         let bound = self.bound();
         file.id.is_none()
-            && (file_item || !carries_frontmatter(&file.path))
+            && (bare || !carries_frontmatter(&file.path))
             && !bound.contains_key(&file.key)
             && !bound.values().any(|(bound, _)| bound == item_id)
             && folder
@@ -532,10 +533,11 @@ impl<'a> Peers<'a> {
     /// or unique bytes, its path given whole. `markdown` is whether the
     /// arriving file is at a Markdown name.
     ///
-    /// A note's Markdown file carries its id line, so an arriving Markdown
-    /// file without one is a file item's or a new item, and a note's missing
-    /// Markdown file is not known by its bytes. A file item's file is its
-    /// bytes whatever its name.
+    /// A note's Markdown file carries its id line once that folder wrote it,
+    /// so an arriving Markdown file without one is then a file item's or a
+    /// new item; before, only its identity follows it. A note's missing
+    /// Markdown file is not known by its bytes, which a template's copies
+    /// share. A file item's file is its bytes whatever its name.
     pub(super) fn left_behind(
         &self,
         mark: Option<&str>,
@@ -563,7 +565,11 @@ impl<'a> Peers<'a> {
             };
             let takes = |bound: &state::Bound, by_bytes: bool| {
                 peer.file_item(&bound.item_id)
-                    || !(markdown || by_bytes && carries_frontmatter(Path::new(&bound.path)))
+                    || if by_bytes {
+                        !(markdown || carries_frontmatter(Path::new(&bound.path)))
+                    } else {
+                        !markdown || !bound.writes.id_carried
+                    }
             };
             if let Some(found) = mark
                 .and_then(|mark| read(state::bound_with_identity, mark))
@@ -591,8 +597,12 @@ impl<'a> Peers<'a> {
         }
         let peers = self.all();
         let item = lost.item_id.as_str();
-        let arrival = |peer: &Peer, file: &OnDisk| {
-            if peer.awaits(file, item, file_item) {
+        let arrival = |peer: &Peer, file: &OnDisk, by_identity: bool| {
+            if peer.awaits(
+                file,
+                item,
+                file_item || by_identity && !lost.writes.id_carried,
+            ) {
                 Look::Arriving
             } else {
                 Look::Moved
@@ -606,7 +616,17 @@ impl<'a> Peers<'a> {
                     .map(|file| (peer, file))
             })
         {
-            return arrival(peer, file);
+            return arrival(peer, file, true);
+        }
+        if lost.identity.is_some()
+            && peers.iter().any(|peer| {
+                peer.bound_to(item).is_some_and(|bound| {
+                    bound.writes.taken_as == lost.identity
+                        && peer.files().iter().any(|file| file.key == bound.path)
+                })
+            })
+        {
+            return Look::Moved;
         }
         if let Some(why) = peers.iter().find_map(|peer| peer.walked().partial.clone()) {
             return Look::Unsure(why);
@@ -667,13 +687,39 @@ impl<'a> Peers<'a> {
             }
         }
         match (matches, last) {
-            (1, Some((peer, file))) => arrival(peer, file),
+            (1, Some((peer, file))) => arrival(peer, file, false),
             (0, _) => Look::Nowhere,
             _ => Look::Unsure(format!(
                 "{} files in other folders have its bytes, and which it became cannot be told",
                 matches
             )),
         }
+    }
+
+    /// Whether another folder's own create of the item may still land, so
+    /// the server cannot show the item yet. A refused create never lands,
+    /// unless it was refused onto a row a read may yet find.
+    pub(super) fn creating(&self, item_id: &str) -> bool {
+        let may_land = |conn: &rusqlite::Connection| -> Result<bool> {
+            let landings = store::pending_landings(conn)?;
+            for id in store::untaken_creates_for_item(conn, item_id)? {
+                let refused = store::queued_write(conn, &id)?
+                    .is_some_and(|write| write.verdict == Some(crate::model::Verdict::Dead));
+                if !refused || landings.contains_key(&id) {
+                    return Ok(true);
+                }
+            }
+            Ok(false)
+        };
+        self.all().iter().any(|peer| {
+            peer.folder.as_ref().is_some_and(|folder| {
+                folder
+                    .core
+                    .conn()
+                    .ok()
+                    .is_some_and(|conn| may_land(&conn).unwrap_or(false))
+            })
+        })
     }
 
     /// Whether another folder holds the item with a file of it already.

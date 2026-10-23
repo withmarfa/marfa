@@ -53,6 +53,17 @@ pub struct Writes {
     /// it was: the line is no edit while it shows that. Any pull ends it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deferred_title: Option<DeferredTitle>,
+    /// Set once the file carried its item's `marfa_id` line, as a pull wrote
+    /// it or a scan read it. Until then a Markdown file without the line is
+    /// still the note's own file, moved before the line was written.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub id_carried: bool,
+    /// The identity the file had in another folder on this machine, where
+    /// this folder took it as that folder's moved file. A pull here that
+    /// writes the file anew changes its identity, so that folder finds its
+    /// file by this.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub taken_as: Option<String>,
 }
 
 /// The title line a file went on showing, which is no edit of the title.
