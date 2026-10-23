@@ -189,6 +189,38 @@ pub struct CatchUpReport {
     pub catalog_changed: bool,
 }
 
+/// How the cache of fetched files chooses its budget.
+#[napi(string_enum = "snake_case")]
+pub enum FileBudgetKind {
+    /// The larger of 2 GiB and a tenth of the volume, held to what leaves a
+    /// twentieth of the volume free.
+    Default,
+    /// `bytes` bytes.
+    Bytes,
+    /// No budget: every file fetched stays.
+    KeepAll,
+}
+
+#[napi(object)]
+pub struct FileBudget {
+    pub kind: FileBudgetKind,
+    /// The byte count, for `bytes` alone.
+    pub bytes: Option<i64>,
+}
+
+/// The cache of fetched files as the state report gives it.
+#[napi(object)]
+pub struct FileCache {
+    /// What was chosen.
+    pub setting: FileBudget,
+    /// The budget in force, in bytes; null while every file fetched is kept.
+    pub budget: Option<i64>,
+    /// The bytes of the files kept now.
+    pub held: i64,
+    /// The default budget is its floor because the disk could not be read.
+    pub volume_unreadable: bool,
+}
+
 #[napi(object)]
 pub struct Status {
     pub server_origin: Option<String>,
@@ -205,6 +237,7 @@ pub struct Status {
     /// Moves each time a refresh changes the catalog; absent where the copy
     /// has never held one.
     pub catalog_version: Option<i64>,
+    pub file_cache: FileCache,
 }
 
 /// A field of an item type, or a property of an edge type.
@@ -689,6 +722,54 @@ impl From<marfa_core::Hydration> for Hydration {
             marfa_core::Hydration::InProgress => Hydration::InProgress,
             marfa_core::Hydration::Complete => Hydration::Complete,
             marfa_core::Hydration::Expired => Hydration::Expired,
+        }
+    }
+}
+
+impl From<marfa_core::FileBudget> for FileBudget {
+    fn from(budget: marfa_core::FileBudget) -> Self {
+        match budget {
+            marfa_core::FileBudget::Default => FileBudget {
+                kind: FileBudgetKind::Default,
+                bytes: None,
+            },
+            marfa_core::FileBudget::Bytes(bytes) => FileBudget {
+                kind: FileBudgetKind::Bytes,
+                bytes: Some(count(bytes)),
+            },
+            marfa_core::FileBudget::KeepAll => FileBudget {
+                kind: FileBudgetKind::KeepAll,
+                bytes: None,
+            },
+        }
+    }
+}
+
+impl From<marfa_core::FileCache> for FileCache {
+    fn from(cache: marfa_core::FileCache) -> Self {
+        FileCache {
+            setting: cache.setting.into(),
+            budget: cache.budget.map(count),
+            held: count(cache.held),
+            volume_unreadable: cache.volume_unreadable,
+        }
+    }
+}
+
+impl TryFrom<FileBudget> for marfa_core::FileBudget {
+    type Error = Error;
+
+    fn try_from(budget: FileBudget) -> Result<Self> {
+        match (budget.kind, budget.bytes) {
+            (FileBudgetKind::Default, None) => Ok(marfa_core::FileBudget::Default),
+            (FileBudgetKind::KeepAll, None) => Ok(marfa_core::FileBudget::KeepAll),
+            (FileBudgetKind::Bytes, Some(bytes)) if bytes >= 0 => {
+                Ok(marfa_core::FileBudget::Bytes(bytes.unsigned_abs()))
+            }
+            _ => Err(Error::new(
+                napi::Status::InvalidArg,
+                "a file budget is `default` or `keep_all` with no bytes, or `bytes` with a count of zero or more",
+            )),
         }
     }
 }
@@ -1988,6 +2069,7 @@ impl MarfaCore {
             items: count(status.items),
             edges: count(status.edges),
             catalog_version: status.catalog_version.map(count),
+            file_cache: status.file_cache.into(),
         })
     }
 
@@ -2362,6 +2444,36 @@ impl MarfaCore {
             failed: None,
             hash,
         })
+    }
+
+    /// The cache of fetched files: its setting, the budget in force and the
+    /// bytes held.
+    #[napi]
+    pub fn file_cache(&self, env: Env) -> Result<FileCache> {
+        self.inner
+            .file_cache()
+            .map(Into::into)
+            .map_err(|error| failure(env, error))
+    }
+
+    /// Chooses the cache's budget and trims to it at once. Refused to a
+    /// reading handle.
+    #[napi]
+    pub fn set_file_budget(&self, env: Env, budget: FileBudget) -> Result<FileCache> {
+        self.inner
+            .set_file_budget(budget.try_into()?)
+            .map(Into::into)
+            .map_err(|error| failure(env, error))
+    }
+
+    /// Trims the cache to its budget now and answers the bytes it took.
+    /// Refused to a reading handle.
+    #[napi]
+    pub fn trim_files(&self, env: Env) -> Result<i64> {
+        self.inner
+            .trim_files()
+            .map(count)
+            .map_err(|error| failure(env, error))
     }
 
     /// Whether a blob's bytes are held beside the store, with no request.

@@ -1432,6 +1432,130 @@ If a device is asked to attach a file to an item the copy does not hold, or hold
 
 **Tests:** `device/queue.test.ts › attaches only to an item the copy holds outside the bin`.
 
+## The file cache
+
+The file cache is the folder beside the store that holds the bytes a device fetched and the bytes of its queued uploads (`device/blob-kept-beside`). A file budget bounds the bytes it holds.
+
+### `device/file-budget-default`
+
+While the file budget is the default, a device MUST give as its file budget the least of the larger of 2 GiB and a tenth of the volume's size, and the bytes the cache holds plus the volume's free bytes less a twentieth of the volume's size, and no less than zero.
+
+**Reason:** a tenth of the volume bounds what files take from the person's other uses of it, a twentieth left free keeps the volume usable, and the bytes the cache holds count as free because a trim hands them back.
+
+**Tests:** `device/file-cache.test.ts › gives the default budget from the volume's size and free space, counting what it holds`.
+
+### `device/file-budget-floor`
+
+While the file budget is the default, if a device cannot read the size of the volume holding the cache, then a device MUST give 2 GiB as its file budget.
+
+**Tests:** `device/file-cache.test.ts › gives 2 GiB and says so where the volume cannot be read`.
+
+### `device/file-budget-unread-said`
+
+While the file budget is the default, if a device cannot read the size of the volume holding the cache, then a device MUST say so in its state report.
+
+**Tests:** `device/file-cache.test.ts › gives 2 GiB and says so where the volume cannot be read`.
+
+### `device/file-budget-set`
+
+When a caller sets the file budget to a byte count, a device MUST give that count as its file budget whatever the volume's size and free space.
+
+**Tests:** `device/file-cache.test.ts › gives a set budget whatever the volume, to every process that opens the store`.
+
+### `device/file-budget-kept`
+
+When a caller sets the file budget, a device MUST keep the setting in the store, so that every handle and process that opens the store reads it.
+
+**Tests:** `device/file-cache.test.ts › gives a set budget whatever the volume, to every process that opens the store`.
+
+### `device/file-budget-invalid`
+
+If a caller sets the file budget to a value that is not a whole number of bytes, to keep every file or the default, then a device MUST refuse it `invalid` and leave the setting as it was.
+
+**Tests:** `device/file-cache.test.ts › gives a set budget whatever the volume, to every process that opens the store`.
+
+### `device/file-budget-keep-all`
+
+While the file budget is to keep every file, a device MUST NOT take away bytes it holds on account of a budget.
+
+**Reason:** a person who chooses to keep every file has chosen to spend their disk on it.
+
+**Tests:** `device/file-cache.test.ts › keeps every file fetched when told to, and reports no budget`.
+
+### `device/file-budget-reported`
+
+A device MUST report in its state report the setting, the budget in force, which is none while every file is kept, and the bytes the cache holds.
+
+**Tests:** `device/file-cache.test.ts › gives the default budget from the volume's size and free space, counting what it holds`, `› keeps every file fetched when told to, and reports no budget`.
+
+### `device/file-trim-after-fetch`
+
+When a device has fetched bytes, a device MUST take bytes away until those it holds fit the file budget, or no more can be taken.
+
+**Tests:** `device/file-cache.test.ts › runs after a fetch, takes the bytes read longest ago first and stops when the rest fit`.
+
+### `device/file-trim-after-upload`
+
+When a device has queued an upload, a device MUST take bytes away until those it holds fit the file budget, or no more can be taken.
+
+**Tests:** `device/file-cache.test.ts › runs after an upload is queued`.
+
+### `device/file-trim-on-ask`
+
+When a caller asks a device to trim, a device MUST take bytes away until those it holds fit the file budget in force then, or no more can be taken.
+
+**Reason:** the default budget moves with the volume's free space, so an app that sees the volume fill asks for the space back.
+
+**Tests:** `device/file-cache.test.ts › runs when asked, and the default budget it fits is the volume's at that moment`.
+
+### `device/file-trim-on-set`
+
+When a caller sets the file budget, a device MUST take bytes away until those it holds fit the new budget, or no more can be taken.
+
+**Tests:** `device/file-cache.test.ts › runs when the budget is set, so a lowered one gives the space back`.
+
+### `device/file-trim-order`
+
+When a device takes bytes away to fit the file budget, a device MUST take those read longest ago first.
+
+**Tests:** `device/file-cache.test.ts › runs after a fetch, takes the bytes read longest ago first and stops when the rest fit`.
+
+### `device/file-trim-stops`
+
+When a device takes bytes away to fit the file budget, a device MUST NOT take any once those left fit the budget.
+
+**Tests:** `device/file-cache.test.ts › runs after a fetch, takes the bytes read longest ago first and stops when the rest fit`, `› runs when the budget is set, so a lowered one gives the space back`.
+
+### `device/file-trim-keeps-queued`
+
+When a device takes bytes away to fit the file budget, a device MUST NOT take bytes a queued upload names.
+
+**Reason:** until the server has taken an upload, its bytes are the only copy.
+
+**Tests:** `device/file-cache.test.ts › keeps the bytes a queued upload names, under a budget of zero`.
+
+### `device/file-trim-keeps-read`
+
+When a device takes bytes away after a caller asked for bytes, a device MUST NOT take the bytes asked for.
+
+**Reason:** the caller is about to read them, and a budget of zero would otherwise return a path to nothing.
+
+**Tests:** `device/file-cache.test.ts › keeps the bytes being read, under a budget of zero`.
+
+### `device/file-cache-backup`
+
+Where the platform's backup honors a mark on a folder, which on Apple platforms is the one `NSURL`'s `isExcludedFromBackup` sets, a device MUST mark the cache excluded from backups.
+
+**Reason:** every byte in the cache can be fetched again, and a backup of it would copy a person's files twice.
+
+**Tests:** `device/file-cache.test.ts › is kept out of backups, and marked again once found unmarked`.
+
+### `device/file-cache-backup-again`
+
+Where the platform's backup honors a mark on a folder, if a device opens a store for writing and finds the cache unmarked, then a device MUST mark it again.
+
+**Tests:** `device/file-cache.test.ts › is kept out of backups, and marked again once found unmarked`.
+
 ## The server the CLI talks to
 
 The CLI is built for one contract version, the version of the document it was generated from, and every answer names the contract it speaks in `X-Marfa-Contract` (`instance/contract-header`).

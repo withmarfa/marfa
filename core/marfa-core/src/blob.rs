@@ -14,6 +14,8 @@ use crate::http::{Call, CallBody, Http, Method};
 
 const PREFIX: &str = "sha256:";
 
+/// The most bytes one fetch pulls. The cache as a whole is bounded by the
+/// file budget, not by this.
 pub(crate) const CACHE_MOST: u64 = 512 * 1024 * 1024;
 
 pub(crate) struct Cache {
@@ -164,13 +166,12 @@ impl Cache {
         }
     }
 
-    /// Called under `hold`, with `kept` read under it.
-    pub(crate) fn trim(&self, most: u64, kept: &HashSet<String>) {
+    /// What the cache holds: every kept blob, nothing still arriving.
+    fn scan(&self) -> Vec<(SystemTime, u64, PathBuf)> {
         let Ok(entries) = self.entries() else {
-            return;
+            return Vec::new();
         };
-        let mut held: Vec<(SystemTime, u64, PathBuf)> = Vec::new();
-        let mut total = 0u64;
+        let mut found = Vec::new();
         for entry in entries {
             let Ok(metadata) = self
                 .open_label(&entry, false, false)
@@ -182,21 +183,59 @@ impl Cache {
             if !metadata.is_file() || name.starts_with(".incoming-") {
                 continue;
             }
-            total += metadata.len();
-            if !kept.contains(name.as_ref()) {
-                let read = metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH);
-                held.push((read, metadata.len(), entry));
-            }
+            let read = metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH);
+            found.push((read, metadata.len(), entry));
         }
+        found
+    }
+
+    /// The bytes of every blob kept.
+    pub(crate) fn held_bytes(&self) -> u64 {
+        self.scan().iter().map(|(_, size, _)| size).sum()
+    }
+
+    /// The volume holding the cache.
+    pub(crate) fn volume(&self) -> Option<crate::file_cache::Volume> {
+        crate::file_cache::read_volume(&self.dir)
+    }
+
+    /// Takes the bytes read longest ago until what is left fits the budget
+    /// `budget` gives for the bytes held, and answers how many it took.
+    /// Bytes named in `kept` stay whatever the budget, and `None` takes
+    /// nothing. Called under `hold`, with `kept` read under it.
+    pub(crate) fn trim(
+        &self,
+        kept: &HashSet<String>,
+        budget: impl FnOnce(u64) -> Option<u64>,
+    ) -> u64 {
+        let found = self.scan();
+        let mut total: u64 = found.iter().map(|(_, size, _)| size).sum();
+        let Some(most) = budget(total) else {
+            return 0;
+        };
+        let mut held: Vec<_> = found
+            .into_iter()
+            .filter(|(_, _, path)| {
+                !kept.contains(
+                    path.file_name()
+                        .unwrap_or_default()
+                        .to_string_lossy()
+                        .as_ref(),
+                )
+            })
+            .collect();
         held.sort();
+        let mut taken = 0;
         for (_, size, path) in held {
             if total <= most {
                 break;
             }
             if self.unlink_label(&path).is_ok() {
                 total -= size;
+                taken += size;
             }
         }
+        taken
     }
 
     pub(crate) fn held(&self, hash: &str) -> Result<Option<PathBuf>> {
@@ -234,6 +273,24 @@ impl Cache {
         return self.parent.is_some();
         #[cfg(not(unix))]
         false
+    }
+
+    /// Every byte in the cache can be fetched again, so no backup needs it.
+    /// Best effort: a mark that cannot be made costs a larger backup and
+    /// loses nothing. Marks the folder where it exists and is not marked, so
+    /// a folder made before, or one whose mark was lost, is marked on the
+    /// next write.
+    pub(crate) fn keep_out_of_backups(&self) {
+        #[cfg(unix)]
+        if self.parent.is_some() {
+            if let Ok(Some(directory)) = self.capability(false) {
+                let _ = crate::file_cache::exclude_from_backup(directory.file());
+            }
+            return;
+        }
+        if let Ok(folder) = File::open(&self.dir) {
+            let _ = crate::file_cache::exclude_from_backup(&folder);
+        }
     }
 
     /// A process that ended mid-copy leaves its file behind, and only its age
@@ -291,6 +348,7 @@ impl Cache {
             std::os::unix::fs::DirBuilderExt::mode(&mut made, 0o700);
             made.create(&self.dir).map_err(Copy::Cache)?;
         }
+        self.keep_out_of_backups();
         let incoming = self.dir.join(format!(".incoming-{}", uuid::Uuid::now_v7()));
         let copied = (|| {
             let mut to = self
@@ -693,8 +751,8 @@ mod tests {
             io::ErrorKind::NotFound
         );
         cache.trim(
-            0,
             &HashSet::from([hex_of(&copied.hash).unwrap().to_string()]),
+            |_| Some(0),
         );
         assert!(cache.held(&first).unwrap().is_none());
         cache.let_go(&copied.hash, &HashSet::new());
@@ -962,7 +1020,7 @@ mod tests {
         let incoming = cache.dir.join(".incoming-still-arriving");
         fs::write(&incoming, b"half").unwrap();
 
-        cache.trim(25, &HashSet::from([waiting]));
+        cache.trim(&HashSet::from([waiting]), |_| Some(25));
         assert!(!oldest.exists(), "the bytes read longest ago were kept");
         assert!(named.exists(), "bytes an upload still names were taken");
         assert!(!older.exists(), "the trim stopped before the rest fit");
@@ -974,7 +1032,7 @@ mod tests {
 
         let (_, first) = kept(&cache, b"eeeeeeeeee", 500);
         cache.touch(&first);
-        cache.trim(20, &HashSet::new());
+        cache.trim(&HashSet::new(), |_| Some(20));
         assert!(first.exists(), "bytes just read were taken first");
         assert!(
             !named.exists(),

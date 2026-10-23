@@ -301,6 +301,62 @@ pub enum Hydration {
     Expired,
 }
 
+/// How the cache of fetched files chooses its budget.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum FileBudget {
+    /// The larger of 2 GiB and a tenth of the volume, held to what leaves a
+    /// twentieth of the volume free.
+    Default,
+    /// This many bytes.
+    Bytes { bytes: u64 },
+    /// No budget: every file fetched stays.
+    KeepAll,
+}
+
+impl From<marfa_core::FileBudget> for FileBudget {
+    fn from(budget: marfa_core::FileBudget) -> Self {
+        match budget {
+            marfa_core::FileBudget::Default => FileBudget::Default,
+            marfa_core::FileBudget::Bytes(bytes) => FileBudget::Bytes { bytes },
+            marfa_core::FileBudget::KeepAll => FileBudget::KeepAll,
+        }
+    }
+}
+
+impl From<FileBudget> for marfa_core::FileBudget {
+    fn from(budget: FileBudget) -> Self {
+        match budget {
+            FileBudget::Default => marfa_core::FileBudget::Default,
+            FileBudget::Bytes { bytes } => marfa_core::FileBudget::Bytes(bytes),
+            FileBudget::KeepAll => marfa_core::FileBudget::KeepAll,
+        }
+    }
+}
+
+/// The cache of fetched files as the state report gives it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Record)]
+pub struct FileCache {
+    /// What was chosen.
+    pub setting: FileBudget,
+    /// The budget in force, in bytes; none while every file fetched is kept.
+    pub budget: Option<u64>,
+    /// The bytes of the files kept now.
+    pub held: u64,
+    /// The default budget is its floor because the disk could not be read.
+    pub volume_unreadable: bool,
+}
+
+impl From<marfa_core::FileCache> for FileCache {
+    fn from(cache: marfa_core::FileCache) -> Self {
+        FileCache {
+            setting: cache.setting.into(),
+            budget: cache.budget,
+            held: cache.held,
+            volume_unreadable: cache.volume_unreadable,
+        }
+    }
+}
+
 #[derive(Debug, Clone, uniffi::Record)]
 pub struct Status {
     pub server_origin: Option<String>,
@@ -317,6 +373,7 @@ pub struct Status {
     /// Moves each time a refresh changes the catalog; none where the copy has
     /// never held one.
     pub catalog_version: Option<u64>,
+    pub file_cache: FileCache,
 }
 
 /// A field of an item type, or a property of an edge type.
@@ -1971,6 +2028,7 @@ impl Core {
             items: status.items,
             edges: status.edges,
             catalog_version: status.catalog_version,
+            file_cache: status.file_cache.into(),
         })
     }
 
@@ -2283,6 +2341,24 @@ impl Core {
     /// neither read nor fetched.
     pub fn blob(&self, hash: String) -> Result<String, MarfaError> {
         Ok(self.inner.blob(&hash)?.to_string_lossy().into_owned())
+    }
+
+    /// The cache of fetched files: its setting, the budget in force and the
+    /// bytes held.
+    pub fn file_cache(&self) -> Result<FileCache, MarfaError> {
+        Ok(self.inner.file_cache()?.into())
+    }
+
+    /// Chooses the cache's budget and trims to it at once. Refused to a
+    /// reading handle.
+    pub fn set_file_budget(&self, budget: FileBudget) -> Result<FileCache, MarfaError> {
+        Ok(self.inner.set_file_budget(budget.into())?.into())
+    }
+
+    /// Trims the cache to its budget now and answers the bytes it took.
+    /// Refused to a reading handle.
+    pub fn trim_files(&self) -> Result<u64, MarfaError> {
+        Ok(self.inner.trim_files()?)
     }
 
     /// Whether a blob's bytes are held beside the store, with no request.

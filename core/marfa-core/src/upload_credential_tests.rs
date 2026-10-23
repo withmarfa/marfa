@@ -91,7 +91,7 @@ fn keeps_the_bytes_a_waiting_file_names_after_their_upload_is_taken() {
     server.on("/items", vec![scripted::refusal(429, "rate_limited")]);
     core.drain().unwrap();
 
-    core.trim_blobs(None, 0);
+    core.set_file_budget(crate::FileBudget::Bytes(0)).unwrap();
     assert!(
         core.blob_held(&hash).unwrap(),
         "a trim let go of bytes a waiting file still names"
@@ -105,7 +105,7 @@ fn keeps_the_bytes_a_waiting_file_names_after_their_upload_is_taken() {
     server.on("/items", vec![scripted::json(201, &receipt)]);
     server.on(&format!("/items/{file_id}"), vec![read]);
     assert_eq!(core.drain().unwrap().undelivered, 0);
-    core.trim_blobs(None, 0);
+    core.set_file_budget(crate::FileBudget::Bytes(0)).unwrap();
     assert!(!core.blob_held(&hash).unwrap());
 }
 
@@ -196,7 +196,7 @@ fn sends_a_taken_upload_again_only_once_the_write_waiting_on_it_is_released() {
         .into_iter()
         .find_map(|queued| queued.blob)
         .unwrap();
-    core.trim_blobs(None, 0);
+    core.set_file_budget(crate::FileBudget::Bytes(0)).unwrap();
     assert!(
         core.blob_held(&hash).unwrap(),
         "a trim let go of bytes a write that can be released still names"
@@ -217,7 +217,7 @@ fn sends_a_taken_upload_again_only_once_the_write_waiting_on_it_is_released() {
         Some("Bearer second")
     );
     // Answered, the file holds the bytes no longer.
-    core.trim_blobs(None, 0);
+    core.set_file_budget(crate::FileBudget::Bytes(0)).unwrap();
     assert!(!core.blob_held(&hash).unwrap());
 }
 
@@ -333,7 +333,7 @@ fn keeps_the_bytes_of_a_file_update_refused_with_a_dead_create_until_it_is_relea
     .unwrap();
     assert_eq!(queued(&core, &update).verdict, Some(Verdict::Refused));
 
-    core.trim_blobs(None, 0);
+    core.set_file_budget(crate::FileBudget::Bytes(0)).unwrap();
     assert!(
         core.blob_held(&second).unwrap(),
         "a trim let go of bytes a refused update that can be released still names"
@@ -388,7 +388,7 @@ fn lets_go_the_bytes_of_a_file_update_refused_behind_a_withdrawn_create() {
     // No release can send the update again, so nothing waits on the bytes.
     assert!(!core.release(&update).unwrap());
 
-    core.trim_blobs(None, 0);
+    core.set_file_budget(crate::FileBudget::Bytes(0)).unwrap();
     assert!(
         !core.blob_held(&second).unwrap(),
         "a trim kept bytes for a refused update no release can send"

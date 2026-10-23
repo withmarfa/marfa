@@ -102,6 +102,20 @@ export interface FollowReport {
   last_failure: string | null;
 }
 
+/** How the cache of fetched files chooses its budget (`device/file-budget-set`). */
+export type FileBudgetSetting = "default" | "keep_all" | { bytes: number };
+
+/** The cache of fetched files as the state report gives it. */
+export interface FileCache {
+  setting: FileBudgetSetting;
+  /** The budget in force, in bytes; null while every file fetched is kept. */
+  budget: number | null;
+  /** The bytes of the files kept now. */
+  held: number;
+  /** The default budget is its floor because the volume could not be read. */
+  volume_unreadable: boolean;
+}
+
 export interface Status {
   server_origin?: string | null;
   slice_types: string[];
@@ -119,6 +133,7 @@ export interface Status {
   /** Moves each time a refresh changes the catalog the copy holds, and is
    *  null where the copy has never held one. */
   catalog_version: number | null;
+  file_cache: FileCache;
 }
 
 /** A field of an item type, or a property of an edge type. */
@@ -550,6 +565,15 @@ export interface DeviceUnderTest {
   putBlob(path: string, mimeType?: string): Promise<Outcome<QueuedWrite>>;
   /** Where a blob's bytes are held, fetched first where they are not. */
   blob(hash: string): Promise<Outcome<{ hash: string; path: string }>>;
+  /**
+   * Shows the file budget, or sets it to `value`: a byte count, `keep-all`
+   * or `default`. With `trim`, also trims to the budget in force and says how
+   * many bytes it took.
+   */
+  fileBudget(
+    value?: string,
+    options?: { trim?: boolean },
+  ): Promise<Outcome<{ file_cache: FileCache; trimmed_bytes: number | null }>>;
   /** The thumbnail an item carries, read from the copy; its bytes to `out`. */
   thumbnail(
     id: string,

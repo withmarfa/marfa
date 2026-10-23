@@ -264,7 +264,8 @@ pub enum DeviceCommand {
         #[command(subcommand)]
         command: ExtensionsCommand,
     },
-    /// Blobs' bytes: uploaded as queued writes, fetched when asked for.
+    /// Blobs' bytes: uploaded as queued writes, fetched when asked for and
+    /// kept within a budget.
     Blobs {
         #[command(subcommand)]
         command: BlobsCommand,
@@ -287,6 +288,17 @@ pub enum BlobsCommand {
     Get {
         /// The blob's hash, `sha256:<hex>`.
         hash: String,
+    },
+    /// Show or change how many bytes of fetched files the store keeps.
+    Budget {
+        /// A byte count, `keep-all` to keep every file fetched, or `default`
+        /// for the larger of 2 GiB and a tenth of the volume, held to what
+        /// leaves a twentieth of the volume free. Omit it to show the budget
+        /// in force.
+        value: Option<String>,
+        /// Also remove the files read longest ago until the budget holds.
+        #[arg(long)]
+        trim: bool,
     },
 }
 
@@ -1132,6 +1144,25 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
                     || path.display().to_string(),
                 )
             }
+            BlobsCommand::Budget { value, trim } => {
+                let core = store.open(None)?;
+                if let Some(value) = value {
+                    core.set_file_budget(parse_file_budget(&value)?)?;
+                }
+                let taken = if trim { Some(core.trim_files()?) } else { None };
+                let cache = core.file_cache()?;
+                output::report(
+                    &serde_json::json!({ "file_cache": cache, "trimmed_bytes": taken }),
+                    json,
+                    || {
+                        let mut text = file_cache_text(&cache);
+                        if let Some(taken) = taken {
+                            text.push_str(&format!("\ntrimmed {taken} byte(s)"));
+                        }
+                        text
+                    },
+                )
+            }
         },
         DeviceCommand::Search {
             query,
@@ -1356,7 +1387,7 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
                         .map_or_else(|| "(none)".into(), |version| version.to_string()),
                     status.items,
                     status.edges
-                )
+                ) + &format!("\n{}", file_cache_text(&status.file_cache))
             })
         }
         DeviceCommand::Types { command } => {
@@ -1497,6 +1528,41 @@ fn folder_row(row: &marfa_core::FolderRow, json: bool) -> Result<(), CliError> {
             row.settings.title.as_deref().unwrap_or("untitled")
         )
     })
+}
+
+fn parse_file_budget(value: &str) -> Result<marfa_core::FileBudget, CliError> {
+    match value {
+        "keep-all" => Ok(marfa_core::FileBudget::KeepAll),
+        "default" => Ok(marfa_core::FileBudget::Default),
+        digits => digits
+            .parse()
+            .map(marfa_core::FileBudget::Bytes)
+            .map_err(|_| {
+                CliError::Invalid(format!(
+                    "{digits:?} is not a byte count, `keep-all` or `default`"
+                ))
+            }),
+    }
+}
+
+fn file_cache_text(cache: &marfa_core::FileCache) -> String {
+    let setting = match cache.setting {
+        marfa_core::FileBudget::Default => "default".to_string(),
+        marfa_core::FileBudget::Bytes(bytes) => format!("{bytes} byte(s)"),
+        marfa_core::FileBudget::KeepAll => "keep every file".to_string(),
+    };
+    let budget = cache
+        .budget
+        .map_or_else(|| "none".to_string(), |bytes| format!("{bytes} byte(s)"));
+    let unreadable = if cache.volume_unreadable {
+        " (the disk could not be read, so the default is its floor)"
+    } else {
+        ""
+    };
+    format!(
+        "file budget {setting}, in force {budget}{unreadable}\nfiles held {} byte(s)",
+        cache.held
+    )
 }
 
 fn type_line(held: &marfa_core::ItemType) -> String {

@@ -29,6 +29,7 @@ import {
   type SearchFilters,
   type SearchHit,
   type SliceTier,
+  type FileCache,
   type Status,
   type Tier,
 } from "./protocol.js";
@@ -866,6 +867,18 @@ export class CliDevice implements DeviceUnderTest {
       hash,
       ...this.server(),
     ]);
+  }
+
+  async fileBudget(
+    value?: string,
+    options: { trim?: boolean } = {},
+  ): Promise<Outcome<{ file_cache: FileCache; trimmed_bytes: number | null }>> {
+    const args = ["blobs", "budget"];
+    if (value !== undefined) args.push(value);
+    if (options.trim === true) args.push("--trim");
+    return this.json<{ file_cache: FileCache; trimmed_bytes: number | null }>(
+      args,
+    );
   }
 
   async attach(

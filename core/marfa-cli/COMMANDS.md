@@ -3286,7 +3286,7 @@ Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 
 ### marfa device blobs
 
-Blobs' bytes: uploaded as queued writes, fetched when asked for.
+Blobs' bytes: uploaded as queued writes, fetched when asked for and kept within a budget.
 
 ```text
 marfa device blobs [OPTIONS] <COMMAND>
@@ -3323,6 +3323,24 @@ marfa device blobs get [OPTIONS] <HASH>
 | Argument | Description |
 | --- | --- |
 | `<HASH>` | The blob's hash, `sha256:<hex>`. |
+
+Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
+
+### marfa device blobs budget
+
+Show or change how many bytes of fetched files the store keeps.
+
+```text
+marfa device blobs budget [OPTIONS] [VALUE]
+```
+
+| Argument | Description |
+| --- | --- |
+| `[VALUE]` | A byte count, `keep-all` to keep every file fetched, or `default` for the larger of 2 GiB and a tenth of the volume, held to what leaves a twentieth of the volume free. Omit it to show the budget in force. |
+
+| Option | Description |
+| --- | --- |
+| `--trim` | Also remove the files read longest ago until the budget holds. |
 
 Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 

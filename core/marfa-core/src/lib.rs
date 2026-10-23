@@ -16,6 +16,7 @@ mod drain;
 mod error;
 /// Public so the binary can name a fault of its own.
 pub mod fault;
+mod file_cache;
 mod filter;
 pub mod folder;
 mod folder_settings;
@@ -73,6 +74,7 @@ pub use catalog::{EdgeType, End, ItemType, ServerCatalog, TypeField, WrittenAt};
 pub use catch_up::{Change, ChangeEvent, FollowReport};
 pub use drain::{DrainReport, DrainVerdict};
 pub use error::{CODES as ERROR_CODES, CoreError, CoreErrorKind};
+pub use file_cache::{DEFAULT_FLOOR as FILE_BUDGET_FLOOR, FileBudget, FileCache};
 pub use folder::{
     CaughtUp, Confirmed, Drained, FOLDER_TYPE, FileStatus, FirstSync, Folder, Paused, PullReport,
     Removal, Restored, ScanReport, SendReport, Settings, SettingsFileReport, StatusReport,
@@ -261,6 +263,7 @@ impl Core {
         let cache = blob::Cache::anchored(state, store_label, writer)?;
         if writer {
             cache.sweep_incoming(INCOMING_GRACE);
+            cache.keep_out_of_backups();
         }
         Self::from_connection(
             store::open_directory(&vfs, store_label)?,
@@ -320,6 +323,7 @@ impl Core {
         let cache = blob::Cache::beside(path);
         if lock.handle() == Handle::Writer {
             cache.sweep_incoming(INCOMING_GRACE);
+            cache.keep_out_of_backups();
             owner_only(path)?;
         }
         Self::from_connection(store::open(path)?, server, Arc::new(lock), Some(cache))
@@ -364,6 +368,7 @@ impl Core {
         let conn = store::replace(path)?;
         let cache = blob::Cache::beside(path);
         cache.sweep_incoming(INCOMING_GRACE);
+        cache.keep_out_of_backups();
         Self::from_connection(conn, server, Arc::new(lock), Some(cache))
     }
 
@@ -2082,7 +2087,7 @@ impl Core {
             tx.commit()?;
             queued
         };
-        self.trim_blobs(None, blob::CACHE_MOST);
+        self.trim_blobs(None);
         Ok(queued)
     }
 
@@ -2204,7 +2209,7 @@ impl Core {
             });
         };
         let path = blob::fetch(cache, http, &hash)?;
-        self.trim_blobs(Some(&hash), blob::CACHE_MOST);
+        self.trim_blobs(Some(&hash));
         Ok(path)
     }
 
@@ -2231,25 +2236,35 @@ impl Core {
         let file = cache
             .open_held(&hash)
             .map_err(|error| CoreError::Store(format!("cannot read fetched bytes: {error}")))?;
-        self.trim_blobs(Some(&hash), blob::CACHE_MOST);
+        self.trim_blobs(Some(&hash));
         Ok(file)
     }
 
-    /// Bytes an upload still names are never taken, nor `fetched`, which a
-    /// caller is about to read. A trim that cannot read the queue takes
-    /// nothing.
-    fn trim_blobs(&self, fetched: Option<&str>, most: u64) {
+    /// Takes the bytes read longest ago until the cache fits its budget, and
+    /// answers how many it took. Bytes an upload still names are never
+    /// taken, nor `fetched`, which a caller is about to read. A trim that
+    /// cannot read the queue or the setting takes nothing.
+    fn trim_blobs(&self, fetched: Option<&str>) -> u64 {
         if self.handle() != Handle::Writer {
-            return;
+            return 0;
         }
         let Ok(cache) = self.cache() else {
-            return;
+            return 0;
         };
         let _held = cache.hold();
-        if let Some(mut kept) = self.kept_blobs() {
-            kept.extend(fetched.and_then(|hash| blob::hex_of(hash).ok().map(str::to_string)));
-            cache.trim(most, &kept);
-        }
+        let Ok(setting) = self.file_budget() else {
+            return 0;
+        };
+        let Some(mut kept) = self.kept_blobs() else {
+            return 0;
+        };
+        kept.extend(fetched.and_then(|hash| blob::hex_of(hash).ok().map(str::to_string)));
+        cache.trim(&kept, |held| {
+            let volume = (setting == FileBudget::Default)
+                .then(|| cache.volume())
+                .flatten();
+            file_cache::in_force(setting, volume, held).bytes
+        })
     }
 
     pub(crate) fn let_go_blob(&self, hash: &str) {
@@ -2375,7 +2390,65 @@ impl Core {
             items: store::count(&conn, "items")?,
             edges: store::count(&conn, "edges")?,
             catalog_version: store::catalog_version(&conn)?,
+            file_cache: self.file_cache_with(&conn)?,
         })
+    }
+
+    /// How the file cache's budget is chosen. A reading handle sees the
+    /// writer's choice, since it lives in the store.
+    pub fn file_budget(&self) -> Result<FileBudget> {
+        Ok(FileBudget::stored(
+            store::meta_get(&*self.conn()?, file_cache::META_BUDGET)?.as_deref(),
+        ))
+    }
+
+    /// The cache's budget in force and the bytes it holds.
+    pub fn file_cache(&self) -> Result<FileCache> {
+        self.file_cache_with(&*self.conn()?)
+    }
+
+    fn file_cache_with(&self, conn: &Connection) -> Result<FileCache> {
+        let setting =
+            FileBudget::stored(store::meta_get(conn, file_cache::META_BUDGET)?.as_deref());
+        let (held, volume) = match &self.cache {
+            Some(cache) => (
+                cache.held_bytes(),
+                (setting == FileBudget::Default)
+                    .then(|| cache.volume())
+                    .flatten(),
+            ),
+            None => (0, None),
+        };
+        let in_force = file_cache::in_force(setting, volume, held);
+        Ok(FileCache {
+            setting,
+            budget: in_force.bytes,
+            held,
+            volume_unreadable: in_force.volume_unreadable,
+        })
+    }
+
+    /// Chooses how the cache's budget is set, and trims to it at once, so a
+    /// lowered budget gives the space back without waiting for a fetch.
+    /// Refused to a reading handle.
+    pub fn set_file_budget(&self, setting: FileBudget) -> Result<FileCache> {
+        self.lock.refuse_unless_writer()?;
+        {
+            let conn = self.conn()?;
+            match setting.to_stored() {
+                Some(text) => store::meta_set(&conn, file_cache::META_BUDGET, &text)?,
+                None => store::meta_delete(&conn, file_cache::META_BUDGET)?,
+            }
+        }
+        self.trim_blobs(None);
+        self.file_cache()
+    }
+
+    /// Trims the cache to its budget now, and answers how many bytes it
+    /// took. Refused to a reading handle.
+    pub fn trim_files(&self) -> Result<u64> {
+        self.lock.refuse_unless_writer()?;
+        Ok(self.trim_blobs(None))
     }
 
     /// Every item type the copy holds, by id, read from the copy alone.
@@ -5821,6 +5894,11 @@ mod tests {
                     .unwrap_err(),
             ),
             (
+                "set_file_budget",
+                reader.set_file_budget(FileBudget::KeepAll).unwrap_err(),
+            ),
+            ("trim_files", reader.trim_files().unwrap_err()),
+            (
                 "attach",
                 reader
                     .attach("x", Path::new("no-such-file.png"), &Attachment::default())
@@ -5943,7 +6021,7 @@ mod tests {
         );
         assert_eq!(
             refusals.len(),
-            43,
+            45,
             "an entry has gone from the list above, and a door dropped from \
              it is a door nothing here covers"
         );
@@ -6167,7 +6245,7 @@ mod tests {
         let read = file("read.txt", b"fetched once");
         let upload = queue_upload(&core.conn().unwrap(), &waiting, "text/plain").unwrap();
 
-        core.trim_blobs(None, 0);
+        core.set_file_budget(FileBudget::Bytes(0)).unwrap();
         assert!(
             core.blob_held(&waiting).unwrap(),
             "the cap took bytes an upload still names, so it can never be sent"
@@ -6185,7 +6263,7 @@ mod tests {
             },
         )
         .unwrap();
-        core.trim_blobs(None, 0);
+        core.set_file_budget(FileBudget::Bytes(0)).unwrap();
         assert!(
             !core.blob_held(&waiting).unwrap(),
             "bytes the server has taken were kept past the cap"
