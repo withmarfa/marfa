@@ -142,6 +142,11 @@ export const items = sqliteTable(
     // because the keyset cursor compares both to page through the rows
     // that share a millisecond, and a bulk write produces many.
     index("idx_items_updated_at_id").on(table.updated_at, table.id),
+    // The same for the other two system orders. A listing in either order
+    // pages by `(column, id)`, and an index on the column alone leaves SQLite
+    // to sort every row that ties on it, which a bulk write makes thousands.
+    index("idx_items_created_at_id").on(table.created_at, table.id),
+    index("idx_items_occurred_at_id").on(table.occurred_at, table.id),
     // Serve a listing of a type in each system order. A listing reads one
     // type, or a slice of a subtree, in `(<column>, id)` order and stops at the
     // page; the indexes above lead with the column alone, so a typed read would

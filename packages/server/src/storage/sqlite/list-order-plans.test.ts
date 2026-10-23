@@ -300,15 +300,65 @@ describe("a typed listing in a system order", () => {
 });
 
 describe("an untyped listing in a system order", () => {
-  it.each(["created_at", "updated_at", "occurred_at"] as const)(
-    "walks the %s index and sorts no whole match",
-    async (sort) => {
-      for (const direction of ["desc", "asc"] as const) {
-        const plan = await planOf({ sort, direction });
-        expect(text(plan)).toMatch(new RegExp(`idx_items_${sort}`));
+  const SORTED_BY = {
+    created_at: "idx_items_created_at_id",
+    updated_at: "idx_items_updated_at_id",
+    occurred_at: "idx_items_occurred_at_id",
+  } as const;
+  const sorts = ["created_at", "updated_at", "occurred_at"] as const;
+
+  // Any sort at all: a block of rows that share a timestamp, as a bulk write
+  // leaves, would be sorted whole by the part of a sort that is left.
+  it.each(sorts)("reads a page of %s order without any sort", async (sort) => {
+    for (const direction of ["desc", "asc"] as const) {
+      for (const extra of [
+        {},
+        { tier: "feed" },
+        { source: "one" },
+      ] satisfies ItemFilters[]) {
+        const plan = await planOf({ ...extra, sort, direction });
+        expect(text(plan), JSON.stringify({ extra, direction })).not.toContain(
+          "USE TEMP B-TREE",
+        );
+        expect(text(plan)).toContain(`USING INDEX ${SORTED_BY[sort]}`);
         expect(text(plan)).not.toContain("idx_items_state");
-        expect(text(plan)).not.toContain("USE TEMP B-TREE FOR ORDER BY");
       }
+    }
+  });
+
+  it.each(sorts)(
+    "continues %s order from a cursor without any sort",
+    async (sort) => {
+      const first = await storage.items.list({ sort, limit: 20 });
+      const plan = await planOf({
+        sort,
+        limit: 20,
+        cursor: first.next_cursor!,
+      });
+      expect(text(plan)).not.toContain("USE TEMP B-TREE");
+      expect(text(plan)).toContain(
+        `USING INDEX ${SORTED_BY[sort]} ((${sort},id)<(?,?))`,
+      );
     },
   );
+
+  it("sorts the rows that tie on the time again without the index on time and id", async () => {
+    // The witness: with only the indexes on the time alone, which is all
+    // there was before, the rows that tie are sorted.
+    await storage.__sqliteRun("DROP INDEX idx_items_created_at_id", []);
+    reader.close();
+    reader = createClient({ url: `file:${path}` });
+    try {
+      const plan = await planOf({ sort: "created_at" });
+      expect(text(plan)).toContain("USE TEMP B-TREE");
+      expect(text(plan)).toContain("idx_items_created_at");
+    } finally {
+      await storage.__sqliteRun(
+        "CREATE INDEX idx_items_created_at_id ON items (created_at, id)",
+        [],
+      );
+      reader.close();
+      reader = createClient({ url: `file:${path}` });
+    }
+  });
 });

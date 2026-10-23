@@ -150,10 +150,8 @@ function expected(filters: ItemFilters): Row[] {
   const kept = ALL.filter((row) => {
     if (filters.state ? row.state !== filters.state : row.state !== "active")
       return false;
-    if (
-      filters.type !== undefined &&
-      !typeAnswersSubtreeFilter(row.type, filters.type)
-    )
+    // An empty `type` is no filter, as the count reads it.
+    if (filters.type && !typeAnswersSubtreeFilter(row.type, filters.type))
       return false;
     if (
       filters.allowed_types !== undefined &&
@@ -213,6 +211,7 @@ const LATER = instant(9);
 
 const CASES: Record<string, ItemFilters> = {
   "no filter": {},
+  "an empty type, which is no filter": { type: "" },
   "a type with subtypes": { type: "user.docs" },
   "a subtree wildcard": { type: "user.docs.*" },
   "a leaf type": { type: "user.docs.b.deep" },

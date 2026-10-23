@@ -41,23 +41,19 @@ export type TypeSlice =
 export const MAX_TYPE_SLICES = 128;
 
 /**
- * The most type patterns and sources one statement repeats across its slices,
- * counted as slices times the patterns a slice carries. Each is a bound
- * parameter, and SQLite refuses a statement past its parameter limit.
+ * The most values one statement binds. SQLite refuses a statement past its
+ * variable limit, 32,766 in the SQLite the server ships with. A listing counts
+ * the values of the statement it built, all slices included, and reads a
+ * subtree as one range when the slices would pass it.
  */
-export const MAX_REPEATED_TERMS = 4096;
+export const MAX_STATEMENT_PARAMETERS = 32_766;
 
 /** What a listing's type predicates restrict. */
 export interface TypeScope {
-  /** The `?type=` read filter. */
+  /** The `?type=` read filter. An empty one restricts nothing. */
   type?: string | undefined;
   /** The credential's grants. */
   allowed_types?: readonly string[] | undefined;
-  /**
-   * The patterns and sources the rest of the statement repeats in every
-   * slice: the grants, the exclusions and the source filter.
-   */
-  repeatedTerms?: number | undefined;
 }
 
 function compareBytes(a: string, b: string): number {
@@ -72,8 +68,7 @@ function underRoot(type: string, root: string): boolean {
 /**
  * The slices that together cover every type `scope` can admit, none
  * overlapping, or `undefined` when the scope restricts nothing, admits no
- * type, or needs more than one statement carries ({@link MAX_TYPE_SLICES},
- * {@link MAX_REPEATED_TERMS}).
+ * type, or needs more than one statement carries ({@link MAX_TYPE_SLICES}).
  *
  * A cover, not the predicate: a credential's exclusions still narrow each
  * slice, in the statement's own conditions.
@@ -107,10 +102,7 @@ export function typeSlices(scope: TypeScope): TypeSlice[] | undefined {
       exclusiveFrom = true;
     }
   }
-  const repeated = Math.max(1, scope.repeatedTerms ?? 0);
-  return slices.length > 0 &&
-    slices.length <= MAX_TYPE_SLICES &&
-    slices.length * repeated <= MAX_REPEATED_TERMS
+  return slices.length > 0 && slices.length <= MAX_TYPE_SLICES
     ? slices
     : undefined;
 }
@@ -125,7 +117,7 @@ function coverOf(
 ): { points: Set<string>; roots: Set<string> } | undefined {
   const points = new Set<string>();
   const roots = new Set<string>();
-  if (scope.type !== undefined && scope.type !== GLOBAL_TYPE_WILDCARD) {
+  if (scope.type && scope.type !== GLOBAL_TYPE_WILDCARD) {
     const root = subtreeWildcardRoot(scope.type) ?? scope.type;
     points.add(root);
     roots.add(root);

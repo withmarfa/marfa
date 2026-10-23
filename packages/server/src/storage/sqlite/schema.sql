@@ -622,6 +622,8 @@ CREATE INDEX IF NOT EXISTS `idx_items_type_state` ON `items` (`type`,`state`);
 CREATE INDEX IF NOT EXISTS `idx_items_created_at` ON `items` (`created_at`);
 CREATE INDEX IF NOT EXISTS `idx_items_occurred_at` ON `items` (`occurred_at`);
 CREATE INDEX IF NOT EXISTS `idx_items_updated_at_id` ON `items` (`updated_at`,`id`);
+CREATE INDEX IF NOT EXISTS `idx_items_created_at_id` ON `items` (`created_at`,`id`);
+CREATE INDEX IF NOT EXISTS `idx_items_occurred_at_id` ON `items` (`occurred_at`,`id`);
 CREATE INDEX IF NOT EXISTS `idx_items_type_created_at` ON `items` (`type`,`created_at`,`id`);
 CREATE INDEX IF NOT EXISTS `idx_items_type_updated_at` ON `items` (`type`,`updated_at`,`id`);
 CREATE INDEX IF NOT EXISTS `idx_items_type_occurred_at` ON `items` (`type`,`occurred_at`,`id`);

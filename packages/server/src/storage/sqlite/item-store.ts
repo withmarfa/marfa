@@ -105,7 +105,12 @@ import {
   propertySortValue,
 } from "../property-sort.js";
 import { closedToNewEdge } from "../edge-constraints.js";
-import { typeSlices, typeSliceSql, type TypeSlice } from "../type-slices.js";
+import {
+  MAX_STATEMENT_PARAMETERS,
+  typeSlices,
+  typeSliceSql,
+  type TypeSlice,
+} from "../type-slices.js";
 import {
   ancestorUnavailable,
   attachResolution,
@@ -1331,17 +1336,9 @@ export class SqliteItemStore implements ItemStore {
         ? typeSlices({
             type: filters.type,
             allowed_types: filters.allowed_types,
-            repeatedTerms:
-              (filters.allowed_types?.length ?? 0) +
-              (filters.excluded_types?.length ?? 0) +
-              (filters.source_filter?.types.length ?? 0) +
-              (filters.source_filter?.sources.length ?? 0),
           })
         : undefined;
-    const conditions: (SQL | undefined)[] = itemFilterConditions(filters, {
-      ordered: sort.kind === "system",
-      typeSliced: slices !== undefined,
-    });
+    const cursorConditions: (SQL | undefined)[] = [];
 
     const systemSortCol =
       sort.kind === "system"
@@ -1360,7 +1357,7 @@ export class SqliteItemStore implements ItemStore {
         const e = propertySort;
         if (v === null) {
           // Already in the trailing NULL block — only later NULL rows remain.
-          conditions.push(and(sql`${e} IS NULL`, gt(items.id, id)));
+          cursorConditions.push(and(sql`${e} IS NULL`, gt(items.id, id)));
         } else {
           const bound = propertySortBound(v);
           const valueCmp =
@@ -1370,14 +1367,14 @@ export class SqliteItemStore implements ItemStore {
             and(sql`${e} = ${bound}`, gt(items.id, id)),
             sql`${e} IS NULL`,
           );
-          if (clause) conditions.push(clause);
+          if (clause) cursorConditions.push(clause);
         }
       } else if (systemSortCol && v !== null) {
         // System columns are NOT NULL, so the cursor value is always present.
         // One row-value comparison rather than its expansion into `OR`: an
         // index on the column and `id` answers it as a single range, where
         // the expansion is a range on the column and a test of every row in it.
-        conditions.push(
+        cursorConditions.push(
           dir === "desc"
             ? sql`(${systemSortCol}, ${items.id}) < (${v}, ${id})`
             : sql`(${systemSortCol}, ${items.id}) > (${v}, ${id})`,
@@ -1400,19 +1397,36 @@ export class SqliteItemStore implements ItemStore {
           : [asc(col), asc(items.id)];
     }
 
-    const read = (slice?: TypeSlice) =>
-      this.db
-        .select(itemColumns)
-        .from(items)
-        .where(and(...conditions, slice && typeSliceSql(items.type, slice)))
-        .$dynamic();
-    let merged = read(slices?.[0]);
-    for (const slice of slices?.slice(1) ?? [])
-      merged = merged.unionAll(read(slice));
-    const rows = await merged
-      .orderBy(...orderBy)
-      .limit(limit + 1)
-      .all();
+    // Every slice repeats the filters' parameters, and a statement binds
+    // only so many, whatever the filters hold (tags, a type map in each
+    // `backref` term, grants). The count is read from the statement itself,
+    // and a listing that would pass the limit is read as one range and sorted.
+    const statementOf = (sliced: TypeSlice[] | undefined) => {
+      const where = [
+        ...itemFilterConditions(filters, {
+          ordered: sort.kind === "system",
+          typeSliced: sliced !== undefined,
+        }),
+        ...cursorConditions,
+      ];
+      const read = (slice?: TypeSlice) =>
+        this.db
+          .select(itemColumns)
+          .from(items)
+          .where(and(...where, slice && typeSliceSql(items.type, slice)))
+          .$dynamic();
+      let merged = read(sliced?.[0]);
+      for (const slice of sliced?.slice(1) ?? [])
+        merged = merged.unionAll(read(slice));
+      return merged.orderBy(...orderBy).limit(limit + 1);
+    };
+    let statement = statementOf(slices);
+    if (
+      slices !== undefined &&
+      statement.toSQL().params.length > MAX_STATEMENT_PARAMETERS
+    )
+      statement = statementOf(undefined);
+    const rows = await statement.all();
 
     const hasMore = rows.length > limit;
     const data = rows.slice(0, limit).map(rowToItem);

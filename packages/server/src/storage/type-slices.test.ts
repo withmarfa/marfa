@@ -14,12 +14,7 @@ import {
   unregisterTypeSchema,
   type TypeSchema,
 } from "@withmarfa/shared";
-import {
-  MAX_REPEATED_TERMS,
-  MAX_TYPE_SLICES,
-  typeSlices,
-  type TypeSlice,
-} from "./type-slices.js";
+import { MAX_TYPE_SLICES, typeSlices, type TypeSlice } from "./type-slices.js";
 
 const REGISTERED: [string, string | undefined][] = [
   ["probe.root", undefined],
@@ -217,11 +212,10 @@ describe("a type filter that is not sliced", () => {
     }
   });
 
-  it("is a subtree whose other conditions would repeat past the parameter limit", () => {
-    const wide = Math.ceil(MAX_REPEATED_TERMS / 5);
-    expect(typeSlices({ type: "probe.root", repeatedTerms: 1 })).toBeDefined();
-    expect(
-      typeSlices({ type: "probe.root", repeatedTerms: wide }),
-    ).toBeUndefined();
+  it("is nothing for an empty type, which restricts nothing", () => {
+    expect(typeSlices({ type: "" })).toBeUndefined();
+    expect(typeSlices({ type: "", allowed_types: ["probe.root.*"] })).toEqual(
+      typeSlices({ allowed_types: ["probe.root.*"] }),
+    );
   });
 });
