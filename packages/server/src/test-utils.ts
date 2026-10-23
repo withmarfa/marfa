@@ -7,7 +7,7 @@ import type { CreateKeyInput } from "@withmarfa/shared";
 import { createApp } from "./app.js";
 import { ensureInstanceId } from "./storage/instance-id.js";
 import { consentLockDepth } from "./auth/consent-lock.js";
-import type { AppConfig } from "./config.js";
+import { DEFAULT_EVENT_LOG_RETENTION_HOURS, type AppConfig } from "./config.js";
 import type { MarfaAuth } from "./auth/instance.js";
 import { createSqliteStorage } from "./storage/sqlite/index.js";
 import { instantColumnValues } from "./storage/instant-columns.js";
@@ -460,7 +460,7 @@ async function buildUnclaimedApp(
     enableHsts: false,
     auditRetentionDays: 90,
     auditCleanupIntervalMs: 86_400_000,
-    eventLogRetentionHours: 168,
+    eventLogRetentionHours: DEFAULT_EVENT_LOG_RETENTION_HOURS,
     versionThinningIntervalMs: 3_600_000,
     feedExpiryIntervalMs: 3_600_000,
     versionRecentDays: 30,

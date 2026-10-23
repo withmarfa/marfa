@@ -11,6 +11,7 @@ import { Housekeeping } from "../src/housekeeping/scheduler.js";
 import { createApp } from "../src/app.js";
 import { ensureInstanceId } from "../src/storage/instance-id.js";
 import { hashApiKey } from "../src/middleware/auth.js";
+import { DEFAULT_EVENT_LOG_RETENTION_HOURS } from "../src/config.js";
 
 async function main(): Promise<void> {
   const dir = mkdtempSync(join(tmpdir(), "bench-"));
@@ -44,7 +45,7 @@ async function main(): Promise<void> {
       enableHsts: false,
       auditRetentionDays: 90,
       auditCleanupIntervalMs: 86400000,
-      eventLogRetentionHours: 168,
+      eventLogRetentionHours: DEFAULT_EVENT_LOG_RETENTION_HOURS,
       versionThinningIntervalMs: 3600000,
       feedExpiryIntervalMs: 3600000,
       versionRecentDays: 30,

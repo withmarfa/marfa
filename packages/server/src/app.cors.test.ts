@@ -1,5 +1,6 @@
 import { describe, expect, it, afterEach } from "vitest";
 import { createApp } from "./app.js";
+import { DEFAULT_EVENT_LOG_RETENTION_HOURS } from "./config.js";
 import { CONTRACT_HEADER, CONTRACT_VERSION } from "./contract.js";
 import { buildPublishedOpenAPISpec } from "./openapi-published.js";
 import { ensureInstanceId } from "./storage/instance-id.js";
@@ -59,7 +60,7 @@ async function buildCtx(isProduction: boolean): Promise<Ctx> {
       enableHsts: false,
       auditRetentionDays: 90,
       auditCleanupIntervalMs: 86_400_000,
-      eventLogRetentionHours: 168,
+      eventLogRetentionHours: DEFAULT_EVENT_LOG_RETENTION_HOURS,
       versionThinningIntervalMs: 3_600_000,
       feedExpiryIntervalMs: 3_600_000,
       versionRecentDays: 30,

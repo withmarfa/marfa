@@ -137,6 +137,60 @@ describe("the housekeeping registrations", () => {
     },
   );
 
+  describe("the event-log cleanup with no retention configured", () => {
+    const DAY_MS = 86_400_000;
+
+    /** Runs the cleanup on a config that names no event-log retention,
+     *  over a log holding one event of each age, and answers the ages left. */
+    async function agesLeftAfterCleanup(
+      agesInDays: number[],
+      config?: Partial<AppConfig>,
+    ): Promise<number[]> {
+      const ctx = await createUnclaimedTestApp();
+      contexts.push(ctx);
+      const run = (
+        ctx.storage as unknown as {
+          __sqliteRun: (sql: string, params: unknown[]) => Promise<unknown>;
+        }
+      ).__sqliteRun;
+      await run("DELETE FROM event_log", []);
+      const now = Date.now();
+      for (const age of agesInDays) {
+        await run(
+          "INSERT INTO event_log (event_type, item_id, payload, enable_fanout, created_at) VALUES ('item.created', 'item', '{}', 1, ?)",
+          [new Date(now - age * DAY_MS).toISOString()],
+        );
+      }
+      const unset: AppConfig = { ...ctx.config };
+      delete unset.eventLogRetentionHours;
+      const housekeeping = new Housekeeping(ctx.storage.housekeeping, {
+        pollIntervalMs: 3_600_000,
+      });
+      registerHousekeepingJobs(housekeeping, ctx.storage, ctx.blobs, {
+        ...unset,
+        ...config,
+      });
+      await housekeeping.start();
+      await housekeeping.runNow("event-log-cleanup");
+      await housekeeping.stop();
+      const left = await ctx.storage.eventLog.getAfter(0n, 100);
+      return left.map((row) =>
+        Math.round((now - Date.parse(row.created_at)) / DAY_MS),
+      );
+    }
+
+    it("keeps an event 29 days old and retires one 31 days old", async () => {
+      expect(await agesLeftAfterCleanup([31, 29, 0])).toEqual([29, 0]);
+    });
+
+    it("retires an event 8 days old only under a shorter retention it was given", async () => {
+      expect(
+        await agesLeftAfterCleanup([8, 0], { eventLogRetentionHours: 168 }),
+      ).toEqual([0]);
+      expect(await agesLeftAfterCleanup([8, 0])).toEqual([8, 0]);
+    });
+  });
+
   it("leaves out the session cleanup and the DCR reaper when their stores are not wired", async () => {
     const { names: admitted } = await namesUnder({});
     expect(admitted).toContain("auth-session-cleanup");

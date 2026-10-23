@@ -7,7 +7,10 @@ import { effectiveConfig, hasErrorReceiver } from "../effective-config.js";
  */
 import { Hono } from "hono";
 import type { InstanceConfig } from "@withmarfa/shared";
-import type { AppConfig } from "../config.js";
+import {
+  DEFAULT_EVENT_LOG_RETENTION_HOURS,
+  type AppConfig,
+} from "../config.js";
 import { DEFAULT_INSTANCE_NAME } from "../instance-name.js";
 import { refuseUndeclaredKeysOf } from "../middleware/undeclared-query-keys.js";
 import { requireDirectAuthority, type AppEnv } from "../middleware/auth.js";
@@ -126,7 +129,8 @@ const KEEPING: readonly Keeping[] = [
     field: "event_log_retention_hours",
     title: "Let apps catch up on changes",
     description: "How far back an app that was offline can catch up",
-    standing: (config) => config.eventLogRetentionHours ?? 168,
+    standing: (config) =>
+      config.eventLogRetentionHours ?? DEFAULT_EVENT_LOG_RETENTION_HOURS,
     presets: [24, 168, 720],
     words: hoursWords,
   },
