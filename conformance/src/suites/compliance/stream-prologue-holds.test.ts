@@ -475,7 +475,7 @@ describe("a replay the retention sweep overtakes", () => {
 
     await note("retired-first");
     await note("retired-second");
-    await server.advanceClock(8 * DAY_MS);
+    await server.advanceClock(31 * DAY_MS);
     const kept = await note("kept");
     const ran = await operator.runHousekeeping("event-log-cleanup");
     expect(ran.status, JSON.stringify(ran.error)).toBe(200);

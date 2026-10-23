@@ -28,11 +28,11 @@ import { collectUntil, withStream } from "../../utils/stream.js";
 
 afterAll(stopFreshServers, 2 * FRESH_SERVER_TIMEOUT_MS);
 
-/** Past the default window of both jobs, the event log's seven days and the
+/** Past the default window of both jobs, the event log's thirty days and the
  *  trash's sixty. */
 const PAST_BOTH_WINDOWS_MS = 61 * DAY_MS;
 /** Past the event log's window and inside the trash's. */
-const PAST_EVENT_WINDOW_MS = 8 * DAY_MS;
+const PAST_EVENT_WINDOW_MS = 31 * DAY_MS;
 
 /** The clients are made on each use, bound to the address a restart moves. */
 interface Instance {

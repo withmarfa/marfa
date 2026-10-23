@@ -7,7 +7,11 @@ import { HOUSEKEEPING_JOBS } from "./metadata.js";
 import { DEFAULT_MAX_STRING_LENGTH } from "@withmarfa/shared";
 import { readInstanceConfig } from "../storage/instance-config.js";
 import type { AppConfig } from "../config.js";
-import { DEFAULT_INBOUND_LIMITS, defaultTessdataDir } from "../config.js";
+import {
+  DEFAULT_EVENT_LOG_RETENTION_HOURS,
+  DEFAULT_INBOUND_LIMITS,
+  defaultTessdataDir,
+} from "../config.js";
 import type { Storage } from "../storage/interface.js";
 import type { BlobLayer } from "../storage/blob-layer.js";
 import type { Housekeeping } from "./scheduler.js";
@@ -73,8 +77,8 @@ export function registerHousekeepingJobs(
     configField: "trash_retention_days",
   };
 
-  // Default 168h; override via MARFA_EVENT_LOG_RETENTION_HOURS or the instance config.
-  const eventLogRetentionHours = config.eventLogRetentionHours ?? 168;
+  const eventLogRetentionHours =
+    config.eventLogRetentionHours ?? DEFAULT_EVENT_LOG_RETENTION_HOURS;
   housekeeping.register({
     name: HOUSEKEEPING_JOBS["event-log-cleanup"].name,
     intervalMs: config.eventLogCleanupIntervalMs ?? 3_600_000,

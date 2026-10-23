@@ -595,7 +595,7 @@ describe("what the move to the bin takes with it", () => {
 
 describe("the event log's retention", () => {
   it("is the event log's own, whatever window a type names", async () => {
-    // A window of a day is far inside the event log's default of seven.
+    // A window of a day is far inside the event log's default of thirty.
     const type = await register({ feed_days: 1 });
     const cursor = await cursorNow();
     const id = await add(type);
@@ -616,7 +616,7 @@ describe("the event log's retention", () => {
 
     // The witness: the log's own window passes, and its cleanup then removes
     // the same events, so the same cursor is too old.
-    await clock.advance(10 * DAY_MS);
+    await clock.advance(30 * DAY_MS);
     const later = await runJob(server, "event-log-cleanup");
     expect(later.outcome, String(later.error)).toBe("ok");
     expect((later.result as { deleted: number }).deleted).toBeGreaterThan(0);

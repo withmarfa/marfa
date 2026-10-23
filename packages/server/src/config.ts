@@ -29,6 +29,16 @@ import { errorMessage } from "./error-text.js";
  */
 export const DEFAULT_KEYS_RATE_LIMIT = 200;
 
+/**
+ * The hours an event stays in the event log when the instance names none:
+ * 30 days, so a device offline for up to a month catches up from the log
+ * instead of hydrating again.
+ *
+ * Written down once and read wherever an `AppConfig` literal leaves
+ * `eventLogRetentionHours` unset.
+ */
+export const DEFAULT_EVENT_LOG_RETENTION_HOURS = 720;
+
 // A century-scale retention horizon keeps cutoff dates in ordinary ISO years.
 export const MAX_RETENTION_DAYS = 36_500;
 export const MAX_RETENTION_HOURS = MAX_RETENTION_DAYS * 24;
@@ -161,12 +171,11 @@ export interface AppConfig {
   grantInactivityDays?: number;
   /** Hours an event_log entry survives at least before the event-log
    *  housekeeping job may purge it.
-   *  Default 168 (7 days). Controls how far back a client's SSE replay
+   *  Default `DEFAULT_EVENT_LOG_RETENTION_HOURS` (720, 30 days). Controls how far back a client's SSE replay
    *  cursor can reach; a request whose `Last-Event-ID` is followed by an
    *  event no longer retained gets a terminal `catchup_too_old` event.
    *  Optional on the type so callers constructing `AppConfig` literals
-   *  don't have to supply it; `housekeeping/registrations.ts` applies the
-   *  168 fallback. */
+   *  don't have to supply it; the default applies in their place. */
   eventLogRetentionHours?: number;
   /** Cadence (ms) for the event-log cleanup sweep that purges expired
    *  `event_log` rows. Default 3_600_000 (1h); env override
@@ -1633,7 +1642,7 @@ const settingsShape = {
       live: "event_log_retention_hours",
     },
     count(
-      168,
+      DEFAULT_EVENT_LOG_RETENTION_HOURS,
       "The least time an event stays in the event log, which bounds how far back a stream can replay. At 0 no event expires by age. `PUT /config` overrides it.",
       { min: 0, max: MAX_RETENTION_HOURS, unit: "hours" },
     ),

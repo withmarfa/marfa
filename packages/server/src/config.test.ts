@@ -68,6 +68,18 @@ describe("the settings schema", () => {
     expect(config.authSecret.length).toBeGreaterThanOrEqual(32);
   });
 
+  it("keeps an event in the log for 30 days by default, and takes any explicit value", () => {
+    expect(loadConfig({}).eventLogRetentionHours).toBe(720);
+    expect(
+      loadConfig({ MARFA_EVENT_LOG_RETENTION_HOURS: "168" })
+        .eventLogRetentionHours,
+    ).toBe(168);
+    expect(
+      loadConfig({ MARFA_EVENT_LOG_RETENTION_HOURS: "0" })
+        .eventLogRetentionHours,
+    ).toBe(0);
+  });
+
   it("treats a blank value as unset", () => {
     expect(loadConfig({ PORT: "", VERSION_RECENT_DAYS: " " }).port).toBe(8600);
   });
