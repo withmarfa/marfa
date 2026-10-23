@@ -92,6 +92,54 @@ describe("a copy no server has been named for", () => {
     expect(absent.ok ? "answered" : absent.refusal.code).toBe("not_found");
   });
 
+  it("keeps the thumbnail of a type Marfa ships out of its search, as it keeps a declared one", async () => {
+    const device = await offline("save-shipped-thumbnail");
+    const image = (word: string) =>
+      `data:image/png;base64,iVBORw0KGgoA/${word}`;
+    const ids: Record<string, string> = {};
+    for (const [type, properties] of [
+      ["core.media", { title: "A work" }],
+      // A subtype reads the thumbnail it inherits.
+      ["core.media.film", { title: "A film" }],
+      [
+        "core.file.image",
+        {
+          blob_ref:
+            "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          mime_type: "image/png",
+        },
+      ],
+    ] as const) {
+      const created = value(
+        await device.create({
+          type,
+          properties: { ...properties, thumbnail: image("unicornsXYZ") },
+        }),
+      );
+      ids[type] = created.item_id ?? "";
+      const out = `${device.store}.${type}.png`;
+      const held = value(await device.thumbnail(ids[type], out));
+      expect(
+        held.thumbnail?.mime_type,
+        `${type} saved offline did not hold its thumbnail as one`,
+      ).toBe("image/png");
+    }
+    // The witness: the same image held as a note's text is found.
+    const note = value(
+      await device.create({
+        type: "core.note",
+        properties: { body: image("unicornsXYZ") },
+      }),
+    );
+    const found = value(await device.search("unicornsXYZ")).map(
+      (hit) => hit.item.id,
+    );
+    expect(
+      found,
+      "the image held as text was not found either, so nothing here is about the thumbnail",
+    ).toEqual([note.item_id]);
+  });
+
   it("checks a write against the types the app declares, and holds an unknown one back", async () => {
     const device = await offline("save-declared");
     const unknown = await device.create({

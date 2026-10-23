@@ -618,6 +618,10 @@
     "altitude": {
      "type": "number",
      "description": "Altitude in meters"
+    },
+    "thumbnail": {
+     "type": "thumbnail",
+     "description": "A small preview of the image, supplied by the writer"
     }
    },
    "display_hints": {
@@ -823,6 +827,10 @@
     "notes": {
      "type": "string",
      "description": "Personal annotations"
+    },
+    "thumbnail": {
+     "type": "thumbnail",
+     "description": "A small preview of the work, supplied by the writer"
     }
    },
    "display_hints": {
@@ -885,6 +893,10 @@
     "notes": {
      "type": "string",
      "description": "Personal annotations"
+    },
+    "thumbnail": {
+     "type": "thumbnail",
+     "description": "A small preview of the work, supplied by the writer"
     },
     "release_type": {
      "type": "string",
@@ -960,6 +972,10 @@
      "type": "string",
      "description": "Personal annotations"
     },
+    "thumbnail": {
+     "type": "thumbnail",
+     "description": "A small preview of the work, supplied by the writer"
+    },
     "section": {
      "type": "string",
      "description": "Section of the publication"
@@ -1029,6 +1045,10 @@
     "notes": {
      "type": "string",
      "description": "Personal annotations"
+    },
+    "thumbnail": {
+     "type": "thumbnail",
+     "description": "A small preview of the work, supplied by the writer"
     },
     "isbn": {
      "type": "string",
@@ -1103,6 +1123,10 @@
     "notes": {
      "type": "string",
      "description": "Personal annotations"
+    },
+    "thumbnail": {
+     "type": "thumbnail",
+     "description": "A small preview of the work, supplied by the writer"
     },
     "medium": {
      "type": "enum",
@@ -1197,6 +1221,10 @@
      "type": "string",
      "description": "Personal annotations"
     },
+    "thumbnail": {
+     "type": "thumbnail",
+     "description": "A small preview of the work, supplied by the writer"
+    },
     "duration": {
      "type": "number",
      "description": "Runtime in seconds"
@@ -1278,6 +1306,10 @@
     "notes": {
      "type": "string",
      "description": "Personal annotations"
+    },
+    "thumbnail": {
+     "type": "thumbnail",
+     "description": "A small preview of the work, supplied by the writer"
     },
     "medium": {
      "type": "enum",
@@ -1363,6 +1395,10 @@
     "notes": {
      "type": "string",
      "description": "Personal annotations"
+    },
+    "thumbnail": {
+     "type": "thumbnail",
+     "description": "A small preview of the work, supplied by the writer"
     },
     "duration": {
      "type": "number",

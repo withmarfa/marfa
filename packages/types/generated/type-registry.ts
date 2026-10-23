@@ -130,6 +130,7 @@ const coreMedia: TypeSchema = {
     image_url: { type: "url", description: "Cover art, poster, or thumbnail" },
     language: { type: "string", description: "BCP 47 language code", format: "bcp47" },
     notes: { type: "string", description: "Personal annotations" },
+    thumbnail: { type: "thumbnail", description: "A small preview of the work, supplied by the writer" },
   },
   display_hints: { title_field: "title", body_field: "body" },
   merge_policy: { fields: { body: "keep_both_copies", notes: "keep_both_copies" }, default: "last_writer_wins" },
@@ -300,6 +301,7 @@ const coreFileImage: TypeSchema = {
     latitude: { type: "number", description: "Subject latitude" },
     longitude: { type: "number", description: "Subject longitude" },
     altitude: { type: "number", description: "Altitude in meters" },
+    thumbnail: { type: "thumbnail", description: "A small preview of the image, supplied by the writer" },
   },
   display_hints: { title_field: "title" },
   merge_policy: { default: "last_writer_wins" },
@@ -352,6 +354,7 @@ const coreMediaAlbum: TypeSchema = {
     image_url: { type: "url", description: "Cover art, poster, or thumbnail" },
     language: { type: "string", description: "BCP 47 language code", format: "bcp47" },
     notes: { type: "string", description: "Personal annotations" },
+    thumbnail: { type: "thumbnail", description: "A small preview of the work, supplied by the writer" },
     release_type: { type: "string", description: "Recommended values: album, ep, single" },
     num_tracks: { type: "integer", description: "Total track count" },
   },
@@ -377,6 +380,7 @@ const coreMediaArticle: TypeSchema = {
     image_url: { type: "url", description: "Cover art, poster, or thumbnail" },
     language: { type: "string", description: "BCP 47 language code", format: "bcp47" },
     notes: { type: "string", description: "Personal annotations" },
+    thumbnail: { type: "thumbnail", description: "A small preview of the work, supplied by the writer" },
     section: { type: "string", description: "Section of the publication" },
     word_count: { type: "integer", description: "Word count" },
   },
@@ -401,6 +405,7 @@ const coreMediaBook: TypeSchema = {
     image_url: { type: "url", description: "Cover art, poster, or thumbnail" },
     language: { type: "string", description: "BCP 47 language code", format: "bcp47" },
     notes: { type: "string", description: "Personal annotations" },
+    thumbnail: { type: "thumbnail", description: "A small preview of the work, supplied by the writer" },
     isbn: { type: "string", description: "International Standard Book Number (ISO 2108)" },
     page_count: { type: "integer", description: "Number of pages" },
     edition: { type: "string", description: "Edition designation" },
@@ -426,6 +431,7 @@ const coreMediaEpisode: TypeSchema = {
     image_url: { type: "url", description: "Cover art, poster, or thumbnail" },
     language: { type: "string", description: "BCP 47 language code", format: "bcp47" },
     notes: { type: "string", description: "Personal annotations" },
+    thumbnail: { type: "thumbnail", description: "A small preview of the work, supplied by the writer" },
     medium: { type: "enum", description: "What the episode is made of.", enum_values: ["tv", "podcast", "radio", "video", "mixed"] },
     season_number: { type: "integer", description: "Which season, where the series has them" },
     episode_number: { type: "integer", description: "Position within the season, or within the series when unseasoned" },
@@ -454,6 +460,7 @@ const coreMediaFilm: TypeSchema = {
     image_url: { type: "url", description: "Cover art, poster, or thumbnail" },
     language: { type: "string", description: "BCP 47 language code", format: "bcp47" },
     notes: { type: "string", description: "Personal annotations" },
+    thumbnail: { type: "thumbnail", description: "A small preview of the work, supplied by the writer" },
     duration: { type: "number", description: "Runtime in seconds" },
     director: { type: "string", description: "Primary director" },
     content_rating: { type: "string", description: "Age or content classification" },
@@ -481,6 +488,7 @@ const coreMediaSeries: TypeSchema = {
     image_url: { type: "url", description: "Cover art, poster, or thumbnail" },
     language: { type: "string", description: "BCP 47 language code", format: "bcp47" },
     notes: { type: "string", description: "Personal annotations" },
+    thumbnail: { type: "thumbnail", description: "A small preview of the work, supplied by the writer" },
     medium: { type: "enum", description: "What the series is made of.", enum_values: ["tv", "podcast", "radio", "video", "mixed"] },
     status: { type: "enum", description: "Whether the series is still producing new members.", enum_values: ["ongoing", "ended", "canceled"] },
   },
@@ -506,6 +514,7 @@ const coreMediaSong: TypeSchema = {
     image_url: { type: "url", description: "Cover art, poster, or thumbnail" },
     language: { type: "string", description: "BCP 47 language code", format: "bcp47" },
     notes: { type: "string", description: "Personal annotations" },
+    thumbnail: { type: "thumbnail", description: "A small preview of the work, supplied by the writer" },
     duration: { type: "number", description: "Track length in seconds" },
     isrc: { type: "string", description: "International Standard Recording Code (ISO 3901)" },
     album: { type: "string", description: "Containing album name" },
@@ -1076,6 +1085,9 @@ export const SHIPPED_TYPE_SHAPES = {
       "source_url": {
         "type": "url"
       },
+      "thumbnail": {
+        "type": "thumbnail"
+      },
       "title": {
         "type": "string"
       },
@@ -1242,6 +1254,9 @@ export const SHIPPED_TYPE_SHAPES = {
       "publisher": {
         "type": "string"
       },
+      "thumbnail": {
+        "type": "thumbnail"
+      },
       "title": {
         "required": true,
         "type": "string"
@@ -1295,6 +1310,9 @@ export const SHIPPED_TYPE_SHAPES = {
       },
       "release_type": {
         "type": "string"
+      },
+      "thumbnail": {
+        "type": "thumbnail"
       },
       "title": {
         "required": true,
@@ -1351,6 +1369,9 @@ export const SHIPPED_TYPE_SHAPES = {
       },
       "section": {
         "type": "string"
+      },
+      "thumbnail": {
+        "type": "thumbnail"
       },
       "title": {
         "required": true,
@@ -1412,6 +1433,9 @@ export const SHIPPED_TYPE_SHAPES = {
       },
       "publisher": {
         "type": "string"
+      },
+      "thumbnail": {
+        "type": "thumbnail"
       },
       "title": {
         "required": true,
@@ -1487,6 +1511,9 @@ export const SHIPPED_TYPE_SHAPES = {
       "season_number": {
         "type": "integer"
       },
+      "thumbnail": {
+        "type": "thumbnail"
+      },
       "title": {
         "required": true,
         "type": "string"
@@ -1550,6 +1577,9 @@ export const SHIPPED_TYPE_SHAPES = {
       },
       "publisher": {
         "type": "string"
+      },
+      "thumbnail": {
+        "type": "thumbnail"
       },
       "title": {
         "required": true,
@@ -1618,6 +1648,9 @@ export const SHIPPED_TYPE_SHAPES = {
         ],
         "type": "enum"
       },
+      "thumbnail": {
+        "type": "thumbnail"
+      },
       "title": {
         "required": true,
         "type": "string"
@@ -1684,6 +1717,9 @@ export const SHIPPED_TYPE_SHAPES = {
       },
       "publisher": {
         "type": "string"
+      },
+      "thumbnail": {
+        "type": "thumbnail"
       },
       "title": {
         "required": true,

@@ -507,3 +507,194 @@ describe("a thumbnail field", () => {
     ).not.toContain(made.data.item.id);
   });
 });
+
+/**
+ * Two shipped types carry a thumbnail, so an app can show a grid of images
+ * and works from what a device already holds. The writer supplies the image;
+ * the server makes none.
+ */
+describe("the thumbnail of a shipped type", () => {
+  let blobRef = "";
+  beforeAll(async () => {
+    const uploaded = await client.uploadBlob(padded(512), "image/png");
+    expect(uploaded.status).toBe(201);
+    blobRef = uploaded.data.hash;
+  });
+  const shipped = [
+    { type: "core.file.image" },
+    { type: "core.media" },
+    // A subtype inherits the field from its parent.
+    { type: "core.media.film" },
+  ] as const;
+  const propertiesOf = (type: string): Record<string, unknown> =>
+    type === "core.file.image"
+      ? { blob_ref: blobRef, mime_type: "image/png" }
+      : { title: "A work" };
+
+  async function createShipped(
+    entry: (typeof shipped)[number],
+    thumbnail: unknown,
+  ): ReturnType<MarfaClient["createItem"]> {
+    const created = await client.createItem({
+      type: entry.type,
+      source: ctx.source,
+      properties: { ...propertiesOf(entry.type), thumbnail },
+    });
+    if (created.ok) trackItem(ctx, created.data.item.id);
+    return created;
+  }
+
+  it("shows the optional thumbnail field on a read of each type, and of a subtype", async () => {
+    for (const { type } of shipped) {
+      const read = await client.getType(type);
+      expect(read.ok, `${type}: ${JSON.stringify(read.error)}`).toBe(true);
+      expect(read.data.fields.thumbnail, type).toEqual(
+        expect.objectContaining({ type: "thumbnail" }),
+      );
+      expect(read.data.fields.thumbnail?.required, type).not.toBe(true);
+    }
+    // The witnesses: a shipped type that declares none shows none.
+    for (const type of ["core.file.audio", "core.note"]) {
+      const read = await client.getType(type);
+      expect(read.ok).toBe(true);
+      expect(
+        read.data.fields.thumbnail,
+        `${type} shows a thumbnail it does not declare`,
+      ).toBeUndefined();
+    }
+  });
+
+  it("takes an item without a thumbnail, and one with a valid thumbnail on a create and an update", async () => {
+    const value = uri(padded(300));
+    for (const entry of shipped) {
+      const bare = await client.createItem({
+        type: entry.type,
+        source: ctx.source,
+        properties: propertiesOf(entry.type),
+      });
+      expect(bare.ok, `${entry.type}: ${JSON.stringify(bare.error)}`).toBe(
+        true,
+      );
+      trackItem(ctx, bare.data.item.id);
+      expect(bare.data.item.properties.thumbnail).toBeUndefined();
+
+      const created = await createShipped(entry, value);
+      expect(
+        created.ok,
+        `${entry.type}: ${JSON.stringify(created.error)}`,
+      ).toBe(true);
+      const id = created.data.item.id;
+      const got = await client.getItem(id);
+      expect(got.ok).toBe(true);
+      expect(got.data.item.properties.thumbnail, entry.type).toBe(value);
+
+      const replaced = uri(padded(301), "image/png");
+      const updated = await client.updateItem(bare.data.item.id, {
+        properties: { thumbnail: replaced },
+        version: bare.data.item.version,
+      });
+      expect(
+        updated.ok,
+        `${entry.type}: ${JSON.stringify(updated.error)}`,
+      ).toBe(true);
+      expect(updated.data.item.properties.thumbnail, entry.type).toBe(replaced);
+    }
+  });
+
+  it("refuses a thumbnail over the cap or not an image on a create and an update, naming the field", async () => {
+    for (const entry of shipped) {
+      for (const [what, value] of [
+        ["over the cap", uri(padded(CAP + 1))],
+        ["not an image", uri(Buffer.from("plain text"), "text/plain")],
+        ["a link", "https://example.com/thumb.png"],
+        ["a number", 7],
+      ] as const) {
+        const refused = await createShipped(entry, value);
+        expect(
+          refused.ok,
+          `${entry.type} took a thumbnail that is ${what}`,
+        ).toBe(false);
+        expect(refused.status).toBe(400);
+        expect(refused.error?.error.code).toBe("invalid_properties");
+        expect(
+          (
+            refused.error?.error.details?.errors as
+              Array<{ field: string }> | undefined
+          )?.map((error) => error.field),
+        ).toContain("thumbnail");
+      }
+      // The witness: the same item at the cap is taken.
+      const atCap = await createShipped(entry, uri(padded(CAP)));
+      expect(atCap.ok, `${entry.type}: ${JSON.stringify(atCap.error)}`).toBe(
+        true,
+      );
+      const refusedUpdate = await client.updateItem(atCap.data.item.id, {
+        properties: { thumbnail: "not an image" },
+        version: atCap.data.item.version,
+      });
+      expect(
+        refusedUpdate.status,
+        `${entry.type} took an update to a thumbnail that is not an image`,
+      ).toBe(400);
+      expect(refusedUpdate.error?.error.code).toBe("invalid_properties");
+    }
+  });
+
+  it("leaves a subtype of either type to add no second thumbnail", async () => {
+    for (const parent of ["core.file.image", "core.media"]) {
+      const refused = await client.registerType({
+        id: `user.second-thumbnail-${parent.replace(/\./g, "-")}-${ctx.runId}`,
+        parent,
+        fields: { cover: { type: "thumbnail" } },
+      });
+      expect(
+        refused.status,
+        `a subtype of ${parent} added a thumbnail beside the one it inherits`,
+      ).toBe(400);
+      expect(refused.error?.error.code).toBe("invalid_schema");
+      // The witness: a subtype adding a field of another kind registers.
+      const plain = await client.registerType({
+        id: `user.plain-${parent.replace(/\./g, "-")}-${ctx.runId}`,
+        parent,
+        fields: { camera: { type: "string" } },
+      });
+      expect(plain.ok, JSON.stringify(plain.error)).toBe(true);
+    }
+  });
+
+  it("is read as the target's by a type claiming compatibility, and refused as text", async () => {
+    const targets = {
+      "core.media": { title: { type: "string", required: true } },
+      "core.file.image": {
+        blob_ref: { type: "string", required: true },
+        mime_type: { type: "string", required: true },
+      },
+    } as const;
+    for (const [target, required] of Object.entries(targets)) {
+      const slug = target.replace(/\./g, "-");
+      // The witness: a claim that declares no thumbnail is taken.
+      const bare = await client.registerType({
+        id: `user.claims-bare-${slug}-${ctx.runId}`,
+        fields: { ...required },
+        compatible_with: target,
+      });
+      expect(bare.ok, `${target}: ${JSON.stringify(bare.error)}`).toBe(true);
+      const typed = await client.registerType({
+        id: `user.claims-thumbnail-${slug}-${ctx.runId}`,
+        fields: { ...required, thumbnail: { type: "thumbnail" } },
+        compatible_with: target,
+      });
+      expect(typed.ok, `${target}: ${JSON.stringify(typed.error)}`).toBe(true);
+      const text = await client.registerType({
+        id: `user.claims-text-${slug}-${ctx.runId}`,
+        fields: { ...required, thumbnail: { type: "string" } },
+        compatible_with: target,
+      });
+      expect(
+        text.status,
+        `a type read its thumbnail as text and claimed ${target}, whose thumbnail is an image`,
+      ).toBe(422);
+      expect(text.error?.error.code).toBe("compatible_with_violation");
+    }
+  });
+});
