@@ -143,9 +143,11 @@ describe("listing the expired feed items of a type", () => {
   });
 
   it("falls back to sorting when the index is removed", async () => {
-    // The witness for the plan above: without the index the same question
-    // sorts or scans.
+    // The witness for the plan above: without the index, and the type and
+    // time index that could serve the same order, the same question sorts or
+    // scans.
     await storage.__sqliteRun("DROP INDEX idx_items_feed_expiry", []);
+    await storage.__sqliteRun("DROP INDEX idx_items_type_created_at", []);
     reader.close();
     const path = join(directory, "test.db");
     reader = createClient({ url: `file:${path}` });
