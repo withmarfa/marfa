@@ -68,7 +68,7 @@ pub struct Discovery {
     pub scopes_supported: Vec<String>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Clone, Deserialize)]
 pub struct DeviceCode {
     pub device_code: String,
     pub user_code: String,
@@ -83,12 +83,34 @@ fn default_interval() -> u64 {
     5
 }
 
-#[derive(Debug, Clone, Deserialize)]
+impl std::fmt::Debug for DeviceCode {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("DeviceCode")
+            .field("user_code", &self.user_code)
+            .field("verification_uri", &self.verification_uri)
+            .field("expires_in", &self.expires_in)
+            .field("interval", &self.interval)
+            .finish_non_exhaustive()
+    }
+}
+
+#[derive(Clone, Deserialize)]
 pub struct TokenSet {
     pub access_token: String,
     pub refresh_token: Option<String>,
     pub expires_in: Option<u64>,
     pub scope: Option<String>,
+}
+
+impl std::fmt::Debug for TokenSet {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("TokenSet")
+            .field("expires_in", &self.expires_in)
+            .field("scope", &self.scope)
+            .finish_non_exhaustive()
+    }
 }
 
 pub fn now_seconds() -> u64 {
@@ -1185,6 +1207,41 @@ mod tests {
             Some(origin.as_str()),
             "the origin stays current so the next command names the server it lost"
         );
+    }
+
+    #[test]
+    fn no_debug_shows_a_token_or_a_device_code() {
+        let tokens = TokenSet {
+            access_token: "access-witness".into(),
+            refresh_token: Some("refresh-witness".into()),
+            expires_in: Some(3600),
+            scope: Some("openid".into()),
+        };
+        let device = DeviceCode {
+            device_code: "device-witness".into(),
+            user_code: "ABCD-EFGH".into(),
+            verification_uri: "https://marfa.example/device".into(),
+            verification_uri_complete: None,
+            expires_in: 600,
+            interval: 5,
+        };
+        let shown = [
+            format!("{tokens:?}"),
+            format!("{:?}", Poll::Token(tokens.clone())),
+            format!("{device:?}"),
+        ];
+        for text in &shown {
+            for secret in ["access-witness", "refresh-witness", "device-witness"] {
+                assert!(!text.contains(secret), "{text}");
+            }
+        }
+        // Witness: what is not secret is still shown.
+        assert!(
+            shown[1].contains("Token(TokenSet { expires_in: Some(3600)"),
+            "{}",
+            shown[1]
+        );
+        assert!(shown[2].contains("ABCD-EFGH"), "{}", shown[2]);
     }
 
     #[test]

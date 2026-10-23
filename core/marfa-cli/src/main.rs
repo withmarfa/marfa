@@ -47,7 +47,7 @@ use crate::remote::{Named, Remote};
 /// Marfa from the command line: every operation of one instance, a working
 /// copy of a slice of it under `device`, and folders that hold a slice as
 /// files.
-#[derive(Debug, Parser)]
+#[derive(Parser)]
 #[command(
     name = "marfa",
     version,
@@ -127,6 +127,21 @@ struct Cli {
 
     #[command(subcommand)]
     command: Command,
+}
+
+impl std::fmt::Debug for Cli {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("Cli")
+            .field("profile", &self.profile)
+            .field("url", &self.url)
+            .field("no_keychain", &self.no_keychain)
+            .field("allow_http", &self.allow_http)
+            .field("socket", &self.socket)
+            .field("json", &self.json)
+            .field("command", &self.command)
+            .finish_non_exhaustive()
+    }
 }
 
 #[derive(Debug, Subcommand)]
@@ -701,6 +716,32 @@ mod tests {
         ] {
             assert!(socket_refusal(&command(words)).is_none(), "{words:?}");
         }
+    }
+
+    #[test]
+    fn no_debug_of_a_command_line_shows_a_key_or_a_secret() {
+        let cli = Cli::try_parse_from([
+            "marfa",
+            "--url",
+            "https://marfa.example",
+            "--key",
+            "key-witness",
+            "webhooks",
+            "create",
+            "--to",
+            "https://receiver.example/hook",
+            "--event",
+            "item.created",
+            "--secret",
+            "secret-witness",
+        ])
+        .unwrap();
+        let shown = format!("{cli:?}");
+        assert!(!shown.contains("key-witness"), "{shown}");
+        assert!(!shown.contains("secret-witness"), "{shown}");
+        // Witness: the rest of the line is shown.
+        assert!(shown.contains("marfa.example"), "{shown}");
+        assert!(shown.contains("receiver.example"), "{shown}");
     }
 
     #[test]

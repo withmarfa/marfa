@@ -50,7 +50,7 @@ pub enum WebhooksCommand {
     },
 }
 
-#[derive(Debug, Default, Args)]
+#[derive(Default, Args)]
 pub struct WebhookCreateArgs {
     /// Where to deliver. Named `--to` rather than `--url`, which is the server.
     #[arg(long = "to", value_name = "URL")]
@@ -64,6 +64,17 @@ pub struct WebhookCreateArgs {
     /// The secret deliveries are signed with. Omitted, the server mints one.
     #[arg(long)]
     pub secret: Option<String>,
+}
+
+impl std::fmt::Debug for WebhookCreateArgs {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("WebhookCreateArgs")
+            .field("to", &self.to)
+            .field("events", &self.events)
+            .field("type_filter", &self.type_filter)
+            .finish_non_exhaustive()
+    }
 }
 
 #[derive(Debug, Default, Args)]
@@ -217,5 +228,18 @@ mod tests {
         let text = created_text(&created(), &args);
         assert!(!text.contains("whsec_PLAINTEXT"), "{text}");
         assert!(text.contains("the secret you gave"), "{text}");
+    }
+
+    #[test]
+    fn no_debug_shows_the_secret() {
+        let args = WebhookCreateArgs {
+            to: "https://receiver.example/hook".into(),
+            secret: Some("whsec_PLAINTEXT".into()),
+            ..Default::default()
+        };
+        let shown = format!("{args:?}");
+        assert!(!shown.contains("whsec_PLAINTEXT"), "{shown}");
+        // Witness: the rest is shown.
+        assert!(shown.contains("receiver.example"), "{shown}");
     }
 }
