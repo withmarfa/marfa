@@ -64,15 +64,16 @@ function compareBytes(a: string, b: string): number {
   return Buffer.compare(Buffer.from(a, "utf8"), Buffer.from(b, "utf8"));
 }
 
-/** Every type that names `root.` as a prefix. */
+/** Whether `type` is named under `root`, as `<root>.<rest>`. */
 function underRoot(type: string, root: string): boolean {
   return type.startsWith(`${root}.`);
 }
 
 /**
  * The slices that together cover every type `scope` can admit, none
- * overlapping, or `undefined` when the scope restricts nothing or needs
- * more than {@link MAX_TYPE_SLICES} of them.
+ * overlapping, or `undefined` when the scope restricts nothing, admits no
+ * type, or needs more than one statement carries ({@link MAX_TYPE_SLICES},
+ * {@link MAX_REPEATED_TERMS}).
  *
  * A cover, not the predicate: a credential's exclusions still narrow each
  * slice, in the statement's own conditions.
