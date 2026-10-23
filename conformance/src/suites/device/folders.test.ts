@@ -3214,6 +3214,88 @@ describe("files and items", () => {
       expect(next.value.hydrated?.items).toBe(2);
       expect(read(harness, "aged.md")).toContain("changed elsewhere");
     });
+
+    it("keeps every file through a hydration that stopped part way, and pulls nothing from its copy", async () => {
+      const later = "01a00000-0000-7000-8000-0000000000c5";
+      let dropping = false;
+      harness = await folderHarness("folder-push-partial", {
+        rows: {
+          "core.note": [
+            {
+              item: {
+                id,
+                version: 1,
+                properties: { title: "first", body: "given first" },
+              },
+            },
+            {
+              item: {
+                id: later,
+                version: 1,
+                properties: { title: "later", body: "still arriving" },
+              },
+            },
+          ],
+        },
+        events: [
+          copyLiveReplay("1", []),
+          agedOut,
+          copyHeadRead("900"),
+          copyHeadRead("900"),
+          copyLiveReplay("900", []),
+        ],
+        pageSize: 1,
+        drop: () => dropping,
+      });
+      scriptFolderWrites(harness);
+      // A push sends what placing the files queued, so nothing below is
+      // left from before the hydration.
+      expect((await harness.folder.push()).ok).toBe(true);
+      expect(read(harness, "later.md")).toContain("still arriving");
+
+      dropping = true;
+      const sent = harness.server.requests.length;
+      const stopped = await harness.folder.push();
+      expect(stopped.ok, JSON.stringify(stopped)).toBe(true);
+      if (!stopped.ok) return;
+      expect(stopped.value.catch_up.failed).not.toBeNull();
+      expect(
+        stopped.value.pull,
+        "a push pulled from a copy its hydration had filled only part way",
+      ).toBeNull();
+      const pulled = await harness.folder.pull();
+      expect(
+        pulled.ok ? "pulled" : pulled.refusal.code,
+        "a pull read a copy still filling as the server's whole slice",
+      ).toBe("hydration_incomplete");
+      expect(
+        read(harness, "later.md"),
+        "a row the copy had not been given yet was read as one the server deleted",
+      ).toContain("still arriving");
+      expect(
+        harness.server.requests
+          .slice(sent)
+          .filter((request) => request.method !== "GET")
+          .map((request) => `${request.method} ${request.pathname}`),
+        "a partial copy sent a write",
+      ).toEqual([]);
+
+      // The witness: a pull of a whole copy takes away the file of a row
+      // that left the folder's states.
+      dropping = false;
+      harness.rows["core.note"]![1]!.item = {
+        id: later,
+        version: 2,
+        state: "trashed",
+        properties: { title: "later", body: "still arriving" },
+      };
+      const whole = await harness.folder.push();
+      expect(whole.ok, JSON.stringify(whole)).toBe(true);
+      expect(
+        existsSync(join(harness.dir, "later.md")),
+        `a pull of a whole copy kept the file of a row that left, so the check above shows nothing: ${JSON.stringify(whole)}`,
+      ).toBe(false);
+    });
   });
 
   it("pulls at a push that cannot reach the server, and says the catch-up failed", async () => {

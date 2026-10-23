@@ -18,10 +18,12 @@ import {
   type Edit,
   type FolderRow,
   type FollowReport,
+  type Found,
   type HydrateReport,
   type Item,
   type ItemType,
   type ListFilters,
+  type Listing,
   type PinReport,
   type Outcome,
   type QueuedWrite,
@@ -43,6 +45,11 @@ const run = promisify(execFile);
  * second engine. The adapter's whole job is translation: an operation becomes
  * a command, stdout becomes an answer, and a non-zero exit becomes a refusal.
  */
+
+/** The rows of an answer that also says how whole the copy was. */
+function rows<T, R>(outcome: Outcome<T>, of: (answer: T) => R): Outcome<R> {
+  return outcome.ok ? { ok: true, value: of(outcome.value) } : outcome;
+}
 
 /**
  * Under `--json` the binary reports a refusal as one JSON object on the last
@@ -224,6 +231,11 @@ export class CliDevice implements DeviceUnderTest {
   }
 
   async list(filters: ListFilters = {}): Promise<Outcome<Item[]>> {
+    return rows(await this.listAnswer(filters), (answer) => answer.items);
+  }
+
+  /** `list`, with whether the copy it read is whole (`device/read-partial-says`). */
+  async listAnswer(filters: ListFilters = {}): Promise<Outcome<Listing>> {
     const args = ["items", "list"];
     if (filters.type !== undefined) args.push("--type", filters.type);
     if (filters.state !== undefined) args.push("--state", filters.state);
@@ -238,7 +250,7 @@ export class CliDevice implements DeviceUnderTest {
       args.push("--limit", String(filters.limit));
     if (filters.filter !== undefined) args.push("--filter", filters.filter);
     if (filters.beneath !== undefined) args.push("--beneath", filters.beneath);
-    return this.json<Item[]>(args);
+    return this.json<Listing>(args);
   }
 
   async get(id: string): Promise<Outcome<Item>> {
@@ -258,14 +270,17 @@ export class CliDevice implements DeviceUnderTest {
     const args = ["items", "list", "--folder", folder];
     if (page.limit !== undefined) args.push("--limit", String(page.limit));
     if (page.offset !== undefined) args.push("--offset", String(page.offset));
-    return this.json<Item[]>(args);
+    return rows(await this.json<Listing>(args), (answer) => answer.items);
   }
 
   async searchInFolder(
     query: string,
     folder: string,
   ): Promise<Outcome<SearchHit[]>> {
-    return this.json<SearchHit[]>(["search", query, "--folder", folder]);
+    return rows(
+      await this.json<Found>(["search", query, "--folder", folder]),
+      (answer) => answer.hits,
+    );
   }
 
   /** A folder's settings as the copy holds them. */
@@ -332,6 +347,18 @@ export class CliDevice implements DeviceUnderTest {
     filters: SearchFilters = {},
     limit?: number,
   ): Promise<Outcome<SearchHit[]>> {
+    return rows(
+      await this.searchAnswer(query, filters, limit),
+      (answer) => answer.hits,
+    );
+  }
+
+  /** `search`, with whether the copy it read is whole (`device/read-partial-says`). */
+  async searchAnswer(
+    query: string,
+    filters: SearchFilters = {},
+    limit?: number,
+  ): Promise<Outcome<Found>> {
     const args = ["search", query];
     if (filters.state !== undefined) args.push("--state", filters.state);
     if (filters.allStates === true) args.push("--all-states");
@@ -340,7 +367,7 @@ export class CliDevice implements DeviceUnderTest {
     if (filters.filter !== undefined) args.push("--filter", filters.filter);
     if (filters.beneath !== undefined) args.push("--beneath", filters.beneath);
     if (limit !== undefined) args.push("--limit", String(limit));
-    return this.json<SearchHit[]>(args);
+    return this.json<Found>(args);
   }
 
   async queue(): Promise<Outcome<QueuedWrite[]>> {

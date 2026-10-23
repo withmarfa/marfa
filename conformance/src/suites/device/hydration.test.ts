@@ -3,6 +3,7 @@ import {
   startHarness,
   scriptHydration,
   scriptKey,
+  scriptStats,
   type Harness,
 } from "./harness.js";
 import {
@@ -317,6 +318,7 @@ describe("the order a hydration reads in", () => {
     server.copyAnswer("GET", "/types", typeCatalog());
     server.copyAnswer("GET", "/edge-types", edgeTypeCatalog());
     scriptKey(server);
+    scriptStats(server);
     server.copyAnswer(
       "GET",
       "/items",
@@ -359,6 +361,7 @@ describe("what a hydration leaves behind", () => {
     server.copyAnswer("GET", "/types", typeCatalog());
     server.copyAnswer("GET", "/edge-types", edgeTypeCatalog());
     scriptKey(server);
+    scriptStats(server);
     server.copyAnswer("GET", "/items", (request) =>
       request.query.get("type") === "core.note"
         ? itemsPage([{ item: wireItem({ id: "from-the-first-slice" }) }])
@@ -402,6 +405,7 @@ describe("what a hydration leaves behind", () => {
     server.copyAnswer("GET", "/types", typeCatalog());
     server.copyAnswer("GET", "/edge-types", edgeTypeCatalog());
     scriptKey(server);
+    scriptStats(server);
     // The first attempt lands a page and then dies partway through the walk,
     // so there is something a resuming device could resume from. With nothing
     // landed, the second attempt reports the whole slice either way and the
@@ -432,10 +436,14 @@ describe("what a hydration leaves behind", () => {
     );
 
     expect((await device.hydrate(["core.note"], "library")).ok).toBe(false);
+    const partial = await device.listAnswer();
     expect(
-      (await device.list()).ok,
-      "a half-hydrated store answered a read, so a caller sees part of a slice as though it were the whole one",
-    ).toBe(false);
+      partial.ok && partial.value,
+      "a half-hydrated store answered a read without saying it was partial, so a caller sees part of a slice as though it were the whole one",
+    ).toEqual({
+      items: [expect.objectContaining({ id: "before-interruption" })],
+      completeness: "partial",
+    });
 
     const again = await device.hydrate(["core.note"], "library");
     expect(
@@ -468,6 +476,7 @@ describe("what a hydration leaves behind", () => {
     server.copyAnswer("GET", "/types", typeCatalog());
     server.copyAnswer("GET", "/edge-types", edgeTypeCatalog());
     scriptKey(server);
+    scriptStats(server);
     server.copyAnswer(
       "GET",
       "/items",
@@ -585,6 +594,7 @@ describe("what a hydration leaves behind", () => {
     server.copyAnswer("GET", "/types", typeCatalog());
     server.copyAnswer("GET", "/edge-types", edgeTypeCatalog());
     scriptKey(server);
+    scriptStats(server);
     server.copyAnswer(
       "GET",
       "/items",
@@ -744,6 +754,7 @@ describe("how a hydration completes", () => {
     server.copyAnswer("GET", "/types", typeCatalog());
     server.copyAnswer("GET", "/edge-types", edgeTypeCatalog());
     scriptKey(server);
+    scriptStats(server);
     server.copyAnswer(
       "GET",
       "/items",
@@ -789,6 +800,7 @@ describe("how a hydration completes", () => {
     server.copyAnswer("GET", "/types", typeCatalog());
     server.copyAnswer("GET", "/edge-types", edgeTypeCatalog());
     scriptKey(server);
+    scriptStats(server);
     server.copyAnswer(
       "GET",
       "/items",
@@ -802,7 +814,11 @@ describe("how a hydration completes", () => {
     if (!hydrated.ok) expect(hydrated.refusal.code).toBe("stream_incomplete");
     const status = await device.status();
     expect(status.ok && status.value.hydration).not.toBe("complete");
-    expect((await device.list()).ok).toBe(false);
+    const listed = await device.listAnswer();
+    expect(
+      listed.ok && listed.value.completeness,
+      "a copy whose replay never went live said it was whole",
+    ).toBe("partial");
   });
 
   it("ends a hydration decoding, and does not expire the copy, where the reader cannot decode an answer", async () => {
@@ -849,6 +865,7 @@ describe("how a hydration completes", () => {
     server.copyAnswer("GET", "/types", typeCatalog());
     server.copyAnswer("GET", "/edge-types", edgeTypeCatalog());
     scriptKey(server);
+    scriptStats(server);
     server.copyAnswer(
       "GET",
       "/items",

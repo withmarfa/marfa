@@ -3780,6 +3780,14 @@ When a folder’s cursor has aged out of the server log, a device MUST hydrate a
 
 **Tests:** `device/folders.test.ts › hydrates again at a push whose cursor the log has aged past`, `device/folders.test.ts › hydrates again while watching when the log ages past its cursor`.
 
+### `folders/pull-waits-for-whole-copy`
+
+While a hydration of a folder's copy has started and not completed, a device MUST refuse a pull of the folder `hydration_incomplete`, writing and removing no file.
+
+**Reason:** a copy still filling answers its reads from the rows it has been given (`device/read-partial-answers`), and a row it has not been given yet is not a row the server deleted.
+
+**Tests:** `device/folders.test.ts › keeps every file through a hydration that stopped part way, and pulls nothing from its copy`.
+
 ### `folders/reach-changed-push-rebuilds`
 
 When any drain of a folder push or a send-only run, the drain after the push's pull included, ends `copy_expired` with the reason `reach_changed`, a device MUST hydrate the copy again and drain once more in the same run, sending each write still waiting once and reporting the verdict of every write that either drain settled.

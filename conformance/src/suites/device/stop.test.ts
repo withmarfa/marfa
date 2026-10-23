@@ -146,7 +146,7 @@ describe("stopping a hydration", () => {
     }
   });
 
-  it("ends it between pages, leaving a copy that refuses reads and a queue that is as it was", async () => {
+  it("ends it between pages, leaving a copy marked partial and a queue that is as it was", async () => {
     harness = await startHarness("stop-hydrate");
     const { server, device } = harness;
     // The listing's first page is held back until the fixture lets it go, and
@@ -218,18 +218,19 @@ describe("stopping a hydration", () => {
     ).toBe(1);
 
     const status = await device.status();
-    expect(status.ok && status.value.hydration).not.toBe("complete");
-    const read = await device.list();
+    expect(status.ok && status.value.hydration).toBe("in_progress");
+    const read = await device.listAnswer();
     expect(
-      read.ok ? "answered" : read.refusal.code,
-      "a copy whose hydration was stopped answered a read from the rows it had taken",
-    ).toBe("hydration_incomplete");
+      read.ok ? read.value.completeness : read.refusal.code,
+      "a copy whose hydration was stopped answered a read from the rows it had taken as though they were the whole slice",
+    ).toBe("partial");
     expect(await device.queue(), "the stop touched the queue").toEqual(queued);
 
     // The witness: the same copy hydrates whole when it is not stopped.
     const finished = await device.hydrate(["core.note"], "library");
     expect(finished.ok, JSON.stringify(finished)).toBe(true);
-    expect((await device.list()).ok).toBe(true);
+    const whole = await device.listAnswer();
+    expect(whole.ok && whole.value.completeness).toBe("complete");
   });
 });
 
