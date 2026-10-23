@@ -3206,7 +3206,7 @@ When a file returns at its own path or a new name within the rename grace, a dev
 
 When another device changes a deleted item in content its file shows during the rename grace, a device MUST restore the file from the changed item.
 
-**Tests:** `device/folders-identity.test.ts › writes a deleted file back when another device changes its item inside the grace, and sends no delete`.
+**Tests:** `device/folders-identity.test.ts › writes a deleted file back when another device changes its item inside the grace, and sends no delete`, `device/folders-pass-writeback.test.ts › writes a remote change into a file in place, and brings back a file deleted after the scan once its delete is journaled`.
 
 ### `folders/delete-revived-cancels`
 
@@ -3225,6 +3225,34 @@ When a deleted file is revived by a visible remote change, a device MUST count i
 When a deleted item advances in version without changing content its file shows, a device MUST retain the journaled deletion.
 
 **Tests:** `device/folders-identity.test.ts › sends a person's delete of a file whose item moved on elsewhere in nothing the file shows`, `device/folders-identity.test.ts › keeps a deleted raw-text file gone after a version step even when its body looks like YAML`.
+
+### `folders/delete-before-first-write`
+
+When a person deletes a bound file before a device first writes its `marfa_id` line into it, a device MUST retain the journaled deletion while the item has not changed in content the file showed.
+
+**Reason:** The lines a device adds on its first write, such as `marfa_id`, `type` and `tier`, were never content the file showed, so their absence from the deleted file is no change made elsewhere.
+
+**Tests:** `device/folders-pass-writeback.test.ts › does not write back a file deleted after the scan, and journals the delete`, `device/binding-folders-clock.test.ts › writes back no file deleted between a watch pass's scan and its pull, and sends its delete after the grace`.
+
+### `folders/pull-missing-file-not-written`
+
+If a folder pull reaches an item whose bound file is missing, neither journaled as deleted nor put back by a restore of a paused removal, then a device MUST NOT write the item's file.
+
+**Reason:** A file gone since the scan read it was moved or deleted by the person, and only the next scan can tell which. Written back, a moved file reads as its copy and becomes a second item, and a deleted one returns. Once the next scan journals a deletion, `folders/delete-remote-revives` decides whether the file comes back; a restore asks for it back under `folders/restore-disk-files`.
+
+**Tests:** `device/folders-pass-writeback.test.ts › does not write back a file moved after the scan, and the next scan follows the move`, `› does not write back a file renamed with its title line after the scan, and keeps its item`, `› does not write back a file deleted after the scan, and journals the delete`, `› keeps the edit of a file moved and edited after the scan, and makes no second item`, `› writes back none of a burst of files moved and deleted after the scan`, `› writes a remote change into a file in place, and brings back a file deleted after the scan once its delete is journaled`, `device/folders-one-mac.test.ts › does not write back a file moved to another folder between a pass's scan and its pull`, `device/binding-folders-clock.test.ts › writes back no file moved between a watch pass's scan and its pull, and follows the move on the next pass`, `› writes back no file deleted between a watch pass's scan and its pull, and sends its delete after the grace`, `device/folders.test.ts › holds the files of a directory it cannot read, and goes on with the rest`.
+
+### `folders/pull-missing-file-unwritten-count`
+
+When a folder pull does not write an item's file under `folders/pull-missing-file-not-written`, a device MUST count the item as `unwritten`.
+
+**Tests:** `device/folders-pass-writeback.test.ts › does not write back a file moved after the scan, and the next scan follows the move`, `› does not write back a file deleted after the scan, and journals the delete`, `› writes back none of a burst of files moved and deleted after the scan`, `device/folders-one-mac.test.ts › does not write back a file moved to another folder between a pass's scan and its pull`.
+
+### `folders/pull-missing-file-moved-keeps-item`
+
+When a bound file moves within a folder between a folder scan and the pull that follows it, a device MUST bind the moved file to the same item at the next scan.
+
+**Tests:** `device/folders-pass-writeback.test.ts › does not write back a file moved after the scan, and the next scan follows the move`, `› does not write back a file renamed with its title line after the scan, and keeps its item`, `› keeps the edit of a file moved and edited after the scan, and makes no second item`, `› writes back none of a burst of files moved and deleted after the scan`, `device/binding-folders-clock.test.ts › writes back no file moved between a watch pass's scan and its pull, and follows the move on the next pass`.
 
 ### `folders/delete-path-reused`
 
