@@ -4116,19 +4116,19 @@ When two folder searches both hold an item and each folder has its own bound fil
 
 When a missing folder file’s deletion grace expires, no other folder holds the moved file and `folders/missing-file-changed-revives` does not restore the file, a device MUST queue deletion of its item.
 
-**Tests:** `device/folders-one-mac.test.ts › trashes a missing file found in no folder on the Mac, and says so`, `device/folders-one-mac.test.ts › takes a file item at a document name moved to another folder as that item, and trashes it only where no folder holds it`.
+**Tests:** `device/folders-one-mac.test.ts › trashes a missing file found in no folder on the Mac, and says so`, `device/folders-one-mac.test.ts › takes a file item at a document name moved to another folder as that item, and trashes it only where no folder holds it`, `device/folders-one-mac.test.ts › trashes an unchanged file item's missing file from a scan with no server, whose bytes it no longer holds`.
 
 ### `folders/missing-file-trashed-path-reported`
 
 When a missing folder file’s deletion grace expires, no other folder holds the moved file and `folders/missing-file-changed-revives` does not restore the file, a device MUST name the path in the scan report’s `trashed`.
 
-**Tests:** `device/folders-one-mac.test.ts › trashes a missing file found in no folder on the Mac, and says so`, `device/folders-one-mac.test.ts › takes a file item at a document name moved to another folder as that item, and trashes it only where no folder holds it`.
+**Tests:** `device/folders-one-mac.test.ts › trashes a missing file found in no folder on the Mac, and says so`, `device/folders-one-mac.test.ts › takes a file item at a document name moved to another folder as that item, and trashes it only where no folder holds it`, `device/folders-one-mac.test.ts › trashes an unchanged file item's missing file from a scan with no server, whose bytes it no longer holds`.
 
 ### `folders/missing-file-changed-revives`
 
 When a device finds a missing folder file in no other registered folder past its rename grace, or on confirming its paused removal, and another device has changed the file's item in content the file showed while the folder's search still holds the item, a device MUST restore the file from the changed item.
 
-**Reason:** The change is newer than the person's deletion, which no other device has heard of yet, so it wins as it does inside the grace (`folders/delete-remote-revives`). A pull writes no file back while its move cannot be told (`folders/uncertain-move-no-replacement`), so a change made inside the grace may show only once the move is told.
+**Reason:** The change is newer than the person's deletion, which no other device has heard of yet, so it wins as it does inside the grace (`folders/delete-remote-revives`). A pull writes no file back while its move cannot be told (`folders/uncertain-move-no-replacement`), so a change made inside the grace may show only once the move is told. The device tells the change from its working copy alone, with no server and no held bytes, so a scan that reaches no server decides it too: a file item by whether its item still names the blob the folder last wrote or sent the file as, and a document by whether its item still shows what the folder last agreed. It decides on the item's version that the deletion is queued against, so a change heard while it decides is decided again rather than trashed with it.
 
 **Tests:** `device/folders-one-mac.test.ts › writes back a file deleted while another folder could not be read, once that folder holds no copy, when another device changed its item inside the grace`, `device/folders-one-mac.test.ts › trashes no item of a confirmed removal that another device changed since its file went, and writes the file back`.
 
@@ -5646,7 +5646,7 @@ When a paused disk removal is confirmed but an unavailable peer folder prevents 
 
 When a paused disk removal is confirmed, a missing file is found in no other folder and `folders/missing-file-changed-revives` does not restore the file, a device MUST queue deletion of the item for the next push.
 
-**Tests:** `device/folders.test.ts › lets a paused removal go once confirmed, or puts it back`, `device/folders-one-mac.test.ts › looks for a paused removal's files in the other folders before confirming it`.
+**Tests:** `device/folders.test.ts › lets a paused removal go once confirmed, or puts it back`, `device/folders-one-mac.test.ts › looks for a paused removal's files in the other folders before confirming it`, `device/folders-one-mac.test.ts › confirms a large removal of file items and sends their deletes without pausing again`.
 
 ### `folders/confirm-pull-removes`
 

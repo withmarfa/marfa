@@ -3745,6 +3745,127 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     for (const n of [4, 5]) expect(deletesOf(a.server, ids[n]!)).toBe(0);
   });
 
+  it("trashes an unchanged file item's missing file from a scan with no server, whose bytes it no longer holds", async () => {
+    // `folders scan` reaches no server, and a pull keeps no blob it wrote,
+    // so only what the binding recorded tells whether the item changed.
+    const kept = "01a00000-0000-7000-8000-0000000044b1";
+    const gone = "01a00000-0000-7000-8000-0000000044b2";
+    const bytesOf = (name: string) => Buffer.from(`the bytes of ${name}\n`);
+    const rows = [
+      [kept, "kept.png"],
+      [gone, "photo.png"],
+    ] as const;
+    const { a } = await onOneMac(
+      "scan-trashes-file-item",
+      { search: { types: ["core.file.image"] } },
+      { search: { types: ["core.bookmark"] } },
+      {
+        "core.file.image": rows.map(([id, name]) => ({
+          item: {
+            id,
+            type: "core.file.image",
+            properties: {
+              title: name,
+              blob_ref: hashOf(bytesOf(name)),
+              mime_type: "image/png",
+            },
+          },
+        })),
+      },
+    );
+    for (const [, name] of rows) scriptBlob(a.server, bytesOf(name));
+    expect((await a.folder.pull()).ok).toBe(true);
+    expect(readFileSync(join(a.dir, "photo.png"))).toEqual(
+      bytesOf("photo.png"),
+    );
+    rmSync(join(a.dir, "photo.png"));
+    // A push here would fetch the bytes again, so only scans see it go.
+    const from = a.server.requests.length;
+    const missing = await a.folder.scan();
+    expect(missing.ok && missing.value.missing).toBe(1);
+    await pastTheGrace();
+    const scanned = await a.folder.scan();
+    expect(scanned.ok, JSON.stringify(scanned)).toBe(true);
+    if (!scanned.ok) return;
+    expect(
+      a.server.requests.length,
+      "a standalone scan reached the server",
+    ).toBe(from);
+    expect(
+      scanned.value.trashed,
+      "an unchanged file item's missing file was read as changed elsewhere",
+    ).toEqual(["photo.png"]);
+    expect((await a.folder.push()).ok).toBe(true);
+    expect([deletesOf(a.server, gone), deletesOf(a.server, kept)]).toEqual([
+      1, 0,
+    ]);
+    expect(existsSync(join(a.dir, "photo.png"))).toBe(false);
+  });
+
+  it("confirms a large removal of file items and sends their deletes without pausing again", async () => {
+    const files = [0, 1, 2, 3].map(
+      (n) =>
+        [
+          `01a00000-0000-7000-8000-0000000044c${String(n)}`,
+          `photo ${String(n)}.png`,
+        ] as const,
+    );
+    const bytesOf = (name: string) => Buffer.from(`the bytes of ${name}\n`);
+    const { a } = await onOneMac(
+      "confirm-file-items",
+      {
+        search: { types: ["core.file.image"] },
+        removal_threshold: { files: 2, fraction: 0.25 },
+      },
+      { search: { types: ["core.bookmark"] } },
+      {
+        "core.file.image": files.map(([id, name]) => ({
+          item: {
+            id,
+            type: "core.file.image",
+            properties: {
+              title: name,
+              blob_ref: hashOf(bytesOf(name)),
+              mime_type: "image/png",
+            },
+          },
+        })),
+      },
+    );
+    for (const [, name] of files) scriptBlob(a.server, bytesOf(name));
+    expect((await a.folder.pull()).ok).toBe(true);
+    const removed = files.slice(0, 3);
+    for (const [, name] of removed) rmSync(join(a.dir, name));
+    // Paused by a scan, which fetches nothing, as `folders confirm` does not.
+    const from = a.server.requests.length;
+    const paused = await a.folder.scan();
+    expect(paused.ok && paused.value.paused).toBe(3);
+
+    const confirmed = await a.folder.confirm();
+    expect(confirmed.ok, JSON.stringify(confirmed)).toBe(true);
+    if (!confirmed.ok) return;
+    expect(
+      [confirmed.value.deleted, confirmed.value.unsure],
+      "a confirmed removal of file items was read as changed elsewhere",
+    ).toEqual([3, []]);
+    expect(
+      a.server.requests.length,
+      "a scan or a confirm reached the server",
+    ).toBe(from);
+    const pushed = await a.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    if (!pushed.ok) return;
+    expect(pushed.value.scan.paused, "the confirmed removal paused again").toBe(
+      0,
+    );
+    expect(files.map(([id]) => deletesOf(a.server, id))).toEqual([1, 1, 1, 0]);
+    for (const [, name] of removed) {
+      expect(existsSync(join(a.dir, name)), `${name} was written back`).toBe(
+        false,
+      );
+    }
+  });
+
   it("holds a file that is not text on its own, and takes it in once it can be read", async () => {
     const gone = "01a00000-0000-7000-8000-000000001841";
     const kept = "01a00000-0000-7000-8000-000000001842";

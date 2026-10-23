@@ -1252,6 +1252,7 @@ mod tests {
             identity: None,
             content_hash: "hash".into(),
             presentation: None,
+            blob: None,
             written_hash: None,
             links: Vec::new(),
             lines: Vec::new(),

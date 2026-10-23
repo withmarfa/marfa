@@ -967,6 +967,7 @@ impl Folder {
                     identity: None,
                     content_hash: hash.clone(),
                     presentation: presentation.clone(),
+                    blob: bytes_of(item, catalog).map(str::to_string),
                     written_hash: Some(hash),
                     links: wrote,
                     lines,
@@ -1035,6 +1036,7 @@ impl Folder {
             identity,
             content_hash: hash.clone(),
             presentation: presentation.clone(),
+            blob: bytes_of(item, catalog).map(str::to_string),
             written_hash: Some(hash.clone()),
             links: wrote.clone(),
             lines: lines.clone(),
@@ -1305,6 +1307,7 @@ impl Folder {
             identity,
             content_hash: theirs.content_hash.clone(),
             presentation: theirs.presentation.clone(),
+            blob: theirs.blob.clone(),
             written_hash: Some(theirs.content_hash.clone()),
             links: theirs.links.clone(),
             lines: theirs.lines.clone(),
@@ -1579,25 +1582,19 @@ impl Folder {
 
     /// Whether another device changed a missing file's item in what the file
     /// showed, so the file comes back rather than the item going to the bin
-    /// (`folders/delete-remote-revives`, `folders/missing-file-changed-revives`).
-    /// `None` where the item's bytes cannot be read to tell.
+    /// (`folders/missing-file-changed-revives`). Told from the copy alone,
+    /// with no server and no held bytes: a file item by the blob its binding
+    /// last agreed at, a document by its agreed presentation.
     pub(super) fn changed_while_missing(
         &self,
         item: &Item,
         bound: &state::Bound,
         basis: Basis<'_>,
-    ) -> Result<Option<bool>> {
-        let Some(blob) = bytes_of(item, basis.0) else {
-            return Ok(Some(!self.deleted_as_agreed(item, bound, basis)?));
-        };
-        match self.core.blob_file(blob).map(|file| read_file(&file)) {
-            Ok(Ok(found)) => Ok(Some(state::hash(&found) != bound.content_hash)),
-            Err(
-                error @ (CoreError::Unauthorized { .. }
-                | CoreError::RenewalFailed(_)
-                | CoreError::Redirected { .. }),
-            ) => Err(error),
-            Ok(Err(_)) | Err(_) => Ok(None),
+    ) -> Result<bool> {
+        match bytes_of(item, basis.0) {
+            // A binding that names no blob cannot tell, so the file comes back.
+            Some(blob) => Ok(bound.agreed_blob(blob) != Some(true)),
+            None => Ok(!self.deleted_as_agreed(item, bound, basis)?),
         }
     }
 
@@ -2014,6 +2011,7 @@ mod tests {
                     identity: None,
                     content_hash: state::hash(b"---\ntitle: a\n---\nbody\n"),
                     presentation: None,
+                    blob: None,
                     written_hash: None,
                     links: Vec::new(),
                     lines: Vec::new(),

@@ -1589,6 +1589,21 @@ impl Core {
         self.transition_locally(id, WriteKind::DeleteItem, ItemState::Trashed, "{}")
     }
 
+    /// The same, only while the copy holds the row at `version`, so a change
+    /// heard after the caller decided on that version is never trashed with
+    /// it. `None`, with nothing queued, where the row has moved on or gone.
+    pub(crate) fn delete_item_at(&self, id: &str, version: i64) -> Result<Option<QueuedWrite>> {
+        self.lock.refuse_unless_writer()?;
+        let conn = self.conn()?;
+        store::refuse_unless_usable(&conn)?;
+        match store::items_by_ids(&conn, &[id.to_string()])?.pop() {
+            Some(held) if held.version == version => self
+                .transition_held(conn, held, WriteKind::DeleteItem, ItemState::Trashed, "{}")
+                .map(Some),
+            _ => Ok(None),
+        }
+    }
+
     /// A row the copy does not hold, such as one read from the bin, is
     /// restored by id: queued, shown nowhere until the server answers, and
     /// held once the answer's read or its `item.restored` event brings it
@@ -1671,7 +1686,7 @@ impl Core {
         payload: &str,
     ) -> Result<QueuedWrite> {
         self.lock.refuse_unless_writer()?;
-        let mut conn = self.conn()?;
+        let conn = self.conn()?;
         store::refuse_unless_usable(&conn)?;
         let Some(held) = store::items_by_ids(&conn, &[id.to_string()])?.pop() else {
             return Err(CoreError::NotFound {
@@ -1679,6 +1694,20 @@ impl Core {
                 message: format!("{id} is not a row this copy holds"),
             });
         };
+        self.transition_held(conn, held, kind, state, payload)
+    }
+
+    /// Under the lock `conn` holds since `held` was read, so the write is
+    /// queued against the row as read.
+    fn transition_held(
+        &self,
+        mut conn: MutexGuard<'_, Connection>,
+        held: Item,
+        kind: WriteKind,
+        state: ItemState,
+        payload: &str,
+    ) -> Result<QueuedWrite> {
+        let id = held.id.as_str();
         refuse_system_type(&held.r#type)?;
         let deleting = kind == WriteKind::DeleteItem;
         let versioned = serde_json::json!({ "version": held.version }).to_string();
@@ -5957,6 +5986,7 @@ mod tests {
                 reader.update_item_as_read("x", &edit).unwrap_err(),
             ),
             ("delete_item", reader.delete_item("x").unwrap_err()),
+            ("delete_item_at", reader.delete_item_at("x", 1).unwrap_err()),
             ("restore_item", reader.restore_item("x").unwrap_err()),
             ("purge_item", reader.purge_item("x", None).unwrap_err()),
             (
@@ -6142,7 +6172,7 @@ mod tests {
         );
         assert_eq!(
             refusals.len(),
-            45,
+            46,
             "an entry has gone from the list above, and a door dropped from \
              it is a door nothing here covers"
         );

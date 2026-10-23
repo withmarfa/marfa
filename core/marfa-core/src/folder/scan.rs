@@ -113,6 +113,10 @@ pub(super) enum Missing {
     Gone,
 }
 
+/// Bounded, so a row another device keeps changing ends the sweep's decision
+/// with its file written back rather than holding the sweep.
+const DECIDE_ATTEMPTS: usize = 3;
+
 /// Read once for every missing file a sweep or a confirm lets go of.
 #[derive(Default)]
 pub(super) struct Sweep {
@@ -1523,6 +1527,7 @@ impl Folder {
                     continue;
                 }
                 taken.insert(item.id.clone());
+                let blob = bytes_of(&item, catalog).map(str::to_string);
                 claims[at] = Some(Claim {
                     item_id: item.id.clone(),
                     bound: Some(state::Bound {
@@ -1531,6 +1536,7 @@ impl Folder {
                         identity: None,
                         content_hash: file.hash.clone(),
                         presentation: None,
+                        blob,
                         // The item's own bytes, as a pull would have written
                         // them, so the file is the folder's to take away.
                         written_hash: Some(file.hash.clone()),
@@ -1877,23 +1883,46 @@ impl Folder {
                     return Ok(Missing::Unsure(reason));
                 }
                 Look::Nowhere => {
-                    // No pull writes the file of an item the search no longer
-                    // holds, so the person's delete of it stands.
-                    if let Some(bound) = bound.as_ref().filter(|_| holds) {
-                        let (edge_types, names) = sweep.shown(self, &catalog)?;
-                        // Bytes that cannot be read to tell are the pull's to
-                        // fetch, or to say it cannot.
-                        if self
-                            .changed_while_missing(&item, bound, (&catalog, edge_types, names))?
-                            .unwrap_or(true)
-                        {
+                    let mut item = item;
+                    let mut attempts = 0;
+                    loop {
+                        // No pull writes the file of an item the search no
+                        // longer holds, so the person's delete of it stands.
+                        let changed = match bound.as_ref().filter(|_| holds) {
+                            Some(bound) => {
+                                let (edge_types, names) = sweep.shown(self, &catalog)?;
+                                self.changed_while_missing(
+                                    &item,
+                                    bound,
+                                    (&catalog, edge_types, names),
+                                )?
+                            }
+                            None => false,
+                        };
+                        // A row that goes on moving while the sweep decides is
+                        // as good as changed.
+                        if changed || attempts == DECIDE_ATTEMPTS {
                             // Unkept, so the pull reaches it.
                             state::journal_keep(&*self.core.conn()?, path, item_id, None)?;
                             return Ok(Missing::Changed);
                         }
+                        #[cfg(debug_assertions)]
+                        crate::fault::hold(|| format!("folder-sweep-decided:{item_id}"));
+                        // Queued at the version decided on, so a change heard
+                        // meanwhile is decided again rather than trashed.
+                        if self.core.delete_item_at(item_id, item.version)?.is_some() {
+                            break Missing::Deleted;
+                        }
+                        attempts += 1;
+                        let newer = {
+                            let conn = self.core.conn()?;
+                            crate::store::items_by_ids(&conn, &[item_id.to_string()])?.pop()
+                        };
+                        match newer.filter(|item| item.state != ItemState::Trashed) {
+                            Some(newer) => item = newer,
+                            None => break Missing::Gone,
+                        }
                     }
-                    self.core.delete_item(item_id)?;
-                    Missing::Deleted
                 }
             }
         } else {
