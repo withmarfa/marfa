@@ -225,6 +225,9 @@ fn unsuited_type(r#type: &str, catalog: &Catalog) -> Option<String> {
 pub(super) struct NewDocument {
     pub(super) draft: Draft,
     pub(super) read: fields::Read,
+    /// The properties the draft takes from the file's name and the folder's
+    /// defaults rather than from the file.
+    pub(super) inferred: Map<String, Value>,
 }
 
 /// The draft a new document makes, or the hold the scan puts on it instead:
@@ -249,12 +252,22 @@ pub(super) fn new_document(
         fields::body_field(catalog, &r#type).into(),
         Value::String(document.body.clone()),
     );
-    for (field, value) in &settings.defaults.properties {
-        properties.entry(field.clone()).or_insert(value.clone());
+    let named = (
+        fields::title_field(catalog, &r#type).to_string(),
+        Value::String(title_of(key)),
+    );
+    let mut inferred = Map::new();
+    for (field, value) in settings
+        .defaults
+        .properties
+        .iter()
+        .chain([(&named.0, &named.1)])
+    {
+        if !properties.contains_key(field) {
+            properties.insert(field.clone(), value.clone());
+            inferred.insert(field.clone(), value.clone());
+        }
     }
-    properties
-        .entry(fields::title_field(catalog, &r#type))
-        .or_insert(Value::String(title_of(key)));
     let draft = Draft {
         r#type,
         properties,
@@ -267,7 +280,11 @@ pub(super) fn new_document(
         occurred_at: read.lines.occurred_at.clone(),
         ..Default::default()
     };
-    Ok(NewDocument { draft, read })
+    Ok(NewDocument {
+        draft,
+        read,
+        inferred,
+    })
 }
 
 /// What the copy says of a draft before queueing it: the hold the scan puts
@@ -302,11 +319,14 @@ impl Folder {
             return Ok(None);
         }
         let document = file.document();
-        let NewDocument { draft, read } =
-            match new_document(&file.key, &document, (settings, catalog, edge_types)) {
-                Ok(made) => made,
-                Err(held) => return Ok(Some(held)),
-            };
+        let NewDocument {
+            draft,
+            read,
+            inferred,
+        } = match new_document(&file.key, &document, (settings, catalog, edge_types)) {
+            Ok(made) => made,
+            Err(held) => return Ok(Some(held)),
+        };
         let created = match self.core.write_create(&draft, crate::Body::Folder) {
             Err(error) if local_admission_refusal(&error) => {
                 return Ok(Some(Flagged::of(
@@ -319,6 +339,7 @@ impl Folder {
         let item_id = named_item(created, &file.key)?;
         let mut writes = state::Writes {
             save: 1,
+            inferred,
             ..state::Writes::default()
         };
         if read.lines.state == Some(ItemState::Archived) {

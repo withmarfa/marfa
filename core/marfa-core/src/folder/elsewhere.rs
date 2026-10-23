@@ -631,21 +631,6 @@ impl<'a> Peers<'a> {
         {
             return arrival(peer, file, true);
         }
-        if lost.identity.is_some()
-            && peers.iter().any(|peer| {
-                peer.bound_to(item).is_some_and(|bound| {
-                    lost.identity
-                        .as_ref()
-                        .is_some_and(|identity| bound.writes.taken_as.contains(identity))
-                        && peer.files().iter().any(|file| file.key == bound.path)
-                })
-            })
-        {
-            return Look::Moved;
-        }
-        if let Some(why) = peers.iter().find_map(|peer| peer.walked().partial.clone()) {
-            return Look::Unsure(why);
-        }
         // Where both folders hold the item, the other's file of it is its
         // own, not this one moved.
         let theirs = |peer: &Peer, file: &OnDisk| {
@@ -656,6 +641,51 @@ impl<'a> Peers<'a> {
                     .get(&file.key)
                     .is_some_and(|(bound, _)| bound == item)
         };
+        // A folder that took the file by an identity it had is a step on its
+        // way. Where the file is gone from there too, it went on with the
+        // identity it had there and, once that folder wrote it, its id line.
+        let mut known: Vec<String> = lost.identity.iter().cloned().collect();
+        let mut passed: Vec<usize> = Vec::new();
+        let mut carried = false;
+        while let Some((at, peer, bound)) = peers
+            .iter()
+            .enumerate()
+            .filter(|(at, _)| !passed.contains(at))
+            .find_map(|(at, peer)| {
+                peer.bound_to(item)
+                    .filter(|bound| {
+                        bound
+                            .writes
+                            .taken_as
+                            .iter()
+                            .any(|identity| known.contains(identity))
+                    })
+                    .map(|bound| (at, peer, bound))
+            })
+        {
+            if peer.files().iter().any(|file| file.key == bound.path) {
+                return Look::Moved;
+            }
+            passed.push(at);
+            carried |= bound.writes.id_carried;
+            known.extend(bound.identity.into_iter().chain(bound.writes.taken_as));
+        }
+        if !passed.is_empty()
+            && let Some((peer, file)) = peers.iter().find_map(|peer| {
+                peer.files()
+                    .iter()
+                    .find(|file| {
+                        file.mark.as_ref().is_some_and(|mark| known.contains(mark))
+                            || carried && file.id.as_deref() == Some(item) && !theirs(peer, file)
+                    })
+                    .map(|file| (peer, file))
+            })
+        {
+            return arrival(peer, file, true);
+        }
+        if let Some(why) = peers.iter().find_map(|peer| peer.walked().partial.clone()) {
+            return Look::Unsure(why);
+        }
         if !file_item && carries_frontmatter(Path::new(&lost.path)) {
             let found = peers.iter().find_map(|peer| {
                 peer.files()

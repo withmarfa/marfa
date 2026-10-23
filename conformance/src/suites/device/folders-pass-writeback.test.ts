@@ -10,6 +10,7 @@ import { describe, it, expect, afterEach } from "vitest";
 import { folderHarness } from "./harness.js";
 import type { FolderHarness } from "./harness.js";
 import type { FolderDoor } from "../../device/folder-door.js";
+import type { FolderSettings } from "../../device/cli-adapter.js";
 import {
   EdgeDoor,
   idIn,
@@ -53,9 +54,10 @@ function deletes(harness: FolderHarness): string[] {
 async function sentNotNamed(
   label: string,
   notes: Record<string, string>,
+  settings?: FolderSettings,
 ): Promise<{ door: FolderDoor; edges: EdgeDoor; ids: Map<string, string> }> {
   const edges = new EdgeDoor();
-  harness = await folderHarness(label, { events: [edges.stream()] });
+  harness = await folderHarness(label, { events: [edges.stream()], settings });
   let door: FolderDoor | undefined;
   scriptFolderWrites(harness, {
     edges,
@@ -204,6 +206,54 @@ describe("a file moved or deleted between a pass's scan and its pull", () => {
     expect(filesIn(harness!)).toEqual(["Retitled.md"]);
     expect(idIn(harness!, "Retitled.md")).toBe(ids.get("renamed"));
   });
+
+  it.each([
+    ["title", { title: "Default" }],
+    ["title and another property", { title: "Default", mood: "calm" }],
+  ])(
+    "does not write back a file with no title line deleted after the scan whose %s its folder's defaults gave, and brings it back for a title that matches its name",
+    async (label, properties) => {
+      const { door, edges } = await sentNotNamed(
+        `folder-pass-default-${label.replaceAll(" ", "-")}`,
+        { "gone.md": "gone words\n", "note.md": "note words\n" },
+        { defaults: { properties } },
+      );
+      const ids = new Map(
+        sentCreates(harness!).map((sent) => [
+          String((sent.properties as Record<string, unknown>).body),
+          String(sent.id),
+        ]),
+      );
+      expect(
+        sentCreates(harness!).map(
+          (sent) => (sent.properties as Record<string, unknown>).title,
+        ),
+      ).toEqual(["Default", "Default"]);
+      rmSync(join(harness!.dir, "gone.md"));
+      rmSync(join(harness!.dir, "note.md"));
+      // Another device gives the note the title its file's name says, which is
+      // not the title the folder gave it.
+      const noted = ids.get("note words\n")!;
+      edges.logItem(
+        "item.updated",
+        door.update(noted, { properties: { title: "note" }, version: 1 }),
+      );
+      const caught = await harness!.folder.device().catchUp();
+      expect(caught.ok, JSON.stringify(caught)).toBe(true);
+      expect((await harness!.folder.pull()).ok).toBe(true);
+
+      const pushed = await harness!.folder.push();
+      expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+      if (!pushed.ok) return;
+      expect(pushed.value.scan.missing).toBe(2);
+      expect(
+        filesIn(harness!),
+        `the ${label} the folder's defaults gave read as a change, or a new title that matches the file's name read as none`,
+      ).toEqual(["note.md"]);
+      expect(pushed.value.pull?.revived).toBe(1);
+      expect(idIn(harness!, "note.md")).toBe(noted);
+    },
+  );
 
   it("keeps the edit of a file moved and edited after the scan, and makes no second item", async () => {
     const { ids } = await sentNotNamed("folder-pass-moved-edited", {

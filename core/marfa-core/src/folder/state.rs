@@ -64,6 +64,13 @@ pub struct Writes {
     /// passed through finds its file by these, however far it has moved on.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub taken_as: Vec<String>,
+    /// The properties the scan that made the item gave it beside what the
+    /// file showed: the title it took from the file's name and the folder's
+    /// defaults. A file deleted before a pull first wrote them into it never
+    /// showed these values, so their absence is no change. A pull that writes
+    /// the file ends it.
+    #[serde(default, skip_serializing_if = "serde_json::Map::is_empty")]
+    pub inferred: serde_json::Map<String, serde_json::Value>,
 }
 
 /// The most identities a file's binding keeps from the folders it was moved

@@ -1008,6 +1008,7 @@ impl Folder {
             writes: state::Writes {
                 landing: None,
                 id_carried: writes.id_carried || carries_id,
+                inferred: serde_json::Map::new(),
                 ..writes.clone()
             },
         };
@@ -1279,6 +1280,7 @@ impl Folder {
             writes: state::Writes {
                 id_carried: theirs.writes.id_carried,
                 taken_as: state::Writes::taken_from(theirs),
+                inferred: theirs.writes.inferred.clone(),
                 ..state::Writes::default()
             },
         };
@@ -1580,13 +1582,21 @@ impl Folder {
         } else {
             document::read_body(&text)
         };
-        let title = fields::title_field(rendering.catalog, &item.r#type);
         Ok(bound.presentation.as_ref().is_some_and(|agreed| {
             // A file deleted before the folder first wrote its own lines into
-            // it never showed them, nor the title the folder took from its
-            // name.
-            let named = presented.front.get(title).and_then(Value::as_str)
-                == Some(super::title_of(&bound.path).as_str());
+            // it never showed them, nor a value the scan gave the item it
+            // made of the file while the item still holds that value.
+            let inferred = bound
+                .writes
+                .inferred
+                .iter()
+                .filter(|(field, given)| {
+                    presented
+                        .front
+                        .get(*field)
+                        .is_some_and(|shown| document::same_value(shown, given))
+                })
+                .map(|(field, _)| field.as_str());
             let presented = [
                 fields::ID_FIELD,
                 fields::VERSION_FIELD,
@@ -1594,7 +1604,7 @@ impl Folder {
                 fields::TIER_FIELD,
             ]
             .into_iter()
-            .chain(named.then_some(title))
+            .chain(inferred)
             .filter(|field| !agreed.front().contains_key(*field))
             .fold(presented.presentation(), |presented, field| {
                 presented.with(field, None)

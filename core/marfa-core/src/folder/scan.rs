@@ -1612,6 +1612,7 @@ impl Folder {
                             writes: state::Writes {
                                 id_carried: theirs.writes.id_carried,
                                 taken_as: state::Writes::taken_from(&theirs),
+                                inferred: theirs.writes.inferred.clone(),
                                 ..state::Writes::default()
                             },
                             ..theirs

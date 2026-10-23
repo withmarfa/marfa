@@ -930,6 +930,83 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     },
   );
 
+  it.each([
+    ["moves on to a third folder", true],
+    ["is deleted there", false],
+  ])(
+    "follows a text note moved to another folder as Markdown when it then %s",
+    async (label, movesOn) => {
+      const name = `text-note-moved-twice-${movesOn ? "on" : "deleted"}`;
+      let third: FolderRow | undefined;
+      const { a, b } = await onOneMac(
+        name,
+        holdsNotes,
+        holdsNotes,
+        {},
+        (server) => {
+          third = scriptFolderRow(server, holdsNotes);
+        },
+      );
+      const c = await folderHarness(`${name}-c`, {
+        sharing: { server: a.server, key: KEY },
+        folder: third,
+        registry: a.registry,
+      });
+      try {
+        // A text file never carries an id line, so only its identity
+        // follows it out of the folder it was made in.
+        put(a, "Moved.txt", "words\n");
+        expect((await a.folder.push()).ok).toBe(true);
+        const id = String(sentCreates(a)[0]?.id);
+        renameSync(join(a.dir, "Moved.txt"), join(b.dir, "Moved.md"));
+        // Taken where it went, whose pull writes the id line by replacing
+        // the file, so its identity there is a new one.
+        expect((await b.folder.push()).ok).toBe(true);
+        expect(idIn(b, "Moved.md")).toBe(id);
+        if (movesOn) {
+          renameSync(join(b.dir, "Moved.md"), join(c.dir, "Moved.md"));
+        } else {
+          rmSync(join(b.dir, "Moved.md"));
+        }
+
+        // The folder it was made in looks before the third folder scans.
+        expect((await a.folder.push()).ok).toBe(true);
+        await pastTheGrace();
+        const swept = await a.folder.push();
+        expect(swept.ok, JSON.stringify(swept)).toBe(true);
+        if (!swept.ok) return;
+        if (!movesOn) {
+          // The witness: a file in no folder is a deletion past the grace.
+          expect(swept.value.scan.trashed).toEqual(["Moved.txt"]);
+          expect(deletesOf(a.server, id)).toBe(1);
+          return;
+        }
+        expect(
+          deletesOf(a.server, id),
+          `the folder a text note was made in trashed it once it ${label}`,
+        ).toBe(0);
+        expect(swept.value.scan.trashed).toEqual([]);
+        expect(swept.value.scan.moved_away).toBe(1);
+
+        const from = a.server.requests.length;
+        expect((await c.folder.push()).ok).toBe(true);
+        expect(idIn(c, "Moved.md")).toBe(id);
+        expect(read(c, "Moved.md")).toContain("words\n");
+        // The folder between finds it there too, past its own grace.
+        expect((await b.folder.push()).ok).toBe(true);
+        await pastTheGrace();
+        const released = await b.folder.push();
+        expect(released.ok, JSON.stringify(released)).toBe(true);
+        if (!released.ok) return;
+        expect(released.value.scan.moved_away).toBe(1);
+        expect(createsSince(a.server, from)).toEqual([]);
+        expect(deletesOf(a.server, id)).toBe(0);
+      } finally {
+        await c.stop();
+      }
+    },
+  );
+
   it("keeps an edit its folder had not sent yet when a new note moves to another folder", async () => {
     const { a, b } = await onOneMac(
       "new-note-moved-unsent-edit",

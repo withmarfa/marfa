@@ -3206,7 +3206,7 @@ When a file returns at its own path or a new name within the rename grace, a dev
 
 When another device changes a deleted item in content its file shows during the rename grace, a device MUST restore the file from the changed item.
 
-**Tests:** `device/folders-identity.test.ts › writes a deleted file back when another device changes its item inside the grace, and sends no delete`, `device/folders-pass-writeback.test.ts › writes a remote change into a file in place, and brings back a file deleted after the scan once its delete is journaled`, `› does not write back a file with no title line deleted after the scan, and brings it back for a new title`.
+**Tests:** `device/folders-identity.test.ts › writes a deleted file back when another device changes its item inside the grace, and sends no delete`, `device/folders-pass-writeback.test.ts › writes a remote change into a file in place, and brings back a file deleted after the scan once its delete is journaled`, `› does not write back a file with no title line deleted after the scan, and brings it back for a new title`, `› does not write back a file with no title line deleted after the scan whose %s its folder's defaults gave, and brings it back for a title that matches its name`.
 
 ### `folders/delete-revived-cancels`
 
@@ -3230,9 +3230,9 @@ When a deleted item advances in version without changing content its file shows,
 
 When a person deletes a bound file before a device first writes its `marfa_id` line into it, a device MUST retain the journaled deletion while the item has not changed in content the file showed.
 
-**Reason:** The lines a device adds on its first write, such as `marfa_id`, `type` and `tier`, and a title line holding the title the device took from the file's name, were never content the file showed, so their absence from the deleted file is no change made elsewhere.
+**Reason:** The lines a device adds on its first write, such as `marfa_id`, `type` and `tier`, and a line holding a value the device gave the item when it read the file, such as the title it took from the file's name or a property from the folder's `defaults`, were never content the file showed, so their absence from the deleted file is no change made elsewhere. A value another device gives the item since is a change, even one the file's name matches.
 
-**Tests:** `device/folders-pass-writeback.test.ts › does not write back a file deleted after the scan, and journals the delete`, `› does not write back a file with no title line deleted after the scan, and brings it back for a new title`, `device/folders-one-mac.test.ts › keeps one item when a new note moves before its id line is written to another folder whose search %s`, `device/binding-folders-clock.test.ts › writes back no file deleted between a watch pass's scan and its pull, and sends its delete after the grace`.
+**Tests:** `device/folders-pass-writeback.test.ts › does not write back a file deleted after the scan, and journals the delete`, `› does not write back a file with no title line deleted after the scan, and brings it back for a new title`, `› does not write back a file with no title line deleted after the scan whose %s its folder's defaults gave, and brings it back for a title that matches its name`, `device/folders-one-mac.test.ts › keeps one item when a new note moves before its id line is written to another folder whose search %s`, `device/binding-folders-clock.test.ts › writes back no file deleted between a watch pass's scan and its pull, and sends its delete after the grace`.
 
 ### `folders/pull-missing-file-not-written`
 
@@ -4106,7 +4106,7 @@ When two folder searches both hold an item and each folder has its own bound fil
 
 When a missing folder file’s deletion grace expires and no other folder holds the moved file, a device MUST queue deletion of its item.
 
-**Tests:** `device/folders-one-mac.test.ts › trashes a missing file found in no folder on the Mac, and says so`, `device/folders-one-mac.test.ts › takes a file item at a document name moved to another folder as that item, and trashes it only where no folder holds it`, `› makes a new item of a new note moved to another folder and saved there anew before that folder scans, and keeps its words`.
+**Tests:** `device/folders-one-mac.test.ts › trashes a missing file found in no folder on the Mac, and says so`, `device/folders-one-mac.test.ts › takes a file item at a document name moved to another folder as that item, and trashes it only where no folder holds it`, `› makes a new item of a new note moved to another folder and saved there anew before that folder scans, and keeps its words`, `› follows a text note moved to another folder as Markdown when it then %s`.
 
 ### `folders/missing-file-trashed-path-reported`
 
@@ -4212,6 +4212,14 @@ When a missing folder file has the identity that another registered folder recor
 
 **Tests:** `device/folders-one-mac.test.ts › keeps one item when a new note moves before its id line is written to another folder whose search %s`, `› keeps one item when a new note moves on to a third folder %s`, `› keeps one item when a new note moves to another folder while its create waits offline`, `› keeps the note of a text note moved to another folder as Markdown, makes a copy a new item, and keeps its words`.
 
+### `folders/moved-followed-onward`
+
+When a missing folder file has the identity that another registered folder recorded for a file it bound as that file's move, and that folder's file of the item is missing too, a device MUST identify as the missing file's move a file in another registered folder that has the identity that folder's file had, or that carries the item's ID where that folder's file carried it.
+
+**Reason:** the file can move on before the folder it first left looks again, and a text file never carries an ID line, so that folder finds it only through the folders it passed through. Each binding on the way records the identity its file had there and whether the file carried the ID line, so the file is followed however far it went. A file found in none of the folders is a deletion (`folders/missing-file-trashed`).
+
+**Tests:** `device/folders-one-mac.test.ts › follows a text note moved to another folder as Markdown when it then %s`.
+
 ### `folders/moved-file-item-bytes`
 
 When a file item's missing folder file has unambiguous bytes in a file that carries no ID in another registered folder, a device MUST identify that file as the missing file's move, whatever either file's name.
@@ -4232,7 +4240,7 @@ While a missing folder file is found in another registered folder in a file that
 
 While a missing folder file that this folder bound as a move from another registered folder is found in a third registered folder that has not bound it to the item, a device MUST keep the missing file's binding.
 
-**Reason:** the folder the file first left finds it only by the identities this binding records (`folders/moved-rewritten-found`). Released before the third folder binds the file and records them, the binding leaves the first folder finding the file nowhere, and it trashes the item (`folders/missing-file-trashed`).
+**Reason:** the folder the file first left finds it only by the identities this binding records (`folders/moved-rewritten-found`, `folders/moved-followed-onward`). Released before the third folder binds the file and records them, the binding leaves the first folder finding the file nowhere, and it trashes the item (`folders/missing-file-trashed`).
 
 **Tests:** `device/folders-one-mac.test.ts › keeps one item when a new note moves on to a third folder %s`.
 
@@ -4266,9 +4274,9 @@ When a bound file moves to another registered folder on the device and that fold
 
 When a file that moved to another registered folder on the device moves again to a third registered folder, a device MUST bind the file in the third folder to the item it was bound to before the first move.
 
-**Reason:** the first folder can still be looking for its missing file when the file reaches the third folder, so every folder the file passed through has to find it there (`folders/moved-rewritten-found`, `folders/moved-binding-kept-onward`).
+**Reason:** the first folder can still be looking for its missing file when the file reaches the third folder, so every folder the file passed through has to find it there (`folders/moved-rewritten-found`, `folders/moved-followed-onward`, `folders/moved-binding-kept-onward`).
 
-**Tests:** `device/folders-one-mac.test.ts › keeps one item when a new note moves on to a third folder %s`.
+**Tests:** `device/folders-one-mac.test.ts › keeps one item when a new note moves on to a third folder %s`, `› follows a text note moved to another folder as Markdown when it then %s`.
 
 ### `folders/move-no-second-item`
 
