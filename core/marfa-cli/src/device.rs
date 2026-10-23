@@ -1139,7 +1139,8 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
             BlobsCommand::Get { hash } => {
                 // No server is required: held bytes need none, and without
                 // one a missing blob is absent rather than a usage error.
-                let path = store.open(named.session_if_named()?)?.blob(&hash)?;
+                let held = store.open(named.session_if_named()?)?.blob(&hash)?;
+                let path = held.path();
                 output::report(
                     &serde_json::json!({ "hash": hash, "path": path }),
                     json,

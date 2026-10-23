@@ -1553,6 +1553,21 @@ fn drained(report: marfa_core::DrainReport) -> Result<DrainReport, MarfaError> {
     })
 }
 
+/// Where a blob's bytes are held. No trim in this process takes them while
+/// this is held, so a caller that waits for it on another thread holds it
+/// until it has opened the path.
+#[derive(uniffi::Object)]
+pub struct BlobPath {
+    inner: marfa_core::BlobPath,
+}
+
+#[uniffi::export]
+impl BlobPath {
+    pub fn path(&self) -> String {
+        self.inner.path().to_string_lossy().into_owned()
+    }
+}
+
 /// A local copy of a slice of one server. Every method blocks; call from off
 /// the main thread.
 #[derive(uniffi::Object)]
@@ -2343,10 +2358,12 @@ impl Core {
     /// Where a blob's bytes are held, fetching them first where this store
     /// does not hold them yet. Refused `BytesAbsent` where they can be
     /// neither read nor fetched. No trim in this process takes the bytes
-    /// before the path is answered; after that a trim may, so open the path
-    /// at once.
-    pub fn blob(&self, hash: String) -> Result<String, MarfaError> {
-        Ok(self.inner.blob(&hash)?.to_string_lossy().into_owned())
+    /// until the answer is released; after that a trim may, so open the path
+    /// before releasing it.
+    pub fn blob(&self, hash: String) -> Result<Arc<BlobPath>, MarfaError> {
+        Ok(Arc::new(BlobPath {
+            inner: self.inner.blob(&hash)?,
+        }))
     }
 
     /// The cache of fetched files: its setting, the budget in force and the
@@ -2941,6 +2958,34 @@ mod tests {
                 "{crossed:?}"
             );
         }
+    }
+
+    /// Swift waits for the answer on another thread, so the bytes are held
+    /// until the answer is released, not until the call returns.
+    #[test]
+    fn a_blob_answered_stays_until_its_answer_is_released() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("core.sqlite");
+        let core = Core::open(path.display().to_string(), None, None, None).unwrap();
+        let bytes = b"held while the answer is";
+        let hex = "2f63a37d2ed539e29e938b4460bed85e6e7152782affa23f1c34d273fa9c0bb5";
+        let blobs = dir.path().join("core.sqlite.blobs");
+        std::fs::create_dir_all(&blobs).unwrap();
+        std::fs::write(blobs.join(hex), bytes).unwrap();
+
+        let held = core.blob(format!("sha256:{hex}")).unwrap();
+        core.set_file_budget(FileBudget::Bytes { bytes: 0 })
+            .unwrap();
+        assert_eq!(
+            std::fs::read(held.path()).ok().as_deref(),
+            Some(&bytes[..]),
+            "a trim took the bytes of an answer still held"
+        );
+
+        // The witness: once the answer is released, a trim takes them.
+        drop(held);
+        assert_eq!(core.trim_files().unwrap(), bytes.len() as u64);
+        assert!(!blobs.join(hex).exists());
     }
 
     #[test]

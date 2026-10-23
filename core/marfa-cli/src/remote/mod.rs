@@ -1433,7 +1433,7 @@ mod tests {
 
         let held = core.blob(HASH).unwrap();
 
-        assert_eq!(std::fs::read(held).unwrap(), b"hello");
+        assert_eq!(std::fs::read(held.path()).unwrap(), b"hello");
         let received = door.received();
         let paths: Vec<&str> = received.iter().map(|r| r.path()).collect();
         let link = format!("/blobs/{HASH}/url");

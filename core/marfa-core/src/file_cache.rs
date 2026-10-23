@@ -268,7 +268,7 @@ pub(crate) fn exclude_from_backup(_file: &File) -> io::Result<()> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     const TB: u64 = 1_000_000_000_000;
@@ -419,9 +419,13 @@ mod tests {
 
             let bytes = b"fetched again whenever";
             let fetched = cache
-                .keep(&crate::blob::name_of(bytes), &bytes[..])
+                .keep(
+                    &crate::blob::name_of(bytes),
+                    &bytes[..],
+                    crate::blob::tests::no_uploads,
+                )
                 .unwrap();
-            assert_eq!(fetched.unmarked, None);
+            assert_eq!(fetched.mark, crate::blob::Mark::Excluded);
             assert!(
                 excluded(&fetched.path),
                 "tmutil does not see fetched bytes as excluded"

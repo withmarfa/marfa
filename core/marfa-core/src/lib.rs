@@ -177,6 +177,20 @@ fn one_at_a_time() -> CoreError {
     )
 }
 
+/// Where a blob's bytes are held. No trim in this process, through any
+/// handle on the store or on any thread, takes them while this is held.
+#[derive(Debug)]
+pub struct BlobPath {
+    path: PathBuf,
+    _reading: blob::Reading,
+}
+
+impl BlobPath {
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
 /// The key is held in memory and never written.
 #[derive(Clone)]
 pub struct Server {
@@ -2185,25 +2199,30 @@ impl Core {
     /// Fetched and held when not held already. With no way to fetch, the
     /// refusal is `BytesAbsent`.
     ///
-    /// The path names the bytes when it is answered: no trim in this
-    /// process, through any handle on the store or on any thread, takes them
-    /// from when this is called until it returns. After that, or for a trim in
-    /// another process, the bytes are the ones read most recently, so they are
-    /// the last a trim takes, but a trim may take them. A caller opens the
-    /// path at once and reads through the handle.
-    pub fn blob(&self, hash: &str) -> Result<PathBuf> {
+    /// No trim in this process, through any handle on the store or on any
+    /// thread, takes the bytes from when this is called until the answer is
+    /// dropped, so a binding that hands the path on later holds the answer
+    /// until it has. After that, or for a trim in another process, the bytes
+    /// are the ones read most recently, so they are the last a trim takes,
+    /// but a trim may take them. A caller opens the path at once and reads
+    /// through the handle.
+    pub fn blob(&self, hash: &str) -> Result<BlobPath> {
         let hash = blob::named(hash)?;
         let cache = self.cache()?;
         if cache.requires_descriptor() {
             return Err(CoreError::Invalid("folder bytes are read through directory capabilities; this store cannot provide a pathname to reopen".into()));
         }
-        let _reading = cache.reading(&hash)?;
+        let reading = cache.reading(&hash)?;
         if let Some(path) = cache.held(&hash)? {
             if self.handle() == Handle::Writer {
                 cache.touch(&path);
             }
+            #[cfg(debug_assertions)]
             crate::fault::hold(|| format!("blob-answered:{hash}"));
-            return Ok(path);
+            return Ok(BlobPath {
+                path,
+                _reading: reading,
+            });
         }
         let Some(http) = self.http.as_deref() else {
             let reason = match self.handle() {
@@ -2215,11 +2234,15 @@ impl Core {
                 reason: reason.into(),
             });
         };
-        let fetched = blob::fetch(cache, http, &hash)?;
-        self.write_down_backup_mark(fetched.unmarked.as_deref());
+        let fetched = blob::fetch(cache, http, &hash, || self.kept_blobs())?;
+        self.write_down_backup_mark(&fetched.mark);
         self.trim_blobs();
+        #[cfg(debug_assertions)]
         crate::fault::hold(|| format!("blob-answered:{hash}"));
-        Ok(fetched.path)
+        Ok(BlobPath {
+            path: fetched.path,
+            _reading: reading,
+        })
     }
 
     /// No trim in this process, through any handle on the store or on any
@@ -2245,8 +2268,8 @@ impl Core {
                 reason: "this handle cannot fetch bytes".into(),
             });
         };
-        let fetched = blob::fetch(cache, http, &hash)?;
-        self.write_down_backup_mark(fetched.unmarked.as_deref());
+        let fetched = blob::fetch(cache, http, &hash, || self.kept_blobs())?;
+        self.write_down_backup_mark(&fetched.mark);
         let file = cache
             .open_held(&hash)
             .map_err(|error| CoreError::Store(format!("cannot read fetched bytes: {error}")))?;
@@ -2258,7 +2281,12 @@ impl Core {
     /// of backups, or clears it once they could, so every process's state
     /// report says so. Best effort: a store that cannot be written loses the
     /// note, never the bytes.
-    fn write_down_backup_mark(&self, unmarked: Option<&str>) {
+    fn write_down_backup_mark(&self, mark: &blob::Mark) {
+        let unmarked = match mark {
+            blob::Mark::Excluded => None,
+            blob::Mark::Refused(reason) => Some(reason.as_str()),
+            blob::Mark::Kept => return,
+        };
         let Ok(conn) = self.conn() else {
             return;
         };
@@ -6253,7 +6281,7 @@ mod tests {
             .unwrap()
             .hash;
         let held = core.blob(&hash).unwrap();
-        assert_eq!(std::fs::read(held).unwrap(), b"held here");
+        assert_eq!(std::fs::read(held.path()).unwrap(), b"held here");
         let other = blob::name_of(b"never held");
         assert!(matches!(
             core.blob(&other),
@@ -6299,12 +6327,12 @@ mod tests {
             let other = core.blob(&second);
             crate::fault::release(&point);
             assert_eq!(
-                std::fs::read(other.unwrap()).unwrap(),
+                std::fs::read(other.unwrap().path()).unwrap(),
                 b"read on the second thread"
             );
             let path = reading.join().unwrap().unwrap();
             assert_eq!(
-                std::fs::read(&path).ok().as_deref(),
+                std::fs::read(path.path()).ok().as_deref(),
                 Some(&b"read on the first thread"[..]),
                 "another thread's trim took the bytes a caller was about to read"
             );
@@ -6350,7 +6378,7 @@ mod tests {
             assert_eq!(taken.unwrap(), 0);
             let path = reading.join().unwrap().unwrap();
             assert_eq!(
-                std::fs::read(&path).ok().as_deref(),
+                std::fs::read(path.path()).ok().as_deref(),
                 Some(&bytes[..]),
                 "the writer's trim took the bytes a reading handle was about to read"
             );
@@ -6358,6 +6386,79 @@ mod tests {
         // The witness: once the reading handle is answered, a trim takes them.
         assert_eq!(core.trim_files().unwrap(), bytes.len() as u64);
         assert!(!core.blob_held(&hash).unwrap());
+    }
+
+    /// Bytes an upload names are the only copy until the server has them,
+    /// whether the upload is queued after they were fetched or while a fetch
+    /// of them is arriving.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn bytes_an_upload_names_stay_in_backups_whichever_comes_first() {
+        use crate::file_cache::tests::excluded;
+        // The system excludes its own temporary folders, so the witness has to
+        // sit under the home folder.
+        let home = std::env::var_os("HOME").expect("HOME");
+        let area = tempfile::Builder::new()
+            .prefix(".marfa-backup-test-")
+            .tempdir_in(home)
+            .unwrap();
+        let server = crate::scripted::Scripted::start();
+        let core = crate::stop_tests::copy_in_keyed(&server, area.path(), "k");
+        core.set_file_budget(FileBudget::KeepAll).unwrap();
+        let serve = |bytes: &[u8]| {
+            let hash = blob::name_of(bytes);
+            let link = blob::tests::linking(bytes.to_vec(), false);
+            server.on(
+                &format!("/blobs/{hash}/url"),
+                vec![crate::scripted::json(
+                    200,
+                    &format!(r#"{{"url":"{link}"}}"#),
+                )],
+            );
+            hash
+        };
+        let upload = |name: &str, bytes: &[u8]| {
+            let path = area.path().join(name);
+            std::fs::write(&path, bytes).unwrap();
+            core.put_blob(&path, Some("text/plain")).unwrap();
+        };
+
+        let fetched_first = b"fetched, then queued as an upload";
+        let hash = serve(fetched_first);
+        let path = core.blob(&hash).unwrap().path().to_path_buf();
+        assert!(
+            excluded(&path),
+            "fetched bytes were not left out of backups"
+        );
+        upload("fetched-first.txt", fetched_first);
+        assert!(
+            !excluded(&path),
+            "bytes fetched and then queued as an upload stayed out of backups"
+        );
+
+        let queued_first = b"queued while a fetch of it arrived";
+        let hash = serve(queued_first);
+        let point = format!("blob-arrived:{hash}");
+        crate::fault::arm(&point);
+        std::thread::scope(|scope| {
+            let fetching = scope.spawn(|| core.blob(&hash).map(|held| held.path().to_path_buf()));
+            let waited = std::time::Instant::now();
+            while crate::fault::waiting(&point) == 0 {
+                assert!(
+                    waited.elapsed() < std::time::Duration::from_secs(10),
+                    "the fetch never arrived"
+                );
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            upload("queued-first.txt", queued_first);
+            crate::fault::release(&point);
+            let path = fetching.join().unwrap().unwrap();
+            assert!(
+                !excluded(&path),
+                "a fetch that settled after an upload of its bytes was queued left them out of backups"
+            );
+        });
+        assert_eq!(core.file_cache().unwrap().backup_mark_failure, None);
     }
 
     #[test]
@@ -6632,7 +6733,7 @@ mod tests {
 
         let reader = Core::open_reader(&path).unwrap();
         let held = reader.blob(&hash).unwrap();
-        assert_eq!(std::fs::read(held).unwrap(), b"held here");
+        assert_eq!(std::fs::read(held.path()).unwrap(), b"held here");
         let other = blob::name_of(b"never held");
         let reason = |core: &Core| match core.blob(&other) {
             Err(CoreError::BytesAbsent { reason, .. }) => reason,

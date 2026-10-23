@@ -1,6 +1,16 @@
 // @ts-check
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { createHash } from "node:crypto";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -78,4 +88,46 @@ test("a budget that names bytes needs a whole count, and no other kind takes one
     core.setFileBudget(largest);
     assert.deepEqual(core.fileCache().setting, largest);
   });
+});
+
+test("a blob is kept from every trim until its promise resolves", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "marfa-node-file-cache-"));
+  try {
+    const path = join(dir, "copy.sqlite");
+    const core = MarfaCore.open(path);
+    const bytes = "held until the promise resolves";
+    const hex = createHash("sha256").update(bytes).digest("hex");
+    const blobs = `${path}.blobs`;
+    mkdirSync(blobs, { recursive: true });
+    const held = join(blobs, hex);
+    writeFileSync(held, bytes);
+
+    assert.equal(await core.blob(`sha256:${hex}`), held);
+    // A writer marks the bytes read when it answers, which says when the
+    // work behind the promise is done.
+    const long = new Date(Date.now() - 60_000);
+    utimesSync(held, long, long);
+    const pending = core.blob(`sha256:${hex}`);
+    const waited = Date.now();
+    while (statSync(held).mtimeMs < waited - 30_000) {
+      assert.ok(Date.now() - waited < 10_000, "the work never read the bytes");
+    }
+    // Keep the JavaScript thread busy past the work's end, so the promise
+    // cannot resolve before the trim.
+    const busy = Date.now();
+    while (Date.now() - busy < 200) {}
+    core.setFileBudget({ kind: FileBudgetKind.Bytes, bytes: 0 });
+
+    const answered = await pending;
+    assert.equal(
+      readFileSync(answered, "utf8"),
+      bytes,
+      "a trim took the bytes of a promise not yet resolved",
+    );
+    // The witness: once the promise has resolved, a trim takes them.
+    assert.equal(core.trimFiles(), Buffer.byteLength(bytes));
+    assert.equal(existsSync(held), false);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

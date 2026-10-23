@@ -1709,7 +1709,9 @@ pub struct FetchBlob {
 
 #[napi]
 impl Task for FetchBlob {
-    type Output = std::path::PathBuf;
+    /// Holds the bytes from every trim until the promise resolves: the
+    /// JavaScript thread may be busy long after the work is done.
+    type Output = marfa_core::BlobPath;
     type JsValue = String;
 
     fn reject(&mut self, env: Env, error: Error) -> Result<Self::JsValue> {
@@ -1722,8 +1724,8 @@ impl Task for FetchBlob {
             .map_err(|error| record(&mut self.failed, error))
     }
 
-    fn resolve(&mut self, _: Env, path: Self::Output) -> Result<Self::JsValue> {
-        Ok(path.to_string_lossy().into_owned())
+    fn resolve(&mut self, _: Env, held: Self::Output) -> Result<Self::JsValue> {
+        Ok(held.path().to_string_lossy().into_owned())
     }
 }
 
@@ -2448,7 +2450,7 @@ impl MarfaCore {
     /// Where a blob's bytes are held, fetching them first where this store
     /// does not hold them yet. Refused `bytes_absent` where they can be
     /// neither read nor fetched. No trim in this process takes the bytes
-    /// before the path is answered; after that a trim may, so open the path
+    /// before the promise resolves; after that a trim may, so open the path
     /// at once.
     #[napi(ts_return_type = "Promise<string>")]
     pub fn blob(&self, hash: String) -> AsyncTask<FetchBlob> {
