@@ -1488,11 +1488,31 @@ While the file budget is to keep every file, a device MUST NOT take away bytes i
 
 A device MUST report in its state report the setting, the budget in force, which is none while every file is kept, and the bytes the cache holds.
 
-If the cache's folder, or an entry in it, cannot be read, a device MUST report the bytes held as unknown, with the reason, and MUST NOT report a count that leaves out what it could not read. A cache not made yet holds 0 bytes, exactly. A device MUST NOT take away any bytes on account of a budget while it cannot read the cache.
+**Tests:** `device/file-cache.test.ts › gives the default budget from the volume's size and free space, counting what it holds`, `› keeps every file fetched when told to, and reports no budget`.
 
-**Reason:** a count that skips what could not be read looks exact, so an app would show a full cache as empty and a trim would work from a total that is too small.
+### `device/file-budget-held-unknown`
 
-**Tests:** `device/file-cache.test.ts › reports the bytes held as unknown, and trims nothing, where the cache cannot be read`, `device/file-cache.test.ts › gives the default budget from the volume's size and free space, counting what it holds`, `› keeps every file fetched when told to, and reports no budget`.
+If a device cannot read the folder of the file cache or an entry in it, then a device MUST report the bytes the cache holds as unknown, with the reason, and not as a count that leaves out what it could not read.
+
+**Reason:** a count that skips what could not be read looks exact, so an app would show a full cache as empty.
+
+**Tests:** `device/file-cache.test.ts › reports the bytes held as unknown, and trims nothing, where the cache cannot be read`.
+
+### `device/file-budget-absent-holds-none`
+
+While the folder of the file cache does not exist, a device MUST report the bytes the cache holds as 0, exactly.
+
+**Reason:** a cache not made yet is empty, which is different from one that cannot be read.
+
+**Tests:** `device/file-cache.test.ts › reports the bytes held as unknown, and trims nothing, where the cache cannot be read`.
+
+### `device/file-trim-unreadable-takes-none`
+
+While a device cannot read the folder of the file cache or an entry in it, a device MUST NOT take away bytes on account of the file budget.
+
+**Reason:** a total that leaves out what could not be read is too small, so a trim working from it would fit the wrong set of files.
+
+**Tests:** `device/file-cache.test.ts › reports the bytes held as unknown, and trims nothing, where the cache cannot be read`.
 
 ### `device/file-trim-after-fetch`
 
