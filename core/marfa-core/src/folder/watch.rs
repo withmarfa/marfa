@@ -402,6 +402,8 @@ impl Folder {
         if asking() {
             return Ok(None);
         }
+        #[cfg(debug_assertions)]
+        crate::fault::hold(|| "folder-pass-pull");
         let pull = self.pull()?;
         let problem = drain
             .report

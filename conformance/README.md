@@ -498,6 +498,7 @@ follows.
   - `folder-watch-turn`, `folder-file-changed`, `folder-pass-start`,
     `folder-pass-ended`, `folder-full-scan`, and `folder-quick-scan`: the watch
     loop, a filesystem change, and its pass and scan boundaries.
+    `folder-pass-pull`: a pass that has scanned and sent, before its pull.
   - `folder-handover-wait`, `folder-handed-over`, and
     `folder-take-back-wait`: an asking call's wait, its acquired folder, and
     the watch's retry before taking it back. `folders-watch-polled` observes
