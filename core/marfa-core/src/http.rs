@@ -644,7 +644,6 @@ impl Http {
         }
     }
 
-    /// Identifies a server without identifying a key.
     fn announce_write(&self) {
         if self.announces
             && let Some(hook) = ON_WRITE.get()
@@ -653,6 +652,7 @@ impl Http {
         }
     }
 
+    /// Identifies a server without identifying a key.
     pub fn origin(&self) -> String {
         origin_of_base(&self.base)
     }

@@ -47,7 +47,7 @@ pub enum ChosenBy {
 
 /// The profile a command line or `MARFA_PROFILE` names. The file is read the
 /// first time a command asks for its server, so a command that asks for none
-/// runs whatever the file holds.
+/// runs even when the file is missing or wrong.
 #[derive(Clone)]
 pub struct Chosen {
     pub name: String,
@@ -499,9 +499,8 @@ impl Drop for Interrupts {
 /// Runs a profile's key command and hands back the key it printed. The
 /// program is run without a shell, with nothing on stdin and in a process
 /// group of its own, which is stopped whole if it outlasts `limit` or a
-/// signal comes to end marfa. A refusal
-/// names the profile and the program, and never shows what the command
-/// printed on stdout.
+/// signal comes to end marfa. A refusal names the profile and the program,
+/// and never shows what the command printed on stdout.
 pub fn run_key_command(profile: &str, argv: &[String], limit: Duration) -> Result<Secret, String> {
     let program = argv.first().map(String::as_str).unwrap_or_default();
     let failed = |why: String| format!("the key command of profile {profile} ({program}) {why}");
