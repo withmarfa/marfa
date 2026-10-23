@@ -119,7 +119,8 @@ impl Request {
         self
     }
 
-    /// A `POST` that asks a question in its body and changes nothing.
+    /// A `POST` that changes no data: a question asked in its body, or a step
+    /// of signing in.
     pub fn reading(mut self) -> Request {
         self.writes = false;
         self

@@ -271,6 +271,33 @@ mod tests {
         std::fs::remove_dir_all(root).unwrap();
     }
 
+    #[test]
+    fn a_write_through_the_socket_is_announced_by_its_path_and_a_read_is_not() {
+        let (root, path, serving) = serve_once("read", |head| {
+            assert!(head.starts_with("GET /_control/setup/status "), "{head}");
+            ("200 OK", "application/json", r#"{"claimed":true}"#)
+        });
+        let remote = Remote::local(&path).unwrap();
+        remote
+            .json(&Request::get(&["_control", "setup", "status"]))
+            .unwrap();
+        serving.join().unwrap();
+        assert_eq!(crate::writing::announced(), Vec::<String>::new());
+        let (written, path, serving) = serve_once("write", |head| {
+            assert!(head.starts_with("POST /items/trash "), "{head}");
+            ("200 OK", "application/json", r#"{"data":[]}"#)
+        });
+        let remote = Remote::local(&path).unwrap();
+        remote.json(&Request::post(&["items", "trash"])).unwrap();
+        serving.join().unwrap();
+        assert_eq!(
+            crate::writing::announced(),
+            vec![format!("unix:{}", path.display())]
+        );
+        std::fs::remove_dir_all(root).unwrap();
+        std::fs::remove_dir_all(written).unwrap();
+    }
+
     const UNAUTHORIZED: &str =
         r#"{"error":{"code":"unauthorized","message":"Authentication required"}}"#;
 

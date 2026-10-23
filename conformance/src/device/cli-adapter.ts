@@ -44,8 +44,9 @@ const run = promisify(execFile);
  */
 
 /**
- * Under `--json` the binary reports a refusal as one JSON object on stderr,
- * `{"error":{"code":...},"exit":N}`, and the code is what the adapter reads.
+ * Under `--json` the binary reports a refusal as one JSON object on the last
+ * line of stderr, `{"error":{"code":...},"exit":N}`, after any plain line
+ * such as a warning or the write line, and the code is what the adapter reads.
  * A command line the binary does not offer is refused that way too, with the
  * code `usage`: the device refusing an operation rather than the core
  * refusing one it does. Without `--json` that refusal is the usage text and
@@ -53,10 +54,11 @@ const run = promisify(execFile);
  */
 function classify(stderr: string, exitCode: number | null): Refusal {
   const raw = stderr.trim();
-  if (exitCode === 2 && !raw.startsWith("{")) return { code: "usage", raw };
+  const last = refusalLine(raw);
+  if (exitCode === 2 && !last.startsWith("{")) return { code: "usage", raw };
   let envelope: { error?: { code?: unknown } };
   try {
-    envelope = JSON.parse(raw) as { error?: { code?: unknown } };
+    envelope = JSON.parse(last) as { error?: { code?: unknown } };
   } catch {
     return { code: "unclassified", raw };
   }
@@ -64,6 +66,20 @@ function classify(stderr: string, exitCode: number | null): Refusal {
   return typeof code === "string"
     ? { code, raw }
     : { code: "unclassified", raw };
+}
+
+/** The last line of stderr, where `--json` puts a refusal (`device/command-json-refusal-last`). */
+export function refusalLine(stderr: string): string {
+  return stderr.trim().split("\n").at(-1) ?? "";
+}
+
+/** Stderr without the line that names the server a write goes to (`device/command-write-line`). */
+export function withoutWriteLine(stderr: string): string {
+  return stderr
+    .split("\n")
+    .filter((line) => !line.startsWith("marfa: writing to "))
+    .join("\n")
+    .trim();
 }
 
 /** What a debug build says on stderr once it has set its stop, where `stop-notice` is a fault it was given. */
@@ -376,7 +392,7 @@ export class CliDevice implements DeviceUnderTest {
       "drain",
       ...this.server(),
     ]);
-    if (result.stderr.trim() !== "" && result.code !== 0) {
+    if (withoutWriteLine(result.stderr) !== "" && result.code !== 0) {
       return { ok: false, refusal: classify(result.stderr, result.code) };
     }
     const report = JSON.parse(result.stdout) as DrainReport;
@@ -395,7 +411,7 @@ export class CliDevice implements DeviceUnderTest {
         : report.unavailable !== null || report.undelivered > 0
           ? 3
           : 0;
-    if (result.code !== expected || result.stderr.trim() !== "") {
+    if (result.code !== expected || withoutWriteLine(result.stderr) !== "") {
       throw new Error(
         `the drain report requires exit ${String(expected)}, received ${String(result.code)}: ${result.stderr}`,
       );

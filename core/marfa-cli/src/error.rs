@@ -615,7 +615,7 @@ pub const CATCH_UP_FAILED: &str = "When `marfa device catch-up` fails, the refus
 
 /// The refusal `--json` prints, said after the drain and the catch-up: what
 /// it is, its shape, and the words before the codes its `error.code` can be.
-pub const JSON_REFUSAL: &str = "With --json a refusal is one JSON object on stderr:";
+pub const JSON_REFUSAL: &str = "With --json a refusal is the last line of stderr, one JSON object, after any plain lines such as a warning or the write line:";
 pub const JSON_REFUSAL_SHAPE: &str = r#"{"error":{"code":...,"message":...,"server":{"status":...,"code":...,"details":...}|null,"retry_after_seconds":...},"exit":N}"#;
 pub const JSON_REFUSAL_CODES: &str = "where error.code is one of:";
 

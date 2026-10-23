@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { refusalLine } from "../../device/cli-adapter.js";
 import { requireBinary } from "./harness.js";
 
 /**
@@ -48,7 +49,7 @@ export function refusal(ran: Ran): {
   error: { code: string; message: string };
   exit: number;
 } {
-  return JSON.parse(ran.stderr) as {
+  return JSON.parse(refusalLine(ran.stderr)) as {
     error: { code: string; message: string };
     exit: number;
   };

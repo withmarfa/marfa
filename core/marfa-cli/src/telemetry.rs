@@ -51,7 +51,7 @@ struct Live {
 /// parsed them, if the environment asks for it.
 ///
 /// A malformed endpoint turns telemetry off for the run, and is said on
-/// standard error unless `json` is set, where stderr is one JSON object.
+/// standard error unless `json` is set.
 pub fn start(command: &str, json: bool) -> Run {
     start_with(command, json, |name| std::env::var(name).ok())
 }

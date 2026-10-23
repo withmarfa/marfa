@@ -1,7 +1,7 @@
 //! Before a command first sends a server a request that can change data, it
 //! says which server on stderr, and which profile named it, so a write meant
-//! for a test server is not made to another unseen. Under `--json` it says
-//! nothing, so that stderr holds a refusal alone.
+//! for a test server is not made to another unseen. Under `--json` it says so
+//! too, as one plain line: a refusal is still the last line of stderr.
 
 use std::io::Write;
 use std::sync::{Mutex, OnceLock};
@@ -23,9 +23,6 @@ pub fn chosen(origin: &str, name: &str) {
 pub fn announce(origin: &str) {
     #[cfg(test)]
     ANNOUNCED.with(|announced| announced.borrow_mut().push(origin.to_string()));
-    if crate::style::json() {
-        return;
-    }
     let mut said = SAID
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);

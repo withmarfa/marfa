@@ -145,10 +145,14 @@ impl Home {
     }
 }
 
+/// A refusal is the last line of stderr, after any plain line such as the
+/// write line.
 fn envelope(output: &Output) -> serde_json::Value {
     let stderr = String::from_utf8_lossy(&output.stderr);
-    serde_json::from_str(stderr.trim())
-        .unwrap_or_else(|error| panic!("stderr is not one JSON object: {error}\n{stderr}"))
+    let last = stderr.trim_end().lines().last().unwrap_or_default();
+    serde_json::from_str(last).unwrap_or_else(|error| {
+        panic!("the last line of stderr is not one JSON object: {error}\n{stderr}")
+    })
 }
 
 fn refused(output: &Output) -> (i32, String, String) {
@@ -416,11 +420,20 @@ fn a_write_names_its_server_and_profile_first_and_a_read_does_not() {
         Some(format!("marfa: writing to {}", profiled.url).as_str()),
         "{stderr}"
     );
-    // Under --json, stderr holds the refusal alone.
+    // Under --json the line is printed too, and the refusal is the last line.
     let output = home.run(
         &["--json", "--profile", "demo", "items", "delete", "i1"],
         &env,
     );
+    assert!(output.stdout.is_empty(), "{}", shown(&output));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(stderr.lines().count(), 2, "{stderr}");
+    assert_eq!(stderr.lines().next(), Some(line.as_str()), "{stderr}");
+    assert_eq!(refused(&output).1, "not_found");
+    // A read under --json prints nothing but its refusal.
+    let output = home.run(&["--json", "--profile", "demo", "items", "get", "i1"], &env);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(stderr.lines().count(), 1, "{stderr}");
     assert_eq!(refused(&output).1, "not_found");
 }
 

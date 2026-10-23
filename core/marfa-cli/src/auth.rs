@@ -210,14 +210,19 @@ pub fn register(discovery: &Discovery, name: Option<&str>) -> Result<String, Cli
         None => client_name(machine_name().as_deref()),
     };
     let door = Remote::public_at(&discovery.registration_endpoint)?;
-    let answer = door.json(&Request::post(&[]).public().json(serde_json::json!({
-        "client_name": name,
-        "software_id": SOFTWARE_ID,
-        "application_type": "native",
-        "grant_types": [DEVICE_CODE_GRANT, "refresh_token"],
-        "response_types": [],
-        "token_endpoint_auth_method": "none",
-    })))?;
+    let answer = door.json(
+        &Request::post(&[])
+            .public()
+            .reading()
+            .json(serde_json::json!({
+                "client_name": name,
+                "software_id": SOFTWARE_ID,
+                "application_type": "native",
+                "grant_types": [DEVICE_CODE_GRANT, "refresh_token"],
+                "response_types": [],
+                "token_endpoint_auth_method": "none",
+            })),
+    )?;
     answer
         .get("client_id")
         .and_then(Value::as_str)
@@ -234,6 +239,7 @@ pub fn device_code(
     let answer = door.json(
         &Request::post(&[])
             .public()
+            .reading()
             .form(&[("client_id", client_id), ("scope", scope)]),
     )?;
     serde_json::from_value(answer).map_err(|error| {
@@ -270,7 +276,7 @@ fn is_blip(error: &CliError) -> bool {
 pub fn poll(discovery: &Discovery, client_id: &str, device_code: &str) -> Result<Poll, CliError> {
     cleartext::guard(&discovery.token_endpoint);
     let door = Remote::public_at(&discovery.token_endpoint)?;
-    let answer = door.json(&Request::post(&[]).public().form(&[
+    let answer = door.json(&Request::post(&[]).public().reading().form(&[
         ("grant_type", DEVICE_CODE_GRANT),
         ("device_code", device_code),
         ("client_id", client_id),
@@ -431,7 +437,7 @@ fn refresh_locked(origin: &str, refused: Option<&str>) -> Result<Kept, CliError>
     Remote::public_at(origin)?.hold_root()?;
     cleartext::guard(&token_endpoint);
     let door = Remote::public_at(&token_endpoint)?;
-    let answer = door.json(&Request::post(&[]).public().form(&[
+    let answer = door.json(&Request::post(&[]).public().reading().form(&[
         ("grant_type", "refresh_token"),
         ("refresh_token", &refresh_token),
         ("client_id", &client_id),
@@ -638,7 +644,7 @@ pub fn revoke(kept: &Kept) -> Result<bool, CliError> {
             Some(refresh_token) => (refresh_token.as_str(), "refresh_token"),
             None => (access_token.as_str(), "access_token"),
         };
-        door.json(&Request::post(&[]).public().form(&[
+        door.json(&Request::post(&[]).public().reading().form(&[
             ("token", token),
             ("token_type_hint", hint),
             ("client_id", client_id),

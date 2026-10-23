@@ -14,7 +14,11 @@ import {
   wireItem,
 } from "../../device/marfa-answers.js";
 import type { SseFrame } from "../../device/scripted-server.js";
-import { newStore } from "../../device/cli-adapter.js";
+import {
+  newStore,
+  refusalLine,
+  withoutWriteLine,
+} from "../../device/cli-adapter.js";
 import {
   hydratedHarness,
   KEY,
@@ -99,7 +103,7 @@ describe("CLI outcomes preserve the result", () => {
         "drain",
       ]);
       expect(result.code).toBe(exit);
-      expect(result.stderr).toBe("");
+      expect(withoutWriteLine(result.stderr)).toBe("");
       const report = JSON.parse(result.stdout);
       expect(report.verdicts[0].verdict).toBe(verdict);
       expect(report.verdicts[0].refusals).toBe(0);
@@ -209,7 +213,7 @@ describe("CLI outcomes preserve the result", () => {
         ]);
         expect(result.code).toBe(1);
         expect(result.stdout).toBe("");
-        const error = JSON.parse(result.stderr).error;
+        const error = JSON.parse(refusalLine(result.stderr)).error;
         expect(error.code).toBe("redirect");
         expect(error.server.status).toBe(307);
         expect(error.message).toContain(h.server.url);
@@ -261,7 +265,7 @@ describe("CLI outcomes preserve the result", () => {
       "drain",
     ]);
     expect(result.code).toBe(3);
-    expect(result.stderr).toBe("");
+    expect(withoutWriteLine(result.stderr)).toBe("");
     const report = JSON.parse(result.stdout);
     expect(report.answered).toBe(1);
     expect(report.undelivered).toBe(1);
@@ -421,7 +425,7 @@ describe.runIf(process.platform === "darwin")("a renewal a drain meets", () => {
     );
     expect(result.code, JSON.stringify(result)).toBe(5);
     expect(result.stdout).toBe("");
-    const envelope = JSON.parse(result.stderr);
+    const envelope = JSON.parse(refusalLine(result.stderr));
     expect(envelope.error.code).toBe("signed_out");
     expect(envelope.error.server).toBeNull();
     const after = await h.device.queue();
@@ -445,7 +449,7 @@ describe.runIf(process.platform === "darwin")("a renewal a drain meets", () => {
       refusal(503, "unavailable", "The token endpoint is down"),
     );
     expect(result.code, JSON.stringify(result)).toBe(3);
-    expect(result.stderr).toBe("");
+    expect(withoutWriteLine(result.stderr)).toBe("");
     const report = JSON.parse(result.stdout);
     expect(report.unavailable).toBeTruthy();
     expect(report.stopped).toBeNull();

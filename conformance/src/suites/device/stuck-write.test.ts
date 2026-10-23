@@ -6,6 +6,7 @@ import {
   wireItem,
   writeAnswers,
 } from "../../device/marfa-answers.js";
+import { refusalLine } from "../../device/cli-adapter.js";
 import type { DrainReport, QueuedWrite } from "../../device/protocol.js";
 import type { Answer } from "../../device/scripted-server.js";
 import type { RecordedRequest } from "../../device/scripted-server.js";
@@ -1672,7 +1673,9 @@ describe("a write the server takes again before it is set aside", () => {
       draining.interrupt();
       await draining.exited();
       expect(draining.exitCode(), draining.stderr).toBe(UNFINISHED);
-      expect(JSON.parse(draining.stderr).error.code).toBe("canceled");
+      expect(JSON.parse(refusalLine(draining.stderr)).error.code).toBe(
+        "canceled",
+      );
     } finally {
       release();
       await draining.stop();

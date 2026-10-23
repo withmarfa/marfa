@@ -139,7 +139,9 @@ describe("attaching a file", () => {
         kept = {
           store,
           code: outcome.code,
-          envelope: JSON.parse(outcome.stderr.trim()) as Refusal,
+          envelope: JSON.parse(
+            outcome.stderr.trim().split("\n").at(-1) ?? "",
+          ) as Refusal,
         };
       }
     }

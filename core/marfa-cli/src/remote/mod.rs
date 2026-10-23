@@ -635,7 +635,7 @@ impl Remote {
         if sends_key && self.bearer().is_none() {
             return Err(self.no_credential());
         }
-        if sends_key && request.writes {
+        if request.writes {
             crate::writing::announce(&self.origin);
         }
         let segments: Vec<&str> = request.segments.iter().map(String::as_str).collect();
@@ -1249,11 +1249,12 @@ mod tests {
     }
 
     #[test]
-    fn only_a_request_that_can_change_data_is_announced() {
+    fn only_a_request_that_can_change_data_is_announced_with_a_key_or_without() {
         let door = Door::open(vec![
             Answer::json("200 OK", r#"{"data":[]}"#),
             Answer::json("200 OK", r#"{"data":[]}"#),
-            Answer::json("200 OK", r#"{"name":"marfa"}"#),
+            Answer::json("200 OK", r#"{"access_token":"t"}"#),
+            Answer::json("201 Created", r#"{"name":"marfa"}"#),
             Answer::json("201 Created", r#"{"id":"i"}"#),
         ]);
         let remote = remote_at(&door, Some("marfa_k1_x"));
@@ -1262,13 +1263,20 @@ mod tests {
             .json(&Request::post(&["items", "lookup"]).reading())
             .unwrap();
         remote
-            .json(&Request::post(&["owner", "setup"]).public())
+            .json(&Request::post(&["auth", "token"]).public().reading())
             .unwrap();
         assert_eq!(crate::writing::announced(), Vec::<String>::new());
-        remote.json(&Request::post(&["items"])).unwrap();
+        remote
+            .json(&Request::post(&["owner", "setup"]).public())
+            .unwrap();
         assert_eq!(
             crate::writing::announced(),
             vec![remote.origin().to_string()]
+        );
+        remote.json(&Request::post(&["items"])).unwrap();
+        assert_eq!(
+            crate::writing::announced(),
+            vec![remote.origin().to_string(); 2]
         );
     }
 
