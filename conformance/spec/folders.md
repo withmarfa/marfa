@@ -3204,9 +3204,11 @@ When a file returns at its own path or a new name within the rename grace, a dev
 
 ### `folders/delete-remote-revives`
 
-When another device changes a deleted item in content its file shows during the rename grace, a device MUST restore the file from the changed item.
+When another device changes a deleted item in content its file shows during the rename grace and no other registered folder holds the file's move, a device MUST restore the file from the changed item.
 
-**Tests:** `device/folders-identity.test.ts › writes a deleted file back when another device changes its item inside the grace, and sends no delete`, `device/folders-pass-writeback.test.ts › writes a remote change into a file in place, and brings back a file deleted after the scan once its delete is journaled`.
+**Reason:** A file another folder holds as this one moved is the item's file there, and written back here it would read there as a copy (`folders/moved-not-revived`, `folders/uncertain-move-no-replacement`). A file whose folders both hold its item is not a move (`folders/two-folders-delete`), so it is written back.
+
+**Tests:** `device/folders-identity.test.ts › writes a deleted file back when another device changes its item inside the grace, and sends no delete`, `device/folders-pass-writeback.test.ts › writes a remote change into a file in place, and brings back a file deleted after the scan once its delete is journaled`, `device/folders-one-mac.test.ts › still writes back a file deleted where both folders hold its item when another device changes it`.
 
 ### `folders/delete-revived-cancels`
 
@@ -3238,7 +3240,7 @@ When a person deletes a bound file before a device first writes its `marfa_id` l
 
 If a folder pull reaches an item whose bound file is missing from a path the folder's lists take outside any nested folder, neither journaled as deleted nor put back by a restore of a paused removal, then a device MUST NOT write the item's file.
 
-**Reason:** A file gone since the scan read it was moved or deleted by the person, and only the next scan can tell which. Written back, a moved file reads as its copy and becomes a second item, and a deleted one returns. Once the next scan journals a deletion, `folders/delete-remote-revives` decides whether the file comes back; a restore asks for it back under `folders/restore-disk-files`. No scan reaches a path the lists no longer take or one inside a nested folder, so nothing there would tell a move from a delete, and the item's file is written where the item wants it.
+**Reason:** A file gone since the scan read it was moved or deleted by the person, and only the next scan can tell which. Written back, a moved file reads as its copy and becomes a second item, and a deleted one returns. Once the next scan journals a deletion, `folders/delete-remote-revives` and `folders/moved-not-revived` decide whether the file comes back; a restore asks for it back under `folders/restore-disk-files`. No scan reaches a path the lists no longer take or one inside a nested folder, so nothing there would tell a move from a delete, and the item's file is written where the item wants it.
 
 **Tests:** `device/folders-pass-writeback.test.ts › does not write back a file moved after the scan, and the next scan follows the move`, `› does not write back a file renamed with its title line after the scan, and keeps its item`, `› does not write back a file deleted after the scan, and journals the delete`, `› keeps the edit of a file moved and edited after the scan, and makes no second item`, `› writes back none of a burst of files moved and deleted after the scan`, `› writes a remote change into a file in place, and brings back a file deleted after the scan once its delete is journaled`, `› counts a file the pull wrote itself and deleted after the scan as unwritten, not unchanged`, `device/folders-one-mac.test.ts › does not write back a file moved to another folder between a pass's scan and its pull`, `device/binding-folders-clock.test.ts › writes back no file moved between a watch pass's scan and its pull, and follows the move on the next pass`, `› writes back no file deleted between a watch pass's scan and its pull, and sends its delete after the grace`, `device/folders.test.ts › holds the files of a directory it cannot read, and goes on with the rest`.
 
@@ -4142,11 +4144,11 @@ When a missing folder file could be in unreadable registered folders or several 
 
 ### `folders/uncertain-move-no-replacement`
 
-While a missing folder file’s deletion is deferred under `folders/uncertain-move-deferred`, a device MUST NOT write the file again.
+While a missing folder file could be in unreadable registered folders or among several files elsewhere with its bytes, a device MUST NOT write the file again.
 
-**Reason:** the file may be in a folder that cannot be read or among the files elsewhere with its bytes. Written again here, the moved file would read as a copy there and become a new item. A full pass looks for the file again.
+**Reason:** written again here, the moved file would read as a copy there and become a new item. Within the rename grace, the grace sweep then tells a move from a deletion (`folders/uncertain-move-deferred`, `folders/missing-file-trashed`), and a full pass looks for the file again.
 
-**Tests:** `device/folders-one-mac.test.ts › writes no file back for a held delete when another device changes its item`.
+**Tests:** `device/folders-one-mac.test.ts › writes no file back for a held delete when another device changes its item`, `device/folders-one-mac.test.ts › writes back no file moved to a folder it cannot read when another device changes its item inside the grace`.
 
 ### `folders/uncertain-move-not-text`
 
@@ -4198,19 +4200,27 @@ While a missing folder file is found in another registered folder in a file that
 
 ### `folders/moved-awaiting-peer`
 
-While a scan keeps a missing folder file’s binding under `folders/moved-binding-kept`, or another registered folder holds a file that carries the ID of an item this folder has not bound and that folder has not bound the file, a device MUST count the item as `elsewhere`.
+While a scan keeps a missing folder file’s binding under `folders/moved-binding-kept`, a pull leaves a missing folder file unwritten under `folders/moved-not-revived`, or another registered folder holds a file that carries the ID of an item this folder has not bound and that folder has not bound the file, a device MUST count the item as `elsewhere`.
 
-**Reason:** a pull runs at every pass of a watch, so it reads where a scan past the rename grace found the missing file instead of looking in the other folders itself. Within the grace, the item counts as any missing file does (`folders/delete-grace`, `folders/delete-remote-revives`). A quick pass keeps the last scan’s finding and a full pass looks again, so a watch releases the binding at its first full pass after the other folder binds the file.
+**Reason:** a pull runs at every pass of a watch, so past the rename grace it reads where the scan found the missing file instead of looking in the other folders itself. A quick pass keeps the last scan’s finding and a full pass looks again, so a watch releases the binding at its first full pass after the other folder binds the file.
 
-**Tests:** `device/folders-one-mac.test.ts › does not trash a file moved to another folder`, `device/folders-one-mac.test.ts › keeps one item when a file item both folders hold moves between them and the %s folder scans first`, `device/folders-one-mac.test.ts › follows a move by copy and delete, by id and by bytes`.
+**Tests:** `device/folders-one-mac.test.ts › does not trash a file moved to another folder`, `device/folders-one-mac.test.ts › keeps one item when a file item both folders hold moves between them and the %s folder scans first`, `device/folders-one-mac.test.ts › follows a move by copy and delete, by id and by bytes`, `device/folders-one-mac.test.ts › makes no second item when another device changes a moved file's item inside the grace`.
 
 ### `folders/moved-awaiting-peer-no-replacement`
 
 While a scan keeps a missing folder file’s binding under `folders/moved-binding-kept`, or another registered folder holds a file that carries the ID of an item this folder has not bound and that folder has not bound the file, a device MUST NOT write a replacement file.
 
-**Reason:** written anew, the file would make the moved file read as a copy in the other folder. Within the rename grace, a device treats the missing file as any other (`folders/delete-remote-revives`, `folders/moved-awaiting-peer`).
+**Reason:** written anew, the file would make the moved file read as a copy in the other folder.
 
 **Tests:** `device/folders-one-mac.test.ts › does not trash a file moved to another folder`, `device/folders-one-mac.test.ts › keeps one item when a file item both folders hold moves between them and the %s folder scans first`.
+
+### `folders/moved-not-revived`
+
+While a missing folder file is found in another registered folder, by its identity, by the ID it carries or as the one file there with its bytes, a device MUST NOT write the missing file again from another device's change.
+
+**Reason:** written again, the file makes the moved file read as a copy in the folder it went to, which then admits it as a second item (`folders/cross-folder-copy`). The change still reaches the item, since the moved file merges it once that folder binds it. A file whose folders both hold its item, each with its own file, is not a move (`folders/two-folders-delete`), and is written back under `folders/delete-remote-revives`.
+
+**Tests:** `device/folders-one-mac.test.ts › makes no second item when another device changes a moved file's item inside the grace`.
 
 ## Watching every folder
 

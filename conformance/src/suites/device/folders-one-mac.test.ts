@@ -37,6 +37,7 @@ import {
   scriptWrites,
 } from "./harness.js";
 import { CliFolder, type FolderSettings } from "../../device/cli-adapter.js";
+import type { FolderDoor } from "../../device/folder-door.js";
 import { ScriptedServer } from "../../device/scripted-server.js";
 import type { FolderHarness, FolderRow } from "./harness.js";
 import type { WireItemOptions } from "../../device/marfa-answers.js";
@@ -211,7 +212,12 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     other: FolderSettings,
     rows: Record<string, Array<{ item: WireItemOptions; tags?: string[] }>>,
     before?: (server: ScriptedServer) => void,
-  ): Promise<{ edges: EdgeDoor; a: FolderHarness; b: FolderHarness }> {
+  ): Promise<{
+    edges: EdgeDoor;
+    door: FolderDoor;
+    a: FolderHarness;
+    b: FolderHarness;
+  }> {
     const edges = new EdgeDoor();
     harness = await folderHarness(`${label}-a`, {
       settings: first,
@@ -221,13 +227,19 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     // Before the item doors, whose read would answer for any id.
     const otherRow = scriptFolderRow(harness.server, other);
     before?.(harness.server);
-    scriptFolderWrites(harness, { edges });
+    let door: FolderDoor | undefined;
+    scriptFolderWrites(harness, {
+      edges,
+      door: (made) => {
+        door = made;
+      },
+    });
     second = await folderHarness(`${label}-b`, {
       sharing: { server: harness.server, key: KEY },
       folder: otherRow,
       registry: harness.registry,
     });
-    return { edges, a: harness, b: second };
+    return { edges, door: door!, a: harness, b: second };
   }
 
   it("lists the folders on the Mac in one registry", async () => {
@@ -1856,13 +1868,43 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
       id: "01a00000-0000-7000-8000-0000000038c2",
       properties: { title: "Graced", body: "g\n" },
     };
+    const restored = {
+      id: "01a00000-0000-7000-8000-0000000038c3",
+      properties: { title: "Restored", body: "r\n" },
+    };
     const { a, edges } = await onOneMac(
       "held-no-write",
       { search: { types: ["core.note"] } },
       { search: { types: ["core.bookmark"] } },
-      { "core.note": [{ item: held }, { item: graced }] },
+      { "core.note": [{ item: held }, { item: graced }, { item: restored }] },
     );
+    const changeElsewhere = (...items: Array<typeof held>): void => {
+      for (const item of items) {
+        edges.events.push(
+          copyItemEvent(
+            String(edges.events.length + 2),
+            "item.updated",
+            wireItem({
+              ...item,
+              version: 2,
+              properties: { ...item.properties, body: "their edit\n" },
+            }),
+          ),
+        );
+      }
+    };
     expect((await a.folder.pull()).ok).toBe(true);
+
+    // The witness: where the move can be told, the same change writes a
+    // file deleted inside the grace back (`folders/delete-remote-revives`).
+    rmSync(join(a.dir, "Restored.md"));
+    expect((await a.folder.push()).ok).toBe(true);
+    changeElsewhere(restored);
+    const told = await a.folder.device().catchUp();
+    expect(told.ok && told.value.applied).toBe(1);
+    expect((await a.folder.push()).ok).toBe(true);
+    expect(read(a, "Restored.md")).toContain("their edit");
+
     writeFileSync(a.registry, "");
     expect((await a.folder.push()).ok).toBe(true);
     rmSync(join(a.dir, "Held.md"));
@@ -1875,37 +1917,201 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
       "Held.md",
     ]);
 
-    // Inside the grace, the same change writes its file back
-    // (`folders/delete-remote-revives`).
+    // Inside the grace, the move cannot be told either.
     rmSync(join(a.dir, "Graced.md"));
     expect((await a.folder.push()).ok).toBe(true);
-    for (const item of [held, graced]) {
-      edges.events.push(
-        copyItemEvent(
-          String(edges.events.length + 2),
-          "item.updated",
-          wireItem({
-            ...item,
-            version: 2,
-            properties: { ...item.properties, body: "their edit\n" },
-          }),
-        ),
-      );
-    }
+    changeElsewhere(held, graced);
     const heard = await a.folder.device().catchUp();
     expect(heard.ok && heard.value.applied).toBe(2);
     const pulled = await a.folder.push();
     expect(pulled.ok, JSON.stringify(pulled)).toBe(true);
     if (!pulled.ok) return;
-    expect(read(a, "Graced.md")).toContain("their edit");
     expect(pulled.value.scan.unsure.map((file) => file.path)).toEqual([
       "Held.md",
     ]);
-    expect(
-      existsSync(join(a.dir, "Held.md")),
-      "a file whose delete is held was written back, so a folder it may have moved to reads it as a copy",
-    ).toBe(false);
+    for (const name of ["Held.md", "Graced.md"]) {
+      expect(
+        existsSync(join(a.dir, name)),
+        `${name}, whose move cannot be told, was written back, so a folder it may have moved to reads it as a copy`,
+      ).toBe(false);
+    }
+    expect(pulled.value.pull?.revived).toBe(0);
     expect(deletesOf(a.server, held.id)).toBe(0);
+  });
+
+  it("makes no second item when another device changes a moved file's item inside the grace", async () => {
+    const moved = {
+      id: "01a00000-0000-7000-8000-0000000043a1",
+      properties: { title: "Moved", body: "the person's words\n" },
+    };
+    const { a, b, door, edges } = await onOneMac(
+      "move-changed-elsewhere",
+      { search: { types: ["core.note"] } },
+      // Its copy holds the note, and its search does not.
+      { search: { types: ["core.bookmark"] } },
+      { "core.note": [{ item: moved }] },
+    );
+    expect((await a.folder.pull()).ok).toBe(true);
+    renameSync(join(a.dir, "Moved.md"), join(b.dir, "Moved.md"));
+    const journaled = await a.folder.push();
+    expect(journaled.ok, JSON.stringify(journaled)).toBe(true);
+    if (!journaled.ok) return;
+    expect(journaled.value.scan.missing).toBe(1);
+
+    edges.logItem(
+      "item.updated",
+      door.update(moved.id, {
+        properties: { notes: "their annotation" },
+        version: 1,
+      }),
+    );
+    const heard = await a.folder.device().catchUp();
+    expect(heard.ok && heard.value.applied).toBe(1);
+    const pulled = await a.folder.push();
+    expect(pulled.ok, JSON.stringify(pulled)).toBe(true);
+    if (!pulled.ok) return;
+    expect(
+      existsSync(join(a.dir, "Moved.md")),
+      "the folder a file moved out of wrote it back from another device's change, so the moved file reads as a copy where it went",
+    ).toBe(false);
+    expect(pulled.value.pull?.revived).toBe(0);
+    expect(pulled.value.pull?.elsewhere).toBe(1);
+
+    writeFileSync(
+      join(b.dir, "Moved.md"),
+      read(b, "Moved.md").replace(
+        "the person's words\n",
+        "the person's words, edited where they went\n",
+      ),
+    );
+    const from = b.server.requests.length;
+    const taken = await b.folder.push();
+    expect(taken.ok, JSON.stringify(taken)).toBe(true);
+    expect(
+      createsSince(b.server, from),
+      "the moved file became a second item",
+    ).toEqual([]);
+    expect(idIn(b, "Moved.md")).toBe(moved.id);
+    expect(
+      door.rows.get(moved.id)?.properties,
+      "the item lost the person's edit or the other device's change",
+    ).toMatchObject({
+      body: "the person's words, edited where they went\n",
+      notes: "their annotation",
+    });
+
+    // Past the grace, the folder it left finds it moved and trashes nothing,
+    // and neither folder makes another item of it.
+    await pastTheGrace();
+    const swept = await a.folder.push();
+    expect(swept.ok, JSON.stringify(swept)).toBe(true);
+    if (!swept.ok) return;
+    expect(swept.value.scan.moved_away).toBe(1);
+    expect(deletesOf(a.server, moved.id)).toBe(0);
+    expect((await a.folder.push()).ok).toBe(true);
+    expect((await b.folder.push()).ok).toBe(true);
+    expect(createsSince(a.server, from)).toEqual([]);
+    expect(
+      [...door.rows.values()].filter((row) => row.type === "core.note"),
+    ).toHaveLength(1);
+  });
+
+  it("still writes back a file deleted where both folders hold its item when another device changes it", async () => {
+    const shared = {
+      id: "01a00000-0000-7000-8000-0000000043b1",
+      properties: { title: "Shared", body: "both folders' words\n" },
+    };
+    const { a, b, door, edges } = await onOneMac(
+      "two-files-changed-elsewhere",
+      { search: { types: ["core.note"] } },
+      { search: { types: ["core.note"] } },
+      { "core.note": [{ item: shared }] },
+    );
+    expect((await a.folder.pull()).ok).toBe(true);
+    expect((await b.folder.pull()).ok).toBe(true);
+    expect(idIn(b, "Shared.md")).toBe(shared.id);
+    rmSync(join(a.dir, "Shared.md"));
+    const journaled = await a.folder.push();
+    expect(journaled.ok && journaled.value.scan.missing).toBe(1);
+
+    edges.logItem(
+      "item.updated",
+      door.update(shared.id, {
+        properties: { notes: "their annotation" },
+        version: 1,
+      }),
+    );
+    const heard = await a.folder.device().catchUp();
+    expect(heard.ok && heard.value.applied).toBe(1);
+    const from = a.server.requests.length;
+    const pulled = await a.folder.push();
+    expect(pulled.ok, JSON.stringify(pulled)).toBe(true);
+    if (!pulled.ok) return;
+    // The other folder's file of the item is its own, not this one moved.
+    expect(
+      pulled.value.pull?.revived,
+      "a file deleted where both folders hold its item was not written back from another device's change",
+    ).toBe(1);
+    expect(read(a, "Shared.md")).toContain("their annotation");
+    expect(idIn(a, "Shared.md")).toBe(shared.id);
+
+    await pastTheGrace();
+    expect((await a.folder.push()).ok).toBe(true);
+    expect((await b.folder.push()).ok).toBe(true);
+    expect(deletesOf(a.server, shared.id)).toBe(0);
+    expect(createsSince(a.server, from)).toEqual([]);
+  });
+
+  it("writes back no file moved to a folder it cannot read when another device changes its item inside the grace", async () => {
+    const moved = {
+      id: "01a00000-0000-7000-8000-0000000043c1",
+      properties: { title: "Moved", body: "the person's words\n" },
+    };
+    const { a, b, door, edges } = await onOneMac(
+      "move-unreadable-changed-elsewhere",
+      { search: { types: ["core.note"] } },
+      { search: { types: ["core.bookmark"] } },
+      { "core.note": [{ item: moved }] },
+    );
+    expect((await a.folder.pull()).ok).toBe(true);
+    renameSync(join(a.dir, "Moved.md"), join(b.dir, "Moved.md"));
+    chmodSync(b.dir, 0o000);
+    try {
+      const journaled = await a.folder.push();
+      expect(journaled.ok && journaled.value.scan.missing).toBe(1);
+      edges.logItem(
+        "item.updated",
+        door.update(moved.id, {
+          properties: { notes: "their annotation" },
+          version: 1,
+        }),
+      );
+      const heard = await a.folder.device().catchUp();
+      expect(heard.ok && heard.value.applied).toBe(1);
+      const pulled = await a.folder.push();
+      expect(pulled.ok, JSON.stringify(pulled)).toBe(true);
+      if (!pulled.ok) return;
+      expect(
+        existsSync(join(a.dir, "Moved.md")),
+        "a missing file was written back while the folder it may have moved to could not be read",
+      ).toBe(false);
+      expect(pulled.value.pull?.revived).toBe(0);
+    } finally {
+      chmodSync(b.dir, 0o755);
+    }
+
+    // Readable again, the folder it went to takes it as the item.
+    const from = b.server.requests.length;
+    expect((await a.folder.push()).ok).toBe(true);
+    expect(existsSync(join(a.dir, "Moved.md"))).toBe(false);
+    const taken = await b.folder.push();
+    expect(taken.ok, JSON.stringify(taken)).toBe(true);
+    expect(createsSince(b.server, from)).toEqual([]);
+    expect(idIn(b, "Moved.md")).toBe(moved.id);
+    expect(door.rows.get(moved.id)?.properties).toMatchObject({
+      body: "the person's words\n",
+      notes: "their annotation",
+    });
   });
 
   it("refuses a folder inside another, and walks past a folder inside it", async () => {

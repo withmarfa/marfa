@@ -1,9 +1,10 @@
 use super::{
     ATTACHMENT_EDGE, BoundFiles, Catalog, CoreError, EdgeTypes, FOLDER_TYPE, Flagged, Folder,
-    HashMap, HashSet, Item, ItemState, Lists, Mode, Names, OFlags, Path, Peers, Result, Serialize,
-    Settings, SettingsFileReport, Uncarried, Value, beside, bytes_of, carries_frontmatter, cleaned,
-    document, executable, fields, identity, landing, line_of, name_of, names, path_of, placement,
-    plainly_inside, read_file, stat_metadata, state, suited, transfer,
+    HashMap, HashSet, Item, ItemState, Lists, Look, Mode, Names, OFlags, Path, Peers, Result,
+    Serialize, Settings, SettingsFileReport, Uncarried, Value, beside, bytes_of,
+    carries_frontmatter, cleaned, document, executable, fields, identity, landing, line_of,
+    name_of, names, path_of, placement, plainly_inside, read_file, stat_metadata, state, suited,
+    transfer,
 };
 
 /// Bounded, so a copy that keeps changing ends the pull with
@@ -44,6 +45,8 @@ struct Rendering<'a> {
     edge_types: &'a EdgeTypes,
     names: &'a Names,
     lists: &'a Lists,
+    peers: &'a Peers<'a>,
+    members: &'a HashSet<String>,
 }
 
 impl Rendering<'_> {
@@ -580,6 +583,8 @@ impl Folder {
             edge_types: &edge_types,
             names: &names,
             lists: &lists,
+            peers: &peers,
+            members: &members,
         };
         let mut refused = HashSet::new();
         for entry in placing {
@@ -877,6 +882,28 @@ impl Folder {
             }
             None => false,
         };
+        // Written back from a change made elsewhere, a file moved to another
+        // folder here would read there as a copy; the moved file brings the
+        // change to the item once that folder binds it. A move that cannot be
+        // told yet is the grace sweep's to tell.
+        if !in_place
+            && let Some(bound) = bound
+            && !self.exists(self.root.join(&bound.path))
+            && journaled_for(&*self.core.conn()?, &bound.path, &item.id)?
+        {
+            match rendering.peers.moved_to(
+                bound,
+                rendering.members.contains(&item.id),
+                bytes_of(item, catalog).is_some(),
+            ) {
+                Look::Nowhere => {}
+                Look::Moved | Look::Arriving => {
+                    report.elsewhere += 1;
+                    return Ok(PlacementWrite::Done);
+                }
+                Look::Unsure(_) => return Ok(PlacementWrite::Done),
+            }
+        }
         // Read before a move queues the placement, which is no edit the
         // file holds.
         let waiting: HashSet<String> =
@@ -1905,6 +1932,8 @@ mod tests {
                 names: &names,
                 edge_types: &edge_types,
                 lists: &lists,
+                peers: &Peers::of(&folder, None),
+                members: &HashSet::new(),
             };
             let entry = Placing {
                 item: &item,
@@ -1980,6 +2009,8 @@ mod tests {
                 names: &names,
                 edge_types: &edge_types,
                 lists: &lists,
+                peers: &Peers::of(&folder, None),
+                members: &HashSet::new(),
             };
             let entry = Placing {
                 item: &item,

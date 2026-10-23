@@ -1228,7 +1228,8 @@ export interface PullReport {
   skipped: number;
   unwritten: number;
   /** Files the person deleted, written back because their item changed
-   *  elsewhere inside the grace (`folders/delete-remote-revives`). */
+   *  elsewhere inside the grace and no other folder on the machine holds
+   *  their move (`folders/delete-remote-revives`). */
   revived: number;
   /** Items whose placement another item holds, written at a free path
    *  beside it (`folders/placement-collision-number`). */
@@ -1259,8 +1260,8 @@ export interface PullReport {
   /** Files another folder on the machine let go of, taken in here
    *  (`folders/take-in-file`). */
   taken: number;
-  /** Items whose file was moved to another folder on the machine that has
-   *  not taken it yet, so none is written here (`folders/moved-awaiting-peer`). */
+  /** Items whose file was moved to another folder on the machine, so none
+   *  is written here (`folders/moved-awaiting-peer`). */
   elsewhere: number;
   /** Files of items another folder on the machine holds with a file of its
    *  own, taken away with nothing trashed (`folders/let-go-existing-peer`). */

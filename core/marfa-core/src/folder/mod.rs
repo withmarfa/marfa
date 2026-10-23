@@ -3557,11 +3557,22 @@ mod tests {
             serde_json::json!({ "search": {} }),
             None,
         );
-        for name in ["held.txt", "graced.txt"] {
-            std::fs::write(dir.path().join(name), "words\n").unwrap();
+        let names = ["restored.txt", "held.txt", "graced.txt"];
+        for name in names {
+            std::fs::write(dir.path().join(name), format!("{name} words\n")).unwrap();
         }
-        assert_eq!(folder.scan().unwrap().created, 2);
-        let ids = ["held.txt", "graced.txt"].map(|name| landed(&folder, name));
+        assert_eq!(folder.scan().unwrap().created, 3);
+        let [restored, held_id, graced] = names.map(|name| landed(&folder, name));
+
+        // The witness: a missing file no other folder holds is written back
+        // with its item's change.
+        std::fs::remove_file(dir.path().join("restored.txt")).unwrap();
+        assert_eq!(folder.scan().unwrap().missing, 1);
+        changed_elsewhere(&folder, &restored, "changed elsewhere");
+        let pulled = folder.pull().unwrap();
+        assert!(dir.path().join("restored.txt").exists(), "{pulled:?}");
+        assert_eq!(pulled.revived, 1, "{pulled:?}");
+
         for name in ["held.txt", "graced.txt"] {
             std::fs::remove_file(dir.path().join(name)).unwrap();
         }
@@ -3586,27 +3597,20 @@ mod tests {
             quick.unsure, held.unsure,
             "a quick pass forgot why it holds"
         );
-        {
-            let conn = folder.core.conn().unwrap();
-            for id in &ids {
-                conn.execute(
-                    "UPDATE items SET version = 2,
-                       properties = json_set(properties, '$.body', 'changed elsewhere')
-                     WHERE id = ?1",
-                    [id],
-                )
-                .unwrap();
-            }
+        for id in [&held_id, &graced] {
+            changed_elsewhere(&folder, id, "changed elsewhere");
         }
 
+        // Past the grace or inside it, a file that may have moved to a folder
+        // the registry no longer names stays unwritten.
         let pulled = folder.pull().unwrap();
-        // The witness: a missing file the sweep has not decided on yet is
-        // written back with the item's change, as before the grace ends.
-        assert!(dir.path().join("graced.txt").exists(), "{pulled:?}");
-        assert!(
-            !dir.path().join("held.txt").exists(),
-            "a missing file whose move cannot be told was written back"
-        );
+        for name in ["held.txt", "graced.txt"] {
+            assert!(
+                !dir.path().join(name).exists(),
+                "{name}, whose move cannot be told, was written back: {pulled:?}"
+            );
+        }
+        assert_eq!(pulled.revived, 0, "{pulled:?}");
         assert_eq!(pulled.elsewhere, 0, "{pulled:?}");
     }
 
