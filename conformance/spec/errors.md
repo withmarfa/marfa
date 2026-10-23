@@ -424,7 +424,7 @@ When the server answers `507 insufficient_storage` because a body would take the
 
 When the server answers `403 type_not_permitted` because a key holds no grant, or too low a grant, on a type at the level the operation asks, the server MUST carry `details.grant` with a `kind` of `type` and a `name` that is the type's identifier.
 
-**Reason:** a client holding a write that the refusal stopped can tell a narrowed key from a write that will never land, and send it again once the grant is back. A folder operation names `system.folder`.
+**Reason:** a client holding a write that the refusal stopped can tell a narrowed key from a write that will never land, and send it again once the grant is back. A folder operation names `system.folder`, and a view operation `system.view`.
 
 **Tests:** `compliance/write-refusal-details.test.ts › names the type, edge type or extension namespace and the level the key lacks`, `› names the level read where the key may not read the type, on a list, its counts and an export`.
 

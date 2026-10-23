@@ -78,6 +78,7 @@ beforeAll(async () => {
     trackedEdges: [],
     trackedEdgeTypes: [],
     trackedFolders: [],
+    trackedViews: [],
     trackedWebhooks: [],
     trackedTypes: [],
     client,

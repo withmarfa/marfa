@@ -15,6 +15,7 @@ import {
   trackFolder,
   trackItem,
   trackKey,
+  trackView,
   cleanup,
 } from "../../utils/setup.js";
 
@@ -106,11 +107,59 @@ describe("system.* set", () => {
     expect(unchanged.data.item.state).toBe("active");
   });
 
+  it("refuses a system.view write on every item door, from a key the view door admits", async () => {
+    const np = await narrowClient("np-view-write");
+    const layouts = [{ id: "main", kind: "list" }];
+    // The witness: this key writes a view through its own door.
+    const made = await np.createView({ title: "item doors", layouts });
+    expect(made.status).toBe(201);
+    const viewId = made.data.item.id;
+    trackView(ctx, viewId);
+    const note = await np.createItem({
+      type: "core.note",
+      properties: { body: "not a view" },
+    });
+    expect(note.status).toBe(201);
+    trackItem(ctx, note.data.item.id);
+
+    const answers = [
+      await np.createItem({
+        type: "system.view",
+        properties: { title: "x", layouts },
+      }),
+      await np.updateItem(viewId, { version: 1, properties: { title: "x" } }),
+      await np.deleteItem(viewId),
+      await np.transitionItem(viewId, "archived"),
+      await np.updateItem(note.data.item.id, {
+        version: 1,
+        type: "system.view",
+        retype: true,
+        properties: { title: "x", layouts },
+      }),
+    ];
+    for (const r of answers) {
+      expect(r.status).toBe(403);
+      expect(r.error?.error.code).toBe("type_not_permitted");
+    }
+    const bulk = await np.bulkItems([
+      { type: "system.view", properties: { title: "x", layouts } },
+    ]);
+    expect(bulk.status).toBe(403);
+    expect(bulk.error?.error.code).toBe("bulk_atomic_rollback");
+    expect(
+      (bulk.error?.error.details as { code?: string } | undefined)?.code,
+    ).toBe("type_not_permitted");
+
+    const unchanged = await np.getItem(viewId);
+    expect(unchanged.data.item.version).toBe(1);
+    expect(unchanged.data.item.state).toBe("active");
+  });
+
   it("ships only the system types the server writes", async () => {
-    // **The absence is witnessed.** The two types something writes are
+    // **The absence is witnessed.** The three types something writes are
     // asserted present by the same doors, so a lookup that answered nothing
     // for every id would redden here.
-    for (const id of ["system.connection", "system.folder"]) {
+    for (const id of ["system.connection", "system.folder", "system.view"]) {
       const r = await client.getType(id);
       expect(r.status, id).toBe(200);
     }
@@ -126,7 +175,7 @@ describe("system.* set", () => {
     }
   });
 
-  it("lists exactly the two system types the server writes", async () => {
+  it("lists exactly the three system types the server writes", async () => {
     const r = await client.listTypes();
     expect(r.status).toBe(200);
     const ids = r.data.data.map((t) => t.id);
@@ -135,6 +184,7 @@ describe("system.* set", () => {
     expect(ids.filter((id) => id.startsWith("system.")).sort()).toEqual([
       "system.connection",
       "system.folder",
+      "system.view",
     ]);
   });
 

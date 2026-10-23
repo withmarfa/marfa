@@ -133,6 +133,17 @@ describe("a refusal caused by a missing grant names it", () => {
       name: "system.folder",
       level: "write",
     });
+
+    const view = await writer.createView({
+      title: "refused",
+      layouts: [{ id: "main", kind: "list" }],
+    });
+    expect(view.status).toBe(403);
+    expect(view.error?.error.details?.grant).toEqual({
+      kind: "type",
+      name: "system.view",
+      level: "write",
+    });
   });
 
   it("names the level read where the key may not read the type, on a list, its counts and an export", async () => {

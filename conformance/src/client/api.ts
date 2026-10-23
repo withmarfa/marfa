@@ -372,6 +372,29 @@ export class MarfaClient {
     });
   }
 
+  async createView(
+    settings: Record<string, unknown>,
+  ): Promise<ApiResponse<{ item: MarfaItem }>> {
+    return this.request<{ item: MarfaItem }>("/views", {
+      method: "POST",
+      body: settings,
+    });
+  }
+
+  async updateView(
+    id: string,
+    changes: Record<string, unknown> & { version: number },
+  ): Promise<ApiResponse<{ item: MarfaItem }>> {
+    return this.request<{ item: MarfaItem }>(`/views/${id}`, {
+      method: "PATCH",
+      body: changes,
+    });
+  }
+
+  async deleteView(id: string): Promise<ApiResponse<{ ok: true }>> {
+    return this.request<{ ok: true }>(`/views/${id}`, { method: "DELETE" });
+  }
+
   async restoreItem(id: string): Promise<ApiResponse<{ item: MarfaItem }>> {
     return this.request<{ item: MarfaItem }>(`/items/${id}/restore`, {
       method: "POST",

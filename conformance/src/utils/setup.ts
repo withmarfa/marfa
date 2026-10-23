@@ -106,6 +106,7 @@ export async function createTestContext(
     trackedEdges: [],
     trackedEdgeTypes: [],
     trackedFolders: [],
+    trackedViews: [],
     trackedWebhooks: [],
     trackedTypes: [],
     client: undefined as unknown as MarfaClient,
@@ -183,6 +184,12 @@ export function trackEdge(ctx: TestContext, id: string): void {
 export function trackFolder(ctx: TestContext, id: string): void {
   if (!ctx.trackedFolders.includes(id)) {
     ctx.trackedFolders.push(id);
+  }
+}
+
+export function trackView(ctx: TestContext, id: string): void {
+  if (!ctx.trackedViews.includes(id)) {
+    ctx.trackedViews.push(id);
   }
 }
 
@@ -470,6 +477,9 @@ export async function cleanup(ctx: TestContext): Promise<void> {
       },
       "Folder",
     ),
+  );
+  outcomes.push(
+    await deleteAll(ctx.trackedViews, (id) => scoped.deleteView(id), "View"),
   );
   outcomes.push(
     await deleteAllByOwner(

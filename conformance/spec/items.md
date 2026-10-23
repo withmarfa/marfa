@@ -468,9 +468,9 @@ If a key writes an item of a type its type map does not grant write on, then the
 
 If any key the API can mint writes a `system.*` type through an item operation, then the server MUST answer `403 type_not_permitted`, whatever the key's type map grants.
 
-**Reason:** a `system.*` row is written only through its own operation, such as `items/folder-create`.
+**Reason:** a `system.*` row is written only through its own operation, such as `items/folder-create` or `views/create`.
 
-**Tests:** `compliance/system-types.test.ts › rejects system.* writes from every key the API can mint`, `› refuses a system.folder write on every item door, from a key the folder door admits`.
+**Tests:** `compliance/system-types.test.ts › rejects system.* writes from every key the API can mint`, `› refuses a system.folder write on every item door, from a key the folder door admits`, `› refuses a system.view write on every item door, from a key the view door admits`.
 
 ## Reading
 
@@ -750,11 +750,11 @@ When the revocation of a key commits after an earlier entry of a `POST /items/bu
 
 ### `items/idempotency-operations`
 
-The server MUST honor an `Idempotency-Key` on `POST /items`, `PATCH /items/{id}`, `DELETE /items/{id}`, `POST /items/{id}/purge`, `POST /items/{id}/transition`, `POST /items/{id}/restore`, `POST /items/{id}/tags`, `DELETE /items/{id}/tags/{tag}`, `PUT /items/{id}/metadata`, `PUT /items/{id}/extensions/{namespace}`, `DELETE /items/{id}/extensions/{namespace}`, `POST /edges`, `PATCH /edges/{id}`, `DELETE /edges/{id}`, `POST /folders`, `PATCH /folders/{id}`, `POST /folders/{id}/revoke` and `POST /items/bulk-actions`, and on no other operation.
+The server MUST honor an `Idempotency-Key` on `POST /items`, `PATCH /items/{id}`, `DELETE /items/{id}`, `POST /items/{id}/purge`, `POST /items/{id}/transition`, `POST /items/{id}/restore`, `POST /items/{id}/tags`, `DELETE /items/{id}/tags/{tag}`, `PUT /items/{id}/metadata`, `PUT /items/{id}/extensions/{namespace}`, `DELETE /items/{id}/extensions/{namespace}`, `POST /edges`, `PATCH /edges/{id}`, `DELETE /edges/{id}`, `POST /folders`, `PATCH /folders/{id}`, `POST /folders/{id}/revoke`, `POST /views`, `PATCH /views/{id}`, `DELETE /views/{id}` and `POST /items/bulk-actions`, and on no other operation.
 
 **Reason:** a client resends a write whose answer it lost. A tag, metadata or extension write checks no version, so one applied a second time would undo a change made between the two sends.
 
-**Tests:** `sync/idempotency-replay.test.ts › guards the replay on every idempotent write operation`, `› takes no Idempotency-Key on the operations that do not list it, and runs each repeat`, `› a metadata or extension write sent again under its key`, `compliance/edge-move.test.ts › answers a move repeated under one Idempotency-Key from its record`.
+**Tests:** `sync/idempotency-replay.test.ts › guards the replay on every idempotent write operation`, `› takes no Idempotency-Key on the operations that do not list it, and runs each repeat`, `› a metadata or extension write sent again under its key`, `compliance/edge-move.test.ts › answers a move repeated under one Idempotency-Key from its record`, `compliance/views.test.ts › answers a view create repeated under one Idempotency-Key once`.
 
 ### `items/idempotency-replay`
 

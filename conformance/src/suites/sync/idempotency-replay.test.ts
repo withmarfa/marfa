@@ -17,6 +17,7 @@ import {
   trackEdge,
   trackEdgeType,
   trackFolder,
+  trackView,
   trackItem,
   trackKey,
 } from "../../utils/setup.js";
@@ -881,6 +882,8 @@ describe("a retained answer after its credential is narrowed", () => {
   });
 });
 
+const LAYOUTS = [{ id: "main", kind: "list" }];
+
 const DOORS = [
   "POST /items",
   "PATCH /items/{id}",
@@ -894,6 +897,9 @@ const DOORS = [
   "POST /folders",
   "PATCH /folders/{id}",
   "POST /folders/{id}/revoke",
+  "POST /views",
+  "PATCH /views/{id}",
+  "DELETE /views/{id}",
   "POST /items/bulk-actions",
   "POST /items/{id}/tags",
   "DELETE /items/{id}/tags/{tag}",
@@ -920,6 +926,12 @@ async function prepare(door: string): Promise<Prepared> {
     const made = await client.createFolder({ title: "A folder" });
     expect(made.status, JSON.stringify(made.error)).toBe(201);
     trackFolder(ctx, made.data.item.id);
+    return made.data.item;
+  };
+  const view = async (): Promise<MarfaItem> => {
+    const made = await client.createView({ title: "A view", layouts: LAYOUTS });
+    expect(made.status, JSON.stringify(made.error)).toBe(201);
+    trackView(ctx, made.data.item.id);
     return made.data.item;
   };
   const edge = async (): Promise<MarfaEdge> =>
@@ -983,6 +995,22 @@ async function prepare(door: string): Promise<Prepared> {
     }
     case "POST /folders/{id}/revoke":
       return { method, path: `/folders/${(await folder()).id}/revoke` };
+    case "POST /views":
+      return {
+        method,
+        path: template,
+        body: { title: "A view", layouts: LAYOUTS },
+      };
+    case "PATCH /views/{id}": {
+      const made = await view();
+      return {
+        method,
+        path: `/views/${made.id}`,
+        body: { version: made.version, title: "Changed view" },
+      };
+    }
+    case "DELETE /views/{id}":
+      return { method, path: `/views/${(await view()).id}` };
     case "POST /items/bulk-actions": {
       const tag = `replay-door-${randomUUID()}`;
       await note({ title: "Matched", body: "row" }, { tags: [tag] });
