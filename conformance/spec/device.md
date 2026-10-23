@@ -4260,6 +4260,18 @@ If `MARFA_DOCS_URL` holds more than white space and is not an `http` or `https` 
 
 **Tests:** `device/contract.test.ts › refuses a docs address that is not http or https with invalid, sending nothing`.
 
+## Terminal output
+
+The CLI draws bold and color for the lines a person reads, on a terminal.
+
+### `device/no-escape-off-terminal`
+
+If a standard stream of the CLI is not a terminal, or `NO_COLOR` is set and not empty, or `TERM` is `dumb`, or `--json` is given, then the CLI MUST write no escape character (U+001B) of its own to that stream.
+
+**Reason:** An agent runs the CLI with no terminal and reads whatever it is sent, up to a limit, and a character that moves a cursor or sets a color is noise to it. Each stream is judged on its own, and a color never carries a meaning its words do not. The fixtures give the CLI no terminal, so the `NO_COLOR`, `TERM` and terminal halves are held by the CLI's own tests, which use a pseudo-terminal.
+
+**Tests:** `device/contract.test.ts › writes no escape character to a stream that is not a terminal, with NO_COLOR set, or under --json`.
+
 ## A starting type definition
 
 `marfa types scaffold` prints a definition for a type identifier and its fields. It names no server, working copy or key, and sends nothing.

@@ -3,6 +3,10 @@
 //! held without an engine. The stand-in keeps its state in files; a thread
 //! plays the server's health endpoint once the stand-in has "started" it.
 
+#[allow(dead_code)]
+#[path = "support/terminal.rs"]
+mod terminal;
+
 use std::fs;
 use std::io::{Read, Write};
 use std::net::TcpListener;
@@ -195,6 +199,30 @@ impl Rig {
             String::from_utf8_lossy(&output.stdout).into_owned(),
             String::from_utf8_lossy(&output.stderr).into_owned(),
         )
+    }
+
+    /// `install` with standard output and error on terminals, as a person sees
+    /// it.
+    fn install_on_terminal(&self, extra: &[&str], env: &[(&str, &str)]) -> terminal::Ran {
+        let port = self.port.to_string();
+        let mut command = Command::new(env!("CARGO_BIN_EXE_marfa"));
+        command
+            .args(["server", "install", "--release", "0.0.22", "--port", &port])
+            .args(["--yes", "--wait", "5"])
+            .args(extra)
+            .arg("--dir")
+            .arg(&self.dir)
+            .env("MARFA_DOCKER", self.root.join("docker"))
+            .env("FAKE_DOCKER_STATE", &self.state)
+            .env("MARFA_TAILSCALE", self.root.join("tailscale"))
+            .env("MARFA_AUTOSTART_ROOT", self.root.join("home"))
+            .env("TERM", "xterm-256color")
+            .env_remove("NO_COLOR")
+            .env_remove("S3_SECRET_ACCESS_KEY");
+        for (name, value) in env {
+            command.env(name, value);
+        }
+        terminal::run_holding(&mut command, true, true, &SOCKETS)
     }
 
     fn install(&self, extra: &[&str]) -> (i32, String, String) {
@@ -511,6 +539,71 @@ fn the_json_report_gains_the_host_and_the_local_address_and_keeps_its_shape() {
         !stdout.contains("ai-agents"),
         "the pointer is for people, not the report: {stdout}"
     );
+}
+
+#[test]
+fn the_install_draws_color_on_a_terminal_and_the_same_words_everywhere_else() {
+    let rig = Rig::new("colour");
+    let ran = rig.install_on_terminal(&["--access", "local"], &[]);
+    let stdout = terminal::Ran::text(&ran.stdout);
+    let stderr = terminal::Ran::text(&ran.stderr);
+    assert_eq!(ran.code, 0, "{stdout}\n{stderr}");
+    assert!(
+        stdout.contains("\u{1b}[1;32mMarfa 0.0.22 is running.\u{1b}[0m"),
+        "{stdout:?}"
+    );
+    assert!(
+        stdout.contains("\u{1b}[1mAddress\u{1b}[0m   http://localhost:"),
+        "{stdout:?}"
+    );
+    assert!(
+        stderr.contains("\u{1b}[1mChecking Docker...\u{1b}[0m"),
+        "{stderr:?}"
+    );
+    // The words are the same without the escapes, and a later run has none.
+    let plain = |text: &str| {
+        let mut out = String::new();
+        let mut chars = text.chars();
+        while let Some(c) = chars.next() {
+            if c == '\u{1b}' {
+                for c in chars.by_ref() {
+                    if c == 'm' {
+                        break;
+                    }
+                }
+            } else {
+                out.push(c);
+            }
+        }
+        out
+    };
+    assert!(plain(&stdout).contains("  Address   http://localhost:"));
+    for (name, env, json) in [
+        ("NO_COLOR", vec![("NO_COLOR", "1")], false),
+        ("TERM=dumb", vec![("TERM", "dumb")], false),
+        ("--json", vec![], true),
+    ] {
+        let rig = Rig::new(&format!("colour-{}", name.len()));
+        let extra: Vec<&str> = if json {
+            vec!["--access", "local", "--json"]
+        } else {
+            vec!["--access", "local"]
+        };
+        let ran = rig.install_on_terminal(&extra, &env);
+        assert_eq!(ran.code, 0, "{name}");
+        assert!(
+            !ran.stdout.contains(&0x1b),
+            "{name}: {:?}",
+            terminal::Ran::text(&ran.stdout)
+        );
+        assert!(
+            !ran.stderr.contains(&0x1b),
+            "{name}: {:?}",
+            terminal::Ran::text(&ran.stderr)
+        );
+    }
+    let (_, piped, piped_err) = rig.install(&["--access", "local"]);
+    assert!(!piped.contains('\u{1b}') && !piped_err.contains('\u{1b}'));
 }
 
 #[test]

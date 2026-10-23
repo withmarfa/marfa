@@ -36,7 +36,10 @@ impl Docker {
 
     fn show(&self, words: &str) {
         if self.trace {
-            eprintln!("  $ {words}");
+            eprintln!(
+                "{}",
+                crate::style::dim(crate::style::Stream::Err, &format!("  $ {words}"))
+            );
         }
     }
 
