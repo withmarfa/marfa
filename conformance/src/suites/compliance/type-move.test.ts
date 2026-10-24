@@ -303,6 +303,8 @@ describe("moving a type's items", () => {
     const first = await move(deal, { to: contract });
     expect(first.succeeded).toBe(1);
     expect(first.errors?.map((e) => e.id)).toEqual([unpriced]);
+    expect(first.remaining).toBe(1);
+    expect(first.remaining_hidden).toBe(false);
     expect(first.settings_rewritten).toBe(false);
     expect((await typeOf(priced)).type).toBe(contract);
     expect((await typeOf(unpriced)).type).toBe(deal);
@@ -313,6 +315,7 @@ describe("moving a type's items", () => {
       properties: { amount: 0 },
     });
     expect(second.succeeded).toBe(1);
+    expect(second.remaining).toBe(0);
     expect(second.settings_rewritten).toBe(true);
     expect(await properties(unpriced)).toEqual({
       name: "unpriced",
@@ -364,6 +367,33 @@ describe("moving a type's items", () => {
     expect((await typeOf(id)).type).toBe(deal);
   });
 
+  it("refuses a move that would make a filter longer than a filter may be", async () => {
+    const { deal, contract } = await pair("long");
+    const id = await item(deal, { name: "stays" });
+    const head = `type eq "${deal}" OR properties.name eq "`;
+    // 2,048 characters as written, the most a filter takes, and over once
+    // it names the longer type.
+    const viewId = await view({
+      filter: `${head}${"x".repeat(2048 - head.length - 1)}"`,
+    });
+
+    const r = await client.moveType(deal, { to: contract, dry_run: true });
+    expect(r.status).toBe(409);
+    expect(r.error?.error.code).toBe("type_move_blocked");
+    expect(
+      (r.error?.error.details as { settings: Record<string, unknown>[] })
+        .settings,
+    ).toMatchObject([
+      {
+        kind: "view",
+        id: viewId,
+        field: "query.filter",
+        reason: "filter_term",
+      },
+    ]);
+    expect((await typeOf(id)).type).toBe(deal);
+  });
+
   it("refuses a move naming a setting the key may not change, before moving anything", async () => {
     const { deal, contract } = await pair("authority");
     const id = await item(deal, { name: "stays" });
@@ -398,6 +428,191 @@ describe("moving a type's items", () => {
       ).settings.map((setting) => setting.reason),
     ).toEqual(["not_permitted"]);
     expect((await typeOf(id)).type).toBe(deal);
+  });
+
+  it("lists the first 100 items a move left and counts every one", async () => {
+    const { deal, contract } = await pair("cap", {
+      name: { type: "string" },
+      amount: { type: "number", required: true },
+    });
+    const made = await client.bulkItems({
+      atomic: false,
+      items: Array.from({ length: 101 }, (_, at) => ({
+        type: deal,
+        properties: { name: `unpriced ${String(at)}` },
+        source: ctx.source,
+      })),
+    });
+    expect(made.ok, JSON.stringify(made.error)).toBe(true);
+    for (const entry of made.data.results)
+      if (entry.id !== undefined) trackItem(ctx, entry.id);
+    expect(made.data.counts.created).toBe(101);
+
+    const result = await move(deal, { to: contract });
+    expect(result.errors).toHaveLength(100);
+    expect(result).toMatchObject({
+      errored: 101,
+      remaining: 101,
+      settings_rewritten: false,
+    });
+  });
+
+  it("moves only the items the key's source filter shows, and says others remain without counting them", async () => {
+    const { deal, contract } = await pair("hidden");
+    const shown = await item(deal, { name: "shown" });
+    const elsewhere = `${ctx.source}-elsewhere`;
+    const writer = await client.createKey({
+      label: "type-move-elsewhere",
+      source: elsewhere,
+      type_permissions: { [deal]: "write" },
+    });
+    expect(writer.ok, JSON.stringify(writer.error)).toBe(true);
+    trackKey(ctx, writer.data.id);
+    const made = await new MarfaClient({
+      baseUrl: apiUrl,
+      apiKey: writer.data.key,
+    }).createItem({
+      type: deal,
+      properties: { name: "hidden" },
+      source: elsewhere,
+    });
+    expect(made.ok, JSON.stringify(made.error)).toBe(true);
+    trackItem(ctx, made.data.item.id);
+    const filtered = await client.createKey({
+      label: "type-move-filtered",
+      source: `${ctx.source}-filtered`,
+      type_permissions: { [deal]: "write", [contract]: "write" },
+      enforcement_override: {
+        source_filter: { types: [deal], sources: [ctx.source] },
+      },
+    });
+    expect(filtered.ok, JSON.stringify(filtered.error)).toBe(true);
+    trackKey(ctx, filtered.data.id);
+    const narrow = new MarfaClient({
+      baseUrl: apiUrl,
+      apiKey: filtered.data.key,
+    });
+
+    const first = await move(deal, { to: contract }, narrow);
+    expect(first).toMatchObject({
+      succeeded: 1,
+      remaining: 0,
+      remaining_hidden: true,
+      settings_rewritten: false,
+    });
+    expect((await typeOf(shown)).type).toBe(contract);
+    expect((await typeOf(made.data.item.id)).type).toBe(deal);
+
+    // The witness: a key that sees every item moves the rest and finishes.
+    const rest = await move(deal, { to: contract });
+    expect(rest).toMatchObject({
+      succeeded: 1,
+      remaining: 0,
+      remaining_hidden: false,
+      settings_rewritten: true,
+    });
+  });
+
+  it("names a setting the key may not read without its ID, on a move and a delete", async () => {
+    const { deal, contract } = await pair("unread");
+    await item(deal, { name: "stays" });
+    const folderId = await folder({ query: { types: [deal] } });
+    const viewId = await view({ types: [deal] });
+    const hook = await webhook(deal);
+    const minted = await client.createKey({
+      label: "type-move-unread",
+      source: `${ctx.source}-unread`,
+      permissions: ["schema.write"],
+      type_permissions: { [deal]: "write", [contract]: "write" },
+    });
+    expect(minted.ok, JSON.stringify(minted.error)).toBe(true);
+    trackKey(ctx, minted.data.id);
+    const narrow = new MarfaClient({
+      baseUrl: apiUrl,
+      apiKey: minted.data.key,
+    });
+    const settingsOf = (error: unknown) =>
+      (error as { error: { details: { settings: Record<string, unknown>[] } } })
+        .error.details.settings;
+
+    // The witness: a key that reads them is told their IDs.
+    const told = await client.deleteType(deal);
+    expect(told.status).toBe(409);
+    expect(settingsOf(told.error).map((setting) => setting.id)).toEqual([
+      folderId,
+      viewId,
+      hook,
+    ]);
+
+    const dry = await narrow.moveType(deal, { to: contract, dry_run: true });
+    expect(dry.status).toBe(409);
+    expect(dry.error?.error.code).toBe("type_move_blocked");
+    expect(
+      settingsOf(dry.error).map(({ kind, field, reason }) => ({
+        kind,
+        field,
+        reason,
+      })),
+    ).toEqual([
+      { kind: "folder", field: "query.types", reason: "not_permitted" },
+      { kind: "view", field: "query.types", reason: "not_permitted" },
+      { kind: "webhook", field: "type_filter", reason: "not_permitted" },
+    ]);
+    const deleted = await narrow.deleteType(deal);
+    expect(deleted.status).toBe(409);
+    expect(deleted.error?.error.code).toBe("type_in_use");
+    for (const settings of [settingsOf(dry.error), settingsOf(deleted.error)]) {
+      expect(settings).toHaveLength(3);
+      for (const setting of settings) expect(setting).not.toHaveProperty("id");
+    }
+    expect(JSON.stringify([dry.error, deleted.error])).not.toMatch(
+      new RegExp(`${folderId}|${viewId}|${hook}`),
+    );
+  });
+
+  it("names the new type for the rows a moved root took into the bin", async () => {
+    const { deal, contract } = await pair("cascade");
+    const root = await item(deal, { name: "root" });
+    const child = await client.createItem({
+      type: "core.note",
+      properties: { body: "child" },
+      source: ctx.source,
+    });
+    expect(child.ok, JSON.stringify(child.error)).toBe(true);
+    trackItem(ctx, child.data.item.id);
+    const edge = await client.createEdge({
+      source_id: root,
+      target_id: child.data.item.id,
+      edge_type: "parent-of",
+    });
+    expect(edge.ok, JSON.stringify(edge.error)).toBe(true);
+    expect((await client.deleteItem(root)).ok).toBe(true);
+    const minted = await client.createKey({
+      label: "type-move-cascade",
+      source: `${ctx.source}-cascade`,
+      type_permissions: { [contract]: "read", "core.note": "read" },
+    });
+    expect(minted.ok, JSON.stringify(minted.error)).toBe(true);
+    trackKey(ctx, minted.data.id);
+    const reader = new MarfaClient({
+      baseUrl: apiUrl,
+      apiKey: minted.data.key,
+    });
+    const markOf = async (by: MarfaClient) => {
+      const r = await by.rawRequest<{ data: Record<string, unknown>[] }>(
+        `/items?type=core.note&state=trashed&source=${encodeURIComponent(ctx.source)}&limit=100`,
+      );
+      expect(r.ok, JSON.stringify(r.error)).toBe(true);
+      return r.data.data.find((row) => row.id === child.data.item.id);
+    };
+    expect(await markOf(client)).toMatchObject({ trashed_with: root });
+    expect(await markOf(reader)).not.toHaveProperty("trashed_with");
+
+    expect((await move(deal, { to: contract })).succeeded).toBe(1);
+    expect(await markOf(reader)).toMatchObject({
+      trashed_by_cascade: true,
+      trashed_with: root,
+    });
   });
 
   it("lists the keys whose type map names the type, leaves them as they are, and a delete goes past them", async () => {

@@ -489,7 +489,8 @@ export class BulkActionWorker {
   /**
    * A type move's last step, once every chunk has run: in one transaction,
    * the settings naming the old type are rewritten if no item of it remains
-   * and none of them is blocked, and the job completes saying which. Any
+   * and none of them is blocked, and the job completes saying which and what
+   * is left. Any
    * failure rolls the rewrite back whole, and the job fails.
    */
   private async finishTypeMove(
@@ -529,12 +530,32 @@ export class BulkActionWorker {
             input.to,
             credential,
           );
-          const rewritten =
-            (await this.storage.items.countByType(input.from)) === 0 &&
-            blockedSettings(plan).length === 0;
+          // What is left of the old type: what the credential can see is
+          // counted, and what its source filter hides is only said to exist.
+          const left = await this.storage.items.countByType(input.from);
+          const sourceFilter = resolveEnforcement(
+            await readInstanceConfig(this.storage.settings),
+            credential.key,
+          ).source_filter;
+          const remaining =
+            left === 0 || sourceFilter === undefined
+              ? left
+              : ((
+                  await this.storage.items.stats(
+                    {
+                      type: input.from,
+                      all_states: true,
+                      source_filter: sourceFilter,
+                    },
+                    "type",
+                  )
+                )[input.from] ?? 0);
+          const rewritten = left === 0 && blockedSettings(plan).length === 0;
           if (rewritten) await applySettings(this.storage, plan, credential);
           if (
             !(await this.jobs.completeOwned(lease, offset, now, {
+              remaining,
+              remaining_hidden: left > remaining,
               settings: plan.settings,
               settings_rewritten: rewritten,
             }))

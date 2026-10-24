@@ -1147,12 +1147,16 @@ export function holdsPermission(
   permission: Permission,
 ): boolean {
   if (isDirectAuthority(c)) return true;
+  return hasPermission(heldPermissions(c), permission);
+}
+
+/** The permission literals the request's credential holds: a key's own list,
+ *  or a sign-in's granted scopes. */
+export function heldPermissions(c: Context<AppEnv>): readonly string[] {
   const key = checkAuth(c.get("apiKey"));
-  const held =
-    c.get("authType") === "oauth"
-      ? (c.get("oauthGrant")?.scopes ?? [])
-      : (key.permissions ?? []);
-  return hasPermission(held, permission);
+  return c.get("authType") === "oauth"
+    ? (c.get("oauthGrant")?.scopes ?? [])
+    : (key.permissions ?? []);
 }
 
 /** Whether the credential's metadata map covers `subresource` at `level`,

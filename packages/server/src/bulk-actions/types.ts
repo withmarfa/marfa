@@ -200,7 +200,12 @@ export const TypeSettingSchema = z
     kind: z
       .enum(["folder", "view", "webhook"])
       .describe("What holds the setting."),
-    id: z.string().describe("The ID of the folder, view or webhook."),
+    id: z
+      .string()
+      .optional()
+      .describe(
+        "The ID of the folder, view or webhook. Absent when you can't read it.",
+      ),
     field: z
       .string()
       .describe(
@@ -210,7 +215,7 @@ export const TypeSettingSchema = z
       .enum(["not_permitted", "filter_term", "placement_conflict", "subtypes"])
       .optional()
       .describe(
-        "Why a move can't rewrite the setting: `not_permitted`, you can't change it; `filter_term`, a `type` term would answer differently; `placement_conflict`, it places the types apart; `subtypes`, a webhook can't name both. Absent when it can.",
+        "Why a move can't rewrite the setting: `not_permitted`, you can't change it; `filter_term`, a `type` term would answer differently, or the filter doesn't parse or would be too long; `placement_conflict`, it places the types apart; `subtypes`, a webhook can't name both. Absent when it can.",
       ),
     message: z
       .string()
@@ -249,7 +254,7 @@ export const BulkActionResultSchema = z
       .array(BulkActionErrorEntrySchema)
       .optional()
       .describe(
-        "On a job, the first 100 items it left unchanged, each with its error, or on a type move every one. Absent otherwise.",
+        "On a job, the first 100 items it left unchanged, each with its error. Absent otherwise.",
       ),
     // Not a strict orphan count: what a blob is still referenced by is the
     // `blob-orphans` housekeeping job's answer, on its own schedule.
@@ -266,11 +271,24 @@ export const BulkActionResultSchema = z
       .describe(
         "On a type move, every folder, view and webhook setting that named the old type when the job finished. Absent otherwise.",
       ),
+    remaining: z
+      .number()
+      .int()
+      .optional()
+      .describe(
+        "On a type move, how many items you can see are still of the old type when the job finished, in any state: those it left unchanged and any written since the move began. Absent otherwise.",
+      ),
+    remaining_hidden: z
+      .boolean()
+      .optional()
+      .describe(
+        "On a type move, `true` if items your source filter hides are still of the old type. A move takes only items you can see. Absent otherwise.",
+      ),
     settings_rewritten: z
       .boolean()
       .optional()
       .describe(
-        "On a type move, `true` if Marfa rewrote `settings` to name the new type. `false` if an item of the old type remains or a setting has a `reason`: Marfa then rewrote none of them. Absent otherwise.",
+        "On a type move, `true` if Marfa rewrote `settings` to name the new type. `false` if an item of the old type remains, counted in `remaining` or `remaining_hidden`, or a setting has a `reason`: Marfa then rewrote none of them. Absent otherwise.",
       ),
   })
   .describe("What a bulk action did, or for a dry run, what it matched.")

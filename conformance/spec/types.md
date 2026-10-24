@@ -629,11 +629,11 @@ A type's identifier never changes. Renaming a type is registering the new one an
 
 ### `types/move`
 
-When a key whose type map grants write on both types sends `POST /types/{id}/move` naming a registered `to`, the server MUST queue a bulk-action job that gives every item of exactly that type, in any state, the type `to`, and leaves each item in its state.
+When a key whose type map grants write on both types sends `POST /types/{id}/move` naming a registered `to`, the server MUST queue a bulk-action job that gives every item of exactly that type that the key's source filter shows, in any state, the type `to`, and leaves each item in its state.
 
-**Reason:** an item in the trash or the archive still names the type it was written against, and a move that left it behind would keep the old type in use.
+**Reason:** an item in the trash or the archive still names the type it was written against, and a move that left it behind would keep the old type in use. An item the source filter hides is one the key may not reach.
 
-**Tests:** `compliance/type-move.test.ts › moves every item of the type in any state, keeping a binned one in the bin`.
+**Tests:** `compliance/type-move.test.ts › moves every item of the type in any state, keeping a binned one in the bin`, `› moves only the items the key's source filter shows, and says others remain without counting them`.
 
 ### `types/move-subtypes`
 
@@ -675,7 +675,7 @@ If the key sending `POST /types/{id}/move` lacks write on the type or on `to` in
 
 ### `types/move-settings`
 
-When a type move's job has given every item of the type the type `to`, the server MUST, in one transaction, rewrite to name `to` instead: a folder's `query.types`, `defaults.type` and `first_placement` key, a view's `query.types`, each `type eq` and `type neq` term naming the type in a folder's or view's `query.filter`, and a webhook's `type_filter` that is exactly the type.
+When no item of the type remains once a type move's job has run, the server MUST, in one transaction, rewrite to name `to` instead: a folder's `query.types`, `defaults.type` and `first_placement` key, a view's `query.types`, each `type eq` and `type neq` term naming the type in a folder's or view's `query.filter`, and a webhook's `type_filter` that is exactly the type.
 
 **Reason:** a folder, view or webhook naming a type no item holds anymore would hold nothing, and the person who made it meant the items, not the identifier.
 
@@ -687,13 +687,27 @@ The server MUST NOT change a webhook whose `type_filter` is a pattern, such as `
 
 **Tests:** `compliance/type-move.test.ts › rewrites the folders, views and webhooks that name the type once every item has moved`.
 
+### `types/move-errors`
+
+If a type move's job leaves an item it selected unmoved, then the server MUST count it in the job's `result.errored` and report it in `result.errors` among the first 100 such items.
+
+**Tests:** `compliance/type-move.test.ts › moves what the new type accepts, rewrites no setting, and a second run finishes`, `› lists the first 100 items a move left and counts every one`.
+
+### `types/move-remaining`
+
+When a type move's job finishes, the server MUST set `result.remaining` to how many items of the type, in any state, the key's source filter shows, and `result.remaining_hidden` to whether an item of the type that the filter hides remains.
+
+**Reason:** an item the job refused, one written while it ran and one the key can't see all keep the settings from being rewritten, and the caller must learn which without being told what it may not see.
+
+**Tests:** `compliance/type-move.test.ts › moves what the new type accepts, rewrites no setting, and a second run finishes`, `› moves only the items the key's source filter shows, and says others remain without counting them`, `compliance/bulk-job-holds.test.ts › counts an item of the old type written while it runs as remaining, and rewrites no setting`.
+
 ### `types/move-partial`
 
-If a type move's job leaves an item of the type unmoved, then the server MUST report each such item in the job's `result.errors`, set `result.settings_rewritten` to `false` and rewrite no setting.
+If an item of the type remains once a type move's job has run, then the server MUST set `result.settings_rewritten` to `false` and rewrite no setting.
 
 **Reason:** settings rewritten while items of the old type remain would stop showing those items.
 
-**Tests:** `compliance/type-move.test.ts › moves what the new type accepts, rewrites no setting, and a second run finishes`.
+**Tests:** `compliance/type-move.test.ts › moves what the new type accepts, rewrites no setting, and a second run finishes`, `› moves only the items the key's source filter shows, and says others remain without counting them`, `compliance/bulk-job-holds.test.ts › counts an item of the old type written while it runs as remaining, and rewrites no setting`.
 
 ### `types/move-rerun`
 
@@ -703,9 +717,9 @@ When a later `POST /types/{id}/move` names the same type, the server MUST move t
 
 ### `types/move-blocked`
 
-If a folder, view or webhook setting names the type in a way a move can't rewrite, then the server MUST answer `POST /types/{id}/move`, dry run or not, `409 type_move_blocked` with `details.settings` naming each, with `reason` `filter_term` for a `query.filter` term on `type` whose answer would change and that isn't a `type eq` or `type neq` naming the type, `placement_conflict` for a `first_placement` that places the two types in different directories, or `subtypes` for a webhook's `type_filter` naming a type with subtypes, and move nothing.
+If a folder, view or webhook setting names the type in a way a move can't rewrite, then the server MUST answer `POST /types/{id}/move`, dry run or not, `409 type_move_blocked` with `details.settings` naming each, with `reason` `filter_term` for a `query.filter` term on `type` whose answer would change and that isn't a `type eq` or `type neq` naming the type, or a `query.filter` that rewriting would make longer than a filter may be, `placement_conflict` for a `first_placement` that places the two types in different directories, or `subtypes` for a webhook's `type_filter` naming a type with subtypes, and move nothing.
 
-**Tests:** `compliance/type-move.test.ts › refuses a move a setting would stop, naming each setting and moving nothing`, `› moves the items of a parent type, leaving its subtypes' items and keeping the folder holding them`.
+**Tests:** `compliance/type-move.test.ts › refuses a move a setting would stop, naming each setting and moving nothing`, `› moves the items of a parent type, leaving its subtypes' items and keeping the folder holding them`, `› refuses a move that would make a filter longer than a filter may be`.
 
 ### `types/move-settings-authority`
 
@@ -714,6 +728,22 @@ If the key sending `POST /types/{id}/move` couldn't change a folder, view or web
 **Reason:** a move must not reach a setting its caller couldn't change directly: a folder or view takes write on `system.folder` or `system.view`, and a webhook takes `webhooks.manage` and the key or app that made it.
 
 **Tests:** `compliance/type-move.test.ts › refuses a move naming a setting the key may not change, before moving anything`.
+
+### `types/move-settings-ids`
+
+When the server names a folder, view or webhook setting in a type move's answer, its job's `result.settings` or a `type_in_use` refusal, the server MUST give the setting's `id` only to a credential that may read it, and name any other setting by its `kind` and `field` alone, with `reason` `not_permitted` on a move: a folder to one whose type map grants read on `system.folder`, a view to one that grants read on `system.view`, and a webhook to the key or app that made it, holding `webhooks.manage`.
+
+**Reason:** a setting's own operations hide it from a credential that may not read it, and a move or a delete must not tell that credential more.
+
+**Tests:** `compliance/type-move.test.ts › names a setting the key may not read without its ID, on a move and a delete`.
+
+### `types/move-cascade-mark`
+
+When a type move gives an item in the bin the type `to`, the server MUST decide who may be told that item's ID in the cascade marks naming it, as `items/cascade-mark-names` says, by `to`.
+
+**Reason:** the marks follow the item they name, and a key that may read only `to` may read the item.
+
+**Tests:** `compliance/type-move.test.ts › names the new type for the rows a moved root took into the bin`.
 
 ### `types/move-grants`
 

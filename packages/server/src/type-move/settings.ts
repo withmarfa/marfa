@@ -14,7 +14,11 @@ import type { ApiKey, Item } from "@withmarfa/shared";
 import type { LiveCredential } from "../auth/live-credential.js";
 import type { Context } from "hono";
 import type { AppEnv } from "../middleware/auth.js";
-import { holdsPermission, oauthGrantOf } from "../middleware/auth.js";
+import {
+  holdsPermission,
+  mayReadType,
+  oauthGrantOf,
+} from "../middleware/auth.js";
 import { keysInReach } from "../auth/key-reach.js";
 import type {
   Storage,
@@ -40,7 +44,8 @@ export type BlockedReason =
 
 export interface TypeSetting {
   kind: SettingKind;
-  id: string;
+  /** Absent where the caller may not read the setting. */
+  id?: string;
   /** The setting's field, such as `query.types`. */
   field: string;
   reason?: BlockedReason;
@@ -67,8 +72,9 @@ export interface TypeGrant {
   label?: string;
 }
 
-/** Who asks: a credential, or the owner's own authority, which changes every setting. */
-export type SettingsActor = LiveCredential | null;
+/** Who asks: a credential, or the owner's own authority, which reads and
+ *  changes every setting. */
+export type SettingsActor = Pick<LiveCredential, "key" | "permissions"> | null;
 
 function mayWriteType(key: ApiKey, type: string): boolean {
   return resolveTypePermission(type, key.type_permissions) === "write";
@@ -137,11 +143,25 @@ function planItem(
     }
   }
   if (query !== undefined && typeof query.filter === "string") {
-    const named = rewriteTypeTerms(query.filter, from, from).rewritten;
-    if (to === null) {
-      if (named) name("query.filter");
+    const rewrite = rewriteTypeTerms(query.filter, from, to ?? from);
+    if (rewrite.unreadable !== undefined) {
+      // Without a parse, any mention of the type may be a term on it.
+      if (rewrite.unreadable === "rewrite" || query.filter.includes(from))
+        name(
+          "query.filter",
+          to === null
+            ? undefined
+            : {
+                reason: "filter_term",
+                message:
+                  rewrite.unreadable === "filter"
+                    ? "Its filter doesn't parse, so the move can't rewrite it. Fix the filter first."
+                    : `Naming ${to} makes its filter longer than a filter may be. Shorten the filter first.`,
+              },
+        );
+    } else if (to === null) {
+      if (rewrite.rewritten) name("query.filter");
     } else {
-      const rewrite = rewriteTypeTerms(query.filter, from, to);
       if (rewrite.unsafe.length > 0) {
         name("query.filter", {
           reason: "filter_term",
@@ -217,11 +237,26 @@ function notPermitted(setting: TypeSetting, message: string): TypeSetting {
   return { ...setting, reason: "not_permitted", message };
 }
 
+/** A setting the caller may not read, named by its kind and field alone. A
+ *  move can't change it, whatever else stops it. */
+function unread(
+  setting: TypeSetting,
+  moving: boolean,
+  message: string,
+): TypeSetting {
+  return {
+    kind: setting.kind,
+    field: setting.field,
+    ...(moving && { reason: "not_permitted" as const, message }),
+  };
+}
+
 /**
  * Every setting naming `from` and, with `to`, how a move rewrites each. A
  * setting the actor may not change is named with `not_permitted`, as its own
- * door would refuse it. A revoked folder or view never changes, so it is left
- * out.
+ * door would refuse it, and one it may not read is named without its ID, as
+ * its own door would hide it. A revoked folder or view never changes, so it
+ * is left out.
  */
 export async function planSettings(
   storage: Storage,
@@ -233,23 +268,31 @@ export async function planSettings(
   const settings: TypeSetting[] = [];
   const rewrites: Rewrite[] = [];
   const key = actor?.key;
+  const moving = to !== null;
 
   for (const [kind, type] of [
     ["folder", FOLDER_TYPE],
     ["view", VIEW_TYPE],
   ] as const) {
+    const readable = key === undefined || mayReadType(key, type);
     const allowed = key === undefined || mayWriteType(key, type);
     for (const row of await liveRows(storage, type)) {
       const planned = planItem(kind, row, from, to, hasSubtypes);
       if (planned.settings.length === 0) continue;
       settings.push(
         ...planned.settings.map((setting) =>
-          allowed || to === null || setting.reason !== undefined
-            ? setting
-            : notPermitted(
+          !readable
+            ? unread(
                 setting,
-                `Changing a ${kind} takes write on ${type}, which your key doesn't have.`,
-              ),
+                moving,
+                `A ${kind} your key can't read names ${from}. Changing it takes write on ${type}.`,
+              )
+            : allowed || !moving || setting.reason !== undefined
+              ? setting
+              : notPermitted(
+                  setting,
+                  `Changing a ${kind} takes write on ${type}, which your key doesn't have.`,
+                ),
         ),
       );
       if (Object.keys(planned.properties).length > 0)
@@ -257,6 +300,8 @@ export async function planSettings(
     }
   }
 
+  // The webhook doors read and change a webhook only for the key or app
+  // that made it, holding webhooks.manage.
   const manages =
     actor === null || hasPermission(actor.permissions, "webhooks.manage");
   for (const webhook of await storage.outboundWebhooks.list()) {
@@ -265,11 +310,12 @@ export async function planSettings(
     const allowed =
       key === undefined || (manages && isMaker(key, webhook.owner));
     settings.push(
-      allowed || to === null || planned.setting.reason !== undefined
+      allowed
         ? planned.setting
-        : notPermitted(
+        : unread(
             planned.setting,
-            "Only the key or app that made a webhook changes it, with webhooks.manage.",
+            moving,
+            `A webhook another key or app made names ${from}. Only it changes the webhook, with webhooks.manage.`,
           ),
     );
     if (planned.rewrite) rewrites.push(planned.rewrite);

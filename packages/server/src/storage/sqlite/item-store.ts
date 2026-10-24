@@ -1912,8 +1912,17 @@ export class SqliteItemStore implements ItemStore {
         written.rowsAffected > 0 &&
         input.type !== undefined &&
         input.type !== row.type
-      )
+      ) {
         markStructuralReadChange();
+        // A mark's type decides who may be told the row it names, so a
+        // binned root that changes type takes its marks with it.
+        if (row.state === "trashed")
+          await tx
+            .update(cascade_marks)
+            .set({ trashed_with_type: input.type })
+            .where(eq(cascade_marks.trashed_with, id))
+            .run();
+      }
     } catch (err) {
       if (isSourceDedupViolation(err)) {
         throw new MarfaError(

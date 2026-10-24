@@ -64,12 +64,14 @@ const TypeMoveDryRunSchema = z
     matched: z
       .number()
       .int()
-      .describe("How many items of `from` the move would take, in any state."),
+      .describe(
+        "How many items of `from` the move would take, in any state. Items your source filter hides aren't counted or moved.",
+      ),
     ids: z.array(z.string()).describe("The IDs of those items."),
     settings: z
       .array(TypeSettingSchema)
       .describe(
-        "Every folder, view and webhook setting that names `from`, which the move rewrites to name `to` once every item has moved.",
+        "Every folder, view and webhook setting that names `from`, which the move rewrites to name `to` once no item of `from` remains.",
       ),
     grants: z
       .array(TypeGrantSchema)
@@ -105,7 +107,7 @@ const moveTypeRoute = createRoute({
   tags: ["Types"],
   summary: "Move items to another type",
   description:
-    "Moves every item of the type, in any state, to another type and queues a bulk-action job. Once every item has moved, it rewrites the folders, views and webhooks that name the type. With `dry_run: true` it returns what it would do.",
+    "Moves every item of the type that you can see, in any state, to another type and queues a bulk-action job. Once no item of the type remains, it rewrites the folders, views and webhooks that name the type. With `dry_run: true` it returns what it would do.",
   security: [{ bearerAuth: [] }],
   middleware: writesMovedType,
   request: {
@@ -147,7 +149,7 @@ const moveTypeRoute = createRoute({
     202: {
       content: { "application/json": { schema: BulkActionJobSchema } },
       description:
-        "Returns the queued job. Poll it with `GET /items/bulk-actions/jobs/{id}`. Its `result` lists every item it couldn't move in `errors`, and says in `settings_rewritten` whether it rewrote `settings`. Run the move again to move what remains.",
+        "Returns the queued job. Poll it with `GET /items/bulk-actions/jobs/{id}`. Its `result` lists the first 100 items it couldn't move in `errors`, counts the items of the type still left in `remaining` and `remaining_hidden`, and says in `settings_rewritten` whether it rewrote `settings`. Run the move again to move what remains.",
     },
     400: {
       content: {

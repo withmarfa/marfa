@@ -763,7 +763,7 @@ export interface paths {
         put?: never;
         /**
          * Move items to another type
-         * @description Moves every item of the type, in any state, to another type and queues a bulk-action job. Once every item has moved, it rewrites the folders, views and webhooks that name the type. With `dry_run: true` it returns what it would do.
+         * @description Moves every item of the type that you can see, in any state, to another type and queues a bulk-action job. Once no item of the type remains, it rewrites the folders, views and webhooks that name the type. With `dry_run: true` it returns what it would do.
          */
         post: operations["moveType"];
         delete?: never;
@@ -2503,13 +2503,17 @@ export interface components {
             dry_run: boolean;
             /** @description On a dry run, the ID of every matched item. On a job, the IDs of the items it changed, if it changed from 1 to 100 of them; absent otherwise. */
             ids?: string[];
-            /** @description On a job, the first 100 items it left unchanged, each with its error, or on a type move every one. Absent otherwise. */
+            /** @description On a job, the first 100 items it left unchanged, each with its error. Absent otherwise. */
             errors?: components["schemas"]["BulkActionError"][];
             /** @description On a purge job, how many distinct blobs the purged items referenced, whether or not anything still references them. Absent otherwise. */
             blob_hashes_referenced?: number;
             /** @description On a type move, every folder, view and webhook setting that named the old type when the job finished. Absent otherwise. */
             settings?: components["schemas"]["TypeSetting"][];
-            /** @description On a type move, `true` if Marfa rewrote `settings` to name the new type. `false` if an item of the old type remains or a setting has a `reason`: Marfa then rewrote none of them. Absent otherwise. */
+            /** @description On a type move, how many items you can see are still of the old type when the job finished, in any state: those it left unchanged and any written since the move began. Absent otherwise. */
+            remaining?: number;
+            /** @description On a type move, `true` if items your source filter hides are still of the old type. A move takes only items you can see. Absent otherwise. */
+            remaining_hidden?: boolean;
+            /** @description On a type move, `true` if Marfa rewrote `settings` to name the new type. `false` if an item of the old type remains, counted in `remaining` or `remaining_hidden`, or a setting has a `reason`: Marfa then rewrote none of them. Absent otherwise. */
             settings_rewritten?: boolean;
         };
         /** @description An item a bulk action left unchanged, and why. */
@@ -2532,12 +2536,12 @@ export interface components {
              * @enum {string}
              */
             kind: "folder" | "view" | "webhook";
-            /** @description The ID of the folder, view or webhook. */
-            id: string;
+            /** @description The ID of the folder, view or webhook. Absent when you can't read it. */
+            id?: string;
             /** @description The setting that names the type: `query.types`, `query.filter`, `defaults.type`, `first_placement` or `type_filter`. */
             field: string;
             /**
-             * @description Why a move can't rewrite the setting: `not_permitted`, you can't change it; `filter_term`, a `type` term would answer differently; `placement_conflict`, it places the types apart; `subtypes`, a webhook can't name both. Absent when it can.
+             * @description Why a move can't rewrite the setting: `not_permitted`, you can't change it; `filter_term`, a `type` term would answer differently, or the filter doesn't parse or would be too long; `placement_conflict`, it places the types apart; `subtypes`, a webhook can't name both. Absent when it can.
              * @enum {string}
              */
             reason?: "not_permitted" | "filter_term" | "placement_conflict" | "subtypes";
@@ -3875,11 +3879,11 @@ export interface components {
             from: string;
             /** @description The type the items would move to. */
             to: string;
-            /** @description How many items of `from` the move would take, in any state. */
+            /** @description How many items of `from` the move would take, in any state. Items your source filter hides aren't counted or moved. */
             matched: number;
             /** @description The IDs of those items. */
             ids: string[];
-            /** @description Every folder, view and webhook setting that names `from`, which the move rewrites to name `to` once every item has moved. */
+            /** @description Every folder, view and webhook setting that names `from`, which the move rewrites to name `to` once no item of `from` remains. */
             settings: components["schemas"]["TypeSetting"][];
             /** @description The keys and apps whose type map names `from`, which the move doesn't change. Keys are listed if you have `keys.manage`, and apps if you have `grants.manage`. */
             grants: components["schemas"]["TypeGrant"][];
@@ -14959,7 +14963,7 @@ export interface operations {
                     "application/json": components["schemas"]["TypeMoveDryRun"];
                 };
             };
-            /** @description Returns the queued job. Poll it with `GET /items/bulk-actions/jobs/{id}`. Its `result` lists every item it couldn't move in `errors`, and says in `settings_rewritten` whether it rewrote `settings`. Run the move again to move what remains. */
+            /** @description Returns the queued job. Poll it with `GET /items/bulk-actions/jobs/{id}`. Its `result` lists the first 100 items it couldn't move in `errors`, counts the items of the type still left in `remaining` and `remaining_hidden`, and says in `settings_rewritten` whether it rewrote `settings`. Run the move again to move what remains. */
             202: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];

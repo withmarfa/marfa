@@ -651,6 +651,8 @@ export interface BulkActionResponse {
     details?: Record<string, unknown>;
   }[];
   blob_hashes_referenced?: number;
+  remaining?: number;
+  remaining_hidden?: boolean;
   settings?: TypeSetting[];
   settings_rewritten?: boolean;
 }
@@ -658,7 +660,7 @@ export interface BulkActionResponse {
 /** A folder, view or webhook setting that names a type. */
 export interface TypeSetting {
   kind: "folder" | "view" | "webhook";
-  id: string;
+  id?: string;
   field: string;
   reason?: "not_permitted" | "filter_term" | "placement_conflict" | "subtypes";
   message?: string;

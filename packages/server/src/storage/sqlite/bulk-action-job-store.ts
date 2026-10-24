@@ -243,20 +243,15 @@ export class SqliteBulkActionJobStore implements BulkActionJobStore {
       }
       const samples = JSON.parse(current.checkpoint_json) as BulkActionSamples;
       const succeeded = current.succeeded_count + delta.succeeded.length;
-      // A type move reports every item it left, so a person can deal with
-      // each before running it again.
-      const move = current.action === "type_move";
       const checkpoint: BulkActionSamples = {
         ids:
           succeeded <= RESPONSE_SAMPLE_CAP
             ? [...samples.ids, ...delta.succeeded]
             : [],
-        errors: move
-          ? [...samples.errors, ...delta.errors]
-          : [
-              ...samples.errors,
-              ...delta.errors.slice(0, RESPONSE_SAMPLE_CAP),
-            ].slice(0, RESPONSE_SAMPLE_CAP),
+        errors: [
+          ...samples.errors,
+          ...delta.errors.slice(0, RESPONSE_SAMPLE_CAP),
+        ].slice(0, RESPONSE_SAMPLE_CAP),
       };
       const changes = {
         next_offset: toOffset,
@@ -269,7 +264,8 @@ export class SqliteBulkActionJobStore implements BulkActionJobStore {
         worker_heartbeat_at: now,
       };
       // A type move completes only after its settings step.
-      const finished = toOffset === current.matched_count && !move;
+      const finished =
+        toOffset === current.matched_count && current.action !== "type_move";
       const rows = await this.db
         .update(bulkActionJobs)
         .set({

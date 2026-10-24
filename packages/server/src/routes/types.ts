@@ -24,6 +24,7 @@ import type { Context, Next } from "hono";
 import type { AppEnv } from "../middleware/auth.js";
 import {
   authorityId,
+  heldPermissions,
   isDirectAuthority,
   requireRecentOwnerAuthentication,
   requireAuth,
@@ -1269,7 +1270,14 @@ export function typeRoutes(storage: Storage) {
           // against, and deleting it out from under one leaves a row whose
           // shape nothing can check.
           const itemCount = await storage.items.countByType(id);
-          const { settings } = await planSettings(storage, id, null, null);
+          const { settings } = await planSettings(
+            storage,
+            id,
+            null,
+            isDirectAuthority(c)
+              ? null
+              : { key: requireAuth(c), permissions: heldPermissions(c) },
+          );
           if (itemCount > 0 || settings.length > 0) {
             const grants = await typeGrants(storage, c, id);
             throw new MarfaError(
