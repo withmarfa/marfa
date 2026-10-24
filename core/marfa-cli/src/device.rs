@@ -176,7 +176,7 @@ pub enum DeviceCommand {
         #[arg(long = "tag", value_name = "TAG")]
         tags: Vec<String>,
         /// An expression in the server's listing grammar, answered as the
-        /// server answers `filter`; a `backref` condition is refused.
+        /// server answers `filter`; a `backref` condition is refused unless the copy holds its edge type whole.
         #[arg(long, value_name = "EXPR")]
         filter: Option<String>,
         /// Only this item and what it reaches along `parent-of` edges.
@@ -759,7 +759,7 @@ pub struct ListArgs {
     #[arg(long = "occurred-before", value_name = "TIME")]
     pub occurred_before: Option<String>,
     /// An expression in the server's listing grammar, answered as the
-    /// server answers `filter`; a `backref` condition is refused.
+    /// server answers `filter`; a `backref` condition is refused unless the copy holds its edge type whole.
     #[arg(long, value_name = "EXPR")]
     pub filter: Option<String>,
     /// Only this item and what it reaches along `parent-of` edges.

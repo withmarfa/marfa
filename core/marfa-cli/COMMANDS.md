@@ -2588,7 +2588,7 @@ marfa device items list [OPTIONS]
 | `--tag <TAG>` | Items must carry every tag given. |
 | `--occurred-after <TIME>` | Exclusive lower bound on the item's own time, RFC 3339. |
 | `--occurred-before <TIME>` | Exclusive upper bound on the item's own time, RFC 3339. |
-| `--filter <EXPR>` | An expression in the server's listing grammar, answered as the server answers `filter`; a `backref` condition is refused. |
+| `--filter <EXPR>` | An expression in the server's listing grammar, answered as the server answers `filter`; a `backref` condition is refused unless the copy holds its edge type whole. |
 | `--beneath <ID>` | Only this item and what it reaches along `parent-of` edges. |
 | `--sort <SORT>` | The time to order by. One of `created-at`, `updated-at`, `occurred-at`. Default: `created-at`. |
 | `--direction <DIRECTION>` | Newest first, or oldest. One of `asc`, `desc`. Default: `desc`. |
@@ -2998,7 +2998,7 @@ marfa device search [OPTIONS] <QUERY>
 | `--all-states` | Every state, not just the active one. |
 | `--type <TYPE>` | A type identifier; its subtypes are included. |
 | `--tag <TAG>` | Hits must carry every tag given. |
-| `--filter <EXPR>` | An expression in the server's listing grammar, answered as the server answers `filter`; a `backref` condition is refused. |
+| `--filter <EXPR>` | An expression in the server's listing grammar, answered as the server answers `filter`; a `backref` condition is refused unless the copy holds its edge type whole. |
 | `--beneath <ID>` | Only this item and what it reaches along `parent-of` edges. |
 | `--limit <LIMIT>` | How many hits at most. Default: `20`. |
 | `--view <ID>` | Only what this view's query selects; refused with a reason where the copy cannot answer the query whole. |

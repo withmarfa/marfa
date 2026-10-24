@@ -262,8 +262,9 @@ pub struct ListFilters {
     pub tags: Vec<String>,
     pub occurred_after: Option<String>,
     pub occurred_before: Option<String>,
-    /// A `backref` condition is refused `Invalid`: the copy does not hold
-    /// every edge drawn to its items.
+    /// A `backref` condition is refused `Invalid` unless the copy holds its
+    /// edge type whole: otherwise it lacks the edges drawn to its items from
+    /// outside the slice.
     pub filter: Option<String>,
     /// An item id: that item and every item it reaches along `parent-of`
     /// edges the copy holds, at any depth.
