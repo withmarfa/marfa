@@ -537,7 +537,8 @@ impl Core {
     /// declaration, so a type the app no longer declares is no longer held to
     /// or registered. A copy that has never reached a server checks what it
     /// queues against these and the types Marfa ships, and a hydration
-    /// registers on the instance the ones it does not hold, where the key may.
+    /// registers on the instance the ones it does not hold, and replaces each
+    /// `app.*` one it holds in another definition, where the key may.
     /// On a copy that holds a server's catalog the set waits for the next
     /// hydration.
     pub fn declare_types(&self, types: &[Value]) -> Result<()> {

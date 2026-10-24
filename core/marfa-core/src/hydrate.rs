@@ -193,8 +193,9 @@ fn attempt(
     let mut catalog_rows = under_reach.catalog()?;
     let declared = declare_on_instance(core, &under_reach, &catalog_rows, stop)?;
     if declared.changed {
-        // A registration or a replacement changes what the instance's reach certifies, so
-        // the head and the catalog read before it are of a reach that has gone.
+        // A registration or a replacement changes what the instance's reach
+        // certifies, so the head and the catalog read before it are of a reach
+        // that has gone.
         (instance, cursor, fence) = read_head(http, stop)?;
         ended = ended.or(expire_if_built_elsewhere(core, &instance, &fence)?);
         under_reach = http.for_reach(&fence);
