@@ -763,7 +763,7 @@ export interface paths {
         put?: never;
         /**
          * Move items to another type
-         * @description Moves every item of the type that you can see, in any state, to another type and queues a bulk-action job. Once no item of the type remains, it rewrites the folders, views and webhooks that name the type. With `dry_run: true` it returns what it would do.
+         * @description Moves every item of the type you can see, in any state, to another type as a bulk-action job. Once none remains, it rewrites the folders, views and webhooks that name the type. `dry_run: true` returns what it would do.
          */
         post: operations["moveType"];
         delete?: never;
@@ -2541,7 +2541,7 @@ export interface components {
             /** @description The setting that names the type: `query.types`, `query.filter`, `defaults.type`, `first_placement` or `type_filter`. */
             field: string;
             /**
-             * @description Why a move can't rewrite the setting: `not_permitted`, you can't change it; `filter_term`, a `type` term would answer differently, or the filter doesn't parse or would be too long; `placement_conflict`, it places the types apart; `subtypes`, a webhook can't name both. Absent when it can.
+             * @description Why a move can't rewrite the setting: `not_permitted`, you can't change it; `filter_term`, its filter can't be rewritten safely; `placement_conflict`, it places the types apart; `subtypes`, a webhook can't name both.
              * @enum {string}
              */
             reason?: "not_permitted" | "filter_term" | "placement_conflict" | "subtypes";

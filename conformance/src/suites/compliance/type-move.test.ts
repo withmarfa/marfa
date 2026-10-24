@@ -109,7 +109,6 @@ async function folder(settings: Record<string, unknown>): Promise<string> {
 async function view(query: Record<string, unknown>): Promise<string> {
   const r = await client.createView({
     title: "Moving",
-    layouts: [{ id: "main", kind: "list" }],
     query,
   });
   expect(r.status, JSON.stringify(r.error)).toBe(201);

@@ -44,7 +44,6 @@ async function view(filter: string): Promise<string> {
     key: ctx.workingKey,
     body: {
       title: "Deals",
-      layouts: [{ id: "main", kind: "list" }],
       query: { filter },
     },
   });

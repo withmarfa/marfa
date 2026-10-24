@@ -215,7 +215,7 @@ export const TypeSettingSchema = z
       .enum(["not_permitted", "filter_term", "placement_conflict", "subtypes"])
       .optional()
       .describe(
-        "Why a move can't rewrite the setting: `not_permitted`, you can't change it; `filter_term`, a `type` term would answer differently, or the filter doesn't parse or would be too long; `placement_conflict`, it places the types apart; `subtypes`, a webhook can't name both. Absent when it can.",
+        "Why a move can't rewrite the setting: `not_permitted`, you can't change it; `filter_term`, its filter can't be rewritten safely; `placement_conflict`, it places the types apart; `subtypes`, a webhook can't name both.",
       ),
     message: z
       .string()

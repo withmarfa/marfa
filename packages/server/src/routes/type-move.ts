@@ -107,7 +107,7 @@ const moveTypeRoute = createRoute({
   tags: ["Types"],
   summary: "Move items to another type",
   description:
-    "Moves every item of the type that you can see, in any state, to another type and queues a bulk-action job. Once no item of the type remains, it rewrites the folders, views and webhooks that name the type. With `dry_run: true` it returns what it would do.",
+    "Moves every item of the type you can see, in any state, to another type as a bulk-action job. Once none remains, it rewrites the folders, views and webhooks that name the type. `dry_run: true` returns what it would do.",
   security: [{ bearerAuth: [] }],
   middleware: writesMovedType,
   request: {
