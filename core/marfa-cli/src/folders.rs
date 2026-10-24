@@ -89,7 +89,7 @@ pub enum FoldersCommand {
         /// The folder.
         dir: PathBuf,
     },
-    /// Pull what the folder's search needs into its working copy.
+    /// Pull what the folder's query needs into its working copy.
     Hydrate {
         /// The folder.
         dir: PathBuf,
@@ -99,7 +99,7 @@ pub enum FoldersCommand {
         /// The folder.
         dir: PathBuf,
     },
-    /// Write what the folder's search matches out as files.
+    /// Write what the folder's query matches out as files.
     Pull {
         /// The folder.
         dir: PathBuf,
@@ -119,7 +119,7 @@ pub enum FoldersCommand {
         #[arg(long)]
         send_only: bool,
     },
-    /// List the files the folder keeps whose items its search no longer
+    /// List the files the folder keeps whose items its query no longer
     /// matches, as the last pull left them, and with `--remove` take them
     /// away. A file goes only after a confirmation at a terminal or `--yes`,
     /// and only while its bytes are the ones the folder wrote and no edit of
@@ -1028,13 +1028,13 @@ fn describe_pull(report: &marfa_core::PullReport) -> String {
     let departed: Vec<String> = [
         (
             report.removed - report.purged,
-            "file(s) of items trashed or out of the search's states removed",
+            "file(s) of items trashed or out of the query's states removed",
         ),
         (report.purged, "file(s) of items purged removed"),
         (report.kept, "kept with the person's changes"),
         (
             report.unmatched,
-            "file(s) left in place whose item the search no longer matches",
+            "file(s) left in place whose item the query no longer matches",
         ),
         (
             report.taken,

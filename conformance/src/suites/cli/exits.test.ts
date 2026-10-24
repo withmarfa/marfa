@@ -85,7 +85,7 @@ describe("the exit codes", () => {
     async () => {
       const folder = await c.cli.json<{ item: { id: string } }>(
         ["folders", "create", "--file", "-", "--title", "renewal fixture"],
-        { stdin: JSON.stringify({ search: { types: ["core.note"] } }) },
+        { stdin: JSON.stringify({ query: { types: ["core.note"] } }) },
       );
       trackFolder(c.ctx, folder.item.id);
       const directory = join(dir, "renewal-folder");

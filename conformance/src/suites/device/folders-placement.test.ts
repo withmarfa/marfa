@@ -219,7 +219,7 @@ describe("where a file sits", () => {
       path: `Note ${String(n)}.md`,
     }));
     const placed = await placedHarness("placement-restore-moved", notes, {
-      search: { types: ["core.note"] },
+      query: { types: ["core.note"] },
       defaults: { type: "core.note" },
       removal_threshold: { files: 2, fraction: 0.25 },
     });
@@ -263,7 +263,7 @@ describe("where a file sits", () => {
     const bookmark = "01a00000-0000-7000-8000-0000000016b2";
     harness = await folderHarness("placement-first", {
       settings: {
-        search: { types: ["core.note", "core.bookmark"] },
+        query: { types: ["core.note", "core.bookmark"] },
         first_placement: { "core.note": "Notes/" },
       },
       rows: {
@@ -409,7 +409,7 @@ describe("where a file sits", () => {
             },
           },
         ],
-        { search: { types: ["core.file"] } },
+        { query: { types: ["core.file"] } },
       );
       harness = placed.harness;
       scriptBlob(harness.server, bytes);
@@ -516,7 +516,7 @@ describe("where a file sits", () => {
             },
           },
         ],
-        { search: { types: ["core.file"] } },
+        { query: { types: ["core.file"] } },
       );
       harness = placed.harness;
       scriptBlob(harness.server, bytes);
@@ -563,7 +563,7 @@ describe("where a file sits", () => {
             },
           },
         ],
-        { search: { types: ["core.file"] } },
+        { query: { types: ["core.file"] } },
       );
       harness = placed.harness;
       scriptBlob(harness.server, bytes);
@@ -608,7 +608,7 @@ describe("where a file sits", () => {
           properties: { title: "empty" },
         },
       ],
-      { search: { types: ["core.note", "core.event"] } },
+      { query: { types: ["core.note", "core.event"] } },
     );
     harness = placed.harness;
     expect((await harness.folder.pull()).ok).toBe(true);
@@ -676,7 +676,7 @@ describe("where a file sits", () => {
           path: "notes.md",
         },
       ],
-      { search: { types: ["core.file", "core.file.image", "core.note"] } },
+      { query: { types: ["core.file", "core.file.image", "core.note"] } },
     );
     harness = placed.harness;
     acceptUploads(harness.server);
@@ -753,7 +753,7 @@ describe("where a file sits", () => {
     expect(existsSync(join(harness.dir, "words.txt"))).toBe(false);
   });
 
-  it("takes back by placement and bytes only an item its search holds", async () => {
+  it("takes back by placement and bytes only an item its query holds", async () => {
     const [archived, kept] = [
       "01a00000-0000-7000-8000-0000000016f5",
       "01a00000-0000-7000-8000-0000000016f6",
@@ -775,7 +775,7 @@ describe("where a file sits", () => {
           path: "kept.txt",
         },
       ],
-      { search: { types: ["core.note"], state: ["active"] } },
+      { query: { types: ["core.note"], state: ["active"] } },
     );
     harness = placed.harness;
     // An empty text file at each placement, which is each item's body: the
@@ -927,7 +927,7 @@ describe("where a file sits", () => {
           path: "blob.md",
         },
       ],
-      { search: { types: ["core.note", "core.file"] } },
+      { query: { types: ["core.note", "core.file"] } },
     );
     harness = placed.harness;
     scriptBlob(harness.server, bytes);
@@ -1789,7 +1789,7 @@ describe("where a file sits", () => {
         { id: gone, title: "Gone", path: "Gone.md" },
         { id: other, title: "Other", path: "Other.md" },
       ],
-      { search: { types: ["core.note"], state: ["active"] } },
+      { query: { types: ["core.note"], state: ["active"] } },
     );
     harness = placed.harness;
     expect((await harness.folder.pull()).ok).toBe(true);
@@ -1836,7 +1836,7 @@ describe("where a file sits", () => {
         { id: gone, title: "Gone", path: "Gone.md" },
         { id: other, title: "Other", path: "Other.md" },
       ],
-      { search: { types: ["core.note"], state: ["active"] } },
+      { query: { types: ["core.note"], state: ["active"] } },
     );
     harness = placed.harness;
     expect((await harness.folder.pull()).ok).toBe(true);
@@ -2270,7 +2270,7 @@ describe("where a file sits", () => {
     const plain = Buffer.from("a file the server holds");
     harness = await folderHarness("placement-first-specific", {
       settings: {
-        search: { types: ["core.file"] },
+        query: { types: ["core.file"] },
         first_placement: {
           "core.file": "Files/",
           "core.file.image": "Images/",
@@ -2331,7 +2331,7 @@ describe("where a file sits", () => {
         key: [answers.currentKey("k", grant)],
       });
       const row = scriptFolderRow(server, {
-        search: { types: ["core.note"] },
+        query: { types: ["core.note"] },
       });
       const parent = mkdtempSync(
         join(realpathSync(tmpdir()), "marfa-folder-no-placement-"),
@@ -2396,22 +2396,22 @@ describe("where a file sits", () => {
         { id: left, title: "Left", path: "Kept/out.md" },
         { id: unplaced, title: "Unplaced", tags: ["keep"] },
       ],
-      { search: { types: ["core.note"], filter: 'tags contains "keep"' } },
+      { query: { types: ["core.note"], filter: 'tags contains "keep"' } },
     );
     harness = placed.harness;
     const pulled = await harness.folder.pull();
     expect(pulled.ok, JSON.stringify(pulled)).toBe(true);
     if (!pulled.ok) return;
-    // The witness: a placement is followed for an item the search holds.
+    // The witness: a placement is followed for an item the query holds.
     expect(idIn(harness, "Kept/one.md")).toBe(kept);
     expect(
       existsSync(join(harness.dir, "Kept", "out.md")) ||
         existsSync(join(harness.dir, "Left.md")),
-      "an item the search does not hold got a file because it has a placement here",
+      "an item the query does not hold got a file because it has a placement here",
     ).toBe(false);
     expect(
       idIn(harness, "Unplaced.md"),
-      "an item the search holds got no file because it has no placement here",
+      "an item the query holds got no file because it has no placement here",
     ).toBe(unplaced);
     expect(pulled.value.written).toBe(2);
   });
@@ -4328,7 +4328,7 @@ describe("writing", () => {
     const id = "01a00000-0000-7000-8000-000000001492";
     const edges = new EdgeDoor();
     harness = await folderHarness("folder-refused-then-behind", {
-      settings: { search: { types: ["core.note", "core.bookmark"] } },
+      settings: { query: { types: ["core.note", "core.bookmark"] } },
       rows: {
         "core.note": [
           {
@@ -5547,7 +5547,7 @@ describe("a file that is not a document", () => {
     0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1,
   ]);
   const settings = {
-    search: { types: ["core.note", "core.file"] },
+    query: { types: ["core.note", "core.file"] },
     defaults: { type: "core.note" },
   };
 
@@ -5920,7 +5920,7 @@ describe("a file that is not a document", () => {
     const bytes = Buffer.from("the bytes a file item names\n");
     harness = await folderHarness("folder-file-not-a-file", {
       settings: {
-        search: { types: ["core.note", "core.bookmark", "core.file"] },
+        query: { types: ["core.note", "core.bookmark", "core.file"] },
         defaults: { type: "core.note" },
       },
       rows: {
@@ -6598,7 +6598,7 @@ describe("a file that is not a document", () => {
       id,
       "capture.bin",
       Buffer.from("initial file bytes"),
-      { settings: { search: { types: ["core.note", "core.file"] } } },
+      { settings: { query: { types: ["core.note", "core.file"] } } },
     );
     renameSync(join(made.dir, "capture.bin"), join(made.dir, "notes.md"));
     expect((await made.folder.push()).ok).toBe(true);
@@ -6773,7 +6773,7 @@ describe("a file that is not a document", () => {
       {
         type: "core.file.image",
         mime: "image/png",
-        settings: { search: { types: ["core.note", "core.file.image"] } },
+        settings: { query: { types: ["core.note", "core.file.image"] } },
       },
     );
     writeFileSync(join(made.dir, "x.bin"), Buffer.from([7, 7, 7]));
@@ -6799,7 +6799,7 @@ describe("a file that is not a document", () => {
     ["from a name that is no document", undefined],
     ["from a document name", "notes.md"],
   ])(
-    "follows a file item moved %s to a name its search holds no type for",
+    "follows a file item moved %s to a name its query holds no type for",
     async (_label, via) => {
       const id = "01a00000-0000-7000-8000-000000000102";
       const made = await pulledFileItem(
@@ -6810,7 +6810,7 @@ describe("a file that is not a document", () => {
         {
           type: "core.file.image",
           mime: "image/png",
-          settings: { search: { types: ["core.note", "core.file.image"] } },
+          settings: { query: { types: ["core.note", "core.file.image"] } },
         },
       );
       let at = "archive.png";

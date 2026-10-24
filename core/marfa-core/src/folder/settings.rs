@@ -6,7 +6,7 @@ use serde_json::{Map, Value};
 use crate::Result;
 use crate::catalog::Catalog;
 use crate::error::CoreError;
-use crate::model::{Item, ItemState, Tier};
+use crate::model::{Item, ItemState, SliceTier, Tier};
 
 pub const FOLDER_TYPE: &str = "system.folder";
 
@@ -20,7 +20,7 @@ pub struct Settings {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
     #[serde(default)]
-    pub search: Search,
+    pub query: Query,
     #[serde(default)]
     pub defaults: Defaults,
     #[serde(default)]
@@ -34,14 +34,14 @@ pub struct Settings {
 }
 
 /// An unknown member is refused rather than ignored, which would answer the
-/// search as though the condition were not there.
+/// query as though the condition were not there.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct Search {
+pub struct Query {
     #[serde(default)]
     pub types: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub tier: Option<Tier>,
+    pub tier: Option<SliceTier>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub state: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -150,26 +150,26 @@ impl Settings {
     }
 
     fn check(&self) -> Result<()> {
-        if let Some(states) = &self.search.state {
+        if let Some(states) = &self.query.state {
             if states.is_empty() {
                 return Err(CoreError::Invalid(
-                    "a folder's search names no state, so it would hold nothing".into(),
+                    "a folder's query names no state, so it would hold nothing".into(),
                 ));
             }
             for state in states {
                 if !matches!(state.as_str(), "active" | "archived") {
                     return Err(CoreError::Invalid(format!(
-                        "a folder holds active and archived items, and its search names {state:?}"
+                        "a folder holds active and archived items, and its query names {state:?}"
                     )));
                 }
             }
         }
-        if let Some(filter) = &self.search.filter {
+        if let Some(filter) = &self.query.filter {
             crate::filter::check(filter).map_err(|error| match error {
                 CoreError::Validation { code, message } => CoreError::Validation {
                     code,
                     message: format!(
-                        "the folder's search.filter is refused: {message}. Change the filter with `marfa folders change`"
+                        "the folder's query.filter is refused: {message}. Change the filter with `marfa folders change`"
                     ),
                 },
                 other => other,
@@ -206,10 +206,10 @@ impl Settings {
             )));
         }
         if let Some(tier) = self.defaults.tier
-            && tier != self.tier()
+            && !self.tier().takes(Some(tier))
         {
             return Err(CoreError::Invalid(format!(
-                "a new file would be made at the {} tier, and the search holds the {} tier",
+                "a new file would be made at the {} tier, and the query holds the {} tier",
                 tier.as_str(),
                 self.tier().as_str()
             )));
@@ -217,26 +217,26 @@ impl Settings {
         Ok(())
     }
 
-    /// A default type the search does not hold would put every new file
+    /// A default type the query does not hold would put every new file
     /// outside its own folder.
     pub(crate) fn check_types(&self, catalog: &Catalog) -> Result<()> {
         if let Some(named) = &self.defaults.r#type
             && !self.holds_type(catalog, named)
         {
             return Err(CoreError::Invalid(format!(
-                "a new file would become a {named}, which the search does not hold"
+                "a new file would become a {named}, which the query does not hold"
             )));
         }
         Ok(())
     }
 
-    /// Whether the search names no type or names `*`: every type but
+    /// Whether the query names no type or names `*`: every type but
     /// `system.*`. The one reading of the star, so a folder naming it holds,
     /// writes and reports exactly what a folder naming no type does.
     pub(crate) fn names_every_type(&self) -> bool {
-        self.search.types.is_empty()
+        self.query.types.is_empty()
             || self
-                .search
+                .query
                 .types
                 .iter()
                 .any(|named| named.trim() == crate::store::EVERY_TYPE)
@@ -246,8 +246,8 @@ impl Settings {
         crate::store::declares_type(catalog, &self.slice_types(), named)
     }
 
-    /// What the search holds, as clauses on `items`: the one evaluation a
-    /// folder's pass and a list or search in a folder share, so the two
+    /// What the query holds, as clauses on `items`: the one evaluation a
+    /// folder's pass and a list or full-text search in a folder share, so the two
     /// cannot hold different items. `system.*` is never held.
     pub(crate) fn narrow(
         &self,
@@ -257,7 +257,7 @@ impl Settings {
     ) -> Result<()> {
         if !self.names_every_type() {
             let mut alternatives = Vec::new();
-            for named in &self.search.types {
+            for named in &self.query.types {
                 crate::query::narrow_by_type(
                     catalog,
                     Some(named.trim()),
@@ -268,9 +268,11 @@ impl Settings {
             clauses.push(format!("({})", alternatives.join(" OR ")));
         }
         clauses.push("items.type NOT LIKE 'system.%'".into());
-        clauses.push("items.tier = ?".into());
-        values.push(Value::String(self.tier().as_str().into()));
-        let states: Vec<&str> = match &self.search.state {
+        if self.tier() != SliceTier::All {
+            clauses.push("items.tier = ?".into());
+            values.push(Value::String(self.tier().as_str().into()));
+        }
+        let states: Vec<&str> = match &self.query.state {
             None => vec![ItemState::Active.as_str(), ItemState::Archived.as_str()],
             Some(states) => states.iter().map(String::as_str).collect(),
         };
@@ -280,14 +282,14 @@ impl Settings {
         ));
         values.extend(states.into_iter().map(|state| Value::String(state.into())));
         crate::filter::narrow(
-            self.search.filter.as_deref(),
-            self.search.beneath.as_deref(),
+            self.query.filter.as_deref(),
+            self.query.beneath.as_deref(),
             clauses,
             values,
         )
     }
 
-    /// Refuses where the copy's slice does not take every item the search
+    /// Refuses where the copy's slice does not take every item the query
     /// can hold: answered from part of the folder, a list would read as the
     /// whole of it.
     pub(crate) fn refuse_unless_answerable(
@@ -296,9 +298,7 @@ impl Settings {
         catalog: &Catalog,
     ) -> Result<()> {
         let unanswerable = |why: String| {
-            CoreError::Invalid(format!(
-                "this copy cannot answer the folder's search: {why}"
-            ))
+            CoreError::Invalid(format!("this copy cannot answer the folder's query: {why}"))
         };
         let Some((types, tier)) = crate::store::slice(conn)?.filter(|(types, _)| !types.is_empty())
         else {
@@ -306,7 +306,7 @@ impl Settings {
                 "it holds no slice yet; hydrate it with the types the folder holds".into(),
             ));
         };
-        if !tier.takes(Some(self.tier())) {
+        if tier != SliceTier::All && tier != self.tier() {
             return Err(unanswerable(format!(
                 "the folder holds the {} tier and this copy holds the {} tier",
                 self.tier().as_str(),
@@ -319,7 +319,13 @@ impl Settings {
             .filter(|id| {
                 !crate::store::is_system(id)
                     && self.holds_type(catalog, id)
-                    && !crate::store::slice_takes(catalog, &types, tier, id, Some(self.tier()))
+                    && !crate::store::slice_takes(
+                        catalog,
+                        &types,
+                        tier,
+                        id,
+                        Some(self.tier().create_tier()),
+                    )
             })
             .collect();
         // A subtype goes with its parent, so only the parent is named.
@@ -345,7 +351,7 @@ impl Settings {
                 )
             }));
         }
-        if self.search.beneath.is_some()
+        if self.query.beneath.is_some()
             && !crate::store::whole_edge_types(conn)?
                 .iter()
                 .any(|held| held == crate::filter::PARENT_OF)
@@ -364,17 +370,17 @@ impl Settings {
 
     /// Each with its subtree; empty is every type the key reads.
     pub fn types(&self) -> &[String] {
-        &self.search.types
+        &self.query.types
     }
 
-    /// The types a copy of the folder declares: `*` where the search names no
+    /// The types a copy of the folder declares: `*` where the query names no
     /// type or names `*`, which `narrow` reads as every type, and the types
     /// otherwise.
     pub(crate) fn slice_types(&self) -> Vec<String> {
         if self.names_every_type() {
             vec![crate::store::EVERY_TYPE.to_string()]
         } else {
-            self.search
+            self.query
                 .types
                 .iter()
                 .map(|named| named.trim().to_string())
@@ -382,13 +388,13 @@ impl Settings {
         }
     }
 
-    pub fn tier(&self) -> Tier {
-        self.search.tier.unwrap_or(Tier::Library)
+    pub fn tier(&self) -> SliceTier {
+        self.query.tier.unwrap_or(SliceTier::Library)
     }
 
     /// Unlike a list's default of active, a folder holds archived items too.
     pub fn holds_state(&self, state: ItemState) -> bool {
-        match &self.search.state {
+        match &self.query.state {
             None => matches!(state, ItemState::Active | ItemState::Archived),
             Some(states) => states.iter().any(|named| named == state.as_str()),
         }
@@ -403,7 +409,7 @@ impl Settings {
                 if self.names_every_type() {
                     return None;
                 }
-                self.search
+                self.query
                     .types
                     .iter()
                     .map(|declared| declared.trim())
@@ -414,7 +420,9 @@ impl Settings {
     }
 
     pub fn new_tier(&self) -> Tier {
-        self.defaults.tier.unwrap_or_else(|| self.tier())
+        self.defaults
+            .tier
+            .unwrap_or_else(|| self.tier().create_tier())
     }
 
     /// The most specific key naming the type or an ancestor of it.
@@ -449,15 +457,32 @@ mod tests {
     }
 
     #[test]
+    fn query_takes_both_tiers_and_names_refused_settings() {
+        let both = read(json!({ "query": { "tier": "all" } })).unwrap();
+        assert_eq!(both.new_tier(), Tier::Library);
+        let feed = read(json!({
+            "query": { "tier": "all" }, "defaults": { "tier": "feed" }
+        }))
+        .unwrap();
+        assert_eq!(feed.new_tier(), Tier::Feed);
+        let old = read(json!({ "search": {} })).unwrap_err().to_string();
+        assert!(old.contains("unknown field `search`"), "{old}");
+        let unknown = read(json!({ "query": { "tier": "unknown" } }))
+            .unwrap_err()
+            .to_string();
+        assert!(unknown.contains("unknown variant `unknown`"), "{unknown}");
+    }
+
+    #[test]
     fn refuses_what_it_does_not_answer() {
-        for search in [
+        for query in [
             json!({ "filter": "backref[parent-of] exists" }),
             json!({ "filter": "title eq 1" }),
             json!({ "near": "x" }),
             json!({ "state": ["trashed"] }),
             json!({ "state": [] }),
         ] {
-            assert!(read(json!({ "search": search })).is_err(), "{search}");
+            assert!(read(json!({ "query": query })).is_err(), "{query}");
         }
         assert!(read(json!({ "defaults": { "colour": "red" } })).is_err());
         assert!(read(json!({ "ignore": ["a{b"] })).is_err());
@@ -484,9 +509,9 @@ mod tests {
             other => panic!("{other:?}"),
         };
         let filter = refused(json!({
-            "search": { "filter": "properties.a eq \"x\" OR properties.b eq null" }
+            "query": { "filter": "properties.a eq \"x\" OR properties.b eq null" }
         }));
-        assert!(filter.contains("search.filter"), "{filter}");
+        assert!(filter.contains("query.filter"), "{filter}");
         assert!(
             filter.contains("Null is not a value to compare with"),
             "{filter}"
@@ -544,30 +569,32 @@ mod tests {
     }
 
     #[test]
-    fn a_new_file_takes_the_defaults_type_then_the_searchs_first() {
+    fn a_new_file_takes_the_default_type_then_the_query_first_type() {
         let named = read(json!({
-            "search": { "types": ["core.bookmark"] },
+            "query": { "types": ["core.bookmark"] },
             "defaults": { "type": "core.note" },
         }))
         .unwrap();
         let catalog = Catalog::load(&crate::store::testing::conn()).unwrap();
         assert_eq!(named.new_type(&catalog), "core.note");
-        let searched =
-            read(json!({ "search": { "types": ["core.bookmark"], "tier": "feed" } })).unwrap();
-        assert_eq!(searched.new_type(&catalog), "core.bookmark");
-        assert_eq!(searched.new_tier(), Tier::Feed);
+        let queried =
+            read(json!({ "query": { "types": ["core.bookmark"], "tier": "feed" } })).unwrap();
+        assert_eq!(queried.new_type(&catalog), "core.bookmark");
+        assert_eq!(queried.new_tier(), Tier::Feed);
         assert_eq!(read(json!({})).unwrap().new_type(&catalog), "core.note");
         let files_first =
-            read(json!({ "search": { "types": ["core.file", "core.note"] } })).unwrap();
+            read(json!({ "query": { "types": ["core.file", "core.note"] } })).unwrap();
         assert_eq!(files_first.new_type(&catalog), "core.note");
         assert!(read(json!({ "defaults": { "tier": "feed" } })).is_err());
-        let unheld = read(json!({ "search": { "types": ["core.note"] }, "defaults": { "type": "core.bookmark" } }))
-            .unwrap();
+        let unheld = read(
+            json!({ "query": { "types": ["core.note"] }, "defaults": { "type": "core.bookmark" } }),
+        )
+        .unwrap();
         assert!(unheld.check_types(&catalog).is_err());
     }
 
     #[test]
-    fn a_search_naming_the_star_is_read_as_a_search_naming_no_type() {
+    fn a_query_naming_the_star_is_read_as_a_query_naming_no_type() {
         let catalog = Catalog::load(&crate::store::testing::conn()).unwrap();
         let clauses = |settings: &Settings| {
             let (mut clauses, mut values) = (Vec::new(), Vec::new());
@@ -579,7 +606,7 @@ mod tests {
         let none = read(json!({ "defaults": { "type": "core.bookmark" } })).unwrap();
         for types in [json!(["*"]), json!([" * "]), json!(["*", "core.note"])] {
             let starred = read(json!({
-                "search": { "types": types },
+                "query": { "types": types },
                 "defaults": { "type": "core.bookmark" },
             }))
             .unwrap();
@@ -590,10 +617,10 @@ mod tests {
             assert_eq!(clauses(&starred), clauses(&none), "{types}");
             assert_eq!(starred.new_type(&catalog), "core.bookmark", "{types}");
         }
-        let starred = read(json!({ "search": { "types": ["*"] } })).unwrap();
+        let starred = read(json!({ "query": { "types": ["*"] } })).unwrap();
         assert_eq!(starred.new_type(&catalog), "core.note");
         // The witness: a named type still holds only itself.
-        let named = read(json!({ "search": { "types": ["core.bookmark"] } })).unwrap();
+        let named = read(json!({ "query": { "types": ["core.bookmark"] } })).unwrap();
         assert!(!named.holds_type(&catalog, "core.note"));
     }
 

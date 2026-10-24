@@ -145,7 +145,7 @@ fn added_tagged(dir: &Path, through: Server) -> (Folder, String) {
     registry();
     let tag = nonce();
     let settings = serde_json::json!({
-        "search": { "types": ["core.note"], "filter": format!("tags contains \"{tag}\"") },
+        "query": { "types": ["core.note"], "filter": format!("tags contains \"{tag}\"") },
         "defaults": { "tags": [tag] },
     });
     let id = seed(&["folder", &nonce(), &settings.to_string()]);

@@ -192,7 +192,7 @@ it("keeps a folder's edit and create and sends both when its grant returns", asy
   trackKey(ctx, minted.data.id);
   const settings = await client.createFolder({
     title: "grant recovery",
-    search: { types: ["core.note"], tier: "library" },
+    query: { types: ["core.note"], tier: "library" },
     defaults: { type: "core.note", tier: "library" },
   });
   expect(settings.ok, JSON.stringify(settings.error)).toBe(true);

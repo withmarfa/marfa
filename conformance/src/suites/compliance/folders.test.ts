@@ -72,7 +72,7 @@ describe("the folder door", () => {
   it("creates a folder as a system.folder, read back through the item doors", async () => {
     const settings = {
       title: "Project",
-      search: {
+      query: {
         types: ["core.note"],
         tier: "library",
         state: ["active", "archived"],
@@ -107,6 +107,42 @@ describe("the folder door", () => {
     );
     expect(listed.status).toBe(200);
     expect(listed.data.data.map((row) => row.id)).toContain(item.id);
+  });
+
+  it.each(["library", "feed", "all"])(
+    "accepts query tier %s through both folder writes",
+    async (tier) => {
+      const { id } = await folder({ query: { tier } });
+      const read = await client.getItem(id);
+      expect(read.data.item.properties.query).toEqual({ tier });
+      const changed = await client.updateFolder(id, {
+        version: 1,
+        query: { tier },
+      });
+      expect(changed.status).toBe(200);
+      expect(changed.data.item.properties.query).toEqual({ tier });
+    },
+  );
+
+  it("refuses search as an unknown folder setting", async () => {
+    const { id } = await folder({ query: { tier: "library" } });
+    for (const r of [
+      await client.createFolder({
+        title: "refused",
+        search: { tier: "library" },
+      }),
+      await client.updateFolder(id, {
+        version: 1,
+        search: { tier: "library" },
+      }),
+    ]) {
+      expect(r.status).toBe(400);
+      expect(r.error?.error.code).toBe("validation_error");
+      expect(r.error?.error.details?.["unknown_body_fields"]).toEqual([
+        "search",
+      ]);
+      expect(r.error?.error.message).toContain("search");
+    }
   });
 
   it("changes a folder at its version, merges a stale change to another setting, and refuses one to the same, and refuses a conflict parameter as undeclared", async () => {
@@ -279,23 +315,16 @@ describe("the folder door", () => {
   });
 
   it.each([
+    [{ query: { tier: "unknown" } }, "validation_error", "query.tier"],
     [
-      { search: { types: ["core.no-such-type"] } },
+      { query: { types: ["core.no-such-type"] } },
       "unknown_type",
-      "search.types.0",
+      "query.types.0",
     ],
-    [
-      { search: { types: ["Not A Type"] } },
-      "validation_error",
-      "search.types.0",
-    ],
-    [{ search: { filter: "tags eq" } }, "validation_error", "search.filter"],
-    [
-      { search: { beneath: "not-an-id" } },
-      "validation_error",
-      "search.beneath",
-    ],
-    [{ search: { state: ["trashed"] } }, "validation_error", "search.state.0"],
+    [{ query: { types: ["Not A Type"] } }, "validation_error", "query.types.0"],
+    [{ query: { filter: "tags eq" } }, "validation_error", "query.filter"],
+    [{ query: { beneath: "not-an-id" } }, "validation_error", "query.beneath"],
+    [{ query: { state: ["trashed"] } }, "validation_error", "query.state.0"],
     [
       { defaults: { type: "core.no-such-type" } },
       "unknown_type",
@@ -345,9 +374,9 @@ describe("the folder door", () => {
       "first_placement.core.note",
     ],
     [
-      { search: { types: ["system.folder"] } },
+      { query: { types: ["system.folder"] } },
       "validation_error",
-      "search.types.0",
+      "query.types.0",
     ],
     [
       { defaults: { type: "system.folder" } },
@@ -395,12 +424,12 @@ describe("the folder door", () => {
     for (const r of [
       await client.createFolder({
         title: "refused",
-        search: { tags: ["x"] },
+        query: { tags: ["x"] },
         owner: "x",
       } as never),
       await client.updateFolder(id, {
         version: 1,
-        search: { tags: ["x"] },
+        query: { tags: ["x"] },
         owner: "x",
       } as never),
     ]) {
@@ -411,7 +440,7 @@ describe("the folder door", () => {
       expect(refusal.error.code).toBe("validation_error");
       expect(refusal.error.details?.unknown_body_fields).toEqual([
         "owner",
-        "search.tags",
+        "query.tags",
       ]);
     }
   });
@@ -450,7 +479,7 @@ describe("the folder door", () => {
     // The witness for the refusals above: `..` alone is not what refuses, and
     // a registered type outside `system.*` is taken.
     const settings = {
-      search: { types: ["core.note"] },
+      query: { types: ["core.note"] },
       defaults: { type: "core.note" },
       first_placement: { "core.note": "Notes/../Tickets" },
     };

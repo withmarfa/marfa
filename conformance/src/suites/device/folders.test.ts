@@ -75,7 +75,7 @@ import {
 } from "./folders.shared.js";
 
 /**
- * "A folder is a directory bound to a `system.folder`, whose search decides
+ * "A folder is a directory bound to a `system.folder`, whose query decides
  * what it holds."
  *
  * Most of the rules below exist because their absence is silent: a file bound
@@ -140,7 +140,7 @@ describe("what a folder is", () => {
   it("reads its settings from the system.folder it is bound to", async () => {
     harness = await folderHarness("folder-settings", {
       settings: {
-        search: { types: ["core.bookmark"] },
+        query: { types: ["core.bookmark"] },
         defaults: {
           type: "core.bookmark",
           properties: { language: "en" },
@@ -185,7 +185,7 @@ describe("what a folder is", () => {
     ).toEqual(["inbox"]);
     expect(
       existsSync(join(harness.dir, "a bookmark.md")),
-      "the bookmark the search holds did not become a file",
+      "the bookmark the query holds did not become a file",
     ).toBe(true);
   });
 
@@ -195,11 +195,11 @@ describe("what a folder is", () => {
       tags: [tag],
     });
     const before: FolderSettings = {
-      search: { types: ["core.note"], filter: 'tags contains "a"' },
+      query: { types: ["core.note"], filter: 'tags contains "a"' },
       defaults: { tags: ["a"] },
     };
     const after: FolderSettings = {
-      search: { types: ["core.note"], filter: 'tags contains "b"' },
+      query: { types: ["core.note"], filter: 'tags contains "b"' },
       defaults: { tags: ["b"] },
     };
     let changed: Record<string, unknown> = {};
@@ -231,7 +231,7 @@ describe("what a folder is", () => {
     if (!pushed.ok) return;
     expect(
       existsSync(join(harness.dir, "tagged b.md")),
-      "the folder went on answering the search it was added with",
+      "the folder went on answering the query it was added with",
     ).toBe(true);
     expect(pushed.value.pull?.unmatched).toBe(1);
     expect(
@@ -257,7 +257,7 @@ describe("what a folder is", () => {
     for (const { asks, settings, check } of [
       {
         asks: "other types",
-        settings: { search: { types: ["core.bookmark"] } },
+        settings: { query: { types: ["core.bookmark"] } },
         check: () => {
           expect(existsSync(join(harness!.dir, "a bookmark.md"))).toBe(true);
           expect(
@@ -268,7 +268,7 @@ describe("what a folder is", () => {
       },
       {
         asks: "another tier",
-        settings: { search: { types: ["core.note"], tier: "feed" as const } },
+        settings: { query: { types: ["core.note"], tier: "feed" as const } },
         check: () => undefined,
       },
     ]) {
@@ -330,7 +330,7 @@ describe("what a folder is", () => {
           folderItem({
             id,
             version: 1,
-            settings: { search: { types: ["core.note"] } },
+            settings: { query: { types: ["core.note"] } },
           }),
         refused: undefined,
       },
@@ -482,7 +482,7 @@ describe("what a folder is", () => {
   it("writes its settings out as one file in .marfa/", async () => {
     harness = await folderHarness("folder-settings-file", {
       settings: {
-        search: { types: ["core.note"], filter: 'tags contains "kept"' },
+        query: { types: ["core.note"], filter: 'tags contains "kept"' },
         defaults: { tags: ["inbox"] },
         include: ["*.md"],
       },
@@ -562,7 +562,7 @@ describe("what a folder is", () => {
     expect(sent.at(-1)).toEqual({
       version: 1,
       title: "renamed",
-      search: { types: ["core.note"] },
+      query: { types: ["core.note"] },
       defaults: { tags: ["landed"] },
     });
 
@@ -580,7 +580,7 @@ describe("what a folder is", () => {
     expect(left.value.settings.flagged).toBeNull();
     expect(sent.at(-1)).toEqual({
       version: 2,
-      search: { types: ["core.note"] },
+      query: { types: ["core.note"] },
       defaults: { tags: ["landed"] },
     });
     expect(readFileSync(settingsFile(harness), "utf8")).toContain(
@@ -718,11 +718,11 @@ describe("what a folder is", () => {
         why: "the folder door refused it",
       },
       {
-        refused: "because it names a search the folder cannot answer",
+        refused: "because it names a query the folder cannot answer",
         edit: (text: string) =>
           text.replace(
-            "search:\n",
-            "search:\n  filter: backref[parent-of] exists\n",
+            "query:\n",
+            "query:\n  filter: backref[parent-of] exists\n",
           ),
         why: "backref",
       },
@@ -753,7 +753,7 @@ describe("what a folder is", () => {
     ]) {
       harness = await folderHarness("folder-settings-refused", {
         settings: {
-          search: { types: ["core.note"] },
+          query: { types: ["core.note"] },
           defaults: { tags: ["kept"] },
         },
       });
@@ -906,7 +906,7 @@ describe("what a folder is", () => {
     ).toEqual({
       version: 1,
       title: "renamed",
-      search: { types: ["core.note"] },
+      query: { types: ["core.note"] },
     });
 
     // A line naming no version the server mints edits on the one last
@@ -941,9 +941,9 @@ describe("what a folder is", () => {
     }
   });
 
-  it("makes a new document the search's first type that is not a file type", async () => {
+  it("makes a new document the query's first type that is not a file type", async () => {
     harness = await folderHarness("folder-type-fallback", {
-      settings: { search: { types: ["core.file", "core.note"] } },
+      settings: { query: { types: ["core.file", "core.note"] } },
     });
     scriptFolderWrites(harness);
     put(harness, "new.md", "---\ntitle: New\n---\nbody\n");
@@ -954,12 +954,12 @@ describe("what a folder is", () => {
     ).toEqual(["core.note"]);
   });
 
-  it("refuses defaults its search would not hold", async () => {
+  it("refuses defaults its query would not hold", async () => {
     for (const { what, settings, named } of [
       {
         what: "a type",
         settings: {
-          search: { types: ["core.note"] },
+          query: { types: ["core.note"] },
           defaults: { type: "core.bookmark" },
         },
         named: "core.bookmark",
@@ -967,7 +967,7 @@ describe("what a folder is", () => {
       {
         what: "a tier",
         settings: {
-          search: { types: ["core.note"] },
+          query: { types: ["core.note"] },
           defaults: { tier: "feed" as const },
         },
         named: "feed",
@@ -996,7 +996,7 @@ describe("what a folder is", () => {
         const added = await folder.add(row.id);
         expect(
           added.ok,
-          `a folder took defaults naming ${what} its search does not hold, so every new file would fall outside it`,
+          `a folder took defaults naming ${what} its query does not hold, so every new file would fall outside it`,
         ).toBe(false);
         if (added.ok) return;
         expect(added.refusal.raw, what).toContain(named);
@@ -1033,7 +1033,7 @@ describe("what a folder is", () => {
     });
     scriptFolderWrites(harness);
     harness.settings.settings = {
-      search: { types: ["core.note"] },
+      query: { types: ["core.note"] },
       defaults: { type: "core.bookmark" },
     };
     harness.settings.version = 2;
@@ -1041,7 +1041,7 @@ describe("what a folder is", () => {
     const later = await harness.folder.push();
     expect(
       later.ok,
-      "a pass made new files of a type its own search does not hold",
+      "a pass made new files of a type its own query does not hold",
     ).toBe(false);
     if (!later.ok) expect(later.refusal.raw).toContain("core.bookmark");
   });
@@ -1052,7 +1052,7 @@ describe("what a folder is", () => {
     const existing = "01a00000-0000-7000-8000-0000000003a3";
     harness = await folderHarness("folder-defaults", {
       settings: {
-        search: { types: ["core.note", "core.file"], tier: "feed" },
+        query: { types: ["core.note", "core.file"], tier: "feed" },
         defaults: {
           type: "core.note",
           tier: "feed",
@@ -1175,11 +1175,11 @@ describe("what a folder is", () => {
   });
   it("keeps each folder's state and queue to itself", async () => {
     harness = await folderHarness("folder-one", {
-      settings: { search: { types: ["core.note"] } },
+      settings: { query: { types: ["core.note"] } },
     });
     // One Mac: both are listed in one registry, and still independent.
     second = await folderHarness("folder-two", {
-      settings: { search: { types: ["core.bookmark"] } },
+      settings: { query: { types: ["core.bookmark"] } },
       registry: harness.registry,
     });
     scriptFolderWrites(harness);
@@ -1265,7 +1265,7 @@ describe("what a folder is", () => {
   });
 });
 
-describe("what a folder's search holds", () => {
+describe("what a folder's query holds", () => {
   const note = (
     id: string,
     title: string,
@@ -1288,7 +1288,7 @@ describe("what a folder's search holds", () => {
       .filter((name) => name.endsWith(".md"))
       .sort();
 
-  const searches: Array<{
+  const queries: Array<{
     condition: string;
     settings: FolderSettings;
     rows: Record<string, Array<{ item: WireItemOptions; tags?: string[] }>>;
@@ -1297,7 +1297,7 @@ describe("what a folder's search holds", () => {
   }> = [
     {
       condition: "type, with its subtree",
-      settings: { search: { types: ["core.note"] } },
+      settings: { query: { types: ["core.note"] } },
       rows: {
         // Served on the note page so the copy holds the bookmark, and the
         // pull's own type rule is what leaves it out.
@@ -1315,7 +1315,7 @@ describe("what a folder's search holds", () => {
     },
     {
       condition: "no type, which holds every type the key reads",
-      settings: { search: {} },
+      settings: { query: {} },
       rows: {
         "core.note": [note("01a00000-0000-7000-8000-000000000211", "a note")],
         "core.bookmark": [
@@ -1328,7 +1328,7 @@ describe("what a folder's search holds", () => {
     },
     {
       condition: "tier",
-      settings: { search: { types: ["core.note"], tier: "feed" } },
+      settings: { query: { types: ["core.note"], tier: "feed" } },
       rows: {
         "core.note": [
           note("01a00000-0000-7000-8000-000000000221", "fed", {
@@ -1341,7 +1341,7 @@ describe("what a folder's search holds", () => {
     },
     {
       condition: "no tier, which holds the library tier",
-      settings: { search: { types: ["core.note"] } },
+      settings: { query: { types: ["core.note"] } },
       rows: {
         "core.note": [
           note("01a00000-0000-7000-8000-000000000223", "fed", {
@@ -1354,7 +1354,7 @@ describe("what a folder's search holds", () => {
     },
     {
       condition: "state",
-      settings: { search: { types: ["core.note"], state: ["archived"] } },
+      settings: { query: { types: ["core.note"], state: ["archived"] } },
       rows: {
         "core.note": [
           note("01a00000-0000-7000-8000-000000000231", "shelved", {
@@ -1368,7 +1368,7 @@ describe("what a folder's search holds", () => {
     {
       condition: "tags",
       settings: {
-        search: { types: ["core.note"], filter: 'tags contains "keep"' },
+        query: { types: ["core.note"], filter: 'tags contains "keep"' },
       },
       rows: {
         "core.note": [
@@ -1384,7 +1384,7 @@ describe("what a folder's search holds", () => {
     {
       condition: "a property",
       settings: {
-        search: {
+        query: {
           types: ["core.note"],
           filter: 'properties.status eq "ready"',
         },
@@ -1410,7 +1410,7 @@ describe("what a folder's search holds", () => {
     {
       condition: "an edge to an item",
       settings: {
-        search: {
+        query: {
           types: ["core.note"],
           filter: `edge[references] eq "${target}"`,
         },
@@ -1438,7 +1438,7 @@ describe("what a folder's search holds", () => {
     },
     {
       condition: "beneath an item",
-      settings: { search: { types: ["core.note"], beneath: root } },
+      settings: { query: { types: ["core.note"], beneath: root } },
       rows: {
         "core.note": [
           note(root, "the root"),
@@ -1466,14 +1466,14 @@ describe("what a folder's search holds", () => {
   ];
 
   // One case per condition, each on a folder of its own.
-  it("holds exactly what its search matches", async () => {
-    for (const { condition, settings, rows, edges, held } of searches) {
-      harness = await folderHarness("folder-search", { settings, rows, edges });
+  it("holds exactly what its query matches", async () => {
+    for (const { condition, settings, rows, edges, held } of queries) {
+      harness = await folderHarness("folder-query", { settings, rows, edges });
       scriptFolderWrites(harness);
       const pulled = await harness.folder.pull();
       expect(pulled.ok, `${condition}: ${JSON.stringify(pulled)}`).toBe(true);
       expect(files(harness), condition).toEqual(held);
-      if (settings.search?.types === undefined) {
+      if (settings.query?.types === undefined) {
         const status = await harness.folder.device().status();
         expect(status.ok && status.value.slice_types).toEqual(["*"]);
         expect(
@@ -1482,7 +1482,7 @@ describe("what a folder's search holds", () => {
               (sent) => sent.method === "GET" && sent.pathname === "/items",
             )
             .every((sent) => !sent.query.has("type")),
-          "a search naming no type was hydrated by naming types",
+          "a query naming no type was hydrated by naming types",
         ).toBe(true);
       }
       await harness.stop();
@@ -1490,7 +1490,7 @@ describe("what a folder's search holds", () => {
     }
   });
 
-  it("holds archived items unless its search narrows state", async () => {
+  it("holds archived items unless its query narrows state", async () => {
     const rows = {
       "core.note": [
         note("01a00000-0000-7000-8000-000000000281", "live"),
@@ -1508,7 +1508,7 @@ describe("what a folder's search holds", () => {
     ).toEqual(["live.md", "shelved.md"]);
 
     second = await folderHarness("folder-active-only", {
-      settings: { search: { types: ["core.note"], state: ["active"] } },
+      settings: { query: { types: ["core.note"], state: ["active"] } },
       rows,
     });
     scriptFolderWrites(second);
@@ -1516,10 +1516,10 @@ describe("what a folder's search holds", () => {
     expect(files(second)).toEqual(["live.md"]);
   });
 
-  it("refuses a search condition it does not implement", async () => {
+  it("refuses a query condition it does not implement", async () => {
     // At a later pass, where the settings change to one it cannot answer.
     let changed: Record<string, unknown> = {};
-    harness = await folderHarness("folder-search-refused-later", {
+    harness = await folderHarness("folder-query-refused-later", {
       events: [
         (): Answer =>
           copyReplay("2", [copyItemEvent("2", "item.updated", changed)]),
@@ -1528,14 +1528,14 @@ describe("what a folder's search holds", () => {
     });
     scriptFolderWrites(harness);
     harness.settings.settings = {
-      search: { types: ["core.note"], filter: "backref[parent-of] exists" },
+      query: { types: ["core.note"], filter: "backref[parent-of] exists" },
     };
     harness.settings.version = 2;
     changed = folderItem(harness.settings);
     const later = await harness.folder.push();
     expect(
       later.ok,
-      "a pass answered a search whose condition it cannot answer, as though the condition were not there",
+      "a pass answered a query whose condition it cannot answer, as though the condition were not there",
     ).toBe(false);
     if (!later.ok) expect(later.refusal.raw).toContain("backref");
     await harness.stop();
@@ -1544,12 +1544,12 @@ describe("what a folder's search holds", () => {
     for (const { condition, settings, named } of [
       {
         condition: "a backref, which a copy cannot answer whole",
-        settings: { search: { filter: "backref[parent-of] exists" } },
+        settings: { query: { filter: "backref[parent-of] exists" } },
         named: "backref",
       },
       {
-        condition: "a search member it does not know",
-        settings: { search: { near: "01a00000-0000-7000-8000-0000000002f9" } },
+        condition: "a query member it does not know",
+        settings: { query: { near: "01a00000-0000-7000-8000-0000000002f9" } },
         named: "near",
       },
       {
@@ -1569,12 +1569,12 @@ describe("what a folder's search holds", () => {
       },
       {
         condition: "no state at all",
-        settings: { search: { state: [] } },
+        settings: { query: { state: [] } },
         named: "no state",
       },
       {
         condition: "a state a folder does not hold",
-        settings: { search: { state: ["trashed"] } },
+        settings: { query: { state: ["trashed"] } },
         named: "trashed",
       },
     ]) {
@@ -1614,7 +1614,7 @@ describe("what a folder's search holds", () => {
     {
       condition: "tag",
       settings: {
-        search: { types: ["core.note"], filter: 'tags contains "keep"' },
+        query: { types: ["core.note"], filter: 'tags contains "keep"' },
       },
       item: note(joining, "joining"),
       change: () =>
@@ -1630,7 +1630,7 @@ describe("what a folder's search holds", () => {
     {
       condition: "property",
       settings: {
-        search: {
+        query: {
           types: ["core.note"],
           filter: 'properties.status eq "ready"',
         },
@@ -1654,7 +1654,7 @@ describe("what a folder's search holds", () => {
     },
     {
       condition: "state",
-      settings: { search: { types: ["core.note"], state: ["active"] } },
+      settings: { query: { types: ["core.note"], state: ["active"] } },
       item: note(joining, "joining", { state: "archived" }),
       change: () =>
         copyItemEvent(
@@ -1666,7 +1666,7 @@ describe("what a folder's search holds", () => {
     {
       condition: "edge",
       settings: {
-        search: {
+        query: {
           types: ["core.note"],
           filter: `edge[references] eq "${target}"`,
         },
@@ -1685,7 +1685,7 @@ describe("what a folder's search holds", () => {
     },
     {
       condition: "beneath",
-      settings: { search: { types: ["core.note"], beneath: root } },
+      settings: { query: { types: ["core.note"], beneath: root } },
       item: note(joining, "joining"),
       edges: { "parent-of": [] },
       change: () =>
@@ -1717,7 +1717,7 @@ describe("what a folder's search holds", () => {
       expect(pushed.ok, `${condition}: ${JSON.stringify(pushed)}`).toBe(true);
       expect(
         existsSync(join(harness.dir, "joining.md")),
-        `an item that came to match the search by ${condition} did not become a file at the next pass`,
+        `an item that came to match the query by ${condition} did not become a file at the next pass`,
       ).toBe(true);
       await harness.stop();
       harness = undefined;
@@ -1725,15 +1725,15 @@ describe("what a folder's search holds", () => {
   });
 });
 
-describe("a search naming no type", () => {
-  it("takes every type, and any default type, where its search names no type or the star", async () => {
+describe("a query naming no type", () => {
+  it("takes every type, and any default type, where its query names no type or the star", async () => {
     // The star is every type but `system.*`, so a folder naming it holds,
     // writes and takes exactly what a folder naming no type does.
-    for (const search of [{}, { types: ["*"] }, { types: [" * "] }]) {
+    for (const query of [{}, { types: ["*"] }, { types: [" * "] }]) {
       const system = "01a00000-0000-7000-8000-0000000002c1";
       const note = "01a00000-0000-7000-8000-0000000002c2";
       harness = await folderHarness("folder-every-type", {
-        settings: { search, defaults: { type: "core.bookmark" } },
+        settings: { query, defaults: { type: "core.bookmark" } },
         events: [
           copyReplay("3", [
             copyItemEvent(
@@ -1765,14 +1765,14 @@ describe("a search naming no type", () => {
         .sort();
       expect(
         types,
-        `a file of some type was left out of a search naming ${JSON.stringify(search)}`,
+        `a file of some type was left out of a query naming ${JSON.stringify(query)}`,
       ).toHaveLength(2);
       expect(types[0]).toBe("core.bookmark");
       expect(types[1]).toMatch(/^core\.file/);
       expect((await harness.folder.device().get(note)).ok).toBe(true);
       expect(
         (await harness.folder.device().get(system)).ok,
-        `a slice of every type took a system row: ${JSON.stringify(search)}`,
+        `a slice of every type took a system row: ${JSON.stringify(query)}`,
       ).toBe(false);
       await harness.stop();
       harness = undefined;
@@ -2497,7 +2497,7 @@ describe("files and items", () => {
 
   it("sends a file being copied in only once it stops changing, while every other file goes on", async () => {
     harness = await folderHarness("folder-watch-copying", {
-      settings: { search: { types: ["core.note", "core.file"] } },
+      settings: { query: { types: ["core.note", "core.file"] } },
     });
     scriptFolderWrites(harness);
     acceptUploads(harness.server);
@@ -2554,7 +2554,7 @@ describe("files and items", () => {
 
   it("says once that a file which never stops changing has not been sent", async () => {
     harness = await folderHarness("folder-watch-never-settles", {
-      settings: { search: { types: ["core.note", "core.file"] } },
+      settings: { query: { types: ["core.note", "core.file"] } },
     });
     scriptFolderWrites(harness);
     acceptUploads(harness.server);
@@ -3529,7 +3529,7 @@ describe("files and items", () => {
 
   it("does not drain again after a push whose first drain left a write undelivered", async () => {
     harness = await folderHarness("placement-push-undelivered", {
-      settings: { search: { types: ["core.note", "core.file"] } },
+      settings: { query: { types: ["core.note", "core.file"] } },
       rows: {
         "core.note": [
           {
@@ -3918,7 +3918,7 @@ describe("what a folder takes", () => {
   it("takes only what its include list names", async () => {
     harness = await folderHarness("folder-include", {
       settings: {
-        search: { types: ["core.note"] },
+        query: { types: ["core.note"] },
         include: ["Notes/", "Other/kept.md"],
       },
       rows: {
@@ -3970,7 +3970,7 @@ describe("what a folder takes", () => {
   it("never takes a secret whatever its lists say", async () => {
     harness = await folderHarness("folder-secrets", {
       settings: {
-        search: { types: ["core.note", "core.file"] },
+        query: { types: ["core.note", "core.file"] },
         defaults: { type: "core.note" },
         include: [".env", "*.pem", "keys/", "ssh/", "*.md"],
         ignore: ["!.env", "!*.pem"],
@@ -4035,7 +4035,7 @@ describe("what a folder takes", () => {
       },
     });
     harness = await folderHarness("folder-secret-items", {
-      settings: { search: { types: ["core.file"] } },
+      settings: { query: { types: ["core.file"] } },
       rows: { "core.file": [key(one), key(two)] },
     });
     scriptFolderWrites(harness);
@@ -4064,7 +4064,7 @@ describe("what a folder takes", () => {
 
   it("never takes an editor's or a download's temporary file", async () => {
     harness = await folderHarness("folder-temporary", {
-      settings: { search: { types: ["core.note", "core.file"] } },
+      settings: { query: { types: ["core.note", "core.file"] } },
     });
     scriptFolderWrites(harness);
     acceptUploads(harness.server);
@@ -4224,7 +4224,7 @@ describe("what a folder takes", () => {
   it("reaches a dot-led path its include list names", async () => {
     harness = await folderHarness("folder-include-dot-led", {
       settings: {
-        search: { types: ["core.note"] },
+        query: { types: ["core.note"] },
         include: [".notes/", "*.md"],
       },
     });
@@ -4254,7 +4254,7 @@ describe("what a folder takes", () => {
   it("takes nothing under a dot-led directory a negated include line names", async () => {
     harness = await folderHarness("folder-include-negated", {
       settings: {
-        search: { types: ["core.note"] },
+        query: { types: ["core.note"] },
         include: ["*", "!.git/"],
       },
     });
@@ -4273,7 +4273,7 @@ describe("what a folder takes", () => {
     const id = "01a00000-0000-7000-8000-0000000018a1";
     const placed = (include: string[]) => ({
       settings: {
-        search: { types: ["core.note"] },
+        query: { types: ["core.note"] },
         include,
         first_placement: { "core.note": ".notes/.hidden" },
       },
@@ -4529,11 +4529,11 @@ describe("what a folder takes", () => {
   const otherId = "01a00000-0000-7000-8000-0000000055a6";
 
   /** A folder holding only the tagged note, whose copy also holds a note
-   *  outside its search that a write of the device's own conflicts on. */
+   *  outside its query that a write of the device's own conflicts on. */
   async function conflictedElsewhere(label: string) {
     harness = await folderHarness(label, {
       settings: {
-        search: { types: ["core.note"], filter: 'tags contains "kept"' },
+        query: { types: ["core.note"], filter: 'tags contains "kept"' },
       },
       rows: {
         "core.note": [
@@ -4633,7 +4633,7 @@ describe("what a folder takes", () => {
   it("does not walk into a package", async () => {
     harness = await folderHarness("folder-package", {
       settings: {
-        search: { types: ["core.note"] },
+        query: { types: ["core.note"] },
         first_placement: { "core.note": "Deck.key" },
       },
       rows: {
@@ -4877,7 +4877,7 @@ describe("what a folder takes", () => {
   it("keeps its own state in .marfa and never pushes it", async () => {
     // An include line naming `.marfa/` takes nothing under it either.
     harness = await folderHarness("folder-state", {
-      settings: { search: { types: ["core.note"] }, include: [".marfa/", "*"] },
+      settings: { query: { types: ["core.note"] }, include: [".marfa/", "*"] },
     });
     scriptFolderWrites(harness);
     put(harness, "note.md", "---\ntitle: A note\n---\nbody\n");
@@ -5094,9 +5094,9 @@ describe("what a folder takes", () => {
     ).toBe(0);
   });
 
-  it("leaves a file outside its search alone", async () => {
+  it("leaves a file outside its query alone", async () => {
     harness = await folderHarness("folder-outside-slice", {
-      settings: { search: { types: ["core.note"] } },
+      settings: { query: { types: ["core.note"] } },
       rows: {
         "core.note": [
           {
@@ -5147,7 +5147,7 @@ describe("what a folder takes", () => {
     ]);
     expect(
       pushed.value.pull?.unmatched,
-      "a document pushed as a type the search does not hold was not flagged outside it",
+      "a document pushed as a type the query does not hold was not flagged outside it",
     ).toBe(1);
     expect(
       readFileSync(join(harness.dir, "photo.png"), "utf8"),
@@ -5208,7 +5208,7 @@ describe("large removals, status and size", () => {
   }
 
   const tight = {
-    search: { types: ["core.note"] },
+    query: { types: ["core.note"] },
     defaults: { type: "core.note" },
     removal_threshold: { files: 2, fraction: 0.25 },
   };
@@ -5299,7 +5299,7 @@ describe("large removals, status and size", () => {
     const name = (n: number) => `file-${String(n)}.txt`;
     harness = await folderHarness("folder-removal-restore-unfetched", {
       settings: {
-        search: { types: ["core.file"] },
+        query: { types: ["core.file"] },
         defaults: { type: "core.file" },
         removal_threshold: { files: 2, fraction: 0.25 },
       },
@@ -5456,7 +5456,7 @@ describe("large removals, status and size", () => {
           ),
         ]),
       ],
-      settings: { ...tight, search: { ...tight.search, state: ["active"] } },
+      settings: { ...tight, query: { ...tight.query, state: ["active"] } },
     });
     scriptFolderWrites(harness);
     expect((await harness.folder.pull()).ok).toBe(true);
@@ -5465,19 +5465,19 @@ describe("large removals, status and size", () => {
     }
     const paused = await harness.folder.scan();
     expect(paused.ok && paused.value.paused).toBe(3);
-    // Another device archives one of the three, which the search leaves out.
+    // Another device archives one of the three, which the query leaves out.
     const caught = await harness.folder.device().catchUp();
     expect(caught.ok ? caught.value.applied : 0).toBe(1);
     const restored = await harness.folder.restore();
     expect(restored.ok, JSON.stringify(restored)).toBe(true);
     if (!restored.ok) return;
-    // The witness: the two the search still holds are written back.
+    // The witness: the two the query still holds are written back.
     for (const n of [1, 2]) {
       expect(existsSync(join(harness.dir, `Note ${String(n)}.md`))).toBe(true);
     }
     expect(
       restored.value.put_back,
-      "restore counted as put back a file no pull will write, since the search no longer holds its item's state",
+      "restore counted as put back a file no pull will write, since the query no longer holds its item's state",
     ).toBe(2);
     expect(existsSync(join(harness.dir, "Note 0.md"))).toBe(false);
     // The file that left for good took its placement with it, and the two put
@@ -5509,7 +5509,7 @@ describe("large removals, status and size", () => {
     const largeType = "user.large_text";
     harness = await folderHarness("folder-size", {
       settings: {
-        search: { types: ["core.note", largeType] },
+        query: { types: ["core.note", largeType] },
         defaults: { type: largeType },
       },
       catalog: typeCatalog([
@@ -5738,7 +5738,7 @@ describe("a file's permission", () => {
 
   it("keeps a file's executable permission", async () => {
     harness = await folderHarness("folder-executable-push", {
-      settings: { search: { types: ["core.note", "core.file"] } },
+      settings: { query: { types: ["core.note", "core.file"] } },
     });
     scriptFolderWrites(harness);
     acceptUploads(harness.server);
@@ -5809,7 +5809,7 @@ describe("a file's permission", () => {
       Buffer.from([n, n, n]),
     );
     harness = await folderHarness("folder-executable-pull", {
-      settings: { search: { types: ["core.file"] } },
+      settings: { query: { types: ["core.file"] } },
       rows: {
         "core.file": [
           { item: fileItem(tool, "tool.bin", toolBytes, { executable: true }) },

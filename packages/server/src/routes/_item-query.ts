@@ -1,5 +1,5 @@
 /**
- * The query a folder's `search` and a view's `query` share: which items a
+ * The query a folder's `query` and a view's `query` share: which items a
  * saved setting names. One schema builder and one check, so the two doors
  * accept and refuse the same shapes.
  */

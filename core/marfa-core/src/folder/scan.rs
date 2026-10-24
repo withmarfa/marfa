@@ -464,7 +464,7 @@ impl Folder {
         let (unchanged, embedded) = (&scan.unchanged, &scan.embedded);
         let (early, stats, report) = (&mut scan.early, &mut scan.stats, &mut scan.report);
         let only_embedded = &mut scan.only_embedded;
-        // A file already a file item is read whatever the search says, so one
+        // A file already a file item is read whatever the query says, so one
         // no longer embedded, or moved, is followed rather than journaled. A
         // file item may be bound at a document name, which the item says.
         let bound_paths: HashSet<&str> = snapshot
@@ -1491,7 +1491,7 @@ impl Folder {
         // A file that carries no id and that no record here names, the
         // folder added again over its own files say, is the item this folder
         // holds that is placed where it sits and whose bytes it holds. An item
-        // the search no longer holds, one another folder took in or one that
+        // the query no longer holds, one another folder took in or one that
         // left by state, has a file elsewhere or none, and a copy of it is new.
         let mut placed: Option<HashMap<String, Vec<crate::model::Edge>>> = None;
         for (at, file) in files.iter().enumerate() {
@@ -1886,7 +1886,7 @@ impl Folder {
                     let mut item = item;
                     let mut attempts = 0;
                     loop {
-                        // No pull writes the file of an item the search no
+                        // No pull writes the file of an item the query no
                         // longer holds, so the person's delete of it stands.
                         let changed = match bound.as_ref().filter(|_| holds) {
                             Some(bound) => {

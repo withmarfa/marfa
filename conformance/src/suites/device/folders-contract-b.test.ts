@@ -59,7 +59,7 @@ const row = (n: number) => ({
   },
 });
 const tight = {
-  search: { types: ["core.note"] },
+  query: { types: ["core.note"] },
   removal_threshold: { files: 2, fraction: 0.25 },
 };
 
@@ -70,7 +70,7 @@ async function departing(
   const rows = Array.from({ length: 6 }, (_, n) => row(n));
   const made = await folderHarness(label, {
     rows: { "core.note": rows },
-    settings: { ...tight, search: { types: ["core.note"], state: ["active"] } },
+    settings: { ...tight, query: { types: ["core.note"], state: ["active"] } },
     events: [
       copyReplay(
         "4",
@@ -166,7 +166,7 @@ it("does not count a missing unmatched file as put back when restoring a removal
     rows: { "core.note": rows },
     settings: {
       ...tight,
-      search: { types: ["core.note"], filter: 'properties.status eq "ready"' },
+      query: { types: ["core.note"], filter: 'properties.status eq "ready"' },
     },
     events: [
       copyReplay("2", [
@@ -298,7 +298,7 @@ it("keeps every built-in machine, temporary and secret name outside admission", 
   ];
   harness = await folderHarness("contract-b-builtins", {
     settings: {
-      search: { types: ["core.note", "core.file"] },
+      query: { types: ["core.note", "core.file"] },
       include: ["*", ...machine, ...temporary, ...secrets],
       ignore: secrets.map((name) => `!${name}`),
     },
@@ -466,7 +466,7 @@ it("reports purged paused files without promising that restore can recover their
 it("applies include negation, ignore precedence and case-normalized patterns", async () => {
   harness = await folderHarness("contract-b-list-composition", {
     settings: {
-      search: { types: ["core.note"] },
+      query: { types: ["core.note"] },
       include: ["*.MD", "!excluded.md", ".hidden.md"],
       ignore: ["ignored.md"],
     },
@@ -491,7 +491,7 @@ it("reports a bound file as unreached when settings exclude it", async () => {
   // The stored server settings are read by a fresh hydration, not inferred
   // from an unsent edit of the local settings file.
   harness.settings.settings = {
-    search: { types: ["core.note"] },
+    query: { types: ["core.note"] },
     ignore: ["*.md"],
   };
   harness.settings.version += 1;
@@ -551,7 +551,7 @@ it.each(["include", "ignore"] as const)(
   async (list) => {
     await expect(
       folderHarness(`contract-b-invalid-${list}`, {
-        settings: { search: { types: ["core.note"] }, [list]: ["a{b"] },
+        settings: { query: { types: ["core.note"] }, [list]: ["a{b"] },
       }),
     ).rejects.toThrow(/pattern|glob/i);
   },
@@ -648,7 +648,7 @@ it("warns at the exact JSON-encoded size boundary including escaped text", async
   expect(JSON.stringify(plain(limit)).length).toBe(limit);
   expect(JSON.stringify(escaped).length).toBe(limit);
   harness = await folderHarness("contract-b-size-boundary", {
-    settings: { search: { types: ["user.large_text"] } },
+    settings: { query: { types: ["user.large_text"] } },
     catalog: typeCatalog([
       wireType("user.large_text", {
         bodyField: "body",
@@ -688,7 +688,7 @@ it("keeps confirmed missing files unsure while another registered folder is unav
   second = await folderHarness("contract-b-confirm-peer", {
     sharing: { server: harness.server, key: KEY },
     registry: harness.registry,
-    settings: { search: { types: ["core.bookmark"] } },
+    settings: { query: { types: ["core.bookmark"] } },
   });
   expect((await harness.folder.pull()).ok).toBe(true);
   for (const n of [0, 1, 2]) rmSync(join(harness.dir, `Note ${String(n)}.md`));
@@ -752,7 +752,7 @@ async function fileHarness(label: string) {
     },
   };
   const made = await folderHarness(label, {
-    settings: { search: { types: ["core.file", "core.note"] } },
+    settings: { query: { types: ["core.file", "core.note"] } },
     rows: { "core.file": [{ item }], "core.note": [row(1)] },
     events: [
       copyReplay("3", [
@@ -1037,7 +1037,7 @@ it("writes an archived embedded file anew without counting it as put back", asyn
   };
   harness = await folderHarness("contract-b-restore-embed", {
     settings: {
-      search: { types: ["core.note"], state: ["active"] },
+      query: { types: ["core.note"], state: ["active"] },
       removal_threshold: { files: 0, fraction: 0 },
     },
     rows: { "core.note": [{ item: host }], "core.file": [{ item: file }] },
@@ -1084,7 +1084,7 @@ it("writes an archived embedded file anew without counting it as put back", asyn
 
 it("matches include names in NFC regardless of case and asks server names in both forms", async () => {
   harness = await folderHarness("contract-b-unicode-list", {
-    settings: { search: { types: ["core.note"] }, include: ["CAFÉ.md"] },
+    settings: { query: { types: ["core.note"] }, include: ["CAFÉ.md"] },
   });
   writeFileSync(join(harness.dir, "Cafe\u0301.md"), "unicode note\n");
   writeFileSync(join(harness.dir, "other.md"), "other\n");
@@ -1119,7 +1119,7 @@ it.each(["ignore", "dot directory"])(
   async (kind) => {
     harness = await folderHarness("contract-b-unicode-other-lists", {
       settings: {
-        search: { types: ["core.note"] },
+        query: { types: ["core.note"] },
         include: kind === "ignore" ? ["*"] : [".CAFÉ/**"],
         ignore: kind === "ignore" ? ["CAFÉ.md"] : [],
       },

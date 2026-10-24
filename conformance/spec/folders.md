@@ -384,61 +384,97 @@ When machines follow the same `system.folder`, a device MUST keep each machine�
 
 **Tests:** `device/folders.test.ts › asks of each machine's folder for itself`.
 
-## Search and defaults
+## Query and defaults
 
 ### `folders/search-match`
 
-When a folder evaluates membership, a device MUST apply its search types and their descendants, tier, state, and filters on tags, properties, and edges.
+When a folder evaluates membership, a device MUST apply its query types and their descendants, tier, state, and filters on tags, properties, and edges.
 
-**Tests:** `device/folders.test.ts › holds exactly what its search matches`.
+**Tests:** `device/folders.test.ts › holds exactly what its query matches`.
 
 ### `folders/search-beneath`
 
-When a folder search names `beneath`, a device MUST include the named item and its readable descendants reached through `parent-of`.
+When a folder query names `beneath`, a device MUST include the named item and its readable descendants reached through `parent-of`.
 
-**Tests:** `device/folders-contract-a.test.ts › materializes only readable copy rows reached by a beneath search`, `device/folders.test.ts › holds exactly what its search matches`.
+**Tests:** `device/folders-contract-a.test.ts › materializes only readable copy rows reached by a beneath query`, `device/folders.test.ts › holds exactly what its query matches`.
 
 ### `folders/search-default-types`
 
-When a folder search names no types or names `*`, a device MUST admit every readable type except `system.*`.
+When a folder query names no types or names `*`, a device MUST admit every readable type except `system.*`.
 
-**Tests:** `device/folders.test.ts › takes every type, and any default type, where its search names no type or the star`.
+**Tests:** `device/folders.test.ts › takes every type, and any default type, where its query names no type or the star`.
 
 ### `folders/search-default-tier`
 
-When a folder search names no tier, a device MUST use the `library` tier.
+When a folder query names no tier, a device MUST use the `library` tier.
 
-**Tests:** `device/folders.test.ts › holds exactly what its search matches`.
+**Tests:** `device/folders.test.ts › holds exactly what its query matches`.
+
+### `folders/query-all-tiers`
+
+When a folder's `query.tier` is `all`, a device MUST write eligible items matching the query from both the `library` and `feed` tiers as files.
+
+**Tests:** `device/folders-query.test.ts › writes matching library and feed items with query tier all`.
+
+### `folders/query-tier-departure-kept`
+
+When an item's tier or a folder's `query.tier` changes so that the item leaves the query's reach and no other folder takes its file, a device MUST keep its existing file as unmatched.
+
+**Tests:** `device/folders-query.test.ts › keeps files and sends no item write when a query narrows from all to library`, `› keeps a file and sends no item write when its item leaves the query tier`.
+
+### `folders/query-tier-never-trashes`
+
+When an item's tier or a folder's `query.tier` changes so that the item leaves the query's reach, a device MUST NOT delete or trash that item on the server because it left the query.
+
+**Tests:** `device/folders-query.test.ts › keeps files and sends no item write when a query narrows from all to library`, `› keeps a file and sends no item write when its item leaves the query tier`.
 
 ### `folders/search-default-states`
 
-When a folder search names no states, a device MUST include active and archived items.
+When a folder query names no states, a device MUST include active and archived items.
 
-**Tests:** `device/folders.test.ts › holds archived items unless its search narrows state`.
+**Tests:** `device/folders.test.ts › holds archived items unless its query narrows state`.
 
 ### `folders/search-refuse-unsupported`
 
-If folder settings name an unknown setting, search member, defaults member, or removal-threshold member, a `backref` condition, an empty state list, or a state other than active or archived, then a device MUST refuse to follow them.
+If folder settings name an unknown setting, query member, defaults member, or removal-threshold member, a `backref` condition, an empty state list, a state other than active or archived, or a query tier other than `library`, `feed` or `all`, then a device MUST refuse to follow them.
 
-**Tests:** `device/folders.test.ts › refuses a search condition it does not implement`.
+**Tests:** `device/folders.test.ts › refuses a query condition it does not implement`.
 
 ### `folders/search-edit-refused`
 
-When a settings-file edit names a search the device cannot answer, a device MUST NOT send that edit.
+When a settings-file edit names a query the device cannot answer, a device MUST NOT send that edit.
 
 **Tests:** `device/folders.test.ts › keeps its settings in force and flags the file when an edit is refused`.
 
+### `folders/query-settings-file-refusal`
+
+If a settings-file edit names `search` or a query tier other than `library`, `feed` or `all`, then a device MUST flag the file with an error naming the refused key or tier.
+
+**Tests:** `device/folders-query.test.ts › refuses an unsupported settings-file key or tier ($setting)`.
+
+### `folders/query-cli-flag`
+
+The CLI MUST take the folder query through `--query` on `marfa folders create` and `marfa folders change`.
+
+**Tests:** `device/folders-query.test.ts › names only --query in folders %s and refuses --search`.
+
+### `folders/query-cli-search-refused`
+
+If `marfa folders create` or `marfa folders change` names `--search`, then the CLI MUST refuse it as an unexpected argument.
+
+**Tests:** `device/folders-query.test.ts › names only --query in folders %s and refuses --search`.
+
 ### `folders/default-document-type`
 
-When a new document has no `type` line, or one holding no type identifier (`folders/foreign-type-property`), a device MUST choose its type from the defaults, then the search's first non-file type, then `core.note`.
+When a new document has no `type` line, or one holding no type identifier (`folders/foreign-type-property`), a device MUST choose its type from the defaults, then the query's first non-file type, then `core.note`.
 
-**Tests:** `device/folders.test.ts › makes a new document the search's first type that is not a file type`, `device/folders-frontmatter.test.ts › makes the note the folder's default type and keeps the line's value as a property`, `device/folders.test.ts › takes every type, and any default type, where its search names no type or the star`, `device/folders-contract-a.test.ts › uses core.note without a type default and preserves explicit empty tags and titles`.
+**Tests:** `device/folders.test.ts › makes a new document the query's first type that is not a file type`, `device/folders-frontmatter.test.ts › makes the note the folder's default type and keeps the line's value as a property`, `device/folders.test.ts › takes every type, and any default type, where its query names no type or the star`, `device/folders-contract-a.test.ts › uses core.note without a type default and preserves explicit empty tags and titles`.
 
 ### `folders/default-document-tier`
 
-When a new document has no `tier` line, a device MUST use the defaults' tier or, if absent, the search's tier.
+When a new document has no `tier` line, a device MUST use the defaults' tier or, if absent, the query's tier, using `library` when the query's tier is `all` or absent.
 
-**Tests:** `device/folders.test.ts › fills a new file's blanks from its defaults, never an edit's`.
+**Tests:** `device/folders.test.ts › fills a new file's blanks from its defaults, never an edit's`, `device/folders-query.test.ts › uses defaults tier or library for new documents and file items with query tier all (%s)`.
 
 ### `folders/default-properties`
 
@@ -490,9 +526,9 @@ When a bound file is edited, a device MUST NOT fill its omitted values from the 
 
 ### `folders/default-search-refusal`
 
-If the defaults name a type or tier the folder search excludes, then a device MUST refuse to follow those defaults.
+If the defaults name a type or tier the folder query excludes, then a device MUST refuse to follow those defaults.
 
-**Tests:** `device/folders.test.ts › refuses defaults its search would not hold`.
+**Tests:** `device/folders.test.ts › refuses defaults its query would not hold`.
 
 ### `folders/independent-folders`
 
@@ -520,7 +556,7 @@ When a file is edited in a newly added folder directory, a device MUST send that
 
 ### `folders/item-to-file`
 
-When a pull meets an item held by the folder search and eligible for writing, a device MUST write the item as a file.
+When a pull meets an item held by the folder query and eligible for writing, a device MUST write the item as a file.
 
 **Tests:** `device/folders.test.ts › makes a file an item and an item a file`.
 
@@ -544,9 +580,9 @@ When a new file item is created from file bytes, a device MUST apply the folder'
 
 ### `folders/default-file-tier`
 
-When a device creates a new file item, a device MUST use the folder defaults' tier or, if absent, the search's tier.
+When a device creates a new file item, a device MUST use the folder defaults' tier or, if absent, the query's tier, using `library` when the query's tier is `all` or absent.
 
-**Tests:** `device/folders.test.ts › fills a new file's blanks from its defaults, never an edit's`.
+**Tests:** `device/folders.test.ts › fills a new file's blanks from its defaults, never an edit's`, `device/folders-query.test.ts › uses defaults tier or library for new documents and file items with query tier all (%s)`.
 
 ### `folders/registry-store-identity`
 
@@ -854,39 +890,39 @@ When `.marfa/folder.yaml` changes during a folder watch, a device MUST submit th
 
 ### `folders/binary-outside-search`
 
-When an unbound non-document file has no type held by a folder’s search and no document embeds it, a device MUST leave the file unsent.
+When an unbound non-document file has no type held by a folder’s query and no document embeds it, a device MUST leave the file unsent.
 
-**Tests:** `device/folders.test.ts › leaves a file outside its search alone`, `device/folders-frontmatter.test.ts › sends an embedded file with its file`.
+**Tests:** `device/folders.test.ts › leaves a file outside its query alone`, `device/folders-frontmatter.test.ts › sends an embedded file with its file`.
 
 ### `folders/binary-outside-search-skipped-count`
 
-When an unbound non-document file has no type held by a folder’s search and no document embeds it, a device MUST count the file as `skipped`.
+When an unbound non-document file has no type held by a folder’s query and no document embeds it, a device MUST count the file as `skipped`.
 
-**Tests:** `device/folders.test.ts › leaves a file outside its search alone`, `device/folders-frontmatter.test.ts › sends an embedded file with its file`.
+**Tests:** `device/folders.test.ts › leaves a file outside its query alone`, `device/folders-frontmatter.test.ts › sends an embedded file with its file`.
 
 ### `folders/embedded-outside-search`
 
-When a document in a folder embeds a file outside the folder’s search, a device MUST admit that file as the document’s attachment.
+When a document in a folder embeds a file outside the folder’s query, a device MUST admit that file as the document’s attachment.
 
 **Tests:** `device/folders-frontmatter.test.ts › sends an embedded file with its file`, `device/folders-frontmatter.test.ts › writes an embedded file where its link says`, `device/folders-frontmatter.test.ts › follows an embedded file renamed away from its link, and says the link names nothing`.
 
 ### `folders/document-outside-search`
 
-When a folder document names an admissible type outside the folder’s search, a device MUST create its item under that type.
+When a folder document names an admissible type outside the folder’s query, a device MUST create its item under that type.
 
-**Tests:** `device/folders.test.ts › leaves a file outside its search alone`.
+**Tests:** `device/folders.test.ts › leaves a file outside its query alone`.
 
 ### `folders/new-file-only-members`
 
-When an item outside a folder’s search has no bound file and no document embeds it, a device MUST NOT write a new file for the item.
+When an item outside a folder’s query has no bound file and no document embeds it, a device MUST NOT write a new file for the item.
 
-**Tests:** `device/folders.test.ts › leaves a file outside its search alone`.
+**Tests:** `device/folders.test.ts › leaves a file outside its query alone`.
 
 ### `folders/outside-document-unmatched`
 
-When a folder document’s accepted type is outside the folder’s search, a device MUST count its bound file as `unmatched` at the next pull.
+When a folder document’s accepted type is outside the folder’s query, a device MUST count its bound file as `unmatched` at the next pull.
 
-**Tests:** `device/folders.test.ts › leaves a file outside its search alone`.
+**Tests:** `device/folders.test.ts › leaves a file outside its query alone`.
 
 ## Document fields and presentation
 
@@ -1460,11 +1496,11 @@ When a file at a document name (`.md`, `.markdown` or `.txt`, in any letter case
 
 ### `folders/file-item-doc-name-moved-out`
 
-When a file at a document name (`.md`, `.markdown` or `.txt`, in any letter case) that is the file of a file item is renamed to a name of no type the folder's search holds, a device MUST keep the file item bound to the file at its new name.
+When a file at a document name (`.md`, `.markdown` or `.txt`, in any letter case) that is the file of a file item is renamed to a name of no type the folder's query holds, a device MUST keep the file item bound to the file at its new name.
 
-**Reason:** a file item's file is followed whatever the search says, and its kind comes from its item, not from the name it had.
+**Reason:** a file item's file is followed whatever the query says, and its kind comes from its item, not from the name it had.
 
-**Tests:** `device/folders-placement.test.ts › follows a file item moved %s to a name its search holds no type for`.
+**Tests:** `device/folders-placement.test.ts › follows a file item moved %s to a name its query holds no type for`.
 
 ### `folders/file-item-doc-name-replaced`
 
@@ -1618,7 +1654,7 @@ When a new edge type is written at its target, a device MUST refresh the folder 
 
 ### `folders/edge-title-outside-folder`
 
-When a document writes an edge to a readable item outside the folder search, a device MUST render that target by title where the name is unambiguous.
+When a document writes an edge to a readable item outside the folder query, a device MUST render that target by title where the name is unambiguous.
 
 **Tests:** `device/folders-frontmatter.test.ts › writes and reads back by title a link to an item with no file on this Mac`.
 
@@ -2058,15 +2094,15 @@ When `![[name]]` names a file, a device MUST prefer the root-relative path, then
 
 ### `folders/embed-upload`
 
-When a document embeds an admissible file, a device MUST upload that file before creating its file item regardless of the search's admitted file types.
+When a document embeds an admissible file, a device MUST upload that file before creating its file item regardless of the query's admitted file types.
 
 **Tests:** `device/folders-frontmatter.test.ts › sends an embedded file with its file`.
 
 ### `folders/embed-held`
 
-While a document embeds a readable active or archived file item, a device MUST retain its file regardless of the folder search's type and state restrictions.
+While a document embeds a readable active or archived file item, a device MUST retain its file regardless of the folder query's type and state restrictions.
 
-**Tests:** `device/folders-frontmatter.test.ts › sends an embedded file with its file`, `device/folders-frontmatter.test.ts › keeps an embedded file archived elsewhere where its search holds active items only`.
+**Tests:** `device/folders-frontmatter.test.ts › sends an embedded file with its file`, `device/folders-frontmatter.test.ts › keeps an embedded file archived elsewhere where its query holds active items only`.
 
 ### `folders/embed-path-placement`
 
@@ -2106,9 +2142,9 @@ When a renamed attachment no longer resolves from its body embed, a device MUST 
 
 ### `folders/embed-attachment-hydration`
 
-When a folder search admits document types, a device MUST hold `attached-to` edges whole.
+When a folder query admits document types, a device MUST hold `attached-to` edges whole.
 
-**Tests:** `device/folders-frontmatter.test.ts › holds attachments whole only where its search holds a document`.
+**Tests:** `device/folders-frontmatter.test.ts › holds attachments whole only where its query holds a document`.
 
 ### `folders/embed-trashed-line`
 
@@ -2378,15 +2414,15 @@ When an unreadable renamed file leaves a replacement at its previous path, a dev
 
 ### `folders/identity-placement-bytes`
 
-When an unbound raw-text or file-item file matches the path and rendered bytes of an otherwise unbound item held by the search, a device MUST bind it to that item.
+When an unbound raw-text or file-item file matches the path and rendered bytes of an otherwise unbound item held by the query, a device MUST bind it to that item.
 
 **Tests:** `device/folders-placement.test.ts › takes back the files it holds by placement and bytes when it is added again over them`, `device/folders-placement.test.ts › takes back an empty text file rendered from a missing body`.
 
 ### `folders/identity-takeback-search`
 
-When a file matches the old placement and bytes of an item the search no longer holds, a device MUST create a new item for that file.
+When a file matches the old placement and bytes of an item the query no longer holds, a device MUST create a new item for that file.
 
-**Tests:** `device/folders-placement.test.ts › takes back by placement and bytes only an item its search holds`.
+**Tests:** `device/folders-placement.test.ts › takes back by placement and bytes only an item its query holds`.
 
 ### `folders/identity-takeback-peer`
 
@@ -2740,7 +2776,7 @@ When `folders add` is refused for lacking placement permission, a device MUST ke
 
 ### `folders/placement-not-membership`
 
-When evaluating folder membership, a device MUST use the search independently of whether an item has a placement edge to the folder.
+When evaluating folder membership, a device MUST use the query independently of whether an item has a placement edge to the folder.
 
 **Tests:** `device/folders-placement.test.ts › does not let placement decide what it holds`.
 
@@ -2968,13 +3004,13 @@ When a person edits or moves the file a pull moved, a device MUST treat a later 
 
 ### `folders/placement-end-departure`
 
-When a file leaves a folder because its item was trashed or left the search's states, a device MUST delete that folder's `in-folder` edge for the item.
+When a file leaves a folder because its item was trashed or left the query's states, a device MUST delete that folder's `in-folder` edge for the item.
 
 **Tests:** `device/folders-identity.test.ts › ends a folder's placement of an item that is trashed, and places it again on restore`, `device/folders-identity.test.ts › ends a folder's placement of an item that leaves by state, and places it again when it returns`, `device/folders.test.ts › lets a paused file whose item left by state go when the removal is put back, rather than journaling it again`, `cli/folder.test.ts › ends a folder's placement of an item put in the bin, and places it again on restore`.
 
 ### `folders/placement-end-transfer`
 
-When a file transfers to another folder on the machine and its original folder's search no longer holds its item, a device MUST delete the original folder's `in-folder` edge for the item.
+When a file transfers to another folder on the machine and its original folder's query no longer holds its item, a device MUST delete the original folder's `in-folder` edge for the item.
 
 **Tests:** `device/folders-one-mac.test.ts › ends a folder's placement of an item whose file another folder took in or let go`, `cli/folder.test.ts › ends a folder's placement of an item whose file another folder took in, and no sooner`.
 
@@ -3006,7 +3042,7 @@ When an item's purge removes its placement from the working copy, a device MUST 
 
 ### `folders/placement-held-transfer`
 
-When a file moves to a folder that does not hold its item but its original folder's search still holds the item, a device MUST retain the original folder's placement.
+When a file moves to a folder that does not hold its item but its original folder's query still holds the item, a device MUST retain the original folder's placement.
 
 **Tests:** `device/folders-one-mac.test.ts › keeps a folder's placement of an item it holds when its file is moved to a folder that does not`.
 
@@ -3018,7 +3054,7 @@ While a folder retains an item's file as `unmatched`, a device MUST retain that 
 
 ### `folders/placement-restore-new`
 
-When a folder's search holds an item again after its placement ended, a device MUST place the item using the current first-placement setting or title as for a new item.
+When a folder's query holds an item again after its placement ended, a device MUST place the item using the current first-placement setting or title as for a new item.
 
 **Tests:** `device/folders-identity.test.ts › ends a folder's placement of an item that is trashed, and places it again on restore`, `cli/folder.test.ts › ends a folder's placement of an item put in the bin, and places it again on restore`.
 
@@ -3264,7 +3300,7 @@ When another item takes a deleted file's path, a device MUST retain the original
 
 ### `folders/delete-left-by-state`
 
-When a locally deleted item leaves the folder search by state during the grace, a device MUST send its deletion after the grace.
+When a locally deleted item leaves the folder query by state during the grace, a device MUST send its deletion after the grace.
 
 **Tests:** `device/folders-identity.test.ts › sends a person's journaled delete of an item that leaves by state, and none for one trashed elsewhere`.
 
@@ -3530,13 +3566,13 @@ When files arriving in the same folder scan name one another in links or frontma
 
 ### `folders/new-search-member`
 
-When an item starts matching a folder’s search through a tag, property, state, edge or `beneath` change received by the copy, a device MUST write its file at the next pull.
+When an item starts matching a folder’s query through a tag, property, state, edge or `beneath` change received by the copy, a device MUST write its file at the next pull.
 
 **Tests:** `device/folders.test.ts › adds an item that starts to match`.
 
 ### `folders/departed-file-removed`
 
-When an item is trashed or leaves the states held by a folder's search, its file is not required by an embedding document, its path remains admitted, its bytes remain those the device wrote, and no large-removal pause applies (`folders/pull-removal-paused`), a device MUST remove that file at the next pull where the filesystem permits removal.
+When an item is trashed or leaves the states held by a folder's query, its file is not required by an embedding document, its path remains admitted, its bytes remain those the device wrote, and no large-removal pause applies (`folders/pull-removal-paused`), a device MUST remove that file at the next pull where the filesystem permits removal.
 
 **Tests:** `device/folders-identity.test.ts › removes a trashed item's file and brings it back on restore`, `device/folders-identity.test.ts › removes the file of an item that leaves by state`.
 
@@ -3554,7 +3590,7 @@ When a folder pull removes a departed item’s file, a device MUST NOT queue del
 
 ### `folders/restored-file-written`
 
-When a trashed item is restored into a folder’s search, a device MUST write its file at the next pull.
+When a trashed item is restored into a folder’s query, a device MUST write its file at the next pull.
 
 **Tests:** `device/folders-identity.test.ts › removes a trashed item's file and brings it back on restore`.
 
@@ -3602,25 +3638,25 @@ When a folder pull cannot read a departed item’s file to verify its bytes, a d
 
 ### `folders/unmatched-file-kept`
 
-When an item leaves a folder’s search for a reason other than its state or purge and no other folder takes its file, a device MUST retain the bound file.
+When an item leaves a folder’s query for a reason other than its state or purge and no other folder takes its file, a device MUST retain the bound file.
 
-**Tests:** `device/folders-identity.test.ts › keeps a file whose item no longer matches, flagged`, `device/folders-identity.test.ts › keeps the file of an item a narrowed search leaves out, flagged, and sends its edits to it`, `device/folders-identity.test.ts › keeps the file of an item retyped out of its search elsewhere, flagged, and sends its edits to it`.
+**Tests:** `device/folders-identity.test.ts › keeps a file whose item no longer matches, flagged`, `device/folders-identity.test.ts › keeps the file of an item a narrowed query leaves out, flagged, and sends its edits to it`, `device/folders-identity.test.ts › keeps the file of an item retyped out of its query elsewhere, flagged, and sends its edits to it`.
 
 ### `folders/unmatched-file-kept-unmatched-count`
 
-When an item leaves a folder’s search for a reason other than its state or purge and no other folder takes its file, a device MUST count the file as `unmatched`.
+When an item leaves a folder’s query for a reason other than its state or purge and no other folder takes its file, a device MUST count the file as `unmatched`.
 
-**Tests:** `device/folders-identity.test.ts › keeps a file whose item no longer matches, flagged`, `device/folders-identity.test.ts › keeps the file of an item a narrowed search leaves out, flagged, and sends its edits to it`, `device/folders-identity.test.ts › keeps the file of an item retyped out of its search elsewhere, flagged, and sends its edits to it`.
+**Tests:** `device/folders-identity.test.ts › keeps a file whose item no longer matches, flagged`, `device/folders-identity.test.ts › keeps the file of an item a narrowed query leaves out, flagged, and sends its edits to it`, `device/folders-identity.test.ts › keeps the file of an item retyped out of its query elsewhere, flagged, and sends its edits to it`.
 
 ### `folders/unmatched-file-edits`
 
-When a bound folder file’s item no longer matches the search, a device MUST continue sending edits to that item.
+When a bound folder file’s item no longer matches the query, a device MUST continue sending edits to that item.
 
-**Tests:** `device/folders-identity.test.ts › keeps a file whose item no longer matches, flagged`, `device/folders-identity.test.ts › keeps the file of an item a narrowed search leaves out, flagged, and sends its edits to it`, `device/folders-identity.test.ts › keeps the file of an item retyped out of its search elsewhere, flagged, and sends its edits to it`.
+**Tests:** `device/folders-identity.test.ts › keeps a file whose item no longer matches, flagged`, `device/folders-identity.test.ts › keeps the file of an item a narrowed query leaves out, flagged, and sends its edits to it`, `device/folders-identity.test.ts › keeps the file of an item retyped out of its query elsewhere, flagged, and sends its edits to it`.
 
 ### `folders/unmatched-file-updated`
 
-When a bound unmatched folder item changes, a device MUST keep its existing file current under the same preservation rules as a search member’s file.
+When a bound unmatched folder item changes, a device MUST keep its existing file current under the same preservation rules as a query member’s file.
 
 **Tests:** `device/folders-identity.test.ts › keeps an unmatched file current, so its second edit keeps another device's change`.
 
@@ -3632,13 +3668,13 @@ When another item takes a bound folder file’s path, a device MUST release the 
 
 ### `folders/embedded-archive-kept`
 
-When an embedded file item becomes archived outside the folder’s search, a device MUST keep its file while a document still embeds it.
+When an embedded file item becomes archived outside the folder’s query, a device MUST keep its file while a document still embeds it.
 
-**Tests:** `device/folders-frontmatter.test.ts › sends an embedded file with its file`, `device/folders-frontmatter.test.ts › keeps an embedded file archived elsewhere where its search holds active items only`.
+**Tests:** `device/folders-frontmatter.test.ts › sends an embedded file with its file`, `device/folders-frontmatter.test.ts › keeps an embedded file archived elsewhere where its query holds active items only`.
 
 ### `folders/binary-created`
 
-When a nonempty non-document file is admitted by a folder’s search or an embed, a device MUST create a file item typed from its MIME type whose create waits for the bytes’ upload.
+When a nonempty non-document file is admitted by a folder’s query or an embed, a device MUST create a file item typed from its MIME type whose create waits for the bytes’ upload.
 
 **Tests:** `device/folders-placement.test.ts › pushes a file that is not a document as a file item, its bytes uploaded first`, `device/folders-frontmatter.test.ts › sends an embedded file with its file`.
 
@@ -4046,13 +4082,13 @@ While another process watches a folder, the CLI MUST answer `folders status` wit
 
 ### `folders/cross-folder-copy`
 
-When a file’s ID already appears in another folder and the receiving folder already binds that item or its search excludes the item, a device MUST admit the arriving file as a new item.
+When a file’s ID already appears in another folder and the receiving folder already binds that item or its query excludes the item, a device MUST admit the arriving file as a new item.
 
 **Tests:** `device/folders-one-mac.test.ts › tells a copy into another folder from a move`.
 
 ### `folders/cross-folder-member-adopted`
 
-When a file arrives with an ID held by the receiving folder’s search and that folder has no file for the item, a device MUST bind the arriving file to the existing item.
+When a file arrives with an ID held by the receiving folder’s query and that folder has no file for the item, a device MUST bind the arriving file to the existing item.
 
 **Tests:** `device/folders-one-mac.test.ts › takes a copy into a folder that holds the item and has no file of it as the item's file`.
 
@@ -4108,7 +4144,7 @@ When another folder’s equal bytes belong to a different item, a device MUST NO
 
 ### `folders/both-folders-copy`
 
-When two folder searches both hold an item and each folder has its own bound file, a device MUST NOT interpret either file as the other’s move.
+When two folder queries both hold an item and each folder has its own bound file, a device MUST NOT interpret either file as the other’s move.
 
 **Tests:** `device/folders-one-mac.test.ts › tells a copy into another folder from a move`.
 
@@ -4126,7 +4162,7 @@ When a missing folder file’s deletion grace expires, no other folder holds the
 
 ### `folders/missing-file-changed-revives`
 
-When a device finds a missing folder file in no other registered folder past its rename grace, or on confirming its paused removal, and another device has changed the file's item in content the file showed while the folder's search still holds the item, a device MUST restore the file from the changed item.
+When a device finds a missing folder file in no other registered folder past its rename grace, or on confirming its paused removal, and another device has changed the file's item in content the file showed while the folder's query still holds the item, a device MUST restore the file from the changed item.
 
 **Reason:** The change is newer than the person's deletion, which no other device has heard of yet, so it wins as it does inside the grace (`folders/delete-remote-revives`). A pull writes no file back while its move cannot be told (`folders/uncertain-move-no-replacement`), so a change made inside the grace may show only once the move is told. The device tells the change from its working copy alone, with no server and no held bytes, so a scan that reaches no server decides it too: a file item by whether its item still names the blob the folder last wrote or sent the file as, and a document by whether its item still shows what the folder last agreed. It decides on the item's version that the deletion is queued against, so a change heard while it decides is decided again rather than trashed with it.
 
@@ -4202,7 +4238,7 @@ When a file item's missing folder file has unambiguous bytes in a file that carr
 
 While a missing folder file is found in another registered folder in a file that carries no ID and that folder would take as the item, that folder’s lists take it, it has not bound it, and it has no file of the item, a device MUST keep the missing file’s binding.
 
-**Reason:** the other folder knows a file that carries no ID as the item only by this binding (`folders/moved-arrival-bytes`, `folders/moved-arrival-text-note`). Released before that folder scans, the binding cannot name the item there, and a folder whose search still holds the item writes its file again, so the moved file becomes a new item. A Markdown file without an ID line is a new item there (`folders/moved-arrival-markdown-new`), so its binding is not kept.
+**Reason:** the other folder knows a file that carries no ID as the item only by this binding (`folders/moved-arrival-bytes`, `folders/moved-arrival-text-note`). Released before that folder scans, the binding cannot name the item there, and a folder whose query still holds the item writes its file again, so the moved file becomes a new item. A Markdown file without an ID line is a new item there (`folders/moved-arrival-markdown-new`), so its binding is not kept.
 
 **Tests:** `device/folders-one-mac.test.ts › keeps one item when a file item both folders hold moves between them and the %s folder scans first`, `device/folders-one-mac.test.ts › follows a move by copy and delete, by id and by bytes`.
 
@@ -4964,13 +5000,13 @@ While `folders watch` runs with `--log`, when its file reaches 1 MiB, the CLI MU
 
 ### `folders/take-in-file`
 
-When another registered folder no longer holds an item for a non-state reason and still holds only its own written file bytes, and the receiving folder’s search holds that item without a file, a device MUST take that file into its placement.
+When another registered folder no longer holds an item for a non-state reason and still holds only its own written file bytes, and the receiving folder’s query holds that item without a file, a device MUST take that file into its placement.
 
 **Tests:** `device/folders-one-mac.test.ts › takes in a file another folder let go`.
 
 ### `folders/take-in-file-taken-count`
 
-When another registered folder no longer holds an item for a non-state reason and still holds only its own written file bytes, and the receiving folder’s search holds that item without a file, a device MUST count the file as `taken`.
+When another registered folder no longer holds an item for a non-state reason and still holds only its own written file bytes, and the receiving folder’s query holds that item without a file, a device MUST count the file as `taken`.
 
 **Tests:** `device/folders-one-mac.test.ts › takes in a file another folder let go`.
 
@@ -5126,7 +5162,7 @@ When a bound unmatched file is missing from disk, a device MUST leave the missin
 
 ### `folders/two-folders-editable`
 
-When two folder searches hold one item, a device MUST keep each folder’s bound file editable through that folder’s own queue.
+When two folder queries hold one item, a device MUST keep each folder’s bound file editable through that folder’s own queue.
 
 **Tests:** `device/folders-one-mac.test.ts › keeps two folders' files for one item editable`.
 
@@ -5464,7 +5500,7 @@ If the server cannot be reached, then the CLI MUST report the writes it could no
 
 ## Removing unmatched files
 
-An unmatched file is one a folder keeps because its item left the search for a reason other than its state or purge (`folders/unmatched-file-kept`).
+An unmatched file is one a folder keeps because its item left the query for a reason other than its state or purge (`folders/unmatched-file-kept`).
 
 ### `folders/unmatched-list`
 
@@ -5662,19 +5698,19 @@ When a paused pull removal is confirmed and the files still contain their folder
 
 ### `folders/restore-disk-files`
 
-When a paused disk removal is restored and the missing files’ items still match the folder’s search, a device MUST write the missing files back from the held copy.
+When a paused disk removal is restored and the missing files’ items still match the folder’s query, a device MUST write the missing files back from the held copy.
 
 **Tests:** `device/folders.test.ts › lets a paused removal go once confirmed, or puts it back`.
 
 ### `folders/restore-disk-files-put-back-count`
 
-When a paused disk removal is restored and the missing files’ items still match the folder’s search, a device MUST count as `put_back` each missing file the restore wrote back.
+When a paused disk removal is restored and the missing files’ items still match the folder’s query, a device MUST count as `put_back` each missing file the restore wrote back.
 
 **Tests:** `device/folders.test.ts › lets a paused removal go once confirmed, or puts it back`, `› counts as put back only the files a restore wrote, and keeps the item of one it could not`.
 
 ### `folders/restore-not-written-listed`
 
-If a paused disk removal is restored and a missing file whose item still matches the folder’s search cannot be written back, such as one whose bytes cannot be fetched, then a device MUST list that file in `not_written_back` with the reason, rather than count it as `put_back`.
+If a paused disk removal is restored and a missing file whose item still matches the folder’s query cannot be written back, such as one whose bytes cannot be fetched, then a device MUST list that file in `not_written_back` with the reason, rather than count it as `put_back`.
 
 **Tests:** `device/folders.test.ts › counts as put back only the files a restore wrote, and keeps the item of one it could not`, `› does not count as put back a file somebody else's file stands in for`.
 
@@ -5708,31 +5744,31 @@ When a pull after a restore can fetch the bytes of a missing file the restore co
 
 ### `folders/restore-departed-binding`
 
-When a paused disk removal is restored and a missing file’s item is absent or outside the search’s states, a device MUST release that file’s binding.
+When a paused disk removal is restored and a missing file’s item is absent or outside the query’s states, a device MUST release that file’s binding.
 
 **Tests:** `device/folders.test.ts › lets a paused file whose item left by state go when the removal is put back, rather than journaling it again`.
 
 ### `folders/restore-departed-binding-not-put-back`
 
-When a paused disk removal is restored and a missing file’s item is absent or outside the search’s states, a device MUST NOT count that missing file as put back.
+When a paused disk removal is restored and a missing file’s item is absent or outside the query’s states, a device MUST NOT count that missing file as put back.
 
 **Tests:** `device/folders.test.ts › lets a paused file whose item left by state go when the removal is put back, rather than journaling it again`.
 
 ### `folders/restore-departed-binding-item-preserved`
 
-When a paused disk removal is restored and a missing file’s item is absent or outside the search’s states, a device MUST NOT delete that missing file’s item.
+When a paused disk removal is restored and a missing file’s item is absent or outside the query’s states, a device MUST NOT delete that missing file’s item.
 
 **Tests:** `device/folders.test.ts › lets a paused file whose item left by state go when the removal is put back, rather than journaling it again`.
 
 ### `folders/restore-unmatched-count`
 
-When a paused disk removal is restored and a missing file’s item left the search for a non-state reason, a device MUST leave the missing file for normal deletion handling.
+When a paused disk removal is restored and a missing file’s item left the query for a non-state reason, a device MUST leave the missing file for normal deletion handling.
 
 **Tests:** `device/folders-contract-b.test.ts › does not count a missing unmatched file as put back when restoring a removal`.
 
 ### `folders/restore-unmatched-count-not-put-back`
 
-When a paused disk removal is restored and a missing file’s item left the search for a non-state reason, a device MUST NOT count the missing file as put back.
+When a paused disk removal is restored and a missing file’s item left the query for a non-state reason, a device MUST NOT count the missing file as put back.
 
 **Tests:** `device/folders-contract-b.test.ts › does not count a missing unmatched file as put back when restoring a removal`.
 
@@ -5750,7 +5786,7 @@ When restoring a disk removal releases an archived file’s old binding but a he
 
 ### `folders/restore-pull-items`
 
-When a paused pull removal is restored, a device MUST queue restoration of trashed items or transition departed items into a state the folder search holds.
+When a paused pull removal is restored, a device MUST queue restoration of trashed items or transition departed items into a state the folder query holds.
 
 **Tests:** `device/folders-contract-b.test.ts › restores a paused pull removal of %s items into a held state`.
 
@@ -5852,7 +5888,7 @@ When a device reads a folder's status and a file at a document name (`.md`, `.ma
 
 ### `folders/status-outside`
 
-When a non-document file has no type held by the folder search, a device MUST report its status as `outside`.
+When a non-document file has no type held by the folder query, a device MUST report its status as `outside`.
 
 **Reason:** this `outside` names a file the folder does not take. It is not the pull report's `outside` count, which `folders/pull-outside-lists` and `folders/placement-outside` say is an item whose path the folder does not write to.
 

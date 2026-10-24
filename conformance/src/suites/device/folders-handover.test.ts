@@ -156,7 +156,7 @@ function tagged(
   extra: Partial<FolderSettings> = {},
 ): FolderSettings {
   return {
-    search: { types: ["core.note"], filter: `tags contains "${tag}"` },
+    query: { types: ["core.note"], filter: `tags contains "${tag}"` },
     defaults: { tags: [tag] },
     ...extra,
   };

@@ -44,14 +44,14 @@ describe("a folder's settings from the terminal", () => {
         "--first-placement",
         "core.note=Notes",
       ],
-      { stdin: JSON.stringify({ search: { types: ["core.note"] } }) },
+      { stdin: JSON.stringify({ query: { types: ["core.note"] } }) },
     );
     trackFolder(c.ctx, created.item.id);
     expect(created.item.type).toBe("system.folder");
     expect(created.item.version).toBe(1);
     expect(created.item.properties).toEqual({
       title,
-      search: { types: ["core.note"] },
+      query: { types: ["core.note"] },
       include: ["*.md"],
       first_placement: { "core.note": "Notes" },
     });

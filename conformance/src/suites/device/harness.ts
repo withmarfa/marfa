@@ -724,7 +724,7 @@ export async function folderHarness(
   options: {
     /** The settings its `system.folder` holds; a folder of notes unless named. */
     settings?: FolderSettings;
-    /** What `GET /edges` lists, by edge type, for a search holding one whole. */
+    /** What `GET /edges` lists, by edge type, for a query holding one whole. */
     edges?: Record<string, WireEdgeOptions[]>;
     /**
      * Another harness's server, for two folders on one server, and the key
@@ -795,7 +795,7 @@ export async function folderHarness(
     options.folder ??
     scriptFolderRow(
       server,
-      options.settings ?? { search: { types: ["core.note"] } },
+      options.settings ?? { query: { types: ["core.note"] } },
     );
   const stop = async (): Promise<void> => {
     const unscripted = [...server.unmatchedRequests];

@@ -218,7 +218,7 @@ describe("folder contract edge and identity boundaries", () => {
           edge_type: "references",
         },
       ],
-      { search: { types: ["core.note", "core.file"] } },
+      { query: { types: ["core.note", "core.file"] } },
     );
     scriptBlob(folder!.server, bytes);
     await pull();
@@ -592,7 +592,7 @@ describe("body links and attachment presentation", () => {
         })),
       ],
       [],
-      { search: { types: ["core.note", "core.file"] } },
+      { query: { types: ["core.note", "core.file"] } },
     );
     scriptBlob(folder!.server, bytes);
     await pull();
@@ -624,7 +624,7 @@ describe("body links and attachment presentation", () => {
           edge_type: "attached-to",
         },
       ],
-      { search: { types: ["core.note", "core.file"] } },
+      { query: { types: ["core.note", "core.file"] } },
     );
     scriptBlob(folder!.server, bytes);
     await pull();
@@ -732,7 +732,7 @@ describe("binary placement identity", () => {
     await seed(
       items,
       [],
-      { search: { types: ["core.file"] } },
+      { query: { types: ["core.file"] } },
       { [id(1)]: "Different.bin", [id(2)]: "Witness.bin" },
     );
     put("Different.bin", "different bytes\n");

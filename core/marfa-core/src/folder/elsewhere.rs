@@ -140,7 +140,7 @@ impl Peer {
         }
     }
 
-    /// Whether its search holds the item; `None` where its copy cannot say.
+    /// Whether its query holds the item; `None` where its copy cannot say.
     fn holds(&self, item_id: &str) -> Option<bool> {
         self.members
             .get_or_init(|| {

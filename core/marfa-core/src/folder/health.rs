@@ -180,7 +180,7 @@ fn count(value: usize) -> u64 {
 
 fn problem_of(flag: &str) -> Option<Code> {
     match flag {
-        "removal" | "search" | "gone" => None,
+        "removal" | "query" | "gone" => None,
         "refused" => Some(Code::Refused),
         "credential_refused" => Some(Code::CredentialRefused),
         "encoding" | "unreadable" => Some(Code::Unreadable),
@@ -781,7 +781,7 @@ mod tests {
                     "system.folder",
                     "active",
                     "2026-01-01T00:00:00Z",
-                    serde_json::json!({"search":{"types":["core.note"]}}),
+                    serde_json::json!({"query":{"types":["core.note"]}}),
                 ),
                 None,
                 &crate::catalog::Indexing::default(),

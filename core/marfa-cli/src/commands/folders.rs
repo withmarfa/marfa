@@ -23,7 +23,7 @@ pub struct SettingsArgs {
     /// Which items the folder holds, as a JSON object: `types`, `tier`,
     /// `state`, `filter` and `beneath`.
     #[arg(long, value_name = "JSON")]
-    pub search: Option<String>,
+    pub query: Option<String>,
     /// What a new file takes where it leaves a blank, as a JSON object:
     /// `type`, `tier`, `properties`, `tags` and `edges`.
     #[arg(long, value_name = "JSON")]
@@ -56,8 +56,8 @@ impl SettingsArgs {
         if let Some(title) = &self.title {
             flags.insert("title".into(), json!(title));
         }
-        if let Some(search) = &self.search {
-            flags.insert("search".into(), Value::Object(object(search, "--search")?));
+        if let Some(query) = &self.query {
+            flags.insert("query".into(), Value::Object(object(query, "--query")?));
         }
         if let Some(defaults) = &self.defaults {
             flags.insert(

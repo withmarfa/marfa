@@ -6270,7 +6270,7 @@
         ],
         "description": "An error response."
       },
-      "FolderSearch": {
+      "FolderQuery": {
         "type": "object",
         "properties": {
           "types": {
@@ -6282,14 +6282,13 @@
             "description": "The types the folder holds, each with its subtypes. Empty or absent holds every type the machine's key can read, except `system.*`."
           },
           "tier": {
-            "allOf": [
-              {
-                "$ref": "#/components/schemas/Tier"
-              },
-              {
-                "description": "The tier the folder holds. Absent means `library`."
-              }
-            ]
+            "type": "string",
+            "enum": [
+              "library",
+              "feed",
+              "all"
+            ],
+            "description": "The tiers the folder holds: `library`, `feed`, or `all` for both. Absent means `library`."
           },
           "state": {
             "type": "array",
@@ -34986,8 +34985,8 @@
                     "maxLength": 500,
                     "description": "The folder's title."
                   },
-                  "search": {
-                    "$ref": "#/components/schemas/FolderSearch"
+                  "query": {
+                    "$ref": "#/components/schemas/FolderQuery"
                   },
                   "defaults": {
                     "$ref": "#/components/schemas/FolderDefaults"
@@ -35474,8 +35473,8 @@
                     "maxLength": 500,
                     "description": "A new title for the folder."
                   },
-                  "search": {
-                    "$ref": "#/components/schemas/FolderSearch"
+                  "query": {
+                    "$ref": "#/components/schemas/FolderQuery"
                   },
                   "defaults": {
                     "$ref": "#/components/schemas/FolderDefaults"

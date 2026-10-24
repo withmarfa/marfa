@@ -9,7 +9,7 @@ afterEach(async () => {
 
 async function scanned(names: string[], settings: FolderSettings = {}) {
   const harness = await folderHarness("patterns", {
-    settings: { search: { types: ["core.note"] }, ...settings },
+    settings: { query: { types: ["core.note"] }, ...settings },
     files: Object.fromEntries(names.map((name) => [name, "a note\n"])),
   });
   harnesses.push(harness);

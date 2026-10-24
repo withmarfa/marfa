@@ -79,7 +79,7 @@ function hold(command: HeldCommand): HeldCommand {
 
 function tagged(tag: string): FolderSettings {
   return {
-    search: { types: ["core.note"], filter: `tags contains "${tag}"` },
+    query: { types: ["core.note"], filter: `tags contains "${tag}"` },
     defaults: { tags: [tag] },
   };
 }

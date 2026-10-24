@@ -328,7 +328,7 @@ impl Folder {
                 .write_settings_file(&row.properties, row.version, Some(&text))?
                 .report(false));
         }
-        // Refused here rather than sent: the door would take a search this
+        // Refused here rather than sent: the door would take a query this
         // folder cannot answer, and every pass after would stop on it.
         let mut merged = base.clone();
         merged.retain(|key, _| setting(key));

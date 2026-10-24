@@ -399,7 +399,7 @@ describe.runIf(process.platform === "darwin")("a kept credential", () => {
     const folder = {
       id: randomUUID(),
       version: 1,
-      settings: { search: { types: ["core.note"] } },
+      settings: { query: { types: ["core.note"] } },
     };
     scriptHydration(server, { head: "1", edges: {} });
     server.copyAnswer(

@@ -56,7 +56,7 @@ it(
       "create",
       "--title",
       "First sync",
-      "--search",
+      "--query",
       JSON.stringify({ types: ["core.note"] }),
       "--defaults",
       JSON.stringify({ type: "core.note" }),

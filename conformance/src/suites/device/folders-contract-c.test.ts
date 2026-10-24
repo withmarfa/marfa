@@ -63,7 +63,7 @@ describe("folder title names and retried pulls", () => {
     const short = `.${"x".repeat(31)}`;
     const long = `.${"x".repeat(32)}`;
     folder = await folderHarness("contract-c-extensions", {
-      settings: { search: { types: ["core.file"] } },
+      settings: { query: { types: ["core.file"] } },
       rows: {
         "core.file": [short, long, ".png"].map((extension, index) => ({
           item: {
@@ -170,7 +170,7 @@ describe("folder title names and retried pulls", () => {
       await expect(
         folderHarness("contract-c-settings", {
           settings: {
-            search: { types: ["core.note"] },
+            query: { types: ["core.note"] },
             defaults,
           },
         }),
@@ -180,7 +180,7 @@ describe("folder title names and retried pulls", () => {
     }
     folder = await folderHarness("contract-c-good-settings", {
       settings: {
-        search: { types: ["core.note"] },
+        query: { types: ["core.note"] },
         defaults: { tags: ["allowed"] },
       },
     });

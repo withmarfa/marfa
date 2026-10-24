@@ -6,7 +6,7 @@ use serde::Serialize;
 use super::{Folder, copy_changed, lists::Lists, plainly_inside, state};
 use crate::Result;
 
-/// A file the folder keeps whose item the folder's search no longer matches.
+/// A file the folder keeps whose item the folder's query no longer matches.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Unmatched {
     pub path: String,
@@ -38,7 +38,7 @@ impl Folder {
         Folder::reading(root.as_ref())?.unmatched_files()
     }
 
-    /// The files whose items the last pull left in place because the search
+    /// The files whose items the last pull left in place because the query
     /// no longer matches them, in path order. Each says why removing it would
     /// keep it, where it would.
     pub fn unmatched_files(&self) -> Result<Vec<Unmatched>> {
@@ -144,11 +144,11 @@ impl Folder {
         match item {
             None => return Ok(Some("its item is not in this copy any more".into())),
             Some(_) if members.contains(&row.item_id) => {
-                return Ok(Some("its item matches the search again".into()));
+                return Ok(Some("its item matches the query again".into()));
             }
             Some(item) if !settings.holds_state(item.state) => {
                 return Ok(Some(
-                    "its item left the search's states, which the next pull settles".into(),
+                    "its item left the query's states, which the next pull settles".into(),
                 ));
             }
             Some(_) => {}

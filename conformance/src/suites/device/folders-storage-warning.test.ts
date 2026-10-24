@@ -32,7 +32,7 @@ import {
  */
 
 const WAIT = { timeout: 30_000, interval: 100 };
-const SETTINGS: FolderSettings = { search: { types: ["core.note"] } };
+const SETTINGS: FolderSettings = { query: { types: ["core.note"] } };
 
 const ICLOUD = "Library/Mobile Documents/com~apple~CloudDocs/notes";
 const CLOUD = "Library/CloudStorage/Dropbox/notes";

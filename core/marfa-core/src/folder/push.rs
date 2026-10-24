@@ -293,7 +293,7 @@ impl Folder {
         withheld: &placement::Withheld,
         work: &mut Vec<EdgeWork>,
     ) -> Result<Option<Flagged>> {
-        // An embedded file goes as its bytes' type whatever the search holds.
+        // An embedded file goes as its bytes' type whatever the query holds.
         let file_type = self
             .file_type_of(&file.path, settings, catalog)
             .or_else(|| embedded.then(|| bytes_type(&file.path, catalog)).flatten());
@@ -394,7 +394,7 @@ impl Folder {
 
     /// The defaults' edges for a new item. A `parent-of` default names the
     /// parent, as the child's file writes it, so a new file lands beneath
-    /// what the search follows. A type the file's own frontmatter writes a
+    /// what the query follows. A type the file's own frontmatter writes a
     /// line for is no blank.
     fn queue_default_edges(
         &self,

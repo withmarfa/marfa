@@ -28,7 +28,7 @@ const BAD_TAGS: Array<[string, string]> = [
 
 async function started(settings = {}) {
   folder = await folderHarness("names", {
-    settings: { search: { types: ["core.note"] }, ...settings },
+    settings: { query: { types: ["core.note"] }, ...settings },
     rows: {
       "core.note": [
         {
@@ -149,7 +149,7 @@ describe("a folder's file whose tags would leave its item more than 100", () => 
 
   it("is flagged with its reason and queues nothing of it, while a swap on a full item and the files after it are saved", async () => {
     folder = await folderHarness("tag-count", {
-      settings: { search: { types: ["core.note"] } },
+      settings: { query: { types: ["core.note"] } },
       rows: {
         "core.note": [
           row(FULL, "full", named("f", 100)),
@@ -243,7 +243,7 @@ describe("a folder whose settings hold a default the server refuses", () => {
       let refused = "";
       try {
         folder = await folderHarness("names-defaults", {
-          settings: { search: { types: ["core.note"] }, ...settings },
+          settings: { query: { types: ["core.note"] }, ...settings },
         });
       } catch (error) {
         refused = String(error);
@@ -258,7 +258,7 @@ describe("a folder whose settings hold a default the server refuses", () => {
     // The witness: the same settings with defaults the server takes.
     folder = await folderHarness("names-defaults", {
       settings: {
-        search: { types: ["core.note"] },
+        query: { types: ["core.note"] },
         defaults: { tags: ["a".repeat(128)], properties: { named: 1 } },
       },
     });
@@ -274,7 +274,7 @@ describe("a folder whose saved filter compares with null", () => {
     try {
       folder = await folderHarness("names-filter", {
         settings: {
-          search: {
+          query: {
             types: ["core.note"],
             filter: 'properties.a eq "x" OR properties.b eq null',
           },
@@ -283,7 +283,7 @@ describe("a folder whose saved filter compares with null", () => {
     } catch (error) {
       refused = String(error);
     }
-    expect(refused).toContain("search.filter");
+    expect(refused).toContain("query.filter");
     expect(refused).toContain("Null is not a value to compare with");
     expect(refused).toContain("marfa folders change");
     await folder?.stop().catch(() => undefined);

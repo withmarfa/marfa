@@ -1,5 +1,5 @@
 //! Folders on this machine: directories whose files are kept in step with a
-//! `system.folder`'s search, through the core the `marfa` binary uses, and
+//! `system.folder`'s query, through the core the `marfa` binary uses, and
 //! listed in the one registry the machine keeps.
 
 use std::sync::Arc;
@@ -70,7 +70,7 @@ pub enum FileState {
     Waiting,
     /// It is not sent; `reason` says why.
     Held,
-    /// Its item no longer matches the folder's search.
+    /// Its item no longer matches the folder's query.
     Unmatched,
     /// The scan did not reach it, so it is held rather than deleted.
     Unreached,
@@ -94,7 +94,7 @@ pub struct FileStatus {
 pub struct PausedRemoval {
     /// Files gone from the disk whose deletes are not sent.
     pub disk: u64,
-    /// Files left in place whose items left the search elsewhere.
+    /// Files left in place whose items left the query elsewhere.
     pub pull: u64,
 }
 
@@ -201,11 +201,11 @@ pub struct FolderPull {
     pub moved: u64,
     pub unchanged: u64,
     pub skipped: u64,
-    /// Files of items trashed, purged or gone from the search's states, removed.
+    /// Files of items trashed, purged or gone from the query's states, removed.
     pub removed: u64,
     /// Of `removed`, the files of items purged, which no restore brings back.
     pub purged: u64,
-    /// Files of items gone from the search, kept with the person's changes.
+    /// Files of items gone from the query, kept with the person's changes.
     pub kept: u64,
     /// Files the folder did not write, and would not write over.
     pub unwritten: u64,
@@ -213,7 +213,7 @@ pub struct FolderPull {
     pub absent: u64,
     /// Placements the server refused.
     pub unplaced: u64,
-    /// Files left in place whose items the search no longer matches.
+    /// Files left in place whose items the query no longer matches.
     pub unmatched: u64,
     /// Files a large removal holds back.
     pub paused: u64,
@@ -465,7 +465,7 @@ impl Folders {
     }
 
     /// Everything a folder does, once: sends what changed on disk, catches
-    /// up with the server and writes out what its search matches. A folder
+    /// up with the server and writes out what its query matches. A folder
     /// whose first sync waits to be confirmed is only read, and `Waiting`
     /// says what the sync will do. Asks a watch that holds the folder to let
     /// it go, as `add` does.
@@ -1078,7 +1078,7 @@ mod tests {
                 "folder",
                 tag,
                 &format!(
-                    r#"{{"search":{{"types":["core.note"],"filter":"tags contains \"{tag}\""}}}}"#
+                    r#"{{"query":{{"types":["core.note"],"filter":"tags contains \"{tag}\""}}}}"#
                 ),
             ])
             .output()

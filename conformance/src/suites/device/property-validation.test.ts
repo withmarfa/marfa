@@ -440,7 +440,7 @@ describe("a working copy checks the fields its catalog holds", () => {
 
   it("retries unchanged document bytes after their destination type is registered", async () => {
     folder = await folderHarness("destination-registration", {
-      settings: { search: { types: [TYPE] } },
+      settings: { query: { types: [TYPE] } },
       catalog: typeCatalog(types),
       rows: {
         [TYPE]: [
@@ -535,7 +535,7 @@ describe("a working copy checks the fields its catalog holds", () => {
 
   it("contains document refusals, preserves bytes through a rename and retries corrected files", async () => {
     folder = await folderHarness("property-validation", {
-      settings: { search: { types: [TYPE] } },
+      settings: { query: { types: [TYPE] } },
       catalog: typeCatalog(types),
       rows: {
         [TYPE]: [
@@ -640,7 +640,7 @@ describe("a working copy checks the fields its catalog holds", () => {
 
   it("flags a document whose list holds an element of the wrong type, keeps its bytes and takes it once mended", async () => {
     folder = await folderHarness("property-validation-list", {
-      settings: { search: { types: [TYPE] } },
+      settings: { query: { types: [TYPE] } },
       catalog: typeCatalog(types),
       rows: {},
     });
@@ -683,7 +683,7 @@ describe("a working copy checks the fields its catalog holds", () => {
     "flags a document whose frontmatter holds the whole number %s a float would change, keeps its bytes and takes it once mended",
     async (digits, served) => {
       folder = await folderHarness("property-validation-digits", {
-        settings: { search: { types: [TYPE] } },
+        settings: { query: { types: [TYPE] } },
         catalog: typeCatalog(types),
         rows: {},
       });

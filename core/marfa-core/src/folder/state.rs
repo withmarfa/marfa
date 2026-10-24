@@ -207,7 +207,7 @@ pub fn untaken_read_version(content_hash: &str) -> Option<i64> {
         .and_then(|version| version.parse().ok())
 }
 
-/// Also pins the item's row, so the copy keeps it whatever the search says
+/// Also pins the item's row, so the copy keeps it whatever the query says
 /// of it.
 pub fn bind(conn: &Connection, bound: &Bound) -> Result<(), CoreError> {
     let before = bound_at(conn, &bound.path)?;
@@ -671,7 +671,7 @@ fn set_list(conn: &Connection, key: &str, list: &[String]) -> Result<(), CoreErr
     crate::store::meta_set(conn, key, &serde_json::to_string(list)?)
 }
 
-/// The items the last pull left in place because the search no longer
+/// The items the last pull left in place because the query no longer
 /// matches them, so a status read needs no pull of its own.
 const UNMATCHED: &str = "folder_unmatched";
 

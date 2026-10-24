@@ -1,15 +1,15 @@
-//! A folder's settings as a working copy reads them, its search answered
+//! A folder's settings as a working copy reads them, its query answered
 //! from the copy, and its settings written through the folder operations. Unlike
 //! `folders`, nothing here touches a directory, so it serves every platform.
 
 use std::collections::HashMap;
 
 use marfa_core::folder::settings::{
-    Defaults, RemovalThreshold as CoreRemovalThreshold, Search, Settings,
+    Defaults, Query, RemovalThreshold as CoreRemovalThreshold, Settings,
 };
 use serde_json::{Map, Value};
 
-use crate::{Core, Found, ItemState, JsonObject, Listing, MarfaError, Sort, Tier};
+use crate::{Core, Found, ItemState, JsonObject, Listing, MarfaError, SliceTier, Sort, Tier};
 
 /// What a folder holds and what a new file in it takes: the settings a
 /// `system.folder` carries.
@@ -17,7 +17,7 @@ use crate::{Core, Found, ItemState, JsonObject, Listing, MarfaError, Sort, Tier}
 pub struct FolderSettings {
     #[uniffi(default = None)]
     pub title: Option<String>,
-    pub search: FolderSearch,
+    pub query: FolderQuery,
     pub defaults: FolderDefaults,
     /// Gitignore patterns for the paths a folder on disk takes; empty takes
     /// every path.
@@ -33,15 +33,15 @@ pub struct FolderSettings {
     pub removal_threshold: RemovalThreshold,
 }
 
-/// The search that decides which items a folder holds.
+/// The query that decides which items a folder holds.
 #[derive(Debug, Clone, Default, PartialEq, uniffi::Record)]
-pub struct FolderSearch {
+pub struct FolderQuery {
     /// Each with its subtypes; empty holds every type but `system.*`.
     #[uniffi(default = [])]
     pub types: Vec<String>,
     /// `None` holds the library tier.
     #[uniffi(default = None)]
-    pub tier: Option<Tier>,
+    pub tier: Option<SliceTier>,
     /// `None` holds active and archived items.
     #[uniffi(default = None)]
     pub states: Option<Vec<ItemState>>,
@@ -85,7 +85,7 @@ pub struct FolderSettingsChange {
     #[uniffi(default = None)]
     pub title: Option<String>,
     #[uniffi(default = None)]
-    pub search: Option<FolderSearch>,
+    pub query: Option<FolderQuery>,
     #[uniffi(default = None)]
     pub defaults: Option<FolderDefaults>,
     #[uniffi(default = None)]
@@ -117,8 +117,8 @@ impl Core {
         self.inner.folder(&id)?.map(row).transpose()
     }
 
-    /// What the folder's search holds, as a folder on disk holds it. A
-    /// search the slice cannot answer whole is `MarfaError.Invalid`, never
+    /// What the folder's query holds, as a folder on disk holds it. A
+    /// query the slice cannot answer whole is `MarfaError.Invalid`, never
     /// answered in part; a folder the copy does not hold is
     /// `MarfaError.NotFound` with the code `not_held`. While a hydration
     /// fills the copy, the answer is marked partial.
@@ -207,7 +207,7 @@ fn row(row: marfa_core::FolderRow) -> Result<FolderRow, MarfaError> {
 fn settings(settings: Settings) -> Result<FolderSettings, MarfaError> {
     let Settings {
         title,
-        search,
+        query,
         defaults,
         include,
         ignore,
@@ -216,10 +216,10 @@ fn settings(settings: Settings) -> Result<FolderSettings, MarfaError> {
     } = settings;
     Ok(FolderSettings {
         title,
-        search: FolderSearch {
-            types: search.types,
-            tier: search.tier.map(Into::into),
-            states: search
+        query: FolderQuery {
+            types: query.types,
+            tier: query.tier.map(Into::into),
+            states: query
                 .state
                 .map(|states| {
                     states
@@ -228,8 +228,8 @@ fn settings(settings: Settings) -> Result<FolderSettings, MarfaError> {
                         .collect::<Result<Vec<_>, _>>()
                 })
                 .transpose()?,
-            filter: search.filter,
-            beneath: search.beneath,
+            filter: query.filter,
+            beneath: query.beneath,
         },
         defaults: FolderDefaults {
             r#type: defaults.r#type,
@@ -251,7 +251,7 @@ fn settings(settings: Settings) -> Result<FolderSettings, MarfaError> {
 fn core_settings(settings: FolderSettings) -> Result<Settings, MarfaError> {
     Ok(Settings {
         title: settings.title,
-        search: core_search(settings.search),
+        query: core_query(settings.query),
         defaults: core_defaults(settings.defaults)?,
         include: settings.include,
         ignore: settings.ignore,
@@ -260,18 +260,18 @@ fn core_settings(settings: FolderSettings) -> Result<Settings, MarfaError> {
     })
 }
 
-fn core_search(search: FolderSearch) -> Search {
-    Search {
-        types: search.types,
-        tier: search.tier.map(Into::into),
-        state: search.states.map(|states| {
+fn core_query(query: FolderQuery) -> Query {
+    Query {
+        types: query.types,
+        tier: query.tier.map(Into::into),
+        state: query.states.map(|states| {
             states
                 .into_iter()
                 .map(|state| marfa_core::ItemState::from(state).as_str().to_string())
                 .collect()
         }),
-        filter: search.filter,
-        beneath: search.beneath,
+        filter: query.filter,
+        beneath: query.beneath,
     }
 }
 
@@ -303,8 +303,8 @@ fn change_body(change: FolderSettingsChange) -> Result<Map<String, Value>, Marfa
     if let Some(title) = change.title {
         put("title", Ok(Value::String(title))).map_err(encoding)?;
     }
-    if let Some(search) = change.search {
-        put("search", serde_json::to_value(core_search(search))).map_err(encoding)?;
+    if let Some(query) = change.query {
+        put("query", serde_json::to_value(core_query(query))).map_err(encoding)?;
     }
     if let Some(defaults) = change.defaults {
         put("defaults", serde_json::to_value(core_defaults(defaults)?)).map_err(encoding)?;
@@ -350,7 +350,7 @@ mod tests {
     fn settings_cross_the_binding_and_back_unchanged() {
         let properties = serde_json::json!({
             "title": "Recipes",
-            "search": { "types": ["core.note"], "tier": "feed", "state": ["archived"], "filter": "tags contains \"x\"", "beneath": "p" },
+            "query": { "types": ["core.note"], "tier": "all", "state": ["archived"], "filter": "tags contains \"x\"", "beneath": "p" },
             "defaults": { "type": "core.note", "tier": "feed", "properties": { "rating": 3 }, "tags": ["new"], "edges": { "about": ["a"] } },
             "include": ["*.md"],
             "ignore": ["drafts/"],
@@ -359,8 +359,8 @@ mod tests {
         });
         let core: Settings = serde_json::from_value(properties).unwrap();
         let crossed = settings(core.clone()).unwrap();
-        assert_eq!(crossed.search.states, Some(vec![ItemState::Archived]));
-        assert_eq!(crossed.search.tier, Some(Tier::Feed));
+        assert_eq!(crossed.query.states, Some(vec![ItemState::Archived]));
+        assert_eq!(crossed.query.tier, Some(SliceTier::All));
         assert_eq!(core_settings(crossed).unwrap(), core);
     }
 

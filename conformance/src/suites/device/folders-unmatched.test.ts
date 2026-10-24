@@ -26,9 +26,9 @@ const execute = promisify(execFile);
 /**
  * "A folder's unmatched files can be listed and removed after confirmation."
  *
- * An unmatched file is one the folder keeps because its item left the search
+ * An unmatched file is one the folder keeps because its item left the query
  * by a retype. Three items start out in the folder and are retyped out of the
- * search at the next catch-up, so each file is unmatched; the cases then make
+ * query at the next catch-up, so each file is unmatched; the cases then make
  * some of them ones that must stay.
  */
 
@@ -48,7 +48,7 @@ interface Made {
   door: ReturnType<typeof scriptFolderWrites>;
 }
 
-/** A folder holding `count` notes, each written as a file and then retyped out of its search. */
+/** A folder holding `count` notes, each written as a file and then retyped out of its query. */
 async function unmatchedFolder(label: string, count = 3): Promise<Made> {
   const items = Array.from({ length: count }, (_, at) => note(at + 1));
   const harness = await folderHarness(label, {

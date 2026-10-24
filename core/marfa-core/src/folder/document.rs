@@ -1228,7 +1228,7 @@ mod tests {
         let settings = serde_json::json!({
             "folder": "f1",
             "version": 3,
-            "search": { "types": ["core.note"], "filter": "tags contains \"a\"", "state": ["active"] },
+            "query": { "types": ["core.note"], "filter": "tags contains \"a\"", "state": ["active"] },
             "defaults": { "properties": { "n": 1.5, "flag": true }, "edges": { "parent-of": ["p"] } },
             "include": ["*.md", "notes/**"],
             "first_placement": {},
@@ -1238,7 +1238,7 @@ mod tests {
         };
         let text = write_map(&map).unwrap();
         assert_eq!(read_map(&text).unwrap(), map, "{text}");
-        assert!(read_map("search: [open\n").is_err());
+        assert!(read_map("query: [open\n").is_err());
         assert!(read_map("- a list\n").is_err());
     }
 }
