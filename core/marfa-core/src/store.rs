@@ -1798,22 +1798,35 @@ pub fn items_awaiting_their_write(conn: &Connection) -> Result<HashSet<String>, 
     Ok(items)
 }
 
-/// The largest size any item the copy holds states for the bytes `hash`
-/// names, or `None` where none states one. A row whose stored properties are
-/// not JSON, or whose size is not a whole number above zero, states none.
+/// The largest size any file the copy holds states for the bytes `hash`
+/// names, or `None` where none states one. Only `core.file` and its subtypes
+/// state the size of their bytes, as the server stamps it. A row whose stored
+/// properties are not JSON, or whose size is not a whole number above zero,
+/// states none.
 pub fn stated_size(conn: &Connection, hash: &str) -> Result<Option<u64>, CoreError> {
-    let size: Option<i64> = conn.query_row(
+    let catalog = crate::catalog::Catalog::load(conn)?;
+    let extra = catalog.declared_descendants("core.file");
+    let mut types = String::from("type = 'core.file' OR type LIKE 'core.file.%'");
+    if !extra.is_empty() {
+        types.push_str(&format!(
+            " OR type IN ({})",
+            vec!["?"; extra.len()].join(", ")
+        ));
+    }
+    let sql = format!(
         "SELECT MAX(size) FROM (
            SELECT CASE WHEN json_valid(properties) THEN
-                    CASE WHEN json_extract(properties, '$.blob_ref') = ?1
+                    CASE WHEN json_extract(properties, '$.blob_ref') = ?
                           AND json_type(properties, '$.size_bytes') = 'integer'
                          THEN json_extract(properties, '$.size_bytes') END
                   END AS size
-             FROM items)
-         WHERE size > 0",
-        [hash],
-        |row| row.get(0),
-    )?;
+             FROM items WHERE {types})
+         WHERE size > 0"
+    );
+    let mut values = vec![hash.to_string()];
+    values.extend(extra);
+    let size: Option<i64> =
+        conn.query_row(&sql, rusqlite::params_from_iter(values), |row| row.get(0))?;
     Ok(size.and_then(|size| u64::try_from(size).ok()))
 }
 
@@ -4644,15 +4657,16 @@ mod tests {
     fn the_stated_size_is_the_largest_whole_number_an_item_states_for_the_bytes() {
         let temp = tempfile::tempdir().unwrap();
         let conn = super::open(&temp.path().join("core.sqlite")).unwrap();
-        let put = |id: &str, properties: &str| {
+        let put_typed = |id: &str, kind: &str, properties: &str| {
             conn.execute(
                 "INSERT INTO items (id, type, state, version, schema_version, source,
                    occurred_at, created_at, updated_at, properties)
-                 VALUES (?1, 'core.file', 'active', 1, 1, 'test', 't', 't', 't', ?2)",
-                [id, properties],
+                 VALUES (?1, ?3, 'active', 1, 1, 'test', 't', 't', 't', ?2)",
+                [id, properties, kind],
             )
             .unwrap();
         };
+        let put = |id: &str, properties: &str| put_typed(id, "core.file", properties);
         let stated = |hash: &str| super::stated_size(&conn, hash).unwrap();
         assert_eq!(stated("sha256:aa"), None);
         put("one", r#"{"blob_ref":"sha256:aa","size_bytes":300}"#);
@@ -4664,6 +4678,26 @@ mod tests {
         put("broken", "not json");
         assert_eq!(stated("sha256:aa"), Some(900));
         assert_eq!(stated("sha256:cc"), None);
+
+        // Only a file, or a subtype of one, states the size of its bytes: a
+        // note naming the same bytes with a smaller size does not bound them.
+        put_typed(
+            "note",
+            "core.note",
+            r#"{"blob_ref":"sha256:dd","size_bytes":10}"#,
+        );
+        assert_eq!(stated("sha256:dd"), None);
+        put_typed(
+            "image",
+            "core.file.image",
+            r#"{"blob_ref":"sha256:dd","size_bytes":400}"#,
+        );
+        put_typed(
+            "lookalike",
+            "core.filesystem",
+            r#"{"blob_ref":"sha256:dd","size_bytes":9999}"#,
+        );
+        assert_eq!(stated("sha256:dd"), Some(400));
     }
 
     #[test]

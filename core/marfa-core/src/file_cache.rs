@@ -207,15 +207,15 @@ fn volume_from(blocks: u64, available: u64, unit: u64) -> Option<Volume> {
     })
 }
 
-/// Marks the file `file` is open on as excluded from backups, through the
-/// resource value `isExcludedFromBackup` documents
-/// (`kCFURLIsExcludedFromBackupKey`). Does nothing off Apple platforms,
-/// where no backup reads the mark.
+/// Marks the file `file` is open on as excluded from backups, or as
+/// included again where `excluded` is false, through the resource value
+/// `isExcludedFromBackup` documents (`kCFURLIsExcludedFromBackupKey`). Does
+/// nothing off Apple platforms, where no backup reads the mark.
 ///
-/// A debug build refuses the mark where `MARFA_TEST_FAULT` names
+/// A debug build refuses the exclusion where `MARFA_TEST_FAULT` names
 /// `backup-mark-refused`, since no fixture can make the system refuse it.
 #[cfg(any(target_os = "macos", target_os = "ios"))]
-pub(crate) fn exclude_from_backup(file: &File) -> io::Result<()> {
+pub(crate) fn set_backup_exclusion(file: &File, excluded: bool) -> io::Result<()> {
     use std::os::unix::ffi::OsStrExt;
     use std::os::unix::fs::MetadataExt;
 
@@ -227,7 +227,7 @@ pub(crate) fn exclude_from_backup(file: &File) -> io::Result<()> {
         CFURL, CFURLSetResourcePropertyForKey, kCFURLIsExcludedFromBackupKey,
     };
 
-    if crate::fault::named("backup-mark-refused").is_some() {
+    if excluded && crate::fault::named("backup-mark-refused").is_some() {
         return Err(io::Error::other("the system refused the mark"));
     }
     // The resource value is set by URL, and the file is held by descriptor:
@@ -248,7 +248,12 @@ pub(crate) fn exclude_from_backup(file: &File) -> io::Result<()> {
         CFURLSetResourcePropertyForKey(
             url.as_concrete_TypeRef(),
             key.as_concrete_TypeRef(),
-            CFBoolean::true_value().as_CFTypeRef(),
+            if excluded {
+                CFBoolean::true_value()
+            } else {
+                CFBoolean::false_value()
+            }
+            .as_CFTypeRef(),
             &mut error,
         )
     };
@@ -267,7 +272,7 @@ pub(crate) fn exclude_from_backup(file: &File) -> io::Result<()> {
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "ios")))]
-pub(crate) fn exclude_from_backup(_file: &File) -> io::Result<()> {
+pub(crate) fn set_backup_exclusion(_file: &File, _excluded: bool) -> io::Result<()> {
     Ok(())
 }
 

@@ -10,6 +10,8 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { CliDevice } from "../../device/cli-adapter.js";
+import { writeAnswers } from "../../device/marfa-answers.js";
+import type { Answer } from "../../device/scripted-server.js";
 import type { FileCache, Status } from "../../device/protocol.js";
 import {
   KEY,
@@ -429,6 +431,72 @@ describe.runIf(process.platform === "darwin")(
         excluded(`${device.store}.blobs`),
         "the folder that holds uploads is kept out of backups",
       ).toBe(false);
+      expect((await cacheOf(device)).backup_mark_failure).toBeNull();
+    });
+
+    /** Serves the first `cut` bytes of `bytes` of a link that then stops, and answers the blob's hash. */
+    function scriptStoppedBlob(
+      { server }: Harness,
+      bytes: Buffer,
+      cut: number,
+    ): string {
+      const hash = hashOf(bytes);
+      const hex = hash.slice("sha256:".length);
+      server.copyAnswer(
+        "GET",
+        `/blobs/${hash}/url`,
+        writeAnswers.link(`${server.url}/links/${hex}`),
+      );
+      server.copyAnswer("GET", `/links/${hex}`, {
+        kind: "bytes",
+        status: 200,
+        body: bytes,
+        cut,
+      } as Answer);
+      return hash;
+    }
+
+    it("keeps the partial file of a fetch that stopped out of backups", async () => {
+      const area = mkdtempSync(join(homedir(), ".marfa-conformance-backup-"));
+      scratch.push(area);
+      harness = await started("backup-partial");
+      const device = new CliDevice({
+        binary: requireBinary(),
+        store: join(area, "core.sqlite"),
+        url: harness.server.url,
+        key: KEY,
+      });
+      expect((await device.status()).ok).toBe(true);
+      const bytes = Buffer.from("a file that arrives in two parts".repeat(4));
+      const hash = scriptStoppedBlob(harness, bytes, 40);
+      expect((await device.blob(hash)).ok).toBe(false);
+
+      const partial = `${device.store}.blobs/.partial-${hash.slice("sha256:".length)}`;
+      expect(existsSync(partial), "no partial file was left to check").toBe(
+        true,
+      );
+      expect(
+        excluded(partial),
+        "tmutil does not exclude the partial file",
+      ).toBe(true);
+      expect((await cacheOf(device)).backup_mark_failure).toBeNull();
+    });
+
+    it("says in its state report when the partial file of a fetch cannot be kept out of backups", async () => {
+      harness = await started("backup-partial-refused");
+      const { device } = harness;
+      const bytes = Buffer.from("a file that arrives in two parts".repeat(4));
+      const hash = scriptStoppedBlob(harness, bytes, 40);
+      const got = await withFault("backup-mark-refused", () =>
+        device.blob(hash),
+      );
+      expect(got.ok).toBe(false);
+      const said = (await cacheOf(device)).backup_mark_failure;
+      expect(said).toEqual(expect.any(String));
+      expect(said).not.toBe("");
+
+      // Until a file of fetched bytes is marked again.
+      await fetched(harness, ten("again"));
       expect((await cacheOf(device)).backup_mark_failure).toBeNull();
     });
 

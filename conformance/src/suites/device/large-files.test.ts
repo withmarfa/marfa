@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { Answer, RecordedRequest } from "../../device/scripted-server.js";
 import { writeAnswers } from "../../device/marfa-answers.js";
 import type { CliDevice } from "../../device/cli-adapter.js";
+import type { Status } from "../../device/protocol.js";
 import {
   hashOf,
   scriptHydration,
@@ -62,15 +63,38 @@ function heldAt(device: CliDevice, hash: string): string {
   return `${device.store}.blobs/${hash.slice("sha256:".length)}`;
 }
 
-/** A device whose copy holds a file item that states `stated` bytes for `hash`. */
+/** The bytes the device says its file cache holds. */
+async function heldBytes(device: CliDevice): Promise<number | null> {
+  const status = await device.status();
+  if (!status.ok) throw new Error(`no status: ${JSON.stringify(status)}`);
+  return (status.value as Status).file_cache.held;
+}
+
+/**
+ * A device whose copy holds a file item that states `stated` bytes for `hash`,
+ * and a note for each of `notes`, which states its own size for the bytes it
+ * names.
+ */
 async function hydratedWith(
   label: string,
   files: Array<{ hash: string; stated?: number }>,
+  notes: Array<{ hash: string; stated: number }> = [],
 ): Promise<Harness> {
   const made = await startHarness(label);
   scriptHydration(made.server, {
     head: "10",
     rows: {
+      "core.note": notes.map(({ hash, stated }, index) => ({
+        item: {
+          id: `note-row-${String(index)}`,
+          type: "core.note",
+          properties: {
+            title: `note-${String(index)}`,
+            blob_ref: hash,
+            size_bytes: stated,
+          },
+        },
+      })),
       "core.file": files.map(({ hash, stated }, index) => ({
         item: {
           id: `file-row-${String(index)}`,
@@ -85,7 +109,10 @@ async function hydratedWith(
       })),
     },
   });
-  const hydrated = await made.device.hydrate(["core.file"], "library");
+  const hydrated = await made.device.hydrate(
+    notes.length === 0 ? ["core.file"] : ["core.file", "core.note"],
+    "library",
+  );
   expect(hydrated.ok, JSON.stringify(hydrated)).toBe(true);
   return made;
 }
@@ -178,6 +205,21 @@ describe("a file larger than the file budget", () => {
     if (got.ok) expect(readFileSync(got.value.path)).toEqual(bytes);
   });
 
+  it("is bounded by the link where only a note states a smaller size for the same bytes", async () => {
+    const bytes = bytesOf(28);
+    const hash = hashOf(bytes);
+    harness = await hydratedWith(
+      "large-note-size",
+      [{ hash }],
+      [{ hash, stated: 100 }],
+    );
+    const { device } = harness;
+    scriptLinks(harness, hash, () => whole(bytes));
+    const fetched = await device.blob(hash);
+    expect(fetched.ok, JSON.stringify(fetched)).toBe(true);
+    expect(readFileSync(heldAt(device, hash))).toEqual(bytes);
+  });
+
   it("is refused where the link states no length and the copy states no size", async () => {
     const bytes = bytesOf(3);
     const hash = hashOf(bytes);
@@ -250,6 +292,94 @@ describe("a file larger than the file budget", () => {
     if (set.ok) expect(set.value.trimmed_bytes).toBe(SIZE);
     expect(existsSync(heldAt(device, bigHash))).toBe(false);
     expect(readFileSync(heldAt(device, smallHash))).toEqual(small);
+  });
+});
+
+describe("the file cache after a file larger than the budget is fetched", () => {
+  it("keeps the other files the budget holds, and takes the large one first at the next trim", async () => {
+    const [a, b, big] = [bytesOf(20, 10), bytesOf(21, 10), bytesOf(22)];
+    const [aHash, bHash, bigHash] = [hashOf(a), hashOf(b), hashOf(big)];
+    harness = await hydratedWith("large-keeps-others", [
+      { hash: aHash, stated: 10 },
+      { hash: bHash, stated: 10 },
+      { hash: bigHash, stated: SIZE },
+    ]);
+    const { device } = harness;
+    for (const [hash, bytes] of [
+      [aHash, a],
+      [bHash, b],
+      [bigHash, big],
+    ] as const) {
+      scriptLinks(harness, hash, () => whole(bytes));
+    }
+    expect((await device.fileBudget(BUDGET)).ok).toBe(true);
+    expect((await device.blob(aHash)).ok).toBe(true);
+    expect((await device.blob(bHash)).ok).toBe(true);
+
+    // The budget is 1,000 bytes and the file 5,000: the trim after the fetch
+    // cannot take the file being read, and must not take the rest for it.
+    const fetched = await device.blob(bigHash);
+    expect(fetched.ok, JSON.stringify(fetched)).toBe(true);
+    expect(readFileSync(heldAt(device, aHash))).toEqual(a);
+    expect(readFileSync(heldAt(device, bHash))).toEqual(b);
+    expect(readFileSync(heldAt(device, bigHash))).toEqual(big);
+
+    // Nothing reads it now, so the next trim takes it first, and only it.
+    const trimmed = await device.fileBudget(BUDGET);
+    expect(trimmed.ok, JSON.stringify(trimmed)).toBe(true);
+    if (trimmed.ok) expect(trimmed.value.trimmed_bytes).toBe(SIZE);
+    expect(existsSync(heldAt(device, bigHash))).toBe(false);
+    expect(readFileSync(heldAt(device, aHash))).toEqual(a);
+    expect(readFileSync(heldAt(device, bHash))).toEqual(b);
+  });
+});
+
+describe("a partial file", () => {
+  it("counts in the bytes held, and a trim takes it where no fetch holds it", async () => {
+    const bytes = bytesOf(23);
+    const small = bytesOf(24, 10);
+    const [hash, smallHash] = [hashOf(bytes), hashOf(small)];
+    harness = await hydratedWith("partial-trimmed", [
+      { hash, stated: SIZE },
+      { hash: smallHash, stated: 10 },
+    ]);
+    const { device } = harness;
+    scriptLinks(harness, hash, () => whole(bytes, { cut: 3000 }));
+    scriptLinks(harness, smallHash, () => whole(small));
+    expect((await device.fileBudget("keep-all")).ok).toBe(true);
+    expect((await device.blob(hash)).ok).toBe(false);
+    expect((await device.blob(smallHash)).ok).toBe(true);
+    expect(inCache(device)).toHaveLength(2);
+    expect(await heldBytes(device)).toBe(3010);
+
+    const trimmed = await device.fileBudget(BUDGET);
+    expect(trimmed.ok, JSON.stringify(trimmed)).toBe(true);
+    if (trimmed.ok) expect(trimmed.value.trimmed_bytes).toBe(3000);
+    expect(inCache(device)).toEqual([smallHash.slice("sha256:".length)]);
+    expect(await heldBytes(device)).toBe(10);
+  });
+
+  it("is taken by a fetch the volume has no room for, before the ask is refused", async () => {
+    const bytes = bytesOf(25);
+    const other = bytesOf(26);
+    const [hash, otherHash] = [hashOf(bytes), hashOf(other)];
+    harness = await hydratedWith("partial-no-room", [
+      { hash, stated: SIZE },
+      { hash: otherHash, stated: SIZE },
+    ]);
+    const { device } = harness;
+    scriptLinks(harness, hash, () => whole(bytes, { cut: 3000 }));
+    scriptLinks(harness, otherHash, () => whole(other));
+    expect((await device.blob(hash)).ok).toBe(false);
+    expect(inCache(device)).toHaveLength(1);
+
+    const refused = await withFault(volume(1000), () => device.blob(otherHash));
+    expect(refused.ok).toBe(false);
+    if (!refused.ok) expect(refused.refusal.code).toBe("no_room");
+    expect(
+      inCache(device),
+      "the space held by another partial was kept",
+    ).toEqual([]);
   });
 });
 
@@ -399,6 +529,40 @@ describe("a fetch that stops part way", () => {
     const fresh = await device.blob(hash);
     expect(fresh.ok, JSON.stringify(fresh)).toBe(true);
     expect(readFileSync(heldAt(device, hash))).toEqual(bytes);
+  });
+
+  it("fails on a range whose last byte overflows or lies past the whole", async () => {
+    const bytes = bytesOf(27);
+    const hash = hashOf(bytes);
+    harness = await hydratedWith("resume-overflow", [{ hash, stated: SIZE }]);
+    const { device } = harness;
+    const ranges = [
+      "bytes 3000-18446744073709551615/5000",
+      "bytes 3000-18446744073709551615/18446744073709551615",
+      "bytes 3000-5000/5000",
+    ];
+    let lying = "";
+    scriptLinks(harness, hash, (_, from) =>
+      from === 0
+        ? whole(bytes, { cut: 3000 })
+        : {
+            kind: "bytes",
+            status: 206,
+            body: bytes.subarray(from),
+            headers: { "content-range": lying },
+          },
+    );
+    for (const range of ranges) {
+      // Each attempt starts from a partial file of 3,000 bytes.
+      lying = "";
+      expect((await device.blob(hash)).ok).toBe(false);
+      expect(inCache(device)).toHaveLength(1);
+      lying = range;
+      const refused = await device.blob(hash);
+      expect(refused.ok, `${range} was appended`).toBe(false);
+      if (!refused.ok) expect(refused.refusal.code, range).toBe("bytes_absent");
+      expect(inCache(device), range).toEqual([]);
+    }
   });
 
   it("keeps nothing of a resumed fetch whose whole does not hash to the blob's name", async () => {

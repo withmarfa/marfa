@@ -30,6 +30,9 @@ pub(crate) struct Cache {
     /// never takes bytes an upload is about to name and a fetch never marks
     /// them out of backups.
     settling: Mutex<()>,
+    /// How the last partial file a fetch made was marked out of backups,
+    /// until `staged_mark` takes it.
+    staged: Mutex<Option<Mark>>,
     /// The bytes callers are reading, by name, with how many read each,
     /// shared by every handle in the process on the same folder. Held by a
     /// removal from the moment it reads the set until it is done, so a caller
@@ -122,6 +125,14 @@ enum Copy {
     Cache(io::Error),
 }
 
+/// A file in the cache: a kept blob or a partial file.
+struct Held {
+    read: SystemTime,
+    size: u64,
+    path: PathBuf,
+    partial: bool,
+}
+
 /// A file the bytes of one fetch are written to.
 pub(crate) struct Staging {
     label: PathBuf,
@@ -164,6 +175,7 @@ impl Cache {
             #[cfg(unix)]
             directory: std::sync::OnceLock::new(),
             settling: Mutex::new(()),
+            staged: Mutex::new(None),
             reading: readers_of(folder),
         }
     }
@@ -301,13 +313,13 @@ impl Cache {
         }
     }
 
-    /// What the cache holds: every kept blob, nothing still arriving. Each
-    /// entry is read by `stat`, never opened, so a large cache costs no open
-    /// per file. A folder not made yet holds nothing, exactly; a folder or
-    /// an entry that cannot be read is an error, never a shorter list. An
-    /// entry gone between the listing and its `stat` was taken by another
-    /// trim and does not count.
-    fn scan(&self) -> std::result::Result<Vec<(SystemTime, u64, PathBuf)>, String> {
+    /// What the cache holds: every kept blob and every partial file, but not
+    /// a copy still arriving. Each entry is read by `stat`, never opened, so
+    /// a large cache costs no open per file. A folder not made yet holds
+    /// nothing, exactly; a folder or an entry that cannot be read is an
+    /// error, never a shorter list. An entry gone between the listing and its
+    /// `stat` was taken by another trim and does not count.
+    fn scan(&self) -> std::result::Result<Vec<Held>, String> {
         let entries = match self.entries() {
             Ok(entries) => entries,
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
@@ -316,11 +328,17 @@ impl Cache {
         let mut found = Vec::new();
         for entry in entries {
             let name = entry.file_name().unwrap_or_default().to_string_lossy();
-            if name.starts_with(".incoming-") || name.starts_with(".partial-") {
+            if name.starts_with(".incoming-") {
                 continue;
             }
+            let partial = name.starts_with(".partial-");
             match self.stat_label(&entry) {
-                Ok((true, size, read)) => found.push((read, size, entry)),
+                Ok((true, size, read)) => found.push(Held {
+                    read,
+                    size,
+                    path: entry,
+                    partial,
+                }),
                 Ok(_) => {}
                 Err(error) if error.kind() == io::ErrorKind::NotFound => {}
                 Err(error) => return Err(error.to_string()),
@@ -350,7 +368,7 @@ impl Cache {
 
     /// The bytes of every blob kept, or why they could not all be counted.
     pub(crate) fn held_bytes(&self) -> std::result::Result<u64, String> {
-        Ok(self.scan()?.iter().map(|(_, size, _)| size).sum())
+        Ok(self.scan()?.iter().map(|held| held.size).sum())
     }
 
     /// The volume holding the cache: read through the folder held open
@@ -369,12 +387,14 @@ impl Cache {
     }
 
     /// Takes bytes larger than the budget, then the bytes read longest ago,
-    /// until what is left fits the budget
-    /// `budget` gives for the bytes held, and answers how many it took.
-    /// Bytes named in `kept`, and bytes a caller is reading, stay whatever
-    /// the budget, and `None` takes nothing. A cache that cannot be read
-    /// takes nothing, since its bytes are not all known. Called under `hold`,
-    /// with `kept` read under it.
+    /// until what is left fits the budget `budget` gives for the bytes held,
+    /// and answers how many it took. Partial files of fetches count with the
+    /// rest, and are taken when no fetch holds them locked. Bytes named in
+    /// `kept`, bytes a caller is reading and partial files a fetch holds stay
+    /// whatever the budget, and one of them larger than the budget is not
+    /// counted against it, since no trim can take it. `None` takes nothing. A
+    /// cache that cannot be read takes nothing, since its bytes are not all
+    /// known. Called under `hold`, with `kept` read under it.
     pub(crate) fn trim(
         &self,
         kept: &HashSet<String>,
@@ -384,29 +404,85 @@ impl Cache {
         let Ok(found) = self.scan() else {
             return 0;
         };
-        let mut total: u64 = found.iter().map(|(_, size, _)| size).sum();
+        let mut total: u64 = found.iter().map(|held| held.size).sum();
         let Some(most) = budget(total) else {
             return 0;
         };
-        let mut held: Vec<_> = found
-            .into_iter()
-            .filter(|(_, _, path)| {
-                let name = path.file_name().unwrap_or_default().to_string_lossy();
-                !kept.contains(name.as_ref()) && !reading.contains_key(name.as_ref())
-            })
-            .collect();
+        let mut held = Vec::new();
+        // Each lock stays until its file is unlinked.
+        let mut locks = Vec::new();
+        for entry in found {
+            let name = entry.path.file_name().unwrap_or_default().to_string_lossy();
+            let mut protected = kept.contains(name.as_ref()) || reading.contains_key(name.as_ref());
+            if entry.partial && !protected {
+                match self.lock_partial(&entry.path) {
+                    Some(lock) => locks.push(lock),
+                    None => protected = true,
+                }
+            }
+            if !protected {
+                held.push(entry);
+            } else if entry.size > most {
+                total -= entry.size;
+            }
+        }
         // Bytes larger than the budget go first: they can never fit, so a
         // trim that kept them for being read lately would take every smaller
         // file before them.
-        held.sort_by(|a, b| ((a.1 <= most), a.0, a.1, &a.2).cmp(&((b.1 <= most), b.0, b.1, &b.2)));
+        held.sort_by(|a, b| {
+            ((a.size <= most), a.read, a.size, &a.path).cmp(&(
+                (b.size <= most),
+                b.read,
+                b.size,
+                &b.path,
+            ))
+        });
         let mut taken = 0;
-        for (_, size, path) in held {
+        for entry in held {
             if total <= most {
                 break;
             }
-            if self.unlink_label(&path).is_ok() {
-                total -= size;
-                taken += size;
+            if self.unlink_label(&entry.path).is_ok() {
+                total -= entry.size;
+                taken += entry.size;
+            }
+        }
+        taken
+    }
+
+    /// Locks a partial file as a fetch does, if no fetch holds it. Nothing
+    /// is locked where the platform has no partial files.
+    fn lock_partial(&self, label: &Path) -> Option<File> {
+        #[cfg(unix)]
+        {
+            let file = self.open_label(label, false, false).ok()?;
+            rustix::fs::flock(&file, rustix::fs::FlockOperation::NonBlockingLockExclusive).ok()?;
+            Some(file)
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = label;
+            None
+        }
+    }
+
+    /// Takes the partial files of bytes other than `except`, which no fetch
+    /// holds, and answers how many bytes it took. A fetch the volume has no
+    /// room for makes room this way before it is refused.
+    fn take_other_partials(&self, except: &Path) -> u64 {
+        let Ok(found) = self.scan() else {
+            return 0;
+        };
+        let mut taken = 0;
+        for entry in found {
+            if !entry.partial || entry.path == except {
+                continue;
+            }
+            let Some(_lock) = self.lock_partial(&entry.path) else {
+                continue;
+            };
+            if self.unlink_label(&entry.path).is_ok() {
+                taken += entry.size;
             }
         }
         taken
@@ -517,16 +593,20 @@ impl Cache {
         // this replaces; the queue is read under the hold that queuing takes,
         // and a queue that cannot be read counts as naming them.
         let _held = self.hold();
-        let mark = if kept().is_none_or(|kept| kept.contains(hex)) {
-            Mark::Kept
-        } else {
-            match self
-                .open_label(incoming, false, false)
-                .and_then(|file| crate::file_cache::exclude_from_backup(&file))
-            {
-                Ok(()) => Mark::Excluded,
-                Err(error) => Mark::Refused(error.to_string()),
+        let upload_named = kept().is_none_or(|kept| kept.contains(hex));
+        // A partial file was marked when it was made, so the mark is taken
+        // off where an upload names the bytes.
+        let marked = self
+            .open_label(incoming, false, false)
+            .and_then(|file| crate::file_cache::set_backup_exclusion(&file, !upload_named));
+        let mark = match (upload_named, marked) {
+            (true, Ok(())) => Mark::Kept,
+            (true, Err(error)) => {
+                let _ = self.unlink_label(incoming);
+                return Err(self.unwritable(error));
             }
+            (false, Ok(())) => Mark::Excluded,
+            (false, Err(error)) => Mark::Refused(error.to_string()),
         };
         Ok(Fetched {
             path: self.settle(incoming, hash)?,
@@ -643,6 +723,16 @@ impl Cache {
                         .metadata()
                         .map_err(|error| self.unwritable(error))?
                         .len();
+                    // Marked as soon as it is made, since a fetch that stops
+                    // leaves it behind for a resume.
+                    let mark = match crate::file_cache::set_backup_exclusion(&file, true) {
+                        Ok(()) => Mark::Excluded,
+                        Err(error) => Mark::Refused(error.to_string()),
+                    };
+                    *self
+                        .staged
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(mark);
                     return Ok(Staging {
                         label,
                         file,
@@ -662,6 +752,15 @@ impl Cache {
             held: 0,
             shared: false,
         })
+    }
+
+    /// How the partial file the last fetch made was marked out of backups,
+    /// once, for the state report.
+    pub(crate) fn staged_mark(&self) -> Option<Mark> {
+        self.staged
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .take()
     }
 
     /// Empties the staging file, for bytes that start again.
@@ -922,7 +1021,7 @@ fn pull(
     link: &str,
     stated: Option<u64>,
     idle: Duration,
-    room: impl FnOnce() -> Option<u64>,
+    room: impl Fn() -> Option<u64>,
     kept: impl FnOnce() -> Option<HashSet<String>>,
 ) -> Result<Fetched> {
     let absent = |reason: String| CoreError::BytesAbsent {
@@ -954,7 +1053,13 @@ fn pull(
                 first,
                 last,
                 total: Some(total),
-            }) if held > 0 && first == held && last + 1 == total => (true, Some(total)),
+            }) if held > 0
+                && first == held
+                && first <= last
+                && last.checked_add(1) == Some(total) =>
+            {
+                (true, Some(total))
+            }
             _ => {
                 cache.drop_staging(staging);
                 return Err(absent(
@@ -993,8 +1098,13 @@ fn pull(
         cache.restart(&mut staging)?;
     }
     let start = staging.held;
-    if let Some(free) = room()
-        && free < end.saturating_sub(start)
+    let needed = end.saturating_sub(start);
+    let mut free = room();
+    if free.is_some_and(|free| free < needed) && cache.take_other_partials(&staging.label) > 0 {
+        free = room();
+    }
+    if let Some(free) = free
+        && free < needed
     {
         cache.drop_staging(staging);
         return Err(CoreError::NoRoom {
@@ -1833,6 +1943,207 @@ pub(crate) mod tests {
             small.exists() && older.exists(),
             "the trim took more than it had to"
         );
+    }
+
+    #[test]
+    fn a_protected_file_larger_than_the_budget_is_not_counted_against_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = Cache::beside(&dir.path().join("store.sqlite"));
+        let (_, oldest) = kept(&cache, b"aaaaaaaaaa", 300);
+        let (_, newest) = kept(&cache, b"bbbbbbbbbb", 0);
+        let (reading, large) = kept(&cache, &[b'r'; 100], 0);
+        let (named, queued) = kept(&cache, &[b'q'; 100], 0);
+        let guard = cache.reading(&format!("sha256:{reading}")).unwrap();
+        // 20 bytes besides the two large files, which are protected: they fit
+        // a budget of 25, so nothing is taken.
+        assert_eq!(cache.trim(&HashSet::from([named.clone()]), |_| Some(25)), 0);
+        assert!(
+            oldest.exists() && newest.exists(),
+            "the trim emptied the cache for a file it could not take"
+        );
+        // The witness: under a budget the rest do not fit, it takes the rest.
+        assert_eq!(
+            cache.trim(&HashSet::from([named.clone()]), |_| Some(10)),
+            10
+        );
+        assert!(!oldest.exists() && newest.exists());
+        // Once nothing protects the large files, the next trim takes them first.
+        drop(guard);
+        let (_, small) = kept(&cache, b"cccccccccc", 500);
+        cache.trim(&HashSet::from([named]), |_| Some(25));
+        assert!(!large.exists(), "the file past the budget was kept");
+        assert!(queued.exists() && small.exists() && newest.exists());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_partial_file_is_kept_out_of_backups_from_the_start_and_an_upload_naming_it_takes_the_mark_off()
+     {
+        use crate::file_cache::tests::excluded;
+        // The system excludes its own temporary folders, so the witness has to
+        // sit under the home folder.
+        let home = std::env::var_os("HOME").expect("HOME");
+        let area = tempfile::Builder::new()
+            .prefix(".marfa-backup-test-")
+            .tempdir_in(home)
+            .unwrap();
+        let cache = Cache::beside(&area.path().join("core.sqlite"));
+        let bytes = payload(64);
+        let hash = name_of(&bytes);
+        let staging = cache.stage(&hash).unwrap();
+        let label = staging.label.clone();
+        assert_eq!(cache.staged_mark(), Some(Mark::Excluded));
+        assert!(excluded(&label), "tmutil does not exclude the partial file");
+        cache.leave_staging(staging);
+
+        // Finished where a queued upload names the bytes, the file is the
+        // upload's and goes into backups.
+        let mut staging = cache.stage(&hash).unwrap();
+        staging.file.write_all(&bytes[..4]).unwrap();
+        std::io::Seek::rewind(&mut staging.file).unwrap();
+        staging.held = 4;
+        let named = HashSet::from([hex_of(&hash).unwrap().to_string()]);
+        let fetched = cache
+            .receive(&hash, staging, &bytes[4..], 64, || Some(named))
+            .unwrap();
+        assert_eq!(fetched.mark, Mark::Kept);
+        assert!(
+            !excluded(&fetched.path),
+            "the mark on a partial file stayed on the bytes of an upload"
+        );
+    }
+
+    #[cfg(unix)]
+    fn partial_of(cache: &Cache, bytes: &[u8], ago: u64) -> PathBuf {
+        let mut staging = cache
+            .stage(&name_of(&payload(bytes.len() + ago as usize)))
+            .unwrap();
+        staging.file.write_all(bytes).unwrap();
+        let label = staging.label.clone();
+        staging
+            .file
+            .set_modified(SystemTime::now() - Duration::from_secs(ago))
+            .unwrap();
+        cache.leave_staging(staging);
+        label
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn partial_files_count_in_the_bytes_held_and_a_trim_takes_those_no_fetch_holds() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = Cache::beside(&dir.path().join("store.sqlite"));
+        let (_, blob) = kept(&cache, b"aaaaaaaaaa", 0);
+        let left = partial_of(&cache, &[b'p'; 30], 500);
+        assert!(left.exists());
+        assert_eq!(cache.held_bytes(), Ok(40));
+        // A partial a fetch holds locked counts, and is never taken.
+        let held = cache.stage(&name_of(&payload(1))).unwrap();
+        assert_eq!(held.held, 0);
+        let busy = held.label.clone();
+        let mut writing = held;
+        writing.file.write_all(&[b'w'; 50]).unwrap();
+        assert_eq!(cache.held_bytes(), Ok(90));
+        let taken = cache.trim(&HashSet::new(), |_| Some(15));
+        assert_eq!(taken, 30);
+        assert!(!left.exists(), "a partial no fetch holds was kept");
+        assert!(blob.exists() && busy.exists(), "the trim took too much");
+        cache.drop_staging(writing);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_fetch_short_of_room_takes_the_partials_of_other_bytes_and_asks_again() {
+        let bytes = payload(5000);
+        let hash = name_of(&bytes);
+        let dir = tempfile::tempdir().unwrap();
+        let cache = Cache::beside(&dir.path().join("store.sqlite"));
+        let link = ranged(bytes.clone(), true, None);
+        let other = partial_of(&cache, &[b'o'; 4000], 10);
+        let room = || Some(if other.exists() { 1000 } else { 5000 });
+        let fetched = pull(
+            &cache,
+            &hash,
+            &link.url,
+            Some(5000),
+            WITHIN,
+            room,
+            no_uploads,
+        );
+        assert!(fetched.is_ok(), "{fetched:?}");
+        assert!(!other.exists());
+        // The witness: where taking them gives no room, the ask is refused.
+        let again = partial_of(&cache, &[b'o'; 4000], 10);
+        let full = || Some(1000);
+        let refused = pull(
+            &cache,
+            &hash,
+            &link.url,
+            Some(5000),
+            WITHIN,
+            full,
+            no_uploads,
+        );
+        assert!(
+            matches!(refused, Err(CoreError::NoRoom { .. })),
+            "{refused:?}"
+        );
+        assert!(!again.exists());
+    }
+
+    /// A link that answers every ask `206` with the `Content-Range` given.
+    fn lying(content_range: &str) -> String {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/bytes", listener.local_addr().unwrap());
+        let range = content_range.to_string();
+        std::thread::spawn(move || {
+            while let Ok((mut socket, _)) = listener.accept() {
+                let mut request = [0u8; 4096];
+                let _ = Read::read(&mut socket, &mut request);
+                let head = format!(
+                    "HTTP/1.1 206 Partial Content\r\nContent-Range: {range}\r\nContent-Length: 2\r\nConnection: close\r\n\r\nab"
+                );
+                let _ = socket.write_all(head.as_bytes());
+            }
+        });
+        url
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_content_range_that_overflows_or_contradicts_itself_is_bytes_absent() {
+        let bytes = payload(5000);
+        let hash = name_of(&bytes);
+        for range in [
+            "bytes 3000-18446744073709551615/18446744073709551615",
+            "bytes 3000-18446744073709551615/5000",
+            "bytes 3000-5000/5000",
+            "bytes 3000-2999/5000",
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let cache = Cache::beside(&dir.path().join("store.sqlite"));
+            let cut = ranged(bytes.clone(), true, Some(3000));
+            let _ = pull(
+                &cache,
+                &hash,
+                &cut.url,
+                Some(5000),
+                WITHIN,
+                || None,
+                no_uploads,
+            );
+            let url = lying(range);
+            let refused = pull(&cache, &hash, &url, Some(5000), WITHIN, || None, no_uploads);
+            assert!(
+                matches!(refused, Err(CoreError::BytesAbsent { .. })),
+                "{range}: {refused:?}"
+            );
+            assert!(
+                left_behind(&cache).is_empty(),
+                "{range}: {:?}",
+                left_behind(&cache)
+            );
+        }
     }
 
     #[test]

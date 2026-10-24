@@ -2277,8 +2277,7 @@ impl Core {
             .conn()
             .ok()
             .and_then(|conn| store::stated_size(&conn, &hash).ok().flatten());
-        let fetched = blob::fetch(cache, http, &hash, stated, || self.kept_blobs())?;
-        self.write_down_backup_mark(&fetched.mark);
+        let fetched = self.fetch_blob(cache, http, &hash, stated)?;
         self.trim_blobs();
         #[cfg(debug_assertions)]
         crate::fault::hold(|| format!("blob-answered:{hash}"));
@@ -2315,13 +2314,30 @@ impl Core {
             .conn()
             .ok()
             .and_then(|conn| store::stated_size(&conn, &hash).ok().flatten());
-        let fetched = blob::fetch(cache, http, &hash, stated, || self.kept_blobs())?;
-        self.write_down_backup_mark(&fetched.mark);
+        self.fetch_blob(cache, http, &hash, stated)?;
         let file = cache
             .open_held(&hash)
             .map_err(|error| CoreError::Store(format!("cannot read fetched bytes: {error}")))?;
         self.trim_blobs();
         Ok(file)
+    }
+
+    /// Fetches the bytes, and writes down how the partial file and the file
+    /// kept were marked out of backups, whether or not the fetch finished.
+    fn fetch_blob(
+        &self,
+        cache: &blob::Cache,
+        http: &http::Http,
+        hash: &str,
+        stated: Option<u64>,
+    ) -> Result<blob::Fetched> {
+        let fetched = blob::fetch(cache, http, hash, stated, || self.kept_blobs());
+        if let Some(mark) = cache.staged_mark() {
+            self.write_down_backup_mark(&mark);
+        }
+        let fetched = fetched?;
+        self.write_down_backup_mark(&fetched.mark);
+        Ok(fetched)
     }
 
     /// Keeps in the store why the last bytes fetched could not be kept out
