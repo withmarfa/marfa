@@ -338,7 +338,7 @@ If an answer to a request made under a copy arrives after a hydration has begun 
 
 ### `device/proof-lost`
 
-While no hydration has started and not completed, and its copy holds a slice and no valid cursor, reach or instance, a device MUST refuse a local read `hydration_incomplete`, through a reading handle as through the writer.
+While no hydration has started and not completed, and its copy holds a slice and no valid cursor, reach or instance, a device MUST refuse a local read `hydration_incomplete`, through a reading handle as through the writer, unless its copy is stale (`device/stale-kept`).
 
 **Tests:** `device/reach.test.ts › refuses reads of a stored copy that lost its instance, through a reader as through the writer`.
 
@@ -364,7 +364,7 @@ While a device holds a reading handle, a device MUST queue nothing.
 
 ### `device/read-partial-answers`
 
-While a hydration has started and not completed, whether it still runs or was interrupted, a device MUST answer a local listing or search from the rows its copy holds, through a reading handle as through the writer.
+While a hydration that is not a refill (`device/refill-in-place`) has started and not completed, whether it still runs or was interrupted, a device MUST answer a local listing or search from the rows its copy holds, through a reading handle as through the writer.
 
 **Reason:** an app shows what has arrived while the rest of a large slice is read, and an interrupted hydration does not leave it with nothing to show.
 
@@ -372,7 +372,7 @@ While a hydration has started and not completed, whether it still runs or was in
 
 ### `device/read-partial-says`
 
-While a hydration has started and not completed, a device MUST mark each local listing and search it answers `partial`, through a reading handle as through the writer.
+While a hydration that is not a refill has started and not completed, a device MUST mark each local listing and search it answers `partial`, through a reading handle as through the writer.
 
 **Reason:** what such a copy holds is a piece of a copy, and an answer from it that did not say so would read as the whole.
 
@@ -386,13 +386,13 @@ While its copy is complete or has never hydrated, a device MUST mark each local 
 
 ### `device/read-partial-held-row`
 
-While a hydration has started and not completed, a device MUST answer a local read by id of a row its copy holds.
+While a hydration that is not a refill has started and not completed, a device MUST answer a local read by id of a row its copy holds.
 
 **Tests:** `device/working-copy.test.ts › answers a read by id of a row it holds part way through a hydration, and refuses one it does not hold yet`.
 
 ### `device/read-partial-unheld-refused`
 
-While a hydration has started and not completed, if a local read by id names a row its copy does not hold, then a device MUST refuse the read `hydration_incomplete`.
+While a hydration that is not a refill has started and not completed, if a local read by id names a row its copy does not hold, then a device MUST refuse the read `hydration_incomplete`.
 
 **Reason:** the row may be one still to arrive, and `not_held` would tell the caller it is outside the slice.
 
@@ -400,33 +400,79 @@ While a hydration has started and not completed, if a local read by id names a r
 
 ### `device/read-partial-edges-refused`
 
-While a hydration has started and not completed, a device MUST refuse a local read of edges, conflicted copies or body links `hydration_incomplete`.
+While a hydration has started and not completed, or its copy is stale, a device MUST refuse a local read of edges, conflicted copies or body links `hydration_incomplete`.
 
-**Reason:** each of these reads joins rows that may arrive on different pages, and none of their answers can say which part is missing.
+**Reason:** each of these reads joins rows that may arrive on different pages, and none of their answers can say which part is missing or out of date.
 
-**Tests:** `device/working-copy.test.ts › refuses a read of edges part way through a hydration, and answers it once the copy is whole`.
+**Tests:** `device/working-copy.test.ts › refuses a read of edges part way through a hydration, and answers it once the copy is whole`, `device/refill.test.ts › fills again in place, changing, adding and sweeping rows`.
+
+### `device/stale-kept`
+
+When a device expires a copy that is complete, or one a refill is filling, because the event log no longer holds its cursor (`events/catchup-too-old`), a device MUST keep the copy's rows and edges, and the instance and reach it was built under, as a stale copy until a hydration completes, through an interrupted refill (`device/refill-in-place`) included.
+
+**Reason:** the rows are what the server held when the copy stopped following it, under the same instance and reach, so the person keeps them in reach while the copy is filled again.
+
+**Tests:** `device/catch-up.test.ts › answers reads marked stale after the cursor ages out, until a hydration fills it in place`, `device/refill.test.ts › answers stale through an interrupted refill, sweeping nothing, and carries on in place`.
+
+### `device/read-stale-answers`
+
+While its copy is stale, a device MUST answer a local listing, search or read by id from the rows its copy holds.
+
+**Reason:** an app keeps showing the person their data while the copy is filled again, rather than nothing until a hydration of a large slice completes.
+
+**Tests:** `device/catch-up.test.ts › answers reads marked stale after the cursor ages out, until a hydration fills it in place`, `device/refill.test.ts › answers stale through an interrupted refill, sweeping nothing, and carries on in place`.
+
+### `device/read-stale-says`
+
+While its copy is stale, a device MUST mark each local listing and search it answers `stale`.
+
+**Reason:** a row may have changed or gone on the server since the copy stopped following it, and an answer that did not say so would read as current.
+
+**Tests:** `device/catch-up.test.ts › answers reads marked stale after the cursor ages out, until a hydration fills it in place`, `device/refill.test.ts › fills again in place, changing, adding and sweeping rows`, `› answers stale through an interrupted refill, sweeping nothing, and carries on in place`.
 
 ### `device/read-refused-expired`
 
-While its copy is expired, a device MUST refuse a local read `hydration_incomplete`.
+While its copy is expired and not stale, a device MUST refuse a local read `hydration_incomplete`.
 
-**Reason:** an expired copy is complete as of the moment it stopped and can no longer be kept current, and a copy that has quietly stopped tracking is the failure this chapter guards against.
+**Reason:** such a copy was built under another instance or a reach it can no longer prove, so it may hold rows the server never held or that the key can no longer read.
 
-**Tests:** `device/catch-up.test.ts › refuses reads after the cursor ages out, until a hydration`.
+**Tests:** `device/refill.test.ts › refuses reads and clears before it fills again`.
 
-### `device/write-refused-incomplete`
+### `device/write-queued-incomplete`
 
-While a hydration has started and not completed, or its copy is expired, a device MUST refuse a local write `hydration_incomplete`.
+While a hydration has started and not completed, or its copy is stale, a device MUST queue a local create, and a local write to a row or edge its copy holds, against the version its copy holds.
 
-**Reason:** a write takes its base version from the row the copy holds, and while a hydration fills the copy a page still to arrive can replace that row, or bring one the write would have been made against.
+**Reason:** the person's work is not lost to a hydration they did not ask for, and a write sent later against the version it was made from lets the server judge it against any change it never saw.
 
-**Tests:** `device/working-copy.test.ts › refuses a local write after an interrupted hydration`, `› reports complete for a copy whose cursor aged out until a catch-up learns it, asking nothing to report`.
+**Tests:** `device/working-copy.test.ts › takes writes to new rows only after an interrupted hydration, and sends none`, `› reports complete for a copy whose cursor aged out until a catch-up learns it, asking nothing to report`, `device/refill.test.ts › queues writes while it refills, sends none, and lays a newer page under them`, `› takes writes to the rows it holds and new ones, sending none until it is whole`.
+
+### `device/write-refused-unheld`
+
+While a hydration has started and not completed, or its copy is stale, if a local write names a row or edge its copy does not hold, then a device MUST refuse the write `hydration_incomplete`.
+
+**Reason:** a write takes its base version from the row the copy holds, and the row may be one a page still to arrive brings.
+
+**Tests:** `device/working-copy.test.ts › takes writes to new rows only after an interrupted hydration, and sends none`, `device/refill.test.ts › takes writes to the rows it holds and new ones, sending none until it is whole`.
+
+### `device/write-refused-expired`
+
+While its copy is expired and not stale, a device MUST refuse a local write `hydration_incomplete`.
+
+**Reason:** the version a write would take is one read from a log the server no longer continues.
+
+**Tests:** `device/refill.test.ts › refuses reads and clears before it fills again`.
+
+### `device/write-laid-over-page`
+
+When a hydration brings a row a queued write names, a device MUST lay the write over the row it brings, keeping the version the write was queued against.
+
+**Tests:** `device/refill.test.ts › queues writes while it refills, sends none, and lays a newer page under them`, `› takes writes to the rows it holds and new ones, sending none until it is whole`.
 
 ### `device/read-after-hydration`
 
 When a hydration completes, a device MUST answer local reads again.
 
-**Tests:** `device/catch-up.test.ts › refuses reads after the cursor ages out, until a hydration`, `device/hydration.test.ts › reads only the pages it had not reached, and holds the copy a whole hydration does`.
+**Tests:** `device/catch-up.test.ts › answers reads marked stale after the cursor ages out, until a hydration fills it in place`, `device/hydration.test.ts › reads only the pages it had not reached, and holds the copy a whole hydration does`.
 
 ### `device/read-never-hydrated`
 
@@ -438,7 +484,7 @@ While its copy has never hydrated, a device MUST answer a local read from what t
 
 A device MUST report its state as the origin it is bound to, the instance it was hydrated from, its slice's types and tier, the edge types it holds whole, the rows it holds pinned, its cursor, how many items and edges it holds, the version of the catalog it holds and its hydration, with the items expected under `device/report-items-expected` and the items listed under `device/report-items-listed`.
 
-**Tests:** `device/working-copy.test.ts › reports its slice, cursor and hydration state before it has hydrated`, `› holds a named edge type whole, whichever end it holds`, `device/catch-up.test.ts › keeps a pinned row outside the slice current`, `› refuses reads after the cursor ages out, until a hydration`, `device/queue.test.ts › sends nothing to another instance at the same address, keeping the queue`, `device/catalog.test.ts › moves the catalog version when a catch-up reads a changed catalog, and only then`.
+**Tests:** `device/working-copy.test.ts › reports its slice, cursor and hydration state before it has hydrated`, `› holds a named edge type whole, whichever end it holds`, `device/catch-up.test.ts › keeps a pinned row outside the slice current`, `› answers reads marked stale after the cursor ages out, until a hydration fills it in place`, `device/queue.test.ts › sends nothing to another instance at the same address, keeping the queue`, `device/catalog.test.ts › moves the catalog version when a catch-up reads a changed catalog, and only then`.
 
 ### `device/report-before-hydration`
 
@@ -510,9 +556,9 @@ While its copy holds its slice, a cursor, the reach and the instance it was hydr
 
 While no hydration is under way and its copy holds a slice and no valid cursor, reach or instance, a device MUST report its hydration as `expired`.
 
-**Reason:** `expired` and `never` are the two a caller must not confuse: reads are refused on the first and answered on the second, and only the first needs a hydration to be read again.
+**Reason:** `expired` and `never` are the two a caller must not confuse: the first is a copy owed a hydration, whose reads are refused or answered stale, and the second is a copy that holds only what this device wrote.
 
-**Tests:** `device/catch-up.test.ts › refuses reads after the cursor ages out, until a hydration`, `device/queue.test.ts › sends nothing to another instance at the same address, keeping the queue`, `device/reach.test.ts › reports a hydration that ended on an invalid page as expired, not in progress`, `› refuses reads of a stored copy that lost its instance, through a reader as through the writer`.
+**Tests:** `device/catch-up.test.ts › answers reads marked stale after the cursor ages out, until a hydration fills it in place`, `device/queue.test.ts › sends nothing to another instance at the same address, keeping the queue`, `device/reach.test.ts › reports a hydration that ended on an invalid page as expired, not in progress`, `› refuses reads of a stored copy that lost its instance, through a reader as through the writer`.
 
 ## Hydration
 
@@ -733,6 +779,42 @@ If a hydration that started again from the first page is refused a listing page,
 **Reason:** a device that started again on every refusal would never end against a server that refuses the same page each time.
 
 **Tests:** `device/hydration.test.ts › ends a hydration whose first page from the start is refused too, rather than start again twice`.
+
+### `device/refill-in-place`
+
+When a device hydrates a stale copy (`device/stale-kept`) under the instance and reach it was built under, declaring the types, tier and edge types it holds (a refill), a device MUST fill the copy over the rows and edges it holds, without first removing them.
+
+**Reason:** the person keeps their rows in reach, marked stale, for as long as the copy takes to fill, rather than an empty copy that fills a page at a time.
+
+**Tests:** `device/catch-up.test.ts › answers reads marked stale after the cursor ages out, until a hydration fills it in place`, `device/refill.test.ts › fills again in place, changing, adding and sweeping rows`, `› answers stale through an interrupted refill, sweeping nothing, and carries on in place`.
+
+### `device/refill-sweep`
+
+When a refill completes, a device MUST remove each row and edge of the copy that the refill did not bring, except a pinned row and a row or edge a queued write names.
+
+**Reason:** a row the server no longer lists is gone or out of the slice, and a pinned row or one the person's waiting write names is kept as any hydration keeps it.
+
+**Tests:** `device/refill.test.ts › fills again in place, changing, adding and sweeping rows`, `› keeps a pinned row and a row a queued write names through the sweep`.
+
+### `device/refill-no-early-sweep`
+
+While a refill has started and not completed, a device MUST NOT remove a row or edge the refill has not brought.
+
+**Reason:** until the walk has read every page and replayed the log, a row it has not brought may be on a page still to read.
+
+**Tests:** `device/refill.test.ts › answers stale through an interrupted refill, sweeping nothing, and carries on in place`.
+
+### `device/refill-clears-otherwise`
+
+When a device hydrates a copy that is not a refill, a device MUST remove the rows and edges of the copy it held before it reads a listing page.
+
+**Tests:** `device/refill.test.ts › refuses reads and clears before it fills again`, `device/working-copy.test.ts › takes writes to new rows only after an interrupted hydration, and sends none`.
+
+### `device/refill-reported`
+
+When a hydration completes, a device MUST report whether it was a refill as `in_place`.
+
+**Tests:** `device/refill.test.ts › fills again in place, changing, adding and sweeping rows`, `› refuses reads and clears before it fills again`, `› takes writes to the rows it holds and new ones, sending none until it is whole`.
 
 ### `device/hydrate-report`
 
@@ -1006,7 +1088,7 @@ If the stream's head, its live marker or a `cursor_ahead` frame names a position
 
 When a device expires its copy, a device MUST drop its cursor.
 
-**Tests:** `device/catch-up.test.ts › refuses reads after the cursor ages out, until a hydration`, `› ends a follow whose server's log ends behind its cursor, and forgets the cursor`.
+**Tests:** `device/catch-up.test.ts › answers reads marked stale after the cursor ages out, until a hydration fills it in place`, `› ends a follow whose server's log ends behind its cursor, and forgets the cursor`.
 
 ### `device/expire-no-reconnect`
 
@@ -3698,7 +3780,7 @@ If a read a device makes under its copy's reach answers a body the device cannot
 
 If a hydration, a catch-up or a follow ends `decoding` on an answer the device cannot parse as JSON, then a device MUST NOT expire the copy.
 
-**Reason:** the answer says nothing against the copy's reach, and an expired copy refuses local reads and writes until a hydration the caller asks for completes. A hydration that ends `decoding` has not completed, so its copy refuses writes (`device/write-refused-incomplete`) and marks its listings and searches partial (`device/read-partial-says`).
+**Reason:** the answer says nothing against the copy's reach, and an expired copy refuses local reads and writes, or answers them stale, until a hydration the caller asks for completes. A hydration that ends `decoding` has not completed, so its copy refuses a write to a row it does not hold (`device/write-refused-unheld`) and marks its listings and searches partial (`device/read-partial-says`).
 
 **Tests:** `device/hydration.test.ts › ends a hydration decoding, and does not expire the copy, where the reader cannot decode an answer`, `device/catch-up.test.ts › ends a catch-up decoding, keeping the copy and the cursor it had, where the reader cannot decode an event`, `› ends a follow decoding, keeping the copy and the cursor it had, where the reader cannot decode an event`.
 
@@ -5112,13 +5194,13 @@ If a caller drains a working copy that has never completed a hydration, then a d
 
 If a caller drains a working copy whose hydration is in progress or was interrupted, then a device MUST refuse the drain `hydration_incomplete`, sending nothing and leaving the queue as it was.
 
-**Tests:** `device/working-copy.test.ts › refuses a local write after an interrupted hydration`.
+**Tests:** `device/working-copy.test.ts › takes writes to new rows only after an interrupted hydration, and sends none`, `device/refill.test.ts › takes writes to the rows it holds and new ones, sending none until it is whole`.
 
 ### `device/drain-expired`
 
 If a caller drains a working copy whose cursor has aged out, then a device MUST refuse the drain `copy_expired`, sending nothing.
 
-**Tests:** `device/working-copy.test.ts › reports complete for a copy whose cursor aged out until a catch-up learns it, asking nothing to report`.
+**Tests:** `device/working-copy.test.ts › reports complete for a copy whose cursor aged out until a catch-up learns it, asking nothing to report`, `device/refill.test.ts › queues writes while it refills, sends none, and lays a newer page under them`.
 
 ### `device/catalog-served`
 

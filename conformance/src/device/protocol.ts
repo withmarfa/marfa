@@ -76,6 +76,9 @@ export interface HydrateReport {
   /** Why an interrupted hydration was filled again from the first page
    *  rather than resumed; absent where it was resumed or nothing waited. */
   restarted?: HydrateRestart;
+  /** Whether the copy was filled again over the rows it held rather than
+   *  cleared first (`device/refill-in-place`). */
+  in_place: boolean;
   cursor: string;
   /** Types the app declared that the instance did not hold and now does. */
   registered_types: string[];
@@ -272,9 +275,10 @@ export interface SearchHit {
   snippet: string;
 }
 
-/** Whether a local list or search was read from a whole copy, or from one a
- *  hydration has started and not completed. */
-export type Completeness = "complete" | "partial";
+/** Whether a local list or search was read from a whole copy, from one a
+ *  hydration has started and not completed, or from one whose cursor the
+ *  event log let go and that a hydration has not yet filled again. */
+export type Completeness = "complete" | "partial" | "stale";
 
 /** A local listing, and whether the copy it was read from is whole. */
 export interface Listing {

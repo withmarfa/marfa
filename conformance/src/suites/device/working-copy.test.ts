@@ -2586,7 +2586,7 @@ describe("the working copy says what it is", () => {
     ).toBe(false);
   });
 
-  it("refuses a local write after an interrupted hydration", async () => {
+  it("takes writes to new rows only after an interrupted hydration, and sends none", async () => {
     harness = await startHarness("interrupted-write");
     const { server, device } = harness;
     scriptHydration(server, {
@@ -2597,28 +2597,41 @@ describe("the working copy says what it is", () => {
     // dies part way.
     server.copyAnswer("GET", "/items", { kind: "drop" });
     expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
-    // The witness: the hydrated copy takes a write.
-    expect(
-      (
-        await device.create({
-          type: "core.note",
-          properties: { title: "taken", body: "taken" },
-        })
-      ).ok,
-    ).toBe(true);
+    // The witness: the hydrated copy takes an edit of the row it holds.
+    const edited = await device.update("n1", {
+      version: 1,
+      properties: { title: "taken" },
+    });
+    expect(edited.ok, JSON.stringify(edited)).toBe(true);
     const queued = await device.queue();
+    expect(queued.ok && queued.value).toHaveLength(1);
+    // A hydration that is not a refill of an aged-out copy clears the copy
+    // before it reads a page, so this one leaves n1 unheld.
     expect((await device.hydrate(["core.note"], "library")).ok).toBe(false);
 
-    const refused = await device.create({
+    // A new row conflicts with nothing the server holds, so the copy takes
+    // it and keeps it for the drain after the hydration.
+    const created = await device.create({
       type: "core.note",
-      properties: { title: "refused", body: "refused" },
+      properties: { title: "taken", body: "taken" },
+    });
+    expect(
+      created.ok,
+      `a copy part way through a hydration refused a new row, so the person cannot write until it ends: ${JSON.stringify(created)}`,
+    ).toBe(true);
+
+    // A row the copy does not hold has no version to write from.
+    const refused = await device.update("n1", {
+      version: 1,
+      properties: { title: "refused" },
     });
     expect(
       refused.ok,
-      "a copy part way through a hydration took a write onto a piece of a copy",
+      "a copy part way through a hydration took an edit of a row it does not hold, writing from a version it never read",
     ).toBe(false);
     if (!refused.ok) expect(refused.refusal.code).toBe("hydration_incomplete");
-    expect(await device.queue()).toEqual(queued);
+    const waiting = await device.queue();
+    expect(waiting.ok && waiting.value).toHaveLength(2);
 
     const sentBefore = server.requests.length;
     const drained = await device.drain();
@@ -2628,7 +2641,7 @@ describe("the working copy says what it is", () => {
     expect(server.requests.length, "the refused drain asked the server").toBe(
       sentBefore,
     );
-    expect(await device.queue()).toEqual(queued);
+    expect(await device.queue()).toEqual(waiting);
   });
 
   it("reports complete for a copy whose cursor aged out until a catch-up learns it, asking nothing to report", async () => {
@@ -2648,12 +2661,12 @@ describe("the working copy says what it is", () => {
     expect((await device.catchUp()).ok).toBe(false);
     const after = await device.status();
     expect(after.ok && after.value.hydration).toBe("expired");
+    // The copy takes the write and keeps it for after the refill.
     const write = await device.create({
       type: "core.note",
-      properties: { title: "refused", body: "refused" },
+      properties: { title: "kept", body: "kept" },
     });
-    expect(write.ok, "an expired copy took a write").toBe(false);
-    if (!write.ok) expect(write.refusal.code).toBe("hydration_incomplete");
+    expect(write.ok, JSON.stringify(write)).toBe(true);
 
     const sentBefore = server.requests.length;
     const drained = await device.drain();
