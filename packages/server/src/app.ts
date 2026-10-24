@@ -69,6 +69,10 @@ import { inboundRoutes } from "./routes/inbound.js";
 import { folderStatusRoutes } from "./routes/folder-status.js";
 import { folderInventoryRoutes } from "./routes/folder-inventory.js";
 import { folderRoutes } from "./routes/folders.js";
+import {
+  VIEW_SCHEMAS_DESCRIBED_BY_REFERENCE,
+  viewRoutes,
+} from "./routes/views.js";
 import type { Housekeeping } from "./housekeeping/scheduler.js";
 import { keyRoutes } from "./routes/keys.js";
 import { exportRoutes } from "./routes/export.js";
@@ -860,6 +864,7 @@ export function createApp(
   app.route("/attention", attentionRoutes(storage, health));
   app.route("/folders", folderRoutes(storage));
   app.route("/folders", folderStatusRoutes(storage));
+  app.route("/views", viewRoutes(storage));
   app.route("/keys", keyRoutes(storage, config.apiKeySalt));
   app.route("/config", configRoutes(storage, instanceId, config));
   app.route(
@@ -971,6 +976,7 @@ export function createApp(
     ...TYPE_SCHEMAS_DESCRIBED_BY_REFERENCE,
     ConnectorProblems: ConnectorProblemsSchema,
     ...BULK_ACTION_SCHEMAS_DESCRIBED_BY_REFERENCE,
+    ...VIEW_SCHEMAS_DESCRIBED_BY_REFERENCE,
   })) {
     app.openAPIRegistry.register(name, schema);
   }

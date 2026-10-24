@@ -14,6 +14,7 @@ The contract has two halves.
 
 - `folder-status.md`: folder-copy sync reports, their canonical sign-ins, receipt ages, and current and historical totals.
 - `items.md`: items, their lifecycle, bulk writes, metadata, tags and extensions, the folder operation that writes `system.folder`, and links and the tombstones a purge leaves.
+- `views.md`: views, the saved lists of items written as `system.view`, their query and layouts, and the operations that create, change and delete them.
 - `types.md`: the type registry, its grammar, inheritance, enforcement levers and a type's link.
 - `edges.md`: edges, edge types, hydration and traversal.
 - `versions.md`: versions, snapshots, the 409 envelopes and server-side merge.

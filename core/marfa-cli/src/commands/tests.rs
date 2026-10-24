@@ -1094,6 +1094,97 @@ fn a_folder_takes_its_settings_from_json_and_flags_and_refuses_one_given_twice()
 }
 
 #[test]
+fn a_view_takes_its_settings_from_json_and_flags_and_refuses_one_given_twice() {
+    let created = views::create_request(&views::CreateArgs {
+        settings: views::SettingsArgs {
+            body: Some(r#"{"query":{"types":["core.task"]}}"#.into()),
+            title: Some("Open tasks".into()),
+            layouts: Some(r#"[{"id":"main","kind":"list"}]"#.into()),
+            ..Default::default()
+        },
+        ..Default::default()
+    })
+    .unwrap();
+    assert_eq!(created.method, Method::Post);
+    assert_eq!(created.path(), "/views");
+    assert_eq!(
+        body(&created),
+        &json!({
+            "query": { "types": ["core.task"] },
+            "title": "Open tasks",
+            "layouts": [{ "id": "main", "kind": "list" }],
+        })
+    );
+
+    let changed = views::change_request(&views::ChangeArgs {
+        id: "v1".into(),
+        version: 2,
+        settings: views::SettingsArgs {
+            query: Some(r#"{"tier":"feed"}"#.into()),
+            ..Default::default()
+        },
+        idempotency: items::IdempotencyArgs {
+            idempotency_key: Some("k1".into()),
+        },
+    })
+    .unwrap();
+    assert_eq!(changed.method, Method::Patch);
+    assert_eq!(changed.path(), "/views/v1");
+    assert_eq!(
+        body(&changed),
+        &json!({ "query": { "tier": "feed" }, "version": 2 })
+    );
+    assert!(
+        changed
+            .headers
+            .iter()
+            .any(|(name, value)| name == "Idempotency-Key" && value == "k1")
+    );
+
+    let deleted = views::delete_request(
+        "v1",
+        &items::IdempotencyArgs {
+            idempotency_key: Some("k2".into()),
+        },
+    );
+    assert_eq!(deleted.method, Method::Delete);
+    assert_eq!(deleted.path(), "/views/v1");
+    assert_eq!(deleted.body, Body::None);
+    assert!(
+        deleted
+            .headers
+            .iter()
+            .any(|(name, value)| name == "Idempotency-Key" && value == "k2")
+    );
+
+    let read = views::get_request("v1");
+    assert_eq!(read.method, Method::Get);
+    assert_eq!(read.path(), "/items/v1");
+
+    let twice = views::create_request(&views::CreateArgs {
+        settings: views::SettingsArgs {
+            body: Some(r#"{"title":"a"}"#.into()),
+            title: Some("b".into()),
+            ..Default::default()
+        },
+        ..Default::default()
+    });
+    assert!(matches!(twice, Err(CliError::Invalid(_))), "{twice:?}");
+
+    let not_a_list = views::create_request(&views::CreateArgs {
+        settings: views::SettingsArgs {
+            layouts: Some(r#"{"id":"main"}"#.into()),
+            ..Default::default()
+        },
+        ..Default::default()
+    });
+    assert!(
+        matches!(&not_a_list, Err(CliError::Invalid(message)) if message.contains("JSON array")),
+        "{not_a_list:?}"
+    );
+}
+
+#[test]
 fn a_connector_registers_under_its_name_and_reports_a_run_whole() {
     let registered = connectors::register_request("mail", Some("reads a mailbox"));
     assert_eq!(registered.method, Method::Post);

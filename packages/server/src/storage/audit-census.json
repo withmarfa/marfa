@@ -313,6 +313,13 @@
       "writeItem": 4
     }
   },
+  "routes/views.ts": {
+    "boundary": "Audited view create/update/delete unit; audit-atomicity.test.ts.",
+    "calls": {
+      "runAuditedTransaction": 3,
+      "writeItem": 4
+    }
+  },
   "routes/health-probes.ts": {
     "boundary": "Operational liveness probe: one settings row, rewritten at most every ten seconds to show a write commits, not a resource mutation door; health.test.ts, health.app.test.ts.",
     "calls": {

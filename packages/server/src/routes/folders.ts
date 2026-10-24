@@ -11,11 +11,7 @@ import {
   ErrorCode,
   MarfaError,
   getEdgeTypeSchema,
-  getTypeSchema,
-  isSystemType,
   isValidId,
-  isValidTypeIdentifier,
-  parseFilter,
 } from "@withmarfa/shared";
 import type { Item, Metadata } from "@withmarfa/shared";
 import type { Context } from "hono";
@@ -42,6 +38,12 @@ import {
 import { AncestorUnavailableSchema, ConflictResponseSchema } from "./items.js";
 import { readableMetadata } from "./_extension-reach.js";
 import { requestBlobProof } from "./_blob-reach.js";
+import {
+  assertItemQuery,
+  assertKnownType,
+  itemQuerySchema,
+  settingRefusal,
+} from "./_item-query.js";
 import * as clock from "../clock.js";
 
 const FOLDER_TYPE = "system.folder";
@@ -52,39 +54,21 @@ const MAX_DEFAULT_EDGE_TARGETS = 100;
 // Schemas
 // ---------------------------------------------------------------------------
 
-const FolderSearchSchema = z
-  .strictObject({
-    types: z
-      .array(z.string())
-      .max(100)
-      .optional()
-      .describe(
-        "The types the folder holds, each with its subtypes. Empty or absent holds every type the machine's key can read, except `system.*`.",
-      ),
-    tier: TierEnum.optional().describe(
-      "The tier the folder holds. Absent means `library`.",
-    ),
-    state: z
-      .array(z.enum(["active", "archived"]))
-      .min(1)
-      .optional()
-      .describe("The states the folder holds. Absent means both."),
-    filter: z
-      .string()
-      .optional()
-      .describe(
-        "A filter expression, as on `GET /items`, that narrows what the folder holds.",
-      ),
-    beneath: z
-      .string()
-      .optional()
-      .describe(
-        "An item ID. The folder holds that item and everything under it by `parent-of`, at any depth.",
-      ),
-  })
-  .openapi("FolderSearch", {
+const FolderSearchSchema = itemQuerySchema(
+  {
+    name: "FolderSearch",
     description: "The search that decides which items a folder holds.",
-  });
+    types:
+      "The types the folder holds, each with its subtypes. Empty or absent holds every type the machine's key can read, except `system.*`.",
+    tier: "The tier the folder holds. Absent means `library`.",
+    state: "The states the folder holds. Absent means both.",
+    filter:
+      "A filter expression, as on `GET /items`, that narrows what the folder holds.",
+    beneath:
+      "An item ID. The folder holds that item and everything under it by `parent-of`, at any depth.",
+  },
+  TierEnum,
+);
 
 const FolderDefaultsSchema = z
   .strictObject({
@@ -207,58 +191,9 @@ const IdParam = z.object({
 // Validation the schemas cannot express
 // ---------------------------------------------------------------------------
 
-function settingRefusal(
-  code: ErrorCode,
-  path: string,
-  message: string,
-): MarfaError {
-  return new MarfaError(code, message, { errors: [{ path, message }] });
-}
-
-function assertKnownType(path: string, id: string): void {
-  if (!isValidTypeIdentifier(id)) {
-    throw settingRefusal(
-      ErrorCode.VALIDATION_ERROR,
-      path,
-      `Invalid type identifier: ${id}`,
-    );
-  }
-  if (isSystemType(id)) {
-    throw settingRefusal(
-      ErrorCode.VALIDATION_ERROR,
-      path,
-      `${id} is a system type, which no item door writes`,
-    );
-  }
-  if (getTypeSchema(id) === undefined) {
-    throw settingRefusal(ErrorCode.UNKNOWN_TYPE, path, `Unknown type: ${id}`);
-  }
-}
-
 function assertSettings(settings: Settings): void {
   const { search, defaults, first_placement: placement } = settings;
-  search?.types?.forEach((id, i) => {
-    assertKnownType(`search.types.${String(i)}`, id);
-  });
-  if (search?.filter !== undefined) {
-    try {
-      parseFilter(search.filter);
-    } catch (err) {
-      if (!(err instanceof MarfaError)) throw err;
-      throw settingRefusal(
-        ErrorCode.VALIDATION_ERROR,
-        "search.filter",
-        err.message,
-      );
-    }
-  }
-  if (search?.beneath !== undefined && !isValidId(search.beneath)) {
-    throw settingRefusal(
-      ErrorCode.VALIDATION_ERROR,
-      "search.beneath",
-      `Invalid item id: ${search.beneath}`,
-    );
-  }
+  if (search !== undefined) assertItemQuery("search", search);
   if (defaults?.type !== undefined) {
     assertKnownType("defaults.type", defaults.type);
   }

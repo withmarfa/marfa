@@ -1806,6 +1806,83 @@ marfa restore [OPTIONS] <FILE>
 | --- | --- |
 | `<FILE>` | The archive, as `export --format archive` wrote it. |
 
+## views
+
+Views: saved lists of items, held as `system.view` and shared by every app. Writing one needs write on `system.view`.
+
+### marfa views
+
+```text
+marfa views [OPTIONS] <COMMAND>
+```
+
+### marfa views create
+
+Create a view, as a `system.view`.
+
+```text
+marfa views create [OPTIONS]
+```
+
+| Option | Description |
+| --- | --- |
+| `--file <PATH>` | A file holding the settings as a JSON object; `-` reads stdin. |
+| `--body <JSON>` | The settings as a JSON object, inline. |
+| `--title <TITLE>` | The view's name. |
+| `--query <JSON>` | Which items the view lists, as a JSON object: `types`, `tier`, `state`, `filter` and `beneath`. |
+| `--layouts <JSON>` | How the view shows its items, as a JSON array of layouts, each with an `id` and a `kind`. |
+| `--idempotency-key <KEY>` | Sent as `Idempotency-Key`, so a repeat is answered from the record rather than written twice. |
+
+### marfa views change
+
+Change a view's settings, each named one replaced whole.
+
+```text
+marfa views change [OPTIONS] --version <VERSION> <ID>
+```
+
+| Argument | Description |
+| --- | --- |
+| `<ID>` | The view's `system.view` id. |
+
+| Option | Description |
+| --- | --- |
+| `--version <VERSION>` | The version the change was based on. |
+| `--file <PATH>` | A file holding the settings as a JSON object; `-` reads stdin. |
+| `--body <JSON>` | The settings as a JSON object, inline. |
+| `--title <TITLE>` | The view's name. |
+| `--query <JSON>` | Which items the view lists, as a JSON object: `types`, `tier`, `state`, `filter` and `beneath`. |
+| `--layouts <JSON>` | How the view shows its items, as a JSON array of layouts, each with an `id` and a `kind`. |
+| `--idempotency-key <KEY>` | Sent as `Idempotency-Key`, so a repeat is answered from the record rather than written twice. |
+
+### marfa views delete
+
+Delete a view at once, with no trash.
+
+```text
+marfa views delete [OPTIONS] <ID>
+```
+
+| Argument | Description |
+| --- | --- |
+| `<ID>` | The view's `system.view` id. |
+
+| Option | Description |
+| --- | --- |
+| `--idempotency-key <KEY>` | Sent as `Idempotency-Key`, so a repeat is answered from the record rather than written twice. |
+
+### marfa views get
+
+One view by id, read through the item operations; an id that holds another type is refused.
+
+```text
+marfa views get [OPTIONS] <ID>
+```
+
+| Argument | Description |
+| --- | --- |
+| `<ID>` | The view's `system.view` id. |
+
 ## webhooks
 
 Outbound subscriptions that send events out. Every command needs `webhooks.manage`.

@@ -338,6 +338,15 @@ const CARRYING: Record<string, Driver> = {
       await request(ctx.app, "POST", `/folders/${id}/revoke`, { key }),
     );
   },
+  "PATCH /views/{id}": async (key) => {
+    const id = await seedView();
+    return answer(
+      await request(ctx.app, "PATCH", `/views/${id}`, {
+        key,
+        body: { version: await versionOf(id), title: "renamed" },
+      }),
+    );
+  },
   "GET /export": async (key) => {
     await seedNote();
     return answer(await request(ctx.app, "GET", "/export", { key }));
@@ -366,6 +375,22 @@ async function seedFolder(): Promise<string> {
   const created = await request(ctx.app, "POST", "/folders", {
     key: ctx.workingKey,
     body: { title: "census folder" },
+  });
+  expect(created.status).toBe(201);
+  const { item } = (await created.json()) as { item: { id: string } };
+  await stampBothNamespaces(item.id);
+  return item.id;
+}
+
+const CENSUS_VIEW = {
+  title: "census view",
+  layouts: [{ id: "main", kind: "list" }],
+};
+
+async function seedView(): Promise<string> {
+  const created = await request(ctx.app, "POST", "/views", {
+    key: ctx.workingKey,
+    body: CENSUS_VIEW,
   });
   expect(created.status).toBe(201);
   const { item } = (await created.json()) as { item: { id: string } };
@@ -471,6 +496,16 @@ const CARRYING_NONE: Record<string, { why: string; drive: Driver }> = {
         await request(ctx.app, "POST", "/folders", {
           key,
           body: { title: "census folder" },
+        }),
+      ),
+  },
+  "POST /views": {
+    why: "answers the view it has just created, which holds no namespace yet",
+    drive: async (key) =>
+      answer(
+        await request(ctx.app, "POST", "/views", {
+          key,
+          body: CENSUS_VIEW,
         }),
       ),
   },

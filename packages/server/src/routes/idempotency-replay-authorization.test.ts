@@ -142,6 +142,19 @@ it.each(IDEMPOTENT_WRITE_DOORS)(
         if (method === "PATCH")
           body = { version: folder.version, title: "Changed folder" };
       }
+    } else if (door.includes("views")) {
+      const view = { title: "View", layouts: [{ id: "main", kind: "list" }] };
+      if (method === "POST") body = view;
+      else {
+        const created = await request(ctx.app, "POST", "/views", {
+          key: ctx.workingKey,
+          body: view,
+        });
+        const saved = ((await created.json()) as { item: Item }).item;
+        path = path.replace(":id", saved.id);
+        if (method === "PATCH")
+          body = { version: saved.version, title: "Changed view" };
+      }
     } else if (door.includes("edges")) {
       const target = await note();
       const edgeBody = {

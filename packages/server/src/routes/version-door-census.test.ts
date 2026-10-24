@@ -188,6 +188,8 @@ const ANSWERING: Record<string, Driver> = {
 const OWN_RULE: Record<string, string> = {
   "PATCH /folders/{id}":
     "a folder is `system.folder` at every version, so the platform's reader, which admits every type, admits only `system.folder` snapshots here, and the door is gated on write to that type, which the key may therefore read",
+  "PATCH /views/{id}":
+    "a view is `system.view` at every version, so the platform's reader, which admits every type, admits only `system.view` snapshots here, and the door is gated on write to that type, which the key may therefore read",
 };
 
 /**

@@ -1056,6 +1056,14 @@ const invocations: Record<string, () => string[]> = {
   "types delete-retired": () => ["core.note"],
   export: () => [],
   restore: () => [fileOf("archive.tar.gz", "archive")],
+  "views create": () => [
+    "--title",
+    "Notes",
+    "--query",
+    '{"types":["core.note"]}',
+  ],
+  "views change": () => [ID, "--version", "1", "--title", "Notes"],
+  "views delete": () => [ID],
   "webhooks create": () => [
     "--to",
     "https://example.com/hook",
@@ -1135,7 +1143,9 @@ function codeOf(stderr: string): string {
  * the table lists published operations, and these reach one without being
  * its entry.
  */
-const beyondTheTable: Record<string, () => string[]> = {};
+const beyondTheTable: Record<string, () => string[]> = {
+  "views get": () => [ID],
+};
 
 /** Table commands that require private machine authority rather than a key. */
 const PRIVATE_SOCKET_TABLE: Record<string, () => string[]> = {
@@ -1294,9 +1304,10 @@ const DESCRIBES = "status";
  * contract, so the answers here cannot witness their silence: `events`
  * reads a stream, and the stream test above reads one on its own contract;
  * `login` needs a sign-in the door cannot complete, so its refusal is held
- * by its code alone.
+ * by its code alone; `views get` refuses an item that is not a view, and
+ * `{}` names no type.
  */
-const SILENT_HERE = ["events", "login"];
+const SILENT_HERE = ["events", "login", "views get"];
 
 describe("every command holds the server to the contract", () => {
   async function table(): Promise<{ operation_id: string; command: string }[]> {

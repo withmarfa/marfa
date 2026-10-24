@@ -1632,9 +1632,9 @@ describe("the content category is covered by holding it and by nothing else", ()
       true,
     );
     // And not into the system family.
-    expect(grantCoversScope(["content:write"], "system.folder:read")).toBe(
-      false,
-    );
+    for (const id of ["system.folder", "system.view"]) {
+      expect(grantCoversScope(["content:write"], `${id}:read`), id).toBe(false);
+    }
   });
 });
 

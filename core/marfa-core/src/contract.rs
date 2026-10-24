@@ -26,4 +26,7 @@ pub const KEYED_WRITES: &[(&str, &str)] = &[
     ("POST", "/folders"),
     ("PATCH", "/folders/{id}"),
     ("POST", "/folders/{id}/revoke"),
+    ("POST", "/views"),
+    ("PATCH", "/views/{id}"),
+    ("DELETE", "/views/{id}"),
 ];

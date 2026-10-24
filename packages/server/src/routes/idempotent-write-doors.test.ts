@@ -81,6 +81,8 @@ const WRITERS: Record<string, string> = {
     "POST /edges, PATCH /edges/{id} and DELETE /edges/{id}, all in IDEMPOTENT_WRITE_DOORS",
   "routes/folders.ts":
     "POST /folders, PATCH /folders/{id} and POST /folders/{id}/revoke, all in IDEMPOTENT_WRITE_DOORS",
+  "routes/views.ts":
+    "POST /views, PATCH /views/{id} and DELETE /views/{id}, all in IDEMPOTENT_WRITE_DOORS",
   "routes/_edges-inline.ts":
     "the shared inline-edge reconciler, reached only from POST /items, PATCH /items/{id} and the bulk doors — it is never a door itself",
 

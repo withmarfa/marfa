@@ -726,6 +726,8 @@ export interface TestContext {
   trackedEdgeTypes: string[];
   /** `system.folder` rows, which the item doors cannot remove: revoked, then purged. */
   trackedFolders: string[];
+  /** `system.view` rows, which the item doors cannot remove: deleted through `/views`. */
+  trackedViews: string[];
   /**
    * Outbound webhook subscriptions for cleanup, each with the credential that
    * registered it. A subscription left behind keeps attempting delivery.

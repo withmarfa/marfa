@@ -83,6 +83,10 @@ const scopedStub = {
     calls.push(`folder-revoke:${id}`);
     return Promise.resolve(okResult);
   },
+  deleteView: (id: string) => {
+    calls.push(`view-delete:${id}`);
+    return Promise.resolve(okResult);
+  },
   purgeItem: (id: string) => {
     calls.push(`item-purge:${id}`);
     return Promise.resolve(nextResult(itemPurgeById, id, itemPurgeResult));
@@ -106,6 +110,7 @@ function contextWithFixtures(): unknown {
     trackedItems: ["i1"],
     trackedEdgeTypes: ["et1"],
     trackedFolders: ["f1"],
+    trackedViews: ["v1"],
     trackedWebhooks: [{ id: "w1" }],
     trackedTypes: [{ id: "t1" }],
     trackedKeys: ["k1"],
@@ -159,6 +164,12 @@ describe("cleanup", () => {
     expect(calls.indexOf("scoped-type:t1")).toBeLessThan(
       calls.indexOf("key:k1"),
     );
+  });
+
+  it("deletes a tracked view through the view door", async () => {
+    const { cleanup } = await import("./setup.js");
+    await cleanup(contextWithFixtures() as Parameters<typeof cleanup>[0]);
+    expect(calls).toContain("view-delete:v1");
   });
 
   it("revokes a tracked folder before purging it", async () => {
