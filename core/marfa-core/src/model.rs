@@ -378,7 +378,20 @@ pub struct HydrateReport {
     pub edge_types: Vec<String>,
     pub items: u64,
     pub edges: u64,
+    /// The listing pages this call read, those of a walk it then started
+    /// again from the first page included.
     pub pages: u64,
+    /// The listing pages the hydration read in all, those of the interrupted
+    /// calls it resumed included.
+    pub pages_total: u64,
+    /// Whether this call carried on from the page an interrupted hydration
+    /// of the same slice had reached.
+    pub resumed: bool,
+    /// Why an interrupted hydration was not resumed, and the copy was filled
+    /// again from the first page; `None` where it was resumed or there was
+    /// nothing to resume.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub restarted: Option<HydrateRestart>,
     pub cursor: String,
     /// Types the app declared that the instance did not hold and now does.
     pub registered_types: Vec<String>,
@@ -386,6 +399,65 @@ pub struct HydrateReport {
     /// them wait for the server's verdict, which is a refusal until a key
     /// that may registers them.
     pub unregistered_types: Vec<UnregisteredType>,
+}
+
+/// Why a hydration began again from the first page rather than carry on from
+/// where an interrupted one had reached.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HydrateRestart {
+    /// The server at the address is another instance.
+    InstanceChanged,
+    /// The credential reads another set of rows than the one the pages
+    /// already held were read under.
+    ReachChanged,
+    /// The hydration declares other types, another tier or other edge types.
+    SliceChanged,
+    /// The server's catalog of item types or edge types changed.
+    CatalogChanged,
+    /// The event log no longer holds the head the interrupted hydration
+    /// started from, so the writes made since cannot be replayed.
+    HeadAgedOut,
+    /// The event log ends behind the head the interrupted hydration started
+    /// from, as a server restored from an earlier point does.
+    HeadPastLog,
+    /// The listing refused the page cursor the interrupted hydration kept.
+    CursorRefused,
+}
+
+impl HydrateRestart {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            HydrateRestart::InstanceChanged => "instance_changed",
+            HydrateRestart::ReachChanged => "reach_changed",
+            HydrateRestart::SliceChanged => "slice_changed",
+            HydrateRestart::CatalogChanged => "catalog_changed",
+            HydrateRestart::HeadAgedOut => "head_aged_out",
+            HydrateRestart::HeadPastLog => "head_past_log",
+            HydrateRestart::CursorRefused => "cursor_refused",
+        }
+    }
+
+    /// Why, in words a person reads.
+    pub fn says(self) -> &'static str {
+        match self {
+            HydrateRestart::InstanceChanged => "another instance answers at the server's address",
+            HydrateRestart::ReachChanged => "the credential now reads other rows",
+            HydrateRestart::SliceChanged => {
+                "this hydration declares other types, another tier or other edge types"
+            }
+            HydrateRestart::CatalogChanged => "the server's catalog of types changed",
+            HydrateRestart::HeadAgedOut => {
+                "the server's event log no longer holds the point the interrupted hydration started from"
+            }
+            HydrateRestart::HeadPastLog => {
+                "the server's event log ends before the point the interrupted hydration started from"
+            }
+            HydrateRestart::CursorRefused => {
+                "the server refused the page cursor the interrupted hydration kept"
+            }
+        }
+    }
 }
 
 /// A declared type the instance refused to register, and why.

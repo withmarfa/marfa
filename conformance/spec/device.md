@@ -368,7 +368,7 @@ While a hydration has started and not completed, whether it still runs or was in
 
 **Reason:** an app shows what has arrived while the rest of a large slice is read, and an interrupted hydration does not leave it with nothing to show.
 
-**Tests:** `device/working-copy.test.ts › answers a listing and a search part way through a hydration from the rows it holds, saying the answer is partial`, `device/hydration.test.ts › leaves an interrupted hydration to be run again, never resumed`.
+**Tests:** `device/working-copy.test.ts › answers a listing and a search part way through a hydration from the rows it holds, saying the answer is partial`, `device/hydration.test.ts › reads only the pages it had not reached, and holds the copy a whole hydration does`.
 
 ### `device/read-partial-says`
 
@@ -376,7 +376,7 @@ While a hydration has started and not completed, a device MUST mark each local l
 
 **Reason:** what such a copy holds is a piece of a copy, and an answer from it that did not say so would read as the whole.
 
-**Tests:** `device/working-copy.test.ts › answers a listing and a search part way through a hydration from the rows it holds, saying the answer is partial`, `› reports an interrupted re-hydration as in progress, not as a copy that aged out`, `device/hydration.test.ts › leaves an interrupted hydration to be run again, never resumed`, `› does not complete a hydration whose replay sends no live marker`, `device/stop.test.ts › ends it between pages, leaving a copy marked partial and a queue that is as it was`.
+**Tests:** `device/working-copy.test.ts › answers a listing and a search part way through a hydration from the rows it holds, saying the answer is partial`, `› reports an interrupted re-hydration as in progress, not as a copy that aged out`, `device/hydration.test.ts › reads only the pages it had not reached, and holds the copy a whole hydration does`, `› does not complete a hydration whose replay sends no live marker`, `device/stop.test.ts › ends it between pages, leaving a copy marked partial and a queue that is as it was`.
 
 ### `device/read-complete-says`
 
@@ -426,7 +426,7 @@ While a hydration has started and not completed, or its copy is expired, a devic
 
 When a hydration completes, a device MUST answer local reads again.
 
-**Tests:** `device/catch-up.test.ts › refuses reads after the cursor ages out, until a hydration`, `device/hydration.test.ts › leaves an interrupted hydration to be run again, never resumed`.
+**Tests:** `device/catch-up.test.ts › refuses reads after the cursor ages out, until a hydration`, `device/hydration.test.ts › reads only the pages it had not reached, and holds the copy a whole hydration does`.
 
 ### `device/read-never-hydrated`
 
@@ -654,13 +654,85 @@ When a device hydrates, a device MUST replace the item type and edge type catalo
 
 When a device hydrates, a device MUST keep its queue and show each write still waiting over the new copy.
 
-**Tests:** `device/catch-up.test.ts › hydrates again when the server's log ends behind its cursor, keeping the queue`, `device/working-copy.test.ts › holds both tiers in a slice of both, hydrated again from one of them`, `device/save-before-sync-live.test.ts › sends what it saved with no server once it has joined, after registering the type the key may`.
+**Tests:** `device/catch-up.test.ts › hydrates again when the server's log ends behind its cursor, keeping the queue`, `device/working-copy.test.ts › holds both tiers in a slice of both, hydrated again from one of them`, `device/save-before-sync-live.test.ts › sends what it saved with no server once it has joined, after registering the type the key may`, `device/hydration.test.ts › keeps the queue and the pinned rows across a resume`.
 
-### `device/hydrate-not-resumed`
+### `device/hydrate-resumes`
 
-When a device hydrates after an interrupted hydration, a device MUST read every page of the slice again.
+When a device hydrates the same types, tier and edge types as an interrupted hydration, under the same instance, reach and catalog, while the server's event log holds the events after the head that hydration started from, a device MUST read only the listing pages that hydration had not taken.
 
-**Tests:** `device/hydration.test.ts › leaves an interrupted hydration to be run again, never resumed`.
+**Reason:** a large slice is read a page at a time, and a device that sleeps, loses its network or is stopped partway through would otherwise read every page again from the first.
+
+**Tests:** `device/hydration.test.ts › reads only the pages it had not reached, and holds the copy a whole hydration does`, `› resumes after the process running it was killed`, `› resumes with no page to read when it was stopped as its last page arrived`, `› keeps the queue and the pinned rows across a resume`.
+
+### `device/hydrate-resume-replays`
+
+When a resumed hydration has read its last listing page, a device MUST apply the events written after the head the interrupted hydration started from before the hydration completes.
+
+**Reason:** a row a page took before the interruption can have changed or been deleted since.
+
+**Tests:** `device/hydration.test.ts › replays a row changed and a row deleted on the server while it was stopped`, `› resumes a replay the process running it was killed in from the last event it applied`.
+
+### `device/hydrate-resume-reported`
+
+When a resumed hydration completes, a device MUST report it `resumed`, with the listing pages it read in that call as `pages` and in all, the interrupted calls included, as `pages_total`.
+
+**Tests:** `device/hydration.test.ts › reads only the pages it had not reached, and holds the copy a whole hydration does`, `› resumes after the process running it was killed`.
+
+### `device/hydrate-complete-not-resumed`
+
+When a device hydrates after a hydration completed, a device MUST read every page of the slice from the first.
+
+**Tests:** `device/hydration.test.ts › reads every page again once a hydration has completed`.
+
+### `device/hydrate-restart-slice`
+
+If a device hydrates other types, another tier or other edge types than an interrupted hydration declared, then a device MUST read the slice again from its first page and report the hydration `restarted` with `slice_changed`.
+
+**Tests:** `device/hydration.test.ts › starts again from the first page for another slice`.
+
+### `device/hydrate-restart-instance`
+
+If another instance answers at the server address than the one an interrupted hydration read from, then a device MUST read the slice again from its first page and report the hydration `restarted` with `instance_changed`.
+
+**Tests:** `device/hydration.test.ts › starts again from the first page when another instance answers`.
+
+### `device/hydrate-restart-reach`
+
+If the key's reach is not the one an interrupted hydration read its pages under, then a device MUST read the slice again from its first page, under the head and catalog of the key's present reach, and report the hydration `restarted` with `reach_changed`.
+
+**Tests:** `device/hydration.test.ts › starts again from the first page when the key's reach changed`.
+
+### `device/hydrate-restart-catalog`
+
+If the server's item type or edge type catalog differs from the one an interrupted hydration held, then a device MUST read the slice again from its first page and report the hydration `restarted` with `catalog_changed`.
+
+**Tests:** `device/hydration.test.ts › starts again from the first page when the catalog changed`.
+
+### `device/hydrate-restart-head-aged-out`
+
+If the server's event log no longer holds the events after the head an interrupted hydration started from, then a device MUST read the slice again from its first page and report the hydration `restarted` with `head_aged_out`.
+
+**Tests:** `device/hydration.test.ts › starts again from the first page when the log no longer holds the head it started from`.
+
+### `device/hydrate-restart-head-past-log`
+
+If the server's event log ends before the head an interrupted hydration started from, then a device MUST read the slice again from its first page and report the hydration `restarted` with `head_past_log`.
+
+**Tests:** `device/hydration.test.ts › starts again from the first page when the log ends before the head it started from`.
+
+### `device/hydrate-restart-cursor`
+
+If the server refuses the page cursor a resumed hydration kept, then a device MUST read the slice again from its first page and report the hydration `restarted` with `cursor_refused`.
+
+**Tests:** `device/hydration.test.ts › starts again from the first page, once, when the server refuses the cursor it kept`.
+
+### `device/hydrate-restart-once`
+
+If a hydration that started again from the first page is refused a listing page, then a device MUST end the hydration with that refusal.
+
+**Reason:** a device that started again on every refusal would never end against a server that refuses the same page each time.
+
+**Tests:** `device/hydration.test.ts › ends a hydration whose first page from the start is refused too, rather than start again twice`.
 
 ### `device/hydrate-report`
 
@@ -698,11 +770,11 @@ While a hydration of a slice of every type has started and not completed, and th
 
 ### `device/hydrate-every-type-interrupted`
 
-When a device hydrates a slice of every type after an interrupted hydration, a device MUST read every page of the slice again.
+When a device hydrates a slice of every type after an interrupted hydration of that slice, a device MUST resume it from the page the interrupted hydration reached, on the item listing naming no type.
 
-**Reason:** `device/hydrate-not-resumed` holds for this slice too.
+**Reason:** `device/hydrate-resumes` holds for this slice too, and the listing it carries on is the one the interrupted hydration walked.
 
-**Tests:** `device/hydrate-every-type.test.ts › reads the whole slice again when a hydration stopped part way is run again`.
+**Tests:** `device/hydrate-every-type.test.ts › resumes a hydration of every type stopped part way from the page it reached`.
 
 ### `device/hydrate-surrogate-pair`
 

@@ -293,7 +293,11 @@ export async function startBindingHarness(
 export function scriptHydration(
   server: ScriptedServer,
   options: {
-    head: string;
+    /** The log's head, as each read of it answers. */
+    head: string | (() => string);
+    /** What a replay from `cursor` answers, the log holding nothing after
+     *  the head unless named. */
+    replay?: (cursor: string) => Answer;
     /** Folder report responses; defaults to accepting the observed sequence. */
     statusReport?: Responder[];
     instance?: () => string;
@@ -301,7 +305,7 @@ export function scriptHydration(
     /** What `GET /edges` lists, by edge type; scripted only where named. */
     edges?: Record<string, WireEdgeOptions[]>;
     /** The catalog every read of `/types` answers, the scripted one unless named. */
-    catalog?: Answer;
+    catalog?: Responder;
     /** What `GET /edge-types` answers, the shipped types unless named. */
     edgeTypes?: Responder;
     /** A folder's name lookup answered otherwise, where this answers. */
@@ -313,8 +317,9 @@ export function scriptHydration(
      *  offset; one page holds them all unless named. */
     pageSize?: number;
     /** Whether the page at an offset dies unanswered, as the page of an
-     *  interrupted hydration does. Asked of every page but the first. */
-    drop?: (offset: number) => boolean;
+     *  interrupted hydration does, or what it answers in place of its rows,
+     *  such as a refusal of its cursor. Asked of every page but the first. */
+    drop?: (offset: number) => boolean | Answer;
   },
 ): void {
   server.answer(
@@ -349,6 +354,8 @@ export function scriptHydration(
       ),
     };
   };
+  const head = (): string =>
+    typeof options.head === "string" ? options.head : options.head();
   const rows = options.rows ?? {};
   const edges = options.edges;
   if (edges !== undefined) {
@@ -381,7 +388,7 @@ export function scriptHydration(
           "validation_error",
           "invalid copy bootstrap request",
         );
-      return copyInstance(copyHeadRead(options.head));
+      return copyInstance(copyHeadRead(head()));
     },
     (request) => {
       const cursor = request.headers["last-event-id"];
@@ -389,7 +396,7 @@ export function scriptHydration(
       if (request.query.toString() !== "edges=all&copy=1")
         return refusal(400, "validation_error", "invalid copy stream query");
       if (cursor === undefined && fence === undefined)
-        return copyInstance(copyHeadRead(options.head));
+        return copyInstance(copyHeadRead(head()));
       if (
         cursor === undefined ||
         !/^(0|[1-9][0-9]*)$/.test(cursor) ||
@@ -397,7 +404,7 @@ export function scriptHydration(
         fence !== SCRIPTED_REACH
       )
         return refusal(400, "validation_error", "invalid copy replay request");
-      return copyInstance(copyReplay(options.head, []));
+      return copyInstance(options.replay?.(cursor) ?? copyReplay(head(), []));
     },
   );
   server.copyAnswer("GET", "/types", options.catalog ?? typeCatalog());
@@ -434,8 +441,9 @@ export function scriptHydration(
     if (filter === null) {
       const size = options.pageSize ?? Math.max(inState.length, 1);
       const offset = Number(request.query.get("cursor") ?? "0");
-      if (offset > 0 && options.drop?.(offset) === true)
-        return { kind: "drop" };
+      const dropped = offset > 0 ? options.drop?.(offset) : undefined;
+      if (dropped === true) return { kind: "drop" };
+      if (dropped !== undefined && dropped !== false) return dropped;
       const next = offset + size;
       return itemsPage(
         inState

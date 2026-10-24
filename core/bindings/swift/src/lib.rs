@@ -200,7 +200,18 @@ pub struct HydrateReport {
     pub edge_types: Vec<String>,
     pub items: u64,
     pub edges: u64,
+    /// The listing pages this call read, those of a walk it then started
+    /// again from the first page included.
     pub pages: u64,
+    /// The listing pages the hydration read in all, those of the interrupted
+    /// calls it resumed included.
+    pub pages_total: u64,
+    /// Whether this call carried on from the page an interrupted hydration
+    /// of the same slice had reached.
+    pub resumed: bool,
+    /// Why an interrupted hydration was filled again from the first page
+    /// rather than resumed, such as `slice_changed` or `head_aged_out`.
+    pub restarted: Option<String>,
     pub cursor: String,
     /// Types the app declared that the instance did not hold and now does.
     pub registered_types: Vec<String>,
@@ -220,7 +231,7 @@ pub struct UnregisteredType {
 /// Raised to end a `hydrate`, `catchUp` or `drain` it was given to, soon
 /// after, with `MarfaError.Canceled`. What the call had taken is consistent:
 /// a hydration left unfinished answers lists and searches marked partial and
-/// refuses writes, a catch-up keeps the cursor it reached, and a drain leaves what it had not sent queued, and an upload or
+/// refuses writes until a hydration completes (the next one of the same slice carries on from the page it reached where it can), a catch-up keeps the cursor it reached, and a drain leaves what it had not sent queued, and an upload or
 /// item or edge write it had in flight queued as sent, for the next drain to
 /// send again under the same key. A raised `Stop` stays raised, so a call given one afterwards
 /// ends at once.
@@ -1293,6 +1304,9 @@ impl From<marfa_core::HydrateReport> for HydrateReport {
             items: report.items,
             edges: report.edges,
             pages: report.pages,
+            pages_total: report.pages_total,
+            resumed: report.resumed,
+            restarted: report.restarted.map(|reason| reason.as_str().to_string()),
             cursor: report.cursor,
             registered_types: report.registered_types,
             unregistered_types: report

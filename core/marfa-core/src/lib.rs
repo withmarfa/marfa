@@ -23,6 +23,8 @@ mod folder_settings;
 /// Public for the call shapes it shares with the binary's own transport.
 pub mod http;
 mod hydrate;
+#[cfg(test)]
+mod hydrate_resume_tests;
 mod instance;
 mod integers;
 mod js;
@@ -89,9 +91,10 @@ pub use lock::Handle;
 pub use model::{
     Added, Attached, Attachment, BinPage, BlockedReason, CatchUpFailed, CatchUpReport,
     Completeness, Draft, Edge, EdgeDraft, EdgeEdit, Edit, FieldRefusal, GrantKind, GrantLevel,
-    HydrateReport, Hydration, Item, ItemState, LastFailure, ListFilters, MetadataWrite,
-    MissingGrant, Outcome, QueuedWrite, Refusal, Rows, SearchFilters, SearchHit, Shown, SliceTier,
-    Sort, SortDirection, SortField, Status, Thumbnail, Tier, UnregisteredType, Verdict, WriteKind,
+    HydrateReport, HydrateRestart, Hydration, Item, ItemState, LastFailure, ListFilters,
+    MetadataWrite, MissingGrant, Outcome, QueuedWrite, Refusal, Rows, SearchFilters, SearchHit,
+    Shown, SliceTier, Sort, SortDirection, SortField, Status, Thumbnail, Tier, UnregisteredType,
+    Verdict, WriteKind,
 };
 pub use scaffold::{ScaffoldField, scaffold_type};
 pub use store::CEILING;

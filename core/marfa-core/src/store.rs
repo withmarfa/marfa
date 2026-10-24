@@ -31,6 +31,10 @@ pub const META_ITEMS_EXPECTED: &str = "items_expected";
 /// How many rows the listings of the hydration under way have brought, set
 /// with each page so it reads against `META_ITEMS_EXPECTED`.
 pub const META_ITEMS_LISTED: &str = "items_listed";
+/// Where the hydration under way has reached: the listing it walks, the page
+/// cursor it sends next and the pages it has read. Set with each page, so an
+/// interrupted hydration carries on from the last page it committed.
+pub const META_HYDRATE_RESUME: &str = "hydrate_resume";
 /// Absent until a catalog is first held, which is how a copy that has never
 /// held one is told from an instance with no types.
 pub const META_CATALOG_VERSION: &str = "catalog_version";

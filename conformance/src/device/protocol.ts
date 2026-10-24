@@ -47,6 +47,16 @@ export interface Item {
   tags: string[];
 }
 
+/** Why a hydration began again from the first page. */
+export type HydrateRestart =
+  | "instance_changed"
+  | "reach_changed"
+  | "slice_changed"
+  | "catalog_changed"
+  | "head_aged_out"
+  | "head_past_log"
+  | "cursor_refused";
+
 export interface HydrateReport {
   types: string[];
   tier: SliceTier;
@@ -54,7 +64,18 @@ export interface HydrateReport {
   edge_types: string[];
   items: number;
   edges: number;
+  /** The listing pages this call read, those of a walk it then started
+   *  again from the first page included. */
   pages: number;
+  /** The listing pages the hydration read in all, those of the interrupted
+   *  calls it resumed included. */
+  pages_total: number;
+  /** Whether this call carried on from the page an interrupted hydration of
+   *  the same slice had reached (`device/hydrate-resumes`). */
+  resumed: boolean;
+  /** Why an interrupted hydration was filled again from the first page
+   *  rather than resumed; absent where it was resumed or nothing waited. */
+  restarted?: HydrateRestart;
   cursor: string;
   /** Types the app declared that the instance did not hold and now does. */
   registered_types: string[];

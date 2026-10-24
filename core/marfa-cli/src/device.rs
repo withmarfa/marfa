@@ -40,6 +40,13 @@ pub struct DeviceArgs {
 #[derive(Debug, Subcommand)]
 pub enum DeviceCommand {
     /// Replace the local copy with the declared types at one tier, or both.
+    ///
+    /// A hydration that stopped before it finished carries on from the page
+    /// it had reached when run again for the same slice. It starts again
+    /// from the first page, and says why, when another instance answers, the
+    /// key's reach, the slice or the catalog has changed since, the server's
+    /// event log no longer holds the point it started from or ends before
+    /// it, or the server refuses the page cursor it kept.
     Hydrate {
         /// Comma-separated type identifiers, such as core.note,core.file, or
         /// `*` alone for every type but `system.*`, hydrated in one pass
@@ -794,15 +801,29 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
                 } else {
                     format!(", {} held whole", report.edge_types.join(","))
                 };
+                let pages = if report.resumed {
+                    format!("{} page(s), {} in all", report.pages, report.pages_total)
+                } else {
+                    format!("{} page(s)", report.pages)
+                };
                 let mut line = format!(
-                    "hydrated {} item(s) and {} edge(s) of {} at {}{whole} in {} page(s); cursor {}",
+                    "hydrated {} item(s) and {} edge(s) of {} at {}{whole} in {pages}; cursor {}",
                     report.items,
                     report.edges,
                     report.types.join(","),
                     report.tier,
-                    report.pages,
                     report.cursor
                 );
+                if report.resumed {
+                    line.push_str("\nresumed the interrupted hydration from the page it had reached");
+                }
+                if let Some(restart) = report.restarted {
+                    line.push_str(&format!(
+                        "\nstarted again from the first page: {} ({})",
+                        restart.says(),
+                        restart.as_str()
+                    ));
+                }
                 if !report.registered_types.is_empty() {
                     line.push_str(&format!(
                         "\nregistered {} on the server",

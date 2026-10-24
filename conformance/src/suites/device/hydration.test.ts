@@ -1,6 +1,7 @@
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
 import {
   startHarness,
+  readsOf,
   scriptHydration,
   scriptKey,
   scriptStats,
@@ -8,6 +9,11 @@ import {
 } from "./harness.js";
 import {
   answers,
+  catchupTooOld,
+  connected,
+  copyFrame,
+  copyStreamCursor,
+  cursorAhead,
   edgesPage,
   copyHeadRead,
   copyItemEvent,
@@ -20,9 +26,17 @@ import {
   wireEdge,
   wireItem,
   wireType,
+  withMetadata,
+  SCRIPTED_INSTANCE,
+  type WireItemOptions,
 } from "../../device/marfa-answers.js";
 import type { DeviceUnderTest } from "../../device/protocol.js";
-import type { Answer, Responder } from "../../device/scripted-server.js";
+import {
+  BUILT_FOR,
+  type Answer,
+  type Responder,
+  type SseFrame,
+} from "../../device/scripted-server.js";
 
 /**
  * "Hydration subscribes first, then reads."
@@ -396,74 +410,6 @@ describe("what a hydration leaves behind", () => {
       status.ok ? status.value.slice_types : [],
       "the device reports a slice it no longer holds, so a catch-up would ask for types the copy has no rows of",
     ).toEqual(["core.bookmark"]);
-  });
-
-  it("leaves an interrupted hydration to be run again, never resumed", async () => {
-    harness = await startHarness("interrupted-hydration");
-    const { server, device } = harness;
-    server.copyAnswer("GET", "/events", copyHeadRead("10"));
-    server.copyAnswer("GET", "/types", typeCatalog());
-    server.copyAnswer("GET", "/edge-types", edgeTypeCatalog());
-    scriptKey(server);
-    scriptStats(server);
-    // The first attempt lands a page and then dies partway through the walk,
-    // so there is something a resuming device could resume from. With nothing
-    // landed, the second attempt reports the whole slice either way and the
-    // assertion below would be about nothing.
-    const page =
-      (cursor: string | null, answer: Answer): Responder =>
-      (request) =>
-        request.query.get("cursor") === cursor
-          ? answer
-          : refusal(400, "validation_error", "unexpected page cursor");
-    server.copyAnswer(
-      "GET",
-      "/items",
-      page(
-        null,
-        itemsPage([{ item: wireItem({ id: "before-interruption" }) }], {
-          nextCursor: "p2",
-        }),
-      ),
-      page("p2", { kind: "drop" }),
-      page(
-        null,
-        itemsPage([{ item: wireItem({ id: "fresh-first-page" }) }], {
-          nextCursor: "p2",
-        }),
-      ),
-      page("p2", itemsPage([{ item: wireItem({ id: "b" }) }])),
-    );
-
-    expect((await device.hydrate(["core.note"], "library")).ok).toBe(false);
-    const partial = await device.listAnswer();
-    expect(
-      partial.ok && partial.value,
-      "a half-hydrated store answered a read without saying it was partial, so a caller sees part of a slice as though it were the whole one",
-    ).toEqual({
-      items: [expect.objectContaining({ id: "before-interruption" })],
-      completeness: "partial",
-    });
-
-    const again = await device.hydrate(["core.note"], "library");
-    expect(
-      again.ok,
-      `the second hydration was refused: ${JSON.stringify(again)}`,
-    ).toBe(true);
-    expect(
-      again.ok ? [again.value.items, again.value.pages] : undefined,
-      "the second hydration walked less than the whole slice, so it resumed the interrupted one rather than replacing it and the copy is short whatever the first attempt missed",
-    ).toEqual([2, 2]);
-    const held = await device.list();
-    expect(held.ok ? held.value.map((row) => row.id).sort() : held).toEqual([
-      "b",
-      "fresh-first-page",
-    ]);
-    expect(
-      server.requests
-        .filter((request) => request.pathname === "/items")
-        .map((request) => request.query.get("cursor")),
-    ).toEqual([null, "p2", null, "p2"]);
   });
 
   it("walks past an empty page that still carries a cursor", async () => {
@@ -883,5 +829,695 @@ describe("how a hydration completes", () => {
     expect(
       server.requests.filter((request) => request.pathname === "/items").length,
     ).toBe(2);
+  });
+});
+
+/**
+ * "An interrupted hydration resumes from the page it reached."
+ *
+ * A large slice is read a page at a time, and a phone that sleeps, loses its
+ * network or is killed partway through would otherwise read every page again
+ * from the first. The pages it took are kept with where the walk had reached
+ * and the head it started from, so the next hydration of the same slice
+ * reads only the rest and replays what changed meanwhile. Where that would
+ * give a copy other than a whole hydration's, it starts again and says why.
+ */
+describe("an interrupted hydration", () => {
+  const NOTES = ["a", "b", "c"];
+
+  function rows(): Record<string, Array<{ item: WireItemOptions }>> {
+    return { "core.note": NOTES.map((id) => ({ item: { id } })) };
+  }
+
+  /** The cursors each listing request carried, the first page's as null. */
+  function listed(server: Harness["server"]): Array<string | null> {
+    return server.requests
+      .filter((request) => request.pathname === "/items")
+      .map((request) => request.query.get("cursor"));
+  }
+
+  async function copyOf(device: Harness["device"]): Promise<unknown> {
+    const read = await device.listAnswer();
+    expect(read.ok, JSON.stringify(read)).toBe(true);
+    if (!read.ok) return read;
+    return {
+      completeness: read.value.completeness,
+      items: read.value.items
+        .map(({ id, version, properties, state, tags }) => ({
+          id,
+          version,
+          properties,
+          state,
+          tags,
+        }))
+        .sort((one, other) => one.id.localeCompare(other.id)),
+    };
+  }
+
+  /**
+   * A device whose hydration of three notes, a page each, took the first two
+   * and died asking for the third. `options` script the server beyond that,
+   * read as the fixture changes them.
+   */
+  async function interrupted(
+    label: string,
+    options: Partial<Parameters<typeof scriptHydration>[1]> & {
+      third?: () => boolean | Answer;
+    } = {},
+  ): Promise<Harness> {
+    harness = await startHarness(label);
+    const { server, device } = harness;
+    let cut = true;
+    scriptHydration(server, {
+      head: "10",
+      rows: rows(),
+      pageSize: 1,
+      ...options,
+      drop: (offset) => {
+        if (offset !== 2) return false;
+        if (cut) {
+          cut = false;
+          return true;
+        }
+        return options.third?.() ?? false;
+      },
+    });
+    const first = await device.hydrate(["core.note"], "library");
+    expect(first.ok, "the interrupted hydration completed").toBe(false);
+    expect(listed(server)).toEqual([null, "1", "2"]);
+    const status = await device.status();
+    expect(status.ok && status.value.hydration).toBe("in_progress");
+    expect(
+      status.ok && [status.value.items_listed, status.value.items_expected],
+      "an interrupted hydration lost the count of rows its listings had brought, so a resumed one reports a fill that starts again from nothing",
+    ).toEqual([2, 3]);
+    return harness;
+  }
+
+  it("reads only the pages it had not reached, and holds the copy a whole hydration does", async () => {
+    const { server, device } = await interrupted("resume-pages");
+    const partial = await device.listAnswer();
+    expect(
+      partial.ok && partial.value.completeness,
+      "a copy partway through a hydration answered as though whole",
+    ).toBe("partial");
+    expect(
+      partial.ok ? partial.value.items.map((item) => item.id).sort() : partial,
+      "a copy partway through a hydration did not answer from the pages it took",
+    ).toEqual(["a", "b"]);
+
+    const resumed = await device.hydrate(["core.note"], "library");
+    expect(resumed.ok, JSON.stringify(resumed)).toBe(true);
+    if (!resumed.ok) return;
+    expect(resumed.value.resumed).toBe(true);
+    expect(resumed.value.restarted).toBeUndefined();
+    expect([resumed.value.pages, resumed.value.pages_total]).toEqual([1, 3]);
+    expect(
+      listed(server),
+      "the resumed hydration read again a page it already held, so an interruption costs the pages it had taken",
+    ).toEqual([null, "1", "2", "2"]);
+    const status = await device.status();
+    expect(status.ok && status.value.hydration).toBe("complete");
+    const resumedCopy = await copyOf(device);
+
+    // The witness: the same slice hydrated whole, by a device nothing
+    // interrupted, holds the same copy.
+    const whole = await startHarness("resume-pages-whole");
+    try {
+      scriptHydration(whole.server, { head: "10", rows: rows(), pageSize: 1 });
+      expect((await whole.device.hydrate(["core.note"], "library")).ok).toBe(
+        true,
+      );
+      expect(
+        resumedCopy,
+        "the resumed copy differs from one hydrated in a single run",
+      ).toEqual(await copyOf(whole.device));
+    } finally {
+      await whole.stop();
+    }
+  });
+
+  it("replays a row changed and a row deleted on the server while it was stopped", async () => {
+    const changed = wireItem({
+      id: "a",
+      version: 2,
+      properties: { title: "changed while stopped", body: "changed" },
+    });
+    const gone = wireItem({ id: "b", version: 2, state: "trashed" });
+    let log: SseFrame[] = [];
+    const { server, device } = await interrupted("resume-changed", {
+      replay: (cursor) =>
+        cursor === "10" && log.length > 0
+          ? copyReplay("12", log)
+          : copyReplay(cursor, []),
+    });
+    // Rows the walk already took change after it took them; the third page
+    // is read after the changes, as a server answers it.
+    log = [
+      copyItemEvent("11", "item.updated", changed),
+      copyItemEvent("12", "item.deleted", gone),
+    ];
+
+    const resumed = await device.hydrate(["core.note"], "library");
+    expect(resumed.ok, JSON.stringify(resumed)).toBe(true);
+    if (!resumed.ok) return;
+    expect(resumed.value.resumed).toBe(true);
+    expect(resumed.value.cursor).toBe("12");
+    const held = await device.list();
+    expect(held.ok, JSON.stringify(held)).toBe(true);
+    const byId = new Map(
+      held.ok ? held.value.map((item) => [item.id, item]) : [],
+    );
+    expect(
+      byId.get("a")?.properties.title,
+      "a row changed while the hydration was stopped kept the version its page brought",
+    ).toBe("changed while stopped");
+    expect(
+      byId.has("b"),
+      "a row deleted while the hydration was stopped is still listed",
+    ).toBe(false);
+    expect([...byId.keys()].sort()).toEqual(["a", "c"]);
+    expect(listed(server)).toEqual([null, "1", "2", "2"]);
+  });
+
+  it("keeps the queue and the pinned rows across a resume", async () => {
+    harness = await startHarness("resume-queue");
+    const { server, device } = harness;
+    // Read by id before the listings: the pinned row, and the row a queued
+    // create made, which the server does not hold yet.
+    server.copyAnswer("GET", "/items/pinned", {
+      kind: "json",
+      status: 200,
+      body: withMetadata(wireItem({ id: "pinned", type: "core.bookmark" })),
+    });
+    server.copyAnswer("GET", /^\/items\/[^/]+\/edges$/, edgesPage([]));
+    server.copyAnswer(
+      "GET",
+      /^\/items\/[^/]+$/,
+      refusal(404, "item_not_found", "none"),
+    );
+    let cut = false;
+    scriptHydration(server, {
+      head: "10",
+      rows: rows(),
+      pageSize: 1,
+      drop: (offset) => {
+        const dropped = offset === 2 && cut;
+        if (dropped) cut = false;
+        return dropped;
+      },
+    });
+    // A pin is taken on a whole copy, so the hydration interrupted is the
+    // copy's second.
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    const created = await device.create({
+      type: "core.note",
+      properties: { title: "saved first", body: "saved first" },
+    });
+    expect(created.ok, JSON.stringify(created)).toBe(true);
+    const pinned = await device.pin("pinned");
+    expect(pinned.ok, JSON.stringify(pinned)).toBe(true);
+    const queued = await device.queue();
+
+    cut = true;
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(false);
+    const resumed = await device.hydrate(["core.note"], "library");
+    expect(resumed.ok, JSON.stringify(resumed)).toBe(true);
+    expect(resumed.ok && resumed.value.resumed).toBe(true);
+    expect(listed(server)).toEqual([null, "1", "2", null, "1", "2", "2"]);
+
+    expect(await device.queue(), "the resume touched the queue").toEqual(
+      queued,
+    );
+    const held = await device.list();
+    const ids = held.ok ? held.value.map((item) => item.id) : [];
+    expect(
+      created.ok && ids.includes(created.value.item_id ?? ""),
+      "a create still waiting is missing from the resumed copy",
+    ).toBe(true);
+    const status = await device.status();
+    expect(status.ok && status.value.pinned).toEqual(["pinned"]);
+    expect(
+      (await device.get("pinned")).ok,
+      "the pinned row is missing from the resumed copy",
+    ).toBe(true);
+  });
+
+  it("resumes after the process running it was killed", async () => {
+    harness = await startHarness("resume-killed");
+    const { server, device } = harness;
+    // The third page never answers the first process.
+    server.copyAnswer(
+      "GET",
+      "/items",
+      itemsPage([{ item: wireItem({ id: "a" }) }], { nextCursor: "1" }),
+      itemsPage([{ item: wireItem({ id: "b" }) }], { nextCursor: "2" }),
+      {
+        kind: "gated",
+        until: new Promise<void>(() => {}),
+        then: itemsPage([]),
+      },
+    );
+    scriptHydration(server, { head: "10", rows: rows(), pageSize: 1 });
+    expect((await device.status()).ok).toBe(true);
+
+    const hydrating = device.hold([
+      "hydrate",
+      "--types",
+      "core.note",
+      "--tier",
+      "library",
+    ]);
+    try {
+      await vi.waitFor(
+        () => {
+          expect(listed(server), hydrating.stderr).toEqual([null, "1", "2"]);
+        },
+        { timeout: 10_000, interval: 25 },
+      );
+    } finally {
+      await hydrating.stop();
+    }
+    const status = await device.status();
+    expect(status.ok && status.value.hydration).toBe("in_progress");
+
+    const resumed = await device.hydrate(["core.note"], "library");
+    expect(resumed.ok, JSON.stringify(resumed)).toBe(true);
+    if (!resumed.ok) return;
+    expect(resumed.value.resumed).toBe(true);
+    expect([resumed.value.pages, resumed.value.pages_total]).toEqual([1, 3]);
+    expect(listed(server)).toEqual([null, "1", "2", "2"]);
+    expect(
+      (
+        (await device.list()) as { ok: true; value: Array<{ id: string }> }
+      ).value
+        .map((item) => item.id)
+        .sort(),
+    ).toEqual(NOTES);
+  });
+
+  it("resumes a replay the process running it was killed in from the last event it applied", async () => {
+    const changed = wireItem({
+      id: "a",
+      version: 2,
+      properties: { title: "changed during the replay", body: "changed" },
+    });
+    // A row of a type the catalog does not name sends the replay to read
+    // the catalog again, which tells the fixture the event before it landed.
+    const unnamed = wireItem({ id: "late", type: "user.late" });
+    const log = [
+      copyItemEvent("11", "item.updated", changed),
+      copyItemEvent("12", "item.created", unnamed),
+    ];
+
+    /** A device with a whole copy and a pin, and a fixture to replay `log`. */
+    async function pinned(label: string, gate: () => boolean) {
+      const started = await startHarness(label);
+      const { server, device } = started;
+      // The pinned row is gone from the server once pinned, so a hydration
+      // holds no row for it and reads it again each time it walks its pins
+      // (`device/pin-gone-kept`).
+      const replay = { log: false, held: false };
+      server.copyAnswer("GET", "/items/pinned", () =>
+        replay.log
+          ? refusal(404, "item_not_found", "none")
+          : {
+              kind: "json",
+              status: 200,
+              body: withMetadata(
+                wireItem({ id: "pinned", type: "core.bookmark" }),
+              ),
+            },
+      );
+      server.copyAnswer("GET", /^\/items\/[^/]+\/edges$/, edgesPage([]));
+      scriptHydration(server, {
+        head: "10",
+        rows: rows(),
+        pageSize: 1,
+        catalog: () =>
+          replay.held && gate()
+            ? {
+                kind: "gated",
+                until: new Promise<void>(() => {}),
+                then: typeCatalog(),
+              }
+            : typeCatalog(),
+        replay: (cursor) => {
+          if (!replay.log) return copyReplay(cursor, []);
+          if (cursor === "11") return copyReplay("12", log.slice(1));
+          if (!gate()) return copyReplay("12", log);
+          replay.held = true;
+          return {
+            kind: "sse",
+            hold: true,
+            frames: [connected, copyStreamCursor("12"), ...log.map(copyFrame)],
+          };
+        },
+      });
+      expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+      const pin = await device.pin("pinned");
+      expect(pin.ok, JSON.stringify(pin)).toBe(true);
+      replay.log = true;
+      return started;
+    }
+
+    let gated = true;
+    harness = await pinned("resume-killed-replay", () => gated);
+    const { server, device } = harness;
+    const pinReads = (): number => readsOf(server, "pinned");
+    const pinsBefore = pinReads();
+    const requestsBefore = server.requests.length;
+    const hydrating = device.hold([
+      "hydrate",
+      "--types",
+      "core.note",
+      "--tier",
+      "library",
+    ]);
+    try {
+      await vi.waitFor(
+        () => {
+          const requests = server.requests.slice(requestsBefore);
+          const replayed = requests.findIndex(
+            (request) =>
+              request.pathname === "/events" &&
+              request.headers["last-event-id"] === "10",
+          );
+          expect(replayed, hydrating.stderr).toBeGreaterThan(-1);
+          expect(
+            requests
+              .slice(replayed)
+              .some((request) => request.pathname === "/types"),
+            hydrating.stderr,
+          ).toBe(true);
+        },
+        { timeout: 10_000, interval: 25 },
+      );
+    } finally {
+      await hydrating.stop();
+    }
+    gated = false;
+    const killed = await device.status();
+    expect(killed.ok && killed.value.hydration).toBe("in_progress");
+    expect(
+      killed.ok && killed.value.event_cursor,
+      "the killed replay kept no event it applied",
+    ).toBe("11");
+    // The witness: the walk the process was killed in read the pin.
+    const pinsKilled = pinReads();
+    expect(pinsKilled).toBeGreaterThan(pinsBefore);
+    const sent = server.requests.length;
+
+    const resumed = await device.hydrate(["core.note"], "library");
+    expect(resumed.ok, JSON.stringify(resumed)).toBe(true);
+    if (!resumed.ok) return;
+    expect(resumed.value.resumed).toBe(true);
+    expect([resumed.value.pages, resumed.value.pages_total]).toEqual([0, 3]);
+    expect(resumed.value.cursor).toBe("12");
+    const after = server.requests.slice(sent);
+    expect(
+      after.filter((request) => request.pathname === "/items"),
+      "a resume in the replay read a listing page again",
+    ).toEqual([]);
+    expect(
+      pinReads(),
+      "a resume in the replay read the pinned rows again",
+    ).toBe(pinsKilled);
+    expect(
+      after
+        .filter((request) => request.pathname === "/events")
+        .map((request) => request.headers["last-event-id"]),
+      "the replay did not carry on from the last event the killed one applied",
+    ).toContain("11");
+    expect(
+      after.some(
+        (request) =>
+          request.pathname === "/events" &&
+          request.headers["last-event-id"] === "10",
+      ),
+      "the replay started again from the head the hydration started from",
+    ).toBe(false);
+    const resumedCopy = await copyOf(device);
+
+    // The witness: the same steps, with nothing killed, hold the same copy.
+    const whole = await pinned("resume-killed-replay-whole", () => false);
+    try {
+      expect((await whole.device.hydrate(["core.note"], "library")).ok).toBe(
+        true,
+      );
+      expect(
+        resumedCopy,
+        "the copy resumed in its replay differs from one hydrated in a single run",
+      ).toEqual(await copyOf(whole.device));
+    } finally {
+      await whole.stop();
+    }
+  });
+
+  it("resumes with no page to read when it was stopped as its last page arrived", async () => {
+    harness = await startHarness("resume-last-page");
+    const { server, device } = harness;
+    let release = (): void => {};
+    const until = new Promise<void>((resolve) => (release = resolve));
+    server.copyAnswer(
+      "GET",
+      "/items",
+      itemsPage([{ item: wireItem({ id: "a" }) }], { nextCursor: "1" }),
+      itemsPage([{ item: wireItem({ id: "b" }) }], { nextCursor: "2" }),
+      {
+        kind: "gated",
+        until,
+        then: itemsPage([{ item: wireItem({ id: "c" }) }]),
+      },
+    );
+    scriptHydration(server, { head: "10", rows: rows(), pageSize: 1 });
+    expect((await device.status()).ok).toBe(true);
+
+    const hydrating = device.hold([
+      "hydrate",
+      "--types",
+      "core.note",
+      "--tier",
+      "library",
+    ]);
+    try {
+      await vi.waitFor(
+        () => {
+          expect(listed(server), hydrating.stderr).toEqual([null, "1", "2"]);
+        },
+        { timeout: 10_000, interval: 25 },
+      );
+      hydrating.interrupt();
+      await hydrating.stopRaised();
+      release();
+      await hydrating.exited();
+    } finally {
+      release();
+      await hydrating.stop();
+    }
+    const status = await device.status();
+    expect(status.ok && status.value.hydration).toBe("in_progress");
+
+    const resumed = await device.hydrate(["core.note"], "library");
+    expect(resumed.ok, JSON.stringify(resumed)).toBe(true);
+    if (!resumed.ok) return;
+    expect(resumed.value.resumed).toBe(true);
+    // Whether the last page landed before the stop was seen decides whether
+    // the resume reads it; either way it reads nothing before it.
+    expect(listed(server).slice(3)).toEqual(
+      resumed.value.pages === 0 ? [] : ["2"],
+    );
+    expect(resumed.value.pages_total).toBe(3);
+    const whole = await device.listAnswer();
+    expect(whole.ok && whole.value.completeness).toBe("complete");
+    expect(
+      whole.ok ? whole.value.items.map((item) => item.id).sort() : whole,
+    ).toEqual(NOTES);
+  });
+
+  it("reads every page again once a hydration has completed", async () => {
+    const { server, device } = await interrupted("resume-then-whole");
+    const resumed = await device.hydrate(["core.note"], "library");
+    expect(resumed.ok && resumed.value.resumed).toBe(true);
+
+    const again = await device.hydrate(["core.note"], "library");
+    expect(again.ok, JSON.stringify(again)).toBe(true);
+    if (!again.ok) return;
+    expect(
+      [again.value.resumed, again.value.restarted],
+      "a hydration after a complete one was taken for a resume",
+    ).toEqual([false, undefined]);
+    expect([again.value.pages, again.value.pages_total]).toEqual([3, 3]);
+    expect(listed(server)).toEqual([null, "1", "2", "2", null, "1", "2"]);
+  });
+
+  it("starts again from the first page for another slice", async () => {
+    const { server, device } = await interrupted("restart-slice");
+    const again = await device.hydrate(["core.note"], "all");
+    expect(again.ok, JSON.stringify(again)).toBe(true);
+    if (!again.ok) return;
+    expect([again.value.resumed, again.value.restarted]).toEqual([
+      false,
+      "slice_changed",
+    ]);
+    expect(listed(server)).toEqual([null, "1", "2", null, "1", "2"]);
+  });
+
+  it("starts again from the first page when the catalog changed", async () => {
+    let catalog = typeCatalog();
+    const { server, device } = await interrupted("restart-catalog", {
+      catalog: () => catalog,
+    });
+    catalog = typeCatalog([wireType("user.late", { parent: "core.note" })]);
+    const again = await device.hydrate(["core.note"], "library");
+    expect(again.ok, JSON.stringify(again)).toBe(true);
+    if (!again.ok) return;
+    expect([again.value.resumed, again.value.restarted]).toEqual([
+      false,
+      "catalog_changed",
+    ]);
+    expect(listed(server)).toEqual([null, "1", "2", null, "1", "2"]);
+  });
+
+  it("starts again from the first page when another instance answers", async () => {
+    const replaced = "00000000-0000-7000-8000-0000000000ff";
+    let instance = SCRIPTED_INSTANCE;
+    const { server, device } = await interrupted("restart-instance", {
+      instance: () => instance,
+    });
+    server.copyAnswer("GET", "/", () =>
+      answers.root(Number(BUILT_FOR), instance),
+    );
+    instance = replaced;
+    const again = await device.hydrate(["core.note"], "library");
+    expect(again.ok, JSON.stringify(again)).toBe(true);
+    if (!again.ok) return;
+    expect([again.value.resumed, again.value.restarted]).toEqual([
+      false,
+      "instance_changed",
+    ]);
+    expect(listed(server)).toEqual([null, "1", "2", null, "1", "2"]);
+    const status = await device.status();
+    expect(status.ok && status.value.instance_id).toBe(replaced);
+  });
+
+  it("starts again from the first page when the key's reach changed", async () => {
+    let refused = true;
+    const { server, device } = await interrupted("restart-reach", {
+      // The server refuses a stream resumed under a reach that is no longer
+      // the key's (`reach/copy-reach-refused`).
+      replay: (cursor) => {
+        if (cursor !== "10" || !refused) return copyReplay(cursor, []);
+        refused = false;
+        return refusal(409, "reach_changed", "The reach has changed");
+      },
+    });
+    const again = await device.hydrate(["core.note"], "library");
+    expect(again.ok, JSON.stringify(again)).toBe(true);
+    if (!again.ok) return;
+    expect([again.value.resumed, again.value.restarted]).toEqual([
+      false,
+      "reach_changed",
+    ]);
+    expect(listed(server)).toEqual([null, "1", "2", null, "1", "2"]);
+    // The head and the catalog read before the refusal are of the reach
+    // that went, so the walk from the first page waits for both again.
+    const requests = server.requests;
+    const refusedAt = requests.findIndex(
+      (request) =>
+        request.pathname === "/events" &&
+        request.headers["last-event-id"] === "10",
+    );
+    const walkAt = requests.findIndex(
+      (request, index) => index > refusedAt && request.pathname === "/items",
+    );
+    const between = requests.slice(refusedAt + 1, walkAt);
+    expect(
+      [
+        between.some(
+          (request) =>
+            request.pathname === "/events" &&
+            request.headers["last-event-id"] === undefined,
+        ),
+        between.some((request) => request.pathname === "/types"),
+      ],
+      "the walk from the first page used the head and the catalog of the reach the server had refused",
+    ).toEqual([true, true]);
+  });
+
+  async function startsAgainOnGap(
+    reason: "head_aged_out" | "head_past_log",
+    gap: SseFrame,
+    head: string,
+  ): Promise<void> {
+    let now = "10";
+    const { server, device } = await interrupted(`restart-${reason}`, {
+      head: () => now,
+      replay: (cursor) =>
+        cursor === "10"
+          ? { kind: "sse", frames: [connected, copyStreamCursor(now), gap] }
+          : copyReplay(now, []),
+    });
+    now = head;
+    const again = await device.hydrate(["core.note"], "library");
+    expect(again.ok, JSON.stringify(again)).toBe(true);
+    if (!again.ok) return;
+    expect([again.value.resumed, again.value.restarted]).toEqual([
+      false,
+      reason,
+    ]);
+    expect(
+      again.value.cursor,
+      "the copy kept the head the interrupted hydration started from, which the log does not continue from",
+    ).toBe(head);
+    expect(listed(server)).toEqual([null, "1", "2", null, "1", "2"]);
+  }
+
+  it("starts again from the first page when the log no longer holds the head it started from", async () => {
+    await startsAgainOnGap("head_aged_out", catchupTooOld("50", "10"), "60");
+  });
+
+  it("starts again from the first page when the log ends before the head it started from", async () => {
+    await startsAgainOnGap("head_past_log", cursorAhead("10", "5"), "5");
+  });
+
+  it("starts again from the first page, once, when the server refuses the cursor it kept", async () => {
+    let refusals = 1;
+    const { server, device } = await interrupted("restart-cursor", {
+      third: () =>
+        refusals-- > 0
+          ? refusal(400, "validation_error", "cursor not recognized")
+          : false,
+    });
+    const again = await device.hydrate(["core.note"], "library");
+    expect(
+      again.ok,
+      `a refused page cursor ended the hydration, so a server that stopped taking it leaves the copy partial until something clears it: ${JSON.stringify(again)}`,
+    ).toBe(true);
+    if (!again.ok) return;
+    expect([again.value.resumed, again.value.restarted]).toEqual([
+      false,
+      "cursor_refused",
+    ]);
+    expect(listed(server)).toEqual([null, "1", "2", "2", null, "1", "2"]);
+    expect(
+      (
+        (await device.list()) as { ok: true; value: Array<{ id: string }> }
+      ).value
+        .map((item) => item.id)
+        .sort(),
+    ).toEqual(NOTES);
+  });
+
+  it("ends a hydration whose first page from the start is refused too, rather than start again twice", async () => {
+    // Every later read of the third page is refused, whatever its cursor.
+    const { server, device } = await interrupted("restart-cursor-once", {
+      third: () => refusal(400, "validation_error", "cursor not recognized"),
+    });
+    const again = await device.hydrate(["core.note"], "library");
+    expect(again.ok).toBe(false);
+    // Refused on resuming and again on the walk from the first page: a
+    // device that started again for every refusal would never end.
+    expect(listed(server)).toEqual([null, "1", "2", "2", null, "1", "2"]);
   });
 });

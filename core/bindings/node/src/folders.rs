@@ -7,9 +7,7 @@ use napi::bindgen_prelude::*;
 use napi::threadsafe_function::{ThreadsafeCallContext, ThreadsafeFunctionCallMode};
 use napi_derive::napi;
 
-use crate::{
-    DrainReport, Ending, HydrateReport, Subscription, UnregisteredType, count, record, report_of,
-};
+use crate::{DrainReport, Ending, HydrateReport, Subscription, count, record, report_of};
 use marfa_core::CoreError;
 
 #[napi(object)]
@@ -506,7 +504,7 @@ impl Task for SyncFolder {
             };
             Ok(FolderSyncOutcome::Done {
                 sync: FolderSync {
-                    hydrated: synced.hydrated.map(hydrated),
+                    hydrated: synced.hydrated.map(HydrateReport::from),
                     catch_up_error: synced.catch_up.err().map(error_report),
                     pass: pass_of(
                         synced.settings,
@@ -809,28 +807,6 @@ fn state_of(status: &str) -> std::result::Result<FileState, CoreError> {
             )));
         }
     })
-}
-
-fn hydrated(report: marfa_core::HydrateReport) -> HydrateReport {
-    HydrateReport {
-        types: report.types,
-        tier: report.tier.into(),
-        edge_types: report.edge_types,
-        items: count(report.items),
-        edges: count(report.edges),
-        pages: count(report.pages),
-        cursor: report.cursor,
-        registered_types: report.registered_types,
-        unregistered_types: report
-            .unregistered_types
-            .into_iter()
-            .map(|held| UnregisteredType {
-                id: held.id,
-                code: held.code,
-                message: held.message,
-            })
-            .collect(),
-    }
 }
 
 fn error_report(error: CoreError) -> serde_json::Value {
@@ -1172,7 +1148,7 @@ impl Task for ProbeCatchUp {
                     cursor: report.cursor,
                     catalog_changed: report.catalog_changed,
                 }),
-                hydrated: report.hydrated.map(hydrated),
+                hydrated: report.hydrated.map(HydrateReport::from),
             })
         })()
         .map_err(|error| record(&mut self.failed, error))
@@ -1250,7 +1226,7 @@ impl Task for ProbeHydrate {
         Err(crate::rethrown(env, self.failed.take(), error))
     }
     fn compute(&mut self) -> Result<Self::Output> {
-        (|| -> marfa_core::Result<Self::Output> { Ok(hydrated(self.folder.hydrate()?)) })()
+        (|| -> marfa_core::Result<Self::Output> { Ok(self.folder.hydrate()?.into()) })()
             .map_err(|error| record(&mut self.failed, error))
     }
     fn resolve(&mut self, _: Env, value: Self::Output) -> Result<Self::JsValue> {

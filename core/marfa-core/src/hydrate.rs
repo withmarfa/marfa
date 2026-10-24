@@ -3,10 +3,14 @@ use std::io::BufReader;
 use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
+use serde::{Deserialize, Serialize};
+
 use crate::catalog::Catalog;
 use crate::error::CoreError;
 use crate::http::{Http, ItemsQuery, Registration};
-use crate::model::{Draft, EdgeDraft, HydrateReport, SliceTier, Tier, UnregisteredType, WriteKind};
+use crate::model::{
+    Draft, EdgeDraft, HydrateReport, HydrateRestart, SliceTier, Tier, UnregisteredType, WriteKind,
+};
 use crate::sse::{Frame, Frames};
 use crate::store;
 use crate::wire::{WireCatalog, WireEdge, WireEdgeBlock, WireItemWithMetadata};
@@ -42,6 +46,145 @@ fn hydrate_inner(
 ) -> Result<HydrateReport> {
     let types = declared_types(types)?;
     let edge_types = declared_edge_types(edge_types)?;
+    let mut restart = None;
+    let mut pages = 0;
+    loop {
+        match attempt(
+            core,
+            http,
+            &types,
+            tier,
+            &edge_types,
+            restart,
+            &mut pages,
+            stop,
+        )? {
+            Attempt::Done(report) => return Ok(report),
+            // Only an attempt that would resume asks to start again, and one
+            // that starts again never resumes, so this goes round at most
+            // twice.
+            Attempt::Again(reason) => restart = Some(reason),
+        }
+    }
+}
+
+enum Attempt {
+    Done(HydrateReport),
+    Again(HydrateRestart),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum Phase {
+    Items,
+    Edges,
+    Pins,
+    Replay,
+}
+
+/// Where a hydration has reached, kept in `store::META_HYDRATE_RESUME` in the
+/// transaction of each page it commits.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct Reached {
+    phase: Phase,
+    /// The declared type, `store::EVERY_TYPE` for the listing naming none, or
+    /// the edge type, whose listing is walked next.
+    listing: Option<String>,
+    /// The page cursor to send next, `None` for the listing's first page.
+    cursor: Option<String>,
+    pages: u64,
+}
+
+impl Reached {
+    fn first(types: &[String], edge_types: &[String]) -> Self {
+        Self::after_items(types, edge_types, 0, 0)
+    }
+
+    /// The first page of the listing at `index` of `types`, or of what
+    /// follows the item listings.
+    fn after_items(types: &[String], edge_types: &[String], index: usize, pages: u64) -> Self {
+        match types.get(index) {
+            Some(listing) => Reached {
+                phase: Phase::Items,
+                listing: Some(listing.clone()),
+                cursor: None,
+                pages,
+            },
+            None => Self::after_edges(edge_types, 0, pages),
+        }
+    }
+
+    fn after_edges(edge_types: &[String], index: usize, pages: u64) -> Self {
+        match edge_types.get(index) {
+            Some(listing) => Reached {
+                phase: Phase::Edges,
+                listing: Some(listing.clone()),
+                cursor: None,
+                pages,
+            },
+            None => Reached {
+                phase: Phase::Pins,
+                listing: None,
+                cursor: None,
+                pages,
+            },
+        }
+    }
+
+    fn at(phase: Phase, pages: u64) -> Self {
+        Reached {
+            phase,
+            listing: None,
+            cursor: None,
+            pages,
+        }
+    }
+
+    /// The index of the item listing to walk next, and of the edge listing,
+    /// each past its end where the walk has gone beyond it. `None` where the
+    /// listing it names is not one the slice walks.
+    fn indices(&self, types: &[String], edge_types: &[String]) -> Option<(usize, usize)> {
+        let position = |listings: &[String]| {
+            let named = self.listing.as_deref()?;
+            listings.iter().position(|listing| listing == named)
+        };
+        match self.phase {
+            Phase::Items => Some((position(types)?, 0)),
+            Phase::Edges => Some((types.len(), position(edge_types)?)),
+            Phase::Pins | Phase::Replay => Some((types.len(), edge_types.len())),
+        }
+    }
+
+    fn keep(&self, conn: &rusqlite::Connection) -> Result<()> {
+        store::meta_set(
+            conn,
+            store::META_HYDRATE_RESUME,
+            &serde_json::to_string(self)?,
+        )
+    }
+}
+
+enum Start {
+    Fresh(Option<HydrateRestart>),
+    Resume(Reached),
+    /// Start again from the first page, under a head and catalog read again:
+    /// the ones read for this attempt are of a reach that has gone.
+    Reread(HydrateRestart),
+}
+
+/// One walk of the slice, adding each listing page it reads to `pages`,
+/// which counts every page of the call.
+#[allow(clippy::too_many_arguments)]
+fn attempt(
+    core: &Core,
+    http: &Http,
+    types: &[String],
+    tier: SliceTier,
+    edge_types: &[String],
+    restart: Option<HydrateRestart>,
+    pages: &mut u64,
+    stop: &AtomicBool,
+) -> Result<Attempt> {
     // Nothing is cleared until the copy is about to be replaced, so a stop
     // raised before then leaves it as it was.
     crate::catch_up::refuse_if_stopped(stop)?;
@@ -70,89 +213,129 @@ fn hydrate_inner(
             tx.commit()?;
         }
     }
+    refuse_unheld(&catalog_rows, types, edge_types)?;
+    let start = match restart {
+        Some(reason) => Start::Fresh(Some(reason)),
+        None => resume_point(core, http, &instance, &fence, types, tier, edge_types, stop)?,
+    };
+    let (reached, restarted) = match start {
+        Start::Reread(reason) => return Ok(Attempt::Again(reason)),
+        // Rows already taken were indexed by the catalog the copy holds, and
+        // a resumed walk would index the rest by another.
+        Start::Resume(_) if catalog_differs(core, &catalog_rows)? => {
+            (None, Some(HydrateRestart::CatalogChanged))
+        }
+        Start::Resume(reached) => (Some(reached), None),
+        Start::Fresh(reason) => (None, reason),
+    };
     // The key it reads names the source a write naming none is stamped with
     // (`items/source-own`), so a copy's first such create finds the row it
-    // holds under it.
-    if let Some(source) = refuse_unreadable(http, &types, tier, &catalog_rows)? {
+    // holds under it. A resume carries on under the reach its walk was
+    // allowed under, so it asks no first page again.
+    if let Some(source) = refuse_unreadable(http, types, tier, &catalog_rows, reached.is_none())? {
         store::learn_source(
             &*core.conn()?,
             &store::credential_digest(&http.authorization()),
             source.as_deref(),
         )?;
     }
-    refuse_unheld(&catalog_rows, &types, &edge_types)?;
-    let counts = counted(plain, &types, tier);
     crate::catch_up::refuse_if_stopped(stop)?;
-    {
+    if reached.is_some() {
         let mut conn = core.conn()?;
         let tx = conn.transaction()?;
         crate::reach::advance_generation(&tx)?;
-        store::meta_set(&tx, store::META_HYDRATE_STATE, store::HYDRATE_IN_PROGRESS)?;
-        store::meta_set(&tx, store::META_EVENT_CURSOR, &cursor)?;
-        store::meta_set(&tx, crate::reach::FENCE, &fence)?;
-        store::meta_set(&tx, store::META_INSTANCE_ID, &instance)?;
         store::meta_set(&tx, store::META_SERVER_ORIGIN, &http.origin())?;
-        store::meta_set(
-            &tx,
-            store::META_SLICE_TYPES,
-            &serde_json::to_string(&types)?,
-        )?;
-        store::meta_set(&tx, store::META_SLICE_TIER, tier.as_str())?;
-        store::meta_set(
-            &tx,
-            store::META_SLICE_EDGE_TYPES,
-            &serde_json::to_string(&edge_types)?,
-        )?;
-        crate::body::rule::before_rebuild(&tx)?;
-        store::clear_slice(&tx)?;
-        store::replace_catalog(&tx, &catalog_rows)?;
-        // A copy filling up answers reads, so it shows what is waiting from
-        // the start, as each row that arrives does.
-        lay_queue_over(
-            &tx,
-            &Catalog::load(&tx)?,
-            &edge_types,
-            Some(&store::credential_digest(&http.authorization())),
-        )?;
-        match &counts {
-            Some(counts) => store::meta_set(
-                &tx,
-                store::META_ITEMS_EXPECTED,
-                &expected(&Catalog::load(&tx)?, &types, counts).to_string(),
-            )?,
-            None => store::meta_delete(&tx, store::META_ITEMS_EXPECTED)?,
-        }
-        store::meta_set(&tx, store::META_ITEMS_LISTED, "0")?;
         tx.commit()?;
     }
-    #[cfg(debug_assertions)]
-    crate::fault::hold(|| "hydration-replacing");
+    let resumed = reached.is_some();
+    let reached = match reached {
+        Some(reached) => reached,
+        None => {
+            let counts = counted(plain, types, tier);
+            crate::catch_up::refuse_if_stopped(stop)?;
+            let mut conn = core.conn()?;
+            let tx = conn.transaction()?;
+            crate::reach::advance_generation(&tx)?;
+            store::meta_set(&tx, store::META_HYDRATE_STATE, store::HYDRATE_IN_PROGRESS)?;
+            store::meta_set(&tx, store::META_EVENT_CURSOR, &cursor)?;
+            store::meta_set(&tx, crate::reach::FENCE, &fence)?;
+            store::meta_set(&tx, store::META_INSTANCE_ID, &instance)?;
+            store::meta_set(&tx, store::META_SERVER_ORIGIN, &http.origin())?;
+            store::meta_set(&tx, store::META_SLICE_TYPES, &serde_json::to_string(types)?)?;
+            store::meta_set(&tx, store::META_SLICE_TIER, tier.as_str())?;
+            store::meta_set(
+                &tx,
+                store::META_SLICE_EDGE_TYPES,
+                &serde_json::to_string(edge_types)?,
+            )?;
+            crate::body::rule::before_rebuild(&tx)?;
+            store::clear_slice(&tx)?;
+            store::replace_catalog(&tx, &catalog_rows)?;
+            // A copy filling up answers reads, so it shows what is waiting
+            // from the start, as each row that arrives does.
+            lay_queue_over(
+                &tx,
+                &Catalog::load(&tx)?,
+                edge_types,
+                Some(&store::credential_digest(&http.authorization())),
+            )?;
+            match &counts {
+                Some(counts) => store::meta_set(
+                    &tx,
+                    store::META_ITEMS_EXPECTED,
+                    &expected(&Catalog::load(&tx)?, types, counts).to_string(),
+                )?,
+                None => store::meta_delete(&tx, store::META_ITEMS_EXPECTED)?,
+            }
+            store::meta_set(&tx, store::META_ITEMS_LISTED, "0")?;
+            let first = Reached::first(types, edge_types);
+            first.keep(&tx)?;
+            tx.commit()?;
+            // A drain waiting on the store would otherwise wait out the hold
+            // too, and never see that the copy it read has been replaced.
+            drop(conn);
+            #[cfg(debug_assertions)]
+            crate::fault::hold(|| "hydration-replacing");
+            first
+        }
+    };
     let context = crate::reach::Context::capture_build(&*core.conn()?)?;
     let result = (|| {
         let catalog = {
             let conn = core.conn()?;
             Catalog::load(&conn)?
         };
+        let Some((item_from, edge_from)) = reached.indices(types, edge_types) else {
+            return Ok(Attempt::Again(HydrateRestart::SliceChanged));
+        };
+        let mut pages_total = reached.pages;
 
-        let mut pages = 0u64;
-        // The expected count is of the slice's listings, so pinned rows and
-        // queued creates, which `items` also counts, stay out of this one.
-        let mut listed_rows = std::collections::HashSet::new();
-        let listings: Vec<Option<&str>> = types
-            .iter()
-            .map(|declared| (declared != store::EVERY_TYPE).then_some(declared.as_str()))
-            .collect();
-        for declared in listings {
-            let mut page_cursor: Option<String> = None;
-            let mut seen = std::collections::HashSet::new();
+        for (index, declared) in types.iter().enumerate().skip(item_from) {
+            let listing = (declared != store::EVERY_TYPE).then_some(declared.as_str());
+            let mut page_cursor = if index == item_from {
+                reached.cursor.clone()
+            } else {
+                None
+            };
+            // Only a cursor an earlier call kept can be one the server has
+            // since stopped taking.
+            let mut kept = resumed && page_cursor.is_some();
+            let mut seen: std::collections::HashSet<String> = page_cursor.iter().cloned().collect();
             loop {
                 crate::catch_up::refuse_if_stopped(stop)?;
-                let page = http.items_page(&ItemsQuery {
-                    r#type: declared,
-                    tier: listed_tier(declared, tier),
+                let page = match http.items_page(&ItemsQuery {
+                    r#type: listing,
+                    tier: listed_tier(listing, tier),
                     cursor: page_cursor.as_deref(),
-                })?;
-                pages += 1;
+                }) {
+                    Err(CoreError::Validation { .. }) if kept => {
+                        return Ok(Attempt::Again(HydrateRestart::CursorRefused));
+                    }
+                    page => page?,
+                };
+                kept = false;
+                *pages += 1;
+                pages_total += 1;
                 let mut overflow: Vec<WireEdge> = Vec::new();
                 for row in &page.data {
                     if let Some(blocks) = &row.item.edges {
@@ -164,7 +347,16 @@ fn hydrate_inner(
                 let mut conn = core.conn()?;
                 let tx = conn.transaction()?;
                 context.check(&tx)?;
+                // The expected count is of the slice's listings, so pinned
+                // rows and queued creates, which `items` also counts, stay out
+                // of this one. A row two listings bring counts once.
+                let mut listed: u64 = store::meta_get(&tx, store::META_ITEMS_LISTED)?
+                    .and_then(|count| count.parse().ok())
+                    .unwrap_or(0);
                 for row in &page.data {
+                    if !crate::reach::answered(&tx, &row.item.id)? {
+                        listed += 1;
+                    }
                     crate::reach::set_listed(
                         &tx,
                         &row.item.id,
@@ -180,104 +372,151 @@ fn hydrate_inner(
                 for edge in &overflow {
                     store::put_server_edge(&tx, edge)?;
                 }
-                listed_rows.extend(page.data.iter().map(|row| row.item.id.clone()));
-                store::meta_set(
-                    &tx,
-                    store::META_ITEMS_LISTED,
-                    &listed_rows.len().to_string(),
-                )?;
-                tx.commit()?;
-                let Some(next) = page.next_cursor.clone() else {
-                    break;
-                };
+                store::meta_set(&tx, store::META_ITEMS_LISTED, &listed.to_string())?;
                 // A server can report more while handing back the same cursor;
                 // without this check a hydration spins forever.
-                let next = Some(next);
-                if !seen.insert(next.clone()) {
+                if let Some(next) = &page.next_cursor
+                    && !seen.insert(next.clone())
+                {
                     return Err(crate::reach::invalid());
                 }
-                page_cursor = next;
+                match &page.next_cursor {
+                    Some(next) => Reached {
+                        phase: Phase::Items,
+                        listing: Some(declared.clone()),
+                        cursor: Some(next.clone()),
+                        pages: pages_total,
+                    },
+                    None => Reached::after_items(types, edge_types, index + 1, pages_total),
+                }
+                .keep(&tx)?;
+                tx.commit()?;
+                let Some(next) = page.next_cursor else {
+                    break;
+                };
+                page_cursor = Some(next);
             }
         }
 
-        for edge_type in &edge_types {
-            let mut page_cursor: Option<String> = None;
-            let mut seen = std::collections::HashSet::new();
+        for (index, edge_type) in edge_types.iter().enumerate().skip(edge_from) {
+            let mut page_cursor = if index == edge_from && reached.phase == Phase::Edges {
+                reached.cursor.clone()
+            } else {
+                None
+            };
+            let mut kept = resumed && page_cursor.is_some();
+            let mut seen: std::collections::HashSet<String> = page_cursor.iter().cloned().collect();
             loop {
                 crate::catch_up::refuse_if_stopped(stop)?;
-                let page = http.edges_page(edge_type, page_cursor.as_deref())?;
-                pages += 1;
+                let page = match http.edges_page(edge_type, page_cursor.as_deref()) {
+                    Err(CoreError::Validation { .. }) if kept => {
+                        return Ok(Attempt::Again(HydrateRestart::CursorRefused));
+                    }
+                    page => page?,
+                };
+                kept = false;
+                *pages += 1;
+                pages_total += 1;
                 let mut conn = core.conn()?;
                 let tx = conn.transaction()?;
                 context.check(&tx)?;
                 for edge in &page.data {
                     store::put_server_edge(&tx, edge)?;
                 }
-                tx.commit()?;
                 // Rows the key cannot read leave a page short or empty, not last.
+                if let Some(next) = &page.next_cursor
+                    && !seen.insert(next.clone())
+                {
+                    return Err(crate::reach::invalid());
+                }
+                match &page.next_cursor {
+                    Some(next) => Reached {
+                        phase: Phase::Edges,
+                        listing: Some(edge_type.clone()),
+                        cursor: Some(next.clone()),
+                        pages: pages_total,
+                    },
+                    None => Reached::after_edges(edge_types, index + 1, pages_total),
+                }
+                .keep(&tx)?;
+                tx.commit()?;
                 let Some(next) = page.next_cursor else {
                     break;
                 };
-                if !seen.insert(next.clone()) {
-                    return Err(crate::reach::invalid());
-                }
                 page_cursor = Some(next);
             }
         }
 
-        // A pin the answer leaves out names no row the key may read outside
-        // the bin, and stays without one (`device/pin-gone-kept`). A pin the
-        // queue alone holds is a create whose answer may have been lost after
-        // the server took it, so only a row the listings brought is skipped.
-        let pinned: Vec<String> = {
-            let conn = core.conn()?;
-            let mut unheld = Vec::new();
-            for id in store::pins(&conn)? {
-                if !crate::reach::answered(&conn, &id)? {
-                    unheld.push(id);
-                }
-            }
-            unheld
-        };
-        for ids in pinned.chunks(crate::http::BULK_GET_LIMIT) {
-            crate::catch_up::refuse_if_stopped(stop)?;
-            let rows = http.items_by_id(ids)?;
-            let mut overflow: Vec<WireEdge> = Vec::new();
-            for row in &rows {
-                for (edge_type, block) in row.item.edges.iter().flatten() {
-                    overflow.extend(fetch_overflow(http, &row.item.id, edge_type, block)?);
-                }
-            }
-            let mut conn = core.conn()?;
-            let tx = conn.transaction()?;
-            context.check(&tx)?;
-            for row in &rows {
-                crate::reach::set_listed(
-                    &tx,
-                    &row.item.id,
-                    row.listed.ok_or_else(crate::reach::invalid)?,
-                )?;
-                store::take_server_item(&tx, &row.item, Some(&row.metadata.tags), &catalog)?;
-                for block in row.item.edges.iter().flat_map(|blocks| blocks.values()) {
-                    for edge in &block.data {
-                        store::put_server_edge(&tx, edge)?;
+        if reached.phase != Phase::Replay {
+            // A pin the answer leaves out names no row the key may read
+            // outside the bin, and stays without one (`device/pin-gone-kept`).
+            // A pin the queue alone holds is a create whose answer may have
+            // been lost after the server took it, so only a row the listings
+            // brought is skipped.
+            let pinned: Vec<String> = {
+                let conn = core.conn()?;
+                let mut unheld = Vec::new();
+                for id in store::pins(&conn)? {
+                    if !crate::reach::answered(&conn, &id)? {
+                        unheld.push(id);
                     }
                 }
+                unheld
+            };
+            for ids in pinned.chunks(crate::http::BULK_GET_LIMIT) {
+                crate::catch_up::refuse_if_stopped(stop)?;
+                let rows = http.items_by_id(ids)?;
+                let mut overflow: Vec<WireEdge> = Vec::new();
+                for row in &rows {
+                    for (edge_type, block) in row.item.edges.iter().flatten() {
+                        overflow.extend(fetch_overflow(http, &row.item.id, edge_type, block)?);
+                    }
+                }
+                let mut conn = core.conn()?;
+                let tx = conn.transaction()?;
+                context.check(&tx)?;
+                for row in &rows {
+                    crate::reach::set_listed(
+                        &tx,
+                        &row.item.id,
+                        row.listed.ok_or_else(crate::reach::invalid)?,
+                    )?;
+                    store::take_server_item(&tx, &row.item, Some(&row.metadata.tags), &catalog)?;
+                    for block in row.item.edges.iter().flat_map(|blocks| blocks.values()) {
+                        for edge in &block.data {
+                            store::put_server_edge(&tx, edge)?;
+                        }
+                    }
+                }
+                for edge in &overflow {
+                    store::put_server_edge(&tx, edge)?;
+                }
+                tx.commit()?;
             }
-            for edge in &overflow {
-                store::put_server_edge(&tx, edge)?;
-            }
-            tx.commit()?;
+            let conn = core.conn()?;
+            context.check(&conn)?;
+            Reached::at(Phase::Replay, pages_total).keep(&conn)?;
         }
 
-        let replay = crate::catch_up::replay_build(
+        let replay = match crate::catch_up::replay_build(
             core,
             http,
             &context,
             core.catch_up_idle,
             stop,
             &mut false,
-        )?;
+        ) {
+            // The head a resumed hydration kept is older than this call, so
+            // the log may have let it go; filled again, the copy starts from
+            // a head read now.
+            Err(CoreError::CopyExpired { reason }) if resumed => {
+                match crate::catch_up::divergence(&reason) {
+                    Some(gap) => return Ok(Attempt::Again(gap)),
+                    None => return Err(CoreError::CopyExpired { reason }),
+                }
+            }
+            replay => replay?,
+        };
         let cursor = replay.cursor;
         let (items, edges) = {
             let mut conn = core.conn()?;
@@ -287,30 +526,151 @@ fn hydrate_inner(
             lay_queue_over(
                 &tx,
                 &catalog,
-                &edge_types,
+                edge_types,
                 Some(&store::credential_digest(&http.authorization())),
             )?;
             store::meta_delete(&tx, store::META_HYDRATE_STATE)?;
             store::meta_delete(&tx, store::META_ITEMS_EXPECTED)?;
             store::meta_delete(&tx, store::META_ITEMS_LISTED)?;
+            store::meta_delete(&tx, store::META_HYDRATE_RESUME)?;
             let counts = (store::count(&tx, "items")?, store::count(&tx, "edges")?);
             tx.commit()?;
             counts
         };
 
-        Ok(HydrateReport {
-            types: types.clone(),
+        Ok(Attempt::Done(HydrateReport {
+            types: types.to_vec(),
             tier,
-            edge_types: edge_types.clone(),
+            edge_types: edge_types.to_vec(),
             items,
             edges,
-            pages,
+            pages: *pages,
+            pages_total,
+            resumed,
+            restarted,
             cursor,
             registered_types: registered_types.clone(),
             unregistered_types: unregistered_types.clone(),
-        })
+        }))
     })();
     result.map_err(|error| context.failed(core, error).unwrap_or_else(|error| error))
+}
+
+/// Where an interrupted hydration of this slice reached, if it can carry on
+/// from there: under the same instance, reach and slice, with the head it
+/// started from still in the server's event log, so the replay after its
+/// pages can start there. The catalog is held to the copy's as the resume
+/// begins. Otherwise why it cannot, where there was one.
+#[allow(clippy::too_many_arguments)]
+fn resume_point(
+    core: &Core,
+    http: &Http,
+    instance: &str,
+    fence: &str,
+    types: &[String],
+    tier: SliceTier,
+    edge_types: &[String],
+    stop: &AtomicBool,
+) -> Result<Start> {
+    let (reached, head) = {
+        let conn = core.conn()?;
+        if store::hydration_complete(&conn)? {
+            return Ok(Start::Fresh(None));
+        }
+        let point = store::meta_get(&conn, store::META_HYDRATE_RESUME)?;
+        let head = store::meta_get(&conn, store::META_EVENT_CURSOR)?;
+        let (Some(point), Some(head)) = (point, head) else {
+            return Ok(Start::Fresh(None));
+        };
+        let Ok(reached) = serde_json::from_str::<Reached>(&point) else {
+            return Ok(Start::Fresh(None));
+        };
+        if store::meta_get(&conn, store::META_INSTANCE_ID)?.as_deref() != Some(instance) {
+            return Ok(Start::Fresh(Some(HydrateRestart::InstanceChanged)));
+        }
+        if store::meta_get(&conn, crate::reach::FENCE)?.as_deref() != Some(fence) {
+            return Ok(Start::Fresh(Some(HydrateRestart::ReachChanged)));
+        }
+        if store::meta_get(&conn, store::META_SLICE_TYPES)? != Some(serde_json::to_string(types)?)
+            || store::meta_get(&conn, store::META_SLICE_TIER)?.as_deref() != Some(tier.as_str())
+            || store::meta_get(&conn, store::META_SLICE_EDGE_TYPES)?
+                != Some(serde_json::to_string(edge_types)?)
+            || reached.indices(types, edge_types).is_none()
+        {
+            return Ok(Start::Fresh(Some(HydrateRestart::SliceChanged)));
+        }
+        (reached, head)
+    };
+    Ok(match head_held(http, &head, stop)? {
+        Some(HydrateRestart::ReachChanged) => Start::Reread(HydrateRestart::ReachChanged),
+        Some(gap) => Start::Fresh(Some(gap)),
+        None => Start::Resume(reached),
+    })
+}
+
+/// Whether `catalog` differs from the one the copy holds, leaving the copy's.
+fn catalog_differs(core: &Core, catalog: &WireCatalog) -> Result<bool> {
+    let mut conn = core.conn()?;
+    let tx = conn.transaction()?;
+    store::replace_catalog(&tx, catalog)
+}
+
+/// Asks the log for the events after `head` and reads only as far as the
+/// frame after `stream_cursor`: `None` where the log would replay them, and
+/// otherwise why it cannot.
+fn head_held(http: &Http, head: &str, stop: &AtomicBool) -> Result<Option<HydrateRestart>> {
+    for _ in 0..HEAD_ATTEMPTS {
+        crate::catch_up::refuse_if_stopped(stop)?;
+        let asked = head.to_string();
+        // A stream resumed under a reach that is no longer the key's is
+        // refused before it starts (`reach/copy-reach-refused`).
+        let reader = match crate::catch_up::ask_unless_stopped(stop, http, move |http| {
+            http.open_events(Some(&asked), HEAD_READ_TIMEOUT)
+        }) {
+            Err(CoreError::CopyExpired { reason }) if reason == "reach_changed" => {
+                return Ok(Some(HydrateRestart::ReachChanged));
+            }
+            reader => reader?,
+        };
+        let mut frames = Frames::new(BufReader::new(reader));
+        let mut opened = false;
+        loop {
+            crate::catch_up::refuse_if_stopped(stop)?;
+            let frame = frames.next_frame();
+            crate::catch_up::refuse_if_stopped(stop)?;
+            match frame {
+                Ok(Some(Frame::Comment(_))) => continue,
+                Ok(Some(Frame::Event { id, name, data })) => {
+                    let payload =
+                        crate::reach::event_payload(name.as_deref(), id.as_deref(), &data)?;
+                    let kind = name.as_deref().unwrap_or(&payload.event_type);
+                    if let Some(reason) = crate::catch_up::diverged(kind, &payload, head) {
+                        return Ok(Some(
+                            crate::catch_up::divergence(&reason)
+                                .unwrap_or(HydrateRestart::HeadPastLog),
+                        ));
+                    }
+                    match kind {
+                        "reach_changed" => return Ok(Some(HydrateRestart::ReachChanged)),
+                        "stream_incomplete" => {
+                            return Err(CoreError::StreamIncomplete {
+                                reason: payload.reason.unwrap_or_default(),
+                            });
+                        }
+                        "stream_cursor" if !opened => opened = true,
+                        // A replayed event or the end of the replay: the log
+                        // holds what follows the head.
+                        _ if opened => return Ok(None),
+                        _ => return Err(crate::reach::invalid()),
+                    }
+                }
+                Ok(None) | Err(_) => break,
+            }
+        }
+    }
+    Err(CoreError::StreamIncomplete {
+        reason: "replay_failed".into(),
+    })
 }
 
 /// The queue survives a hydration and the copy does not, so without this a
@@ -566,11 +926,15 @@ fn declared_types(types: &[String]) -> Result<Vec<String>> {
 /// refuses it only when nothing it selects is readable.
 /// Answers the key's own source where it read the key: `Some(None)` for a
 /// credential that is not a key.
+/// A key that may not read itself, as an app's sign-in may not, is asked
+/// for the first page of each named type where `probe` holds; where it does
+/// not, the types are taken as readable.
 fn refuse_unreadable(
     http: &Http,
     types: &[String],
     tier: SliceTier,
     catalog: &WireCatalog,
+    probe: bool,
 ) -> Result<Option<Option<String>>> {
     let named: Vec<&str> = types
         .iter()
@@ -591,6 +955,7 @@ fn refuse_unreadable(
             .into_iter()
             .filter(|name| !reads_under(key, name, catalog))
             .collect(),
+        None if !probe => Vec::new(),
         None => {
             let mut refused = Vec::new();
             for name in named {
@@ -1445,17 +1810,22 @@ mod tests {
     #[test]
     fn a_key_that_reads_only_a_descendant_of_a_declared_type_hydrates_it() {
         let server = Scripted::start();
-        let core = copy(&server);
-        server.on(
-            "/types",
-            vec![scripted::certified(scripted::types(&[
-                ("core.note", None),
-                ("core.entity", None),
-                ("core.entity.person", Some("core.entity")),
-                ("acme.contact", Some("core.entity")),
-            ]))],
-        );
+        let catalog = || {
+            server.on(
+                "/types",
+                vec![scripted::certified(scripted::types(&[
+                    ("core.note", None),
+                    ("core.entity", None),
+                    ("core.entity.person", Some("core.entity")),
+                    ("acme.contact", Some("core.entity")),
+                ]))],
+            )
+        };
         for readable in ["core.entity.person", "acme.contact"] {
+            // A copy of its own, since a hydration the scripted stream left
+            // unfinished would resume past its listings.
+            let core = copy(&server);
+            catalog();
             server.on(
                 "/keys/current",
                 vec![scripted::certified(scripted::json(
@@ -1491,6 +1861,8 @@ mod tests {
             );
         }
 
+        let core = copy(&server);
+        catalog();
         server.on(
             "/keys/current",
             vec![scripted::certified(scripted::json(
@@ -1768,6 +2140,10 @@ mod tests {
     /// A page of the listing holding rows of the types named, each an id and
     /// a type.
     fn page_of(rows: &[(&str, &str)]) -> Answer {
+        page_then(rows, None)
+    }
+
+    fn page_then(rows: &[(&str, &str)], next: Option<&str>) -> Answer {
         let data: Vec<Value> = rows
             .iter()
             .map(|(id, row_type)| {
@@ -1777,7 +2153,7 @@ mod tests {
                 json!({"item": payload["item"], "metadata": payload["metadata"], "listed": true})
             })
             .collect();
-        let body = json!({"data": data, "next_cursor": null});
+        let body = json!({"data": data, "next_cursor": next});
         scripted::certified(scripted::json(200, &body.to_string()))
     }
 
@@ -2020,8 +2396,7 @@ mod tests {
     }
 
     #[test]
-    fn a_slice_of_every_type_stopped_part_way_is_read_whole_again() {
-        // A stop that came after the copy was cleared leaves it unfinished.
+    fn a_slice_of_every_type_stopped_part_way_resumes_naming_no_type() {
         let server = Scripted::start();
         let core = copy(&server);
         server.on(
@@ -2029,9 +2404,9 @@ mod tests {
             vec![
                 Answer::Slow {
                     after: std::time::Duration::from_millis(300),
-                    answer: Box::new(page_of(&[("a", "core.note")])),
+                    answer: Box::new(page_then(&[("a", "core.note")], Some("after-a"))),
                 },
-                page_of(&[("a", "core.note"), ("b", "acme.thing")]),
+                page_of(&[("b", "acme.thing")]),
             ],
         );
         at_head(&server);
@@ -2046,12 +2421,13 @@ mod tests {
         assert_eq!(core.status().unwrap().hydration, Hydration::InProgress);
 
         let report = hydrate_every_type(&core).unwrap();
-        assert_eq!(
-            report.items, 2,
-            "the second run did not read the slice whole"
-        );
+        assert!(report.resumed, "the second run did not resume the first");
+        assert_eq!(report.restarted, None);
+        assert_eq!([report.items, report.pages, report.pages_total], [2, 1, 2]);
         assert_eq!(core.status().unwrap().hydration, Hydration::Complete);
-        assert_eq!(server.seen("/items").len(), 2);
+        let seen = server.seen("/items");
+        assert_eq!(seen.len(), 2, "the resumed run read a page it held");
+        assert!(seen[1].query.contains("after-a"), "{}", seen[1].query);
         assert!(
             server
                 .seen("/items")

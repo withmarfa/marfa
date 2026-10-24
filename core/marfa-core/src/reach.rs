@@ -214,6 +214,7 @@ pub(crate) fn expire(conn: &Connection) -> Result<()> {
     store::meta_delete(conn, store::META_HYDRATE_STATE)?;
     store::meta_delete(conn, store::META_ITEMS_EXPECTED)?;
     store::meta_delete(conn, store::META_ITEMS_LISTED)?;
+    store::meta_delete(conn, store::META_HYDRATE_RESUME)?;
     store::meta_delete(conn, FENCE)
 }
 

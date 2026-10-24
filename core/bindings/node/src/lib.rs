@@ -176,7 +176,18 @@ pub struct HydrateReport {
     pub edge_types: Vec<String>,
     pub items: i64,
     pub edges: i64,
+    /// The listing pages this call read, those of a walk it then started
+    /// again from the first page included.
     pub pages: i64,
+    /// The listing pages the hydration read in all, those of the interrupted
+    /// calls it resumed included.
+    pub pages_total: i64,
+    /// Whether this call carried on from the page an interrupted hydration
+    /// of the same slice had reached.
+    pub resumed: bool,
+    /// Why an interrupted hydration was filled again from the first page
+    /// rather than resumed, such as `slice_changed` or `head_aged_out`.
+    pub restarted: Option<String>,
     pub cursor: String,
     /// Types the app declared that the instance did not hold and now does.
     pub registered_types: Vec<String>,
@@ -1505,7 +1516,7 @@ pub struct MarfaCore {
 /// Raised to end a `hydrate`, `catchUp` or `drain` it was given to, soon
 /// after, with an error coded `canceled`. What the call had taken is
 /// consistent: a hydration left unfinished answers lists and searches marked
-/// partial and refuses writes, a catch-up keeps the cursor it reached, and a drain leaves what it had not sent queued, and
+/// partial and refuses writes until a hydration completes (the next one of the same slice carries on from the page it reached where it can), a catch-up keeps the cursor it reached, and a drain leaves what it had not sent queued, and
 /// an upload or item or edge write it had in flight queued as sent, for the
 /// next drain to send again under the same key. A raised `Stop` stays raised, so a call given one
 /// afterwards ends at once.
@@ -1567,13 +1578,22 @@ impl Task for Hydrate {
     }
 
     fn resolve(&mut self, _: Env, report: Self::Output) -> Result<Self::JsValue> {
-        Ok(HydrateReport {
+        Ok(report.into())
+    }
+}
+
+impl From<marfa_core::HydrateReport> for HydrateReport {
+    fn from(report: marfa_core::HydrateReport) -> Self {
+        HydrateReport {
             types: report.types,
             tier: report.tier.into(),
             edge_types: report.edge_types,
             items: count(report.items),
             edges: count(report.edges),
             pages: count(report.pages),
+            pages_total: count(report.pages_total),
+            resumed: report.resumed,
+            restarted: report.restarted.map(|reason| reason.as_str().to_string()),
             cursor: report.cursor,
             registered_types: report.registered_types,
             unregistered_types: report
@@ -1585,7 +1605,7 @@ impl Task for Hydrate {
                     message: held.message,
                 })
                 .collect(),
-        })
+        }
     }
 }
 

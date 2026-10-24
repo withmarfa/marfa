@@ -221,7 +221,7 @@ describe("a slice of every type", () => {
     expect("items_expected" in filling.value).toBe(false);
   });
 
-  it("reads the whole slice again when a hydration stopped part way is run again", async () => {
+  it("resumes a hydration of every type stopped part way from the page it reached", async () => {
     harness = await startHarness("every-type-interrupted");
     const { server, device } = harness;
     let cut = true;
@@ -240,10 +240,16 @@ describe("a slice of every type", () => {
     const again = await device.hydrate(["*"], "library");
     expect(again.ok, JSON.stringify(again)).toBe(true);
     if (!again.ok) return;
+    expect(again.value.resumed, "the second run started again").toBe(true);
+    expect(again.value.restarted).toBeUndefined();
     expect(
-      [again.value.items, again.value.pages],
-      "the second run resumed the first, so the copy is short whatever the first missed",
+      [again.value.items, again.value.pages_total],
+      "the resumed copy is short of what the whole slice holds",
     ).toEqual([2, 2]);
+    expect(
+      again.value.pages,
+      "the resumed run read again a page the first had kept",
+    ).toBeLessThan(2);
     const complete = await device.status();
     expect(complete.ok && complete.value.hydration).toBe("complete");
   });
