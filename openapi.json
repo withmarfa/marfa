@@ -4664,7 +4664,7 @@
         ],
         "description": "A key or app whose type map names a type outright."
       },
-      "BulkCapExceededOrUnknownTypeOrValidationErrorRefusal": {
+      "BulkCapExceededOrMissingRequiredFieldOrUnknownTypeOrValidationErrorRefusal": {
         "type": "object",
         "properties": {
           "error": {
@@ -4674,6 +4674,7 @@
                 "type": "string",
                 "enum": [
                   "bulk_cap_exceeded",
+                  "missing_required_field",
                   "unknown_type",
                   "validation_error"
                 ],
@@ -28530,11 +28531,11 @@
             }
           },
           "400": {
-            "description": "- `validation_error`: `to` is malformed or names the type itself.\n- `unknown_type`: no type has the identifier `to`.\n- `bulk_cap_exceeded`: the type holds over 50,000 items.",
+            "description": "- `missing_required_field`: `to` is missing.\n- `validation_error`: `to` is malformed or names the type itself.\n- `unknown_type`: no type has the identifier `to`.\n- `bulk_cap_exceeded`: the type holds over 50,000 items.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/BulkCapExceededOrUnknownTypeOrValidationErrorRefusal"
+                  "$ref": "#/components/schemas/BulkCapExceededOrMissingRequiredFieldOrUnknownTypeOrValidationErrorRefusal"
                 }
               }
             },

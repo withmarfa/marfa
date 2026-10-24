@@ -3901,14 +3901,14 @@ export interface components {
             label?: string;
         };
         /** @description An error response. */
-        BulkCapExceededOrUnknownTypeOrValidationErrorRefusal: {
+        BulkCapExceededOrMissingRequiredFieldOrUnknownTypeOrValidationErrorRefusal: {
             /** @description What went wrong. */
             error: {
                 /**
                  * @description A machine-readable code for the error. Use it in your logic.
                  * @enum {string}
                  */
-                code: "bulk_cap_exceeded" | "unknown_type" | "validation_error";
+                code: "bulk_cap_exceeded" | "missing_required_field" | "unknown_type" | "validation_error";
                 /** @description A description of the error for a person to read. It can change, so don't match on it. */
                 message: string;
                 /** @description More about the error, such as the field it concerns. Each code defines its own details. */
@@ -14978,7 +14978,8 @@ export interface operations {
                 };
             };
             /**
-             * @description - `validation_error`: `to` is malformed or names the type itself.
+             * @description - `missing_required_field`: `to` is missing.
+             *     - `validation_error`: `to` is malformed or names the type itself.
              *     - `unknown_type`: no type has the identifier `to`.
              *     - `bulk_cap_exceeded`: the type holds over 50,000 items.
              */
@@ -14993,7 +14994,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["BulkCapExceededOrUnknownTypeOrValidationErrorRefusal"];
+                    "application/json": components["schemas"]["BulkCapExceededOrMissingRequiredFieldOrUnknownTypeOrValidationErrorRefusal"];
                 };
             };
             /** @description `unauthorized`: the request has no credential, or its credential is not valid. */

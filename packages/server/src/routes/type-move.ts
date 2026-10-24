@@ -155,6 +155,7 @@ const moveTypeRoute = createRoute({
       content: {
         "application/json": {
           schema: makeErrorResponseSchema([
+            "missing_required_field",
             "validation_error",
             "unknown_type",
             "bulk_cap_exceeded",
@@ -162,7 +163,7 @@ const moveTypeRoute = createRoute({
         },
       },
       description:
-        "- `validation_error`: `to` is malformed or names the type itself.\n- `unknown_type`: no type has the identifier `to`.\n- `bulk_cap_exceeded`: the type holds over 50,000 items.",
+        "- `missing_required_field`: `to` is missing.\n- `validation_error`: `to` is malformed or names the type itself.\n- `unknown_type`: no type has the identifier `to`.\n- `bulk_cap_exceeded`: the type holds over 50,000 items.",
     },
     401: {
       content: {
