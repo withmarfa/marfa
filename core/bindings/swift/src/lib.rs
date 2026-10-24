@@ -397,8 +397,8 @@ pub struct FileCache {
     /// once a fetched file is marked.
     pub backup_mark_failure: Option<String>,
     /// The files attached to items the copy holds, which stay on the device
-    /// outside the budget; none while a hydration fills the copy, for a
-    /// folder's copy, and where the cache could not be read.
+    /// outside the budget; none from the start of a hydration until one
+    /// completes, for a folder's copy, and where the cache could not be read.
     pub attachments: Option<Attachments>,
 }
 
@@ -427,6 +427,9 @@ pub enum NotHeldReason {
     /// The server, or the link it gave, could not be reached, or the link
     /// stopped sending part way.
     Unreachable,
+    /// The server asked for a wait longer than a fetch of attachments
+    /// makes, before them or an attachment before them in the same fetch.
+    RateLimited,
     /// The server holds no bytes by that hash.
     Absent,
     /// The fetch failed otherwise.
@@ -442,6 +445,7 @@ impl From<marfa_core::NotHeldReason> for NotHeldReason {
             Why::NotFetched => NotHeldReason::NotFetched,
             Why::NoRoom => NotHeldReason::NoRoom,
             Why::Unreachable => NotHeldReason::Unreachable,
+            Why::RateLimited => NotHeldReason::RateLimited,
             Why::Absent => NotHeldReason::Absent,
             Why::Failed => NotHeldReason::Failed,
             Why::NotInCopy => NotHeldReason::NotInCopy,
@@ -2583,10 +2587,12 @@ impl Core {
 
     /// Fetches the bytes of every file attached to an item the copy holds
     /// that the cache does not hold whole, smallest first, and answers what
-    /// it fetched and the attachments after it. Stops at the first the disk
-    /// has no room for, or once the server cannot be reached. Run after a
-    /// hydration and after a catch-up. Refused to a reading handle and for a
-    /// folder's copy.
+    /// it fetched and the attachments after it, resuming the part of one an
+    /// earlier fetch left. Waits out a server that asks for a wait of a
+    /// minute or less, and stops at the first the disk has no room for, once
+    /// the server cannot be reached, or once it asks for a longer wait; one
+    /// that fails otherwise is passed over. Run after a hydration and after
+    /// a catch-up. Refused to a reading handle and for a folder's copy.
     pub fn fetch_kept(&self, stop: Option<Arc<Stop>>) -> Result<KeptFetch, MarfaError> {
         let fetched = self.inner.fetch_kept_until(&flag_of(stop))?;
         Ok(KeptFetch {

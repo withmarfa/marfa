@@ -333,10 +333,14 @@ pub enum BlobsCommand {
     /// hold yet, smallest first, resuming any fetch that stopped part way.
     ///
     /// Attached files stay on the device outside the budget while the item
-    /// they are attached to is held. Run it after `device hydrate` and after
-    /// each `device catch-up`. It stops at the first file the disk has no
-    /// room for, or once the server cannot be reached, and reports the
-    /// attached files not held and why. Ctrl-C stops it between two files.
+    /// they are attached to is held, and so does the part of one a fetch
+    /// left, which this resumes. Run it after `device hydrate` and after
+    /// each `device catch-up`. It waits out a server that asks for a wait of
+    /// a minute or less, and stops at the first file the disk has no room
+    /// for, once the server cannot be reached, or once it asks for a longer
+    /// wait. A file that fails otherwise is passed over. It reports the
+    /// attached files not held and why. Ctrl-C stops it between two files
+    /// or during a wait.
     FetchKept,
 }
 
@@ -1750,6 +1754,7 @@ fn attachments_text(attachments: &marfa_core::Attachments) -> String {
                 marfa_core::NotHeldReason::NotFetched => "not fetched yet",
                 marfa_core::NotHeldReason::NoRoom => "no room on the disk",
                 marfa_core::NotHeldReason::Unreachable => "the server could not be reached",
+                marfa_core::NotHeldReason::RateLimited => "the server asked for a longer wait",
                 marfa_core::NotHeldReason::Absent => "the server holds none",
                 marfa_core::NotHeldReason::Failed => "the fetch failed",
                 marfa_core::NotHeldReason::NotInCopy => "the file is outside the slice",
