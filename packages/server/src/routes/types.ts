@@ -24,6 +24,7 @@ import type { Context, Next } from "hono";
 import type { AppEnv } from "../middleware/auth.js";
 import {
   authorityId,
+  heldPermissions,
   isDirectAuthority,
   requireRecentOwnerAuthentication,
   requireAuth,
@@ -48,10 +49,37 @@ import {
   requireTypeSchemaWrite,
 } from "./_schema-reach.js";
 import { MergePolicySchema, nullableRef, wholeListOf } from "./_schemas.js";
+import { planSettings, typeGrants } from "../type-move/settings.js";
 
 // ---------------------------------------------------------------------------
 // Constants & helpers
 // ---------------------------------------------------------------------------
+
+/** Why a type can't be deleted yet, and what to do first. */
+function typeInUseMessage(
+  id: string,
+  itemCount: number,
+  settingCount: number,
+  c: Context<AppEnv>,
+): string {
+  const items = `${String(itemCount)} ${itemCount === 1 ? "item" : "items"}`;
+  const settings = `${String(settingCount)} folder, view or webhook ${settingCount === 1 ? "setting" : "settings"}`;
+  const first =
+    settingCount === 0
+      ? `Type "${id}" still has ${items}.`
+      : itemCount === 0
+        ? `${settings} still ${settingCount === 1 ? "names" : "name"} type "${id}".`
+        : `Type "${id}" still has ${items}, and ${settings} ${settingCount === 1 ? "names" : "name"} it.`;
+  const move =
+    itemCount > 0
+      ? isDirectAuthority(c)
+        ? " Move the items to another type first."
+        : ` Move the items to another type first with POST /types/${id}/move${settingCount > 0 ? ", which also rewrites those settings" : ""}.`
+      : " Change those settings first.";
+  return isDirectAuthority(c)
+    ? first + move
+    : `${first}${move} Or use ?force=true to delete it anyway.`;
+}
 
 function requireDependencyReach(
   c: Context<AppEnv>,
@@ -866,7 +894,7 @@ const deleteTypeRoute = createRoute({
   tags: ["Types"],
   summary: "Delete a type",
   description:
-    "Deletes an unused type. A key can use `force=true` to keep existing items without their type; new writes then fail until it is registered again. A recent owner session or local command can remove only unused types.",
+    "Deletes a type no item holds and no folder, view or webhook names. With `force=true`, a key keeps the items without their type and leaves the settings as they are; new writes then fail until it's registered again.",
   security: [{ bearerAuth: [] }, { ownerSession: [] }] as Record<
     string,
     string[]
@@ -883,7 +911,7 @@ const deleteTypeRoute = createRoute({
         .enum(["true", "false"])
         .optional()
         .describe(
-          "Delete the type even if items of it exist, in any state. It doesn't cover subtypes or compatibility dependents.",
+          "Delete the type even if items of it exist, in any state, or a folder, view or webhook names it. It doesn't cover subtypes or compatibility dependents.",
         ),
     }),
   },
@@ -941,7 +969,7 @@ const deleteTypeRoute = createRoute({
         },
       },
       description:
-        "- `type_has_subtypes`: other types name this one as their `parent` (`details.subtype_ids` lists them). Delete them, or give them another parent with `PUT /types/{id}`.\n- `type_in_use`: an item of the type exists, in any state, and `force` isn't `true`.",
+        "- `type_has_subtypes`: other types name this one as their `parent` (`details.subtype_ids` lists them). Delete them, or give them another parent with `PUT /types/{id}`.\n- `type_in_use`: an item of the type exists, in any state, or a folder, view or webhook names it, and `force` isn't `true`. `details` counts the items and lists the settings. Move them with `POST /types/{id}/move`.",
     },
   },
 });
@@ -1209,7 +1237,7 @@ export function typeRoutes(storage: Storage) {
           if (force === "true")
             throw new MarfaError(
               ErrorCode.FORBIDDEN,
-              "The owner console removes only unused types. Move or remove their items first.",
+              "The owner console removes only unused types. Move their items to another type, and change the folders, views and webhooks that name them, first.",
             );
         } else requireTypeSchemaWrite(c, "change", id);
 
@@ -1236,22 +1264,26 @@ export function typeRoutes(storage: Storage) {
         }
 
         if (force !== "true") {
-          const items = await storage.items.list({
-            type: id,
-            // Every state, because the question is whether anything is written
-            // against this type, not whether anything is being worked on. A row
-            // in the bin or the archive still names the type it was validated
-            // against, and deleting it out from under one leaves a row whose
-            // shape nothing can check.
-            all_states: true,
-            limit: 1,
-          });
-          if (items.data.length > 0) {
+          // Every state, because the question is whether anything is written
+          // against this type, not whether anything is being worked on. A row
+          // in the bin or the archive still names the type it was validated
+          // against, and deleting it out from under one leaves a row whose
+          // shape nothing can check.
+          const itemCount = await storage.items.countByType(id);
+          const { settings } = await planSettings(
+            storage,
+            id,
+            null,
+            isDirectAuthority(c)
+              ? null
+              : { key: requireAuth(c), permissions: heldPermissions(c) },
+          );
+          if (itemCount > 0 || settings.length > 0) {
+            const grants = await typeGrants(storage, c, id);
             throw new MarfaError(
               ErrorCode.TYPE_IN_USE,
-              isDirectAuthority(c)
-                ? `Type "${id}" still has items. Remove them before removing the type.`
-                : `Type "${id}" has existing items. Use ?force=true to delete anyway.`,
+              typeInUseMessage(id, itemCount, settings.length, c),
+              { item_count: itemCount, settings, grants },
             );
           }
         }

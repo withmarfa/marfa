@@ -23,6 +23,7 @@ export const ITEM_PROPERTY_BAGS: readonly {
   { method: "PATCH", path: "/items/{id}", at: ["properties"] },
   { method: "POST", path: "/items/bulk", at: ["items", "*", "properties"] },
   { method: "POST", path: "/items/bulk-actions", at: ["patch"] },
+  { method: "POST", path: "/types/{id}/move", at: ["properties"] },
   { method: "POST", path: "/folders", at: ["defaults", "properties"] },
   { method: "PATCH", path: "/folders/{id}", at: ["defaults", "properties"] },
   { method: "POST", path: "/edges", at: ["properties"] },

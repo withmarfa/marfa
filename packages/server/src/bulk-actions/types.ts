@@ -142,6 +142,20 @@ export const BulkActionInputSchema = z.discriminatedUnion("action", [
 export type BulkActionInput = z.infer<typeof BulkActionInputSchema>;
 
 /**
+ * A type move as its job stores it. `POST /types/{id}/move` queues it, so it
+ * is no body the bulk door takes.
+ */
+export interface TypeMoveInput {
+  action: "type_move";
+  from: string;
+  to: string;
+  properties?: Record<string, unknown>;
+}
+
+/** Whatever a bulk-action job runs. */
+export type QueuedAction = BulkActionInput | TypeMoveInput;
+
+/**
  * The request shape each `action` selects, keyed by the action name.
  *
  * Read off the union's own options rather than restated, for the reason
@@ -181,6 +195,38 @@ export type BulkActionErrorEntry = z.infer<typeof BulkActionErrorEntrySchema>;
 
 const BULK_ACTION_TEXT = "The action, such as `purge`.";
 
+export const TypeSettingSchema = z
+  .object({
+    kind: z
+      .enum(["folder", "view", "webhook"])
+      .describe("What holds the setting."),
+    id: z
+      .string()
+      .optional()
+      .describe(
+        "The ID of the folder, view or webhook. Absent when you can't read it.",
+      ),
+    field: z
+      .string()
+      .describe(
+        "The setting that names the type: `query.types`, `query.filter`, `defaults.type`, `first_placement` or `type_filter`.",
+      ),
+    reason: z
+      .enum(["not_permitted", "filter_term", "placement_conflict", "subtypes"])
+      .optional()
+      .describe(
+        "Why a move can't rewrite the setting: `not_permitted`, you can't change it; `filter_term`, its filter can't be rewritten safely; `placement_conflict`, it places the types apart; `subtypes`, a webhook can't name both.",
+      ),
+    message: z
+      .string()
+      .optional()
+      .describe(
+        "What to change before moving, for a person to read. Present with `reason`.",
+      ),
+  })
+  .describe("A folder, view or webhook setting that names a type.")
+  .openapi("TypeSetting");
+
 export const BulkActionResultSchema = z
   .object({
     action: z.string().describe(BULK_ACTION_TEXT),
@@ -218,6 +264,31 @@ export const BulkActionResultSchema = z
       .optional()
       .describe(
         "On a purge job, how many distinct blobs the purged items referenced, whether or not anything still references them. Absent otherwise.",
+      ),
+    settings: z
+      .array(TypeSettingSchema)
+      .optional()
+      .describe(
+        "On a type move, every folder, view and webhook setting that named the old type when the job finished. Absent otherwise.",
+      ),
+    remaining: z
+      .number()
+      .int()
+      .optional()
+      .describe(
+        "On a type move, how many items you can see are still of the old type when the job finished, in any state: those it left unchanged and any written since the move began. Absent otherwise.",
+      ),
+    remaining_hidden: z
+      .boolean()
+      .optional()
+      .describe(
+        "On a type move, `true` if items your source filter hides are still of the old type. A move takes only items you can see. Absent otherwise.",
+      ),
+    settings_rewritten: z
+      .boolean()
+      .optional()
+      .describe(
+        "On a type move, `true` if Marfa rewrote `settings` to name the new type. `false` if an item of the old type remains, counted in `remaining` or `remaining_hidden`, or a setting has a `reason`: Marfa then rewrote none of them. Absent otherwise.",
       ),
   })
   .describe("What a bulk action did, or for a dry run, what it matched.")
@@ -286,4 +357,5 @@ export const BULK_ACTION_SCHEMAS_DESCRIBED_BY_REFERENCE: Readonly<
 > = {
   BulkActionJobStatus: BulkActionJobStatusSchema,
   BulkActionResult: BulkActionResultSchema,
+  TypeSetting: TypeSettingSchema,
 };

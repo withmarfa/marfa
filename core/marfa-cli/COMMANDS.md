@@ -1318,7 +1318,7 @@ marfa types replace [OPTIONS] <ID>
 
 ### marfa types delete
 
-Remove a registered type. Needs `schema.write` and write on the type in the key's type map.
+Remove a registered type. Needs `schema.write` and write on the type in the key's type map. Refused while items of the type exist or a folder, view or webhook names it. `marfa types move` moves the items and changes those settings.
 
 ```text
 marfa types delete [OPTIONS] <ID>
@@ -1330,7 +1330,27 @@ marfa types delete [OPTIONS] <ID>
 
 | Option | Description |
 | --- | --- |
-| `--force` | Remove it even where items of the type exist. |
+| `--force` | Remove it even where items of the type exist or a setting names it, leaving both as they are. |
+
+### marfa types move
+
+Move every item of a type, in any state, to another type. Needs write on both types in the key's type map.
+
+It moves only the items the key can see. Once no item of the type remains, the folders, views and webhooks that name it are changed to name the new one. An item the new type refuses stays where it is, and the command names it. The command waits for the move to finish, and exits with an error, saying why, when it leaves the settings unchanged: an item it couldn't move, one written while it ran, one the key can't see, or a setting it can't change. Run it again once those are dealt with.
+
+```text
+marfa types move [OPTIONS] <FROM> <TO>
+```
+
+| Argument | Description |
+| --- | --- |
+| `<FROM>` | The type the items are in now. |
+| `<TO>` | The type to move them to. |
+
+| Option | Description |
+| --- | --- |
+| `--dry-run` | Show what would move and change, and change nothing. |
+| `--properties <JSON>` | Properties to merge into every item as it moves, as a JSON object, such as a field the new type requires. |
 
 ### marfa types retired
 

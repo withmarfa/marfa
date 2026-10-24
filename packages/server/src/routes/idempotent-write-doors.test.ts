@@ -97,7 +97,9 @@ const WRITERS: Record<string, string> = {
   // --- Writes with no request behind them, so no header to carry ---
   "enrichment/sweeper.ts": "background extraction sweep, no request",
   "bulk-actions/runner.ts":
-    "the async bulk-action worker; the job it runs is queued by POST /items/bulk-actions, in IDEMPOTENT_WRITE_DOORS",
+    "the async bulk-action worker; the job it runs is queued by POST /items/bulk-actions, in IDEMPOTENT_WRITE_DOORS, or by POST /types/{id}/move, which converges as below",
+  "type-move/settings.ts":
+    "the folder and view rewrite the bulk-action worker makes once a type move has moved every item; a retried POST /types/{id}/move queues a job that counts an item already of the new type as moved and finds no setting left naming the old type, so a retry converges",
 
   // --- Routes writing a system item through a surface of their own ---
   "routes/auth-pages.ts": "the device-flow and grant surfaces, as above",

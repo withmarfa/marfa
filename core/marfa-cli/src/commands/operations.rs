@@ -63,6 +63,7 @@ pub const OPERATIONS: &[Operation] = &[
     reached("getType", "types get"),
     reached("replaceType", "types replace"),
     reached("deleteType", "types delete"),
+    reached("moveType", "types move"),
     reached("searchItems", "search"),
     reached("listOccurrences", "items occurrences"),
     reached("listTags", "metadata tags"),

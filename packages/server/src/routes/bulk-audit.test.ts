@@ -261,3 +261,65 @@ it("audits fenced worker chunks with their rows, events and checkpoints", async 
     await live.done;
   }
 });
+
+it("rewrites a type move's settings together with their audit, or not at all", async () => {
+  for (const id of ["acme.deal", "acme.contract"]) {
+    const r = await request(ctx.app, "POST", "/types", {
+      key: ctx.workingKey,
+      body: { id, fields: { title: { type: "string" } } },
+    });
+    expect(r.status).toBe(201);
+  }
+  const item = await request(ctx.app, "POST", "/items", {
+    key: ctx.workingKey,
+    body: { type: "acme.deal", properties: { title: "Deal" } },
+  });
+  expect(item.status).toBe(201);
+  const folder = await request(ctx.app, "POST", "/folders", {
+    key: ctx.workingKey,
+    body: { title: "Deals", query: { types: ["acme.deal"] } },
+  });
+  expect(folder.status).toBe(201);
+  const folderId = ((await folder.json()) as { item: { id: string } }).item.id;
+  const folderTypes = async () =>
+    (
+      (await ctx.storage.items.get(folderId))?.properties as {
+        query: { types: string[] };
+      }
+    ).query.types;
+  const move = async () => {
+    const r = await request(ctx.app, "POST", "/types/acme.deal/move", {
+      key: ctx.workingKey,
+      body: { to: "acme.contract" },
+    });
+    expect(r.status).toBe(202);
+    return ((await r.json()) as { id: string }).id;
+  };
+  const audits = async () =>
+    (await ctx.storage.audit.list({ action: "type.move.settings" })).data;
+
+  await sql(
+    "CREATE TRIGGER reject_move_settings BEFORE INSERT ON audit_log WHEN NEW.action = 'type.move.settings' BEGIN SELECT RAISE(ABORT, 'settings audit refused'); END",
+  );
+  const refused = await move();
+  const worker = new BulkActionWorker({ storage: ctx.storage });
+  try {
+    await worker.runOnce();
+    expect(await ctx.storage.bulkActionJobs.getById(refused)).toMatchObject({
+      status: "failed",
+    });
+    expect(await folderTypes()).toEqual(["acme.deal"]);
+    expect(await audits()).toHaveLength(0);
+
+    await sql("DROP TRIGGER reject_move_settings");
+    const finished = await move();
+    await worker.runOnce();
+    expect(await ctx.storage.bulkActionJobs.getById(finished)).toMatchObject({
+      status: "completed",
+    });
+    expect(await folderTypes()).toEqual(["acme.contract"]);
+    expect(await audits()).toHaveLength(1);
+  } finally {
+    await worker.stop();
+  }
+});

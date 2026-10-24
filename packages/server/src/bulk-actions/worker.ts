@@ -22,7 +22,16 @@ import { resolveLiveCredential } from "../auth/live-credential.js";
 import { yieldBulkWork } from "./yield.js";
 import { sourceHiddenItemIds } from "./source-visibility.js";
 import { readInstanceConfig } from "../storage/instance-config.js";
-import type { BulkActionErrorEntry, BulkActionInput } from "./types.js";
+import type {
+  BulkActionErrorEntry,
+  QueuedAction,
+  TypeMoveInput,
+} from "./types.js";
+import {
+  applySettings,
+  blockedSettings,
+  planSettings,
+} from "../type-move/settings.js";
 
 import { BulkActionLeaseLost, jobLease, ownsJob } from "./checkpoint.js";
 import {
@@ -284,11 +293,18 @@ export class BulkActionWorker {
 
   private async executeJob(job: BulkActionJobRow): Promise<void> {
     const matchedIds = JSON.parse(job.matched_ids) as string[];
-    const input = JSON.parse(job.input) as BulkActionInput;
+    const input = JSON.parse(job.input) as QueuedAction;
     const lease = jobLease(job);
     let offset = job.next_offset;
     if (offset === matchedIds.length) {
-      await this.jobs.completeOwned(lease, offset, this.nowFn().toISOString());
+      if (input.action === "type_move")
+        await this.finishTypeMove(job, input, lease, offset);
+      else
+        await this.jobs.completeOwned(
+          lease,
+          offset,
+          this.nowFn().toISOString(),
+        );
       return;
     }
 
@@ -465,6 +481,107 @@ export class BulkActionWorker {
         if (faultsArmed()) await holdAt("bulk-job:between-chunks");
         await yieldBulkWork();
       }
+    }
+    if (input.action === "type_move")
+      await this.finishTypeMove(job, input, lease, offset);
+  }
+
+  /**
+   * A type move's last step, once every chunk has run: in one transaction,
+   * the settings naming the old type are rewritten if no item of it remains
+   * and none of them is blocked, and the job completes saying which and what
+   * is left. Any failure rolls the rewrite back whole, and the job fails.
+   */
+  private async finishTypeMove(
+    job: BulkActionJobRow,
+    input: TypeMoveInput,
+    lease: BulkActionJobLease,
+    offset: number,
+  ): Promise<void> {
+    let actor: VersionWriter | null = null;
+    try {
+      await runAuditedTransaction(
+        this.storage,
+        async () => {
+          const now = this.nowFn().toISOString();
+          if (!(await this.jobs.beginChunk(lease, offset, now)))
+            throw new BulkActionLeaseLost();
+          const credential = await resolveLiveCredential(
+            this.storage,
+            job.api_key_id,
+            { tokenOutlivesExpiry: true },
+          );
+          if (!credential) {
+            await this.jobs.failOwned(
+              lease,
+              "The credential that queued this job no longer authenticates, so the job rewrote no settings.",
+              now,
+            );
+            return null;
+          }
+          actor = await resolveWriter(this.storage, {
+            kind: "credential",
+            key: credential.key,
+          });
+          const plan = await planSettings(
+            this.storage,
+            input.from,
+            input.to,
+            credential,
+          );
+          // What is left of the old type: what the credential can see is
+          // counted, and what its source filter hides is only said to exist.
+          const left = await this.storage.items.countByType(input.from);
+          const sourceFilter = resolveEnforcement(
+            await readInstanceConfig(this.storage.settings),
+            credential.key,
+          ).source_filter;
+          const remaining =
+            left === 0 || sourceFilter === undefined
+              ? left
+              : ((
+                  await this.storage.items.stats(
+                    {
+                      type: input.from,
+                      all_states: true,
+                      source_filter: sourceFilter,
+                    },
+                    "type",
+                  )
+                )[input.from] ?? 0);
+          const rewritten = left === 0 && blockedSettings(plan).length === 0;
+          if (rewritten) await applySettings(this.storage, plan, credential);
+          if (
+            !(await this.jobs.completeOwned(lease, offset, now, {
+              remaining,
+              remaining_hidden: left > remaining,
+              settings: plan.settings,
+              settings_rewritten: rewritten,
+            }))
+          )
+            throw new BulkActionLeaseLost();
+          return { rewritten, settings: plan.settings.length };
+        },
+        (outcome) =>
+          outcome === null
+            ? null
+            : {
+                actor,
+                key_id: job.api_key_id ?? undefined,
+                action: "type.move.settings",
+                resource_type: "type",
+                resource_id: input.from,
+                details: {
+                  job_id: job.id,
+                  to: input.to,
+                  settings: outcome.settings,
+                  settings_rewritten: outcome.rewritten,
+                },
+              },
+      );
+    } catch (error) {
+      if (error instanceof BulkActionLeaseLost) return;
+      throw error;
     }
   }
 

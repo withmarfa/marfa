@@ -58,6 +58,7 @@ import { edgeRoutes, itemEdgeListingRoutes } from "./routes/edges.js";
 import { edgesBulkRoutes } from "./routes/edges-bulk.js";
 import { edgeTypeRoutes } from "./routes/edge-types.js";
 import { typeRoutes } from "./routes/types.js";
+import { typeMoveRoutes } from "./routes/type-move.js";
 import { searchRoutes } from "./routes/search.js";
 import { occurrenceRoutes } from "./routes/occurrences.js";
 import { metadataRoutes } from "./routes/metadata.js";
@@ -853,6 +854,7 @@ export function createApp(
   app.route("/edges", edgesBulkRoutes(storage));
   app.route("/edge-types", edgeTypeRoutes(storage));
   app.route("/types", typeRoutes(storage));
+  app.route("/types", typeMoveRoutes(storage));
   app.route("/search", searchRoutes(storage));
   app.route("/occurrences", occurrenceRoutes(storage));
   app.route("/metadata", metadataRoutes(storage));

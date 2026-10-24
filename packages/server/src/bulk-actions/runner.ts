@@ -28,7 +28,7 @@ import { originalErrorMessage } from "../storage/sqlite/transaction-control.js";
 import { collectBlobHashes } from "../storage/blob-utils.js";
 import type { Storage } from "../storage/interface.js";
 import type { Metadata } from "@withmarfa/shared";
-import type { BulkActionErrorEntry, BulkActionInput } from "./types.js";
+import type { BulkActionErrorEntry, QueuedAction } from "./types.js";
 import { publish } from "../pubsub.js";
 import { ERROR_CODES, ErrorCode, MarfaError } from "@withmarfa/shared";
 import { checkTypeAccess, mayReadType } from "../middleware/auth.js";
@@ -52,8 +52,8 @@ export interface ChunkOutcome {
 
 export interface RunChunkContext {
   storage: Storage;
-  /** The full BulkActionInput sent to `POST /items/bulk-actions`. */
-  input: BulkActionInput;
+  /** What the job was queued to do. */
+  input: QueuedAction;
   /** Ids the worker has assigned to this chunk. */
   ids: string[];
   /**
@@ -88,8 +88,9 @@ export async function runChunk(ctx: RunChunkContext): Promise<ChunkOutcome> {
       return runUpdatePropertiesChunk(ctx);
     case "update_occurred_at":
       return runUpdateOccurredAtChunk(ctx);
+    case "type_move":
+      return runTypeMoveChunk(ctx);
     default: {
-      // Exhaustiveness check — discriminated union covers all six.
       const _exhaustive: never = input;
       throw new Error(
         `runChunk: unhandled action ${JSON.stringify(_exhaustive)}`,
@@ -343,11 +344,87 @@ async function runUpdateChunk(
 }
 
 /**
+ * Each row of the type the move leaves goes into the type it enters, where
+ * it stands: a row in the bin stays there. A row already in the new type is
+ * one an earlier run moved, and a row in any other type was moved elsewhere
+ * since the job was queued, and is left alone.
+ */
+async function runTypeMoveChunk({
+  storage,
+  input,
+  ids,
+  credential,
+}: RunChunkContext): Promise<ChunkOutcome> {
+  if (input.action !== "type_move")
+    throw new Error("runTypeMoveChunk: wrong action");
+  const succeeded: string[] = [];
+  const errors: BulkActionErrorEntry[] = [];
+  const blob_proof = blobProof(
+    storage,
+    credential.key,
+    credential.kind,
+    credential.permissions,
+  );
+  await storage.runInTransaction(async () => {
+    for (const id of ids) {
+      try {
+        const row = await storage.items.getIncludingTrashed(id);
+        if (row?.type === input.to) {
+          succeeded.push(id);
+          continue;
+        }
+        if (row && row.type !== input.from) {
+          errors.push({
+            id,
+            code: ErrorCode.TYPE_MISMATCH,
+            message: `The item is a ${row.type} now, not a ${input.from}`,
+          });
+          continue;
+        }
+        const actor = { kind: "credential", key: credential.key } as const;
+        const write: ItemWrite = {
+          op: "update",
+          id,
+          declared_type: input.to,
+          retype: true,
+          in_bin: true,
+          ...(input.properties !== undefined && {
+            properties: input.properties,
+            blob_proof,
+          }),
+        };
+        const options = { fanout: false };
+        const result = await (faultsArmed()
+          ? withStatementFault(
+              "job-row",
+              () => writeItem(storage, actor, write, options),
+              undefined,
+              ENDS_TRANSACTION,
+            )
+          : writeItem(storage, actor, write, options));
+        if (result.outcome === "updated") succeeded.push(id);
+        else
+          errors.push({
+            id,
+            code: "conflict",
+            message: "Version conflict during the type move",
+          });
+      } catch (err) {
+        storage.assertTransactionUsable();
+        errors.push(toErrorEntry(id, err));
+      }
+    }
+    storage.assertTransactionUsable();
+  });
+  return { succeeded, errors };
+}
+
+/**
  * Whether this job's events drive outbound side effects. Absent reads as
  * off, as the bulk doors read it.
  */
-function fansOutFor(input: BulkActionInput): boolean {
-  return input.enable_fanout ?? false;
+function fansOutFor(input: QueuedAction): boolean {
+  return "enable_fanout" in input ? (input.enable_fanout ?? false) : false;
 }
 
 export function toErrorEntry(id: string, err: unknown): BulkActionErrorEntry {

@@ -1,7 +1,10 @@
+use std::time::Duration;
+
 use clap::{Args, Subcommand};
 use marfa_core::ScaffoldField;
+use serde_json::{Map, Value};
 
-use super::BodySource;
+use super::{BodySource, object};
 use crate::error::CliError;
 use crate::output::Printer;
 use crate::remote::Remote;
@@ -35,14 +38,18 @@ pub enum TypesCommand {
         #[command(flatten)]
         body: BodySource,
     },
-    /// Remove a registered type. Needs `schema.write` and write on the type in the key's type map.
+    /// Remove a registered type. Needs `schema.write` and write on the type in the key's type map. Refused while items of the type exist or a folder, view or webhook names it. `marfa types move` moves the items and changes those settings.
     Delete {
         /// The type id.
         id: String,
-        /// Remove it even where items of the type exist.
+        /// Remove it even where items of the type exist or a setting names it, leaving both as they are.
         #[arg(long)]
         force: bool,
     },
+    /// Move every item of a type, in any state, to another type. Needs write on both types in the key's type map.
+    ///
+    /// It moves only the items the key can see. Once no item of the type remains, the folders, views and webhooks that name it are changed to name the new one. An item the new type refuses stays where it is, and the command names it. The command waits for the move to finish, and exits with an error, saying why, when it leaves the settings unchanged: an item it couldn't move, one written while it ran, one the key can't see, or a setting it can't change. Run it again once those are dealt with.
+    Move(MoveArgs),
     /// The retired platform types: shipped types this instance carries that the build no longer does. Requires `instance.read`.
     Retired,
     /// Delete one retired platform type. Requires `instance.maintain`.
@@ -50,6 +57,20 @@ pub enum TypesCommand {
         /// The type id.
         id: String,
     },
+}
+
+#[derive(Debug, Args)]
+pub struct MoveArgs {
+    /// The type the items are in now.
+    pub from: String,
+    /// The type to move them to.
+    pub to: String,
+    /// Show what would move and change, and change nothing.
+    #[arg(long)]
+    pub dry_run: bool,
+    /// Properties to merge into every item as it moves, as a JSON object, such as a field the new type requires.
+    #[arg(long, value_name = "JSON")]
+    pub properties: Option<String>,
 }
 
 #[derive(Debug, Args)]
@@ -141,6 +162,28 @@ pub fn delete_request(id: &str, force: bool) -> Request {
     Request::delete(&["types", id]).query_flag("force", force)
 }
 
+pub fn move_request(args: &MoveArgs) -> Result<Request, CliError> {
+    let mut body = Map::new();
+    body.insert("to".into(), Value::String(args.to.clone()));
+    if let Some(properties) = &args.properties {
+        body.insert(
+            "properties".into(),
+            Value::Object(object(properties, "--properties")?),
+        );
+    }
+    let request = Request::post(&["types", &args.from, "move"]);
+    Ok(if args.dry_run {
+        body.insert("dry_run".into(), Value::Bool(true));
+        request.json(Value::Object(body)).reading()
+    } else {
+        request.json(Value::Object(body))
+    })
+}
+
+pub fn job_request(id: &str) -> Request {
+    Request::get(&["items", "bulk-actions", "jobs", id])
+}
+
 pub fn retired_request() -> Request {
     Request::get(&["platform-types", "retired"])
 }
@@ -158,6 +201,7 @@ pub fn run(
 ) -> Result<(), CliError> {
     let request = match &command {
         TypesCommand::Scaffold(args) => return scaffold(args, out),
+        TypesCommand::Move(args) => return move_type(args, &remote()?, out),
         TypesCommand::List => list_request(),
         TypesCommand::Get { id } => get_request(id),
         TypesCommand::Register(body) => register_request(body.read()?),
@@ -172,6 +216,219 @@ pub fn run(
         TypesCommand::Delete { id, .. } => out.report(&answer, || format!("removed type {id}")),
         _ => out.value(&answer),
     }
+}
+
+/// How often a move's job is asked how it stands.
+const JOB_POLL: Duration = Duration::from_millis(500);
+
+fn move_type(args: &MoveArgs, remote: &Remote, out: &Printer) -> Result<(), CliError> {
+    let mut answer = remote.json(&move_request(args)?)?;
+    if args.dry_run {
+        return out.report(&answer, || dry_run_words(&answer));
+    }
+    while matches!(
+        answer.get("status").and_then(Value::as_str),
+        Some("queued" | "in_progress")
+    ) {
+        std::thread::sleep(JOB_POLL);
+        answer = remote.json(&job_request(field(&answer, "id")))?;
+    }
+    out.report(&answer, || moved_words(args, &answer))?;
+    match move_shortfall(&args.from, &answer) {
+        Some(why) => Err(CliError::Invalid(why)),
+        None => Ok(()),
+    }
+}
+
+fn plural(n: u64, one: &str, many: &str) -> String {
+    format!("{n} {}", if n == 1 { one } else { many })
+}
+
+/// Why a move's job left the settings naming `from` unchanged, or `None` when
+/// it rewrote them.
+pub fn move_shortfall(from: &str, job: &Value) -> Option<String> {
+    let status = field(job, "status");
+    if status != "completed" {
+        return Some(format!(
+            "the move {status}: {}. Run it again to move what remains.",
+            field(job, "error")
+        ));
+    }
+    let result = job.get("result").unwrap_or(&Value::Null);
+    if result.get("settings_rewritten") == Some(&Value::Bool(true)) {
+        return None;
+    }
+    let mut why = Vec::new();
+    let errored = count(result, "errored");
+    if errored > 0 {
+        why.push(format!(
+            "it couldn't move {}",
+            plural(errored, "item", "items")
+        ));
+    }
+    let remaining = count(result, "remaining");
+    if remaining > 0 {
+        why.push(format!(
+            "{} you can see {} still {from}, counting any written while it ran",
+            plural(remaining, "item", "items"),
+            if remaining == 1 { "is" } else { "are" }
+        ));
+    }
+    if result.get("remaining_hidden") == Some(&Value::Bool(true)) {
+        why.push(format!(
+            "items of {from} that your key can't see remain, which only a key that sees them can move"
+        ));
+    }
+    let blocked = list(result, "settings")
+        .iter()
+        .filter(|setting| setting.get("reason").is_some())
+        .count() as u64;
+    if blocked > 0 {
+        why.push(format!(
+            "{} can't be changed",
+            plural(blocked, "setting", "settings")
+        ));
+    }
+    Some(format!(
+        "the move left {from} in use: {}. Deal with these, then run the move again.",
+        why.join("; ")
+    ))
+}
+
+fn field<'a>(value: &'a Value, name: &str) -> &'a str {
+    value.get(name).and_then(Value::as_str).unwrap_or_default()
+}
+
+fn count(value: &Value, name: &str) -> u64 {
+    value.get(name).and_then(Value::as_u64).unwrap_or_default()
+}
+
+fn list<'a>(value: &'a Value, name: &str) -> &'a [Value] {
+    value
+        .get(name)
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or_default()
+}
+
+pub fn setting_line(setting: &Value) -> String {
+    let id = setting
+        .get("id")
+        .and_then(Value::as_str)
+        .unwrap_or("(one your key can't read)");
+    let mut line = format!(
+        "{} {id} {}",
+        field(setting, "kind"),
+        field(setting, "field")
+    );
+    if let Some(reason) = setting.get("reason").and_then(Value::as_str) {
+        line.push_str(&format!(", {reason}: {}", field(setting, "message")));
+    }
+    line
+}
+
+fn dry_run_words(answer: &Value) -> String {
+    let mut lines = vec![format!(
+        "would move {} items from {} to {}",
+        count(answer, "matched"),
+        field(answer, "from"),
+        field(answer, "to")
+    )];
+    let settings = list(answer, "settings");
+    if !settings.is_empty() {
+        lines.push("would change these settings once every item has moved:".into());
+        lines.extend(
+            settings
+                .iter()
+                .map(|setting| format!("  {}", setting_line(setting))),
+        );
+    }
+    let grants = list(answer, "grants");
+    if !grants.is_empty() {
+        lines.push("these keys and apps name the type and are left as they are:".into());
+        lines.extend(grants.iter().map(|grant| {
+            format!(
+                "  {} {} {}",
+                field(grant, "kind"),
+                field(grant, "id"),
+                field(grant, "label")
+            )
+            .trim_end()
+            .to_string()
+        }));
+    }
+    lines.join("\n")
+}
+
+fn moved_words(args: &MoveArgs, job: &Value) -> String {
+    let status = field(job, "status");
+    let mut lines = vec![format!(
+        "moved {} of {} items from {} to {}",
+        count(job, "succeeded"),
+        count(job, "matched"),
+        args.from,
+        args.to
+    )];
+    if status != "completed" {
+        lines.push(format!("the move {status}: {}", field(job, "error")));
+    }
+    let result = job.get("result").unwrap_or(&Value::Null);
+    let refused = list(result, "errors");
+    let errored = count(result, "errored");
+    if errored > 0 {
+        lines.push(format!(
+            "it couldn't move {}:",
+            plural(errored, "item", "items")
+        ));
+        lines.extend(refused.iter().map(|error| {
+            format!(
+                "  {} {}: {}",
+                field(error, "id"),
+                field(error, "code"),
+                field(error, "message")
+            )
+        }));
+        let unlisted = errored.saturating_sub(refused.len() as u64);
+        if unlisted > 0 {
+            lines.push(format!("  and {unlisted} more"));
+        }
+    }
+    let remaining = count(result, "remaining");
+    if remaining > 0 {
+        lines.push(format!(
+            "{} you can see {} still {}",
+            plural(remaining, "item", "items"),
+            if remaining == 1 { "is" } else { "are" },
+            args.from
+        ));
+    }
+    if result.get("remaining_hidden") == Some(&Value::Bool(true)) {
+        lines.push(format!(
+            "items of {} that your key can't see remain, and the move left them",
+            args.from
+        ));
+    }
+    let settings = list(result, "settings");
+    if result.get("settings_rewritten") == Some(&Value::Bool(true)) {
+        if !settings.is_empty() {
+            lines.push(format!(
+                "changed {} to name {}",
+                plural(settings.len() as u64, "setting", "settings"),
+                args.to
+            ));
+        }
+    } else if !settings.is_empty() {
+        lines.push(format!(
+            "these settings still name {}, and change once no item of it remains:",
+            args.from
+        ));
+        lines.extend(
+            settings
+                .iter()
+                .map(|setting| format!("  {}", setting_line(setting))),
+        );
+    }
+    lines.join("\n")
 }
 
 fn scaffold(args: &ScaffoldArgs, out: &Printer) -> Result<(), CliError> {

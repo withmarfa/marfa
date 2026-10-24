@@ -564,3 +564,104 @@ export function parseFilter(input: string): FilterExpression {
     logical: logical ?? "AND",
   };
 }
+
+export interface TypeTermRewrite {
+  filter: string;
+  rewritten: boolean;
+  /** Each `type` term, as written, whose answer the move changes and that cannot be rewritten. */
+  unsafe: string[];
+  /** Present when the filter can't be rewritten at all, and kept as it is:
+   *  `filter`, it doesn't parse; `rewrite`, the rewritten filter wouldn't. */
+  unreadable?: "filter" | "rewrite";
+}
+
+function parses(input: string): boolean {
+  try {
+    parseFilter(input);
+    return true;
+  } catch (err) {
+    if (err instanceof MarfaError) return false;
+    throw err;
+  }
+}
+
+/** Answers a `type` term for one type id the way the SQL in `filter-sql.ts` does. */
+function typeTermHolds(op: ComparisonOp, value: string, type: string): boolean {
+  switch (op) {
+    case "eq":
+      return type === value;
+    case "neq":
+      return type !== value;
+    case "gt":
+      return type > value;
+    case "gte":
+      return type >= value;
+    case "lt":
+      return type < value;
+    case "lte":
+      return type <= value;
+    // SQLite's LIKE folds ASCII case only.
+    case "contains":
+      return asciiLower(type).includes(asciiLower(value));
+    case "starts_with":
+      return asciiLower(type).startsWith(asciiLower(value));
+    default:
+      return true;
+  }
+}
+
+function asciiLower(s: string): string {
+  return s.replace(/[A-Z]/g, (ch) => ch.toLowerCase());
+}
+
+/**
+ * Rewrites the `type` terms of a filter for a type move from `from` to `to`.
+ * An `eq` or `neq` naming `from` names `to` instead. Any other `type` term
+ * whose answer differs between the two ids is reported as unsafe. Every other
+ * byte of the filter is kept. A stored filter may predate today's parser, so
+ * one that doesn't parse, or wouldn't once rewritten, is answered rather than
+ * thrown.
+ */
+export function rewriteTypeTerms(
+  input: string,
+  from: string,
+  to: string,
+): TypeTermRewrite {
+  const kept = { filter: input, rewritten: false, unsafe: [] };
+  if (!parses(input)) return { ...kept, unreadable: "filter" };
+  const tokens = tokenize(input);
+  const unsafe: string[] = [];
+  const edits: { start: number; end: number; text: string }[] = [];
+
+  let pos = 0;
+  while (pos < tokens.length) {
+    const field = expectToken(tokens, pos, "a field");
+    const op = expectToken(tokens, pos + 1, "an operator")
+      .value as ComparisonOp;
+    if (UNARY_OPS.has(op)) {
+      pos += 3;
+      continue;
+    }
+    const value = expectToken(tokens, pos + 2, "a value");
+    pos += 4;
+    if (field.value !== "type") continue;
+
+    const named = String(value.value);
+    const end = value.pos + value.raw.length;
+    if ((op === "eq" || op === "neq") && named === from) {
+      edits.push({ start: value.pos, end, text: JSON.stringify(to) });
+    } else if (
+      typeTermHolds(op, named, from) !== typeTermHolds(op, named, to)
+    ) {
+      unsafe.push(input.slice(field.pos, end));
+    }
+  }
+
+  let filter = input;
+  for (const edit of edits.reverse()) {
+    filter = filter.slice(0, edit.start) + edit.text + filter.slice(edit.end);
+  }
+  if (edits.length > 0 && !parses(filter))
+    return { ...kept, unreadable: "rewrite" };
+  return { filter, rewritten: edits.length > 0, unsafe };
+}

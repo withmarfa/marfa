@@ -742,3 +742,50 @@ describe("a strict mode that is set while its job waits", () => {
     }
   });
 });
+
+describe("a type move held at its claim", () => {
+  it("counts an item of the old type written while it runs as remaining, and rewrites no setting", async () => {
+    const ns = fresh("move").replace("-", "");
+    for (const id of [`${ns}.deal`, `${ns}.contract`]) {
+      const r = await working.registerType({
+        id,
+        fields: { name: { type: "string" } },
+      } as never);
+      expect(r.ok, JSON.stringify(r.error)).toBe(true);
+    }
+    const write = async (name: string) => {
+      const r = await working.createItem({
+        type: `${ns}.deal`,
+        properties: { name },
+      });
+      expect(r.ok, JSON.stringify(r.error)).toBe(true);
+    };
+    await write("before");
+    const folder = await working.createFolder({
+      title: "Deals",
+      query: { types: [`${ns}.deal`] },
+    });
+    expect(folder.status, JSON.stringify(folder.error)).toBe(201);
+
+    await server.setFault(HOLD.claimed);
+    const moved = await working.moveType(`${ns}.deal`, {
+      to: `${ns}.contract`,
+    });
+    expect(moved.status, JSON.stringify(moved.error)).toBe(202);
+    await server.waitForHold(HOLD.claimed);
+    await write("during");
+    await server.clearFault();
+
+    const ended = await working.pollBulkActionToTerminal(
+      (moved.data as BulkActionJob).id,
+    );
+    expect(ended.status, ended.error).toBe("completed");
+    expect(ended.result).toMatchObject({
+      succeeded: 1,
+      errored: 0,
+      remaining: 1,
+      remaining_hidden: false,
+      settings_rewritten: false,
+    });
+  });
+});

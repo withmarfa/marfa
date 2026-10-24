@@ -1494,7 +1494,7 @@ export class SqliteItemStore implements ItemStore {
       if (!row) {
         throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
       }
-      if (row.state === "trashed") {
+      if (row.state === "trashed" && input.in_bin !== true) {
         throw new MarfaError(
           ErrorCode.INVALID_TRANSITION,
           "Cannot update trashed item",
@@ -1912,8 +1912,17 @@ export class SqliteItemStore implements ItemStore {
         written.rowsAffected > 0 &&
         input.type !== undefined &&
         input.type !== row.type
-      )
+      ) {
         markStructuralReadChange();
+        // A mark's type decides who may be told the row it names, so a
+        // binned root that changes type takes its marks with it.
+        if (row.state === "trashed")
+          await tx
+            .update(cascade_marks)
+            .set({ trashed_with_type: input.type })
+            .where(eq(cascade_marks.trashed_with, id))
+            .run();
+      }
     } catch (err) {
       if (isSourceDedupViolation(err)) {
         throw new MarfaError(
@@ -1939,7 +1948,9 @@ export class SqliteItemStore implements ItemStore {
       properties: write.properties,
     });
 
-    await this.searchStore.index(id, properties, type);
+    // The bin is never searched, so a row written there stays out of the index.
+    if (row.state !== "trashed")
+      await this.searchStore.index(id, properties, type);
 
     return rowToItem({
       ...row,

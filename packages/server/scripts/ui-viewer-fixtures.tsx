@@ -1813,7 +1813,7 @@ const CONSOLE: GalleryTab = {
           trashed: 2,
           removable: true,
           removalReason:
-            "This type still has items, including items in the trash. Remove them before removing the type.",
+            "This type still has items, including items in the trash. Move them to another type before removing the type.",
         }),
       ),
       variant("missing", "Type is not there", () =>

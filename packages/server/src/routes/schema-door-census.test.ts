@@ -182,6 +182,31 @@ const CHANGING: Record<string, Driver> = {
     }
   },
 
+  // A move changes the items of a type rather than the registry, held to the
+  // same map on the type it moves from and the type it moves to.
+  "POST /types/:id/move": async ({ refused, served, name }) => {
+    const mine = `mine.${name}`;
+    const other = `other.${name}`;
+    await registerType(served, mine);
+    await registerType(served, other);
+    const move = (key: string, from: string, to: string) =>
+      request(ctx.app, "POST", `/types/${from}/move`, {
+        key,
+        body: { to, dry_run: true },
+      });
+    await expectRefused(
+      await move(refused, other, mine),
+      "type_not_permitted",
+      other,
+    );
+    await expectRefused(
+      await move(refused, mine, other),
+      "type_not_permitted",
+      other,
+    );
+    expect((await move(served, mine, other)).status).toBe(200);
+  },
+
   "POST /edge-types": async ({ refused, served, name }) => {
     for (const body of edgeTargets(name)) {
       const res = await request(ctx.app, "POST", "/edge-types", {

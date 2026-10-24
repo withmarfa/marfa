@@ -519,6 +519,75 @@ fn types_are_reached_at_their_doors_and_a_forced_delete_says_so() {
 }
 
 #[test]
+fn a_type_move_posts_its_target_and_a_dry_run_reads() {
+    let args = |dry_run, properties: Option<&str>| types::MoveArgs {
+        from: "acme.deal".into(),
+        to: "acme.contract".into(),
+        dry_run,
+        properties: properties.map(String::from),
+    };
+    let moved = types::move_request(&args(false, Some(r#"{"stage":"won"}"#))).unwrap();
+    assert_eq!(moved.path(), "/types/acme.deal/move");
+    assert!(moved.writes);
+    assert_eq!(
+        moved.body,
+        Body::Json(json!({ "to": "acme.contract", "properties": { "stage": "won" } }))
+    );
+    let dry = types::move_request(&args(true, None)).unwrap();
+    assert!(!dry.writes);
+    assert_eq!(
+        dry.body,
+        Body::Json(json!({ "to": "acme.contract", "dry_run": true }))
+    );
+    assert!(types::move_request(&args(false, Some("[1]"))).is_err());
+}
+
+#[test]
+fn a_type_move_that_left_the_old_type_in_use_says_why() {
+    let job = |result: Value| json!({ "status": "completed", "result": result });
+    assert_eq!(
+        types::move_shortfall(
+            "acme.deal",
+            &job(json!({ "errored": 0, "remaining": 0, "settings_rewritten": true }))
+        ),
+        None
+    );
+    let written = types::move_shortfall(
+        "acme.deal",
+        &job(json!({ "errored": 0, "remaining": 1, "remaining_hidden": false, "settings_rewritten": false })),
+    )
+    .unwrap();
+    assert!(
+        written.contains("1 item you can see is still acme.deal"),
+        "{written}"
+    );
+    let hidden = types::move_shortfall(
+        "acme.deal",
+        &job(json!({ "errored": 0, "remaining": 0, "remaining_hidden": true, "settings_rewritten": false })),
+    )
+    .unwrap();
+    assert!(hidden.contains("your key can't see"), "{hidden}");
+    let blocked = types::move_shortfall(
+        "acme.deal",
+        &job(json!({
+            "errored": 0,
+            "remaining": 0,
+            "remaining_hidden": false,
+            "settings_rewritten": false,
+            "settings": [{ "kind": "view", "field": "query.filter", "reason": "not_permitted", "message": "Ask its maker." }],
+        })),
+    )
+    .unwrap();
+    assert!(blocked.contains("1 setting"), "{blocked}");
+    assert_eq!(
+        types::setting_line(
+            &json!({ "kind": "view", "field": "query.filter", "reason": "not_permitted", "message": "Ask its maker." })
+        ),
+        "view (one your key can't read) query.filter, not_permitted: Ask its maker."
+    );
+}
+
+#[test]
 fn a_key_is_minted_with_exactly_the_reach_named() {
     let inherited = keys::create_request(&keys::KeyCreateArgs {
         label: "laptop".into(),

@@ -25,6 +25,7 @@ import {
 } from "./item-pages.js";
 import { isLockedPlatformType } from "./_schema-reach.js";
 import { summaryFilters } from "./item-summaries.js";
+import { planSettings } from "../type-move/settings.js";
 import { sizeWords } from "./export-routes.js";
 
 async function inventory(storage: Storage) {
@@ -181,12 +182,15 @@ export function itemPageRoutes(storage: Storage) {
         removalReason:
           schema && !isLockedPlatformType(id)
             ? (await storage.items.countByType(id)) > 0
-              ? "This type still has items, including items in the trash. Remove them before removing the type."
-              : (await storage.types.list()).some(
-                    (t) => t.parent === id || t.compatible_with?.includes(id),
-                  )
-                ? "Another type depends on this type. Remove that dependency first."
-                : undefined
+              ? "This type still has items, including items in the trash. Move them to another type before removing the type."
+              : (await planSettings(storage, id, null, null)).settings.length >
+                  0
+                ? "A folder, view or webhook names this type. Change it before removing the type."
+                : (await storage.types.list()).some(
+                      (t) => t.parent === id || t.compatible_with?.includes(id),
+                    )
+                  ? "Another type depends on this type. Remove that dependency first."
+                  : undefined
             : undefined,
       }),
       schema ? 200 : 404,

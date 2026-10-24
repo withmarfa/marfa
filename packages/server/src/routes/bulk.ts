@@ -1247,7 +1247,7 @@ function assertJobAuth(
 // `matched_ids` (frozen list — large, not useful to callers), `input`
 // (already known to the caller), `worker_id`, `worker_heartbeat_at`,
 // `api_key_id`. Parses the JSON-encoded `result` if present.
-function jobRowToEnvelope(
+export function jobRowToEnvelope(
   job: BulkActionJobRow,
 ): z.infer<typeof BulkActionJobSchema> {
   const envelope: z.infer<typeof BulkActionJobSchema> = {
