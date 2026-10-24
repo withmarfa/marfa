@@ -205,7 +205,7 @@ describe("DELETE /edge-types/{id} — the check and the delete are one transacti
     const edgeType = `acme.atomic-del-${RUN}`;
     const registered = await request(ctx.app, "POST", "/edge-types", {
       key: ctx.workingKey,
-      body: { id: edgeType, cardinality: "many-to-many" },
+      body: { id: edgeType, label: "Test label", cardinality: "many-to-many" },
     });
     expect(registered.status).toBe(201);
     const [source, target] = await twoNotes();
@@ -240,7 +240,7 @@ describe("DELETE /edge-types/{id} — the check and the delete are one transacti
     const edgeType = `acme.atomic-bulk-${RUN}`;
     const registered = await request(ctx.app, "POST", "/edge-types", {
       key: ctx.workingKey,
-      body: { id: edgeType, cardinality: "many-to-many" },
+      body: { id: edgeType, label: "Test label", cardinality: "many-to-many" },
     });
     expect(registered.status).toBe(201);
     const [source, target] = await twoNotes();
@@ -281,7 +281,7 @@ describe("DELETE /edge-types/{id} — the check and the delete are one transacti
     const edgeType = `acme.atomic-twice-${RUN}`;
     await request(ctx.app, "POST", "/edge-types", {
       key: ctx.workingKey,
-      body: { id: edgeType, cardinality: "many-to-many" },
+      body: { id: edgeType, label: "Test label", cardinality: "many-to-many" },
     });
     const statuses = (
       await Promise.all(
@@ -301,7 +301,7 @@ describe("DELETE /edge-types/{id} — the check and the delete are one transacti
     const edgeType = `acme.atomic-first-${RUN}`;
     await request(ctx.app, "POST", "/edge-types", {
       key: ctx.workingKey,
-      body: { id: edgeType, cardinality: "many-to-many" },
+      body: { id: edgeType, label: "Test label", cardinality: "many-to-many" },
     });
     const [source, target] = await twoNotes();
     const written = await request(ctx.app, "POST", "/edges", {

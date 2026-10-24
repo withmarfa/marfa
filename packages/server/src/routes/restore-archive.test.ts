@@ -2083,6 +2083,7 @@ describe("POST /restore of an edge whose type is not registered", () => {
     const registration = JSON.stringify({
       edge_type: {
         id,
+        label: "Test label",
         cardinality: "many-to-many",
         source_type_constraints: ["core.bookmark"],
       },

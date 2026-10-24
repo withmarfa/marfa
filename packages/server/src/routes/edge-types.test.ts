@@ -59,7 +59,11 @@ async function createNarrowKey(label: string): Promise<string> {
 describe("Edge-type endpoints — auth gate", () => {
   it("POST /edge-types rejects unauthenticated", async () => {
     const res = await request(ctx.app, "POST", "/edge-types", {
-      body: { id: `${NS}.unauth`, cardinality: "many-to-many" },
+      body: {
+        id: `${NS}.unauth`,
+        label: "Test label",
+        cardinality: "many-to-many",
+      },
     });
     expect(res.status).toBe(401);
   });
@@ -75,7 +79,11 @@ describe("Edge-type endpoints — schema gate", () => {
     const memberKey = await createNarrowKey("et-post-member");
     const res = await request(ctx.app, "POST", "/edge-types", {
       key: memberKey,
-      body: { id: `${NS}.admin-gate`, cardinality: "many-to-many" },
+      body: {
+        id: `${NS}.admin-gate`,
+        label: "Test label",
+        cardinality: "many-to-many",
+      },
     });
     expect(res.status).toBe(403);
     const body = (await res.json()) as ErrorBody;
@@ -113,10 +121,55 @@ describe("POST /edge-types — happy path and validation", () => {
     expect(data.edge_type.target_type_constraints).toEqual(["*"]);
   });
 
+  it("lists the reverse label a registration named, and the label for both ends where it named none", async () => {
+    const named = await request(ctx.app, "POST", "/edge-types", {
+      key: ctx.workingKey,
+      body: {
+        id: `${NS}.mentors`,
+        label: "Mentees",
+        reverse_label: "Mentor",
+        cardinality: "many-to-many",
+      },
+    });
+    expect(named.status).toBe(201);
+    expect(
+      ((await named.json()) as { edge_type: EdgeType }).edge_type,
+    ).toMatchObject({
+      label: "Mentees",
+      reverse_label: "Mentor",
+    });
+    const twoWay = await request(ctx.app, "POST", "/edge-types", {
+      key: ctx.workingKey,
+      body: {
+        id: `${NS}.related`,
+        label: "Related to",
+        cardinality: "many-to-many",
+      },
+    });
+    expect(twoWay.status).toBe(201);
+    expect(
+      ((await twoWay.json()) as { edge_type: EdgeType }).edge_type,
+    ).toMatchObject({
+      label: "Related to",
+      reverse_label: "Related to",
+    });
+  });
+
+  it("400 naming label when a registration leaves it out", async () => {
+    const res = await request(ctx.app, "POST", "/edge-types", {
+      key: ctx.workingKey,
+      body: { id: `${NS}.unnamed`, cardinality: "many-to-many" },
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as ErrorBody;
+    expect(body.error.code).toBe("missing_required_field");
+    expect(JSON.stringify(body)).toContain("label");
+  });
+
   it("409 on redefinition of a core edge type", async () => {
     const res = await request(ctx.app, "POST", "/edge-types", {
       key: ctx.workingKey,
-      body: { id: "about", cardinality: "many-to-many" },
+      body: { id: "about", label: "Test label", cardinality: "many-to-many" },
     });
     expect(res.status).toBe(409);
     const body = (await res.json()) as ErrorBody;
@@ -128,6 +181,7 @@ describe("POST /edge-types — happy path and validation", () => {
       key: ctx.workingKey,
       body: {
         id: `${NS}.inherit`,
+        label: "Test label",
         cardinality: "many-to-many",
         extends: "about",
       },
@@ -140,7 +194,7 @@ describe("POST /edge-types — happy path and validation", () => {
   it("400 on an invalid type identifier", async () => {
     const res = await request(ctx.app, "POST", "/edge-types", {
       key: ctx.workingKey,
-      body: { id: "INVALID", cardinality: "many-to-many" },
+      body: { id: "INVALID", label: "Test label", cardinality: "many-to-many" },
     });
     expect(res.status).toBe(400);
   });
@@ -151,7 +205,7 @@ describe("GET /edge-types — list", () => {
     const id = `${NS}.list`;
     const create = await request(ctx.app, "POST", "/edge-types", {
       key: ctx.workingKey,
-      body: { id, cardinality: "many-to-many" },
+      body: { id, label: "Test label", cardinality: "many-to-many" },
     });
     expect(create.status).toBe(201);
 
@@ -175,7 +229,7 @@ describe("DELETE /edge-types/:id — happy path and errors", () => {
     const id = `${NS}.delete-me`;
     const create = await request(ctx.app, "POST", "/edge-types", {
       key: ctx.workingKey,
-      body: { id, cardinality: "many-to-many" },
+      body: { id, label: "Test label", cardinality: "many-to-many" },
     });
     expect(create.status).toBe(201);
 
@@ -231,6 +285,7 @@ describe("Edge-type endpoints — one name, one type", () => {
         key: ctx.workingKey,
         body: {
           id: `${NS}.claims-${suffix}`,
+          label: "Test label",
           cardinality: "many-to-many",
           reverse_name: reverse,
         },
@@ -256,7 +311,12 @@ describe("Edge-type endpoints — one name, one type", () => {
     try {
       const failed = await request(ctx.app, "POST", "/edge-types", {
         key: ctx.workingKey,
-        body: { id, cardinality: "many-to-many", reverse_name: `${id}-by` },
+        body: {
+          id,
+          label: "Test label",
+          cardinality: "many-to-many",
+          reverse_name: `${id}-by`,
+        },
       });
       expect(failed.status).toBe(500);
     } finally {
@@ -265,7 +325,12 @@ describe("Edge-type endpoints — one name, one type", () => {
     // The witness that the claim was given back: the same names register.
     const again = await request(ctx.app, "POST", "/edge-types", {
       key: ctx.workingKey,
-      body: { id, cardinality: "many-to-many", reverse_name: `${id}-by` },
+      body: {
+        id,
+        label: "Test label",
+        cardinality: "many-to-many",
+        reverse_name: `${id}-by`,
+      },
     });
     expect(again.status).toBe(201);
   });

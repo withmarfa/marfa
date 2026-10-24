@@ -121,6 +121,7 @@ describe("archive registration counts", () => {
               }
             : {
                 id,
+                label: "Test label",
                 cardinality: "many-to-many",
                 source_type_constraints: ["*"],
                 target_type_constraints: ["*"],
@@ -349,6 +350,7 @@ describe("archives carry type registrations", () => {
     });
     await source.storage.edgeTypes.create({
       id: edgeTypeId,
+      label: "Related",
       cardinality: "many-to-many",
       source_type_constraints: ["*"],
       target_type_constraints: ["*"],
@@ -606,6 +608,7 @@ describe("archives carry type registrations", () => {
     // in the table: a format on a string and a `required: false`.
     const stored = {
       id,
+      label: "Stored",
       cardinality: "many-to-many" as const,
       source_type_constraints: ["*"],
       target_type_constraints: ["*"],
@@ -649,6 +652,7 @@ describe("archives carry type registrations", () => {
           JSON.stringify({
             edge_type: {
               id,
+              label: "Test label",
               cardinality: "many-to-many",
               property_schema: { contact: property },
             },
@@ -864,7 +868,11 @@ describe("archives carry type registrations", () => {
     const tampered = await repack(entries, {
       "types.ndjson":
         JSON.stringify({
-          edge_type: { id: "about", cardinality: "one-to-one" },
+          edge_type: {
+            id: "about",
+            label: "Test label",
+            cardinality: "one-to-one",
+          },
         }) + "\n",
     });
 
@@ -897,6 +905,7 @@ describe("archives carry type registrations", () => {
       kept,
       await withEdgeTypes({
         id,
+        label: "Test label",
         cardinality: "many-to-many",
         reverse_name: reverse,
       }),
@@ -915,6 +924,7 @@ describe("archives carry type registrations", () => {
       await newContext(),
       await withEdgeTypes({
         id: `user.parents-${uniqueSuffix()}`,
+        label: "Test label",
         cardinality: "one-to-many",
         reverse_name: "child-of",
       }),
@@ -926,11 +936,13 @@ describe("archives carry type registrations", () => {
       await withEdgeTypes(
         {
           id: `user.first-${uniqueSuffix()}`,
+          label: "Test label",
           cardinality: "many-to-many",
           reverse_name: twice,
         },
         {
           id: `user.second-${uniqueSuffix()}`,
+          label: "Test label",
           cardinality: "many-to-many",
           reverse_name: twice,
         },
@@ -944,9 +956,10 @@ describe("archives carry type registrations", () => {
     const idThenReverse = await restore(
       batchDestination,
       await withEdgeTypes(
-        { id: claimed, cardinality: "many-to-many" },
+        { id: claimed, label: "Test label", cardinality: "many-to-many" },
         {
           id: `user.claimer-${uniqueSuffix()}`,
+          label: "Test label",
           cardinality: "many-to-many",
           reverse_name: claimed,
         },
@@ -974,7 +987,12 @@ describe("archives carry type registrations", () => {
     const archive = await repack(entries, {
       "types.ndjson":
         JSON.stringify({
-          edge_type: { id, cardinality: "many-to-many", reverse_name: reverse },
+          edge_type: {
+            id,
+            label: "Test label",
+            cardinality: "many-to-many",
+            reverse_name: reverse,
+          },
         }) + "\n",
     });
 
@@ -990,7 +1008,12 @@ describe("archives carry type registrations", () => {
       const rows = await listRegistered();
       const res = await request(racing.app, "POST", "/edge-types", {
         key: racing.workingKey,
-        body: { id: rival, cardinality: "many-to-many", reverse_name: reverse },
+        body: {
+          id: rival,
+          label: "Test label",
+          cardinality: "many-to-many",
+          reverse_name: reverse,
+        },
       });
       expect(res.status).toBe(201);
       return rows;
@@ -1011,6 +1034,7 @@ describe("archives carry type registrations", () => {
         JSON.stringify({
           edge_type: {
             id: freeId,
+            label: "Test label",
             cardinality: "many-to-many",
             reverse_name: `${freeId}-by`,
           },
@@ -1042,6 +1066,7 @@ describe("archives carry type registrations", () => {
           JSON.stringify({
             edge_type: {
               id,
+              label: "Test label",
               cardinality: "many-to-many",
               property_schema: { preview: property },
             },
@@ -1103,6 +1128,7 @@ describe("archives carry type registrations", () => {
     const edgeLine = (property: Record<string, unknown>) => ({
       edge_type: {
         id: `user.unread-${uniqueSuffix()}`,
+        label: "Test label",
         cardinality: "many-to-many",
         property_schema: { rank: { type: "number", ...property } },
       },

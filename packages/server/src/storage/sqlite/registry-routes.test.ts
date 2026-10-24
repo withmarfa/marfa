@@ -86,6 +86,7 @@ it("ordinary TCP registration reads and inherited validation follow commit and r
     ).toBe(true);
     const createdEdge = await call("POST", "/edge-types", {
       id: edge,
+      label: "Test label",
       cardinality: "many-to-many",
       reverse_name: reverse,
       source_type_constraints: ["role:container"],

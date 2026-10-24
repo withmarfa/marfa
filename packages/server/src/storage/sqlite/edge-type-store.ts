@@ -3,6 +3,7 @@ import {
   markStructuralReadChange,
   ErrorCode,
   MarfaError,
+  edgeTypeFromStored,
   registerEdgeTypeSchema,
   unregisterEdgeTypeSchema,
 } from "@withmarfa/shared";
@@ -13,7 +14,7 @@ import type { DrizzleDb } from "./connection.js";
 import * as clock from "../../clock.js";
 
 function parseRow(row: typeof edgeTypes.$inferSelect): EdgeTypeSchema {
-  return JSON.parse(row.schema) as EdgeTypeSchema;
+  return edgeTypeFromStored(row.schema);
 }
 
 export class SqliteEdgeTypeStore implements EdgeTypeStore {

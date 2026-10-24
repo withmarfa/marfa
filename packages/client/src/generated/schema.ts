@@ -787,7 +787,7 @@ export interface paths {
         put?: never;
         /**
          * Register an edge type
-         * @description Registers an edge type and returns it. With `evolve_constraints: true`, widens a registered type's endpoint constraints without changing its edges. An edge type can't extend another.
+         * @description Registers an edge type and returns it. With `evolve_constraints: true`, widens a registered type's endpoint constraints and may rename its labels, without changing its edges. An edge type can't extend another.
          */
         post: operations["registerEdgeType"];
         delete?: never;
@@ -2061,8 +2061,10 @@ export interface components {
         EdgeType: {
             /** @description Unique identifier for the edge type. */
             id: string;
-            /** @description A name for people to read. */
-            label?: string;
+            /** @description The name an app shows on the source end of an edge of this type, such as `Children` on a parent. Not the `reverse_name`, which is the code name a file writes. */
+            label: string;
+            /** @description The name an app shows on the target end, such as `Parent` on a child. It is the same text as `label` when the relation is two-way, and an app then shows both directions as one list. */
+            reverse_label: string;
             /** @description What the edge type is for. */
             description?: string;
             /**
@@ -3482,8 +3484,10 @@ export interface components {
         EdgeTypeRegistrationRequest: {
             /** @description The identifier of the edge type, such as `acme.list-member`. */
             id: string;
-            /** @description A name for people to read. */
-            label?: string;
+            /** @description The name an app shows on the source end of an edge of this type, such as `Children` on a parent. Not the `reverse_name`, which is the code name a file writes. */
+            label: string;
+            /** @description The name an app shows on the target end, such as `Parent` on a child. Leave it out and `label` names both ends: the relation is two-way, and an app shows both directions as one list. */
+            reverse_label?: string;
             /** @description What the edge type is for. */
             description?: string;
             /**
@@ -3511,7 +3515,7 @@ export interface components {
              * @enum {string}
              */
             written_at?: "source" | "target" | "none";
-            /** @description `true` widens a registered type's endpoints in place. Retain every existing constraint token, or allow all types with `[]` or `*`; other members must stay unchanged. Omit or set `false` to register a new type. Not stored in the definition. */
+            /** @description `true` updates a registered type in place: widen its endpoints (keep every constraint token, or allow all types with `[]` or `*`) and change its labels. Other members stay unchanged. Omit or `false` to register a new type. Not stored. */
             evolve_constraints?: boolean;
         };
         /** @description A page holding every edge type. */
@@ -15139,7 +15143,7 @@ export interface operations {
             };
             /**
              * @description - `validation_error`: a field is invalid, such as a bad `id` or `reverse_name`, a `role:` naming no role, or `written_at: target` with no `reverse_name`, or `extends` is set.
-             *     - `missing_required_field`: `id` or `cardinality` is missing.
+             *     - `missing_required_field`: `id`, `label` or `cardinality` is missing.
              *     - `invalid_schema`: a property's `type` isn't a field type, or the body has a key the schema doesn't define (`details.errors` names each path).
              */
             400: {
@@ -15204,7 +15208,7 @@ export interface operations {
                     "application/json": components["schemas"]["EdgeTypeNotFoundRefusal"];
                 };
             };
-            /** @description `conflict`: `id` is the name of an edge type Marfa ships, `id` or `reverse_name` is already the ID or reverse name of an edge type, or `reverse_name` equals `id`, or constraint evolution would remove a constraint token without allowing every type or change another definition member. */
+            /** @description `conflict`: `id` is the name of an edge type Marfa ships, `id` or `reverse_name` is already the ID or reverse name of an edge type, or `reverse_name` equals `id`, or constraint evolution would remove a constraint token without allowing every type or change a definition member other than the labels. */
             409: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];

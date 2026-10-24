@@ -18,7 +18,6 @@ export function assertConstraintEvolution(
   const changes: string[] = [];
   for (const key of [
     "id",
-    "label",
     "description",
     "cardinality",
     "cascade_on_delete",
@@ -37,7 +36,7 @@ export function assertConstraintEvolution(
   if (changes.length > 0)
     throw new MarfaError(
       ErrorCode.CONFLICT,
-      "Constraint evolution may only add endpoint constraint tokens or allow every type; every other definition member must stay unchanged",
+      "Constraint evolution may only add endpoint constraint tokens or allow every type; every other definition member except the labels must stay unchanged",
       { edge_type: stored.id, changes },
     );
 }

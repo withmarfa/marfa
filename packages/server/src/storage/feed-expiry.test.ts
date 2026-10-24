@@ -602,6 +602,7 @@ describe("an edge that blocks a delete", () => {
       key: ctx.workingKey,
       body: {
         id: edgeType,
+        label: "Test label",
         cardinality: "many-to-many",
         source_type_constraints: ["*"],
         target_type_constraints: ["*"],

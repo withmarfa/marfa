@@ -7,7 +7,7 @@ import {
 import { assertRegistryReady } from "./registry-context.js";
 import { projectPlatformRows } from "../platform-family.js";
 import { toLoadedTypes } from "../loaded-types.js";
-import type { RegistrySnapshot, EdgeTypeSchema } from "@withmarfa/shared";
+import type { RegistrySnapshot } from "@withmarfa/shared";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
 import {
@@ -20,7 +20,12 @@ import {
   type Transaction,
   type TransactionMode,
 } from "@libsql/client";
-import { ErrorCode, MarfaError, isCoreEdgeType } from "@withmarfa/shared";
+import {
+  ErrorCode,
+  MarfaError,
+  edgeTypeFromStored,
+  isCoreEdgeType,
+} from "@withmarfa/shared";
 import { drizzle } from "drizzle-orm/libsql";
 import { sql } from "drizzle-orm";
 import * as schema from "./schema.js";
@@ -674,7 +679,7 @@ function transactionConnections(
           .map((row) => {
             if (typeof row.schema !== "string")
               throw new Error("Stored edge registry schema is unavailable");
-            return JSON.parse(row.schema) as EdgeTypeSchema;
+            return edgeTypeFromStored(row.schema);
           })
           .filter((schema) => !isCoreEdgeType(schema.id));
         await reader.execute("COMMIT");
