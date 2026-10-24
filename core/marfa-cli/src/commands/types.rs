@@ -48,7 +48,7 @@ pub enum TypesCommand {
     },
     /// Move every item of a type, in any state, to another type. Needs write on both types in the key's type map.
     ///
-    /// Once every item has moved, the folders, views and webhooks that name the type are changed to name the new one. An item the new type refuses stays where it is, and the command names it; run the command again once it is fixed. The command waits for the move to finish.
+    /// It moves only the items the key can see. Once no item of the type remains, the folders, views and webhooks that name it are changed to name the new one. An item the new type refuses stays where it is, and the command names it. The command waits for the move to finish, and exits with an error, saying why, when it leaves the settings unchanged: an item it couldn't move, one written while it ran, one the key can't see, or a setting it can't change. Run it again once those are dealt with.
     Move(MoveArgs),
     /// The retired platform types: shipped types this instance carries that the build no longer does. Requires `instance.read`.
     Retired,
@@ -234,14 +234,65 @@ fn move_type(args: &MoveArgs, remote: &Remote, out: &Printer) -> Result<(), CliE
         answer = remote.json(&job_request(field(&answer, "id")))?;
     }
     out.report(&answer, || moved_words(args, &answer))?;
-    let stayed = list(answer.get("result").unwrap_or(&Value::Null), "errors").len();
-    if field(&answer, "status") != "completed" || stayed > 0 {
-        return Err(CliError::Invalid(format!(
-            "the move didn't finish, and {} still holds items. Run it again to move them.",
-            args.from
-        )));
+    match move_shortfall(&args.from, &answer) {
+        Some(why) => Err(CliError::Invalid(why)),
+        None => Ok(()),
     }
-    Ok(())
+}
+
+fn plural(n: u64, one: &str, many: &str) -> String {
+    format!("{n} {}", if n == 1 { one } else { many })
+}
+
+/// Why a move's job left the settings naming `from` unchanged, or `None` when
+/// it rewrote them.
+pub fn move_shortfall(from: &str, job: &Value) -> Option<String> {
+    let status = field(job, "status");
+    if status != "completed" {
+        return Some(format!(
+            "the move {status}: {}. Run it again to move what remains.",
+            field(job, "error")
+        ));
+    }
+    let result = job.get("result").unwrap_or(&Value::Null);
+    if result.get("settings_rewritten") == Some(&Value::Bool(true)) {
+        return None;
+    }
+    let mut why = Vec::new();
+    let errored = count(result, "errored");
+    if errored > 0 {
+        why.push(format!(
+            "it couldn't move {}",
+            plural(errored, "item", "items")
+        ));
+    }
+    let remaining = count(result, "remaining");
+    if remaining > 0 {
+        why.push(format!(
+            "{} you can see {} still {from}, counting any written while it ran",
+            plural(remaining, "item", "items"),
+            if remaining == 1 { "is" } else { "are" }
+        ));
+    }
+    if result.get("remaining_hidden") == Some(&Value::Bool(true)) {
+        why.push(format!(
+            "items of {from} that your key can't see remain, which only a key that sees them can move"
+        ));
+    }
+    let blocked = list(result, "settings")
+        .iter()
+        .filter(|setting| setting.get("reason").is_some())
+        .count() as u64;
+    if blocked > 0 {
+        why.push(format!(
+            "{} can't be changed",
+            plural(blocked, "setting", "settings")
+        ));
+    }
+    Some(format!(
+        "the settings that name {from} weren't changed: {}. Deal with these, then run the move again.",
+        why.join("; ")
+    ))
 }
 
 fn field<'a>(value: &'a Value, name: &str) -> &'a str {
@@ -260,13 +311,20 @@ fn list<'a>(value: &'a Value, name: &str) -> &'a [Value] {
         .unwrap_or_default()
 }
 
-fn setting_line(setting: &Value) -> String {
-    format!(
-        "{} {} {}",
+pub fn setting_line(setting: &Value) -> String {
+    let id = setting
+        .get("id")
+        .and_then(Value::as_str)
+        .unwrap_or("(one your key can't read)");
+    let mut line = format!(
+        "{} {id} {}",
         field(setting, "kind"),
-        field(setting, "id"),
         field(setting, "field")
-    )
+    );
+    if let Some(reason) = setting.get("reason").and_then(Value::as_str) {
+        line.push_str(&format!(", {reason}: {}", field(setting, "message")));
+    }
+    line
 }
 
 fn dry_run_words(answer: &Value) -> String {
@@ -316,8 +374,12 @@ fn moved_words(args: &MoveArgs, job: &Value) -> String {
     }
     let result = job.get("result").unwrap_or(&Value::Null);
     let refused = list(result, "errors");
-    if !refused.is_empty() {
-        lines.push(format!("{} items stayed in {}:", refused.len(), args.from));
+    let errored = count(result, "errored");
+    if errored > 0 {
+        lines.push(format!(
+            "it couldn't move {}:",
+            plural(errored, "item", "items")
+        ));
         lines.extend(refused.iter().map(|error| {
             format!(
                 "  {} {}: {}",
@@ -326,19 +388,38 @@ fn moved_words(args: &MoveArgs, job: &Value) -> String {
                 field(error, "message")
             )
         }));
+        let unlisted = errored.saturating_sub(refused.len() as u64);
+        if unlisted > 0 {
+            lines.push(format!("  and {unlisted} more"));
+        }
+    }
+    let remaining = count(result, "remaining");
+    if remaining > 0 {
+        lines.push(format!(
+            "{} you can see {} still {}",
+            plural(remaining, "item", "items"),
+            if remaining == 1 { "is" } else { "are" },
+            args.from
+        ));
+    }
+    if result.get("remaining_hidden") == Some(&Value::Bool(true)) {
+        lines.push(format!(
+            "items of {} that your key can't see remain, and the move left them",
+            args.from
+        ));
     }
     let settings = list(result, "settings");
     if result.get("settings_rewritten") == Some(&Value::Bool(true)) {
         if !settings.is_empty() {
             lines.push(format!(
-                "changed {} settings to name {}",
-                settings.len(),
+                "changed {} to name {}",
+                plural(settings.len() as u64, "setting", "settings"),
                 args.to
             ));
         }
     } else if !settings.is_empty() {
         lines.push(format!(
-            "these settings still name {}, and change once every item has moved:",
+            "these settings still name {}, and change once no item of it remains:",
             args.from
         ));
         lines.extend(

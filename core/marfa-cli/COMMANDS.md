@@ -1336,7 +1336,7 @@ marfa types delete [OPTIONS] <ID>
 
 Move every item of a type, in any state, to another type. Needs write on both types in the key's type map.
 
-Once every item has moved, the folders, views and webhooks that name the type are changed to name the new one. An item the new type refuses stays where it is, and the command names it; run the command again once it is fixed. The command waits for the move to finish.
+It moves only the items the key can see. Once no item of the type remains, the folders, views and webhooks that name it are changed to name the new one. An item the new type refuses stays where it is, and the command names it. The command waits for the move to finish, and exits with an error, saying why, when it leaves the settings unchanged: an item it couldn't move, one written while it ran, one the key can't see, or a setting it can't change. Run it again once those are dealt with.
 
 ```text
 marfa types move [OPTIONS] <FROM> <TO>
