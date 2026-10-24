@@ -422,6 +422,14 @@ When a hydration of a stale copy reads an instance or a reach other than the one
 
 **Tests:** `device/refill.test.ts › ends the stale copy when its refill reads another instance`.
 
+### `device/stale-ends-refused`
+
+When a hydration of a stale copy is refused because the credential has ended or the reach has changed before it reads a listing page, a device MUST end the stale copy.
+
+**Reason:** the server no longer lets the credential read what it read when the copy was built, so answering its rows stale would show the person rows they may no longer be allowed to read. A refusal that says nothing of the credential or the reach, such as the server being unavailable, leaves the copy stale.
+
+**Tests:** `device/refill.test.ts › ends the stale copy when the server refuses the credential or the reach before the refill reads a page`.
+
 ### `device/read-stale-answers`
 
 While its copy is stale, a device MUST answer a local listing, search or read by id from the rows its copy holds.
@@ -448,7 +456,7 @@ While its copy is expired and not stale, a device MUST refuse a local read `hydr
 
 ### `device/write-queued-incomplete`
 
-While a hydration has started and not completed, or its copy is stale, a device MUST queue a local create, a file added as an item of its own or attached to a row its copy holds with its upload, and a local write to a row or edge its copy holds, against the version its copy holds.
+While a hydration has started and not completed, or its copy is stale, a device MUST queue a local create, a file added as an item of its own or attached to a row its copy holds with its upload and the edge that attaches it, and a local write to a row its copy holds, against the version its copy holds.
 
 **Reason:** the person's work is not lost to a hydration they did not ask for, and a write sent later against the version it was made from lets the server judge it against any change it never saw.
 
@@ -456,11 +464,19 @@ While a hydration has started and not completed, or its copy is stale, a device 
 
 ### `device/write-refused-unheld`
 
-While a hydration has started and not completed, or its copy is stale, if a local write, or a file attached to a row, names a row or edge its copy does not hold, then a device MUST refuse the write `hydration_incomplete`.
+While a hydration has started and not completed, or its copy is stale, if a local write, or a file attached to a row, names a row its copy does not hold, then a device MUST refuse the write `hydration_incomplete`.
 
 **Reason:** a write takes its base version from the row the copy holds, and the row may be one a page still to arrive brings.
 
 **Tests:** `device/working-copy.test.ts › takes writes to new rows only after an interrupted hydration, and sends none`, `device/refill.test.ts › takes writes to the rows it holds and new ones, sending none until it is whole`, `› takes files added alone or attached to a row it holds, sending none until it is whole`.
+
+### `device/write-edge-refused-incomplete`
+
+While a hydration has started and not completed, or its copy is stale, a device MUST refuse a local create, edit, move or delete of an edge `hydration_incomplete`, queueing nothing.
+
+**Reason:** a page still to arrive can bring the server's edge, or an edge between the same two items, beneath a queued edge write, so the copy would show the write undone or doubled while the queue still sends it. A copy that is not whole already refuses edge reads (`device/read-partial-edges-refused`). The edge that attaches a file to a row the copy holds is queued with the file (`device/write-queued-incomplete`), since its source is a new item no page can bring.
+
+**Tests:** `device/refill.test.ts › refuses an edge write while the copy is stale, queueing nothing, and takes it once the copy is whole`, `› refuses an edge write part way through a first fill`.
 
 ### `device/write-refused-expired`
 
@@ -833,6 +849,14 @@ If the server's event log ends before the head an interrupted refill started fro
 **Reason:** a server restored from an earlier point may never have held the rows and versions the refill took, and filling over them would keep versions the server does not have.
 
 **Tests:** `device/refill.test.ts › clears rather than fill again where the log ends before the head its refill started from`.
+
+### `device/refill-restored-clears`
+
+If the head a refill reads is behind the cursor its copy held when it went stale, then a device MUST remove the rows and edges of the copy before it reads a listing page, and report the hydration as not in place.
+
+**Reason:** a log that ends behind the copy's cursor is a server restored from an earlier point, which may never have held the rows and versions the copy holds. A head level with the cursor or past it fills in place.
+
+**Tests:** `device/refill.test.ts › clears rather than fill again where the server was restored before its refill began`, `› fills in place from a head level with the cursor the copy held`.
 
 ### `device/refill-reported`
 
@@ -4804,7 +4828,7 @@ A body written through a working copy is read by the rule a folder reads a Markd
 
 ### `device/body-edges`
 
-When a create or an edit through a working copy changes an item's body, a device MUST queue the edges that the links and embeds of the change name.
+When a create or an edit through a working copy changes an item's body, a device MUST queue the edges that the links and embeds of the change name, at the write or, where `device/body-older-version` or `device/body-not-whole` says, once the server answers it.
 
 **Reason:** an app on a binding or the command line has no folder, so without this a link it saves names nothing, and every app would need its own copy of the rule.
 
@@ -5051,6 +5075,14 @@ When an edit based on a version older than the one the copy holds changes an ite
 **Reason:** the server merges such an edit (`queue-and-verdicts/as-read-sent-on-read`), and the copy cannot tell what the merge makes of the body until it is answered.
 
 **Tests:** `device/body-edges-live.test.ts › reads an edit based on an older version once the server answers it, and sends its edges at the next drain`.
+
+### `device/body-not-whole`
+
+While a hydration has started and not completed, or its copy is stale, when a create or an edit changes an item's body, a device MUST read the body's edges from the row the server answers the write with, once it answers, and queue no edge write before then.
+
+**Reason:** a copy that is not whole takes no edge write (`device/write-edge-refused-incomplete`), and a name in the body may answer to a row still to arrive. A queued write is sent only once the copy is whole, so its answer is read against a whole copy.
+
+**Tests:** `device/refill.test.ts › queues a body edit with links while the copy is stale, and reads its links once the server answers it`.
 
 ### `device/body-link-renamed`
 

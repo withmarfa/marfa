@@ -7,14 +7,21 @@ import {
   copyStreamCursor,
   cursorAhead,
   edgesPage,
+  answers,
+  writeAnswers,
+  refusal,
+  typeCatalog,
+  wireEdge,
   wireItem,
   withMetadata,
+  type WireEdgeOptions,
   type WireItemOptions,
 } from "../../device/marfa-answers.js";
 import type { Answer, ScriptedServer } from "../../device/scripted-server.js";
 import {
   fileOf,
   scriptHydration,
+  scriptWrites,
   startHarness,
   type Harness,
 } from "./harness.js";
@@ -48,13 +55,18 @@ async function agedOut(
 ): Promise<{
   h: Harness;
   head: { now: string };
+  /** What a read of the log's head, or of the type catalog, answers in
+   *  place of its answer while set. */
+  refuse: { head?: Answer; types?: Answer };
 }> {
   harness = await startHarness(label);
   const h = harness;
   const head = { now: "10" };
+  const refuse: { head?: Answer; types?: Answer } = {};
   let aging = false;
   scriptHydration(h.server, {
     head: () => head.now,
+    catalog: () => refuse.types ?? typeCatalog(),
     rows,
     pageSize: options.pageSize,
     drop: options.drop,
@@ -79,7 +91,8 @@ async function agedOut(
         };
   h.server.copyAnswer("GET", "/events", (request) => {
     const cursor = request.headers["last-event-id"];
-    if (cursor === undefined) return named(copyHeadRead(head.now));
+    if (cursor === undefined)
+      return refuse.head ?? named(copyHeadRead(head.now));
     if (aging) {
       aging = false;
       head.now = "900";
@@ -107,7 +120,7 @@ async function agedOut(
     caught.ok ? "caught up" : caught.refusal.code,
     "the catch-up was not told its cursor aged out",
   ).toBe("copy_expired");
-  return { h, head };
+  return { h, head, refuse };
 }
 
 async function ids(
@@ -506,14 +519,20 @@ describe("a refill's sweep", () => {
         { item: { id: "swept" } },
       ],
     };
-    const { h } = await agedOut("refill-keeps-edge-ends", rows);
-    const linked = await h.device.createEdge({
-      source: "from",
-      target: "aimed",
-      type: "core.related",
+    // The edge write is made while the copy is whole, since a copy that
+    // is not whole refuses one (`device/write-edge-refused-incomplete`).
+    const { h } = await agedOut("refill-keeps-edge-ends", rows, {
+      before: async (whole) => {
+        const linked = await whole.device.createEdge({
+          source: "from",
+          target: "aimed",
+          type: "core.related",
+        });
+        expect(linked.ok, JSON.stringify(linked)).toBe(true);
+      },
     });
-    expect(linked.ok, JSON.stringify(linked)).toBe(true);
     const queued = await h.device.queue();
+    expect(queued.ok && queued.value).toHaveLength(1);
 
     // The server lists neither end now.
     rows["core.note"] = [];
@@ -539,6 +558,287 @@ describe("a refill's sweep", () => {
       "the sweep took the edge a queued write names",
     ).toEqual(["aimed"]);
     expect(await h.device.queue()).toEqual(queued);
+  });
+});
+
+describe("a stale copy before its refill reads a page", () => {
+  it("clears rather than fill again where the server was restored before its refill began", async () => {
+    const rows: Rows = { "core.note": [{ item: { id: "a", version: 5 } }] };
+    const { h, head } = await agedOut("refill-restored-first", rows);
+    const held = await h.device.get("a");
+    expect(held.ok && held.value.version).toBe(5);
+
+    // The server is restored from a backup whose log ends at 2, before the
+    // cursor 10 the copy held, holding `a` at an earlier version.
+    head.now = "2";
+    rows["core.note"] = [
+      { item: { id: "a", version: 2 } },
+      { item: { id: "c" } },
+    ];
+    const again = await h.device.hydrate(["core.note"], "library");
+    expect(again.ok, JSON.stringify(again)).toBe(true);
+    expect(
+      again.ok && again.value.in_place,
+      "a refill of a restored server filled over rows it may never have held",
+    ).toBe(false);
+    expect(await ids(h)).toEqual({ ids: ["a", "c"], completeness: "complete" });
+    const restored = await h.device.get("a");
+    expect(
+      restored.ok && restored.value.version,
+      "the copy kept a version the restored server never had",
+    ).toBe(2);
+  });
+
+  it("fills in place from a head level with the cursor the copy held", async () => {
+    const rows: Rows = { "core.note": [{ item: { id: "a" } }] };
+    const { h, head } = await agedOut("refill-level-head", rows);
+    head.now = "10";
+    const again = await h.device.hydrate(["core.note"], "library");
+    expect(again.ok, JSON.stringify(again)).toBe(true);
+    expect(again.ok && again.value.in_place).toBe(true);
+  });
+
+  it("ends the stale copy when the server refuses the credential or the reach before the refill reads a page", async () => {
+    const rows: Rows = { "core.note": [{ item: { id: "a" } }] };
+    // The witness: a refusal that says nothing of the credential or the
+    // reach leaves the copy stale.
+    {
+      const { h, refuse } = await agedOut("refill-unavailable", rows);
+      refuse.head = refusal(503, "unavailable", "try again later");
+      expect((await h.device.hydrate(["core.note"], "library")).ok).toBe(false);
+      expect(await hydration(h)).toBe("stale");
+      await h.stop();
+      harness = undefined;
+    }
+    for (const [door, answer, reason] of [
+      [
+        "head",
+        refusal(401, "unauthorized", "Invalid or missing credential"),
+        "credential_ended",
+      ],
+      [
+        "types",
+        refusal(409, "reach_changed", "the reach has changed"),
+        "reach_changed",
+      ],
+    ] as const) {
+      const { h, refuse } = await agedOut(`refill-${reason}`, rows);
+      refuse[door] = answer;
+      const refused = await h.device.hydrate(["core.note"], "library");
+      expect(
+        refused.ok ? "hydrated" : refused.refusal.code,
+        `${reason}: the refill was not refused copy_expired`,
+      ).toBe("copy_expired");
+      expect(refused.ok ? "" : refused.refusal.raw).toContain(reason);
+      expect(
+        await hydration(h),
+        `${reason}: the copy stayed stale, answering rows the server may no longer let the credential read`,
+      ).toBe("expired");
+      const read = await h.device.list();
+      expect(
+        read.ok ? "answered" : read.refusal.code,
+        `${reason}: the copy still answered reads`,
+      ).toBe("hydration_incomplete");
+      const write = await h.device.update("a", {
+        version: 1,
+        properties: { title: "refused" },
+      });
+      expect(
+        write.ok ? "queued" : write.refusal.code,
+        `${reason}: the copy still took a write`,
+      ).toBe("hydration_incomplete");
+      await h.stop();
+      harness = undefined;
+    }
+  });
+});
+
+describe("an edge write to a copy that is not whole", () => {
+  const link = {
+    id: "link",
+    source_id: "from",
+    target_id: "to",
+    edge_type: "references",
+  };
+  const linked: Rows = {
+    "core.note": [
+      {
+        item: {
+          id: "from",
+          edges: {
+            references: { data: [wireEdge(link)], next_cursor: null },
+          },
+        },
+      },
+      { item: { id: "to" } },
+      { item: { id: "other" } },
+    ],
+  };
+
+  it("refuses an edge write while the copy is stale, queueing nothing, and takes it once the copy is whole", async () => {
+    const { h } = await agedOut("refill-edge-writes", linked);
+    const writes: Array<
+      [string, () => Promise<{ ok: boolean; refusal?: { code: string } }>]
+    > = [
+      [
+        "a create",
+        () =>
+          h.device.createEdge({
+            source: "from",
+            target: "other",
+            type: "references",
+          }),
+      ],
+      [
+        "an edit",
+        () =>
+          h.device.updateEdge("link", {
+            properties: { weight: 2 },
+            version: 1,
+          }),
+      ],
+      [
+        "a move",
+        () =>
+          h.device.updateEdge("link", {
+            properties: {},
+            version: 1,
+            target_id: "other",
+          }),
+      ],
+      ["a delete", () => h.device.deleteEdge("link")],
+    ];
+    for (const [write, run] of writes) {
+      const answer = await run();
+      expect(
+        answer.ok ? "queued" : answer.refusal?.code,
+        `${write} of an edge was queued while a page still to arrive could bring the server's edge beneath it`,
+      ).toBe("hydration_incomplete");
+    }
+    const queued = await h.device.queue();
+    expect(queued.ok && queued.value).toEqual([]);
+    // An item write is still taken.
+    expect(
+      (
+        await h.device.update("from", {
+          version: 1,
+          properties: { title: "mine" },
+        })
+      ).ok,
+    ).toBe(true);
+
+    const refilled = await h.device.hydrate(["core.note"], "library");
+    expect(refilled.ok, JSON.stringify(refilled)).toBe(true);
+    // The witness: the whole copy takes the same writes.
+    for (const [write, run] of writes.slice(0, 2)) {
+      const answer = await run();
+      expect(answer.ok, `${write}: ${JSON.stringify(answer)}`).toBe(true);
+    }
+  });
+
+  it("refuses an edge write part way through a first fill", async () => {
+    harness = await startHarness("first-fill-edge-writes");
+    const { device } = harness;
+    let dropping = true;
+    scriptHydration(harness.server, {
+      head: "10",
+      pageSize: 1,
+      rows: linked,
+      drop: () => {
+        if (!dropping) return false;
+        dropping = false;
+        return true;
+      },
+    });
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(false);
+    const created = await device.create({
+      type: "core.note",
+      properties: { title: "new", body: "new" },
+    });
+    expect(created.ok, JSON.stringify(created)).toBe(true);
+    if (!created.ok) return;
+    const edge = await device.createEdge({
+      source: created.value.item_id ?? "",
+      target: "from",
+      type: "references",
+    });
+    expect(
+      edge.ok ? "queued" : edge.refusal.code,
+      "an edge write was queued part way through a first fill",
+    ).toBe("hydration_incomplete");
+    const queued = await device.queue();
+    expect(queued.ok && queued.value).toHaveLength(1);
+  });
+
+  it("queues a body edit with links while the copy is stale, and reads its links once the server answers it", async () => {
+    const rows: Rows = {
+      "core.note": [
+        { item: { id: "host", properties: { title: "host", body: "none" } } },
+        { item: { id: "other" } },
+      ],
+    };
+    const { h } = await agedOut("refill-body-links", rows);
+    const edit = await h.device.update("host", {
+      version: 1,
+      properties: { body: "see [[other]]" },
+    });
+    expect(
+      edit.ok,
+      `a stale copy refused a body edit of a row it holds: ${JSON.stringify(edit)}`,
+    ).toBe(true);
+    const queued = await h.device.queue();
+    expect(
+      queued.ok && queued.value.map((write) => write.kind),
+      "the body edit queued an edge write while the copy was not whole",
+    ).toEqual(["update_item"]);
+
+    expect((await h.device.hydrate(["core.note"], "library")).ok).toBe(true);
+    const answered = wireItem({
+      id: "host",
+      version: 2,
+      properties: { title: "host", body: "see [[other]]" },
+    });
+    scriptWrites(h.server, {
+      update: [answers.updated(answered)],
+      read: [answers.updated(answered)],
+    });
+    expect((await h.device.drain()).ok).toBe(true);
+    // The edit's answer queues the link's edge, which the next drain sends.
+    const made: Record<string, WireEdgeOptions> = {};
+    scriptWrites(h.server, {
+      edges: [
+        (request) => {
+          const sent = JSON.parse(request.body) as WireEdgeOptions;
+          made[sent.id] = sent;
+          return writeAnswers.edge(sent);
+        },
+      ],
+    });
+    h.server.copyAnswer("GET", /^\/edges\/[^/]+$/, (request) => ({
+      kind: "json",
+      status: 200,
+      body: {
+        edge: wireEdge(made[request.pathname.slice("/edges/".length)]),
+      },
+    }));
+    const asked = h.server.requests.length;
+    expect((await h.device.drain()).ok).toBe(true);
+    expect(
+      h.server.requests
+        .slice(asked)
+        .filter(
+          (request) =>
+            request.method === "POST" && request.pathname === "/edges",
+        )
+        .map((request) => {
+          const sent = JSON.parse(request.body) as {
+            source_id: string;
+            target_id: string;
+          };
+          return [sent.source_id, sent.target_id];
+        }),
+      "the body's link was not read once the server answered the edit",
+    ).toEqual([["host", "other"]]);
   });
 });
 
