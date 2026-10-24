@@ -174,4 +174,6 @@ it("classifies every declared method and every production mutation caller", () =
       Object.entries(inventory).map(([path, entry]) => [path, entry.calls]),
     ),
   );
-}, 30_000);
+  // Type-checking the whole server takes seconds alone and over 30 on a CI
+  // shard that shares its runner with other test files.
+}, 90_000);
