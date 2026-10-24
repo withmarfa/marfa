@@ -2,7 +2,11 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { MarfaClient } from "../../client/api.js";
 import type { TestContext } from "../../client/types.js";
 import { createTestContext, trackItem, cleanup } from "../../utils/setup.js";
-import { createNote, generateId } from "../../generators/items.js";
+import {
+  createMessage,
+  createNote,
+  generateId,
+} from "../../generators/items.js";
 
 let client: MarfaClient;
 let ctx: TestContext;
@@ -31,11 +35,20 @@ describe("validation edge cases", () => {
     trackItem(ctx, r.data.item.id);
   });
 
-  it("rejects core.note with no properties with invalid_properties naming body", async () => {
+  it("accepts core.note with no properties, since it requires none", async () => {
+    const r = await client.createItem({
+      type: "core.note",
+      source: ctx.source,
+    });
+    expect(r.ok).toBe(true);
+    trackItem(ctx, r.data.item.id);
+  });
+
+  it("rejects core.entity with no properties with invalid_properties naming name", async () => {
     // A missing type-declared property is a properties-versus-schema failure,
     // the same code every other schema failure answers with.
     const r = await client.createItem({
-      type: "core.note",
+      type: "core.entity",
       source: ctx.source,
     });
     expect(r.ok).toBe(false);
@@ -43,7 +56,7 @@ describe("validation edge cases", () => {
     expect(r.error?.error.code).toBe("invalid_properties");
     const errors = r.error?.error.details?.errors as
       Array<{ field: string }> | undefined;
-    expect(errors?.map((e) => e.field)).toContain("body");
+    expect(errors?.map((e) => e.field)).toContain("name");
   });
 
   it("accepts item with empty tags array", async () => {
@@ -767,9 +780,9 @@ describe("type identifier validation", () => {
 
   it("refuses a null on a field the type requires under a merge", async () => {
     const created = await client.createItem(
-      createNote({
+      createMessage({
         source: ctx.source,
-        properties: { body: "required", title: "kept" },
+        properties: { from: "required", body: "kept" },
       }),
     );
     expect(created.ok).toBe(true);
@@ -777,29 +790,29 @@ describe("type identifier validation", () => {
     const id = created.data.item.id;
 
     const refused = await client.updateItem(id, {
-      properties: { body: null },
+      properties: { from: null },
       version: created.data.item.version,
     });
     expect(refused.status).toBe(400);
     expect(refused.error?.error.code).toBe("invalid_properties");
     const errors = refused.error?.error.details?.errors as
       Array<{ field: string }> | undefined;
-    expect(errors?.map((e) => e.field)).toContain("body");
+    expect(errors?.map((e) => e.field)).toContain("from");
 
     const read = await client.getItem(id);
     expect(read.data.item.version).toBe(created.data.item.version);
     expect(read.data.item.properties).toEqual({
-      body: "required",
-      title: "kept",
+      from: "required",
+      body: "kept",
     });
 
     // The witness: the same merge naming a value for the field lands.
     const merged = await client.updateItem(id, {
-      properties: { body: "changed" },
+      properties: { from: "changed" },
       version: created.data.item.version,
     });
     expect(merged.ok, JSON.stringify(merged.error)).toBe(true);
-    expect(merged.data.item.properties.body).toBe("changed");
+    expect(merged.data.item.properties.from).toBe("changed");
   });
 
   it("leaves out a create's null on a declared optional field, and keeps one on an undeclared property", async () => {

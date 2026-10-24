@@ -27,6 +27,7 @@ import {
 } from "../../utils/setup.js";
 import {
   createBookmark,
+  createMessage,
   createNote,
   createTask,
   generateId,
@@ -134,10 +135,10 @@ describe("bulk", () => {
   it("takes properties_mode on an entry as PATCH takes it, stale versions included", async () => {
     const seed = async (sourceId: string): Promise<string> => {
       const created = await client.createItem(
-        createNote({
+        createMessage({
           source: ctx.source,
           source_id: sourceId,
-          properties: { title: "Whole", body: "Original", notes: "Set" },
+          properties: { from: "Original", body: "Whole", to: ["Set"] },
         }),
       );
       expect(created.ok).toBe(true);
@@ -151,7 +152,7 @@ describe("bulk", () => {
     ) => ({
       items: [
         {
-          type: "core.note",
+          type: "core.message",
           source: ctx.source,
           source_id: sourceId,
           properties,
@@ -165,13 +166,13 @@ describe("bulk", () => {
     const merged = `bulk-mode-merge-${ctx.runId}`;
     const mergedId = await seed(merged);
     const merge = await client.bulkItems(
-      entry(merged, { body: "Original" }, {}),
+      entry(merged, { from: "Original" }, {}),
     );
     expect(merge.data.results[0]!.outcome).toBe("updated");
     expect((await client.getItem(mergedId)).data.item.properties).toEqual({
-      title: "Whole",
-      body: "Original",
-      notes: "Set",
+      body: "Whole",
+      from: "Original",
+      to: ["Set"],
     });
 
     // At the current version, `replace` takes the entry's properties whole.
@@ -180,7 +181,7 @@ describe("bulk", () => {
     const replaced = await client.bulkItems(
       entry(
         current,
-        { body: "Original" },
+        { from: "Original" },
         { properties_mode: "replace", version: 1 },
       ),
     );
@@ -189,14 +190,14 @@ describe("bulk", () => {
       JSON.stringify(replaced.data),
     ).toBe("updated");
     expect((await client.getItem(currentId)).data.item.properties).toEqual({
-      body: "Original",
+      from: "Original",
     });
 
     // And refuses one that drops a field the type requires.
     const dropped = await client.bulkItems(
       entry(
         current,
-        { title: "No body" },
+        { body: "No sender" },
         { properties_mode: "replace", version: 2 },
       ),
     );
@@ -207,14 +208,14 @@ describe("bulk", () => {
     const untouched = `bulk-mode-untouched-${ctx.runId}`;
     const untouchedId = await seed(untouched);
     const moved = await client.updateItem(untouchedId, {
-      properties: { title: "Server title" },
+      properties: { body: "Server body" },
       version: 1,
     });
     expect(moved.ok).toBe(true);
     const cleared = await client.bulkItems(
       entry(
         untouched,
-        { title: "Whole", body: "Original" },
+        { body: "Whole", from: "Original" },
         { properties_mode: "replace", version: 1 },
       ),
     );
@@ -222,8 +223,8 @@ describe("bulk", () => {
       "updated",
     );
     expect((await client.getItem(untouchedId)).data.item.properties).toEqual({
-      title: "Server title",
-      body: "Original",
+      body: "Server body",
+      from: "Original",
     });
 
     // And collides on one the other writer changed since, a field the type
@@ -231,20 +232,20 @@ describe("bulk", () => {
     const changed = `bulk-mode-changed-${ctx.runId}`;
     const changedId = await seed(changed);
     const other = await client.updateItem(changedId, {
-      properties: { body: "Changed since" },
+      properties: { from: "Changed since" },
       version: 1,
     });
     expect(other.ok).toBe(true);
     const collided = await client.bulkItems(
       entry(
         changed,
-        { title: "Whole" },
+        { body: "Whole" },
         { properties_mode: "replace", version: 1 },
       ),
     );
     expect(collided.data.results[0]!.outcome).toBe("errored");
     expect(collided.data.results[0]!.error?.code).toBe("version_conflict");
-    expect((await client.getItem(changedId)).data.item.properties.body).toBe(
+    expect((await client.getItem(changedId)).data.item.properties.from).toBe(
       "Changed since",
     );
   });

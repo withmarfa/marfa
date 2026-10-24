@@ -15,7 +15,7 @@ import {
   trackItem,
   cleanup,
 } from "../../utils/setup.js";
-import { createNote } from "../../generators/items.js";
+import { createMessage, createNote } from "../../generators/items.js";
 import { expectMatchesSchema } from "../../utils/openapi.js";
 
 let client: MarfaClient;
@@ -409,27 +409,27 @@ describe("item versioning", () => {
 
   it("takes a replace at the current version as the item's whole properties, and refuses one that drops a required field", async () => {
     const r = await client.createItem(
-      createNote({
+      createMessage({
         source: ctx.source,
-        properties: { title: "Whole", body: "Original", notes: "Set" },
+        properties: { from: "Original", body: "Whole", to: ["Set"] },
       }),
     );
     expect(r.ok).toBe(true);
     trackItem(ctx, r.data.item.id);
 
     const replaced = await client.updateItem(r.data.item.id, {
-      properties: { body: "Original" },
+      properties: { from: "Original" },
       properties_mode: "replace",
       version: 1,
     });
     expect(replaced.status, JSON.stringify(replaced.error)).toBe(200);
-    expect(replaced.data.item.properties).toEqual({ body: "Original" });
+    expect(replaced.data.item.properties).toEqual({ from: "Original" });
     expect(replaced.data.item.version).toBe(2);
 
     // The witness for the refusal: the same shape landed above with the
     // required field in it.
     const dropped = await client.updateItem(r.data.item.id, {
-      properties: { title: "No body" },
+      properties: { body: "No sender" },
       properties_mode: "replace",
       version: 2,
     });
@@ -439,7 +439,7 @@ describe("item versioning", () => {
     const fetched = await client.getItem(r.data.item.id);
     expect(fetched.ok).toBe(true);
     expect(fetched.data.item.version).toBe(2);
-    expect(fetched.data.item.properties).toEqual({ body: "Original" });
+    expect(fetched.data.item.properties).toEqual({ from: "Original" });
   });
 
   it("moves the type on a stale write as on a current one", async () => {
@@ -485,14 +485,14 @@ describe("item versioning", () => {
   });
 
   it("refuses a stale move whose merged properties fall short of the type entered", async () => {
-    // A bookmark requires nothing and may carry a body; a note requires
-    // one. The body this write carries echoes the ancestor's value, so it
+    // A bookmark requires nothing and may carry a title; a task requires
+    // one. The title this write carries echoes the ancestor's value, so it
     // is not applied, and the other writer removed it since: the row a
-    // note would be left as has no body.
+    // task would be left as has no title.
     const r = await client.createItem({
       type: "core.bookmark",
       source: ctx.source,
-      properties: { url: "https://example.com/short", body: "Carried" },
+      properties: { url: "https://example.com/short", title: "Carried" },
     });
     expect(r.ok).toBe(true);
     trackItem(ctx, r.data.item.id);
@@ -503,12 +503,12 @@ describe("item versioning", () => {
       version: 1,
     });
     expect(removed.ok).toBe(true);
-    expect(removed.data.item.properties).not.toHaveProperty("body");
+    expect(removed.data.item.properties).not.toHaveProperty("title");
 
     const refused = await client.updateItem(r.data.item.id, {
-      type: "core.note",
+      type: "core.task",
       retype: true,
-      properties: { body: "Carried" },
+      properties: { title: "Carried" },
       version: 1,
     });
     expect(refused.status).toBe(400);
@@ -524,22 +524,22 @@ describe("item versioning", () => {
     const r = await client.createItem({
       type: "core.bookmark",
       source: ctx.source,
-      properties: { url: "https://example.com/alone", body: "Kept" },
+      properties: { url: "https://example.com/alone", title: "Kept" },
     });
     expect(r.ok).toBe(true);
     trackItem(ctx, r.data.item.id);
 
     const moved = await client.updateItem(r.data.item.id, {
-      type: "core.note",
+      type: "core.task",
       retype: true,
       version: 1,
     });
     expect(moved.status, JSON.stringify(moved.error)).toBe(200);
-    expect(moved.data.item.type).toBe("core.note");
+    expect(moved.data.item.type).toBe("core.task");
     expect(moved.data.item.version).toBe(2);
-    expect(moved.data.item.properties.body).toBe("Kept");
+    expect(moved.data.item.properties.title).toBe("Kept");
 
-    // The witness: the same move on a row without the body the note
+    // The witness: the same move on a row without the title the task
     // requires is refused, and nothing moves.
     const bare = await client.createItem({
       type: "core.bookmark",
@@ -549,7 +549,7 @@ describe("item versioning", () => {
     expect(bare.ok).toBe(true);
     trackItem(ctx, bare.data.item.id);
     const refused = await client.updateItem(bare.data.item.id, {
-      type: "core.note",
+      type: "core.task",
       retype: true,
       version: 1,
     });
@@ -1583,23 +1583,23 @@ describe("item versioning", () => {
 
   it("names the field a merged result lacks when a stale write leaves the row short of its type", async () => {
     const r = await client.createItem(
-      createNote({
+      createMessage({
         source: ctx.source,
-        properties: { title: "Short", body: "Original" },
+        properties: { body: "Short", from: "Original" },
       }),
     );
     expect(r.ok).toBe(true);
     trackItem(ctx, r.data.item.id);
     const advanced = await client.updateItem(r.data.item.id, {
-      properties: { title: "Server title" },
+      properties: { body: "Server body" },
       version: 1,
     });
     expect(advanced.ok).toBe(true);
 
-    // Nobody changed the body since, so the replace's clear of it lands and
-    // the merged row has no body, which a note requires.
+    // Nobody changed the sender since, so the replace's clear of it lands and
+    // the merged row has no sender, which a message requires.
     const refused = await client.updateItem(r.data.item.id, {
-      properties: { title: "Short" },
+      properties: { body: "Short" },
       properties_mode: "replace",
       version: 1,
     });
@@ -1607,16 +1607,16 @@ describe("item versioning", () => {
     expect(refused.error?.error.code).toBe("invalid_properties");
     const errors = refused.error?.error.details?.errors as
       Array<{ field: string }> | undefined;
-    expect(errors?.map((e) => e.field)).toContain("body");
+    expect(errors?.map((e) => e.field)).toContain("from");
     const after = await client.getItem(r.data.item.id);
     expect(after.data.item.version).toBe(2);
-    expect(after.data.item.properties.body).toBe("Original");
+    expect(after.data.item.properties.from).toBe("Original");
 
     // And on a stale move, the field the type entered requires.
     const bookmark = await client.createItem({
       type: "core.bookmark",
       source: ctx.source,
-      properties: { url: "https://example.com/short", body: "Carried" },
+      properties: { url: "https://example.com/short", title: "Carried" },
     });
     expect(bookmark.ok).toBe(true);
     trackItem(ctx, bookmark.data.item.id);
@@ -1630,16 +1630,16 @@ describe("item versioning", () => {
       ).ok,
     ).toBe(true);
     const move = await client.updateItem(bookmark.data.item.id, {
-      type: "core.note",
+      type: "core.task",
       retype: true,
-      properties: { body: "Carried" },
+      properties: { title: "Carried" },
       version: 1,
     });
     expect(move.status).toBe(400);
     expect(move.error?.error.code).toBe("invalid_properties");
     const moveErrors = move.error?.error.details?.errors as
       Array<{ field: string }> | undefined;
-    expect(moveErrors?.map((e) => e.field)).toContain("body");
+    expect(moveErrors?.map((e) => e.field)).toContain("title");
   });
 
   it("writes a version for an update whose properties are empty or equal to the row's", async () => {

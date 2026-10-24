@@ -423,35 +423,35 @@ describe("strict_mode lever", () => {
     // parse answers two questions at once — it also refuses a property
     // set missing a field the type requires — and the doors that hand it
     // a complete set never meet the second. A patch is not a complete
-    // set: `core.note` requires `body`, so a patch setting only `title`
+    // set: `core.message` requires `from`, so a patch setting only `body`
     // reads as a missing required field to a strict parse, and the update
     // doors would refuse an ordinary request under a message naming a
     // cause that is not the cause. The store still asks for the required
     // fields, against the merged row, and answers in its own words.
     await setConfig({
-      enforcement: { strict_mode: { types: ["core.note"] } },
+      enforcement: { strict_mode: { types: ["core.message"] } },
     });
     const made = await client.createItem({
-      type: "core.note",
-      properties: { body: "the body the type requires", title: "first" },
+      type: "core.message",
+      properties: { from: "the sender the type requires", body: "first" },
     });
     expect(made.ok, JSON.stringify(made.error)).toBe(true);
     trackItem(ctx, made.data.item.id);
 
     const patched = await client.updateItem(made.data.item.id, {
       version: made.data.item.version,
-      properties: { title: "second" },
+      properties: { body: "second" },
     });
     expect(
       patched.ok,
       `a patch naming only declared properties was refused: ${JSON.stringify(patched.error)}`,
     ).toBe(true);
     const read = await client.getItem(made.data.item.id);
-    expect(read.data.item.properties.title).toBe("second");
+    expect(read.data.item.properties.body).toBe("second");
     expect(
-      read.data.item.properties.body,
+      read.data.item.properties.from,
       "the patch was taken but the store did not keep the property it did not name",
-    ).toBe("the body the type requires");
+    ).toBe("the sender the type requires");
 
     // The same shape through the bulk door, which reaches this branch by
     // resolving a row rather than by naming one.
@@ -459,8 +459,8 @@ describe("strict_mode lever", () => {
       items: [
         {
           id: made.data.item.id,
-          type: "core.note",
-          properties: { title: "third" },
+          type: "core.message",
+          properties: { body: "third" },
         },
       ],
       atomic: false,
