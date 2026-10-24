@@ -66,6 +66,32 @@ async function nextPass(
   await advanceWatch(own, elapsed);
 }
 
+/**
+ * A tick on a folder the last pass left at rest: no pass runs, so the watch
+ * waits at its next turn instead of at a pass's end.
+ */
+async function restedTurn(
+  own: BindingFolderHarness,
+  elapsed: number,
+): Promise<void> {
+  await own.device.hooks.hold("folder-watch-turn");
+  await own.device.hooks.release("folder-pass-ended");
+  await untilHeld(own.device, "folder-watch-turn");
+  await own.device.hooks.release("folder-watch-turn");
+  await own.device.hooks.hold("folder-watch-turn");
+  await vi.waitFor(
+    async () => {
+      expect(
+        (await own.device.clock.waits()).some((wait) => wait.askedMs === 1_000),
+        "the folder has not armed its next receive",
+      ).toBe(true);
+    },
+    { timeout: 10_000, interval: 20 },
+  );
+  await own.device.clock.advance(elapsed);
+  await untilHeld(own.device, "folder-watch-turn");
+}
+
 async function startPasses(own: BindingFolderHarness): Promise<void> {
   await own.device.hooks.hold("folder-watch-turn");
   await own.device.hooks.hold("folder-pass-ended");
@@ -163,7 +189,9 @@ describe("placement retries on the folder clock", () => {
         first + 1,
       );
       if (failed) {
-        await nextPass(harness, 59_999);
+        // The failed read leaves the watch at rest, so the retry waits for
+        // the next full pass, which the contract's minute bounds from below.
+        await restedTurn(harness, 59_999);
         expect(
           reads(),
           "a failed key read was retried before the minute ended",

@@ -63,7 +63,7 @@ pub enum WatchEvent {
     /// A pass that did something, or whose standing conditions differ from
     /// the pass before it.
     Passed(Box<WatchPass>),
-    /// More than one pass a second has started, on average, for a minute,
+    /// More than one pass a second has started, on average, within a minute,
     /// which a folder at rest never needs: `passes` is how many started in
     /// that minute. Told at most once a minute, to a log; the bindings do not
     /// carry it.
@@ -990,24 +990,31 @@ fn event_passed_over(event: &notify::Event, root: &Path, lists: Option<&Lists>) 
 /// How often passes start, so a loop of them shows in a log.
 #[derive(Debug, Default)]
 struct PassRate {
-    since: Option<Instant>,
-    count: usize,
+    /// When the passes of the last minute started, oldest first.
+    recent: std::collections::VecDeque<Instant>,
 }
 
 impl PassRate {
     const WINDOW: Duration = Duration::from_secs(60);
 
-    /// Counts a pass starting at `now`. Returns the count when a minute has
-    /// passed and it exceeded one a second, then begins a new minute.
+    /// Counts a pass starting at `now`. Returns how many passes started in
+    /// the last minute when they exceed one a second, then forgets them so a
+    /// minute is told once.
     fn started(&mut self, now: Instant) -> Option<usize> {
-        let since = *self.since.get_or_insert(now);
-        self.count += 1;
-        if now.saturating_duration_since(since) < Self::WINDOW {
+        while self
+            .recent
+            .front()
+            .is_some_and(|at| now.saturating_duration_since(*at) >= Self::WINDOW)
+        {
+            self.recent.pop_front();
+        }
+        self.recent.push_back(now);
+        if self.recent.len() as u64 <= Self::WINDOW.as_secs() {
             return None;
         }
-        let count = std::mem::replace(&mut self.count, 0);
-        self.since = Some(now);
-        (count as u64 > Self::WINDOW.as_secs()).then_some(count)
+        let count = self.recent.len();
+        self.recent.clear();
+        Some(count)
     }
 }
 
@@ -1190,6 +1197,21 @@ mod tests {
     }
 
     #[test]
+    fn a_path_that_is_gone_is_reached_unless_both_lists_exclude_it() {
+        // None of these exist: a gone path may have been a directory or a
+        // file, so it is passed over only when no pass could have found it
+        // as either.
+        let (lists, root) = (record_lists(), Path::new("/folder"));
+        let reached = |relative: &str| !unreached(&lists, root, &root.join(relative));
+        for relative in ["_tmp/clone/file.rs", "README.md"] {
+            assert!(reached(relative), "{relative}");
+        }
+        for relative in ["Repos/marfa/gone.rs", "Sandbox/gone.txt"] {
+            assert!(!reached(relative), "{relative}");
+        }
+    }
+
+    #[test]
     fn an_ignored_folder_is_unreached_while_it_is_a_directory() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
@@ -1265,20 +1287,39 @@ mod tests {
         let start = Instant::now();
         let at = |seconds: f64| start + Duration::from_secs_f64(seconds);
         let mut rate = PassRate::default();
-        // A pass every half second for a minute, then the minute ends.
-        for step in 0..120 {
+        // A pass every half second: the sixty-first within a minute is told.
+        for step in 0..60 {
             assert_eq!(rate.started(at(step as f64 * 0.5)), None);
         }
-        assert_eq!(rate.started(at(60.0)), Some(121));
-        // A new minute, at one pass a second or less: nothing to report.
-        for second in 61..120 {
+        assert_eq!(rate.started(at(30.0)), Some(61));
+        // A pass a second or fewer never is, however long it goes on.
+        for second in 31..300 {
             assert_eq!(rate.started(at(second as f64)), None);
         }
-        assert_eq!(rate.started(at(121.0)), None);
         // A minute is told once however many passes follow.
-        for step in 0..10 {
-            assert_eq!(rate.started(at(122.0 + step as f64 * 0.01)), None);
+        for step in 0..60 {
+            assert_eq!(rate.started(at(400.0 + step as f64 * 0.01)), None);
         }
+        assert_eq!(rate.started(at(401.0)), Some(61));
+    }
+
+    #[test]
+    fn passes_that_stop_and_start_again_are_not_counted_over_more_than_a_minute() {
+        let start = Instant::now();
+        let at = |seconds: f64| start + Duration::from_secs_f64(seconds);
+        let mut rate = PassRate::default();
+        for step in 0..40 {
+            assert_eq!(rate.started(at(step as f64 * 0.1)), None);
+        }
+        // Nothing for ten minutes, then more: forty and thirty are not seventy.
+        for step in 0..30 {
+            assert_eq!(rate.started(at(600.0 + step as f64 * 0.1)), None);
+        }
+        // The witness: thirty-one more within the same minute are told.
+        for step in 30..60 {
+            rate.started(at(600.0 + step as f64 * 0.1));
+        }
+        assert_eq!(rate.started(at(606.0)), Some(61));
     }
 
     #[test]
