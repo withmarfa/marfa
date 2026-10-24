@@ -282,9 +282,10 @@ impl Folder {
             },
             crate::model::Sort::default(),
         )?;
-        // A row a partial copy has not been given yet is not a row the server
-        // deleted, so the pass waits for a whole copy.
-        if listed.completeness == crate::model::Completeness::Partial {
+        // A row a partial copy has not been given yet, or one a stale copy
+        // still holds, says nothing of what the server deleted, so the pass
+        // waits for a whole copy.
+        if listed.completeness != crate::model::Completeness::Complete {
             return Err(CoreError::HydrationIncomplete);
         }
         let items = listed.rows;

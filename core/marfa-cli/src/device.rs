@@ -47,6 +47,16 @@ pub enum DeviceCommand {
     /// key's reach, the slice or the catalog has changed since, the server's
     /// event log no longer holds the point it started from or ends before
     /// it, or the server refuses the page cursor it kept.
+    ///
+    /// A copy whose cursor the server's event log no longer holds is filled
+    /// again in place for the same slice, server and key: it keeps
+    /// answering, marked stale, and takes writes to the rows it holds and
+    /// new ones, which wait to be sent, until the hydration finishes and
+    /// removes the rows the server no longer lists. Any other hydration
+    /// empties the copy first. Until the copy is whole, a write to an edge is
+    /// refused `hydration_incomplete`, since a page still to arrive could
+    /// bring the server's edge in place of the one the write was made
+    /// against.
     Hydrate {
         /// Comma-separated type identifiers, such as core.note,core.file, or
         /// `*` alone for every type but `system.*`, hydrated in one pass
@@ -141,9 +151,12 @@ pub enum DeviceCommand {
     ///
     /// Without `--view`, while a hydration fills the copy or after one was
     /// interrupted, the search covers the rows that have arrived and says
-    /// it is partial: on standard error, and under --json as `completeness`,
-    /// `partial` or `complete`, beside `hits`. With `--view`, an incomplete
-    /// copy is refused.
+    /// it is partial. Once the server's event log no longer reaches the
+    /// copy, and until a hydration has filled it again, the search covers
+    /// the rows the copy holds and says it is stale. Each is said on
+    /// standard error, and under --json as `completeness`, `partial`,
+    /// `stale` or `complete`, beside `hits`. With `--view`, a copy that is
+    /// not whole is refused.
     Search {
         /// Words to look for, matched as the server matches them: all must
         /// match, the last as a prefix, and a query in double quotes is a
@@ -258,6 +271,13 @@ pub enum DeviceCommand {
     /// counted them, `items_expected`. Set the first against the second to
     /// show how far it has come; the item count also holds pinned rows and
     /// writes still waiting.
+    ///
+    /// The hydration is `never`, `in_progress`, `complete`, `stale` or
+    /// `expired`. A stale copy is one the server's event log no longer
+    /// reaches: it answers reads marked stale and takes writes, but not to
+    /// edges, until a hydration has filled it again in place, and stays
+    /// stale while that hydration runs. An expired copy refuses reads and writes until a
+    /// hydration, which empties it first.
     Status,
     /// The item types the copy holds, read from it alone, the ones an app
     /// declares for it, and the server's.
@@ -350,9 +370,11 @@ pub enum ItemsCommand {
     ///
     /// Without `--view`, while a hydration fills the copy or after one was
     /// interrupted, the list holds the rows that have arrived and says it
-    /// is partial: on standard error, and under --json as `completeness`,
-    /// `partial` or `complete`, beside `items`. With `--view`, an incomplete
-    /// copy is refused.
+    /// is partial. Once the server's event log no longer reaches the copy,
+    /// and until a hydration has filled it again, the list holds the rows
+    /// the copy holds and says it is stale. Each is said on standard error,
+    /// and under --json as `completeness`, `partial`, `stale` or `complete`,
+    /// beside `items`. With `--view`, a copy that is not whole is refused.
     List(ListArgs),
     /// One item by id, with its properties and tags.
     ///
@@ -862,6 +884,11 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
                 );
                 if report.resumed {
                     line.push_str("\nresumed the interrupted hydration from the page it had reached");
+                }
+                if report.in_place {
+                    line.push_str(
+                        "\nfilled the copy again over the rows it held, taking out the ones the server no longer has",
+                    );
                 }
                 if let Some(restart) = report.restarted {
                     line.push_str(&format!(

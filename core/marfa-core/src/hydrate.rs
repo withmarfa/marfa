@@ -27,12 +27,7 @@ pub(crate) fn hydrate(
     edge_types: &[String],
     stop: &AtomicBool,
 ) -> Result<HydrateReport> {
-    let previous = crate::reach::Context::capture_build(&*core.conn()?).ok();
     let result = hydrate_inner(core, http, types, tier, edge_types, stop);
-    let result = result.map_err(|error| match previous {
-        Some(context) => context.failed(core, error).unwrap_or_else(|error| error),
-        None => error,
-    });
     crate::catch_up::unless_stopped(result, stop)
 }
 
@@ -49,6 +44,7 @@ fn hydrate_inner(
     let mut restart = None;
     let mut pages = 0;
     loop {
+        let before = crate::reach::Before::capture(&*core.conn()?)?;
         match attempt(
             core,
             http,
@@ -58,7 +54,9 @@ fn hydrate_inner(
             restart,
             &mut pages,
             stop,
-        )? {
+        )
+        .map_err(|error| before.failed(core, error).unwrap_or_else(|error| error))?
+        {
             Attempt::Done(report) => return Ok(report),
             // Only an attempt that would resume asks to start again, and one
             // that starts again never resumes, so this goes round at most
@@ -189,6 +187,7 @@ fn attempt(
     // raised before then leaves it as it was.
     crate::catch_up::refuse_if_stopped(stop)?;
     let (mut instance, mut cursor, mut fence) = read_head(http, stop)?;
+    let mut ended = expire_if_built_elsewhere(core, &instance, &fence)?;
     let mut under_reach = http.for_reach(&fence);
     crate::catch_up::refuse_if_stopped(stop)?;
     let (mut catalog_rows, registered_types, unregistered_types, registered_any) =
@@ -197,24 +196,14 @@ fn attempt(
         // A registration changes what the instance's reach certifies, so
         // the head and the catalog read before it are of a reach that has gone.
         (instance, cursor, fence) = read_head(http, stop)?;
+        ended = ended.or(expire_if_built_elsewhere(core, &instance, &fence)?);
         under_reach = http.for_reach(&fence);
         catalog_rows = under_reach.catalog()?;
     }
     let plain = http;
     let http = &under_reach;
-    {
-        let mut conn = core.conn()?;
-        if store::hydrated(&conn)?
-            && (store::meta_get(&conn, crate::reach::FENCE)?.as_deref() != Some(&fence)
-                || store::meta_get(&conn, store::META_INSTANCE_ID)?.as_deref() != Some(&instance))
-        {
-            let tx = conn.transaction()?;
-            crate::reach::expire(&tx)?;
-            tx.commit()?;
-        }
-    }
     refuse_unheld(&catalog_rows, types, edge_types)?;
-    let start = match restart {
+    let start = match restart.or(ended) {
         Some(reason) => Start::Fresh(Some(reason)),
         None => resume_point(core, http, &instance, &fence, types, tier, edge_types, stop)?,
     };
@@ -255,6 +244,24 @@ fn attempt(
             crate::catch_up::refuse_if_stopped(stop)?;
             let mut conn = core.conn()?;
             let tx = conn.transaction()?;
+            // A copy whose cursor aged out is filled again over what it holds
+            // when the instance, the reach and the slice are those it was
+            // built under; anything else may hold rows the key no longer
+            // reads, so it is cleared first.
+            // A log that ends before the head the refill began from, or
+            // before the cursor the copy held when it went stale, is a server
+            // restored to an earlier point, whose rows the later versions held
+            // would refuse.
+            let in_place = restarted != Some(HydrateRestart::HeadPastLog)
+                && store::refill(&tx)?.is_some_and(|refill| {
+                    refill.instance == instance
+                        && refill.reach == fence
+                        && not_behind(&cursor, &refill.cursor)
+                })
+                && store::meta_get(&tx, store::META_SLICE_TYPES)?
+                    == Some(serde_json::to_string(types)?)
+                && store::meta_get(&tx, store::META_SLICE_TIER)?.as_deref() == Some(tier.as_str())
+                && store::whole_edge_types(&tx)? == edge_types;
             crate::reach::advance_generation(&tx)?;
             store::meta_set(&tx, store::META_HYDRATE_STATE, store::HYDRATE_IN_PROGRESS)?;
             store::attachments_start_growing(&tx)?;
@@ -270,7 +277,12 @@ fn attempt(
                 &serde_json::to_string(edge_types)?,
             )?;
             crate::body::rule::before_rebuild(&tx)?;
-            store::clear_slice(&tx)?;
+            if in_place {
+                store::start_refill(&tx)?;
+            } else {
+                store::meta_delete(&tx, store::META_REFILL)?;
+                store::clear_slice(&tx)?;
+            }
             store::replace_catalog(&tx, &catalog_rows)?;
             // A copy filling up answers reads, so it shows what is waiting
             // from the start, as each row that arrives does.
@@ -300,7 +312,13 @@ fn attempt(
             first
         }
     };
-    let context = crate::reach::Context::capture_build(&*core.conn()?)?;
+    let (context, in_place) = {
+        let conn = core.conn()?;
+        (
+            crate::reach::Context::capture_build(&conn)?,
+            store::refilling(&conn)?,
+        )
+    };
     let result = (|| {
         let catalog = {
             let conn = core.conn()?;
@@ -534,6 +552,9 @@ fn attempt(
             store::meta_delete(&tx, store::META_ITEMS_EXPECTED)?;
             store::meta_delete(&tx, store::META_ITEMS_LISTED)?;
             store::meta_delete(&tx, store::META_HYDRATE_RESUME)?;
+            if in_place {
+                store::sweep_refill(&tx)?;
+            }
             store::attachments_whole(&tx)?;
             let counts = (store::count(&tx, "items")?, store::count(&tx, "edges")?);
             tx.commit()?;
@@ -550,12 +571,62 @@ fn attempt(
             pages_total,
             resumed,
             restarted,
+            in_place,
             cursor,
             registered_types: registered_types.clone(),
             unregistered_types: unregistered_types.clone(),
         }))
     })();
     result.map_err(|error| context.failed(core, error).unwrap_or_else(|error| error))
+}
+
+/// Whether the head `head` is at or past the cursor `held`: a log that ends
+/// before the cursor a copy held is a server restored to an earlier point.
+fn not_behind(head: &str, held: &str) -> bool {
+    matches!(
+        (crate::reach::cursor(head), crate::reach::cursor(held)),
+        (Some(head), Some(held)) if head >= held
+    )
+}
+
+/// A whole or stale copy built under another instance or reach than the head
+/// names may hold rows the key no longer reads, so it stops answering at once,
+/// before a later step of the hydration can fail and leave it answering. The
+/// expiry takes the resume point too, so it answers why an interrupted refill
+/// it ended starts again.
+fn expire_if_built_elsewhere(
+    core: &Core,
+    instance: &str,
+    fence: &str,
+) -> Result<Option<HydrateRestart>> {
+    let mut conn = core.conn()?;
+    let elsewhere = if store::hydrated(&conn)? {
+        if store::meta_get(&conn, store::META_INSTANCE_ID)?.as_deref() != Some(instance) {
+            Some(HydrateRestart::InstanceChanged)
+        } else if store::meta_get(&conn, crate::reach::FENCE)?.as_deref() != Some(fence) {
+            Some(HydrateRestart::ReachChanged)
+        } else {
+            None
+        }
+    } else {
+        store::refill(&conn)?.and_then(|built| {
+            if built.instance != instance {
+                Some(HydrateRestart::InstanceChanged)
+            } else if built.reach != fence {
+                Some(HydrateRestart::ReachChanged)
+            } else {
+                None
+            }
+        })
+    };
+    let Some(reason) = elsewhere else {
+        return Ok(None);
+    };
+    let interrupted = store::meta_get(&conn, store::META_HYDRATE_RESUME)?.is_some();
+    let tx = conn.transaction()?;
+    crate::reach::expire(&tx)?;
+    tx.commit()?;
+    Ok(interrupted.then_some(reason))
 }
 
 /// Where an interrupted hydration of this slice reached, if it can carry on

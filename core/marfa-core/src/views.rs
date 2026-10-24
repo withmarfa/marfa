@@ -993,6 +993,34 @@ mod tests {
             core.list_views().unwrap().completeness,
             crate::Completeness::Partial
         );
+
+        // A copy whose cursor aged out answers its rows as stale, and a view
+        // over them is refused all the same.
+        {
+            let conn = core.conn().unwrap();
+            conn.execute(
+                "DELETE FROM meta WHERE key IN (?1, ?2)",
+                [store::META_HYDRATE_STATE, store::META_EVENT_CURSOR],
+            )
+            .unwrap();
+            store::meta_set(&conn, store::META_REFILL, "{}").unwrap();
+        }
+        assert_eq!(
+            core.list_views().unwrap().completeness,
+            crate::Completeness::Stale
+        );
+        assert!(matches!(
+            core.list_in_view("view", None, None, None),
+            Err(crate::CoreError::HydrationIncomplete)
+        ));
+        assert!(matches!(
+            core.view_groups("view", "list", None),
+            Err(crate::CoreError::HydrationIncomplete)
+        ));
+        assert!(matches!(
+            core.search_in_view("pasta", "view", 10),
+            Err(crate::CoreError::HydrationIncomplete)
+        ));
     }
     #[test]
     fn tags_sort_by_the_first_lexical_tag_with_untagged_items_last() {

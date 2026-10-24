@@ -698,11 +698,11 @@ describe("the attachments of a copy", () => {
     expect(await budget(device, "0")).toBe(40);
     expect(readFileSync(heldAt(device, photo))).toEqual(photo);
 
-    // An expired copy still holds its rows, so its attachments stay.
+    // A stale copy still holds its rows, so its attachments stay.
     aged = true;
     expect((await device.catchUp()).ok).toBe(false);
-    const expired = await device.status();
-    expect(expired.ok && expired.value.hydration).toBe("expired");
+    const stale = await device.status();
+    expect(stale.ok && stale.value.hydration).toBe("stale");
     expect(await attachmentsOf(device)).toMatchObject({ held: 1 });
     expect(await budget(device, "0")).toBe(0);
     expect(readFileSync(heldAt(device, photo))).toEqual(photo);

@@ -2127,6 +2127,48 @@ describe("catch-up keeps the copy to its slice", () => {
     ).not.toContain("leaves");
   });
 
+  it("keeps an edge a queued write names when its source leaves the slice", async () => {
+    harness = await startHarness("eviction-queued-edge");
+    const { server, device } = harness;
+    scriptHydration(server, {
+      head: "10",
+      rows: {
+        "core.note": [{ item: { id: "stays" } }, { item: { id: "leaves" } }],
+      },
+    });
+    server.copyAnswer(
+      "GET",
+      "/events",
+      copyReplay("11", [
+        copyItemEvent(
+          "11",
+          "item.updated",
+          wireItem({ id: "leaves", tier: "feed", version: 2 }),
+        ),
+      ]),
+    );
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    const linked = await device.createEdge({
+      source: "leaves",
+      target: "stays",
+      type: "core.related",
+    });
+    expect(linked.ok, JSON.stringify(linked)).toBe(true);
+    const queued = await device.queue();
+
+    expect((await device.catchUp()).ok).toBe(true);
+    // The witness: the row the edge leaves from went.
+    const held = await device.list();
+    expect(held.ok && held.value.map((item) => item.id)).toEqual(["stays"]);
+    const edges = await device.edgesTo("stays");
+    expect(edges.ok, JSON.stringify(edges)).toBe(true);
+    expect(
+      edges.ok && edges.value.map((edge) => edge.source_id),
+      "the row that left took an edge the person is still waiting to send",
+    ).toEqual(["leaves"]);
+    expect(await device.queue()).toEqual(queued);
+  });
+
   describe("a slice of both tiers", () => {
     const rows = {
       "core.note": [
@@ -3301,10 +3343,11 @@ describe("catch-up keeps the copy to its slice", () => {
     expect((await device.pin("settings")).ok).toBe(true);
     expect((await device.catchUp()).ok).toBe(false);
     // The witness: the cursor aged out with the pin in place.
-    const expired = await device.status();
-    expect(
-      expired.ok && [expired.value.hydration, expired.value.pinned],
-    ).toEqual(["expired", ["settings"]]);
+    const stale = await device.status();
+    expect(stale.ok && [stale.value.hydration, stale.value.pinned]).toEqual([
+      "stale",
+      ["settings"],
+    ]);
 
     const again = await device.hydrate(["core.note"], "library");
     expect(again.ok, JSON.stringify(again)).toBe(true);
@@ -4140,7 +4183,7 @@ describe("a cursor the log no longer holds", () => {
       "900",
     ]);
   });
-  it("refuses reads after the cursor ages out, until a hydration", async () => {
+  it("answers reads marked stale after the cursor ages out, until a hydration fills it in place", async () => {
     harness = await startHarness("aged-out-reads");
     const { server, device } = harness;
     scriptHydration(server, {
@@ -4172,18 +4215,18 @@ describe("a cursor the log no longer holds", () => {
 
     expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
 
-    // The control, and the reason this case is not the sibling above: the
-    // copy answers before the cursor ages out. What follows is the aging,
-    // not a device that was refusing all along.
-    const before = await device.list();
+    // The control: the copy answers whole before the cursor ages out, so the
+    // mark below is the aging, not a copy that was never whole.
+    const before = await device.listAnswer();
     expect(
       before.ok,
-      `a hydrated copy would not answer a listing at all, so the refusal below says nothing about the cursor: ${JSON.stringify(before)}`,
+      `a hydrated copy would not answer a listing at all, so the mark below says nothing about the cursor: ${JSON.stringify(before)}`,
     ).toBe(true);
     expect(
-      before.ok ? before.value.map((item) => item.id) : [],
-      "the hydration landed no rows, so the refusal below is about an empty copy rather than an aged-out one",
+      before.ok ? before.value.items.map((item) => item.id) : [],
+      "the hydration landed no rows, so the reads below are about an empty copy rather than an aged-out one",
     ).toContain("first");
+    expect(before.ok && before.value.completeness).toBe("complete");
 
     const edit = await device.update("first", {
       version: 1,
@@ -4206,28 +4249,31 @@ describe("a cursor the log no longer holds", () => {
     const queuedExpired = await device.queue();
     expect(queuedExpired).toEqual(queuedBefore);
 
-    // The copy is complete as of the moment it stopped, and it refuses
-    // anyway: it can no longer be kept current, and a copy that has quietly
-    // stopped tracking is worse than one that says it cannot answer.
-    const after = await device.list();
+    // The copy still holds what it held, so it answers, and says the answer
+    // may be out of date: a person keeps their data in reach while the copy
+    // refills, and an app can tell them what they see may have changed.
+    const after = await device.listAnswer();
     expect(
       after.ok,
-      "a copy whose cursor has aged out still answers reads, so it goes on serving a snapshot that has silently stopped tracking the server",
-    ).toBe(false);
-    if (!after.ok) {
+      `a copy whose cursor aged out refused a listing, so the person loses their data until a hydration finishes: ${JSON.stringify(after)}`,
+    ).toBe(true);
+    if (after.ok) {
       expect(
-        after.refusal.code,
-        `the refusal did not say a hydration is owed: ${after.refusal.raw}`,
-      ).toBe("hydration_incomplete");
+        after.value.completeness,
+        "an aged-out copy answered as complete, so a caller reads rows that have stopped tracking the server as current",
+      ).toBe("stale");
+      expect(after.value.items.map((item) => item.id)).toEqual(["first"]);
     }
+    const found = await device.searchAnswer("queued");
+    expect(found.ok, JSON.stringify(found)).toBe(true);
+    expect(found.ok && found.value.completeness).toBe("stale");
 
-    // What the report says about a store in this state. `expired` and not
+    // What the report says about a store in this state. `stale` and not
     // `never`, which is a copy that holds nothing, nor `complete`, which is
-    // a copy that can still be kept current: this one holds its slice and
-    // its rows and can no longer follow the server. The advice a caller
-    // acts on is the same either way — hydrate — but `never` would have
-    // said the copy is empty, and a caller deciding whether to keep
-    // answering from it reads that and is wrong.
+    // a copy that can still be kept current, nor `expired`, which is a copy
+    // whose reads are refused: this one holds its slice and its rows,
+    // answers from them, and can no longer follow the server. A caller
+    // deciding whether to keep answering from it reads the word.
     const reported = await device.status();
     expect(
       reported.ok,
@@ -4236,36 +4282,42 @@ describe("a cursor the log no longer holds", () => {
     if (reported.ok) {
       expect(
         reported.value.hydration,
-        "an aged-out store did not report itself as expired, so a caller weighing whether the copy in hand is worth anything is told the wrong thing about it",
-      ).toBe("expired");
-      // The witness for the word. `expired` is only worth having on a
+        "an aged-out store did not report itself as stale, so a caller weighing whether the copy in hand is worth anything is told the wrong thing about it",
+      ).toBe("stale");
+      // The witness for the word. `stale` is only worth having on a
       // store that has something in it: with the slice and the rows gone,
-      // the two words would describe the same store and either would do.
+      // it would describe an empty store and promise rows that are not there.
       // The rows, not only the declaration — the declaration survives a
       // store with nothing in it, and what the word promises a caller is
       // that the copy in hand is still worth something.
       expect(
         reported.value.slice_types,
-        "the report says the slice is empty as well, so `expired` is a guess rather than a reading of what the store holds",
+        "the report says the slice is empty as well, so `stale` is a guess rather than a reading of what the store holds",
       ).toContain("core.note");
       expect(
         reported.value.items,
-        "the aging took the rows with it, so `expired` describes an empty store and promises a caller a copy that is not there",
+        "the aging took the rows with it, so `stale` describes an empty store and promises a caller a copy that is not there",
       ).toBe(1);
       expect(
         reported.value.event_cursor ?? null,
-        "the store still holds a cursor, so `expired` is not about the aging at all",
+        "the store still holds a cursor, so `stale` is not about the aging at all",
       ).toBeNull();
     }
 
-    // And a hydration clears it, which is what makes the refusal a state to
-    // leave rather than a store to discard.
-    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
-    const recovered = await device.list();
+    // And a hydration fills the same copy again rather than clearing it
+    // first, so the person's rows stay in reach the whole time.
+    const refilled = await device.hydrate(["core.note"], "library");
+    expect(refilled.ok, JSON.stringify(refilled)).toBe(true);
+    expect(
+      refilled.ok && refilled.value.in_place,
+      "the hydration after an aged-out cursor cleared the copy first, so the person's rows vanish until it ends",
+    ).toBe(true);
+    const recovered = await device.listAnswer();
     expect(
       recovered.ok,
-      `a hydration did not clear the refusal, so an aged-out cursor bricks the store: ${JSON.stringify(recovered)}`,
+      `a hydration did not end the stale state: ${JSON.stringify(recovered)}`,
     ).toBe(true);
+    expect(recovered.ok && recovered.value.completeness).toBe("complete");
     expect(recoveryHeadReads).toBe(1);
     expect(lastEventIds(harness)).toEqual([
       "(none)",

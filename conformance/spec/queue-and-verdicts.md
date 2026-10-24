@@ -1570,7 +1570,7 @@ Where the row under the id a device minted for a create refused onto a row its n
 
 When a copy is hydrated again, a device MUST keep every queued write, with its id and idempotency key.
 
-**Reason:** a copy that expires, whether its cursor aged out, its server was restored behind it or another instance answers at its origin, is cleared and pulled again (`device/expire-aged-cursor`, `device/expire-log-behind` and `device/instance-marker`), and a queue cleared with it would drop writes a caller was told were queued.
+**Reason:** a copy that expires, whether its cursor aged out, its server was restored behind it or another instance answers at its origin, is pulled again, cleared first unless the copy is filled in place (`device/expire-aged-cursor`, `device/expire-log-behind`, `device/instance-marker` and `device/refill-in-place`), and a queue cleared with it would drop writes a caller was told were queued.
 
 **Tests:** `device/queue.test.ts › keeps the queue through a re-hydration`, `device/catch-up.test.ts › hydrates again when the server's log ends behind its cursor, keeping the queue`.
 

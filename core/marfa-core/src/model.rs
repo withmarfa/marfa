@@ -392,6 +392,11 @@ pub struct HydrateReport {
     /// nothing to resume.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub restarted: Option<HydrateRestart>,
+    /// Whether the copy was filled again over the rows it held, which it
+    /// answered marked stale meanwhile, rather than cleared first: so it is
+    /// filled when the event log let its cursor go and the instance, the reach
+    /// and the slice are those it was built under.
+    pub in_place: bool,
     pub cursor: String,
     /// Types the app declared that the instance did not hold and now does.
     pub registered_types: Vec<String>,
@@ -506,22 +511,32 @@ pub enum Hydration {
     InProgress,
     Complete,
     /// A catch-up or a held stream learned that the server's log no longer
-    /// continues from the kept cursor, or any call that reads the root (a
-    /// catch-up, a held stream, a drain, a pin or a folder's settings edit)
-    /// found another instance at the origin. Set only on that answer: a store
-    /// whose cursor aged out and has not asked since still reports
-    /// `Complete`. Local reads are refused, where `Never` answers them.
+    /// continues from the kept cursor in a way the copy cannot be filled
+    /// again over (`Stale`), or any call that reads the root (a catch-up, a
+    /// held stream, a drain, a pin or a folder's settings edit) found another
+    /// instance at the origin. Set only on that answer. Local reads and
+    /// writes are refused, where `Never` answers them.
     Expired,
+    /// A catch-up or a held stream learned that the event log let the kept
+    /// cursor go. Set only on that answer: a store whose cursor aged out and
+    /// has not asked since still reports `Complete`. Local reads answer what
+    /// the copy holds marked `stale`, and writes but edge writes are queued,
+    /// from then until a hydration has filled it again in place, through that
+    /// hydration and an interrupted one.
+    Stale,
 }
 
-/// Whether a local list or search was read from a whole copy, or from one a
+/// Whether a local list or search was read from a whole copy; from one a
 /// hydration has started and not completed, which holds only the rows that
-/// have arrived.
+/// have arrived; or from one whose cursor the event log let go, which holds
+/// the rows it held then, some since changed or gone on the server, until a
+/// hydration has filled it again in place.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Completeness {
     Complete,
     Partial,
+    Stale,
 }
 
 /// The rows a local list or search answers, and whether the copy they were
@@ -548,6 +563,7 @@ impl Hydration {
             Hydration::InProgress => "in_progress",
             Hydration::Complete => "complete",
             Hydration::Expired => "expired",
+            Hydration::Stale => "stale",
         }
     }
 }

@@ -35,6 +35,12 @@ pub const META_ITEMS_LISTED: &str = "items_listed";
 /// cursor it sends next and the pages it has read. Set with each page, so an
 /// interrupted hydration carries on from the last page it committed.
 pub const META_HYDRATE_RESUME: &str = "hydrate_resume";
+/// Present while the copy is to be filled again in place: from the moment the
+/// event log let its cursor go, under the instance and reach it was built
+/// under (`Refill`), until a hydration has walked the slice again, replayed
+/// the log and taken out what the walk did not bring. Any other expiry, and a
+/// hydration that clears the copy, removes it.
+pub const META_REFILL: &str = "refill";
 /// Absent until a catalog is first held, which is how a copy that has never
 /// held one is told from an instance with no types.
 pub const META_CATALOG_VERSION: &str = "catalog_version";
@@ -646,16 +652,66 @@ pub fn refuse_unless_usable(conn: &Connection) -> Result<(), CoreError> {
     }
 }
 
-/// For a local list, search or read by id: a whole copy answers complete, and
-/// one a hydration has started and not completed answers from the rows that
-/// have arrived, as partial. A copy whose cursor has gone is still refused.
+/// For a local list, search or read by id: a whole copy answers complete; one
+/// whose cursor aged out answers the rows it held, as stale, until a hydration
+/// fills it again in place; one a hydration has started and not completed
+/// answers from the rows that have arrived, as partial. Any other expired copy
+/// is refused.
 pub fn read_completeness(conn: &Connection) -> Result<Completeness, CoreError> {
     if hydrated(conn)? || never_synced(conn)? {
         Ok(Completeness::Complete)
+    } else if refilling(conn)? {
+        Ok(Completeness::Stale)
     } else if !hydration_complete(conn)? {
         Ok(Completeness::Partial)
     } else {
         Err(CoreError::HydrationIncomplete)
+    }
+}
+
+/// The instance and reach a copy whose cursor aged out was built under, which
+/// a hydration under the same ones fills again in place, and the cursor it
+/// held then.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct Refill {
+    pub instance: String,
+    pub reach: String,
+    /// A head behind it is a server restored to an earlier point, which may
+    /// never have held the versions the copy holds.
+    pub cursor: String,
+}
+
+pub fn refill(conn: &Connection) -> Result<Option<Refill>, CoreError> {
+    Ok(meta_get(conn, META_REFILL)?.and_then(|json| serde_json::from_str(&json).ok()))
+}
+
+pub fn refilling(conn: &Connection) -> Result<bool, CoreError> {
+    Ok(meta_get(conn, META_REFILL)?.is_some())
+}
+
+/// For a write queued against the copy: a whole copy, one waiting to be filled
+/// again in place or being filled so, and one a hydration has started and not
+/// completed all take one, sent once the copy is whole again. What the
+/// write is to be queued against is told by `refuse_unless_held`.
+pub fn refuse_unless_writable(conn: &Connection) -> Result<Completeness, CoreError> {
+    read_completeness(conn)
+}
+
+/// For an edge write: a copy that is not whole takes none. A page still to
+/// arrive can bring the server's edge, at another version or between other
+/// ends, beneath a write queued against the edge the copy shows, and leave
+/// that write to run against an edge nobody saw.
+pub fn refuse_unless_whole(conn: &Connection) -> Result<(), CoreError> {
+    refuse_unless_held(refuse_unless_writable(conn)?)
+}
+
+/// A row or an edge a copy that is not whole does not hold may be one the
+/// server holds and has not yet brought, so a write to it is refused rather
+/// than answered not found.
+pub fn refuse_unless_held(completeness: Completeness) -> Result<(), CoreError> {
+    match completeness {
+        Completeness::Complete => Ok(()),
+        Completeness::Stale | Completeness::Partial => Err(CoreError::HydrationIncomplete),
     }
 }
 
@@ -674,7 +730,7 @@ pub fn read_marked<T>(
 }
 
 /// A row a partial copy does not hold may still be arriving, so its absence
-/// is refused rather than answered.
+/// is refused rather than answered. A stale copy answers what it holds.
 pub fn held_or_refused<T>(
     found: Option<T>,
     completeness: Completeness,
@@ -852,6 +908,9 @@ pub(crate) fn put_server_item(
 /// `put_server_item` for an edge.
 pub(crate) fn put_server_edge(conn: &Connection, edge: &WireEdge) -> Result<bool, CoreError> {
     settle_read_back(conn, Subject::Edge, &edge.id)?;
+    if refilling(conn)? {
+        meta_set(conn, &edge_brought(&edge.id), "true")?;
+    }
     if holds_later(
         conn,
         Subject::Edge,
@@ -2758,9 +2817,79 @@ pub fn clear_slice(conn: &Connection) -> Result<(), CoreError> {
          DELETE FROM items;
          DELETE FROM items_fts;
          DELETE FROM beneath;
-         DELETE FROM meta WHERE key LIKE 'item_listed/%';",
+         DELETE FROM meta WHERE key LIKE 'item_listed/%' OR key LIKE 'edge_brought/%';",
     )?;
     Ok(())
+}
+
+fn edge_brought(id: &str) -> String {
+    format!("edge_brought/{id}")
+}
+
+/// The start of a hydration that fills the copy again in place: nothing has
+/// been brought yet, so every row and edge the copy holds is one the sweep at
+/// its end takes out unless the walk or the replay brings it again.
+pub fn start_refill(conn: &Connection) -> Result<(), CoreError> {
+    conn.execute_batch(
+        "DELETE FROM meta WHERE key LIKE 'item_listed/%' OR key LIKE 'edge_brought/%';",
+    )?;
+    Ok(())
+}
+
+/// The end of a hydration that filled the copy again in place, after its walk
+/// and its replay: takes out each row neither brought, but for a pinned row
+/// and one a waiting write names as its item or as an end of an edge, then
+/// each such edge but one a waiting write names. Answers the rows and the
+/// edges it took out.
+pub fn sweep_refill(conn: &Connection) -> Result<(u64, u64), CoreError> {
+    let unbrought = |sql: &str| -> Result<Vec<String>, CoreError> {
+        let mut statement = conn.prepare(sql)?;
+        let rows = statement.query_map([], |row| row.get(0))?;
+        Ok(rows.collect::<Result<Vec<String>, _>>()?)
+    };
+    let whole = whole_edge_types(conn)?;
+    // An edge write's ends are the columns it was queued with, the ends a
+    // move in its payload names, and the ends the edge the copy shows has.
+    let named: HashSet<String> = unbrought(&format!(
+        "SELECT id FROM (
+         SELECT item_id AS id FROM queue WHERE {WAITING}
+         UNION SELECT target_id FROM queue WHERE {WAITING}
+         UNION SELECT json_extract(payload, '$.source_id') FROM queue
+                WHERE {WAITING} AND edge_id IS NOT NULL AND json_valid(payload)
+         UNION SELECT json_extract(payload, '$.target_id') FROM queue
+                WHERE {WAITING} AND edge_id IS NOT NULL AND json_valid(payload)
+         UNION SELECT edges.source_id FROM edges JOIN queue ON queue.edge_id = edges.id
+                WHERE {WAITING}
+         UNION SELECT edges.target_id FROM edges JOIN queue ON queue.edge_id = edges.id
+                WHERE {WAITING}
+         ) WHERE id IS NOT NULL"
+    ))?
+    .into_iter()
+    .collect();
+    let mut items = 0;
+    for id in unbrought(
+        "SELECT id FROM items
+          WHERE NOT EXISTS (SELECT 1 FROM meta WHERE key = 'item_listed/' || items.id)
+            AND NOT EXISTS (SELECT 1 FROM pins WHERE pins.item_id = items.id)
+          ORDER BY id",
+    )? {
+        if !named.contains(&id) && evict_item(conn, &id, &whole)? {
+            items += 1;
+        }
+    }
+    let mut edges = 0;
+    for id in unbrought(
+        "SELECT id FROM edges
+          WHERE NOT EXISTS (SELECT 1 FROM meta WHERE key = 'edge_brought/' || edges.id)
+          ORDER BY id",
+    )? {
+        if !edge_write_waits(conn, &id)? && forget_edge(conn, &id)? {
+            edges += 1;
+        }
+    }
+    conn.execute_batch("DELETE FROM meta WHERE key LIKE 'edge_brought/%';")?;
+    meta_delete(conn, META_REFILL)?;
+    Ok((items, edges))
 }
 
 /// `tags` replaces the item's tags when given and leaves them alone when not.
@@ -2833,8 +2962,27 @@ pub fn adopt_answered_id(conn: &Connection, local: &str, answered: &str) -> Resu
         "UPDATE queue SET item_id = ?2 WHERE item_id = ?1 AND
          (sent = 0 OR (kind = 'create_item' AND verdict IN ('accepted', 'merged', 'conflicted', 'refused')))",
         "UPDATE queue SET target_id = ?2 WHERE target_id = ?1 AND sent = 0",
+        "UPDATE body_checks SET item_id = ?2 WHERE item_id = ?1",
+        "UPDATE body_edges SET item_id = ?2 WHERE item_id = ?1",
+        "UPDATE body_edges SET other_id = ?2 WHERE other_id = ?1",
+        "UPDATE body_names SET other_id = ?2 WHERE other_id = ?1",
+        "UPDATE folder_files SET item_id = ?2 WHERE item_id = ?1",
+        "UPDATE folder_journal SET item_id = ?2 WHERE item_id = ?1",
     ] {
         conn.execute(statement, params![local, answered])?;
+    }
+    // The names the create's body carries are the row's now; the landing
+    // drops any its answered body does not carry.
+    if conn.query_row(
+        "SELECT EXISTS (SELECT 1 FROM body_names WHERE item_id = ?1)",
+        [local],
+        |row| row.get(0),
+    )? {
+        conn.execute("DELETE FROM body_names WHERE item_id = ?1", [answered])?;
+        conn.execute(
+            "UPDATE body_names SET item_id = ?2 WHERE item_id = ?1",
+            params![local, answered],
+        )?;
     }
     let carried = pinned(conn, local)?;
     if conn.execute(
@@ -3024,19 +3172,26 @@ pub fn purge_item(conn: &Connection, id: &str) -> Result<bool, CoreError> {
     Ok(removed || unpinned)
 }
 
-/// Keeps the edges of a type in `whole`, and edges drawn to the item, as a
-/// hydration holds them.
+/// Keeps the edges of a type in `whole`, edges drawn to the item, as a
+/// hydration holds them, and an edge a waiting write names, with what is kept
+/// beneath it, until that write is answered.
 pub fn evict_item(conn: &Connection, id: &str, whole: &[String]) -> Result<bool, CoreError> {
     crate::body::rule::rows_changed(conn)?;
     crate::body::rule::item_changing(conn, id, None)?;
     let kept = vec!["?"; whole.len()].join(", ");
+    let waits =
+        format!("id NOT IN (SELECT edge_id FROM queue WHERE edge_id IS NOT NULL AND {WAITING})");
     let edges = if whole.is_empty() {
-        "source_id = ?1".to_string()
+        format!("source_id = ?1 AND {waits}")
     } else {
-        format!("source_id = ?1 AND edge_type NOT IN ({kept})")
+        format!("source_id = ?1 AND edge_type NOT IN ({kept}) AND {waits}")
     };
     remove_item(conn, id, &edges, whole)
 }
+
+/// A queued write the server has yet to take: unanswered, blocked or dead,
+/// as `waiting_writes` reads them.
+const WAITING: &str = "(verdict IS NULL OR verdict IN ('blocked', 'dead'))";
 
 /// The one way a row leaves the copy, with the edges `edges` names (a
 /// condition on `edges`, `?1` the row's id, then `kept`): what is kept
@@ -5603,6 +5758,46 @@ mod tests {
         assert_eq!(pins(&conn).unwrap(), ["answered"]);
         assert!(unpin(&conn, "answered").unwrap());
         assert!(!pinned(&conn, "answered").unwrap());
+    }
+
+    #[test]
+    fn what_the_body_rule_and_the_folder_hold_of_a_minted_id_moves_to_the_answered_id() {
+        let conn = conn();
+        for statement in [
+            "INSERT INTO body_checks (write_id, item_id, body) VALUES ('check', 'minted', '')",
+            "INSERT INTO body_edges (write_id, item_id, kind, other_id) VALUES ('from', 'minted', 'link', 'other')",
+            "INSERT INTO body_edges (write_id, item_id, kind, other_id) VALUES ('to', 'other', 'link', 'minted')",
+            "INSERT INTO body_names (item_id, kind, text, state, other_id) VALUES ('minted', 'link', 'other', 'resolved', 'other')",
+            "INSERT INTO body_names (item_id, kind, text, state, other_id) VALUES ('answered', 'link', 'before', 'resolved', 'before')",
+            "INSERT INTO body_names (item_id, kind, text, state, other_id) VALUES ('other', 'link', 'new', 'resolved', 'minted')",
+            "INSERT INTO folder_files (path, item_id, content_hash, links, edge_lines, seen_at) VALUES ('New.md', 'minted', 'h', '[]', '[]', '2026-01-01T00:00:00Z')",
+            "INSERT INTO folder_journal (path, item_id, missing_since) VALUES ('Gone.md', 'minted', '2026-01-01T00:00:00Z')",
+        ] {
+            conn.execute(statement, []).unwrap();
+        }
+        adopt_answered_id(&conn, "minted", "answered").unwrap();
+        let rows = |sql: &str| -> Vec<String> {
+            let mut statement = conn.prepare(sql).unwrap();
+            statement
+                .query_map([], |row| row.get(0))
+                .unwrap()
+                .collect::<Result<_, _>>()
+                .unwrap()
+        };
+        assert_eq!(rows("SELECT item_id FROM body_checks"), ["answered"]);
+        assert_eq!(
+            rows("SELECT item_id || '>' || other_id FROM body_edges ORDER BY write_id"),
+            ["answered>other", "other>answered"]
+        );
+        assert_eq!(
+            rows(
+                "SELECT item_id || ':' || text || '>' || other_id FROM body_names ORDER BY item_id"
+            ),
+            ["answered:other>other", "other:new>answered"],
+            "the names the create's body carries are not the row's"
+        );
+        assert_eq!(rows("SELECT item_id FROM folder_files"), ["answered"]);
+        assert_eq!(rows("SELECT item_id FROM folder_journal"), ["answered"]);
     }
 
     #[test]

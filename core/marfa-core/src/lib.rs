@@ -26,6 +26,8 @@ mod folder_settings;
 pub mod http;
 mod hydrate;
 #[cfg(test)]
+mod hydrate_refill_tests;
+#[cfg(test)]
 mod hydrate_resume_tests;
 mod instance;
 mod integers;
@@ -866,7 +868,19 @@ impl Core {
     fn claim_stream_once_hydrated(&self, stop: &AtomicBool) -> Result<Option<StreamClaim<'_>>> {
         let mut waited = false;
         loop {
-            match catch_up::refuse_unless_current(&mut *self.conn()?) {
+            let mut conn = self.conn()?;
+            let answer = catch_up::refuse_unless_current(&mut conn);
+            // A refill under way is waited for as a first hydration is; a
+            // stale copy no refill has begun is refused.
+            let waits = match &answer {
+                Err(CoreError::NoCursor | CoreError::HydrationIncomplete) => true,
+                Err(CoreError::CopyExpired { reason }) if reason == catch_up::CATCHUP_TOO_OLD => {
+                    !store::hydration_complete(&conn)?
+                }
+                _ => false,
+            };
+            drop(conn);
+            match answer {
                 Ok(()) => match self.try_claim_stream(Mover::Follow) {
                     Ok(claim) => return Ok(Some(claim)),
                     // The hydration waited for holds it until it has
@@ -874,7 +888,7 @@ impl Core {
                     Err(Mover::Hydration | Mover::CatchUp) if waited => {}
                     Err(_) => return Err(one_at_a_time()),
                 },
-                Err(CoreError::NoCursor | CoreError::HydrationIncomplete) => {
+                Err(_) if waits => {
                     #[cfg(debug_assertions)]
                     if !waited {
                         fault::hold(|| "follow-waiting");
@@ -1473,7 +1487,7 @@ impl Core {
     pub(crate) fn write_create(&self, draft: &Draft, body: Body) -> Result<QueuedWrite> {
         self.lock.refuse_unless_writer()?;
         let mut conn = self.conn()?;
-        store::refuse_unless_usable(&conn)?;
+        let completeness = store::refuse_unless_writable(&conn)?;
         let tx = conn.transaction()?;
         let catalog = catalog::Catalog::load(&tx)?;
         let queued = queue_create(&tx, &catalog, draft, &[], self.credential().as_deref())?;
@@ -1485,7 +1499,11 @@ impl Core {
                 .transpose()?
                 .flatten()
         {
-            body::rule::derive(&tx, &catalog, "", &item, &queued.id)?;
+            if completeness == Completeness::Complete {
+                body::rule::derive(&tx, &catalog, "", &item, &queued.id)?;
+            } else {
+                body::rule::derive_on_answer(&tx, &item.id, "", &queued.id)?;
+            }
         }
         tx.commit()?;
         Ok(queued)
@@ -1559,19 +1577,24 @@ impl Core {
     ) -> Result<QueuedWrite> {
         self.lock.refuse_unless_writer()?;
         let mut conn = self.conn()?;
-        store::refuse_unless_usable(&conn)?;
+        let completeness = store::refuse_unless_writable(&conn)?;
         let tx = conn.transaction()?;
         let catalog = catalog::Catalog::load(&tx)?;
         let before = store::item_by_id(&tx, id)?;
+        if !store::item_held(&tx, id)? {
+            store::refuse_unless_held(completeness)?;
+        }
         let queued = queue_update(&tx, &catalog, id, edit, &[], based)?;
         if body == Body::Read
             && let Some(before) = before
             && let Some(after) = store::item_by_id(&tx, id)?
         {
-            if edit.base_version.is_some_and(|base| base < before.version) {
-                body::rule::derive_on_answer(&tx, &catalog, &before, &queued.id)?;
+            let old = body::rule::body_of(&catalog, &before).to_string();
+            if completeness != Completeness::Complete
+                || edit.base_version.is_some_and(|base| base < before.version)
+            {
+                body::rule::derive_on_answer(&tx, id, &old, &queued.id)?;
             } else {
-                let old = body::rule::body_of(&catalog, &before).to_string();
                 body::rule::derive(&tx, &catalog, &old, &after, &queued.id)?;
             }
         }
@@ -1622,7 +1645,7 @@ impl Core {
     pub fn restore_item(&self, id: &str) -> Result<QueuedWrite> {
         self.lock.refuse_unless_writer()?;
         let mut conn = self.conn()?;
-        store::refuse_unless_usable(&conn)?;
+        let completeness = store::refuse_unless_writable(&conn)?;
         // Looked at and queued under one lock, so a row a held stream brings
         // in meanwhile is restored as a held row is.
         let tx = conn.transaction()?;
@@ -1631,6 +1654,7 @@ impl Core {
             drop(conn);
             return self.transition_locally(id, WriteKind::RestoreItem, ItemState::Active, "{}");
         }
+        store::refuse_unless_held(completeness)?;
         if store::waiting_writes_for_item(&tx, id)?
             .iter()
             .any(|row| row.kind == WriteKind::RestoreItem)
@@ -1698,8 +1722,9 @@ impl Core {
     ) -> Result<QueuedWrite> {
         self.lock.refuse_unless_writer()?;
         let conn = self.conn()?;
-        store::refuse_unless_usable(&conn)?;
+        let completeness = store::refuse_unless_writable(&conn)?;
         let Some(held) = store::items_by_ids(&conn, &[id.to_string()])?.pop() else {
+            store::refuse_unless_held(completeness)?;
             return Err(CoreError::NotFound {
                 code: "item_not_found".into(),
                 message: format!("{id} is not a row this copy holds"),
@@ -1757,7 +1782,7 @@ impl Core {
     pub fn create_edge(&self, draft: &EdgeDraft) -> Result<QueuedWrite> {
         self.lock.refuse_unless_writer()?;
         let mut conn = self.conn()?;
-        store::refuse_unless_usable(&conn)?;
+        store::refuse_unless_whole(&conn)?;
         let tx = conn.transaction()?;
         let queued = queue_edge(&tx, draft, &[])?;
         tx.commit()?;
@@ -1773,7 +1798,7 @@ impl Core {
     pub fn update_edge(&self, id: &str, edit: &EdgeEdit) -> Result<Option<QueuedWrite>> {
         self.lock.refuse_unless_writer()?;
         let mut conn = self.conn()?;
-        store::refuse_unless_usable(&conn)?;
+        store::refuse_unless_whole(&conn)?;
         let Some(held) = store::edge_by_id(&conn, id)? else {
             return Err(CoreError::NotFound {
                 code: "edge_not_found".into(),
@@ -1852,7 +1877,7 @@ impl Core {
     pub fn delete_edge(&self, id: &str) -> Result<QueuedWrite> {
         self.lock.refuse_unless_writer()?;
         let mut conn = self.conn()?;
-        store::refuse_unless_usable(&conn)?;
+        store::refuse_unless_whole(&conn)?;
         let held = held_edge(&conn, id)?;
         let tx = conn.transaction()?;
         let queued = queue_edge_delete(&tx, &held, &[])?;
@@ -1891,8 +1916,9 @@ impl Core {
         self.lock.refuse_unless_writer()?;
         validation::tags(admitted)?;
         let mut conn = self.conn()?;
-        store::refuse_unless_usable(&conn)?;
+        let completeness = store::refuse_unless_writable(&conn)?;
         if !store::item_held(&conn, id)? {
+            store::refuse_unless_held(completeness)?;
             return Err(CoreError::NotFound {
                 code: "item_not_found".into(),
                 message: format!("{id} is not a row this copy holds"),
@@ -1955,7 +1981,7 @@ impl Core {
     ) -> Result<QueuedWrite> {
         self.lock.refuse_unless_writer()?;
         let mut conn = self.conn()?;
-        store::refuse_unless_usable(&conn)?;
+        let completeness = store::refuse_unless_writable(&conn)?;
         if namespace.is_empty() {
             return Err(CoreError::Invalid(
                 "an extension write names no namespace, and the namespace is where it goes".into(),
@@ -1965,6 +1991,7 @@ impl Core {
             integers::refuse_inexact_integers(payload)?;
         }
         if !store::item_held(&conn, id)? {
+            store::refuse_unless_held(completeness)?;
             return Err(CoreError::NotFound {
                 code: "item_not_found".into(),
                 message: format!("{id} is not a row this copy holds"),
@@ -2007,7 +2034,7 @@ impl Core {
         self.lock.refuse_unless_writer()?;
         refuse_invalid_names(&draft.tags, &draft.properties)?;
         self.refuse_unwritable_type(&draft.r#type)?;
-        store::refuse_unless_usable(&*self.conn()?)?;
+        store::refuse_unless_writable(&*self.conn()?)?;
         let file = std::fs::File::open(path).map_err(|error| {
             CoreError::Invalid(format!("{} cannot be read: {error}", path.display()))
         })?;
@@ -2053,7 +2080,7 @@ impl Core {
     ) -> Result<QueuedWrite> {
         self.lock.refuse_unless_writer()?;
         refuse_invalid_names(&[], &edit.properties)?;
-        store::refuse_unless_usable(&*self.conn()?)?;
+        store::refuse_unless_writable(&*self.conn()?)?;
         let file = std::fs::File::open(path).map_err(|error| {
             CoreError::Invalid(format!("{} cannot be read: {error}", path.display()))
         })?;
@@ -2070,8 +2097,15 @@ impl Core {
     ) -> Result<QueuedWrite> {
         refuse_invalid_names(&[], &edit.properties)?;
         // Before any bytes are taken in, as `refuse_unwritable_type` is.
-        if let Some(held) = store::item_by_id(&*self.conn()?, id)? {
-            refuse_system_type(&held.r#type)?;
+        {
+            let conn = self.conn()?;
+            let completeness = store::refuse_unless_writable(&conn)?;
+            if !store::item_held(&conn, id)? {
+                store::refuse_unless_held(completeness)?;
+            }
+            if let Some(held) = store::item_by_id(&conn, id)? {
+                refuse_system_type(&held.r#type)?;
+            }
         }
         if let Some(r#type) = &edit.r#type {
             refuse_system_type(r#type)?;
@@ -2119,7 +2153,7 @@ impl Core {
         then: impl FnOnce(&Connection, &catalog::Catalog, &QueuedWrite, &blob::Taken) -> Result<T>,
     ) -> Result<T> {
         self.lock.refuse_unless_writer()?;
-        store::refuse_unless_usable(&*self.conn()?)?;
+        store::refuse_unless_writable(&*self.conn()?)?;
         let file = std::fs::File::open(path).map_err(|error| {
             CoreError::Invalid(format!("{} cannot be read: {error}", path.display()))
         })?;
@@ -2134,7 +2168,7 @@ impl Core {
         then: impl FnOnce(&Connection, &catalog::Catalog, &QueuedWrite, &blob::Taken) -> Result<T>,
     ) -> Result<T> {
         self.lock.refuse_unless_writer()?;
-        store::refuse_unless_usable(&*self.conn()?)?;
+        store::refuse_unless_writable(&*self.conn()?)?;
         let cache = self.cache()?;
         let queued = {
             // Until the upload is queued, nothing but this hold keeps its
@@ -2161,7 +2195,10 @@ impl Core {
         self.lock.refuse_unless_writer()?;
         {
             let conn = self.conn()?;
-            store::refuse_unless_usable(&conn)?;
+            let completeness = store::refuse_unless_writable(&conn)?;
+            if !store::item_held(&conn, target)? {
+                store::refuse_unless_held(completeness)?;
+            }
             // A row in the bin reads as absent, and a file attached to it
             // would be linked to something nobody can open.
             if store::item_by_id(&conn, target)?.is_none() {
@@ -2219,7 +2256,7 @@ impl Core {
 
     pub fn add_file(&self, path: &Path, attachment: &Attachment, tags: &[String]) -> Result<Added> {
         self.lock.refuse_unless_writer()?;
-        store::refuse_unless_usable(&*self.conn()?)?;
+        store::refuse_unless_writable(&*self.conn()?)?;
         let (mime_type, mut draft) = file_draft(path, attachment, tags);
         refuse_invalid_names(&draft.tags, &draft.properties)?;
         self.refuse_unwritable_type(&draft.r#type)?;
@@ -2661,19 +2698,23 @@ impl Core {
             None => None,
         };
         let event_cursor = store::meta_get(&tx, store::META_EVENT_CURSOR)?;
-        let hydration = if !store::hydration_complete(&tx)? {
+        let hydration = if store::refilling(&tx)? {
+            Hydration::Stale
+        } else if !store::hydration_complete(&tx)? {
             Hydration::InProgress
         } else if store::hydrated(&tx)? {
             Hydration::Complete
         } else if store::holds_slice(&tx)? {
-            // A slice and no cursor: the log aged past the cursor.
+            // A slice and no cursor, reach or instance, and no refill owed.
             Hydration::Expired
         } else {
             Hydration::Never
         };
         let filling = |key| -> Result<Option<u64>> {
             Ok(match hydration {
-                Hydration::InProgress => {
+                // A stale copy holds these only while its refill runs or
+                // was interrupted.
+                Hydration::InProgress | Hydration::Stale => {
                     store::meta_get(&tx, key)?.and_then(|count| count.parse().ok())
                 }
                 _ => None,

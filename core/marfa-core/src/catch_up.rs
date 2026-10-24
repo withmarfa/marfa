@@ -251,11 +251,18 @@ fn start(core: &Core) -> Result<(Slice, String)> {
 
 /// A copy talks to its server only under the reach a completed hydration
 /// gave it: refused `HydrationIncomplete` part way through one, `NoCursor`
-/// where none has completed, and expired where its cursor has gone. Asked
-/// before anything is sent, so the refusal is the same offline. A copy
-/// expired already is refused as it stands: expiring it again would move its
-/// generation, and with it every call begun on the copy, for nothing.
+/// where none has completed, and expired where its cursor has gone. A copy
+/// kept stale for a refill answers that its cursor aged out until the refill
+/// completes, whether or not one has started. Asked before anything is
+/// sent, so the refusal is the same offline. A copy expired already is
+/// refused as it stands: expiring it again would move its generation, and
+/// with it every call begun on the copy, for nothing.
 pub(crate) fn refuse_unless_current(conn: &mut rusqlite::Connection) -> Result<()> {
+    if store::refilling(conn)? {
+        return Err(CoreError::CopyExpired {
+            reason: CATCHUP_TOO_OLD.into(),
+        });
+    }
     if !store::hydration_complete(conn)? {
         return Err(CoreError::HydrationIncomplete);
     }
@@ -590,6 +597,8 @@ pub(crate) fn replay_build(
 }
 
 const AGED_OUT: &str = "the event log no longer holds the cursor";
+/// The reason a stale copy answers after the one that made it stale.
+pub(crate) const CATCHUP_TOO_OLD: &str = "catchup_too_old";
 const RESTORED: &str = "as a server restored from an earlier point does";
 
 /// Why a frame says the server's log does not continue from `held`: the log
@@ -624,7 +633,7 @@ pub(crate) fn diverged(kind: &str, payload: &EventPayload, held: &str) -> Option
 
 /// Which of the two `diverged` named, from the reason it gave.
 pub(crate) fn divergence(reason: &str) -> Option<crate::model::HydrateRestart> {
-    if reason.starts_with(AGED_OUT) {
+    if reason.starts_with(AGED_OUT) || reason == CATCHUP_TOO_OLD {
         Some(crate::model::HydrateRestart::HeadAgedOut)
     } else if reason.ends_with(RESTORED) {
         Some(crate::model::HydrateRestart::HeadPastLog)
@@ -1279,9 +1288,12 @@ fn edges_of_entering_row(
     }
     {
         let conn = core.conn()?;
-        if store::item_held(&conn, &item.id)?
-            || !(in_slice(catalog, slice, item)? || store::pinned(&conn, &item.id)?)
-        {
+        // A refill keeps the rows it held until its sweep, which takes the
+        // edges of a held row neither its walk nor its replay brought: one
+        // only the replay brings enters as a row the copy does not hold.
+        let entering = !store::item_held(&conn, &item.id)?
+            || (store::refilling(&conn)? && !reach::answered(&conn, &item.id)?);
+        if !entering || !(in_slice(catalog, slice, item)? || store::pinned(&conn, &item.id)?) {
             return Ok(Vec::new());
         }
     }

@@ -114,8 +114,8 @@ pub enum CoreError {
         write_sent: bool,
     },
     /// The caller's stop was raised. What had been taken is consistent: a
-    /// hydration left unfinished answers lists and searches marked partial
-    /// and refuses writes until a hydration completes (the next one of the same slice carries on from the page it reached where it can), a catch-up keeps the cursor it reached, and a drain leaves what it had not sent queued, and an
+    /// hydration left unfinished answers lists and searches marked partial,
+    /// and takes writes only to the rows it holds and new ones, and no edge writes, until a hydration completes (the next one of the same slice carries on from the page it reached where it can), a catch-up keeps the cursor it reached, and a drain leaves what it had not sent queued, and an
     /// upload or keyed write it had in flight queued as sent, under its key,
     /// for the next drain to send again.
     #[error("the operation was stopped before it finished")]
@@ -311,6 +311,7 @@ fn copy_expired(reason: &str) -> String {
         crate::http::INSTANCE_CHANGED => {
             "another Marfa now answers at this address; rebuild the copy from it".to_string()
         }
+        crate::catch_up::CATCHUP_TOO_OLD => "the server's event log no longer holds the point this copy had reached; refill the copy from the server, which keeps what it holds and the changes not yet sent".to_string(),
         "reach_invalid" => "this copy holds no proof it can accept of what the credential may read; rebuild the copy from the server".to_string(),
         sentence => {
             return format!(
@@ -403,12 +404,15 @@ mod tests {
             invalid.contains("holds no proof it can accept"),
             "{invalid}"
         );
+        let aged = said("catchup_too_old");
+        assert!(aged.contains("keeps what it holds"), "{aged}");
         // The reason is named, so a caller can tell why the copy expired.
         for reason in [
             "credential_ended",
             "reach_changed",
             "instance_changed",
             "reach_invalid",
+            "catchup_too_old",
         ] {
             assert!(said(reason).contains(&format!("({reason})")), "{reason}");
         }
@@ -428,6 +432,7 @@ mod tests {
             "reach_changed",
             "reach_invalid",
             "instance_changed",
+            "catchup_too_old",
             "the event log no longer holds the cursor 4",
         ] {
             let text = said(reason);

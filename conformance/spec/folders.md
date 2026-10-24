@@ -3820,9 +3820,9 @@ When a folder’s cursor has aged out of the server log, a device MUST hydrate a
 
 ### `folders/pull-waits-for-whole-copy`
 
-While a hydration of a folder's copy has started and not completed, a device MUST refuse a pull of the folder `hydration_incomplete`, writing and removing no file.
+While a hydration of a folder's copy has started and not completed, or the folder's copy is stale, a device MUST refuse a pull of the folder `hydration_incomplete`, writing and removing no file.
 
-**Reason:** a copy still filling answers its reads from the rows it has been given (`device/read-partial-answers`), and a row it has not been given yet is not a row the server deleted.
+**Reason:** a copy still filling answers its reads from the rows it has been given (`device/read-partial-answers`), and a row it has not been given yet is not a row the server deleted; a stale copy (`device/read-stale-answers`) holds rows the server may since have changed or deleted, and a file written from one would overwrite a newer one.
 
 **Tests:** `device/folders.test.ts › keeps every file through a hydration that stopped part way, and pulls nothing from its copy`.
 

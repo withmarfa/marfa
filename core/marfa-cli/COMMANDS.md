@@ -2457,6 +2457,8 @@ Replace the local copy with the declared types at one tier, or both.
 
 A hydration that stopped before it finished carries on from the page it had reached when run again for the same slice. It starts again from the first page, and says why, when another instance answers, the key's reach, the slice or the catalog has changed since, the server's event log no longer holds the point it started from or ends before it, or the server refuses the page cursor it kept.
 
+A copy whose cursor the server's event log no longer holds is filled again in place for the same slice, server and key: it keeps answering, marked stale, and takes writes to the rows it holds and new ones, which wait to be sent, until the hydration finishes and removes the rows the server no longer lists. Any other hydration empties the copy first. Until the copy is whole, a write to an edge is refused `hydration_incomplete`, since a page still to arrive could bring the server's edge in place of the one the write was made against.
+
 ```text
 marfa device hydrate [OPTIONS] --types <TYPE> --tier <TIER>
 ```
@@ -2569,7 +2571,7 @@ Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 
 List items, newest first unless sorted otherwise.
 
-Without `--view`, while a hydration fills the copy or after one was interrupted, the list holds the rows that have arrived and says it is partial: on standard error, and under --json as `completeness`, `partial` or `complete`, beside `items`. With `--view`, an incomplete copy is refused.
+Without `--view`, while a hydration fills the copy or after one was interrupted, the list holds the rows that have arrived and says it is partial. Once the server's event log no longer reaches the copy, and until a hydration has filled it again, the list holds the rows the copy holds and says it is stale. Each is said on standard error, and under --json as `completeness`, `partial`, `stale` or `complete`, beside `items`. With `--view`, a copy that is not whole is refused.
 
 ```text
 marfa device items list [OPTIONS]
@@ -2980,7 +2982,7 @@ Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 
 Full-text search over the local copy, best match first.
 
-Without `--view`, while a hydration fills the copy or after one was interrupted, the search covers the rows that have arrived and says it is partial: on standard error, and under --json as `completeness`, `partial` or `complete`, beside `hits`. With `--view`, an incomplete copy is refused.
+Without `--view`, while a hydration fills the copy or after one was interrupted, the search covers the rows that have arrived and says it is partial. Once the server's event log no longer reaches the copy, and until a hydration has filled it again, the search covers the rows the copy holds and says it is stale. Each is said on standard error, and under --json as `completeness`, `partial`, `stale` or `complete`, beside `hits`. With `--view`, a copy that is not whole is refused.
 
 ```text
 marfa device search [OPTIONS] <QUERY>
@@ -3100,6 +3102,8 @@ Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 What the local copy holds and where it came from.
 
 While a hydration fills the copy, the report also gives the rows its listings have brought, `items_listed` under --json, and the items the server counted for the slice when the hydration started, where it counted them, `items_expected`. Set the first against the second to show how far it has come; the item count also holds pinned rows and writes still waiting.
+
+The hydration is `never`, `in_progress`, `complete`, `stale` or `expired`. A stale copy is one the server's event log no longer reaches: it answers reads marked stale and takes writes, but not to edges, until a hydration has filled it again in place, and stays stale while that hydration runs. An expired copy refuses reads and writes until a hydration, which empties it first.
 
 ```text
 marfa device status [OPTIONS]
