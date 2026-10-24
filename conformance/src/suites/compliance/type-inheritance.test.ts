@@ -544,9 +544,9 @@ describe("type inheritance rule", () => {
       id,
       label: "Compat-missing-field",
       version: 1,
-      // core.note requires `body`; this declaration omits it.
+      // core.task requires `title`; this declaration omits it.
       fields: { extra: { type: "string" } },
-      compatible_with: "core.note",
+      compatible_with: "core.task",
     });
     expect(r.ok).toBe(false);
     expect(r.status).toBe(422);

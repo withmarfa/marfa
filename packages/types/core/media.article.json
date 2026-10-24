@@ -17,6 +17,5 @@
       "type": "integer",
       "description": "Word count"
     }
-  },
-  "required": ["body"]
+  }
 }

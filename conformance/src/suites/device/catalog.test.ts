@@ -151,13 +151,12 @@ describe("The type catalog a working copy holds", () => {
     ).toEqual({
       name: "body",
       type: "string",
-      required: true,
+      required: false,
       description: "The note text",
       declared_by: "core.note",
       definition: {
         type: "string",
         description: "The note text",
-        required: true,
       },
     });
 

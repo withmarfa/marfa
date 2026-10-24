@@ -93,11 +93,11 @@ export function createTask(
 }
 
 /**
- * Create a `core.message` item. `body` and `from` are both required; `to` is
- * an optional array. Participant identifiers are format-agnostic strings — a
- * phone number, an email address, or a handle are all valid — so the generator
- * uses an email-shaped value only because it reads clearly, not because the
- * type constrains the format.
+ * Create a `core.message` item. `from` is required; `body` and `to` are
+ * optional, and `to` is an array. Participant identifiers are format-agnostic
+ * strings — a phone number, an email address, or a handle are all valid — so
+ * the generator uses an email-shaped value only because it reads clearly, not
+ * because the type constrains the format.
  */
 export function createMessage(
   overrides: Partial<CreateItemInput> = {},

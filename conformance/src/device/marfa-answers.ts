@@ -249,7 +249,7 @@ export const SCRIPTED_TYPES: ReadonlyArray<Record<string, unknown>> = [
     // a scripted type thinner than the real one is a registry no server
     // serves.
     fields: {
-      body: { type: "string", description: "The note text", required: true },
+      body: { type: "string", description: "The note text" },
       title: { type: "string", description: "Heading or title" },
       language: {
         type: "string",

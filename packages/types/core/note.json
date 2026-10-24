@@ -22,7 +22,6 @@
       "description": "Personal annotations"
     }
   },
-  "required": ["body"],
   "display_hints": {
     "title_field": "title",
     "body_field": "body"

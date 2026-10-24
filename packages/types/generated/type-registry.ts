@@ -142,7 +142,7 @@ const coreMessage: TypeSchema = {
   description: "A light, cross-platform message. Threading is edge-based via in-thread; reply trees via parent-of. Tool-specific richness lives in app namespaces.",
   version: 0,
   fields: {
-    body: { type: "string", description: "The message text", required: true },
+    body: { type: "string", description: "The message text" },
     from: { type: "string", description: "Sender identifier — format-agnostic (phone number, email, handle, etc.)", required: true },
     to: { type: "array", description: "Recipient identifiers — same format-agnostic shape as from", items_type: "string" },
   },
@@ -156,7 +156,7 @@ const coreNote: TypeSchema = {
   description: "Text content you created.",
   version: 0,
   fields: {
-    body: { type: "string", description: "The note text", required: true },
+    body: { type: "string", description: "The note text" },
     title: { type: "string", description: "Heading or title" },
     language: { type: "string", description: "BCP 47 language code", format: "bcp47" },
     notes: { type: "string", description: "Personal annotations" },
@@ -371,7 +371,7 @@ const coreMediaArticle: TypeSchema = {
   version: 0,
   fields: {
     title: { type: "string", description: "Name of the work", required: true },
-    body: { type: "string", description: "The article text", required: true },
+    body: { type: "string", description: "The article text" },
     author: { type: "string", description: "Who created the work" },
     url: { type: "url", description: "Web address" },
     description: { type: "string", description: "Summary or blurb" },
@@ -1359,7 +1359,6 @@ export const SHIPPED_TYPE_SHAPES = {
         "type": "string"
       },
       "body": {
-        "required": true,
         "type": "string"
       },
       "description": {
@@ -1762,7 +1761,6 @@ export const SHIPPED_TYPE_SHAPES = {
     },
     "fields": {
       "body": {
-        "required": true,
         "type": "string"
       },
       "from": {
@@ -1789,7 +1787,6 @@ export const SHIPPED_TYPE_SHAPES = {
     },
     "fields": {
       "body": {
-        "required": true,
         "type": "string"
       },
       "language": {

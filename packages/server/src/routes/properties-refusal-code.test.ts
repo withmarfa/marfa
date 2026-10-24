@@ -39,7 +39,7 @@ let ctx: TestContext;
 const ITEM_SOURCE = "properties-refusal";
 let RUNTIME_KEY = "marfa_k1_test_properties_refusal";
 
-/** `core.note` declares `body` as a required string, so a number is a
+/** `core.note` declares `body` as a string, so a number is a
  *  properties-versus-type refusal at every door and nothing else. */
 const BAD = { body: 12345 };
 const GOOD = { body: "well formed" };

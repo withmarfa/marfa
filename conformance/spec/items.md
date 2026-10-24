@@ -324,7 +324,7 @@ When the server measures a string property against a length cap, the server MUST
 
 If a write leaves out a property its type requires, or names one the type declares with a value of another shape, then the server MUST answer `400 invalid_properties` with `details.errors[].field` naming it.
 
-**Tests:** `compliance/validation.test.ts › rejects core.note with no properties with invalid_properties naming body`, `compliance/core-message.test.ts › rejects a message missing body with invalid_properties naming it`, `compliance/entity-subtypes.test.ts › rejects entity without required name with invalid_properties naming it`, `compliance/highlight.test.ts › rejects a highlight missing the required text property`, `compliance/thumbnails.test.ts › refuses a thumbnail over the cap or not an image, naming the field`.
+**Tests:** `compliance/validation.test.ts › rejects core.entity with no properties with invalid_properties naming name`, `compliance/core-message.test.ts › rejects a message missing from with invalid_properties naming it`, `compliance/entity-subtypes.test.ts › rejects entity without required name with invalid_properties naming it`, `compliance/highlight.test.ts › rejects a highlight missing the required text property`, `compliance/thumbnails.test.ts › refuses a thumbnail over the cap or not an image, naming the field`.
 
 ### `items/property-number-exact`
 

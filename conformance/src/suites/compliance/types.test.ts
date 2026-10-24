@@ -537,15 +537,15 @@ describe("type registration and listing", () => {
     const id = `user.compat-replace-${ctx.runId}`;
     const registered = await client.registerType({
       id,
-      fields: { body: { type: "string", required: true } },
-      compatible_with: "core.note",
+      fields: { title: { type: "string", required: true } },
+      compatible_with: "core.task",
     });
     expect(registered.status).toBe(201);
 
-    // core.note requires `body`; the replacement drops it.
+    // core.task requires `title`; the replacement drops it.
     const missingField = await client.replaceType(id, {
       fields: { extra: { type: "string" } },
-      compatible_with: "core.note",
+      compatible_with: "core.task",
     });
     expect(missingField.status).toBe(422);
     expect(missingField.error?.error.code).toBe("compatible_with_violation");

@@ -178,10 +178,10 @@ const CLASSES: { name: string; input: unknown; atField: string }[] = [
     name: "compatible_with target missing a required field",
     input: {
       id: "acme.r",
-      compatible_with: ["core.note"],
+      compatible_with: ["core.task"],
       fields: { headline: { type: "string" } },
     },
-    atField: "compatible_with.core.note.body",
+    atField: "compatible_with.core.task.title",
   },
   {
     name: "compatible_with naming an unregistered target",
@@ -321,7 +321,7 @@ describe("error codes the API maps to dedicated statuses", () => {
   it("flags a compatible_with violation", () => {
     const errors = errorsFor({
       id: "acme.claim",
-      compatible_with: ["core.note"],
+      compatible_with: ["core.task"],
       fields: { headline: { type: "string" } },
     });
     expect(errors.some((e) => e.code === "compatible_with_violation")).toBe(

@@ -120,7 +120,7 @@ describe("POST /items", () => {
   it("rejects missing required field", async () => {
     const res = await request(ctx.app, "POST", "/items", {
       key: ctx.workingKey,
-      body: { type: "core.note", properties: { title: "No body" } },
+      body: { type: "core.task", properties: { notes: "No title" } },
     });
     expect(res.status).toBe(400);
   });
@@ -137,10 +137,10 @@ describe("POST /items", () => {
 
   it("rejects an empty properties object that omits a required field", async () => {
     // An empty `{}` must run the same required-field validation as a
-    // partially-filled body — a core.note with no `body` is invalid either way.
+    // partially-filled body — a core.task with no `title` is invalid either way.
     const res = await request(ctx.app, "POST", "/items", {
       key: ctx.workingKey,
-      body: { type: "core.note", properties: {} },
+      body: { type: "core.task", properties: {} },
     });
     expect(res.status).toBe(400);
     const data = (await res.json()) as { error: { code: string } };
@@ -713,7 +713,7 @@ describe("null on an optional property is treated as unset", () => {
   it("create: a required field sent as null still rejects with 400", async () => {
     const res = await request(ctx.app, "POST", "/items", {
       key: ctx.workingKey,
-      body: { type: "core.note", properties: { body: null } },
+      body: { type: "core.task", properties: { title: null } },
     });
     expect(res.status).toBe(400);
   });

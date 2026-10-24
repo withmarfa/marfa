@@ -730,8 +730,8 @@ describe("the server resolves a conflict", () => {
     expect(winner.ok).toBe(true);
 
     // A stale replace that clears the body the winner changed, and moves
-    // the row to a bookmark: the collision is real, and the copy a
-    // resolution would write would be a note without a body.
+    // the row to a bookmark: the collision is real, and the copy a resolution
+    // would write would belong to neither type.
     const refused = await client.rawRequest(`/items/${id}?conflict=auto`, {
       method: "PATCH",
       body: {

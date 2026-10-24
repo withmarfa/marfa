@@ -30,7 +30,7 @@ afterAll(() => {
 
 describe("an ordinary update", () => {
   it("treats a null on an optional field as leaving it unset", () => {
-    // `body` is what `core.note` requires; `title` is optional.
+    // `body` and `title` are both optional on `core.note`.
     const incoming = resolveIncomingProperties("core.note", {
       body: "kept",
       title: null,
@@ -42,8 +42,8 @@ describe("an ordinary update", () => {
   });
 
   it("keeps a null on a required field so validation can still refuse it", () => {
-    const incoming = resolveIncomingProperties("core.note", { body: null });
-    expect(incoming).toEqual({ body: null });
+    const incoming = resolveIncomingProperties("core.task", { title: null });
+    expect(incoming).toEqual({ title: null });
   });
 
   it("resolves a type registered at runtime, not only a shipped one", () => {

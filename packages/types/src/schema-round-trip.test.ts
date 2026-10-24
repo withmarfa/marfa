@@ -181,9 +181,9 @@ describe("compatible_with", () => {
 
   it("rejects a claim whose target requires a field this type lacks", () => {
     const result = validate({
-      id: "acme.bodyless",
+      id: "acme.titleless",
       version: 1,
-      compatible_with: ["core.note"],
+      compatible_with: ["core.task"],
       fields: { headline: { type: "string" } },
     });
     expect(result.success).toBe(false);
@@ -192,7 +192,7 @@ describe("compatible_with", () => {
       (e) => e.code === "compatible_with_violation",
     );
     expect(violation).toBeDefined();
-    expect(violation?.field).toBe("compatible_with.core.note.body");
+    expect(violation?.field).toBe("compatible_with.core.task.title");
   });
 
   it("rejects a claim whose target field has a different type", () => {
@@ -211,17 +211,17 @@ describe("compatible_with", () => {
 
   it("rejects a claim whose matching field remains optional", () => {
     const result = validate({
-      id: "acme.optional_note",
+      id: "acme.optional_task",
       version: 1,
-      compatible_with: ["core.note"],
-      fields: { body: { type: "string" } },
+      compatible_with: ["core.task"],
+      fields: { title: { type: "string" } },
     });
     expect(result.success).toBe(false);
     if (result.success) return;
     expect(
       result.errors.some(
         (error) =>
-          error.field === "compatible_with.core.note.body.required" &&
+          error.field === "compatible_with.core.task.title.required" &&
           error.code === "compatible_with_violation",
       ),
     ).toBe(true);

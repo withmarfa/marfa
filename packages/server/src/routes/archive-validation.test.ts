@@ -259,7 +259,7 @@ it("names the item a core type's shape refuses, with its type, field and code", 
   const lineFiles = selection(3, []);
   writeFileSync(
     lineFiles["items.ndjson"],
-    `${JSON.stringify({ item: { id: idAt(1), type: "core.note", properties: { body: "one" } } })}\n${JSON.stringify({ item: { id: idAt(2), type: "core.note", properties: {} } })}\n`,
+    `${JSON.stringify({ item: { id: idAt(1), type: "core.task", properties: { title: "one" } } })}\n${JSON.stringify({ item: { id: idAt(2), type: "core.task", properties: {} } })}\n`,
   );
   const refused = await validate(lineFiles).then(
     () => undefined,
@@ -269,8 +269,8 @@ it("names the item a core type's shape refuses, with its type, field and code", 
   expect((refused as SelectionRefusal).row).toMatchObject({
     kind: "item",
     id: idAt(2),
-    type: "core.note",
-    field: "properties.body",
+    type: "core.task",
+    field: "properties.title",
     code: "invalid_properties",
   });
 });

@@ -74,12 +74,12 @@ describe("a copy no server has been named for", () => {
     // The witness: a write that breaks a shipped type's rule is refused, so the
     // note above was held to something.
     const refused = await device.create({
-      type: "core.note",
-      properties: { title: "No body" },
+      type: "core.task",
+      properties: { notes: "No title" },
     });
     expect(
       refused.ok ? "queued" : refused.refusal.code,
-      "a note missing a required field was queued by a copy that holds the type",
+      "a task missing a required field was queued by a copy that holds the type",
     ).toBe("validation");
   });
 
