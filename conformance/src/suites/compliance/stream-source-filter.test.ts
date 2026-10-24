@@ -46,6 +46,7 @@ beforeAll(async () => {
 
   edgeType = `mock.streamsourcefilter.${ctx.runId}`;
   const registered = await client.registerEdgeType({
+    label: "Test edge type",
     id: edgeType,
     cardinality: "many-to-many",
   });

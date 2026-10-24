@@ -386,7 +386,7 @@ withReader("archive spool (%s)", (credential) => {
     const type = "snapshot.retired-link";
     const registered = await request(ctx.app, "POST", "/edge-types", {
       key: ctx.workingKey,
-      body: { id: type, cardinality: "many-to-many" },
+      body: { id: type, label: "Test label", cardinality: "many-to-many" },
     });
     expect(registered.status, await registered.clone().text()).toBe(201);
     const linked = await request(ctx.app, "POST", "/edges", {

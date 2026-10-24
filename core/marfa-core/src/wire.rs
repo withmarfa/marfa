@@ -103,12 +103,17 @@ pub struct WireType {
 }
 
 /// Every field the listing always sends is required, so a row missing one is
-/// refused rather than held with a default that says something else.
+/// refused rather than held with a default that says something else. The two
+/// labels are the exception: a catalog held or listed before every edge type
+/// carried them has none, so [`WireEdgeType::label`] and
+/// [`WireEdgeType::reverse_label`] fill them as the server does.
 #[derive(Debug, Clone, Deserialize)]
 pub struct WireEdgeType {
     pub id: String,
     #[serde(default)]
-    pub label: Option<String>,
+    label: Option<String>,
+    #[serde(default)]
+    reverse_label: Option<String>,
     #[serde(default)]
     pub description: Option<String>,
     pub cardinality: String,
@@ -120,6 +125,46 @@ pub struct WireEdgeType {
     pub cascade_on_delete: String,
     pub property_schema: Map<String, Value>,
     pub shipped: bool,
+}
+
+impl WireEdgeType {
+    /// The listed `label`, or the one the id makes where the row has none.
+    pub fn label(&self) -> String {
+        match self.label.as_deref() {
+            Some(label) if !label.is_empty() => label.to_string(),
+            _ => label_from_id(&self.id),
+        }
+    }
+
+    /// The listed `reverse_label`, or the `label` where the row has none: the
+    /// relation is two-way.
+    pub fn reverse_label(&self) -> String {
+        match self.reverse_label.as_deref() {
+            Some(label) if !label.is_empty() => label.to_string(),
+            _ => self.label(),
+        }
+    }
+}
+
+/// The label a type gets when it names none: the last segment of its id, with
+/// each hyphen and underscore made a space and each word capitalized.
+/// `labelFromId` in `@withmarfa/shared` is the same function; a test on each
+/// side holds both to the same answers.
+pub fn label_from_id(id: &str) -> String {
+    let last = id.rsplit('.').next().unwrap_or(id);
+    let mut label = String::with_capacity(last.len());
+    let mut in_word = false;
+    for ch in last.chars() {
+        let ch = if ch == '-' || ch == '_' { ' ' } else { ch };
+        let is_word = ch.is_ascii_alphanumeric();
+        label.push(if is_word && !in_word {
+            ch.to_ascii_uppercase()
+        } else {
+            ch
+        });
+        in_word = is_word;
+    }
+    label
 }
 
 /// Both catalogs, read together so a copy never holds one without the other.
@@ -194,7 +239,46 @@ pub struct WireEdgeAnswer {
 
 #[cfg(test)]
 mod tests {
-    use super::WirePage;
+    use super::{WireEdgeType, WirePage, label_from_id};
+
+    /// The same table as `type-label.test.ts` in `@withmarfa/shared`.
+    pub const LABELS: [(&str, &str); 6] = [
+        ("acme.list-member", "List Member"),
+        ("parent-of", "Parent Of"),
+        ("about", "About"),
+        ("a.b.snake_case_name", "Snake Case Name"),
+        ("acme.2nd-pass", "2nd Pass"),
+        ("acme.v2--draft", "V2  Draft"),
+    ];
+
+    #[test]
+    fn a_label_is_made_from_an_id_as_the_server_makes_it() {
+        for (id, label) in LABELS {
+            assert_eq!(label_from_id(id), label, "{id}");
+        }
+    }
+
+    #[test]
+    fn an_edge_type_row_without_labels_reads_with_the_ones_the_server_makes() {
+        let bare = |extra: &str| -> WireEdgeType {
+            serde_json::from_str(&format!(
+                r#"{{"id":"acme.list-member","cardinality":"many-to-many","source_type_constraints":["*"],"target_type_constraints":["*"],"cascade_on_delete":"orphan","property_schema":{{}},"written_at":"source","shipped":false{extra}}}"#
+            ))
+            .unwrap()
+        };
+        let none = bare("");
+        assert_eq!(
+            (none.label(), none.reverse_label()),
+            ("List Member".into(), "List Member".into())
+        );
+        let named = bare(r#","label":"Members","reverse_label":"Member of""#);
+        assert_eq!(
+            (named.label(), named.reverse_label()),
+            ("Members".into(), "Member of".into())
+        );
+        let one_way = bare(r#","label":"Members","reverse_label":"""#);
+        assert_eq!(one_way.reverse_label(), "Members");
+    }
 
     #[test]
     fn a_page_without_a_cursor_key_is_refused_and_a_null_one_is_the_last() {

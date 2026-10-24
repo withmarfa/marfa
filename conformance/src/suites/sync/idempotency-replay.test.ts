@@ -224,6 +224,7 @@ async function blockingEdgeType(): Promise<string> {
   const found = await client.listEdgeTypes();
   if (!found.data.data.some((t) => t.id === id)) {
     const registered = await client.registerEdgeType({
+      label: "Test edge type",
       id,
       cardinality: "many-to-many",
       cascade_on_delete: "block",

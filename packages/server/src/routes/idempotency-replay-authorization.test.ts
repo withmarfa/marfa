@@ -931,7 +931,12 @@ it("retained blockers require the target's read grant", async () => {
   const kind = "replay.blocks";
   const registered = await request(ctx.app, "POST", "/edge-types", {
     key: ctx.workingKey,
-    body: { id: kind, cardinality: "many-to-many", cascade_on_delete: "block" },
+    body: {
+      id: kind,
+      label: "Test label",
+      cardinality: "many-to-many",
+      cascade_on_delete: "block",
+    },
   });
   expect(registered.status, await registered.clone().text()).toBe(201);
   const linked = await request(ctx.app, "POST", "/edges", {
@@ -988,7 +993,12 @@ it("omitted blockers leave no replay requirements", async () => {
   const kind = "replay.hidden-blocks";
   const registered = await request(ctx.app, "POST", "/edge-types", {
     key: ctx.workingKey,
-    body: { id: kind, cardinality: "many-to-many", cascade_on_delete: "block" },
+    body: {
+      id: kind,
+      label: "Test label",
+      cardinality: "many-to-many",
+      cascade_on_delete: "block",
+    },
   });
   expect(registered.status).toBe(201);
   const linked = await request(ctx.app, "POST", "/edges", {
@@ -1057,6 +1067,7 @@ it.each(["retyped", "moved", "purged"])(
           key: ctx.workingKey,
           body: {
             id: kind,
+            label: "Test label",
             cardinality: change === "moved" ? "many-to-one" : "many-to-many",
             cascade_on_delete: "block",
           },

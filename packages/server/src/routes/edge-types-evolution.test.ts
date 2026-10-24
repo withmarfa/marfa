@@ -91,7 +91,6 @@ it.each([
   ["target narrowing", { target_type_constraints: ["core.task"] }],
   ["cardinality", { cardinality: "many-to-one" }],
   ["cascade", { cascade_on_delete: "block" }],
-  ["label", { label: "Changed" }],
   ["description", { description: "Changed" }],
   ["properties", { property_schema: { note: { type: "string" } } }],
   ["reverse name", { reverse_name: `${prefix}.reverse` }],
@@ -110,6 +109,84 @@ it.each([
   });
   expect(response.status).toBe(409);
   expect(await ctx.storage.edgeTypes.get(definition.id)).toEqual(before);
+});
+
+it("renames both labels in place and answers the new ones", async () => {
+  const definition = {
+    ...base(`${prefix}.renamed`),
+    reverse_label: "Repository of",
+  };
+  expect((await register(definition)).status).toBe(201);
+  const response = await register({
+    ...definition,
+    label: "Lives in",
+    reverse_label: "Holds",
+    evolve_constraints: true,
+  });
+  expect(response.status).toBe(200);
+  expect(await response.json()).toMatchObject({
+    edge_type: { label: "Lives in", reverse_label: "Holds" },
+  });
+  expect(await ctx.storage.edgeTypes.get(definition.id)).toMatchObject({
+    label: "Lives in",
+    reverse_label: "Holds",
+  });
+});
+
+it("keeps both labels when an evolution names none", async () => {
+  const definition = {
+    ...base(`${prefix}.kept-labels`),
+    label: "Lives in",
+    reverse_label: "Holds",
+  };
+  expect((await register(definition)).status).toBe(201);
+  const response = await register({
+    id: definition.id,
+    cardinality: definition.cardinality,
+    source_type_constraints: ["*"],
+    evolve_constraints: true,
+  });
+  expect(response.status, await response.clone().text()).toBe(200);
+  const body = (await response.json()) as {
+    edge_type: { source_type_constraints: string[] };
+  };
+  expect(body).toMatchObject({
+    edge_type: { label: "Lives in", reverse_label: "Holds" },
+  });
+  // The witness that the evolution ran.
+  expect(body.edge_type.source_type_constraints).toEqual(["*"]);
+  expect(await ctx.storage.edgeTypes.get(definition.id)).toMatchObject({
+    label: "Lives in",
+    reverse_label: "Holds",
+  });
+});
+
+it("follows a changed label with the reverse label of a type that registered none", async () => {
+  const definition = base(`${prefix}.two-way`);
+  expect((await register(definition)).status).toBe(201);
+  const stored = await ctx.storage.edgeTypes.get(definition.id);
+  expect(stored).not.toHaveProperty("reverse_label");
+  const response = await register({
+    ...definition,
+    label: "Related to",
+    evolve_constraints: true,
+  });
+  expect(response.status).toBe(200);
+  expect(await response.json()).toMatchObject({
+    edge_type: { label: "Related to", reverse_label: "Related to" },
+  });
+  const listed = (await (
+    await request(ctx.app, "GET", "/edge-types", { key: ctx.workingKey })
+  ).json()) as {
+    data: { id: string; label: string; reverse_label: string }[];
+  };
+  expect(listed.data.find((e) => e.id === definition.id)).toMatchObject({
+    label: "Related to",
+    reverse_label: "Related to",
+  });
+  expect(await ctx.storage.edgeTypes.get(definition.id)).not.toHaveProperty(
+    "reverse_label",
+  );
 });
 
 it.each([{ all: [] }, { all: ["*"] }])(

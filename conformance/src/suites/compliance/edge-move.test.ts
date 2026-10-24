@@ -258,6 +258,7 @@ describe("moving an edge's end", () => {
   it("refuses a move onto a target its type's constraint refuses, and answers one the key cannot read exactly as a missing one", async () => {
     const edgeType = `mock.move.${ctx.runId}`;
     const registered = await client.registerEdgeType({
+      label: "Test edge type",
       id: edgeType,
       cardinality: "many-to-one",
       target_type_constraints: ["core.note"],

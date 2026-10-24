@@ -64,6 +64,7 @@ describe("the counts an archive carries", () => {
             });
             expect(type.status, JSON.stringify(type.error)).toBe(201);
             const edgeType = await working.registerEdgeType({
+              label: "Test edge type",
               id: `counts.edge${String(n)}`,
               cardinality: "many-to-many",
             });

@@ -1,6 +1,7 @@
 {
   "id": "about",
   "label": "About",
+  "reverse_label": "Subject of",
   "description": "Source item is about the target item. Topical connection between items across types.",
   "cardinality": "many-to-many",
   "source_type_constraints": ["*"],

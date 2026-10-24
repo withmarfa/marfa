@@ -370,6 +370,7 @@ const doors: Door[] = [
     at: "/description",
     body: (text, p) => ({
       id: `wellformed.link${p.suffix}`,
+      label: "Test edge type",
       cardinality: "many-to-many",
       description: `Links ${text}`,
     }),
@@ -381,6 +382,7 @@ const doors: Door[] = [
 async function edgeWorld(): Promise<Partial<Prepared>> {
   const edgeType = `wellformed.edge${randomUUID().replaceAll("-", "")}`;
   const registered = await client.registerEdgeType({
+    label: "Test edge type",
     id: edgeType,
     cardinality: "many-to-many",
     property_schema: { label: { type: "string" } },

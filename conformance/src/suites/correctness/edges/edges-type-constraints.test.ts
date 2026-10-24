@@ -43,6 +43,7 @@ describe("edge type-constraints", () => {
   it("source / target type constraints: matching types accepted", async () => {
     const edgeTypeId = `mock.tc.${ctx.runId}`;
     const reg = await client.registerEdgeType({
+      label: "Test edge type",
       id: edgeTypeId,
       cardinality: "many-to-many",
       source_type_constraints: ["core.highlight"],
@@ -67,6 +68,7 @@ describe("edge type-constraints", () => {
   it("non-matching source type rejected", async () => {
     const edgeTypeId = `mock.tc2.${ctx.runId}`;
     const reg = await client.registerEdgeType({
+      label: "Test edge type",
       id: edgeTypeId,
       cardinality: "many-to-many",
       source_type_constraints: ["core.highlight"],
@@ -92,6 +94,7 @@ describe("edge type-constraints", () => {
   it("non-matching target type rejected", async () => {
     const edgeTypeId = `mock.tc3.${ctx.runId}`;
     const reg = await client.registerEdgeType({
+      label: "Test edge type",
       id: edgeTypeId,
       cardinality: "many-to-many",
       source_type_constraints: ["core.note"],
@@ -132,6 +135,7 @@ describe("edge type-constraints", () => {
     expect(typeReg.ok).toBe(true);
 
     const edgeReg = await client.registerEdgeType({
+      label: "Test edge type",
       id: edgeTypeId,
       cardinality: "many-to-many",
       source_type_constraints: ["core.highlight"],
@@ -225,6 +229,7 @@ describe("endpoint constraints on every write path", () => {
   beforeAll(async () => {
     edgeType = `mock.ep.${ctx.runId}`;
     const reg = await client.registerEdgeType({
+      label: "Test edge type",
       id: edgeType,
       cardinality: "many-to-many",
       source_type_constraints: ["core.highlight"],

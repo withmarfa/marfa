@@ -1916,6 +1916,7 @@ describe("the scripted answers match the server's", () => {
     // it is prose the device passes through and nothing here asserts.
     const read = (row: Record<string, unknown> | WireEdgeType | undefined) => ({
       label: row?.label,
+      reverse_label: row?.reverse_label,
       cardinality: row?.cardinality,
       source_type_constraints: row?.source_type_constraints,
       target_type_constraints: row?.target_type_constraints,
@@ -1939,7 +1940,7 @@ describe("the scripted answers match the server's", () => {
     const id = `fidelity-${uuidv7().slice(-12)}`;
     const registered = await client.rawRequest("/edge-types", {
       method: "POST",
-      body: { id, cardinality: "many-to-many" },
+      body: { id, label: "Fidelity link", cardinality: "many-to-many" },
     });
     expect(registered.ok, JSON.stringify(registered.error)).toBe(true);
     const again = await client.rawRequest("/edge-types");
@@ -1950,7 +1951,7 @@ describe("the scripted answers match the server's", () => {
     expect(
       read(real),
       "an edge type the scripted catalog registers is not the one the server lists after the same registration",
-    ).toEqual(read(edgeType(id)));
+    ).toEqual(read(edgeType(id, { label: "Fidelity link" })));
   });
 
   it("matches the name lookup a folder asks the server for a typed name", async () => {
@@ -2463,6 +2464,8 @@ describe("the scripted answers match the server's", () => {
       method: "POST",
       body: {
         id: mentor,
+        label: "Mentees",
+        reverse_label: "Mentor",
         cardinality: "one-to-many",
         reverse_name: `mentee-${ctx.runId}`,
         written_at: "target",
@@ -2526,6 +2529,7 @@ describe("the scripted answers match the server's", () => {
     expect(
       {
         label: edge.value.label,
+        reverse_label: edge.value.reverse_label,
         cardinality: edge.value.cardinality,
         reverse_name: edge.value.reverse_name,
         written_at: edge.value.written_at,
@@ -2540,6 +2544,7 @@ describe("the scripted answers match the server's", () => {
       "the copy holds the registered edge type otherwise than the server lists it",
     ).toEqual({
       label: row?.label ?? null,
+      reverse_label: row?.reverse_label,
       cardinality: row?.cardinality,
       reverse_name: row?.reverse_name,
       written_at: row?.written_at,

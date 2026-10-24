@@ -2656,6 +2656,20 @@ mod tests {
     }
 
     #[test]
+    fn a_listing_of_an_edge_type_without_labels_is_read() {
+        let server = crate::scripted::Scripted::start();
+        server.on(
+            "/edge-types",
+            vec![crate::scripted::json(
+                200,
+                r#"{"data":[{"id":"acme.list-member","cardinality":"many-to-many","source_type_constraints":["*"],"target_type_constraints":["*"],"cascade_on_delete":"orphan","property_schema":{},"written_at":"source","shipped":false}],"next_cursor":null}"#,
+            )],
+        );
+        let http = Http::new(&server.url(), "k").unwrap();
+        assert_eq!(http.edge_types().unwrap().len(), 1);
+    }
+
+    #[test]
     fn a_catalog_that_names_a_next_page_is_refused_not_cut_short() {
         let server = crate::scripted::Scripted::start();
         server.on(

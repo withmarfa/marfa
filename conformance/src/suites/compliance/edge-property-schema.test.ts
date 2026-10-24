@@ -46,6 +46,7 @@ async function register(
 ): Promise<string> {
   const id = `mock.propschema${String(counter++)}.${ctx.runId}`;
   const r = await client.registerEdgeType({
+    label: "Test edge type",
     id,
     cardinality,
     property_schema,
@@ -292,6 +293,7 @@ describe("PATCH /edges/{id}", () => {
     // one: the edge stays, holding properties the new schema refuses.
     const id = `mock.propschema.late.${ctx.runId}`;
     const first = await client.registerEdgeType({
+      label: "Test edge type",
       id,
       cardinality: "many-to-many",
     });
@@ -308,6 +310,7 @@ describe("PATCH /edges/{id}", () => {
     const edge = made.data.edge;
     expect((await client.deleteEdgeType(id, true)).status).toBe(200);
     const second = await client.registerEdgeType({
+      label: "Test edge type",
       id,
       cardinality: "many-to-many",
       property_schema: SCHEMA,
@@ -647,6 +650,7 @@ describe("null and format", () => {
 
   it("refuses a registration that puts a format on a property it does not suit, naming the property", async () => {
     const r = await client.registerEdgeType({
+      label: "Test edge type",
       id: `mock.propschema.badformat.${ctx.runId}`,
       cardinality: "many-to-many",
       property_schema: { size: { type: "number", format: "email" } },

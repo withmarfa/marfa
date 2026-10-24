@@ -77,7 +77,7 @@ const coreEvent: TypeSchema = {
 const coreFile: TypeSchema = {
   id: "core.file",
   label: "File",
-  description: "A file or binary reference — the generic fallback for non-media files.",
+  description: "A file or binary reference — the generic fallback for any file that has no more specific type.",
   version: 0,
   fields: {
     blob_ref: { type: "string", description: "Reference to the binary content (sha256:<hex>)", required: true },

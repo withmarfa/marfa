@@ -71,6 +71,7 @@ describe("a restore of an edge whose type was force-deleted", () => {
       [blocking, "block"],
     ] as const) {
       const registered = await source.registerEdgeType({
+        label: "Test edge type",
         id,
         cardinality: "many-to-many",
         cascade_on_delete: cascade,
@@ -231,6 +232,7 @@ describe("a restore of an edge whose type was force-deleted", () => {
     expect(
       (
         await source.registerEdgeType({
+          label: "Test edge type",
           id: type,
           cardinality: "one-to-one",
           source_type_constraints: ["core.note"],

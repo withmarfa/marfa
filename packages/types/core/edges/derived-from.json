@@ -1,6 +1,7 @@
 {
   "id": "derived-from",
   "label": "Derived from",
+  "reverse_label": "Basis for",
   "description": "Source was produced from the target (imports, AI generation, transformations). Both items remain valid in parallel.",
   "cardinality": "many-to-many",
   "source_type_constraints": ["*"],

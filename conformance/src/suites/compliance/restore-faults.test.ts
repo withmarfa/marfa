@@ -73,6 +73,7 @@ function ownerClient(): MarfaClient {
 
 const edgeTypeOf = (id: string) => ({
   id,
+  label: "Test edge type",
   cardinality: "many-to-many",
   source_type_constraints: ["*"],
   target_type_constraints: ["*"],

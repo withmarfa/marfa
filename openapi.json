@@ -30,7 +30,11 @@
           },
           "label": {
             "type": "string",
-            "description": "A name for people to read."
+            "description": "The name an app shows on the source end of an edge of this type, such as `Children` on a parent. Not the `reverse_name`, which is the code name a file writes."
+          },
+          "reverse_label": {
+            "type": "string",
+            "description": "The name an app shows on the target end, such as `Parent` on a child. It is the same text as `label` when the relation is two-way, and an app then shows both directions as one list."
           },
           "description": {
             "type": "string",
@@ -96,6 +100,8 @@
         },
         "required": [
           "id",
+          "label",
+          "reverse_label",
           "cardinality",
           "source_type_constraints",
           "target_type_constraints",
@@ -3573,7 +3579,12 @@
           },
           "label": {
             "type": "string",
-            "description": "A name for people to read."
+            "description": "The name an app shows on the source end, such as `Children` on a parent. Leave it out and the last segment of the `id` makes it, such as `List Member`. On a change, leaving it out keeps the stored one."
+          },
+          "reverse_label": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The name an app shows on the target end, such as `Parent` on a child. Leave it out and `label` names both ends. On a change, leaving it out keeps the stored one; send the `label` to make a type two-way."
           },
           "description": {
             "type": "string",
@@ -3636,7 +3647,7 @@
           },
           "evolve_constraints": {
             "type": "boolean",
-            "description": "`true` widens a registered type's endpoints in place. Retain every existing constraint token, or allow all types with `[]` or `*`; other members must stay unchanged. Omit or set `false` to register a new type. Not stored in the definition."
+            "description": "`true` updates a registered type in place: widen its endpoints (keep every constraint token, or allow all types with `[]` or `*`) and change its labels. Other members stay unchanged. Omit or `false` to register a new type. Not stored."
           }
         },
         "required": [
@@ -28494,7 +28505,7 @@
           "Edge types"
         ],
         "summary": "Register an edge type",
-        "description": "Registers an edge type and returns it. With `evolve_constraints: true`, widens a registered type's endpoint constraints without changing its edges. An edge type can't extend another.",
+        "description": "Registers an edge type and returns it. With `evolve_constraints: true`, widens a registered type's endpoint constraints and may rename its labels, without changing its edges. An edge type can't extend another.",
         "security": [
           {
             "bearerAuth": []
@@ -28686,7 +28697,7 @@
             }
           },
           "409": {
-            "description": "`conflict`: `id` is the name of an edge type Marfa ships, `id` or `reverse_name` is already the ID or reverse name of an edge type, or `reverse_name` equals `id`, or constraint evolution would remove a constraint token without allowing every type or change another definition member.",
+            "description": "`conflict`: `id` is the name of an edge type Marfa ships, `id` or `reverse_name` is already the ID or reverse name of an edge type, or `reverse_name` equals `id`, or constraint evolution would remove a constraint token without allowing every type or change a definition member other than the labels.",
             "content": {
               "application/json": {
                 "schema": {

@@ -14,6 +14,7 @@ afterEach(() => {
 function register(id: string, reverse_name?: string): void {
   registerEdgeTypeSchema({
     id,
+    label: id,
     cardinality: "many-to-many",
     source_type_constraints: ["*"],
     target_type_constraints: ["*"],

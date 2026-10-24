@@ -652,6 +652,7 @@ it("source movement bumps, target-only movement and ordinary edge writes do not"
     third = await item();
   const edgeSchema = {
     id: "example.read-edge",
+    label: "Read edge",
     cardinality: "many-to-many" as const,
     cascade_on_delete: "orphan" as const,
     property_schema: {},

@@ -59,6 +59,7 @@ const parent = {
 const child = { id: "other.child", parent: parent.id, version: 1, fields: {} };
 const edge = {
   id: "example.related",
+  label: "Related to",
   cardinality: "many-to-many" as const,
   cascade_on_delete: "orphan" as const,
   source_type_constraints: [parent.id],

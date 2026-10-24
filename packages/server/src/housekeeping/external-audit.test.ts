@@ -464,6 +464,7 @@ describe("external and background audit units with real SQLite and disk", () => 
       edge_type: {
         id: "custom.audit_edge",
         description: "Audit fixture",
+        label: "Test edge type",
         cardinality: "many-to-many",
       },
     };

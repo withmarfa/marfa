@@ -729,6 +729,7 @@ describe("Custom edge-type registration", () => {
       key: ctx.workingKey,
       body: {
         id: "test.custom-link",
+        label: "Test label",
         cardinality: "many-to-many",
         cascade_on_delete: "orphan",
       },
@@ -754,6 +755,7 @@ describe("Custom edge-type registration", () => {
       key: ctx.workingKey,
       body: {
         id: "about",
+        label: "Test label",
         cardinality: "many-to-many",
       },
     });
@@ -765,6 +767,7 @@ describe("Custom edge-type registration", () => {
       key: ctx.workingKey,
       body: {
         id: "test.inherit",
+        label: "Test label",
         cardinality: "many-to-many",
         extends: "about",
       },

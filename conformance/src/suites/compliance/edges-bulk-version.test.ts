@@ -189,6 +189,7 @@ describe("edges.bulk with a version on an entry that matches a held edge", () =>
   it("answers updated for an entry whose triple an edge of a force-deleted type holds", async () => {
     const edgeType = `mock.bulk-version.${ctx.runId}`;
     const registered = await client.registerEdgeType({
+      label: "Test edge type",
       id: edgeType,
       cardinality: "many-to-many",
     });

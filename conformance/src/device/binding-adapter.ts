@@ -97,7 +97,8 @@ export interface BindingItemType {
 
 export interface BindingEdgeType {
   id: string;
-  label?: string;
+  label: string;
+  reverseLabel: string;
   cardinality: string;
 }
 

@@ -20,6 +20,8 @@ const LATE = { id: "acme.late", parent: "core.note", version: 0, fields: {} };
 
 const MENTOR = {
   id: "mentor-of",
+  label: "Mentees",
+  reverse_label: "Mentors",
   cardinality: "one-to-many",
   source_type_constraints: ["*"],
   target_type_constraints: ["*"],
@@ -137,6 +139,8 @@ test("holds the types Marfa ships before a server's catalog is read, then reads 
   assert.deepEqual(recipe.fields[0]?.definition, RECIPE.fields.servings);
   const mentor = core.edgeType("mentor-of");
   assert.equal(mentor.reverseName, "mentored-by");
+  assert.equal(mentor.label, "Mentees");
+  assert.equal(mentor.reverseLabel, "Mentors");
   assert.equal(mentor.writtenAt, EdgeWrittenAt.Target);
   assert.deepEqual(
     core.edgeTypes().map((type) => type.id),

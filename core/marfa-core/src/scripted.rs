@@ -464,7 +464,7 @@ pub fn edge_types(entries: &[(&str, Option<&str>)]) -> Answer {
                 ""
             };
             format!(
-                r#"{{"id":"{id}","cardinality":"many-to-many","source_type_constraints":["*"],"target_type_constraints":["*"],"cascade_on_delete":"orphan","property_schema":{{}},"shipped":false{reverse}{written}}}"#
+                r#"{{"id":"{id}","label":"{id}","reverse_label":"{id}","cardinality":"many-to-many","source_type_constraints":["*"],"target_type_constraints":["*"],"cascade_on_delete":"orphan","property_schema":{{}},"shipped":false{reverse}{written}}}"#
             )
         })
         .collect();

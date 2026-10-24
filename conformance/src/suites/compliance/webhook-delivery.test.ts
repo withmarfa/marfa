@@ -60,6 +60,7 @@ async function keyWith(
 async function registerEdgeType(label: string): Promise<string> {
   const id = `mock.webhook.${label}.${ctx.runId}`;
   const registered = await client.registerEdgeType({
+    label: "Test edge type",
     id,
     cardinality: "many-to-many",
   });

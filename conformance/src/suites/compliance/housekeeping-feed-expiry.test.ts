@@ -564,6 +564,7 @@ describe("what the move to the bin takes with it", () => {
     const edgeType = `user.feed-expiry-block-${String(Date.now())}-${String(++sequence)}`;
     const registered = await writer.registerEdgeType({
       id: edgeType,
+      label: "Test edge type",
       cardinality: "many-to-many",
       source_type_constraints: ["*"],
       target_type_constraints: ["*"],

@@ -136,6 +136,7 @@ async function createEdge() {
     key: ctx.workingKey,
     body: {
       id: EDGE,
+      label: "Test label",
       cardinality: "many-to-many",
       reverse_name: REVERSE,
       source_type_constraints: ["role:container"],

@@ -8,12 +8,14 @@ describe("validateEdgeTypeSchema", () => {
   it("accepts a minimal schema and applies the defaults", () => {
     const result = validateEdgeTypeSchema({
       id: "cites",
+      label: "Test label",
       cardinality: "many-to-many",
     });
     expect(result.success).toBe(true);
     if (!result.success) return;
     expect(result.data).toEqual({
       id: "cites",
+      label: "Test label",
       cardinality: "many-to-many",
       source_type_constraints: ["*"],
       target_type_constraints: ["*"],
@@ -26,6 +28,7 @@ describe("validateEdgeTypeSchema", () => {
   it("normalizes edge properties through the item-field model", () => {
     const result = validateEdgeTypeSchema({
       id: "linked-from",
+      label: "Test label",
       cardinality: "many-to-many",
       property_schema: {
         source_url: { type: "string", format: "url" },
@@ -42,6 +45,40 @@ describe("validateEdgeTypeSchema", () => {
     });
   });
 
+  it("requires a label and takes a reverse label as optional", () => {
+    const base = { id: "cites", cardinality: "many-to-many" };
+    const unnamed = validateEdgeTypeSchema(base);
+    expect(unnamed.success).toBe(false);
+    if (unnamed.success) return;
+    expect(unnamed.errors.map((e) => e.field)).toEqual(["label"]);
+
+    const oneEnd = validateEdgeTypeSchema({ ...base, label: "Cites" });
+    expect(oneEnd.success).toBe(true);
+    if (oneEnd.success) expect(oneEnd.data).not.toHaveProperty("reverse_label");
+
+    const twoEnds = validateEdgeTypeSchema({
+      ...base,
+      label: "Cites",
+      reverse_label: "Cited by",
+    });
+    expect(twoEnds.success).toBe(true);
+    if (twoEnds.success) expect(twoEnds.data.reverse_label).toBe("Cited by");
+
+    const empty = validateEdgeTypeSchema({
+      ...base,
+      label: "Cites",
+      reverse_label: "",
+    });
+    expect(empty.success).toBe(false);
+  });
+
+  it("gives every shipped edge type both labels", () => {
+    for (const edge of ALL_EDGE_TYPES) {
+      expect(edge.label, edge.id).toBeTruthy();
+      expect(edge.reverse_label, edge.id).toBeTruthy();
+    }
+  });
+
   it("rejects a non-object input", () => {
     const result = validateEdgeTypeSchema("in-thread");
     expect(result.success).toBe(false);
@@ -53,6 +90,7 @@ describe("validateEdgeTypeSchema", () => {
     for (const id of ["In-Thread", "in_thread", "in.thread", "in/thread", ""]) {
       const result = validateEdgeTypeSchema({
         id,
+        label: "Test label",
         cardinality: "many-to-many",
       });
       expect(result.success, `id ${JSON.stringify(id)} should fail`).toBe(
@@ -65,7 +103,11 @@ describe("validateEdgeTypeSchema", () => {
 
   it("rejects a missing or unknown cardinality", () => {
     for (const cardinality of [undefined, "one-to-few", 4]) {
-      const result = validateEdgeTypeSchema({ id: "cites", cardinality });
+      const result = validateEdgeTypeSchema({
+        id: "cites",
+        label: "Cites",
+        cardinality,
+      });
       expect(result.success).toBe(false);
       if (result.success) continue;
       expect(result.errors[0]?.field).toBe("cardinality");
@@ -75,6 +117,7 @@ describe("validateEdgeTypeSchema", () => {
   it("rejects an unknown cascade and empty or malformed constraints", () => {
     const cascade = validateEdgeTypeSchema({
       id: "cites",
+      label: "Test label",
       cardinality: "many-to-many",
       cascade_on_delete: "detach",
     });
@@ -83,6 +126,7 @@ describe("validateEdgeTypeSchema", () => {
     for (const bad of [[], ["*", ""], "core.note", [42]]) {
       const result = validateEdgeTypeSchema({
         id: "cites",
+        label: "Test label",
         cardinality: "many-to-many",
         target_type_constraints: bad,
       });
@@ -95,6 +139,7 @@ describe("validateEdgeTypeSchema", () => {
   it("rejects a property with an unknown field type, naming the field", () => {
     const result = validateEdgeTypeSchema({
       id: "cites",
+      label: "Test label",
       cardinality: "many-to-many",
       property_schema: { weight: { type: "float" } },
     });
@@ -152,6 +197,7 @@ describe("role constraints", () => {
   it("accepts a known role on either side", () => {
     const result = validateEdgeTypeSchema({
       id: "shelved-in",
+      label: "Test label",
       cardinality: "many-to-many",
       target_type_constraints: ["role:container"],
     });
@@ -170,6 +216,7 @@ describe("role constraints", () => {
     ] as const) {
       const result = validateEdgeTypeSchema({
         id: "shelved-in",
+        label: "Test label",
         cardinality: "many-to-many",
         [side]: ["role:warehouse"],
       });
@@ -182,6 +229,7 @@ describe("role constraints", () => {
   it("still accepts a type identifier alongside a role", () => {
     const result = validateEdgeTypeSchema({
       id: "shelved-in",
+      label: "Test label",
       cardinality: "many-to-many",
       target_type_constraints: ["core.note", "role:container"],
     });
@@ -191,6 +239,7 @@ describe("role constraints", () => {
   it("keeps a reverse name, and refuses one that is not kebab-case or is the id", () => {
     const kept = validateEdgeTypeSchema({
       id: "mentors",
+      label: "Test label",
       cardinality: "one-to-many",
       reverse_name: "mentored-by",
     });
@@ -200,6 +249,7 @@ describe("role constraints", () => {
     for (const reverse_name of ["Mentored By", "", 7, "mentors"]) {
       const refused = validateEdgeTypeSchema({
         id: "mentors",
+        label: "Test label",
         cardinality: "one-to-many",
         reverse_name,
       });
@@ -225,12 +275,14 @@ describe("role constraints", () => {
   it("writes an edge at its source unless told, and refuses the target without a reverse name", () => {
     const plain = validateEdgeTypeSchema({
       id: "cites",
+      label: "Test label",
       cardinality: "many-to-many",
     });
     expect(plain.success && plain.data.written_at).toBe("source");
 
     const atTarget = validateEdgeTypeSchema({
       id: "mentors",
+      label: "Test label",
       cardinality: "one-to-many",
       reverse_name: "mentored-by",
       written_at: "target",
@@ -240,6 +292,7 @@ describe("role constraints", () => {
     // An edge no file writes names no end and needs no name to write it under.
     const unwritten = validateEdgeTypeSchema({
       id: "placed-in",
+      label: "Test label",
       cardinality: "many-to-many",
       written_at: "none",
     });
@@ -248,6 +301,7 @@ describe("role constraints", () => {
     for (const written_at of ["target", "middle"]) {
       const refused = validateEdgeTypeSchema({
         id: "mentors",
+        label: "Test label",
         cardinality: "one-to-many",
         written_at,
       });

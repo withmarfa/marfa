@@ -1,6 +1,7 @@
 {
   "id": "parent-of",
-  "label": "Parent of",
+  "label": "Children",
+  "reverse_label": "Parent",
   "description": "Source is the parent of the target. Target has at most one parent. Deleting the parent cascades to children. A child's file writes the edge, naming its parent under the reverse name, `child-of`, so a parent's file does not list every child.",
   "cardinality": "one-to-many",
   "source_type_constraints": ["*"],

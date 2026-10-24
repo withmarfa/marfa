@@ -85,7 +85,7 @@ async function registerEdgeType(
 ): Promise<void> {
   const res = await request(ctx.app, "POST", "/edge-types", {
     key,
-    body: { cardinality: "many-to-many", ...body },
+    body: { label: "Test label", cardinality: "many-to-many", ...body },
   });
   expect(res.status, `register ${body.id}`).toBe(201);
 }
@@ -186,7 +186,7 @@ const CHANGING: Record<string, Driver> = {
     for (const body of edgeTargets(name)) {
       const res = await request(ctx.app, "POST", "/edge-types", {
         key: refused,
-        body: { cardinality: "many-to-many", ...body },
+        body: { label: "Test label", cardinality: "many-to-many", ...body },
       });
       await expectRefused(res, "edge_permission_denied", body.id);
       expect(await edgeTypeListed(body.id, served)).toBe(false);

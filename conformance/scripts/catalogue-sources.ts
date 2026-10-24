@@ -76,6 +76,8 @@ export function typeRows(): TypeRow[] {
 export function edgeTypeRows(): EdgeTypeRow[] {
   return ALL_EDGE_TYPES.map((schema) => ({
     id: schema.id,
+    label: schema.label,
+    reverseLabel: schema.reverse_label ?? schema.label,
     ...(schema.reverse_name === undefined
       ? {}
       : { reverseName: schema.reverse_name }),

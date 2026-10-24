@@ -15,6 +15,8 @@ import {
   ROLE_CONSTRAINT_PREFIX,
   FIELD_TYPES,
   normalizeEdgeProperties,
+  labelFromId,
+  namedLabel,
   unreadKeys,
 } from "@withmarfa/shared";
 import type { EdgeTypeSchema } from "@withmarfa/shared";
@@ -106,7 +108,14 @@ export const EdgePropertyDefinitionSchema = z
 
 // The texts the request and the answer share. The request adds what leaving
 // a field out does.
-const LABEL = "A name for people to read.";
+const LABEL =
+  "The name an app shows on the source end of an edge of this type, such as `Children` on a parent. Not the `reverse_name`, which is the code name a file writes.";
+const LABEL_REQUEST =
+  "The name an app shows on the source end, such as `Children` on a parent. Leave it out and the last segment of the `id` makes it, such as `List Member`. On a change, leaving it out keeps the stored one.";
+const REVERSE_LABEL_REQUEST =
+  "The name an app shows on the target end, such as `Parent` on a child. Leave it out and `label` names both ends. On a change, leaving it out keeps the stored one; send the `label` to make a type two-way.";
+const REVERSE_LABEL =
+  "The name an app shows on the target end, such as `Parent` on a child. It is the same text as `label` when the relation is two-way, and an app then shows both directions as one list.";
 const DESCRIPTION = "What the edge type is for.";
 const CardinalitySchema = z
   .enum(["one-to-one", "one-to-many", "many-to-one", "many-to-many"])
@@ -135,7 +144,8 @@ export const EdgeTypeRequestSchema = z
       .string()
       .min(1)
       .describe("The identifier of the edge type, such as `acme.list-member`."),
-    label: z.string().optional().describe(LABEL),
+    label: z.string().optional().describe(LABEL_REQUEST),
+    reverse_label: z.string().min(1).optional().describe(REVERSE_LABEL_REQUEST),
     description: z.string().optional().describe(DESCRIPTION),
     cardinality: CardinalitySchema,
     source_type_constraints: z
@@ -173,7 +183,8 @@ export const EdgeTypeRequestSchema = z
 const EdgeTypeResponseSchema = z
   .object({
     id: z.string().describe("Unique identifier for the edge type."),
-    label: z.string().optional().describe(LABEL),
+    label: z.string().describe(LABEL),
+    reverse_label: z.string().describe(REVERSE_LABEL),
     description: z.string().optional().describe(DESCRIPTION),
     cardinality: CardinalitySchema,
     source_type_constraints: z.array(z.string()).describe(SOURCE_CONSTRAINTS),
@@ -195,8 +206,14 @@ const EdgeTypeResponseSchema = z
   )
   .openapi("EdgeType");
 
+/** `reverse_label` is derived here, never stored, so a type that registered
+ *  no reverse label follows its `label` when that changes. */
 function edgeTypeResponse(schema: EdgeTypeSchema) {
-  return { ...schema, shipped: isCoreEdgeType(schema.id) };
+  return {
+    ...schema,
+    reverse_label: schema.reverse_label ?? schema.label,
+    shipped: isCoreEdgeType(schema.id),
+  };
 }
 
 /**
@@ -298,7 +315,10 @@ export function edgeTypeFromRequest(
   assertEdgeNamesFree(body.id, reverse, taken);
   return {
     id: body.id,
-    ...(body.label !== undefined && { label: body.label }),
+    label: namedLabel(body.label) ?? labelFromId(body.id),
+    ...(body.reverse_label !== undefined && {
+      reverse_label: body.reverse_label,
+    }),
     ...(body.description !== undefined && { description: body.description }),
     cardinality: body.cardinality,
     source_type_constraints: body.source_type_constraints ?? ["*"],
@@ -321,7 +341,7 @@ const EdgeTypeRegistrationRequestSchema = z
       .boolean()
       .optional()
       .describe(
-        "`true` widens a registered type's endpoints in place. Retain every existing constraint token, or allow all types with `[]` or `*`; other members must stay unchanged. Omit or set `false` to register a new type. Not stored in the definition.",
+        "`true` updates a registered type in place: widen its endpoints (keep every constraint token, or allow all types with `[]` or `*`) and change its labels. Other members stay unchanged. Omit or `false` to register a new type. Not stored.",
       ),
   })
   .describe("An edge type to register.")
@@ -340,7 +360,7 @@ const registerEdgeTypeRoute = createRoute({
   tags: ["Edge types"],
   summary: "Register an edge type",
   description:
-    "Registers an edge type and returns it. With `evolve_constraints: true`, widens a registered type's endpoint constraints without changing its edges. An edge type can't extend another.",
+    "Registers an edge type and returns it. With `evolve_constraints: true`, widens a registered type's endpoint constraints and may rename its labels, without changing its edges. An edge type can't extend another.",
   security: [{ bearerAuth: [] }],
   middleware: registersEdgeType,
   request: {
@@ -409,7 +429,7 @@ const registerEdgeTypeRoute = createRoute({
         },
       },
       description:
-        "`conflict`: `id` is the name of an edge type Marfa ships, `id` or `reverse_name` is already the ID or reverse name of an edge type, or `reverse_name` equals `id`, or constraint evolution would remove a constraint token without allowing every type or change another definition member.",
+        "`conflict`: `id` is the name of an edge type Marfa ships, `id` or `reverse_name` is already the ID or reverse name of an edge type, or `reverse_name` equals `id`, or constraint evolution would remove a constraint token without allowing every type or change a definition member other than the labels.",
     },
   },
 });
@@ -574,7 +594,11 @@ export function edgeTypeRoutes(storage: Storage) {
               ErrorCode.EDGE_TYPE_NOT_FOUND,
               `Edge type ${body.id} not found`,
             );
-          const built = edgeTypeFromRequest(body);
+          const built = edgeTypeFromRequest({
+            ...body,
+            label: namedLabel(body.label) ?? existing.label,
+            reverse_label: body.reverse_label ?? existing.reverse_label,
+          });
           assertConstraintEvolution(existing, built);
           if (isDeepStrictEqual(existing, built))
             return { schema: existing, evolved: true, changed: false };

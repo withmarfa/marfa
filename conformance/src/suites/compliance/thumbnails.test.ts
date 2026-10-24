@@ -230,6 +230,7 @@ describe("a thumbnail field", () => {
     expect(captioned.ok, JSON.stringify(captioned.error)).toBe(true);
 
     const edge = await client.registerEdgeType({
+      label: "Test edge type",
       id: `mock.depicts.${ctx.runId}`,
       cardinality: "many-to-many",
       property_schema: { preview: { type: "thumbnail" } },
@@ -243,6 +244,7 @@ describe("a thumbnail field", () => {
     // on an edge's property too, rather than dropped and the edge type
     // registered as though it had carried none.
     const formatEdge = await client.registerEdgeType({
+      label: "Test edge type",
       id: `mock.depicts-format.${ctx.runId}`,
       cardinality: "many-to-many",
       property_schema: { preview: { type: "string", format: "thumbnail" } },
@@ -253,6 +255,7 @@ describe("a thumbnail field", () => {
     ).toBe(400);
     expect(formatEdge.error?.error.code).toBe("validation_error");
     const arrayEdge = await client.registerEdgeType({
+      label: "Test edge type",
       id: `mock.depicts-array.${ctx.runId}`,
       cardinality: "many-to-many",
       property_schema: { previews: { type: "array", items_type: "thumbnail" } },
@@ -263,6 +266,7 @@ describe("a thumbnail field", () => {
     ).toBe(400);
     expect(arrayEdge.error?.error.code).toBe("validation_error");
     const plainEdge = await client.registerEdgeType({
+      label: "Test edge type",
       id: `mock.depicts-plain.${ctx.runId}`,
       cardinality: "many-to-many",
       property_schema: { note: { type: "string" } },

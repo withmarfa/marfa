@@ -354,6 +354,7 @@ const doors: [string, () => Door | Promise<Door>][] = [
       path: "/edge-types",
       body: {
         id: `test.audit_${generateId().replaceAll("-", "")}`,
+        label: "Test label",
         cardinality: "many-to-many",
       },
     }),
@@ -367,7 +368,7 @@ const doors: [string, () => Door | Promise<Door>][] = [
           await send({
             method: "POST",
             path: "/edge-types",
-            body: { id, cardinality: "many-to-many" },
+            body: { id, label: "Test label", cardinality: "many-to-many" },
           })
         ).status,
       ).toBe(201);

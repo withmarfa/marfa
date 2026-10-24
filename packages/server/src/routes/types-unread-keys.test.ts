@@ -233,6 +233,7 @@ describe("POST /edge-types", () => {
     const id = `user.${name()}`;
     const bad = await send("POST", "/edge-types", {
       id,
+      label: "Test label",
       cardinality: "many-to-many",
       cascade: "orphan",
       property_schema: { rank: { type: "number", minimum: 0 } },
@@ -242,6 +243,7 @@ describe("POST /edge-types", () => {
 
     const mended = await send("POST", "/edge-types", {
       id,
+      label: "Test label",
       cardinality: "many-to-many",
       cascade_on_delete: "orphan",
       property_schema: { rank: { type: "number" } },
@@ -252,6 +254,7 @@ describe("POST /edge-types", () => {
   it("still answers `extends` as it did", async () => {
     const answer = await send("POST", "/edge-types", {
       id: `user.${name()}`,
+      label: "Test label",
       cardinality: "many-to-many",
       extends: "references",
     });
@@ -261,6 +264,7 @@ describe("POST /edge-types", () => {
   it("names a property key an item field takes and an edge property does not", async () => {
     const answer = await send("POST", "/edge-types", {
       id: `user.${name()}`,
+      label: "Test label",
       cardinality: "many-to-many",
       property_schema: { note: { type: "string", maxLength: 10 } },
     });

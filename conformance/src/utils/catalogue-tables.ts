@@ -45,6 +45,8 @@ export interface TypeRow {
 /** One shipped edge type, as its definition holds it. */
 export interface EdgeTypeRow {
   id: string;
+  label: string;
+  reverseLabel: string;
   reverseName?: string;
   cardinality: string;
   cascadeOnDelete: string;
@@ -193,6 +195,8 @@ export function edgeTypesTable(rows: readonly EdgeTypeRow[]): string {
   return renderTable(
     [
       "Edge type",
+      "Label",
+      "Reverse label",
       "Reverse name",
       "Cardinality",
       "On delete",
@@ -201,6 +205,8 @@ export function edgeTypesTable(rows: readonly EdgeTypeRow[]): string {
     ],
     ordered.map((row) => [
       code(row.id),
+      row.label,
+      row.reverseLabel,
       row.reverseName === undefined ? "None" : code(row.reverseName),
       row.cardinality,
       row.cascadeOnDelete,

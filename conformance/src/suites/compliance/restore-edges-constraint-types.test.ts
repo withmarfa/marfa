@@ -132,6 +132,7 @@ async function register(
   },
 ) {
   const registered = await source.registerEdgeType({
+    label: "Test edge type",
     id,
     cardinality: "many-to-many",
     ...constraints,

@@ -265,6 +265,7 @@ describe("the server resolves a conflict", () => {
     // and the type registered again with one the stored edge breaks.
     const edgeType = `mock.copy-schema.${ctx.runId}`;
     const registered = await client.registerEdgeType({
+      label: "Test edge type",
       id: edgeType,
       cardinality: "many-to-many",
     });
@@ -283,6 +284,7 @@ describe("the server resolves a conflict", () => {
     trackEdge(ctx, old.data.edge.id);
     expect((await client.deleteEdgeType(edgeType, true)).ok).toBe(true);
     const again = await client.registerEdgeType({
+      label: "Test edge type",
       id: edgeType,
       cardinality: "many-to-many",
       property_schema: { weight: { type: "number" } },
@@ -347,6 +349,7 @@ describe("the server resolves a conflict", () => {
     const under = `mock.copy-under.${ctx.runId}`;
     const unwritten = `mock.copy-unwritten.${ctx.runId}`;
     const registeredUnwritten = await client.registerEdgeType({
+      label: "Test edge type",
       id: unwritten,
       cardinality: "many-to-many",
       written_at: "none",
@@ -357,6 +360,7 @@ describe("the server resolves a conflict", () => {
     ).toBe(true);
     trackEdgeType(ctx, unwritten);
     const registeredUnder = await client.registerEdgeType({
+      label: "Test edge type",
       id: under,
       cardinality: "many-to-many",
       reverse_name: `mock.copy-over.${ctx.runId}`,
@@ -371,6 +375,7 @@ describe("the server resolves a conflict", () => {
       [blocking, "block"],
     ] as const) {
       const r = await client.registerEdgeType({
+        label: "Test edge type",
         id,
         cardinality: "many-to-many",
         cascade_on_delete,

@@ -468,7 +468,11 @@ describe("wildcard scope reaches runtime user.* types (keystone)", () => {
 });
 
 describe("edge-type registration is scope-gated (metadata.edge_types:write)", () => {
-  const edgeBody = { id: "user.blocks", cardinality: "many-to-many" as const };
+  const edgeBody = {
+    id: "user.blocks",
+    label: "Test label",
+    cardinality: "many-to-many" as const,
+  };
 
   it("rejects POST /edge-types without metadata.edge_types:write", async () => {
     // A broad data grant is not enough — edge-type setup is its own scope.

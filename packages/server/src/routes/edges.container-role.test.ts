@@ -225,6 +225,7 @@ describe("the role vocabulary is closed", () => {
       key: ctx.workingKey,
       body: {
         id: `user.shelved-in-${suffix}`,
+        label: "Test edge type",
         cardinality: "many-to-many",
         source_type_constraints: ["*"],
         target_type_constraints: ["role:warehouse"],

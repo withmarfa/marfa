@@ -135,7 +135,11 @@ pub struct ItemType {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct EdgeType {
     pub id: String,
-    pub label: Option<String>,
+    /// The name shown on the source end.
+    pub label: String,
+    /// The name shown on the target end; the same text as `label` where the
+    /// relation is two-way.
+    pub reverse_label: String,
     pub description: Option<String>,
     pub cardinality: String,
     /// The name the edge goes by read from its target.
@@ -180,7 +184,8 @@ impl EdgeType {
     ) -> EdgeType {
         EdgeType {
             id: id.into(),
-            label: None,
+            label: id.into(),
+            reverse_label: id.into(),
             description: None,
             cardinality: cardinality.into(),
             reverse_name: reverse_name.map(str::to_string),
@@ -404,8 +409,9 @@ fn edge_type_of(id: &str, json: &str) -> Result<EdgeType, CoreError> {
         .map(|(name, definition)| field(name, definition, &wire.id))
         .collect::<Result<_, _>>()?;
     Ok(EdgeType {
+        label: wire.label(),
+        reverse_label: wire.reverse_label(),
         id: wire.id,
-        label: wire.label,
         description: wire.description,
         cardinality: wire.cardinality,
         reverse_name: wire.reverse_name,
@@ -1365,7 +1371,7 @@ mod tests {
             types: serde_json::from_value(serde_json::json!([{ "id": "acme.note", "fields": {} }]))
                 .unwrap(),
             edge_types: vec![
-                serde_json::json!({ "id": "references", "cardinality": "many-to-many", "source_type_constraints": ["*"], "target_type_constraints": ["*"], "cascade_on_delete": "orphan", "property_schema": {}, "shipped": true, "written_at": "source" }),
+                serde_json::json!({ "id": "references", "label": "References", "reverse_label": "Referenced by", "cardinality": "many-to-many", "source_type_constraints": ["*"], "target_type_constraints": ["*"], "cascade_on_delete": "orphan", "property_schema": {}, "shipped": true, "written_at": "source" }),
             ],
         };
         {
@@ -1685,7 +1691,8 @@ mod tests {
         let catalog = |reverse: &str| crate::wire::WireCatalog {
             types: Vec::new(),
             edge_types: vec![serde_json::json!({
-                "id": "mentor-of", "cardinality": "one-to-many",
+                "id": "mentor-of", "label": "Mentees", "reverse_label": "Mentors",
+                "cardinality": "one-to-many",
                 "source_type_constraints": ["*"], "target_type_constraints": ["*"],
                 "cascade_on_delete": "orphan", "property_schema": {},
                 "reverse_name": reverse, "written_at": "target", "shipped": false
@@ -1701,6 +1708,43 @@ mod tests {
         assert_eq!(
             (mentor.reverse_name.as_deref(), mentor.written_at),
             (Some("taught-by"), WrittenAt::Target)
+        );
+        assert_eq!(
+            (mentor.label.as_str(), mentor.reverse_label.as_str()),
+            ("Mentees", "Mentors")
+        );
+    }
+
+    #[test]
+    fn a_held_edge_type_without_its_labels_reads_with_the_ones_the_server_makes() {
+        let conn = store::open_in_memory().unwrap();
+        let catalog = crate::wire::WireCatalog {
+            types: Vec::new(),
+            edge_types: vec![
+                serde_json::json!({
+                    "id": "acme.mentor-of", "cardinality": "one-to-many",
+                    "source_type_constraints": ["*"], "target_type_constraints": ["*"],
+                    "cascade_on_delete": "orphan", "property_schema": {},
+                    "written_at": "source", "shipped": false
+                }),
+                serde_json::json!({
+                    "id": "acme.reviews", "label": "Reviews", "cardinality": "one-to-many",
+                    "source_type_constraints": ["*"], "target_type_constraints": ["*"],
+                    "cascade_on_delete": "orphan", "property_schema": {},
+                    "written_at": "source", "shipped": false
+                }),
+            ],
+        };
+        store::replace_catalog(&conn, &catalog).unwrap();
+        let held = edge_type(&conn, "acme.mentor-of").unwrap();
+        assert_eq!(
+            (held.label.as_str(), held.reverse_label.as_str()),
+            ("Mentor Of", "Mentor Of")
+        );
+        let labelled = edge_type(&conn, "acme.reviews").unwrap();
+        assert_eq!(
+            (labelled.label.as_str(), labelled.reverse_label.as_str()),
+            ("Reviews", "Reviews")
         );
     }
 

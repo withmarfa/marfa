@@ -248,7 +248,8 @@ export interface ItemType {
 /** An edge type as the copy holds it. */
 export interface EdgeType {
   id: string;
-  label: string | null;
+  label: string;
+  reverse_label: string;
   description: string | null;
   cardinality: string;
   reverse_name: string | null;
