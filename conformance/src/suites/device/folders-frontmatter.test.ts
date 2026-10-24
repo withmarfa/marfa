@@ -33,7 +33,11 @@ import { acceptUploads, folderHarness, hashOf, scriptBlob } from "./harness.js";
 import { CliFolder, type FolderSettings } from "../../device/cli-adapter.js";
 import { FolderDoor } from "../../device/folder-door.js";
 import type { FolderHarness } from "./harness.js";
-import type { Answer, Responder } from "../../device/scripted-server.js";
+import type {
+  Answer,
+  Responder,
+  ScriptedServer,
+} from "../../device/scripted-server.js";
 import type { DoorRow } from "../../device/folder-door.js";
 import type {
   WireEdgeOptions,
@@ -69,8 +73,12 @@ afterEach(async () => {
 function edgeRows(
   items: WireItemOptions[],
   edges: WireEdgeOptions[],
-): Record<string, Array<{ item: WireItemOptions }>> {
-  const rows: Record<string, Array<{ item: WireItemOptions }>> = {};
+  tags: Record<string, string[]> = {},
+): Record<string, Array<{ item: WireItemOptions; tags?: string[] }>> {
+  const rows: Record<
+    string,
+    Array<{ item: WireItemOptions; tags?: string[] }>
+  > = {};
   for (const item of items) {
     const drawn: Record<string, { data: unknown[]; next_cursor: null }> = {};
     for (const edge of edges.filter((held) => held.source_id === item.id)) {
@@ -83,6 +91,7 @@ function edgeRows(
     const asked = (item.type ?? "core.note").split(".").slice(0, 2).join(".");
     (rows[asked] ??= []).push({
       item: { ...item, edges: drawn },
+      tags: tags[item.id],
     });
   }
   return rows;
@@ -111,13 +120,19 @@ async function edgeHarness(
     door?: (door: FolderDoor) => void;
     /** What `GET /edge-types` answers, the shipped types unless named. */
     edgeTypes?: Responder;
+    /** As `folderHarness` takes it, for a folder whose first sync waits. */
+    confirm?: boolean;
+    hydrate?: boolean;
+    beforeAdd?: (server: ScriptedServer) => void;
+    /** The tags each item carries, by id. */
+    tags?: Record<string, string[]>;
   } = {},
 ): Promise<{ harness: FolderHarness; door: EdgeDoor }> {
   const whole = (type: string) =>
     edges.filter((edge) => edge.edge_type === type);
   const made = await folderHarness(label, {
     settings: options.settings,
-    rows: edgeRows(items, edges),
+    rows: edgeRows(items, edges, options.tags),
     edges: {
       "parent-of": whole("parent-of"),
       "attached-to": whole("attached-to"),
@@ -125,6 +140,9 @@ async function edgeHarness(
     events: options.events,
     lookup: options.lookup,
     edgeTypes: options.edgeTypes,
+    confirm: options.confirm,
+    hydrate: options.hydrate,
+    beforeAdd: options.beforeAdd,
   });
   const door = new EdgeDoor();
   for (const edge of edges) door.hold(edge);
@@ -811,6 +829,7 @@ describe("edges in frontmatter", () => {
       [],
     );
     harness = made.harness;
+    scriptBlob(harness.server, Buffer.from("a picture"));
     expect((await harness.folder.pull()).ok).toBe(true);
     edit(
       harness,
@@ -825,7 +844,10 @@ describe("edges in frontmatter", () => {
       frontOf(harness, "Host.md"),
       "the pull erased a line whose edge it made, so the edge is shown in no file",
     ).toContain("has-attachment");
-    expect(existsSync(join(harness.dir, "picture.png"))).toBe(false);
+    expect(
+      readFileSync(join(harness.dir, "picture.png"), "utf8"),
+      "the file the line attached was not written beside its document",
+    ).toBe("a picture");
   });
 
   it("resolves a name by its file's name, and keeps it as typed", async () => {
@@ -2285,7 +2307,6 @@ describe("embedded files", () => {
       "the pull wrote no embedded file at all, so the one below is absent for nothing",
     ).toEqual(png(2));
     expect(existsSync(join(elsewhere.dir, "..", "away.png"))).toBe(false);
-    expect(existsSync(join(elsewhere.dir, "away.png"))).toBe(false);
     expect(
       pulled.value.embeds,
       "a pull did not report an embed leading out of the folder",
@@ -2296,6 +2317,14 @@ describe("embedded files", () => {
         reason: expect.stringContaining("![](../away.png)") as unknown,
       }),
     ]);
+    // Still attached, it is written beside the note and listed there, as
+    // an attachment no embed shows, and reads back as the same edge.
+    expect(readFileSync(join(elsewhere.dir, "away.png"))).toEqual(png(1));
+    expect(frontOf(elsewhere, "Host.md")).toContain(
+      'has-attachment:\n  - "[[away.png]]"',
+    );
+    expect((await elsewhere.folder.push()).ok).toBe(true);
+    expect(sentEdgeWrites(elsewhere)).toEqual([]);
   });
 
   it("writes an item embedded at two paths at the first, and reports the other", async () => {
@@ -2510,6 +2539,7 @@ describe("embedded files", () => {
     );
     harness = made.harness;
     scriptBlob(harness.server, png(1));
+    scriptBlob(harness.server, png(2));
     const pulled = await harness.folder.pull();
     expect(pulled.ok, JSON.stringify(pulled)).toBe(true);
     expect(
@@ -2522,11 +2552,12 @@ describe("embedded files", () => {
     ).not.toContain("pic.png");
     expect(existsSync(join(harness.dir, "pic.png"))).toBe(true);
     expect(
-      existsSync(join(harness.dir, "scan.png")),
-      "an attachment nothing embeds was written as a file",
-    ).toBe(false);
+      readFileSync(join(harness.dir, "scan.png")),
+      "an attachment nothing embeds was not written beside its document",
+    ).toEqual(png(2));
 
-    // Read back, nothing changes; the line taken out removes only its edge.
+    // Read back, nothing changes; the line taken out removes only its edge,
+    // and its file stays as one the folder no longer holds.
     expect((await harness.folder.push()).ok).toBe(true);
     expect(sentEdgeWrites(harness)).toEqual([]);
     edit(
@@ -2538,6 +2569,8 @@ describe("embedded files", () => {
     const pushed = await harness.folder.push();
     expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
     expect(heldEdges(made.door)).toEqual([`${pic} attached-to ${host}`]);
+    expect(existsSync(join(harness.dir, "scan.png"))).toBe(true);
+    expect(pushed.ok && pushed.value.pull?.unmatched).toBe(1);
   });
 
   it("reads an embed of a note, even one with a dot in its name, as text", async () => {
@@ -2911,7 +2944,8 @@ describe("embedded files", () => {
       )["has-attachment"],
       "an attachment the body no longer shows is not listed",
     ).toEqual(["[[renamed.png]]"]);
-    expect(renamed.value.pull?.unmatched).toBe(1);
+    // Still attached, it is held beside its note.
+    expect(renamed.value.pull?.unmatched).toBe(0);
 
     // The link mended, the body shows it again.
     edit(harness, "Note.md", "![](a.png)", "![](renamed.png)");
@@ -3157,7 +3191,7 @@ describe("embedded files", () => {
     ).toEqual(["Host.md", "t10.png"]);
   });
 
-  it("writes nothing for a name two attachments share, and says so", async () => {
+  it("reads a name two attachments share as neither, and says so", async () => {
     const twin = "01a00000-0000-7000-8000-00000000e2f5";
     const made = await edgeHarness(
       "folder-embed-shared-name",
@@ -3185,10 +3219,15 @@ describe("embedded files", () => {
       readFileSync(join(harness.dir, "one.png")),
       "the pull wrote no embedded file at all, so the one below is absent for nothing",
     ).toEqual(png(3));
+    // Both are attached, so both are written beside the note, under two
+    // names, and neither where the embed alone would put it.
     expect(
-      existsSync(join(harness.dir, "dup.png")),
+      readdirSync(harness.dir)
+        .filter((name) => name.startsWith("dup"))
+        .map((name) => readFileSync(join(harness!.dir, name))[8])
+        .sort(),
       "a name two attachments share was read as one of them",
-    ).toBe(false);
+    ).toEqual([1, 2]);
     expect(pulled.value.embeds).toEqual([
       expect.objectContaining({
         path: "Host.md",
@@ -3197,6 +3236,11 @@ describe("embedded files", () => {
         ) as unknown,
       }),
     ]);
+    // Read back, the embed and the lines keep every edge as it was.
+    const pushed = await harness.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    expect(sentEdgeWrites(harness)).toEqual([]);
+    expect(heldEdges(made.door)).toHaveLength(3);
   });
 
   it("writes no file a .txt file's text embeds", async () => {
@@ -3205,7 +3249,10 @@ describe("embedded files", () => {
       "folder-embed-txt-pull",
       [
         { id: host, properties: { title: "Shown", body: "![](y.png)\n" } },
-        { id: plain, properties: { title: "Plain", body: "![](x.png)\n" } },
+        {
+          id: plain,
+          properties: { title: "Plain", body: "![](art/x.png)\n" },
+        },
         fileRow(pic, "y.png", png(1)),
         fileRow(chart, "x.png", png(2)),
       ],
@@ -3221,13 +3268,15 @@ describe("embedded files", () => {
     scriptBlob(harness.server, png(2));
     const pulled = await harness.folder.pull();
     expect(pulled.ok, JSON.stringify(pulled)).toBe(true);
-    expect(read(harness, "Plain.txt")).toBe("![](x.png)\n");
+    expect(read(harness, "Plain.txt")).toBe("![](art/x.png)\n");
     expect(
       readFileSync(join(harness.dir, "y.png")),
       "a Markdown file's embed wrote nothing, so the absence below says nothing",
     ).toEqual(png(1));
+    // Attached, it is written beside the file, not where the text says.
+    expect(readFileSync(join(harness.dir, "x.png"))).toEqual(png(2));
     expect(
-      existsSync(join(harness.dir, "x.png")),
+      existsSync(join(harness.dir, "art", "x.png")),
       "a .txt file's text was read as embedding a file",
     ).toBe(false);
   });
@@ -3250,6 +3299,681 @@ describe("embedded files", () => {
     ).toEqual([
       `${createdFor(harness, "b.png")} attached-to ${createdFor(harness, "Note")}`,
     ]);
+  });
+
+  describe("a file attached to a document and embedded by none", () => {
+    const edgeId = (n: number): string =>
+      `01a00000-0000-7000-8000-00000000e3${String(n).padStart(2, "0")}`;
+
+    /** The image files in a directory of the folder, sorted. */
+    function images(made: FolderHarness, dir = ""): string[] {
+      return readdirSync(join(made.dir, dir))
+        .filter((name) => name.endsWith(".png"))
+        .sort();
+    }
+
+    it("is written beside its document, and its has-attachment line reads back as the same edge", async () => {
+      const made = await edgeHarness(
+        "folder-attached-beside",
+        [
+          { id: host, properties: { title: "Host", body: "no picture\n" } },
+          fileRow(scan, "scan.png", png(2)),
+        ],
+        [attached(edgeId(1), scan, host)],
+        {
+          settings: {
+            query: { types: ["core.note"] },
+            first_placement: { "core.note": "notes" },
+          },
+        },
+      );
+      harness = made.harness;
+      scriptBlob(harness.server, png(2));
+      const pulled = await harness.folder.pull();
+      expect(pulled.ok, JSON.stringify(pulled)).toBe(true);
+      if (!pulled.ok) return;
+      expect(
+        readFileSync(join(harness.dir, "notes", "scan.png")),
+        "a file attached to a document and embedded by none was not written beside it",
+      ).toEqual(png(2));
+      expect(pulled.value.unmatched).toBe(0);
+      expect(pulled.value.embeds).toEqual([]);
+      expect(
+        frontOf(harness, "notes/Host.md"),
+        "an attachment the body does not show lost its line once its file was written",
+      ).toContain('has-attachment:\n  - "[[scan.png]]"');
+
+      // Read back, and after an edit to the note, the edge stays as it was.
+      expect((await harness.folder.push()).ok).toBe(true);
+      edit(harness, "notes/Host.md", "no picture", "still no picture");
+      const edited = await harness.folder.push();
+      expect(edited.ok, JSON.stringify(edited)).toBe(true);
+      expect(
+        sentUpdates(harness),
+        "the edit to the note was not sent, so the edges below are unchanged for nothing",
+      ).toHaveLength(1);
+      expect(
+        sentEdgeWrites(harness),
+        "reading back a written attachment and its line changed an edge",
+      ).toEqual([]);
+      expect(heldEdges(made.door)).toEqual([`${scan} attached-to ${host}`]);
+      expect(made.door.placements(harness.settings.id).get(scan)).toBe(
+        "notes/scan.png",
+      );
+    });
+
+    it("is written under a number where another attachment of its document has its name, whatever the case", async () => {
+      const twin = "01a00000-0000-7000-8000-00000000e3a1";
+      const cased = "01a00000-0000-7000-8000-00000000e3a2";
+      const made = await edgeHarness(
+        "folder-attached-shared-name",
+        [
+          { id: host, properties: { title: "Host", body: "no picture\n" } },
+          fileRow(pic, "dup.png", png(1)),
+          fileRow(twin, "dup.png", png(2)),
+          fileRow(chart, "Logo.png", png(3)),
+          fileRow(cased, "logo.png", png(4)),
+        ],
+        [
+          attached(edgeId(2), pic, host),
+          attached(edgeId(3), twin, host),
+          attached(edgeId(4), chart, host),
+          attached(edgeId(5), cased, host),
+        ],
+      );
+      harness = made.harness;
+      for (const last of [1, 2, 3, 4]) scriptBlob(harness.server, png(last));
+      const pulled = await harness.folder.pull();
+      expect(pulled.ok, JSON.stringify(pulled)).toBe(true);
+      if (!pulled.ok) return;
+      const written = images(harness);
+      expect(
+        written,
+        "two attachments sharing a name, or one differing only in case, were not both written",
+      ).toHaveLength(4);
+      expect(
+        new Set(written.map((name) => name.toLowerCase())).size,
+        "two attachments were written at names that differ only in case",
+      ).toBe(4);
+      expect(
+        written.map((name) => readFileSync(join(harness!.dir, name))[8]).sort(),
+      ).toEqual([1, 2, 3, 4]);
+
+      // Each line names its own file, so reading them back changes nothing.
+      expect((await harness.folder.push()).ok).toBe(true);
+      expect(
+        sentEdgeWrites(harness),
+        "a has-attachment line beside a numbered attachment named the wrong file",
+      ).toEqual([]);
+      expect(heldEdges(made.door)).toHaveLength(4);
+    });
+
+    it("is written once, beside the first of its documents in path order, and the other is reported", async () => {
+      const made = await placedEmbeds(
+        "folder-attached-two-dirs",
+        [
+          { id: host, properties: { title: "First", body: "one\n" } },
+          { id: other, properties: { title: "Second", body: "two\n" } },
+          fileRow(pic, "pic.png", png(1)),
+        ],
+        [attached(edgeId(6), pic, host), attached(edgeId(7), pic, other)],
+        { [host]: "a/First.md", [other]: "b/Second.md" },
+        ["core.note"],
+      );
+      harness = made.harness;
+      scriptBlob(harness.server, png(1));
+      const pulled = await harness.folder.pull();
+      expect(pulled.ok, JSON.stringify(pulled)).toBe(true);
+      if (!pulled.ok) return;
+      expect(
+        readFileSync(join(harness.dir, "a", "pic.png")),
+        "a file attached to two documents was not written beside the first in path order",
+      ).toEqual(png(1));
+      expect(
+        images(harness, "b"),
+        "a file attached to two documents was written twice",
+      ).toEqual([]);
+      expect(
+        pulled.value.embeds,
+        "the document in the other directory was not told where its attachment is",
+      ).toEqual([
+        expect.objectContaining({
+          path: "b/Second.md",
+          flag: "attachment",
+          reason: expect.stringContaining("a/pic.png") as unknown,
+        }),
+      ]);
+      expect((await harness.folder.push()).ok).toBe(true);
+      expect(
+        sentEdgeWrites(harness),
+        "a document's line naming an attachment written in another directory changed an edge",
+      ).toEqual([]);
+    });
+
+    it("follows its document to another directory, and goes back beside it when moved away", async () => {
+      const made = await placedEmbeds(
+        "folder-attached-follows",
+        [
+          { id: host, properties: { title: "Host", body: "no picture\n" } },
+          fileRow(scan, "scan.png", png(2)),
+        ],
+        [attached(edgeId(8), scan, host)],
+        { [host]: "a/Host.md" },
+        ["core.note"],
+      );
+      harness = made.harness;
+      scriptBlob(harness.server, png(2));
+      expect((await harness.folder.pull()).ok).toBe(true);
+      expect(images(harness, "a")).toEqual(["scan.png"]);
+
+      mkdirSync(join(harness.dir, "b"));
+      renameSync(
+        join(harness.dir, "a", "Host.md"),
+        join(harness.dir, "b", "Host.md"),
+      );
+      const moved = await harness.folder.push();
+      expect(moved.ok, JSON.stringify(moved)).toBe(true);
+      expect(
+        readFileSync(join(harness.dir, "b", "scan.png")),
+        "an attachment did not follow its document to another directory",
+      ).toEqual(png(2));
+      expect(images(harness, "a")).toEqual([]);
+
+      // Moved away from its document, it goes back beside it.
+      mkdirSync(join(harness.dir, "c"));
+      renameSync(
+        join(harness.dir, "b", "scan.png"),
+        join(harness.dir, "c", "scan.png"),
+      );
+      const away = await harness.folder.push();
+      expect(away.ok, JSON.stringify(away)).toBe(true);
+      expect(existsSync(join(harness.dir, "b", "scan.png"))).toBe(true);
+      expect(existsSync(join(harness.dir, "c", "scan.png"))).toBe(false);
+      expect((await harness.folder.push()).ok).toBe(true);
+      expect(made.door.placements(harness.settings.id).get(scan)).toBe(
+        "b/scan.png",
+      );
+      expect(
+        heldEdges(made.door),
+        "moving a document and its attachment changed an edge",
+      ).toEqual([`${scan} attached-to ${host}`]);
+      expect(sentCreates(harness)).toEqual([]);
+    });
+
+    it("stays as a file the folder no longer holds when its edge is taken away elsewhere", async () => {
+      const edge = attached(edgeId(9), scan, host);
+      const made = await edgeHarness(
+        "folder-attached-edge-gone",
+        [
+          { id: host, properties: { title: "Host", body: "no picture\n" } },
+          fileRow(scan, "scan.png", png(2)),
+        ],
+        [edge],
+        {
+          events: [
+            copyReplay("2", [edgeEvent("2", "edge.deleted", wireEdge(edge))]),
+          ],
+        },
+      );
+      harness = made.harness;
+      scriptBlob(harness.server, png(2));
+      expect((await harness.folder.pull()).ok).toBe(true);
+      expect(existsSync(join(harness.dir, "scan.png"))).toBe(true);
+      const caught = await harness.folder.device().catchUp();
+      expect(caught.ok ? caught.value.applied : 0).toBe(1);
+      const pulled = await harness.folder.pull();
+      expect(pulled.ok, JSON.stringify(pulled)).toBe(true);
+      if (!pulled.ok) return;
+      expect(
+        frontOf(harness, "Host.md"),
+        "the edge taken away still has its line, so the file below is kept for nothing",
+      ).not.toContain("has-attachment");
+      expect(
+        readFileSync(join(harness.dir, "scan.png")),
+        "a file whose attachment edge was taken away was removed",
+      ).toEqual(png(2));
+      expect(pulled.value.unmatched).toBe(1);
+      expect(pulled.value.removed).toBe(0);
+    });
+
+    it("is trashed once its grace runs out when its file is deleted, and not written again", async () => {
+      const made = await edgeHarness(
+        "folder-attached-deleted",
+        [
+          { id: host, properties: { title: "Host", body: "no picture\n" } },
+          fileRow(scan, "scan.png", png(2)),
+        ],
+        [attached(edgeId(16), scan, host)],
+      );
+      harness = made.harness;
+      scriptBlob(harness.server, png(2));
+      expect((await harness.folder.pull()).ok).toBe(true);
+      expect(images(harness)).toEqual(["scan.png"]);
+      const trashes = (): string[] =>
+        harness!.server.requests
+          .filter(
+            (request) =>
+              request.method === "DELETE" &&
+              /^\/items\/[^/]+$/.test(request.pathname),
+          )
+          .map((request) => request.pathname);
+
+      rmSync(join(harness.dir, "scan.png"));
+      const early = await harness.folder.push();
+      expect(early.ok, JSON.stringify(early)).toBe(true);
+      expect(
+        trashes(),
+        "a deleted attachment was trashed inside its grace",
+      ).toEqual([]);
+      expect(
+        images(harness),
+        "a pull inside the grace wrote back an attachment the person deleted",
+      ).toEqual([]);
+      await new Promise((resolve) => setTimeout(resolve, 6_000));
+      const late = await harness.folder.push();
+      expect(late.ok, JSON.stringify(late)).toBe(true);
+      expect(
+        trashes(),
+        "an attachment deleted on disk was not trashed once its grace ran out",
+      ).toEqual([`/items/${scan}`]);
+      const pulled = await harness.folder.pull();
+      expect(pulled.ok, JSON.stringify(pulled)).toBe(true);
+      expect(
+        images(harness),
+        "a trashed attachment was written again beside its document",
+      ).toEqual([]);
+    });
+
+    it("is not written again once its document embeds it", async () => {
+      const made = await edgeHarness(
+        "folder-attached-then-embedded",
+        [
+          { id: host, properties: { title: "Host", body: "no picture\n" } },
+          fileRow(scan, "scan.png", png(2)),
+        ],
+        [attached(edgeId(10), scan, host)],
+      );
+      harness = made.harness;
+      scriptBlob(harness.server, png(2));
+      expect((await harness.folder.pull()).ok).toBe(true);
+      expect(images(harness)).toEqual(["scan.png"]);
+      edit(harness, "Host.md", "no picture", "a picture ![](scan.png)");
+      const pushed = await harness.folder.push();
+      expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+      if (!pushed.ok) return;
+      expect(
+        frontOf(harness, "Host.md"),
+        "an attachment the body now shows is still listed",
+      ).not.toContain("has-attachment");
+      expect(
+        images(harness),
+        "embedding a file already beside its document wrote a second copy",
+      ).toEqual(["scan.png"]);
+      expect(sentCreates(harness)).toEqual([]);
+      expect(heldEdges(made.door)).toEqual([`${scan} attached-to ${host}`]);
+    });
+
+    it("leaves with its document, unless the query holds it on its own", async () => {
+      const departing = (label: string, types: string[]) =>
+        edgeHarness(
+          label,
+          [
+            { id: host, properties: { title: "Host", body: "no picture\n" } },
+            { id: other, properties: { title: "Stays", body: "here\n" } },
+            fileRow(scan, "scan.png", png(2)),
+          ],
+          [attached(edgeId(11), scan, host)],
+          {
+            settings: { query: { types } },
+            events: [
+              copyReplay("2", [
+                copyItemEvent(
+                  "2",
+                  "item.deleted",
+                  wireItem({
+                    id: host,
+                    properties: { title: "Host", body: "no picture\n" },
+                    state: "trashed",
+                  }),
+                ),
+              ]),
+            ],
+          },
+        ).then((made) => made.harness);
+
+      harness = await departing("folder-attached-leaves", ["core.note"]);
+      scriptBlob(harness.server, png(2));
+      expect((await harness.folder.pull()).ok).toBe(true);
+      expect(images(harness)).toEqual(["scan.png"]);
+      expect((await harness.folder.device().catchUp()).ok).toBe(true);
+      const pulled = await harness.folder.pull();
+      expect(pulled.ok, JSON.stringify(pulled)).toBe(true);
+      if (!pulled.ok) return;
+      expect(existsSync(join(harness.dir, "Host.md"))).toBe(false);
+      expect(
+        images(harness),
+        "an attachment stayed after the document it was there for left",
+      ).toEqual([]);
+      expect([pulled.value.removed, pulled.value.unmatched]).toEqual([2, 0]);
+
+      // The witness: the same departure, with files in the query, keeps it.
+      second = await departing("folder-attached-member", [
+        "core.note",
+        "core.file",
+      ]);
+      scriptBlob(second.server, png(2));
+      expect((await second.folder.pull()).ok).toBe(true);
+      expect((await second.folder.device().catchUp()).ok).toBe(true);
+      const kept = await second.folder.pull();
+      expect(kept.ok, JSON.stringify(kept)).toBe(true);
+      if (!kept.ok) return;
+      expect(existsSync(join(second.dir, "Host.md"))).toBe(false);
+      expect(
+        images(second),
+        "a file the query holds on its own left with a document it is attached to",
+      ).toEqual(["scan.png"]);
+      expect(kept.value.removed).toBe(1);
+    });
+
+    it("is kept archived elsewhere while its document is held, where the query holds active items only", async () => {
+      const gone = "01a00000-0000-7000-8000-00000000e3e1";
+      const scanRow = fileRow(scan, "scan.png", png(2));
+      const goneRow: WireItemOptions = {
+        id: gone,
+        properties: { title: "Gone", body: "archived too\n" },
+      };
+      const made = await edgeHarness(
+        "folder-attached-archived",
+        [
+          { id: host, properties: { title: "Host", body: "no picture\n" } },
+          goneRow,
+          scanRow,
+        ],
+        [attached(edgeId(17), scan, host)],
+        {
+          settings: { query: { types: ["core.note"], state: ["active"] } },
+          events: [
+            copyReplay("3", [
+              copyItemEvent(
+                "2",
+                "item.state_changed",
+                wireItem({ ...scanRow, state: "archived" }),
+              ),
+              copyItemEvent(
+                "3",
+                "item.state_changed",
+                wireItem({ ...goneRow, state: "archived" }),
+              ),
+            ]),
+          ],
+        },
+      );
+      harness = made.harness;
+      scriptBlob(harness.server, png(2));
+      expect((await harness.folder.pull()).ok).toBe(true);
+      expect(images(harness)).toEqual(["scan.png"]);
+      const caught = await harness.folder.device().catchUp();
+      expect(caught.ok ? caught.value.applied : 0).toBe(2);
+      const pulled = await harness.folder.pull();
+      expect(pulled.ok, JSON.stringify(pulled)).toBe(true);
+      if (!pulled.ok) return;
+      expect(
+        [pulled.value.removed, existsSync(join(harness.dir, "Gone.md"))],
+        "a note archived beside it kept its file, so the one below is kept for nothing",
+      ).toEqual([1, false]);
+      expect(
+        readFileSync(join(harness.dir, "scan.png")),
+        "a file attached to a held note was taken away because it was archived",
+      ).toEqual(png(2));
+      expect(pulled.value.unmatched).toBe(0);
+    });
+
+    it("is reported absent where its bytes cannot be had, and the pass goes on", async () => {
+      const made = await edgeHarness(
+        "folder-attached-absent",
+        [
+          { id: host, properties: { title: "Host", body: "no picture\n" } },
+          fileRow(pic, "pic.png", png(1)),
+          fileRow(scan, "scan.png", png(2)),
+        ],
+        [attached(edgeId(12), pic, host), attached(edgeId(13), scan, host)],
+      );
+      harness = made.harness;
+      scriptBlob(harness.server, png(1));
+      // Served bytes that are not the ones it names, so never written.
+      scriptBlob(harness.server, png(2), png(9));
+      const pulled = await harness.folder.pull();
+      expect(pulled.ok, JSON.stringify(pulled)).toBe(true);
+      if (!pulled.ok) return;
+      expect(
+        readFileSync(join(harness.dir, "pic.png")),
+        "one attachment whose bytes could not be had kept the other from being written",
+      ).toEqual(png(1));
+      expect(existsSync(join(harness.dir, "scan.png"))).toBe(false);
+      expect(
+        pulled.value.flagged
+          .filter((file) => file.flag === "absent")
+          .map((file) => [file.item, file.path]),
+        "an attachment whose bytes could not be had was not reported absent",
+      ).toEqual([[scan, "scan.png"]]);
+    });
+
+    it("is counted in the first sync's plan", async () => {
+      const made = await edgeHarness(
+        "folder-attached-first-sync",
+        [
+          { id: host, properties: { title: "Host", body: "no picture\n" } },
+          fileRow(scan, "scan.png", png(2)),
+        ],
+        [attached(edgeId(14), scan, host)],
+        {
+          confirm: false,
+          hydrate: false,
+          // The plan reads the attachment by id, before any door is scripted.
+          beforeAdd: (server) => {
+            server.copyAnswer(
+              "GET",
+              `/items/${scan}`,
+              answers.updated(wireItem(fileRow(scan, "scan.png", png(2))), []),
+            );
+            scriptBlob(server, png(2));
+          },
+        },
+      );
+      harness = made.harness;
+      expect(
+        harness.added.first_sync,
+        "the first sync's plan left out an attachment it will write",
+      ).toEqual({
+        waiting: true,
+        write: 2,
+        send: 0,
+        beside: 0,
+        left: 0,
+        unread: null,
+      });
+    });
+
+    it("counts toward a large removal when it leaves with its document", async () => {
+      const notes = [0, 1, 2, 3, 4, 5].map((n) => ({
+        id: `01a00000-0000-7000-8000-00000000e3b${String(n)}`,
+        properties: { title: `Note ${String(n)}`, body: "body\n" },
+      }));
+      const files = [0, 1].map((n) =>
+        fileRow(
+          `01a00000-0000-7000-8000-00000000e3c${String(n)}`,
+          `scan ${String(n)}.png`,
+          png(10 + n),
+        ),
+      );
+      const departing = (label: string, settings?: FolderSettings) =>
+        edgeHarness(
+          label,
+          [...notes, ...files],
+          files.map((file, at) =>
+            attached(edgeId(20 + at), file.id!, notes[at]!.id!),
+          ),
+          {
+            ...(settings ? { settings } : {}),
+            events: [
+              copyReplay(
+                "3",
+                notes
+                  .slice(0, 2)
+                  .map((note, at) =>
+                    copyItemEvent(
+                      String(at + 2),
+                      "item.deleted",
+                      wireItem({ ...note, state: "trashed" }),
+                    ),
+                  ),
+              ),
+            ],
+          },
+        ).then((made) => made.harness);
+
+      // The witness: at the default threshold, both notes and both files go.
+      const plain = await departing("folder-attached-removal-plain");
+      try {
+        for (const n of [0, 1]) scriptBlob(plain.server, png(10 + n));
+        expect((await plain.folder.pull()).ok).toBe(true);
+        expect((await plain.folder.device().catchUp()).ok).toBe(true);
+        const taken = await plain.folder.pull();
+        expect(taken.ok && taken.value.removed).toBe(4);
+      } finally {
+        await plain.stop();
+      }
+
+      harness = await departing("folder-attached-removal", {
+        query: { types: ["core.note"] },
+        removal_threshold: { files: 3, fraction: 0.25 },
+      });
+      for (const n of [0, 1]) scriptBlob(harness.server, png(10 + n));
+      expect((await harness.folder.pull()).ok).toBe(true);
+      expect((await harness.folder.device().catchUp()).ok).toBe(true);
+      const held = await harness.folder.pull();
+      expect(
+        held.ok && [held.value.removed, held.value.paused],
+        "the attachments leaving with their notes were not counted toward the large removal",
+      ).toEqual([0, 4]);
+      expect(images(harness)).toEqual(["scan 0.png", "scan 1.png"]);
+    });
+
+    it.each(["while the body does not show it", "where the body embeds it"])(
+      "is put back with its document when a paused removal is restored, %s",
+      async (what) => {
+        const body = what.startsWith("where")
+          ? "![](scan.png)\n"
+          : "no picture\n";
+        const made = await edgeHarness(
+          `folder-attached-restored-${body.length}`,
+          [
+            { id: host, properties: { title: "Host", body } },
+            fileRow(scan, "scan.png", png(2)),
+          ],
+          [attached(edgeId(30), scan, host)],
+          {
+            settings: {
+              query: { types: ["core.note"] },
+              removal_threshold: { files: 1, fraction: 0.25 },
+            },
+          },
+        );
+        harness = made.harness;
+        scriptBlob(harness.server, png(2));
+        expect((await harness.folder.pull()).ok).toBe(true);
+        expect(images(harness)).toEqual(["scan.png"]);
+        rmSync(join(harness.dir, "Host.md"));
+        rmSync(join(harness.dir, "scan.png"));
+        const paused = await harness.folder.push();
+        expect(paused.ok && paused.value.scan.paused).toBe(2);
+
+        const restored = await harness.folder.restore();
+        expect(restored.ok, JSON.stringify(restored)).toBe(true);
+        if (!restored.ok) return;
+        expect(existsSync(join(harness.dir, "Host.md"))).toBe(true);
+        expect(
+          images(harness),
+          `the restore put back the note and not its file, ${what}`,
+        ).toEqual(["scan.png"]);
+        expect(restored.value.put_back).toBe(2);
+        await new Promise((resolve) => setTimeout(resolve, 6_000));
+        expect((await harness.folder.push()).ok).toBe(true);
+        expect(
+          harness.server.requests.filter(
+            (request) =>
+              request.method === "DELETE" &&
+              /^\/items\/[^/]+$/.test(request.pathname),
+          ),
+          `a file put back by the restore, ${what}, was trashed`,
+        ).toEqual([]);
+      },
+    );
+
+    it("is not put back when a paused removal is restored with an unmatched document that stays deleted", async () => {
+      const plan: WireItemOptions = {
+        id: host,
+        properties: { title: "Plan", body: "no picture\n" },
+      };
+      const made = await edgeHarness(
+        "folder-attached-restored-unmatched",
+        [plan, fileRow(scan, "scan.png", png(2))],
+        [attached(edgeId(31), scan, host)],
+        {
+          settings: {
+            query: { types: ["core.note"], filter: 'tags contains "a"' },
+            removal_threshold: { files: 1, fraction: 0.25 },
+          },
+          tags: { [host]: ["a"] },
+          events: [
+            copyReplay("2", [
+              copyItemEvent("2", "metadata.changed", wireItem(plan), {
+                tags: ["b"],
+              }),
+            ]),
+          ],
+        },
+      );
+      harness = made.harness;
+      scriptBlob(harness.server, png(2));
+      expect((await harness.folder.pull()).ok).toBe(true);
+      expect(images(harness)).toEqual(["scan.png"]);
+      expect((await harness.folder.device().catchUp()).ok).toBe(true);
+      const unmatched = await harness.folder.pull();
+      expect(unmatched.ok && unmatched.value.unmatched).toBe(1);
+      rmSync(join(harness.dir, "Plan.md"));
+      rmSync(join(harness.dir, "scan.png"));
+      const paused = await harness.folder.push();
+      expect(paused.ok && paused.value.scan.paused).toBe(2);
+
+      const restored = await harness.folder.restore();
+      expect(restored.ok, JSON.stringify(restored)).toBe(true);
+      if (!restored.ok) return;
+      expect(existsSync(join(harness.dir, "Plan.md"))).toBe(false);
+      expect(
+        images(harness),
+        "the restore put back the attachment of a note whose deletion it kept",
+      ).toEqual([]);
+      expect(restored.value.put_back).toBe(0);
+      // Both deletions are the person's again, so the next push holds them
+      // together, and confirming sends both.
+      const again = await harness.folder.push();
+      expect(again.ok && again.value.scan.paused).toBe(2);
+      const confirmed = await harness.folder.confirm();
+      expect(confirmed.ok && confirmed.value.deleted).toBe(2);
+      expect((await harness.folder.push()).ok).toBe(true);
+      const deleted = harness.server.requests
+        .filter(
+          (request) =>
+            request.method === "DELETE" &&
+            /^\/items\/[^/]+$/.test(request.pathname),
+        )
+        .map((request) => request.pathname)
+        .sort();
+      expect(deleted, "the attachment was not deleted with its note").toEqual(
+        [`/items/${host}`, `/items/${scan}`].sort(),
+      );
+    });
   });
 });
 

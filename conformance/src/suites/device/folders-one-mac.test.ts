@@ -23,6 +23,7 @@ import { describe, it, expect, afterEach, vi } from "vitest";
 import {
   answers,
   copyItemEvent,
+  wireEdge,
   wireItem,
   writeAnswers,
 } from "../../device/marfa-answers.js";
@@ -40,7 +41,10 @@ import { CliFolder, type FolderSettings } from "../../device/cli-adapter.js";
 import type { FolderDoor } from "../../device/folder-door.js";
 import { ScriptedServer } from "../../device/scripted-server.js";
 import type { FolderHarness, FolderRow } from "./harness.js";
-import type { WireItemOptions } from "../../device/marfa-answers.js";
+import type {
+  WireEdgeOptions,
+  WireItemOptions,
+} from "../../device/marfa-answers.js";
 import {
   EdgeDoor,
   idIn,
@@ -204,7 +208,8 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
   /**
    * Two folders on one Mac: one server, one registry, each folder with its
    * own settings, directory and store. The first holds `rows`; the item
-   * doors and the stream are the shared server's.
+   * doors and the stream are the shared server's. `attachments` are
+   * `attached-to` edges the server holds already, drawn on their sources.
    */
   async function onOneMac(
     label: string,
@@ -212,6 +217,7 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     other: FolderSettings,
     rows: Record<string, Array<{ item: WireItemOptions; tags?: string[] }>>,
     before?: (server: ScriptedServer) => void,
+    attachments: WireEdgeOptions[] = [],
   ): Promise<{
     edges: EdgeDoor;
     door: FolderDoor;
@@ -219,9 +225,29 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     b: FolderHarness;
   }> {
     const edges = new EdgeDoor();
+    for (const edge of attachments) edges.hold(edge);
+    const drawn = (item: WireItemOptions): WireItemOptions => {
+      const own = attachments.filter((edge) => edge.source_id === item.id);
+      return own.length === 0
+        ? item
+        : {
+            ...item,
+            edges: {
+              "attached-to": { data: own.map(wireEdge), next_cursor: null },
+            },
+          };
+    };
     harness = await folderHarness(`${label}-a`, {
       settings: first,
-      rows,
+      rows: Object.fromEntries(
+        Object.entries(rows).map(([type, held]) => [
+          type,
+          held.map((row) => ({ ...row, item: drawn(row.item) })),
+        ]),
+      ),
+      ...(attachments.length > 0
+        ? { edges: { "attached-to": attachments } }
+        : {}),
       events: [edges.stream()],
     });
     // Before the item doors, whose read would answer for any id.
@@ -1711,6 +1737,149 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
       "a copy of another folder's file was taken as that item's file here",
     ).toBe(1);
   });
+
+  it.each(["attached to", "embedded in"])(
+    "keeps a file %s a note while another folder on the Mac holds the file, and writes nothing again",
+    async (kind) => {
+      const bytes = Buffer.from([
+        0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x23, 0xd1,
+      ]);
+      const host = {
+        id: "01a00000-0000-7000-8000-0000000023d1",
+        properties: {
+          title: "Host",
+          body: kind === "embedded in" ? "![](scan.png)\n" : "no picture\n",
+        },
+      };
+      const scan = {
+        id: "01a00000-0000-7000-8000-0000000023d2",
+        type: "core.file.image",
+        properties: {
+          title: "scan.png",
+          blob_ref: hashOf(bytes),
+          mime_type: "image/png",
+        },
+      };
+      const { a, b } = await onOneMac(
+        `attachment-held-elsewhere-${kind.split(" ")[0]!}`,
+        { query: { types: ["core.note"] } },
+        { query: { types: ["core.file"] } },
+        { "core.note": [{ item: host }], "core.file": [{ item: scan }] },
+        (server) => scriptBlob(server, bytes),
+        [
+          {
+            id: "01a00000-0000-7000-8000-0000000023d3",
+            source_id: scan.id,
+            target_id: host.id,
+            edge_type: "attached-to",
+          },
+        ],
+      );
+      expect((await a.folder.pull()).ok).toBe(true);
+      const other = await b.folder.pull();
+      expect(other.ok, JSON.stringify(other)).toBe(true);
+      if (!other.ok) return;
+      expect(
+        [other.value.taken, other.value.written],
+        "the folder holding the file took the note's attachment out of the other folder",
+      ).toEqual([0, 1]);
+      for (const made of [a, b]) {
+        expect(readFileSync(join(made.dir, "scan.png"))).toEqual(bytes);
+      }
+      for (const pass of ["second", "third"]) {
+        const again = await a.folder.pull();
+        expect(again.ok, JSON.stringify(again)).toBe(true);
+        if (!again.ok) return;
+        expect(
+          [again.value.let_go, again.value.ended, again.value.written],
+          `the ${pass} pull let the note's file go because the other folder holds it, and wrote it again`,
+        ).toEqual([0, 0, 0]);
+      }
+      expect(readFileSync(join(a.dir, "scan.png"))).toEqual(bytes);
+    },
+  );
+
+  it.each(["the folder it left", "the folder it moved to"])(
+    "moves a note's attachment with the note to another notes folder when %s hears first",
+    async (first) => {
+      const bytes = Buffer.from([
+        0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x23, 0xd4,
+      ]);
+      const plan = {
+        id: "01a00000-0000-7000-8000-0000000023d4",
+        properties: { title: "Plan", body: "the plan\n" },
+      };
+      const scan = {
+        id: "01a00000-0000-7000-8000-0000000023d5",
+        type: "core.file.image",
+        properties: {
+          title: "scan.png",
+          blob_ref: hashOf(bytes),
+          mime_type: "image/png",
+        },
+      };
+      const { a, b, edges } = await onOneMac(
+        `attachment-moves-with-note-${first.split(" ").at(-1)!}`,
+        { query: { types: ["core.note"], filter: 'tags contains "a"' } },
+        { query: { types: ["core.note"], filter: 'tags contains "b"' } },
+        {
+          "core.note": [{ item: plan, tags: ["a"] }],
+          "core.file": [{ item: scan }],
+        },
+        (server) => scriptBlob(server, bytes),
+        [
+          {
+            id: "01a00000-0000-7000-8000-0000000023d6",
+            source_id: scan.id,
+            target_id: plan.id,
+            edge_type: "attached-to",
+          },
+        ],
+      );
+      expect((await a.folder.pull()).ok).toBe(true);
+      expect((await b.folder.pull()).ok).toBe(true);
+      expect(readFileSync(join(a.dir, "scan.png"))).toEqual(bytes);
+
+      edges.events.push(
+        copyItemEvent(
+          String(edges.events.length + 2),
+          "metadata.changed",
+          wireItem(plan),
+          { tags: ["b"] },
+        ),
+      );
+      const leftFirst = first === "the folder it left";
+      if (leftFirst) expect((await a.folder.push()).ok).toBe(true);
+      const took = await b.folder.push();
+      expect(took.ok, JSON.stringify(took)).toBe(true);
+      if (!took.ok) return;
+      expect(
+        [took.value.pull?.taken, took.value.pull?.written],
+        "the folder the note moved to took in the note and not its attachment",
+      ).toEqual(leftFirst ? [2, 0] : [0, 2]);
+      expect(readFileSync(join(b.dir, "scan.png"))).toEqual(bytes);
+      expect(existsSync(join(b.dir, "Plan.md"))).toBe(true);
+      const letGo = await a.folder.push();
+      expect(letGo.ok, JSON.stringify(letGo)).toBe(true);
+      if (!letGo.ok) return;
+      expect(letGo.value.pull?.let_go).toBe(leftFirst ? 0 : 2);
+      await pastTheGrace();
+      for (const pass of ["first", "second"]) {
+        const left = await a.folder.push();
+        expect(left.ok, JSON.stringify(left)).toBe(true);
+        if (!left.ok) return;
+        expect(
+          [left.value.pull?.unmatched, left.value.pull?.written],
+          `past the grace, the ${pass} pass of the folder the note left kept its attachment`,
+        ).toEqual([0, 0]);
+      }
+      expect(existsSync(join(a.dir, "scan.png"))).toBe(false);
+      expect(existsSync(join(a.dir, "Plan.md"))).toBe(false);
+      expect(deletesOf(a.server, scan.id) + deletesOf(a.server, plan.id)).toBe(
+        0,
+      );
+    },
+  );
 
   it("keeps a file saved back where another folder took the item's file from as the item's while its binding lasts", async () => {
     const plan = {

@@ -187,6 +187,22 @@ impl PullReport {
     }
 }
 
+/// The name a new file of `item` takes, from its title or else its id.
+pub(super) fn new_name(item: &Item, catalog: &Catalog) -> String {
+    let title = item
+        .properties
+        .get(fields::title_field(catalog, &item.r#type))
+        .and_then(Value::as_str)
+        .filter(|title| !title.trim().is_empty())
+        .unwrap_or(&item.id);
+    // A file item's title is a file's name already, extension and all.
+    if bytes_of(item, catalog).is_some() {
+        name_from_title(title, None)
+    } else {
+        name_from_title(title, Some(".md"))
+    }
+}
+
 /// A file's name for a title, with `extension` where the title carries none.
 fn name_from_title(title: &str, extension: Option<&str>) -> String {
     let stem = names::title_stem(title);
@@ -319,19 +335,21 @@ impl Folder {
         let held = crate::store::items_by_ids(&*self.core.conn()?, &outside)?;
         let peers = Peers::of(self, None);
         let mut retained = Vec::new();
-        for item in held {
-            // A folder that has never synced writes no file, so what a pass
-            // would let go of is not its to count.
-            if !settings.holds_state(item.state) || planning.is_some() {
-                continue;
-            }
-            context.same_copy(&*self.core.conn()?)?;
-            match self.let_go(&item.id, &peers, &context, report)? {
-                LetGo::Inapplicable => work.push((item, true)),
-                LetGo::Retained => retained.push(item.id),
-                LetGo::Removed => {}
-            }
-        }
+        // A folder that has never synced writes no file, so what a pass
+        // would let go of is not its to count.
+        let (files, documents): (Vec<Item>, Vec<Item>) = held
+            .into_iter()
+            .filter(|item| settings.holds_state(item.state) && planning.is_none())
+            .partition(|item| bytes_of(item, &catalog).is_some());
+        // Documents first: one let go embeds and has attached nothing here.
+        self.let_go_outside(
+            documents,
+            &peers,
+            &context,
+            report,
+            &mut work,
+            &mut retained,
+        )?;
         self.hold_edge_ends(&work, &edge_types, &catalog)?;
         let withheld = self.withheld()?;
         let renaming = Renaming {
@@ -339,29 +357,17 @@ impl Folder {
             lists: &lists,
         };
         // After the pins, so an embed names an attachment the copy now holds;
-        // an item a file here embeds is that file's, never unmatched.
-        let embedded = {
-            let mut hosts = Vec::new();
-            for (item, _) in &work {
-                if item.version == 0 || bytes_of(item, &catalog).is_some() {
-                    continue;
-                }
-                let bound = state::bound_to_item(&*self.core.conn()?, &item.id)?;
-                let placed = self.placement(&item.id)?;
-                if let Some(path) = self.path_for(
-                    item,
-                    placed.as_ref(),
-                    bound.as_ref(),
-                    &withheld,
-                    &settings,
-                    &catalog,
-                    &renaming,
-                ) {
-                    hosts.push((item, path));
-                }
-            }
-            self.embedded(&hosts, &catalog, &lists)?
-        };
+        // an item a file here embeds or has attached is that file's, never
+        // unmatched.
+        let embedded =
+            self.with_documents(&work, &members, &withheld, &settings, &catalog, &renaming)?;
+        // A file a document here embeds or has attached is that document's,
+        // whatever other folder holds the item, so it is never let go.
+        let (shown, files): (Vec<Item>, Vec<Item>) = files
+            .into_iter()
+            .partition(|item| embedded.at.contains_key(&item.id));
+        work.extend(shown.into_iter().map(|item| (item, true)));
+        self.let_go_outside(files, &peers, &context, report, &mut work, &mut retained)?;
         report.embeds = embedded.reports;
         let missing: Vec<String> = embedded
             .at
@@ -373,7 +379,17 @@ impl Folder {
         for (item, unmatched) in &mut work {
             *unmatched &= !embedded.at.contains_key(&item.id);
         }
-        // Held by the file embedding it whatever state the query narrows to;
+        // A file here only as an attachment leaves with its documents, as
+        // `remove_departed` takes it away; it is not kept as unmatched.
+        let mut gone_with = HashSet::new();
+        for (item, unmatched) in &work {
+            if *unmatched && self.left_with_its_documents(&item.id, &settings)? {
+                gone_with.insert(item.id.clone());
+            }
+        }
+        work.retain(|(item, _)| !gone_with.contains(&item.id));
+        // Held by the file embedding it or attached to it whatever state the
+        // query narrows to;
         // a trashed one's file goes as any trashed item's does.
         work.extend(
             found
@@ -449,12 +465,12 @@ impl Folder {
                 continue;
             }
             let taken = match &bound {
-                None if !*unmatched => peers.let_go(&item.id),
+                None if !*unmatched => peers.let_go(&item.id, &members),
                 _ => None,
             };
             let placed = self.placement(&item.id)?;
-            // An embedded file goes where its link says, and its placement
-            // follows.
+            // An embedded file goes where its link says, any other attachment
+            // beside its document, and its placement follows.
             let Some(want) = embedded
                 .at
                 .get(&item.id)
@@ -1388,6 +1404,107 @@ impl Folder {
         Ok(TakeIn::Taken)
     }
 
+    /// Where each file a document of `work` embeds or has attached is
+    /// written, each document read at the path a pull writes it.
+    fn with_documents(
+        &self,
+        work: &[(Item, bool)],
+        members: &HashSet<String>,
+        withheld: &placement::Withheld,
+        settings: &Settings,
+        catalog: &Catalog,
+        renaming: &Renaming<'_>,
+    ) -> Result<super::embeds::Embedded> {
+        let mut hosts = Vec::new();
+        for (item, _) in work {
+            if item.version == 0 || bytes_of(item, catalog).is_some() {
+                continue;
+            }
+            let bound = state::bound_to_item(&*self.core.conn()?, &item.id)?;
+            let placed = self.placement(&item.id)?;
+            if let Some(path) = self.path_for(
+                item,
+                placed.as_ref(),
+                bound.as_ref(),
+                withheld,
+                settings,
+                catalog,
+                renaming,
+            ) {
+                hosts.push((item, path));
+            }
+        }
+        self.embedded(&hosts, members, catalog, renaming.lists)
+    }
+
+    /// The files a pull writes as the embeds or attachments of documents
+    /// here: those of members, and of bound documents in a state the query
+    /// holds whose file is not among `missing`, since no pull writes back an
+    /// unmatched document.
+    pub(super) fn written_with_documents(
+        &self,
+        settings: &Settings,
+        members: &HashSet<String>,
+        missing: &[String],
+    ) -> Result<HashSet<String>> {
+        let lists = settings.lists()?;
+        let missing: HashSet<&str> = missing.iter().map(String::as_str).collect();
+        let (catalog, bound) = {
+            let conn = self.core.conn()?;
+            let bound: HashSet<String> = state::every_bound(&conn)?
+                .into_iter()
+                .filter(|bound| !missing.contains(bound.path.as_str()))
+                .map(|bound| bound.item_id)
+                .collect();
+            (Catalog::load(&conn)?, bound)
+        };
+        // Only a document something is attached to can place a file.
+        let mut documents: Vec<String> = self
+            .core
+            .edges_of_type(ATTACHMENT_EDGE)?
+            .into_iter()
+            .map(|edge| edge.target_id)
+            .filter(|id| members.contains(id) || bound.contains(id))
+            .collect();
+        documents.sort_unstable();
+        documents.dedup();
+        let work: Vec<(Item, bool)> = crate::store::items_by_ids(&*self.core.conn()?, &documents)?
+            .into_iter()
+            .filter(|item| members.contains(&item.id) || settings.holds_state(item.state))
+            .map(|item| (item, false))
+            .collect();
+        let renaming = Renaming {
+            reserved: self.placed_here()?,
+            lists: &lists,
+        };
+        let withheld = self.withheld()?;
+        let embedded =
+            self.with_documents(&work, members, &withheld, settings, &catalog, &renaming)?;
+        Ok(embedded.at.into_keys().collect())
+    }
+
+    /// Lets go of each file of `items`, outside the query, that another
+    /// folder files; the rest stay to be kept current here, unmatched.
+    fn let_go_outside(
+        &self,
+        items: Vec<Item>,
+        peers: &Peers<'_>,
+        context: &crate::reach::Context,
+        report: &mut PullReport,
+        work: &mut Vec<(Item, bool)>,
+        retained: &mut Vec<String>,
+    ) -> Result<()> {
+        for item in items {
+            context.same_copy(&*self.core.conn()?)?;
+            match self.let_go(&item.id, peers, context, report)? {
+                LetGo::Inapplicable => work.push((item, true)),
+                LetGo::Retained => retained.push(item.id),
+                LetGo::Removed => {}
+            }
+        }
+        Ok(())
+    }
+
     /// Trashes nothing. Answers whether it did.
     fn let_go(
         &self,
@@ -1531,7 +1648,13 @@ impl Folder {
             None if !crate::store::purged(&*self.core.conn()?, &row.item_id)? => {
                 return Ok(Departing::No);
             }
-            Some(item) if settings.holds_state(item.state) => return Ok(Departing::No),
+            Some(item)
+                if settings.holds_state(item.state)
+                    && (row.blob.is_none()
+                        || !self.left_with_its_documents(&item.id, settings)?) =>
+            {
+                return Ok(Departing::No);
+            }
             _ => {}
         }
         Ok(match self.read(self.root.join(&row.path)) {
@@ -1545,6 +1668,37 @@ impl Folder {
             // Bytes it cannot read are not shown to be the folder's own.
             Err(error) => Departing::Unread(error.to_string()),
         })
+    }
+
+    /// Whether an item the query does not hold is attached to documents
+    /// and every one of them left the folder by its state or was purged, so
+    /// its file, there only as their attachment, leaves with them. An item
+    /// attached to nothing, such as one whose edge was taken away, stays as
+    /// any unmatched file does, and so does one attached to a document still
+    /// in a state the query holds, wherever that document is.
+    fn left_with_its_documents(&self, item_id: &str, settings: &Settings) -> Result<bool> {
+        let documents: Vec<String> = self
+            .core
+            .edges_from(item_id)?
+            .into_iter()
+            .filter(|edge| edge.edge_type == ATTACHMENT_EDGE)
+            .map(|edge| edge.target_id)
+            .collect();
+        if documents.is_empty() {
+            return Ok(false);
+        }
+        let conn = self.core.conn()?;
+        let held = crate::store::items_by_ids(&conn, &documents)?;
+        for document in &documents {
+            let gone = match held.iter().find(|item| &item.id == document) {
+                Some(item) => !settings.holds_state(item.state),
+                None => crate::store::purged(&conn, document)?,
+            };
+            if !gone {
+                return Ok(false);
+            }
+        }
+        Ok(true)
     }
 
     /// A journal row here is a file put back since its scan, so it asks for
@@ -1761,18 +1915,7 @@ impl Folder {
         if let Some(bound) = bound {
             return Some(staying(bound.path.clone()));
         }
-        let title = item
-            .properties
-            .get(fields::title_field(catalog, &item.r#type))
-            .and_then(Value::as_str)
-            .filter(|title| !title.trim().is_empty())
-            .unwrap_or(&item.id);
-        // A file item's title is a file's name already, extension and all.
-        let name = if bytes_of(item, catalog).is_some() {
-            name_from_title(title, None)
-        } else {
-            name_from_title(title, Some(".md"))
-        };
+        let name = new_name(item, catalog);
         match settings.first_placement_for(&item.r#type, catalog) {
             Some(dir) => cleaned(&format!("{dir}/{name}")),
             None => Some(name),

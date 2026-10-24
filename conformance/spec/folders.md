@@ -248,7 +248,7 @@ When a waiting folder’s first-sync plan is read, a device MUST report the coun
 
 **Reason:** `beside` counts a file written where a file the folder sends already is, and one of the two takes a number in its name; two names are the same path when they differ only in case or Unicode form, as the folder compares them. `left` counts an item whose file is not written because a file the folder does not send is at the path, which `folders/first-sync-plan-left` says. `write` counts neither of the files `left` counts.
 
-**Tests:** `device/folders.test.ts › says what it will do when the folder is added, and sends and writes nothing`, `device/folders.test.ts › writes beside a file already where an item's file would go, and says so`, `device/folders.test.ts › counts a file whose name differs from an item's only in case as a file written beside, not one left`, `device/folders.test.ts › counts a file whose name differs from an item's only in Unicode form as a file written beside, not one left`.
+**Tests:** `device/folders.test.ts › says what it will do when the folder is added, and sends and writes nothing`, `device/folders.test.ts › writes beside a file already where an item's file would go, and says so`, `device/folders.test.ts › counts a file whose name differs from an item's only in case as a file written beside, not one left`, `device/folders.test.ts › counts a file whose name differs from an item's only in Unicode form as a file written beside, not one left`, `device/folders-frontmatter.test.ts › is counted in the first sync's plan`.
 
 ### `folders/first-sync-plan-left`
 
@@ -902,9 +902,9 @@ When an unbound non-document file has no type held by a folder’s query and no 
 
 ### `folders/embedded-outside-search`
 
-When a document in a folder embeds a file outside the folder’s query, a device MUST admit that file as the document’s attachment.
+When a document in a folder embeds a file outside the folder’s query, or a file outside the query is attached to the document, a device MUST admit that file as the document’s attachment.
 
-**Tests:** `device/folders-frontmatter.test.ts › sends an embedded file with its file`, `device/folders-frontmatter.test.ts › writes an embedded file where its link says`, `device/folders-frontmatter.test.ts › follows an embedded file renamed away from its link, and says the link names nothing`.
+**Tests:** `device/folders-frontmatter.test.ts › sends an embedded file with its file`, `device/folders-frontmatter.test.ts › writes an embedded file where its link says`, `device/folders-frontmatter.test.ts › follows an embedded file renamed away from its link, and says the link names nothing`, `› is written beside its document, and its has-attachment line reads back as the same edge`.
 
 ### `folders/document-outside-search`
 
@@ -914,9 +914,9 @@ When a folder document names an admissible type outside the folder’s query, a 
 
 ### `folders/new-file-only-members`
 
-When an item outside a folder’s query has no bound file and no document embeds it, a device MUST NOT write a new file for the item.
+When an item outside a folder’s query has no bound file, no document in the folder embeds it, and it is attached to no document in the folder, a device MUST NOT write a new file for the item.
 
-**Tests:** `device/folders.test.ts › leaves a file outside its query alone`.
+**Tests:** `device/folders.test.ts › leaves a file outside its query alone`, `device/folders-frontmatter.test.ts › is written beside its document, and its has-attachment line reads back as the same edge`.
 
 ### `folders/outside-document-unmatched`
 
@@ -1700,7 +1700,7 @@ If a document has a frontmatter line named for an edge type whose `written_at` i
 
 When an edge's designated writing end cannot carry frontmatter, a device MUST write the edge at the other document end under its name there.
 
-**Tests:** `device/folders-frontmatter.test.ts › writes attached-to in the attachment's file, and has-attachment in an image's host`.
+**Tests:** `device/folders-frontmatter.test.ts › writes attached-to in the attachment's file, and has-attachment in an image's host`, `› is written beside its document, and its has-attachment line reads back as the same edge`.
 
 ### `folders/edge-unknown-writer`
 
@@ -2032,9 +2032,9 @@ When a document removes an embed, a device MUST delete that attachment edge.
 
 ### `folders/embed-file-kept`
 
-When a document removes an embed, a device MUST retain the embedded file on disk.
+When a document removes an embed, or a `has-attachment` line, a device MUST retain the attached file on disk.
 
-**Tests:** `device/folders-frontmatter.test.ts › removes the edge when the embed is taken out`.
+**Tests:** `device/folders-frontmatter.test.ts › removes the edge when the embed is taken out`, `› lists under has-attachment only what the body does not embed`.
 
 ### `folders/embed-markdown-only`
 
@@ -2100,9 +2100,9 @@ When a document embeds an admissible file, a device MUST upload that file before
 
 ### `folders/embed-held`
 
-While a document embeds a readable active or archived file item, a device MUST retain its file regardless of the folder query's type and state restrictions.
+While a document in a folder embeds a readable active or archived file item, or such an item is attached to the document, a device MUST retain the item's file regardless of the folder query's type and state restrictions.
 
-**Tests:** `device/folders-frontmatter.test.ts › sends an embedded file with its file`, `device/folders-frontmatter.test.ts › keeps an embedded file archived elsewhere where its query holds active items only`.
+**Tests:** `device/folders-frontmatter.test.ts › sends an embedded file with its file`, `device/folders-frontmatter.test.ts › keeps an embedded file archived elsewhere where its query holds active items only`, `› is kept archived elsewhere while its document is held, where the query holds active items only`.
 
 ### `folders/embed-path-placement`
 
@@ -2198,13 +2198,13 @@ When an embed names no attachment the key can read, a device MUST NOT write a fi
 
 When an embed name matches two attachments, a device MUST report the ambiguity.
 
-**Tests:** `device/folders-frontmatter.test.ts › writes nothing for a name two attachments share, and says so`.
+**Tests:** `device/folders-frontmatter.test.ts › reads a name two attachments share as neither, and says so`.
 
 ### `folders/embed-ambiguous-no-write`
 
-When an embed name matches two attachments, a device MUST NOT write a file for it.
+When an embed name matches two attachments, a device MUST NOT place either attachment's file by that embed.
 
-**Tests:** `device/folders-frontmatter.test.ts › writes nothing for a name two attachments share, and says so`.
+**Tests:** `device/folders-frontmatter.test.ts › reads a name two attachments share as neither, and says so`.
 
 ### `folders/body-self-link`
 
@@ -2229,6 +2229,88 @@ When a pull rewrites a document whose body embeds an attachment also named in it
 When an embedded file needs uploading, a device MUST leave its size-limit decision to the server's upload operation.
 
 **Tests:** `device/folders-contract-extra-c.test.ts › sends an embedded file to the server for its upload limit decision`.
+
+### `folders/attachment-beside`
+
+When a pull writes a document that a readable active or archived file item is attached to, no document in the folder embeds that file, and the folder's query does not hold it, a device MUST write the file in the directory of a document it is attached to.
+
+**Reason:** a file attached to an item is part of that item, so a folder that holds the item holds its files too, wherever the body shows them or not.
+
+**Tests:** `device/folders-frontmatter.test.ts › is written beside its document, and its has-attachment line reads back as the same edge`, `› reports an embed pointing outside the folder`, `› writes no file a .txt file's text embeds`.
+
+### `folders/attachment-line`
+
+While a document's attachment is written beside the document and the body embeds it nowhere, a device MUST render the attachment in the document's `has-attachment` line.
+
+**Tests:** `device/folders-frontmatter.test.ts › is written beside its document, and its has-attachment line reads back as the same edge`, `› reports an embed pointing outside the folder`.
+
+### `folders/attachment-name`
+
+When a pull writes a file attached to documents in a folder, which no document there embeds and the folder's query does not hold, and the file has no path in the folder yet, a device MUST name it from its item's title, numbered beside any other file the pull places at that name without regard to case or Unicode normalization (`folders/placement-collision-number`).
+
+**Tests:** `device/folders-frontmatter.test.ts › is written under a number where another attachment of its document has its name, whatever the case`, `› reads a name two attachments share as neither, and says so`.
+
+### `folders/attachment-stays`
+
+While a file attached to documents in a folder, which no document there embeds and the folder's query does not hold, is in the directory of one of those documents, a device MUST leave it at its path.
+
+**Tests:** `device/folders-frontmatter.test.ts › follows its document to another directory, and goes back beside it when moved away`.
+
+### `folders/attachment-follows`
+
+When a file attached to documents in a folder, which no document there embeds and the folder's query does not hold, is in the directory of none of those documents, or has no path in the folder yet, a device MUST write it in the directory of the first of those documents in path order.
+
+**Reason:** an attachment that no embed places has its document as its only anchor, so it follows the document, and a file moved away from it goes back, as a file an embed places by path does.
+
+**Tests:** `device/folders-frontmatter.test.ts › follows its document to another directory, and goes back beside it when moved away`, `› is written once, beside the first of its documents in path order, and the other is reported`.
+
+### `folders/attachment-written-once`
+
+When a pull writes a file attached to documents in more than one directory of a folder, which no document there embeds and the folder's query does not hold, a device MUST write one copy of it.
+
+**Tests:** `device/folders-frontmatter.test.ts › is written once, beside the first of its documents in path order, and the other is reported`.
+
+### `folders/attachment-written-once-report`
+
+When a pull writes a file attached to documents in more than one directory of a folder, which no document there embeds and the folder's query does not hold, a device MUST report each of those documents outside the directory the file is written in, in `embeds` with the flag `attachment`.
+
+**Tests:** `device/folders-frontmatter.test.ts › is written once, beside the first of its documents in path order, and the other is reported`.
+
+### `folders/attachment-embedded-once`
+
+When a document comes to embed an attachment whose file is already written beside it, a device MUST keep that one file and write no second copy.
+
+**Tests:** `device/folders-frontmatter.test.ts › is not written again once its document embeds it`.
+
+### `folders/attachment-edge-gone-kept`
+
+When the last `attached-to` edge from a written attachment to a document in the folder is deleted, and the folder's query does not hold the attachment, a device MUST keep its file and count it `unmatched`.
+
+**Tests:** `device/folders-frontmatter.test.ts › stays as a file the folder no longer holds when its edge is taken away elsewhere`, `› lists under has-attachment only what the body does not embed`.
+
+### `folders/attachment-departs`
+
+When every document a written attachment is attached to is trashed or leaves the states held by the folder's query, and the query does not hold the attachment, a device MUST remove the attachment's file under the conditions of `folders/departed-file-removed`.
+
+**Tests:** `device/folders-frontmatter.test.ts › leaves with its document, unless the query holds it on its own`, `› counts toward a large removal when it leaves with its document`.
+
+### `folders/attachment-member-stays`
+
+When a document leaves a folder and the folder's query holds a file attached to it, a device MUST keep that file.
+
+**Tests:** `device/folders-frontmatter.test.ts › leaves with its document, unless the query holds it on its own`.
+
+### `folders/attachment-deleted`
+
+When a person deletes the file a pull wrote for an attachment, a device MUST trash the attachment's item once the rename grace (`folders/delete-grace`) ends.
+
+**Tests:** `device/folders-frontmatter.test.ts › is trashed once its grace runs out when its file is deleted, and not written again`.
+
+### `folders/attachment-absent`
+
+If a pull cannot fetch an attachment's bytes, then a device MUST report the attachment as `absent` and continue the pull.
+
+**Tests:** `device/folders-frontmatter.test.ts › is reported absent where its bytes cannot be had, and the pass goes on`.
 
 ## File identity
 
@@ -3572,7 +3654,7 @@ When an item starts matching a folder’s query through a tag, property, state, 
 
 ### `folders/departed-file-removed`
 
-When an item is trashed or leaves the states held by a folder's query, its file is not required by an embedding document, its path remains admitted, its bytes remain those the device wrote, and no large-removal pause applies (`folders/pull-removal-paused`), a device MUST remove that file at the next pull where the filesystem permits removal.
+When an item is trashed or leaves the states held by a folder's query, its file is not held by a document that embeds it or that it is attached to (`folders/embed-held`), its path remains admitted, its bytes remain those the device wrote, and no large-removal pause applies (`folders/pull-removal-paused`), a device MUST remove that file at the next pull where the filesystem permits removal.
 
 **Tests:** `device/folders-identity.test.ts › removes a trashed item's file and brings it back on restore`, `device/folders-identity.test.ts › removes the file of an item that leaves by state`.
 
@@ -3668,9 +3750,9 @@ When another item takes a bound folder file’s path, a device MUST release the 
 
 ### `folders/embedded-archive-kept`
 
-When an embedded file item becomes archived outside the folder’s query, a device MUST keep its file while a document still embeds it.
+When an embedded or attached file item becomes archived outside the folder’s query, a device MUST keep its file while a document in the folder still embeds it or it is still attached to one.
 
-**Tests:** `device/folders-frontmatter.test.ts › sends an embedded file with its file`, `device/folders-frontmatter.test.ts › keeps an embedded file archived elsewhere where its query holds active items only`.
+**Tests:** `device/folders-frontmatter.test.ts › sends an embedded file with its file`, `device/folders-frontmatter.test.ts › keeps an embedded file archived elsewhere where its query holds active items only`, `› is kept archived elsewhere while its document is held, where the query holds active items only`.
 
 ### `folders/binary-created`
 
@@ -5022,6 +5104,22 @@ When an item left another folder by state, a device MUST NOT take in that folder
 
 **Tests:** `device/folders-one-mac.test.ts › does not take in the file of an item that left its folder by state`.
 
+### `folders/take-in-attachment-excluded`
+
+When a document in another registered folder embeds an item or has it attached, that folder has a file of the document, and that folder's query still holds the document or the receiving folder's query does not, a device MUST NOT take in that folder's file of the item.
+
+**Reason:** the file is the document's attachment there, whatever folder holds the item on its own, so taking it in would take it from beside its document.
+
+**Tests:** `device/folders-one-mac.test.ts › keeps a file %s a note while another folder on the Mac holds the file, and writes nothing again`.
+
+### `folders/take-in-attachment-with-document`
+
+When a document moves from another registered folder's query into a folder's query, and the other folder has a file of an item the document embeds or has attached, a device MUST take in that file for the folder the document moved to, as it takes in the document's own file.
+
+**Reason:** the other folder no longer writes the file once its document leaves, so a file written anew instead would leave the other folder's copy unmatched for good.
+
+**Tests:** `device/folders-one-mac.test.ts › moves a note's attachment with the note to another notes folder when %s hears first`.
+
 ### `folders/take-in-destination-kept`
 
 When a file appears at the destination before a move-in lands, a device MUST preserve the destination file.
@@ -5153,6 +5251,22 @@ When another registered folder already holds its own file for an item this folde
 When another registered folder already holds its own file for an item this folder no longer holds, a device MUST count this folder’s file as `let_go`.
 
 **Tests:** `device/folders-one-mac.test.ts › takes in a file another folder let go`.
+
+### `folders/let-go-attachment-kept`
+
+While a document in a folder embeds an item or has it attached, a device MUST NOT let go of that folder's file of the item because another registered folder holds its own file for the item.
+
+**Reason:** the pull that lets the file go writes it again beside its document, so every pull would remove and write the same file.
+
+**Tests:** `device/folders-one-mac.test.ts › keeps a file %s a note while another folder on the Mac holds the file, and writes nothing again`.
+
+### `folders/let-go-attachment-with-document`
+
+When this folder no longer holds an item or any document the item is attached to, and another registered folder's query holds a document the item is attached to and that folder has its own file of the item, a device MUST remove this folder's unchanged owned file of the item and count it as `let_go`.
+
+**Reason:** the other folder writes the file beside the document it holds, so a file kept here would stay unmatched for good.
+
+**Tests:** `device/folders-one-mac.test.ts › moves a note's attachment with the note to another notes folder when %s hears first`.
 
 ### `folders/unmatched-missing-not-rewritten`
 
@@ -5634,13 +5748,13 @@ When missing folder files exceed the large-removal threshold, including files st
 
 When owned folder files eligible for removal after their items depart exceed the large-removal threshold, a device MUST retain those files.
 
-**Tests:** `device/folders.test.ts › pauses a large removal from another device`, `device/folders-contract-b.test.ts › confirms a paused pull removal of %s items`.
+**Tests:** `device/folders.test.ts › pauses a large removal from another device`, `device/folders-contract-b.test.ts › confirms a paused pull removal of %s items`, `device/folders-frontmatter.test.ts › counts toward a large removal when it leaves with its document`.
 
 ### `folders/pull-removal-paused-paused-count`
 
 When owned folder files eligible for removal after their items depart exceed the large-removal threshold, a device MUST count those files as `paused`.
 
-**Tests:** `device/folders.test.ts › pauses a large removal from another device`, `device/folders-contract-b.test.ts › confirms a paused pull removal of %s items`.
+**Tests:** `device/folders.test.ts › pauses a large removal from another device`, `device/folders-contract-b.test.ts › confirms a paused pull removal of %s items`, `device/folders-frontmatter.test.ts › counts toward a large removal when it leaves with its document`.
 
 ### `folders/confirm-moves-first`
 
@@ -5702,6 +5816,14 @@ When a paused disk removal is restored and the missing files’ items still matc
 
 **Tests:** `device/folders.test.ts › lets a paused removal go once confirmed, or puts it back`.
 
+### `folders/restore-disk-attachments`
+
+When a paused disk removal is restored and a missing file's item is outside the folder's query but a document the folder holds embeds it or has it attached, a device MUST write the missing file back from the held copy and count it as `put_back`, unless every such document is outside the query and its own file is among the missing files.
+
+**Reason:** a pull writes such a file with its document, so restoring the document alone would leave the file for the next scan to trash. A document outside the query stays deleted, as `folders/restore-unmatched-count` says, so its attachment goes with it rather than stay unmatched for good.
+
+**Tests:** `device/folders-frontmatter.test.ts › is put back with its document when a paused removal is restored, %s`, `› is not put back when a paused removal is restored with an unmatched document that stays deleted`.
+
 ### `folders/restore-disk-files-put-back-count`
 
 When a paused disk removal is restored and the missing files’ items still match the folder’s query, a device MUST count as `put_back` each missing file the restore wrote back.
@@ -5762,27 +5884,27 @@ When a paused disk removal is restored and a missing file’s item is absent or 
 
 ### `folders/restore-unmatched-count`
 
-When a paused disk removal is restored and a missing file’s item left the query for a non-state reason, a device MUST leave the missing file for normal deletion handling.
+When a paused disk removal is restored and a missing file’s item left the query for a non-state reason and no document the folder holds embeds it or has it attached, a device MUST leave the missing file for normal deletion handling.
 
 **Tests:** `device/folders-contract-b.test.ts › does not count a missing unmatched file as put back when restoring a removal`.
 
 ### `folders/restore-unmatched-count-not-put-back`
 
-When a paused disk removal is restored and a missing file’s item left the query for a non-state reason, a device MUST NOT count the missing file as put back.
+When a paused disk removal is restored and a missing file’s item left the query for a non-state reason and no document the folder holds embeds it or has it attached, a device MUST NOT count the missing file as put back.
 
 **Tests:** `device/folders-contract-b.test.ts › does not count a missing unmatched file as put back when restoring a removal`.
 
 ### `folders/restore-embedded-departure`
 
-When restoring a disk removal releases an archived file’s old binding but a held document still embeds that file, a device MUST write the embedded file anew.
+When restoring a disk removal releases an archived file’s old binding but a held document still embeds that file or has it attached, a device MUST write the file anew.
 
-**Tests:** `device/folders-contract-b.test.ts › writes an archived embedded file anew without counting it as put back`.
+**Tests:** `device/folders-contract-b.test.ts › writes an archived %s file anew without counting it as put back`.
 
 ### `folders/restore-embedded-not-put-back`
 
-When restoring a disk removal releases an archived file’s old binding but a held document still embeds that file, a device MUST NOT count the newly written embedded file as put back.
+When restoring a disk removal releases an archived file’s old binding but a held document still embeds that file or has it attached, a device MUST NOT count the newly written file as put back.
 
-**Tests:** `device/folders-contract-b.test.ts › writes an archived embedded file anew without counting it as put back`.
+**Tests:** `device/folders-contract-b.test.ts › writes an archived %s file anew without counting it as put back`.
 
 ### `folders/restore-pull-items`
 

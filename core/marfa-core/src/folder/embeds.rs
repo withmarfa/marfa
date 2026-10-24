@@ -1,18 +1,18 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 
 use serde_json::Value;
 
 use super::lists::Lists;
 use super::placement::{cleaned, path_of};
-use super::{Flagged, Folder, bytes_of, fields, state};
+use super::{Flagged, Folder, bytes_of, fields, pull, state};
 use crate::Result;
 use crate::body::embed::{
     answers, carries_frontmatter, dir_of, file_like, is_note, joined, named, read_as,
 };
 use crate::body::text::{self, Embed};
 use crate::catalog::Catalog;
-use crate::model::Item;
+use crate::model::{Item, ItemState};
 use crate::names::{folded, name_of, same};
 
 pub const ATTACHMENT_EDGE: &str = "attached-to";
@@ -93,7 +93,7 @@ pub(super) fn on_disk(host: &str, embed: &Embed, files: &Files) -> Option<Target
 pub(super) fn reason(raw: &str, target: &Target) -> String {
     match target {
         Target::Outside => format!(
-            "{raw} leads out of the folder, so the folder neither sends nor writes the file it shows"
+            "{raw} leads out of the folder, so the folder neither sends nor writes a file at that path"
         ),
         Target::Spaced => format!(
             "{raw} has a raw space in its path, which ends a Markdown path, so it names no file and no attachment of this file is removed until it does; write the space as %20, or the path inside < >"
@@ -124,7 +124,8 @@ struct Attachment {
     names: Vec<String>,
 }
 
-/// Where an item a file here embeds is written, and the embeds reported.
+/// Where each file a document here embeds or has attached is written, and
+/// what was reported.
 #[derive(Default)]
 pub(super) struct Embedded {
     pub at: BTreeMap<String, String>,
@@ -253,11 +254,15 @@ impl Folder {
         Ok(shown)
     }
 
-    /// Where each item a document here embeds is written: where its link
-    /// says, the first in path order where its links name more than one path.
+    /// Where each file a document here embeds or has attached is written. An
+    /// embedded file goes where its link says, the first in path order where
+    /// its links name more than one path. A file attached to a document and
+    /// embedded by none goes beside the document, unless the query holds it
+    /// on its own and its own placement says where.
     pub(super) fn embedded(
         &self,
         hosts: &[(&Item, String)],
+        members: &HashSet<String>,
         catalog: &Catalog,
         lists: &Lists,
     ) -> Result<Embedded> {
@@ -337,6 +342,7 @@ impl Folder {
             };
             links.entry(id).or_default().push(Link { path, host, raw });
         }
+        self.beside_documents(hosts, &links, members, catalog, &mut embedded)?;
         for (id, mut found) in links {
             found.sort_by(|a, b| a.path.cmp(&b.path));
             let first = found[0].path.clone();
@@ -362,5 +368,76 @@ impl Folder {
             }
         }
         Ok(embedded)
+    }
+
+    /// Places each file attached to a document here that no embed shows and
+    /// the query does not hold on its own: where it already sits beside one
+    /// of its documents, else beside the first of them in path order, under
+    /// the name it has here or the one its title makes. Every other document
+    /// it is attached to in another directory is reported.
+    fn beside_documents<T>(
+        &self,
+        hosts: &[(&Item, String)],
+        links: &BTreeMap<String, T>,
+        members: &HashSet<String>,
+        catalog: &Catalog,
+        embedded: &mut Embedded,
+    ) -> Result<()> {
+        let host_paths: HashMap<&str, &str> = hosts
+            .iter()
+            .map(|(host, path)| (host.id.as_str(), path.as_str()))
+            .collect();
+        let mut attached: BTreeMap<String, Vec<&str>> = BTreeMap::new();
+        for edge in self.core.edges_of_type(ATTACHMENT_EDGE)? {
+            let Some(host) = host_paths.get(edge.target_id.as_str()) else {
+                continue;
+            };
+            if links.contains_key(&edge.source_id) || members.contains(&edge.source_id) {
+                continue;
+            }
+            attached.entry(edge.source_id).or_default().push(host);
+        }
+        for (id, mut found) in attached {
+            let Some(item) = self.core.get(&id)? else {
+                continue;
+            };
+            if bytes_of(&item, catalog).is_none()
+                || !matches!(item.state, ItemState::Active | ItemState::Archived)
+            {
+                continue;
+            }
+            found.sort_unstable();
+            found.dedup();
+            let own = self.own_paths(&id)?;
+            let beside = |path: &str| found.iter().any(|host| same(dir_of(host), dir_of(path)));
+            let path = match own.iter().find(|path| beside(path)) {
+                Some(path) => path.clone(),
+                None => {
+                    let name = own.first().map_or_else(
+                        || pull::new_name(&item, catalog),
+                        |path| name_of(path).to_string(),
+                    );
+                    format!("{}{name}", dir_of(found[0]))
+                }
+            };
+            for host in found
+                .iter()
+                .filter(|host| !same(dir_of(host), dir_of(&path)))
+            {
+                embedded.reports.push(Flagged {
+                    path: (*host).to_string(),
+                    flag: "attachment",
+                    reason: format!(
+                        "{} is attached to this file and to another in another directory, and is written once, at {path}",
+                        name_of(&path)
+                    ),
+                    item: None,
+                });
+            }
+            if let Some(path) = cleaned(&path) {
+                embedded.at.insert(id, path);
+            }
+        }
+        Ok(())
     }
 }

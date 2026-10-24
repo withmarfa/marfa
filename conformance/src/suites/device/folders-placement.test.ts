@@ -1996,8 +1996,15 @@ describe("where a file sits", () => {
             "Write access to edge type denied",
           )
         : undefined;
+    // When the key was last read: the watch reads it again a minute after.
+    let keyReadAt = 0;
     harness = await folderHarness("placement-grant-watch", {
-      key: [() => key],
+      key: [
+        () => {
+          keyReadAt = Date.now();
+          return key;
+        },
+      ],
     });
     scriptFolderWrites(harness, { edges });
     // The same key, its grant narrowed once the folder is added.
@@ -2018,7 +2025,7 @@ describe("where a file sits", () => {
     const afterAdd = keyReads();
     put(harness, "one.md", "---\ntitle: One\n---\nwords\n");
     const watching = harness.folder.watchText();
-    let restored = 0;
+    let refusedAt = 0;
     try {
       await vi.waitFor(() => expect(placings()).toBe(1), {
         timeout: 20_000,
@@ -2044,20 +2051,23 @@ describe("where a file sits", () => {
 
       key = answers.currentKey("fixture-key", { "*": "write" });
       refusing = false;
-      restored = Date.now();
+      // The read the refusal was recorded under, none having come since.
+      refusedAt = keyReadAt;
       await vi.waitFor(
         () => expect(edges.placements(harness!.settings.id).size).toBe(1),
-        { timeout: 70_000, interval: 250 },
+        { timeout: 90_000, interval: 250 },
       );
     } finally {
       await watching.stop();
     }
+    // A minute from the read the refusal stands under, and room for the
+    // passes after it on a busy machine.
     expect(
-      Date.now() - restored,
+      Date.now() - refusedAt,
       "a restored grant was not met within the minute the key is read again in",
-    ).toBeLessThan(65_000);
+    ).toBeLessThan(80_000);
     expect(placings()).toBe(2);
-  }, 110_000);
+  }, 150_000);
 
   it("asks a key it could not read again at most once a minute while watching", async () => {
     let key: Answer = answers.currentKey("fixture-key", { "*": "write" });

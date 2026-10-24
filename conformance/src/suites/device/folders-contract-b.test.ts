@@ -1021,66 +1021,75 @@ it("keeps first sync confirmed after a failed landing and after adding the folde
   expect(recovered.ok && recovered.value.written).toBe(1);
 });
 
-it("writes an archived embedded file anew without counting it as put back", async () => {
-  const bytes = Buffer.from("embedded bytes");
-  const host = row(0).item;
-  host.properties.body = "![](file.bin)\n";
-  const file = {
-    id: row(1).item.id,
-    type: "core.file",
-    version: 1,
-    properties: {
-      title: "file.bin",
-      blob_ref: hashOf(bytes),
-      mime_type: "application/octet-stream",
-    },
-  };
-  harness = await folderHarness("contract-b-restore-embed", {
-    settings: {
-      query: { types: ["core.note"], state: ["active"] },
-      removal_threshold: { files: 0, fraction: 0 },
-    },
-    rows: { "core.note": [{ item: host }], "core.file": [{ item: file }] },
-    edges: {
-      "attached-to": [
-        {
-          id: "01a00000-0000-7000-8000-000000008888",
-          source_id: file.id,
-          target_id: host.id,
-          edge_type: "attached-to",
-        },
+/** A note's body that embeds its file, and one that leaves it attached only. */
+const restoredBodies = [
+  ["embedded", "![](file.bin)\n"],
+  ["attached", "the file is attached, not shown\n"],
+];
+
+it.each(restoredBodies)(
+  "writes an archived %s file anew without counting it as put back",
+  async (kind, body) => {
+    const bytes = Buffer.from("embedded bytes");
+    const host = row(0).item;
+    host.properties.body = body;
+    const file = {
+      id: row(1).item.id,
+      type: "core.file",
+      version: 1,
+      properties: {
+        title: "file.bin",
+        blob_ref: hashOf(bytes),
+        mime_type: "application/octet-stream",
+      },
+    };
+    harness = await folderHarness(`contract-b-restore-file-${kind}`, {
+      settings: {
+        query: { types: ["core.note"], state: ["active"] },
+        removal_threshold: { files: 0, fraction: 0 },
+      },
+      rows: { "core.note": [{ item: host }], "core.file": [{ item: file }] },
+      edges: {
+        "attached-to": [
+          {
+            id: "01a00000-0000-7000-8000-000000008888",
+            source_id: file.id,
+            target_id: host.id,
+            edge_type: "attached-to",
+          },
+        ],
+      },
+      events: [
+        copyReplay("2", [
+          copyItemEvent(
+            "2",
+            "item.state_changed",
+            wireItem({ ...file, state: "archived" }),
+          ),
+        ]),
       ],
-    },
-    events: [
-      copyReplay("2", [
-        copyItemEvent(
-          "2",
-          "item.state_changed",
-          wireItem({ ...file, state: "archived" }),
-        ),
-      ]),
-    ],
-  });
-  let archived = false;
-  harness.server.copyAnswer("GET", `/items/${file.id}`, () =>
-    answers.updated(
-      wireItem({ ...file, state: archived ? "archived" : "active" }),
-    ),
-  );
-  scriptBlob(harness.server, bytes);
-  expect((await harness.folder.pull()).ok).toBe(true);
-  expect(readFileSync(join(harness.dir, "file.bin"))).toEqual(bytes);
-  rmSync(join(harness.dir, "file.bin"));
-  const paused = await harness.folder.scan();
-  expect(paused.ok && paused.value.paused).toBe(1);
-  expect((await harness.folder.device().catchUp()).ok).toBe(true);
-  archived = true;
-  const restored = await harness.folder.restore();
-  expect(restored.ok && restored.value.put_back).toBe(0);
-  expect(readFileSync(join(harness.dir, "file.bin"))).toEqual(bytes);
-  const scan = await harness.folder.scan();
-  expect(scan.ok && scan.value.missing).toBe(0);
-});
+    });
+    let archived = false;
+    harness.server.copyAnswer("GET", `/items/${file.id}`, () =>
+      answers.updated(
+        wireItem({ ...file, state: archived ? "archived" : "active" }),
+      ),
+    );
+    scriptBlob(harness.server, bytes);
+    expect((await harness.folder.pull()).ok).toBe(true);
+    expect(readFileSync(join(harness.dir, "file.bin"))).toEqual(bytes);
+    rmSync(join(harness.dir, "file.bin"));
+    const paused = await harness.folder.scan();
+    expect(paused.ok && paused.value.paused).toBe(1);
+    expect((await harness.folder.device().catchUp()).ok).toBe(true);
+    archived = true;
+    const restored = await harness.folder.restore();
+    expect(restored.ok && restored.value.put_back).toBe(0);
+    expect(readFileSync(join(harness.dir, "file.bin"))).toEqual(bytes);
+    const scan = await harness.folder.scan();
+    expect(scan.ok && scan.value.missing).toBe(0);
+  },
+);
 
 it("matches include names in NFC regardless of case and asks server names in both forms", async () => {
   harness = await folderHarness("contract-b-unicode-list", {
