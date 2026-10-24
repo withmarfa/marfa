@@ -155,6 +155,9 @@ fn scratch(name: &str) -> PathBuf {
         std::process::id(),
         RUNS.fetch_add(1, Ordering::Relaxed)
     ));
+    // A process ID comes round again, and a copy left by another build would
+    // then be refused as the wrong shape.
+    let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     dir
 }
