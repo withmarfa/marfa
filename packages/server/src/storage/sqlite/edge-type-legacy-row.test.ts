@@ -21,7 +21,7 @@ afterEach(async () => {
   tmpDir = undefined;
 });
 
-it("boots and lists an edge type stored without a label, naming it by its id", async () => {
+it("boots and lists an edge type stored without a label, giving it the label its id makes", async () => {
   tmpDir = mkdtempSync(join(tmpdir(), "marfa-legacy-edge-"));
   const dbPath = join(tmpDir, "marfa.db");
   await (await createSqliteStorage(dbPath)).close();
@@ -49,9 +49,9 @@ it("boots and lists an edge type stored without a label, naming it by its id", a
 
   storage = await createSqliteStorage(dbPath);
   expect(await storage.edgeTypes.get(stored.id)).toMatchObject({
-    label: "legacy.mentions",
+    label: "Mentions",
   });
   expect(listEdgeTypes().find((t) => t.id === stored.id)).toMatchObject({
-    label: "legacy.mentions",
+    label: "Mentions",
   });
 });

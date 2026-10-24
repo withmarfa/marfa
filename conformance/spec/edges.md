@@ -1273,17 +1273,23 @@ When the server answers an edge type, on `GET /edge-types` and on the `201` of `
 
 ### `edges/types-register`
 
-When a key sends `POST /edge-types` with an `id`, a `label` and a `cardinality` it may register and leaves `evolve_constraints` absent or `false`, the server MUST answer `201` with the `edge_type`.
+When a key sends `POST /edge-types` with an `id` and a `cardinality` it may register and leaves `evolve_constraints` absent or `false`, the server MUST answer `201` with the `edge_type`.
 
 **Tests:** `compliance/edge-types.test.ts › registers a custom edge type and answers 201`.
 
-### `edges/types-label-required`
+### `edges/types-label`
 
-If `POST /edge-types` names no `label`, then the server MUST answer `400 missing_required_field` naming it.
+When `POST /edge-types` names no `label`, or an empty one, the server MUST give the edge type one made from the last segment of its `id`, with each hyphen and underscore made a space and each word capitalized.
 
-**Reason:** an edge type is read by people as well as by code, and an app that listed one by its `id` alone would show a dotted identifier where a heading belongs.
+**Reason:** an edge type is read by people as well as by code, and an app that listed one by its `id` alone would show a dotted identifier where a heading belongs. An item type is labelled the same way (`types/label`), so the two registrations read alike.
 
-**Tests:** `compliance/edge-types.test.ts › refuses a registration without a label with 400 missing_required_field`.
+**Tests:** `compliance/edge-types.test.ts › makes the label of a registered edge type from its identifier when it names none or an empty one`.
+
+### `edges/types-label-kept`
+
+When `POST /edge-types` names a non-empty `label`, the server MUST store it and answer it on every read of the edge type.
+
+**Tests:** `compliance/edge-types.test.ts › keeps the label a registration names`.
 
 ### `edges/types-reverse-label`
 
@@ -1338,6 +1344,14 @@ When the server refuses `POST /edge-types` for an `id` already registered, the s
 When a key admitted by `edges/types-register-permission` and `edges/types-register-map` sends `POST /edge-types` with `evolve_constraints: true` for a registered edge type and a definition `edges/types-evolve-safe` permits, the server MUST update its endpoint constraints and its labels in place and answer `200` with the resulting definition.
 
 **Tests:** `compliance/edge-types.test.ts › widens endpoint constraints without rewriting held edges`, `› changes the labels of a registered edge type in place`.
+
+### `edges/types-evolve-labels-kept`
+
+When a constraint evolution of a registered edge type names no `label`, or an empty one, or names no `reverse_label`, the server MUST keep the stored value in its place.
+
+**Reason:** a call that widens an endpoint says nothing of the headings, so it must not rename them. A reverse label is read from the registration (`edges/types-reverse-label`): a type that stored none keeps naming both ends by its `label`, and a caller makes a type two-way by sending a `reverse_label` equal to its `label`.
+
+**Tests:** `compliance/edge-types.test.ts › keeps the labels of a registered edge type when an evolution names none`, `› changes the labels of a registered edge type in place`.
 
 ### `edges/types-evolve-safe`
 

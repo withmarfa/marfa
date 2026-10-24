@@ -67,7 +67,8 @@ export interface MarfaEdge {
 
 export interface EdgeTypeRegistration {
   id: string;
-  label: string;
+  /** Left out, the last segment of the `id` makes it. */
+  label?: string;
   reverse_label?: string;
   description?: string;
   cardinality: EdgeCardinality;
@@ -81,6 +82,7 @@ export interface EdgeTypeRegistration {
 
 /** Full edge-type definition as returned by the server (core or custom). */
 export interface EdgeTypeDefinition extends EdgeTypeRegistration {
+  label: string;
   /** Always listed: the label again where none was registered. */
   reverse_label: string;
   shipped: boolean;

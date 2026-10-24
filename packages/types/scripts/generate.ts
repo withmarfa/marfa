@@ -340,8 +340,8 @@ lines.push("");
 
 /**
  * A shipped definition as literal types: every key sorted by code unit, the
- * prose (`label`, `reverse_label`, `description`) and the id left out. The consts above are
- * annotated with the schema interfaces, which widen every value to `string`
+ * prose (`label`, `reverse_label`, `description`) and the id left out. The
+ * consts above are annotated with the schema interfaces, which widen every value to `string`
  * and every list to `string[]`, so the shapes of fields, enum values,
  * parents, roles, constraints and cardinalities reach a built declaration
  * through these instead, and they are what `shipped-shapes.sha256` sees move

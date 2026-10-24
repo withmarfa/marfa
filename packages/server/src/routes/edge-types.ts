@@ -15,6 +15,8 @@ import {
   ROLE_CONSTRAINT_PREFIX,
   FIELD_TYPES,
   normalizeEdgeProperties,
+  labelFromId,
+  namedLabel,
   unreadKeys,
 } from "@withmarfa/shared";
 import type { EdgeTypeSchema } from "@withmarfa/shared";
@@ -108,8 +110,10 @@ export const EdgePropertyDefinitionSchema = z
 // a field out does.
 const LABEL =
   "The name an app shows on the source end of an edge of this type, such as `Children` on a parent. Not the `reverse_name`, which is the code name a file writes.";
+const LABEL_REQUEST =
+  "The name an app shows on the source end, such as `Children` on a parent. Leave it out and the last segment of the `id` makes it, such as `List Member`. On a change, leaving it out keeps the stored one.";
 const REVERSE_LABEL_REQUEST =
-  "The name an app shows on the target end, such as `Parent` on a child. Leave it out and `label` names both ends: the relation is two-way, and an app shows both directions as one list.";
+  "The name an app shows on the target end, such as `Parent` on a child. Leave it out and `label` names both ends. On a change, leaving it out keeps the stored one; send the `label` to make a type two-way.";
 const REVERSE_LABEL =
   "The name an app shows on the target end, such as `Parent` on a child. It is the same text as `label` when the relation is two-way, and an app then shows both directions as one list.";
 const DESCRIPTION = "What the edge type is for.";
@@ -140,7 +144,7 @@ export const EdgeTypeRequestSchema = z
       .string()
       .min(1)
       .describe("The identifier of the edge type, such as `acme.list-member`."),
-    label: z.string().min(1).describe(LABEL),
+    label: z.string().optional().describe(LABEL_REQUEST),
     reverse_label: z.string().min(1).optional().describe(REVERSE_LABEL_REQUEST),
     description: z.string().optional().describe(DESCRIPTION),
     cardinality: CardinalitySchema,
@@ -311,7 +315,7 @@ export function edgeTypeFromRequest(
   assertEdgeNamesFree(body.id, reverse, taken);
   return {
     id: body.id,
-    label: body.label,
+    label: namedLabel(body.label) ?? labelFromId(body.id),
     ...(body.reverse_label !== undefined && {
       reverse_label: body.reverse_label,
     }),
@@ -395,7 +399,7 @@ const registerEdgeTypeRoute = createRoute({
         },
       },
       description:
-        "- `validation_error`: a field is invalid, such as a bad `id` or `reverse_name`, a `role:` naming no role, or `written_at: target` with no `reverse_name`, or `extends` is set.\n- `missing_required_field`: `id`, `label` or `cardinality` is missing.\n- `invalid_schema`: a property's `type` isn't a field type, or the body has a key the schema doesn't define (`details.errors` names each path).",
+        "- `validation_error`: a field is invalid, such as a bad `id` or `reverse_name`, a `role:` naming no role, or `written_at: target` with no `reverse_name`, or `extends` is set.\n- `missing_required_field`: `id` or `cardinality` is missing.\n- `invalid_schema`: a property's `type` isn't a field type, or the body has a key the schema doesn't define (`details.errors` names each path).",
     },
     403: {
       content: {
@@ -590,7 +594,11 @@ export function edgeTypeRoutes(storage: Storage) {
               ErrorCode.EDGE_TYPE_NOT_FOUND,
               `Edge type ${body.id} not found`,
             );
-          const built = edgeTypeFromRequest(body);
+          const built = edgeTypeFromRequest({
+            ...body,
+            label: namedLabel(body.label) ?? existing.label,
+            reverse_label: body.reverse_label ?? existing.reverse_label,
+          });
           assertConstraintEvolution(existing, built);
           if (isDeepStrictEqual(existing, built))
             return { schema: existing, evolved: true, changed: false };

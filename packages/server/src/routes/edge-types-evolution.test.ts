@@ -133,6 +133,34 @@ it("renames both labels in place and answers the new ones", async () => {
   });
 });
 
+it("keeps both labels when an evolution names none", async () => {
+  const definition = {
+    ...base(`${prefix}.kept-labels`),
+    label: "Lives in",
+    reverse_label: "Holds",
+  };
+  expect((await register(definition)).status).toBe(201);
+  const response = await register({
+    id: definition.id,
+    cardinality: definition.cardinality,
+    source_type_constraints: ["*"],
+    evolve_constraints: true,
+  });
+  expect(response.status, await response.clone().text()).toBe(200);
+  const body = (await response.json()) as {
+    edge_type: { source_type_constraints: string[] };
+  };
+  expect(body).toMatchObject({
+    edge_type: { label: "Lives in", reverse_label: "Holds" },
+  });
+  // The witness that the evolution ran.
+  expect(body.edge_type.source_type_constraints).toEqual(["*"]);
+  expect(await ctx.storage.edgeTypes.get(definition.id)).toMatchObject({
+    label: "Lives in",
+    reverse_label: "Holds",
+  });
+});
+
 it("follows a changed label with the reverse label of a type that registered none", async () => {
   const definition = base(`${prefix}.two-way`);
   expect((await register(definition)).status).toBe(201);

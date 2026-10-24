@@ -1,9 +1,6 @@
 import { VersionWriterSchema } from "./_schemas.js";
 import { assertCompatibleDependents } from "./_type-dependents.js";
-import {
-  canonicalTypeDefinition,
-  labelledTypeDefinition as labelled,
-} from "./_canonical-type.js";
+import { canonicalTypeDefinition } from "./_canonical-type.js";
 import { runAuditedTransaction } from "../storage/audited-transaction.js";
 import { createRoute, z } from "@hono/zod-openapi";
 import {
@@ -20,6 +17,7 @@ import {
   FIELD_TYPES,
   FIELD_FORMATS,
   malformedTypeIdentifier,
+  labelledTypeDefinition,
 } from "@withmarfa/shared";
 import type { SchemaValidationIssue, TypeSchema } from "@withmarfa/shared";
 import type { Context, Next } from "hono";
@@ -1085,7 +1083,7 @@ export function typeRoutes(storage: Storage) {
 
           const schema = result.data;
 
-          labelled(schema);
+          labelledTypeDefinition(schema);
 
           requireDependencyReach(c, schema);
           if (schema.parent) {
@@ -1148,7 +1146,7 @@ export function typeRoutes(storage: Storage) {
             throw schemaRefusal(result.errors);
           }
 
-          const schema = labelled(result.data);
+          const schema = labelledTypeDefinition(result.data);
           await requireTypeReplacement(c, stored, schema, (types, names) =>
             storage.types.propertyNamesHeld(types, names),
           );

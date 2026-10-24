@@ -17,6 +17,7 @@ import type {
   EdgeTypeSchema,
 } from "@withmarfa/types";
 import { getTypeSchema, isSubtypeOf, typeHasRole } from "./type-registry.js";
+import { labelFromId, namedLabel } from "./type-label.js";
 
 // Re-export types so consumers of @withmarfa/shared can reach them without
 // depending on @withmarfa/types directly.
@@ -73,14 +74,17 @@ export function registerEdgeTypeSchema(schema: EdgeTypeSchema): void {
 
 /**
  * Reads a registered edge type from the JSON a database stores. A row written
- * before `label` was required may have none, and is read with the id as its
- * label, so the listing always holds one. Nothing rewrites the row until the
- * type is replaced.
+ * before `label` was required may have none, and is read with the label its
+ * id makes, as a registration that names none is. Nothing rewrites the row
+ * until the type is replaced.
  */
 export function edgeTypeFromStored(json: string): EdgeTypeSchema {
   const stored = JSON.parse(json) as Omit<EdgeTypeSchema, "label"> &
     Partial<Pick<EdgeTypeSchema, "label">>;
-  return { ...stored, label: stored.label ?? stored.id };
+  // `label` follows `id`, where a registration puts it, so a stored row and
+  // the same registration read the same when an archive restore compares them.
+  const { id, ...rest } = stored;
+  return { id, label: namedLabel(stored.label) ?? labelFromId(id), ...rest };
 }
 
 /** Removes a custom edge-type schema from the runtime overlay. */

@@ -962,24 +962,48 @@ describe("custom edge-type registration", () => {
     ]);
   });
 
-  it("refuses a registration without a label with 400 missing_required_field", async () => {
-    const id = `mock.unlabelled.${ctx.runId}`;
-    const refused = await client.registerEdgeType({
-      id,
-      cardinality: "many-to-many",
-    } as never);
-    expect(refused.status).toBe(400);
-    expect(refused.error?.error.code).toBe("missing_required_field");
-    expect(JSON.stringify(refused.error)).toContain("label");
-    // The witness: the same body with a label registers, so the label was
-    // what the refusal was about.
-    const alone = await client.registerEdgeType({
-      id,
-      label: "Unlabelled no more",
+  it("makes the label of a registered edge type from its identifier when it names none or an empty one", async () => {
+    const bare = `mock.${ctx.runId}.pair-link`;
+    const empty = `mock.${ctx.runId}.empty_label`;
+    const first = await client.registerEdgeType({
+      id: bare,
       cardinality: "many-to-many",
     });
-    expect(alone.status).toBe(201);
+    expect(first.status, JSON.stringify(first.error)).toBe(201);
+    trackEdgeType(ctx, bare);
+    await expectMatchesSchema("POST", "/edge-types", 201, first.data);
+    expect([
+      first.data.edge_type.label,
+      first.data.edge_type.reverse_label,
+    ]).toEqual(["Pair Link", "Pair Link"]);
+    const second = await client.registerEdgeType({
+      id: empty,
+      label: "",
+      cardinality: "many-to-many",
+    });
+    expect(second.status, JSON.stringify(second.error)).toBe(201);
+    trackEdgeType(ctx, empty);
+    expect(second.data.edge_type.label).toBe("Empty Label");
+
+    const listed = (await client.listEdgeTypes()).data.data;
+    expect(listed.find((t) => t.id === bare)?.label).toBe("Pair Link");
+    expect(listed.find((t) => t.id === empty)?.label).toBe("Empty Label");
+  });
+
+  it("keeps the label a registration names", async () => {
+    const id = `mock.${ctx.runId}.pair-link-named`;
+    const named = await client.registerEdgeType({
+      id,
+      label: "Partners",
+      cardinality: "many-to-many",
+    });
+    expect(named.status, JSON.stringify(named.error)).toBe(201);
     trackEdgeType(ctx, id);
+    expect(named.data.edge_type.label).toBe("Partners");
+    const row = (await client.listEdgeTypes()).data.data.find(
+      (t) => t.id === id,
+    );
+    expect(row?.label).toBe("Partners");
   });
 
   it("lists the end whose file writes each shipped edge type", async () => {
@@ -1639,15 +1663,62 @@ describe("explicit edge-type constraint evolution", () => {
     expect((await row())?.label).toBe("Held connection");
     expect((await row())?.reverse_label).toBe("Held by");
 
-    // Naming no reverse label makes the label name both ends, and the
-    // reverse label listed follows it rather than a stored copy.
-    const both = await evolve({ label: "Linked", reverse_label: undefined });
-    expect(both.status).toBe(200);
+    // Naming no reverse label keeps the stored one. A reverse label equal
+    // to the label makes the type two-way, and it then stays as it was set
+    // when the label changes alone.
+    const kept = await evolve({ label: "Linked", reverse_label: undefined });
+    expect(kept.status).toBe(200);
     expect((await row())?.label).toBe("Linked");
+    expect((await row())?.reverse_label).toBe("Held by");
+    const both = await evolve({ label: "Linked", reverse_label: "Linked" });
+    expect(both.status).toBe(200);
     expect((await row())?.reverse_label).toBe("Linked");
     const again = await evolve({ label: "Joined", reverse_label: undefined });
     expect(again.status).toBe(200);
-    expect((await row())?.reverse_label).toBe("Joined");
+    expect((await row())?.label).toBe("Joined");
+    expect((await row())?.reverse_label).toBe("Linked");
+  });
+
+  it("keeps the labels of a registered edge type when an evolution names none", async () => {
+    const named = {
+      id: `mock.evolve-labels-kept.${ctx.runId}`,
+      label: "Kept connection",
+      reverse_label: "Kept by",
+      cardinality: "many-to-many" as const,
+      source_type_constraints: ["core.note"],
+    };
+    const twoWay = {
+      id: `mock.evolve-labels-two-way.${ctx.runId}`,
+      label: "Joined to",
+      cardinality: "many-to-many" as const,
+      source_type_constraints: ["core.note"],
+    };
+    for (const definition of [named, twoWay]) {
+      expect((await client.registerEdgeType(definition)).status).toBe(201);
+      trackEdgeType(ctx, definition.id);
+    }
+    const bare = (definition: typeof named | typeof twoWay) => ({
+      id: definition.id,
+      cardinality: definition.cardinality,
+      source_type_constraints: ["*"],
+      evolve_constraints: true,
+    });
+    for (const definition of [named, twoWay]) {
+      const widened = await client.registerEdgeType(bare(definition));
+      expect(widened.status, JSON.stringify(widened.error)).toBe(200);
+    }
+    const listed = (await client.listEdgeTypes()).data.data;
+    const row = (id: string) => listed.find((t) => t.id === id);
+    expect([row(named.id)?.label, row(named.id)?.reverse_label]).toEqual([
+      "Kept connection",
+      "Kept by",
+    ]);
+    expect([row(twoWay.id)?.label, row(twoWay.id)?.reverse_label]).toEqual([
+      "Joined to",
+      "Joined to",
+    ]);
+    // The witness that the evolution ran: the endpoint is widened.
+    expect(row(named.id)?.source_type_constraints).toEqual(["*"]);
   });
 
   it("refuses narrowing, structural changes, and a missing evolution target", async () => {

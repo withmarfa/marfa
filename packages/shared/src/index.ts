@@ -6,6 +6,7 @@ export * from "./validation.js";
 export * from "./type-patterns.js";
 export * from "./type-registry.js";
 export * from "./edge-registry.js";
+export * from "./type-label.js";
 export * from "./scopes.js";
 export * from "./query-parser.js";
 export * from "./time-zones.js";

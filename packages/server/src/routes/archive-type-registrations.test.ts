@@ -15,6 +15,7 @@
  */
 
 import { getTypeSchema, unregisterTypeSchema } from "@withmarfa/shared";
+import type { EdgeTypeSchema } from "@withmarfa/shared";
 import { Readable } from "node:stream";
 import { createGunzip, createGzip } from "node:zlib";
 import * as tar from "tar-stream";
@@ -633,6 +634,59 @@ describe("archives carry type registrations", () => {
       (await destination.storage.edgeTypes.get(id))?.property_schema,
       "the stored row is compared in its normalized form and left as it was",
     ).toEqual(stored.property_schema);
+  });
+
+  it("restores an edge type that names no label, and lists the label its id makes", async () => {
+    const source = await newContext();
+    const entries = await extractArchive(await exportArchive(source));
+    const id = `user.s${uniqueSuffix()}.list-member`;
+    const archive = await repack(entries, {
+      "types.ndjson":
+        JSON.stringify({ edge_type: { id, cardinality: "many-to-many" } }) +
+        "\n",
+    });
+
+    const destination = await newContext();
+    const restored = await restore(destination, archive);
+    expect(restored.status, await restored.clone().text()).toBe(200);
+    const listed = (await (
+      await request(destination.app, "GET", "/edge-types", {
+        key: destination.workingKey,
+      })
+    ).json()) as { data: { id: string; label: string }[] };
+    expect(listed.data.find((type) => type.id === id)?.label).toBe(
+      "List Member",
+    );
+  });
+
+  it("re-restores an edge type held without a label, as the same registration as an archive that names none", async () => {
+    const source = await newContext();
+    const destination = await newContext();
+    const id = `user.held-${uniqueSuffix()}`;
+    // The row a registration left before every edge type carried a label.
+    const held = {
+      id,
+      cardinality: "many-to-many",
+      source_type_constraints: ["*"],
+      target_type_constraints: ["*"],
+      cascade_on_delete: "orphan",
+      property_schema: {},
+      written_at: "source",
+    } as unknown as EdgeTypeSchema;
+    await destination.storage.edgeTypes.create(held);
+    const entries = await extractArchive(await exportArchive(source));
+    const archive = await repack(entries, {
+      "types.ndjson":
+        JSON.stringify({ edge_type: { id, cardinality: "many-to-many" } }) +
+        "\n",
+    });
+
+    const again = await restore(destination, archive);
+    expect(again.status, await again.clone().text()).toBe(200);
+    expect(await again.json()).toMatchObject({
+      edge_types_registered: 0,
+      edge_types_skipped: 1,
+    });
   });
 
   it("restores an edge type's string property with a format as the type of that format, and refuses a format that does not suit its property", async () => {

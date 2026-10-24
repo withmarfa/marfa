@@ -155,15 +155,26 @@ describe("POST /edge-types — happy path and validation", () => {
     });
   });
 
-  it("400 naming label when a registration leaves it out", async () => {
-    const res = await request(ctx.app, "POST", "/edge-types", {
-      key: ctx.workingKey,
-      body: { id: `${NS}.unnamed`, cardinality: "many-to-many" },
+  it("makes the label from the id when a registration names none or an empty one, and keeps one it names", async () => {
+    const register = async (body: Record<string, unknown>) => {
+      const res = await request(ctx.app, "POST", "/edge-types", {
+        key: ctx.workingKey,
+        body: { cardinality: "many-to-many", ...body },
+      });
+      expect(res.status).toBe(201);
+      return ((await res.json()) as { edge_type: EdgeType }).edge_type;
+    };
+    expect(await register({ id: `${NS}.list-member` })).toMatchObject({
+      label: "List Member",
+      reverse_label: "List Member",
     });
-    expect(res.status).toBe(400);
-    const body = (await res.json()) as ErrorBody;
-    expect(body.error.code).toBe("missing_required_field");
-    expect(JSON.stringify(body)).toContain("label");
+    expect(
+      await register({ id: `${NS}.snake_case_name`, label: "" }),
+    ).toMatchObject({ label: "Snake Case Name" });
+    // The witness that a label wins over the derived one.
+    expect(
+      await register({ id: `${NS}.named-wins`, label: "Partners" }),
+    ).toMatchObject({ label: "Partners" });
   });
 
   it("409 on redefinition of a core edge type", async () => {
