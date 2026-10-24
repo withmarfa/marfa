@@ -245,7 +245,38 @@ mod tests {
                 assert!(size > 0, "the request ended before its head did");
                 head.extend_from_slice(&buffer[..size]);
             }
+            let end = head
+                .windows(4)
+                .position(|window| window == b"\r\n\r\n")
+                .unwrap()
+                + 4;
+            let mut body = head.split_off(end);
             let head = String::from_utf8_lossy(&head).to_string();
+            // Answering before the body arrives closes the socket under a
+            // client still writing it, which fails that write with EPIPE. A
+            // POST with no body is sent chunked, so its last chunk follows the head.
+            let header = |wanted: &str| {
+                head.lines().find_map(|line| {
+                    let (name, value) = line.split_once(':')?;
+                    name.trim()
+                        .eq_ignore_ascii_case(wanted)
+                        .then(|| value.trim().to_ascii_lowercase())
+                })
+            };
+            let chunked =
+                header("transfer-encoding").is_some_and(|value| value.contains("chunked"));
+            let length = header("content-length")
+                .and_then(|value| value.parse::<usize>().ok())
+                .unwrap_or(0);
+            while if chunked {
+                !body.ends_with(b"0\r\n\r\n")
+            } else {
+                body.len() < length
+            } {
+                let size = socket.read(&mut buffer).unwrap();
+                assert!(size > 0, "the request ended before its body did");
+                body.extend_from_slice(&buffer[..size]);
+            }
             assert!(!head.to_lowercase().contains("authorization:"), "{head}");
             let (status, content_type, body) = answer(&head);
             write!(socket,"HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nX-Marfa-Contract: {}\r\nConnection: close\r\n\r\n{body}",body.len(),marfa_core::contract::CONTRACT_VERSION).unwrap();
