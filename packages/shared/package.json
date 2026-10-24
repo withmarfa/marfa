@@ -20,7 +20,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "zod": "^4.6.5",
+    "zod": "^4.6.6",
     "uuidv7": "^1.2.1",
     "whatwg-url": "^17.3.0"
   },
