@@ -87,12 +87,11 @@ async function folder() {
   expect(res.status).toBe(201);
   return ((await res.json()) as { item: Item }).item;
 }
-const LAYOUTS = [{ id: "main", kind: "list" }];
 async function view() {
   const res = await send({
     method: "POST",
     path: "/views",
-    body: { title: "Before", layouts: LAYOUTS },
+    body: { title: "Before" },
   });
   expect(res.status).toBe(201);
   return ((await res.json()) as { item: Item }).item;
@@ -273,7 +272,7 @@ const doors: [string, () => Door | Promise<Door>][] = [
     () => ({
       method: "POST",
       path: "/views",
-      body: { title: "Created", layouts: LAYOUTS },
+      body: { title: "Created" },
     }),
   ],
   [

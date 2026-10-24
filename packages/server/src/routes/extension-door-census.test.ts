@@ -382,10 +382,7 @@ async function seedFolder(): Promise<string> {
   return item.id;
 }
 
-const CENSUS_VIEW = {
-  title: "census view",
-  layouts: [{ id: "main", kind: "list" }],
-};
+const CENSUS_VIEW = { title: "census view" };
 
 async function seedView(): Promise<string> {
   const created = await request(ctx.app, "POST", "/views", {

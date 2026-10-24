@@ -1167,7 +1167,7 @@ export interface paths {
         put?: never;
         /**
          * Create a view
-         * @description Creates a view: a `system.view` item whose properties say which items it lists and how its layouts show them. The item endpoints can't write one.
+         * @description Creates a view: a `system.view` item whose properties say which items it lists, in what order and how they group. The item endpoints can't write one.
          */
         post: operations["createView"];
         delete?: never;
@@ -1195,7 +1195,7 @@ export interface paths {
         head?: never;
         /**
          * Update a view
-         * @description Updates a view's title, query or layouts. Each one you send replaces the current value whole, and those you leave out stay as they are. Send the `version` you read.
+         * @description Updates a view's title, query, sort or group. Each one you send replaces the current value whole, and those you leave out stay as they are. Send the `version` you read.
          */
         patch: operations["updateView"];
         trace?: never;
@@ -2509,12 +2509,7 @@ export interface components {
          * @enum {string}
          */
         ViewTier: "library" | "feed" | "all";
-        /**
-         * @description How a layout shows items. `list`: rows. `table`: rows with columns. `board`: columns by `group`. `gallery`: cards. `calendar`: on dates. `timeline`: as spans. `chart`: as a chart. `map`: on a map.
-         * @enum {string}
-         */
-        ViewLayoutKind: "list" | "table" | "board" | "gallery" | "calendar" | "timeline" | "chart" | "map";
-        /** @description One key a layout sorts by. */
+        /** @description One key a view sorts by. */
         ViewSort: {
             by: components["schemas"]["ViewField"] & unknown;
             /**
@@ -2523,7 +2518,7 @@ export interface components {
              */
             direction: "asc" | "desc";
         };
-        /** @description How a layout groups its items. */
+        /** @description How a view groups its items. */
         ViewGroup: {
             /**
              * @description The field to group by: a field, or `edge[<type>]` or `backref[<type>]` for the item an edge of that type joins.
@@ -2537,7 +2532,7 @@ export interface components {
             bucket?: "day" | "week" | "month" | "year";
             /** @description The values whose groups come first, in this order. Other groups follow. */
             order?: (string | number | boolean | null)[];
-            /** @description The values whose groups the layout leaves out. */
+            /** @description The values whose groups the view leaves out. */
             hidden?: (string | number | boolean | null)[];
         };
         /** @description An instance: its identity, build, contract version and features. */
@@ -4670,35 +4665,6 @@ export interface components {
             filter?: string;
             /** @description An item ID. The view lists that item and everything under it by `parent-of`, at any depth. */
             beneath?: string;
-        };
-        /** @description One way a view shows its items. A layout takes only the options its `kind` takes, and never narrows which items the view lists. */
-        ViewLayout: {
-            /** @description The layout's ID, unique in the view, which an app keeps to reopen it. */
-            id: string;
-            kind: components["schemas"]["ViewLayoutKind"] & unknown;
-            /** @description The layout's name. Absent, an app names it by its kind. */
-            title?: string;
-            /** @description The keys the layout sorts by, first key first. */
-            sort?: components["schemas"]["ViewSort"][];
-            group?: components["schemas"]["ViewGroup"] & unknown;
-            /** @description The fields the layout shows, in order. */
-            shown?: components["schemas"]["ViewField"][];
-            /** @description For a `gallery`, the property that holds each card's image. */
-            image?: string;
-            /** @description For a `calendar`, the date field that places each item. */
-            date?: string;
-            /** @description For a `timeline`, the date field each span starts at. Required for a `timeline`. */
-            start?: string;
-            /** @description For a `calendar` or `timeline`, the date field each span ends at. Required for a `timeline`. */
-            end?: string;
-            x?: components["schemas"]["ViewField"] & unknown;
-            /** @description What a chart measures: `count` of items, or `{ "sum": "properties.<name>" }`. */
-            y?: "count" | {
-                /** @description The number property whose values are added up. */
-                sum: string;
-            };
-            /** @description For a `map`, the property that holds each item's place. */
-            location?: string;
         };
         /** @description An error response. */
         InvalidIdOrInvalidTransitionOrMissingRequiredFieldOrUnknownTypeOrValidationErrorRefusal: {
@@ -19184,8 +19150,9 @@ export interface operations {
                     /** @description The view's title. */
                     title: string;
                     query?: components["schemas"]["ViewQuery"];
-                    /** @description How the view shows its items, in order. At least one. */
-                    layouts: components["schemas"]["ViewLayout"][];
+                    /** @description The keys the view sorts by, first key first. */
+                    sort?: components["schemas"]["ViewSort"][];
+                    group?: components["schemas"]["ViewGroup"] & unknown;
                 };
             };
         };
@@ -19206,8 +19173,8 @@ export interface operations {
                 };
             };
             /**
-             * @description - `validation_error`: a setting is malformed or undeclared, such as a repeated layout `id`. `details.errors[0].path` or `details.unknown_body_fields` names it.
-             *     - `missing_required_field`: `title`, `layouts` or a part a layout requires is missing. `details.field` names it.
+             * @description - `validation_error`: a setting is malformed or undeclared, `details.errors[0].path` or `details.unknown_body_fields` names it.
+             *     - `missing_required_field`: `title` is missing. `details.field` names it.
              *     - `unknown_type`: `query.types` names a type that isn't registered.
              */
             400: {
@@ -19603,8 +19570,9 @@ export interface operations {
                     /** @description A new title for the view. */
                     title?: string;
                     query?: components["schemas"]["ViewQuery"] & unknown;
-                    /** @description New layouts, which replace the current ones whole. At least one. */
-                    layouts?: components["schemas"]["ViewLayout"][];
+                    /** @description A new sort, which replaces the current one whole. */
+                    sort?: components["schemas"]["ViewSort"][];
+                    group?: components["schemas"]["ViewGroup"] & unknown;
                 };
             };
         };
@@ -19626,7 +19594,7 @@ export interface operations {
             };
             /**
              * @description - `validation_error`: no setting, or a malformed or undeclared setting; `details` names it.
-             *     - `missing_required_field`: `version` or a required layout part is missing; `details.field` names it.
+             *     - `missing_required_field`: `version` is missing; `details.field` names it.
              *     - `unknown_type`: `query.types` names a type that isn't registered.
              *     - `invalid_id`: the ID is invalid.
              *     - `invalid_transition`: the view is revoked.
