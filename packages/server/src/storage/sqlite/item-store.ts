@@ -706,8 +706,8 @@ function creatableItem(
     );
   }
   // Validate properties against the type schema. Runs unconditionally —
-  // an empty `{}` must still fail required-field checks (a core.note with
-  // no body is invalid whether properties is empty or partially filled).
+  // an empty `{}` must still fail required-field checks (a core.task with
+  // no title is invalid whether properties is empty or partially filled).
   // Persist the validated (coerced) properties so `null` on an optional
   // field — which validation treats as "unset" — drops out before the write
   // rather than landing as a stored null.
