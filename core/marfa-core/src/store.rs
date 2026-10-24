@@ -35,6 +35,12 @@ pub const META_ITEMS_LISTED: &str = "items_listed";
 /// cursor it sends next and the pages it has read. Set with each page, so an
 /// interrupted hydration carries on from the last page it committed.
 pub const META_HYDRATE_RESUME: &str = "hydrate_resume";
+/// Present while the copy is to be filled again in place: from the moment the
+/// event log let its cursor go, under the instance and reach it was built
+/// under (`Refill`), until a hydration has walked the slice again, replayed
+/// the log and taken out what the walk did not bring. Any other expiry, and a
+/// hydration that clears the copy, removes it.
+pub const META_REFILL: &str = "refill";
 /// Absent until a catalog is first held, which is how a copy that has never
 /// held one is told from an instance with no types.
 pub const META_CATALOG_VERSION: &str = "catalog_version";
@@ -652,10 +658,46 @@ pub fn refuse_unless_usable(conn: &Connection) -> Result<(), CoreError> {
 pub fn read_completeness(conn: &Connection) -> Result<Completeness, CoreError> {
     if hydrated(conn)? || never_synced(conn)? {
         Ok(Completeness::Complete)
+    } else if refilling(conn)? {
+        Ok(Completeness::Stale)
     } else if !hydration_complete(conn)? {
         Ok(Completeness::Partial)
     } else {
         Err(CoreError::HydrationIncomplete)
+    }
+}
+
+/// The instance and reach a copy whose cursor aged out was built under, which
+/// a hydration under the same ones fills again in place.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct Refill {
+    pub instance: String,
+    pub reach: String,
+}
+
+pub fn refill(conn: &Connection) -> Result<Option<Refill>, CoreError> {
+    Ok(meta_get(conn, META_REFILL)?.and_then(|json| serde_json::from_str(&json).ok()))
+}
+
+pub fn refilling(conn: &Connection) -> Result<bool, CoreError> {
+    Ok(meta_get(conn, META_REFILL)?.is_some())
+}
+
+/// For a write queued against the copy: a whole copy, one waiting to be filled
+/// again in place or being filled so, and one a hydration has started and not
+/// completed all take one, sent once the copy is whole again. What the
+/// write is to be queued against is told by `refuse_unless_held`.
+pub fn refuse_unless_writable(conn: &Connection) -> Result<Completeness, CoreError> {
+    read_completeness(conn)
+}
+
+/// A row or an edge a copy that is not whole does not hold may be one the
+/// server holds and has not yet brought, so a write to it is refused rather
+/// than answered not found.
+pub fn refuse_unless_held(completeness: Completeness) -> Result<(), CoreError> {
+    match completeness {
+        Completeness::Complete => Ok(()),
+        Completeness::Stale | Completeness::Partial => Err(CoreError::HydrationIncomplete),
     }
 }
 
@@ -674,7 +716,7 @@ pub fn read_marked<T>(
 }
 
 /// A row a partial copy does not hold may still be arriving, so its absence
-/// is refused rather than answered.
+/// is refused rather than answered. A stale copy answers what it holds.
 pub fn held_or_refused<T>(
     found: Option<T>,
     completeness: Completeness,
@@ -852,6 +894,9 @@ pub(crate) fn put_server_item(
 /// `put_server_item` for an edge.
 pub(crate) fn put_server_edge(conn: &Connection, edge: &WireEdge) -> Result<bool, CoreError> {
     settle_read_back(conn, Subject::Edge, &edge.id)?;
+    if refilling(conn)? {
+        meta_set(conn, &edge_brought(&edge.id), "true")?;
+    }
     if holds_later(
         conn,
         Subject::Edge,
@@ -2758,9 +2803,60 @@ pub fn clear_slice(conn: &Connection) -> Result<(), CoreError> {
          DELETE FROM items;
          DELETE FROM items_fts;
          DELETE FROM beneath;
-         DELETE FROM meta WHERE key LIKE 'item_listed/%';",
+         DELETE FROM meta WHERE key LIKE 'item_listed/%' OR key LIKE 'edge_brought/%';",
     )?;
     Ok(())
+}
+
+fn edge_brought(id: &str) -> String {
+    format!("edge_brought/{id}")
+}
+
+/// The start of a hydration that fills the copy again in place: nothing has
+/// been brought yet, so every row and edge the copy holds is one the sweep at
+/// its end takes out unless the walk or the replay brings it again.
+pub fn start_refill(conn: &Connection) -> Result<(), CoreError> {
+    conn.execute_batch(
+        "DELETE FROM meta WHERE key LIKE 'item_listed/%' OR key LIKE 'edge_brought/%';",
+    )?;
+    Ok(())
+}
+
+/// The end of a hydration that filled the copy again in place, after its walk
+/// and its replay: takes out each row neither brought, but for a pinned row
+/// and one a waiting write names, then each such edge but one a waiting write
+/// names. Answers the rows and the edges it took out.
+pub fn sweep_refill(conn: &Connection) -> Result<(u64, u64), CoreError> {
+    let unbrought = |sql: &str| -> Result<Vec<String>, CoreError> {
+        let mut statement = conn.prepare(sql)?;
+        let rows = statement.query_map([], |row| row.get(0))?;
+        Ok(rows.collect::<Result<Vec<String>, _>>()?)
+    };
+    let whole = whole_edge_types(conn)?;
+    let mut items = 0;
+    for id in unbrought(
+        "SELECT id FROM items
+          WHERE NOT EXISTS (SELECT 1 FROM meta WHERE key = 'item_listed/' || items.id)
+            AND NOT EXISTS (SELECT 1 FROM pins WHERE pins.item_id = items.id)
+          ORDER BY id",
+    )? {
+        if !item_waits(conn, &id)? && evict_item(conn, &id, &whole)? {
+            items += 1;
+        }
+    }
+    let mut edges = 0;
+    for id in unbrought(
+        "SELECT id FROM edges
+          WHERE NOT EXISTS (SELECT 1 FROM meta WHERE key = 'edge_brought/' || edges.id)
+          ORDER BY id",
+    )? {
+        if !edge_write_waits(conn, &id)? && forget_edge(conn, &id)? {
+            edges += 1;
+        }
+    }
+    conn.execute_batch("DELETE FROM meta WHERE key LIKE 'edge_brought/%';")?;
+    meta_delete(conn, META_REFILL)?;
+    Ok((items, edges))
 }
 
 /// `tags` replaces the item's tags when given and leaves them alone when not.

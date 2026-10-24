@@ -26,6 +26,8 @@ mod folder_settings;
 pub mod http;
 mod hydrate;
 #[cfg(test)]
+mod hydrate_refill_tests;
+#[cfg(test)]
 mod hydrate_resume_tests;
 mod instance;
 mod integers;
@@ -1473,7 +1475,7 @@ impl Core {
     pub(crate) fn write_create(&self, draft: &Draft, body: Body) -> Result<QueuedWrite> {
         self.lock.refuse_unless_writer()?;
         let mut conn = self.conn()?;
-        store::refuse_unless_usable(&conn)?;
+        store::refuse_unless_writable(&conn)?;
         let tx = conn.transaction()?;
         let catalog = catalog::Catalog::load(&tx)?;
         let queued = queue_create(&tx, &catalog, draft, &[], self.credential().as_deref())?;
@@ -1559,10 +1561,13 @@ impl Core {
     ) -> Result<QueuedWrite> {
         self.lock.refuse_unless_writer()?;
         let mut conn = self.conn()?;
-        store::refuse_unless_usable(&conn)?;
+        let completeness = store::refuse_unless_writable(&conn)?;
         let tx = conn.transaction()?;
         let catalog = catalog::Catalog::load(&tx)?;
         let before = store::item_by_id(&tx, id)?;
+        if !store::item_held(&tx, id)? {
+            store::refuse_unless_held(completeness)?;
+        }
         let queued = queue_update(&tx, &catalog, id, edit, &[], based)?;
         if body == Body::Read
             && let Some(before) = before
@@ -1622,7 +1627,7 @@ impl Core {
     pub fn restore_item(&self, id: &str) -> Result<QueuedWrite> {
         self.lock.refuse_unless_writer()?;
         let mut conn = self.conn()?;
-        store::refuse_unless_usable(&conn)?;
+        let completeness = store::refuse_unless_writable(&conn)?;
         // Looked at and queued under one lock, so a row a held stream brings
         // in meanwhile is restored as a held row is.
         let tx = conn.transaction()?;
@@ -1631,6 +1636,7 @@ impl Core {
             drop(conn);
             return self.transition_locally(id, WriteKind::RestoreItem, ItemState::Active, "{}");
         }
+        store::refuse_unless_held(completeness)?;
         if store::waiting_writes_for_item(&tx, id)?
             .iter()
             .any(|row| row.kind == WriteKind::RestoreItem)
@@ -1698,8 +1704,9 @@ impl Core {
     ) -> Result<QueuedWrite> {
         self.lock.refuse_unless_writer()?;
         let conn = self.conn()?;
-        store::refuse_unless_usable(&conn)?;
+        let completeness = store::refuse_unless_writable(&conn)?;
         let Some(held) = store::items_by_ids(&conn, &[id.to_string()])?.pop() else {
+            store::refuse_unless_held(completeness)?;
             return Err(CoreError::NotFound {
                 code: "item_not_found".into(),
                 message: format!("{id} is not a row this copy holds"),
@@ -1757,7 +1764,7 @@ impl Core {
     pub fn create_edge(&self, draft: &EdgeDraft) -> Result<QueuedWrite> {
         self.lock.refuse_unless_writer()?;
         let mut conn = self.conn()?;
-        store::refuse_unless_usable(&conn)?;
+        store::refuse_unless_writable(&conn)?;
         let tx = conn.transaction()?;
         let queued = queue_edge(&tx, draft, &[])?;
         tx.commit()?;
@@ -1773,8 +1780,9 @@ impl Core {
     pub fn update_edge(&self, id: &str, edit: &EdgeEdit) -> Result<Option<QueuedWrite>> {
         self.lock.refuse_unless_writer()?;
         let mut conn = self.conn()?;
-        store::refuse_unless_usable(&conn)?;
+        let completeness = store::refuse_unless_writable(&conn)?;
         let Some(held) = store::edge_by_id(&conn, id)? else {
+            store::refuse_unless_held(completeness)?;
             return Err(CoreError::NotFound {
                 code: "edge_not_found".into(),
                 message: format!("{id} is not an edge this copy holds"),
@@ -1852,7 +1860,10 @@ impl Core {
     pub fn delete_edge(&self, id: &str) -> Result<QueuedWrite> {
         self.lock.refuse_unless_writer()?;
         let mut conn = self.conn()?;
-        store::refuse_unless_usable(&conn)?;
+        let completeness = store::refuse_unless_writable(&conn)?;
+        if store::edge_by_id(&conn, id)?.is_none() {
+            store::refuse_unless_held(completeness)?;
+        }
         let held = held_edge(&conn, id)?;
         let tx = conn.transaction()?;
         let queued = queue_edge_delete(&tx, &held, &[])?;
@@ -1891,8 +1902,9 @@ impl Core {
         self.lock.refuse_unless_writer()?;
         validation::tags(admitted)?;
         let mut conn = self.conn()?;
-        store::refuse_unless_usable(&conn)?;
+        let completeness = store::refuse_unless_writable(&conn)?;
         if !store::item_held(&conn, id)? {
+            store::refuse_unless_held(completeness)?;
             return Err(CoreError::NotFound {
                 code: "item_not_found".into(),
                 message: format!("{id} is not a row this copy holds"),
@@ -1955,7 +1967,7 @@ impl Core {
     ) -> Result<QueuedWrite> {
         self.lock.refuse_unless_writer()?;
         let mut conn = self.conn()?;
-        store::refuse_unless_usable(&conn)?;
+        let completeness = store::refuse_unless_writable(&conn)?;
         if namespace.is_empty() {
             return Err(CoreError::Invalid(
                 "an extension write names no namespace, and the namespace is where it goes".into(),
@@ -1965,6 +1977,7 @@ impl Core {
             integers::refuse_inexact_integers(payload)?;
         }
         if !store::item_held(&conn, id)? {
+            store::refuse_unless_held(completeness)?;
             return Err(CoreError::NotFound {
                 code: "item_not_found".into(),
                 message: format!("{id} is not a row this copy holds"),

@@ -213,6 +213,11 @@ pub struct HydrateReport {
     /// Why an interrupted hydration was filled again from the first page
     /// rather than resumed, such as `slice_changed` or `head_aged_out`.
     pub restarted: Option<String>,
+    /// Whether the copy was filled again over the rows it held, which it
+    /// answered marked stale meanwhile, rather than cleared first: so it is
+    /// filled when the event log let its cursor go and the instance, the reach
+    /// and the slice are those it was built under.
+    pub in_place: bool,
     pub cursor: String,
     /// Types the app declared that the instance did not hold and now does.
     pub registered_types: Vec<String>,
@@ -232,7 +237,7 @@ pub struct UnregisteredType {
 /// Raised to end a `hydrate`, `catchUp` or `drain` it was given to, soon
 /// after, with `MarfaError.Canceled`. What the call had taken is consistent:
 /// a hydration left unfinished answers lists and searches marked partial and
-/// refuses writes until a hydration completes (the next one of the same slice carries on from the page it reached where it can), a catch-up keeps the cursor it reached, and a drain leaves what it had not sent queued, and an upload or
+/// takes writes only to the rows it holds and new ones, until a hydration completes (the next one of the same slice carries on from the page it reached where it can), a catch-up keeps the cursor it reached, and a drain leaves what it had not sent queued, and an upload or
 /// item or edge write it had in flight queued as sent, for the next drain to
 /// send again under the same key. A raised `Stop` stays raised, so a call given one afterwards
 /// ends at once.
@@ -307,12 +312,16 @@ impl From<marfa_core::CatchUpFailed> for CatchUpError {
     }
 }
 
-/// Whether a local list or search was read from a whole copy, or from one a
-/// hydration is still filling, which holds only the rows that have arrived.
+/// Whether a local list or search was read from a whole copy; from one a
+/// hydration is still filling, which holds only the rows that have arrived;
+/// or from one the server's event log no longer reaches, which holds the rows
+/// it held then, some since changed or gone on the server, until a hydration
+/// has filled it again.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
 pub enum Completeness {
     Complete,
     Partial,
+    Stale,
 }
 
 impl From<marfa_core::Completeness> for Completeness {
@@ -320,6 +329,7 @@ impl From<marfa_core::Completeness> for Completeness {
         match completeness {
             marfa_core::Completeness::Complete => Completeness::Complete,
             marfa_core::Completeness::Partial => Completeness::Partial,
+            marfa_core::Completeness::Stale => Completeness::Stale,
         }
     }
 }
@@ -1410,6 +1420,7 @@ impl From<marfa_core::HydrateReport> for HydrateReport {
             pages_total: report.pages_total,
             resumed: report.resumed,
             restarted: report.restarted.map(|reason| reason.as_str().to_string()),
+            in_place: report.in_place,
             cursor: report.cursor,
             registered_types: report.registered_types,
             unregistered_types: report

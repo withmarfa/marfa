@@ -141,9 +141,12 @@ pub enum DeviceCommand {
     ///
     /// Without `--view`, while a hydration fills the copy or after one was
     /// interrupted, the search covers the rows that have arrived and says
-    /// it is partial: on standard error, and under --json as `completeness`,
-    /// `partial` or `complete`, beside `hits`. With `--view`, an incomplete
-    /// copy is refused.
+    /// it is partial. Once the server's event log no longer reaches the
+    /// copy, and until a hydration has filled it again, the search covers
+    /// the rows the copy holds and says it is stale. Each is said on
+    /// standard error, and under --json as `completeness`, `partial`,
+    /// `stale` or `complete`, beside `hits`. With `--view`, a copy that is
+    /// not whole is refused.
     Search {
         /// Words to look for, matched as the server matches them: all must
         /// match, the last as a prefix, and a query in double quotes is a
@@ -350,9 +353,11 @@ pub enum ItemsCommand {
     ///
     /// Without `--view`, while a hydration fills the copy or after one was
     /// interrupted, the list holds the rows that have arrived and says it
-    /// is partial: on standard error, and under --json as `completeness`,
-    /// `partial` or `complete`, beside `items`. With `--view`, an incomplete
-    /// copy is refused.
+    /// is partial. Once the server's event log no longer reaches the copy,
+    /// and until a hydration has filled it again, the list holds the rows
+    /// the copy holds and says it is stale. Each is said on standard error,
+    /// and under --json as `completeness`, `partial`, `stale` or `complete`,
+    /// beside `items`. With `--view`, a copy that is not whole is refused.
     List(ListArgs),
     /// One item by id, with its properties and tags.
     ///
@@ -862,6 +867,11 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
                 );
                 if report.resumed {
                     line.push_str("\nresumed the interrupted hydration from the page it had reached");
+                }
+                if report.in_place {
+                    line.push_str(
+                        "\nfilled the copy again over the rows it held, taking out the ones the server no longer has",
+                    );
                 }
                 if let Some(restart) = report.restarted {
                     line.push_str(&format!(

@@ -255,6 +255,16 @@ fn attempt(
             crate::catch_up::refuse_if_stopped(stop)?;
             let mut conn = core.conn()?;
             let tx = conn.transaction()?;
+            // A copy whose cursor aged out is filled again over what it holds
+            // when the instance, the reach and the slice are those it was
+            // built under; anything else may hold rows the key no longer
+            // reads, so it is cleared first.
+            let in_place = store::refill(&tx)?
+                .is_some_and(|refill| refill.instance == instance && refill.reach == fence)
+                && store::meta_get(&tx, store::META_SLICE_TYPES)?
+                    == Some(serde_json::to_string(types)?)
+                && store::meta_get(&tx, store::META_SLICE_TIER)?.as_deref() == Some(tier.as_str())
+                && store::whole_edge_types(&tx)? == edge_types;
             crate::reach::advance_generation(&tx)?;
             store::meta_set(&tx, store::META_HYDRATE_STATE, store::HYDRATE_IN_PROGRESS)?;
             store::attachments_start_growing(&tx)?;
@@ -270,7 +280,12 @@ fn attempt(
                 &serde_json::to_string(edge_types)?,
             )?;
             crate::body::rule::before_rebuild(&tx)?;
-            store::clear_slice(&tx)?;
+            if in_place {
+                store::start_refill(&tx)?;
+            } else {
+                store::meta_delete(&tx, store::META_REFILL)?;
+                store::clear_slice(&tx)?;
+            }
             store::replace_catalog(&tx, &catalog_rows)?;
             // A copy filling up answers reads, so it shows what is waiting
             // from the start, as each row that arrives does.
@@ -300,7 +315,13 @@ fn attempt(
             first
         }
     };
-    let context = crate::reach::Context::capture_build(&*core.conn()?)?;
+    let (context, in_place) = {
+        let conn = core.conn()?;
+        (
+            crate::reach::Context::capture_build(&conn)?,
+            store::refilling(&conn)?,
+        )
+    };
     let result = (|| {
         let catalog = {
             let conn = core.conn()?;
@@ -534,6 +555,9 @@ fn attempt(
             store::meta_delete(&tx, store::META_ITEMS_EXPECTED)?;
             store::meta_delete(&tx, store::META_ITEMS_LISTED)?;
             store::meta_delete(&tx, store::META_HYDRATE_RESUME)?;
+            if in_place {
+                store::sweep_refill(&tx)?;
+            }
             store::attachments_whole(&tx)?;
             let counts = (store::count(&tx, "items")?, store::count(&tx, "edges")?);
             tx.commit()?;
@@ -550,6 +574,7 @@ fn attempt(
             pages_total,
             resumed,
             restarted,
+            in_place,
             cursor,
             registered_types: registered_types.clone(),
             unregistered_types: unregistered_types.clone(),

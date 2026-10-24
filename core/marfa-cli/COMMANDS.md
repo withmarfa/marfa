@@ -2569,7 +2569,7 @@ Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 
 List items, newest first unless sorted otherwise.
 
-Without `--view`, while a hydration fills the copy or after one was interrupted, the list holds the rows that have arrived and says it is partial: on standard error, and under --json as `completeness`, `partial` or `complete`, beside `items`. With `--view`, an incomplete copy is refused.
+Without `--view`, while a hydration fills the copy or after one was interrupted, the list holds the rows that have arrived and says it is partial. Once the server's event log no longer reaches the copy, and until a hydration has filled it again, the list holds the rows the copy holds and says it is stale. Each is said on standard error, and under --json as `completeness`, `partial`, `stale` or `complete`, beside `items`. With `--view`, a copy that is not whole is refused.
 
 ```text
 marfa device items list [OPTIONS]
@@ -2980,7 +2980,7 @@ Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 
 Full-text search over the local copy, best match first.
 
-Without `--view`, while a hydration fills the copy or after one was interrupted, the search covers the rows that have arrived and says it is partial: on standard error, and under --json as `completeness`, `partial` or `complete`, beside `hits`. With `--view`, an incomplete copy is refused.
+Without `--view`, while a hydration fills the copy or after one was interrupted, the search covers the rows that have arrived and says it is partial. Once the server's event log no longer reaches the copy, and until a hydration has filled it again, the search covers the rows the copy holds and says it is stale. Each is said on standard error, and under --json as `completeness`, `partial`, `stale` or `complete`, beside `hits`. With `--view`, a copy that is not whole is refused.
 
 ```text
 marfa device search [OPTIONS] <QUERY>

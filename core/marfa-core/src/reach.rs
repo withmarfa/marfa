@@ -186,7 +186,22 @@ impl Context {
         let mut conn = core.conn()?;
         let tx = conn.transaction()?;
         if self.generation == revision(&tx, GENERATION)? {
+            // A first fill, or a fill that cleared the copy, holds a piece of
+            // the slice, which no refill in place can make whole.
+            let in_place = crate::catch_up::divergence(reason)
+                == Some(crate::model::HydrateRestart::HeadAgedOut)
+                && (!self.building || store::refilling(&tx)?);
             expire(&tx)?;
+            if in_place {
+                store::meta_set(
+                    &tx,
+                    store::META_REFILL,
+                    &serde_json::to_string(&store::Refill {
+                        instance: self.instance.clone(),
+                        reach: self.fence.clone(),
+                    })?,
+                )?;
+            }
         }
         tx.commit()?;
         Ok(CoreError::CopyExpired {
@@ -224,6 +239,7 @@ pub(crate) fn expire(conn: &Connection) -> Result<()> {
     store::meta_delete(conn, store::META_ITEMS_EXPECTED)?;
     store::meta_delete(conn, store::META_ITEMS_LISTED)?;
     store::meta_delete(conn, store::META_HYDRATE_RESUME)?;
+    store::meta_delete(conn, store::META_REFILL)?;
     store::meta_delete(conn, FENCE)
 }
 
