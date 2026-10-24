@@ -1821,9 +1821,10 @@ fn field_line(field: &marfa_core::TypeField) -> String {
 
 fn edge_type_line(held: &marfa_core::EdgeType) -> String {
     format!(
-        "{}  {}  {}{}  written at {}{}",
+        "{}  {} / {}  {}{}  written at {}{}",
         held.id,
-        held.label.as_deref().unwrap_or("(no label)"),
+        held.label,
+        held.reverse_label,
         held.cardinality,
         held.reverse_name
             .as_deref()

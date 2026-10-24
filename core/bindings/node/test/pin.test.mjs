@@ -67,6 +67,8 @@ async function scripted() {
         data: [
           {
             id: "parent-of",
+            label: "Children",
+            reverse_label: "Parent",
             cardinality: "one-to-many",
             source_type_constraints: ["*"],
             target_type_constraints: ["*"],

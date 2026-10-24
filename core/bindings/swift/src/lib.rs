@@ -599,7 +599,10 @@ pub enum EdgeWrittenAt {
 #[derive(Debug, Clone, uniffi::Record)]
 pub struct EdgeType {
     pub id: String,
-    pub label: Option<String>,
+    /// The name shown on the source end.
+    pub label: String,
+    /// The name shown on the target end.
+    pub reverse_label: String,
     pub description: Option<String>,
     pub cardinality: String,
     /// The name the edge goes by read from its target.
@@ -660,6 +663,7 @@ impl From<marfa_core::EdgeType> for EdgeType {
         EdgeType {
             id: held.id,
             label: held.label,
+            reverse_label: held.reverse_label,
             description: held.description,
             cardinality: held.cardinality,
             reverse_name: held.reverse_name,
@@ -3374,7 +3378,8 @@ mod tests {
     fn an_edge_type_crosses_with_its_reverse_name_and_the_end_that_writes_it() {
         let mut held = marfa_core::EdgeType {
             id: "mentor-of".into(),
-            label: None,
+            label: "Mentees".into(),
+            reverse_label: "Mentors".into(),
             description: None,
             cardinality: "one-to-many".into(),
             reverse_name: Some("mentored-by".into()),
@@ -3394,6 +3399,8 @@ mod tests {
         };
         let crossed = EdgeType::from(held.clone());
         assert_eq!(crossed.reverse_name.as_deref(), Some("mentored-by"));
+        assert_eq!(crossed.label, "Mentees");
+        assert_eq!(crossed.reverse_label, "Mentors");
         assert_eq!(crossed.written_at, EdgeWrittenAt::Target);
         assert_eq!(
             text(&crossed.properties[0].definition),

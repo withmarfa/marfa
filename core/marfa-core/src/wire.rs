@@ -107,8 +107,8 @@ pub struct WireType {
 #[derive(Debug, Clone, Deserialize)]
 pub struct WireEdgeType {
     pub id: String,
-    #[serde(default)]
-    pub label: Option<String>,
+    pub label: String,
+    pub reverse_label: String,
     #[serde(default)]
     pub description: Option<String>,
     pub cardinality: String,

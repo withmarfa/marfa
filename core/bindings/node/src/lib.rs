@@ -414,7 +414,10 @@ pub enum EdgeWrittenAt {
 #[napi(object)]
 pub struct EdgeType {
     pub id: String,
-    pub label: Option<String>,
+    /// The name shown on the source end.
+    pub label: String,
+    /// The name shown on the target end.
+    pub reverse_label: String,
     pub description: Option<String>,
     pub cardinality: String,
     /// The name the edge goes by read from its target.
@@ -467,6 +470,7 @@ fn edge_type(held: marfa_core::EdgeType) -> EdgeType {
     EdgeType {
         id: held.id,
         label: held.label,
+        reverse_label: held.reverse_label,
         description: held.description,
         cardinality: held.cardinality,
         reverse_name: held.reverse_name,
