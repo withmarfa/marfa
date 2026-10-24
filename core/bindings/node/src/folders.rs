@@ -638,6 +638,9 @@ fn keep_in_step(
     let mut back = false;
     loop {
         let end = folder.watch_handing_over(stop, |event| {
+            if matches!(event, marfa_core::WatchEvent::Busy { .. }) {
+                return Ok(());
+            }
             if back && matches!(event, marfa_core::WatchEvent::Watching { .. }) {
                 back = false;
                 tell(Told::Event(Box::new(FolderEvent::TakenBack)));
@@ -722,6 +725,7 @@ fn event_of(event: marfa_core::WatchEvent) -> std::result::Result<FolderEvent, C
         W::Waiting { scan, .. } => FolderEvent::Waiting {
             reason: scan.root_gone.unwrap_or_default(),
         },
+        W::Busy { .. } => unreachable!("the watch callback drops it"),
         W::Passed(pass) => {
             let pass = *pass;
             FolderEvent::Passed {

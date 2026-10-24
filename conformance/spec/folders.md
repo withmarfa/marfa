@@ -2572,7 +2572,7 @@ When a device gives way from moves of an `in-folder` edge that the server answer
 
 While a watch holds a placement write whose give-way read failed, a device MUST read for it again at most once a minute.
 
-**Reason:** a watch drains every second, and a read refused for good, made again at each drain, would spend the key's rate limit. The exact threshold needs a fixture-controlled clock.
+**Reason:** a watch drains at every pass, and a pass can start every second while changes wait, so a read refused for good, made again at each drain, would spend the key's rate limit. The exact threshold needs a fixture-controlled clock.
 
 **Tests:** `device/binding-folders-placement.test.ts › suppresses a failed give-way reread before sixty seconds and reads again afterwards`.
 
@@ -6048,7 +6048,7 @@ While a folder receives changes more frequently than its settle window, a device
 
 ### `folders/watch-settle-ceiling`
 
-When five seconds have elapsed since a folder watch’s previous pass ended, a device MUST start the next pass at its next wake without waiting for the folder to settle.
+While a change the folder takes is waiting, when five seconds have elapsed since a folder watch’s previous pass ended, a device MUST start the next pass at its next wake without waiting for the folder to settle.
 
 **Tests:** `device/binding-folders-clock.test.ts › starts a pass after five seconds even while filesystem changes keep arriving`.
 

@@ -63,6 +63,11 @@ pub enum WatchEvent {
     /// A pass that did something, or whose standing conditions differ from
     /// the pass before it.
     Passed(Box<WatchPass>),
+    /// More than one pass a second has started, on average, for a minute,
+    /// which a folder at rest never needs: `passes` is how many started in
+    /// that minute. Told at most once a minute, to a log; the bindings do not
+    /// carry it.
+    Busy { passes: usize },
 }
 
 /// One pass of a watch: the settings edit sent, the scan, the drain and the
@@ -267,6 +272,10 @@ impl Folder {
         // Whether anything has happened since the last pass began that it
         // did not see.
         let mut changed = true;
+        // Whether `lists` may no longer be the settings' lists: a settings
+        // change on disk or from the server.
+        let mut stale = false;
+        let mut rate = PassRate::default();
         loop {
             if stop.load(Ordering::SeqCst) {
                 break;
@@ -278,17 +287,12 @@ impl Folder {
             crate::fault::hold(|| "folder-watch-turn");
             match crate::clock::recv_timeout(events, stop, TICK) {
                 Ok(Wake::File(Ok(event))) => {
-                    // `Access` is an open or the close after a write, which has
-                    // already shown itself as a modify.
-                    let passed_over = matches!(event.kind, EventKind::Access(_))
-                        || event.paths.iter().all(|path| {
-                            !settings_file(dir, path)
-                                && match &lists {
-                                    Some(lists) => unreached(lists, dir, path),
-                                    None => dot_led(dir, path),
-                                }
-                        });
-                    if !passed_over {
+                    if stale {
+                        lists = self.settings().and_then(|settings| settings.lists()).ok();
+                        stale = false;
+                    }
+                    stale |= event.paths.iter().any(|path| settings_file(dir, path));
+                    if !event_passed_over(&event, dir, lists.as_ref()) {
                         changed = true;
                         gate.changed(crate::clock::now());
                         #[cfg(debug_assertions)]
@@ -299,10 +303,15 @@ impl Folder {
                     }
                 }
                 Ok(Wake::File(Err(error))) => {
+                    // The watcher may have lost events, so nothing says the
+                    // folder is unchanged.
+                    changed = true;
+                    gate.changed(crate::clock::now());
                     tell(WatchEvent::WatcherFailed(error.to_string())).map_err(WatchError::Told)?;
                 }
                 Ok(Wake::Server) => {
                     changed = true;
+                    stale = true;
                     telling.health_changed = true;
                 }
                 Ok(Wake::Retrying(error, wait)) => {
@@ -322,8 +331,6 @@ impl Folder {
                 Err(mpsc::RecvTimeoutError::Timeout) => {}
                 Err(mpsc::RecvTimeoutError::Disconnected) => break,
             }
-            // No "was there a change" flag: it would stop the journal being
-            // swept in a folder that went quiet after a delete.
             // No pass runs while the server's rate limit lasts, since a write
             // sent before it ends is refused again: changes on disk wait
             // unscanned and nothing is pulled.
@@ -344,6 +351,9 @@ impl Folder {
             }
             #[cfg(debug_assertions)]
             crate::fault::hold(|| "folder-pass-start");
+            if let Some(passes) = rate.started(crate::clock::now()) {
+                tell(WatchEvent::Busy { passes }).map_err(WatchError::Told)?;
+            }
             let passed = self.pass(full, asked, &mut telling, tell, health);
             if let Err(WatchError::Core(error) | WatchError::CredentialRefused(error)) = &passed {
                 self.health_observe(false, full, None, Some(error), false);
@@ -365,6 +375,7 @@ impl Folder {
             #[cfg(debug_assertions)]
             crate::fault::hold(|| "folder-pass-ended");
             lists = self.settings().and_then(|settings| settings.lists()).ok();
+            stale = false;
         }
         Ok(WatchEnd::Stopped)
     }
@@ -485,6 +496,7 @@ impl Folder {
             && scan.waiting == 0
             && scan.paused == 0
             && scan.unsure.is_empty()
+            && scan.directories.is_empty()
             && pull.paused == 0
             && pull.kept == 0
             && pull.elsewhere == 0
@@ -495,6 +507,7 @@ impl Folder {
             && drain.report.unsent == 0
             && drain.report.held == 0
             && drain.report.unmade == 0
+            && !self.has_unanswered_writes()
             && self
                 .unread_give_ways
                 .lock()
@@ -932,9 +945,12 @@ fn settings_file(root: &Path, path: &Path) -> bool {
     path == root.join(STATE_DIR).join(SETTINGS_FILE)
 }
 
-/// Whether no pass can find anything at `path`, which an event names: the
-/// folder takes no file there, nor under it where it is a directory. A path
-/// outside the folder's root or the root itself is never unreached.
+/// Whether no pass can find anything at `path`, which an event names: it is
+/// a directory the walk does not enter, or a file the folder does not take,
+/// or it is gone and was neither. A directory is reached unless a line
+/// excludes it by itself, since `include` may match the files inside it by
+/// name. A path outside the folder's root or the root itself is never
+/// unreached.
 fn unreached(lists: &Lists, root: &Path, path: &Path) -> bool {
     let Some(relative) = path
         .strip_prefix(root)
@@ -947,13 +963,52 @@ fn unreached(lists: &Lists, root: &Path, path: &Path) -> bool {
     if lists.secret(relative) {
         return false;
     }
-    let under = !lists.takes(&format!("{relative}/x"));
-    if lists.takes(relative) {
-        // Taken as a file: unless it is a directory, which the lists skip
-        // whole. A path already gone may have been either, and is reached.
-        return under && std::fs::symlink_metadata(path).is_ok_and(|found| found.is_dir());
+    match std::fs::symlink_metadata(path) {
+        Ok(found) if found.is_dir() => !lists.enters(relative),
+        Ok(_) => !lists.takes(relative),
+        Err(_) => !lists.enters(relative) && !lists.takes(relative),
     }
-    under
+}
+
+/// Whether an event starts no pass: it names only paths no pass can find,
+/// or is an access. An event that says events were lost, or names no path,
+/// is never passed over.
+fn event_passed_over(event: &notify::Event, root: &Path, lists: Option<&Lists>) -> bool {
+    if event.need_rescan() || event.paths.is_empty() {
+        return false;
+    }
+    matches!(event.kind, EventKind::Access(_))
+        || event.paths.iter().all(|path| {
+            !settings_file(root, path)
+                && match lists {
+                    Some(lists) => unreached(lists, root, path),
+                    None => dot_led(root, path),
+                }
+        })
+}
+
+/// How often passes start, so a loop of them shows in a log.
+#[derive(Debug, Default)]
+struct PassRate {
+    since: Option<Instant>,
+    count: usize,
+}
+
+impl PassRate {
+    const WINDOW: Duration = Duration::from_secs(60);
+
+    /// Counts a pass starting at `now`. Returns the count when a minute has
+    /// passed and it exceeded one a second, then begins a new minute.
+    fn started(&mut self, now: Instant) -> Option<usize> {
+        let since = *self.since.get_or_insert(now);
+        self.count += 1;
+        if now.saturating_duration_since(since) < Self::WINDOW {
+            return None;
+        }
+        let count = std::mem::replace(&mut self.count, 0);
+        self.since = Some(now);
+        (count as u64 > Self::WINDOW.as_secs()).then_some(count)
+    }
 }
 
 fn dot_led(root: &Path, path: &Path) -> bool {
@@ -1128,8 +1183,6 @@ mod tests {
             "Repos",
             "Repos/marfa/target/debug/build.o",
             "Sandbox/Xcode Builds/App/Info.plist",
-            "_tmp/clone/file.rs",
-            "README.md",
             ".marfa/core.sqlite-wal",
         ] {
             assert!(!reached(relative), "{relative}");
@@ -1154,6 +1207,78 @@ mod tests {
         assert!(!unreached(&lists, root, &root.join("Repos")));
         std::fs::write(root.join("Repos"), "").unwrap();
         assert!(!unreached(&lists, root, &root.join("Repos")));
+    }
+
+    #[test]
+    fn a_directory_moved_in_is_reached_where_include_matches_by_file_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let lists = Lists::new(&["*.md".to_string()], &["/Repos/".to_string()]).unwrap();
+        std::fs::create_dir_all(root.join("Moved/in")).unwrap();
+        std::fs::write(root.join("Moved/in/a.md"), "").unwrap();
+        std::fs::write(root.join("Moved/in/b.txt"), "").unwrap();
+        // One event names only the directory.
+        assert!(!unreached(&lists, root, &root.join("Moved")));
+        assert!(!unreached(&lists, root, &root.join("Moved/in")));
+        // The witness: a file include does not match, and an ignored folder.
+        assert!(unreached(&lists, root, &root.join("Moved/in/b.txt")));
+        std::fs::create_dir_all(root.join("Repos/x")).unwrap();
+        assert!(unreached(&lists, root, &root.join("Repos")));
+        assert!(unreached(&lists, root, &root.join("Repos/x")));
+        // Gone, it may have been a directory holding files the folder took.
+        assert!(!unreached(&lists, root, &root.join("Gone")));
+    }
+
+    #[test]
+    fn an_event_that_says_events_were_lost_or_names_no_path_starts_a_pass() {
+        use notify::event::{AccessKind, CreateKind, Flag};
+        let (lists, root) = (record_lists(), Path::new("/folder"));
+        let ignored = || root.join("Repos/app/out.o");
+        let create = || notify::Event::new(EventKind::Create(CreateKind::File));
+        // The witness: the same event on an ignored path is passed over.
+        assert!(event_passed_over(
+            &create().add_path(ignored()),
+            root,
+            Some(&lists)
+        ));
+        assert!(!event_passed_over(
+            &create().add_path(ignored()).set_flag(Flag::Rescan),
+            root,
+            Some(&lists)
+        ));
+        assert!(!event_passed_over(&create(), root, Some(&lists)));
+        assert!(!event_passed_over(
+            &notify::Event::new(EventKind::Other).set_flag(Flag::Rescan),
+            root,
+            None
+        ));
+        assert!(event_passed_over(
+            &notify::Event::new(EventKind::Access(AccessKind::Any))
+                .add_path(root.join("Notes/a.md")),
+            root,
+            Some(&lists)
+        ));
+    }
+
+    #[test]
+    fn passes_are_reported_only_when_a_minute_of_them_exceeds_one_a_second() {
+        let start = Instant::now();
+        let at = |seconds: f64| start + Duration::from_secs_f64(seconds);
+        let mut rate = PassRate::default();
+        // A pass every half second for a minute, then the minute ends.
+        for step in 0..120 {
+            assert_eq!(rate.started(at(step as f64 * 0.5)), None);
+        }
+        assert_eq!(rate.started(at(60.0)), Some(121));
+        // A new minute, at one pass a second or less: nothing to report.
+        for second in 61..120 {
+            assert_eq!(rate.started(at(second as f64)), None);
+        }
+        assert_eq!(rate.started(at(121.0)), None);
+        // A minute is told once however many passes follow.
+        for step in 0..10 {
+            assert_eq!(rate.started(at(122.0 + step as f64 * 0.01)), None);
+        }
     }
 
     #[test]

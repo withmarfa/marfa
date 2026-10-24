@@ -529,6 +529,12 @@ fn tell(
             say.note(&format!("watching {} (interrupt to stop)", dir.display()));
             Ok(())
         }
+        WatchEvent::Busy { passes } => {
+            say.note(&format!(
+                "busy: {passes} passes started in the last minute; a folder at rest starts almost none"
+            ));
+            Ok(())
+        }
         WatchEvent::WatcherFailed(error) => {
             say.note(&format!("watch error: {error}"));
             Ok(())
