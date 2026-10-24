@@ -39,6 +39,7 @@ import type {
   BulkEdgeResponse,
   BulkActionInput,
   BulkActionJob,
+  TypeMoveDryRun,
   BulkActionResponse,
   RestoreArchiveResponse,
   ErrorResponse,
@@ -488,6 +489,24 @@ export class MarfaClient {
     return this.request<{ ok: boolean }>(`/types/${typeId}${query}`, {
       method: "DELETE",
     });
+  }
+
+  /**
+   * `POST /types/{id}/move`: 200 with what it would do for a dry run, 202
+   * with the queued job otherwise.
+   */
+  async moveType(
+    from: string,
+    body: {
+      to: string;
+      properties?: Record<string, unknown>;
+      dry_run?: boolean;
+    },
+  ): Promise<ApiResponse<TypeMoveDryRun | BulkActionJob>> {
+    return this.request<TypeMoveDryRun | BulkActionJob>(
+      `/types/${encodeURIComponent(from)}/move`,
+      { method: "POST", body },
+    );
   }
 
   async exportItems(

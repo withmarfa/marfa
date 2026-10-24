@@ -739,6 +739,9 @@ export type StoredUpdateItemInput = Omit<UpdateItemInput, "version"> &
      * already gone or the caller's version never held it.
      */
     clear_properties?: readonly string[];
+    /** A row in the bin may be written, and stays in the bin. Only a type
+     *  move asks for it. */
+    in_bin?: boolean;
   };
 
 /** What a purge left of a row's link or natural key under its type. `key`
@@ -2985,10 +2988,12 @@ export interface BulkActionJobStore {
     jobId: string,
     ids: readonly string[],
   ): Promise<ReadonlySet<string>>;
+  /** `outcome` adds an action's own fields to the result. */
   completeOwned(
     lease: BulkActionJobLease,
     expectedOffset: number,
     now: string,
+    outcome?: Record<string, unknown>,
   ): Promise<boolean>;
   failOwned(
     lease: BulkActionJobLease,

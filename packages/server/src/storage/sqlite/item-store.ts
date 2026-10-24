@@ -1494,7 +1494,7 @@ export class SqliteItemStore implements ItemStore {
       if (!row) {
         throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
       }
-      if (row.state === "trashed") {
+      if (row.state === "trashed" && input.in_bin !== true) {
         throw new MarfaError(
           ErrorCode.INVALID_TRANSITION,
           "Cannot update trashed item",
@@ -1939,7 +1939,9 @@ export class SqliteItemStore implements ItemStore {
       properties: write.properties,
     });
 
-    await this.searchStore.index(id, properties, type);
+    // The bin is never searched, so a row written there stays out of the index.
+    if (row.state !== "trashed")
+      await this.searchStore.index(id, properties, type);
 
     return rowToItem({
       ...row,

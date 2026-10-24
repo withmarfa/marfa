@@ -1040,11 +1040,22 @@
             "items": {
               "$ref": "#/components/schemas/BulkActionError"
             },
-            "description": "On a job, the first 100 items it left unchanged, each with its error. Absent otherwise."
+            "description": "On a job, the first 100 items it left unchanged, each with its error, or on a type move every one. Absent otherwise."
           },
           "blob_hashes_referenced": {
             "type": "integer",
             "description": "On a purge job, how many distinct blobs the purged items referenced, whether or not anything still references them. Absent otherwise."
+          },
+          "settings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TypeSetting"
+            },
+            "description": "On a type move, every folder, view and webhook setting that named the old type when the job finished. Absent otherwise."
+          },
+          "settings_rewritten": {
+            "type": "boolean",
+            "description": "On a type move, `true` if Marfa rewrote `settings` to name the new type. `false` if an item of the old type remains or a setting has a `reason`: Marfa then rewrote none of them. Absent otherwise."
           }
         },
         "required": [
@@ -1083,6 +1094,48 @@
           "message"
         ],
         "description": "An item a bulk action left unchanged, and why."
+      },
+      "TypeSetting": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "folder",
+              "view",
+              "webhook"
+            ],
+            "description": "What holds the setting."
+          },
+          "id": {
+            "type": "string",
+            "description": "The ID of the folder, view or webhook."
+          },
+          "field": {
+            "type": "string",
+            "description": "The setting that names the type: `query.types`, `query.filter`, `defaults.type`, `first_placement` or `type_filter`."
+          },
+          "reason": {
+            "type": "string",
+            "enum": [
+              "not_permitted",
+              "filter_term",
+              "placement_conflict",
+              "subtypes"
+            ],
+            "description": "Why a move can't rewrite the setting: `not_permitted`, you can't change it; `filter_term`, a `type` term would answer differently; `placement_conflict`, it places the types apart; `subtypes`, a webhook can't name both. Absent when it can."
+          },
+          "message": {
+            "type": "string",
+            "description": "What to change before moving, for a person to read. Present with `reason`."
+          }
+        },
+        "required": [
+          "kind",
+          "id",
+          "field"
+        ],
+        "description": "A folder, view or webhook setting that names a type."
       },
       "ViewField": {
         "type": "string",
@@ -4498,6 +4551,195 @@
                 "enum": [
                   "type_has_subtypes",
                   "type_in_use"
+                ],
+                "description": "A machine-readable code for the error. Use it in your logic."
+              },
+              "message": {
+                "type": "string",
+                "description": "A description of the error for a person to read. It can change, so don't match on it."
+              },
+              "details": {
+                "type": "object",
+                "additionalProperties": {},
+                "description": "More about the error, such as the field it concerns. Each code defines its own details."
+              }
+            },
+            "required": [
+              "code",
+              "message"
+            ],
+            "description": "What went wrong."
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "description": "An error response."
+      },
+      "TypeMoveDryRun": {
+        "type": "object",
+        "properties": {
+          "dry_run": {
+            "type": "boolean",
+            "enum": [
+              true
+            ],
+            "description": "Always `true`."
+          },
+          "from": {
+            "type": "string",
+            "description": "The type the items are in now."
+          },
+          "to": {
+            "type": "string",
+            "description": "The type the items would move to."
+          },
+          "matched": {
+            "type": "integer",
+            "description": "How many items of `from` the move would take, in any state."
+          },
+          "ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The IDs of those items."
+          },
+          "settings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TypeSetting"
+            },
+            "description": "Every folder, view and webhook setting that names `from`, which the move rewrites to name `to` once every item has moved."
+          },
+          "grants": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TypeGrant"
+            },
+            "description": "The keys and apps whose type map names `from`, which the move doesn't change. Keys are listed if you have `keys.manage`, and apps if you have `grants.manage`."
+          }
+        },
+        "required": [
+          "dry_run",
+          "from",
+          "to",
+          "matched",
+          "ids",
+          "settings",
+          "grants"
+        ],
+        "description": "What a type move would do, written nowhere."
+      },
+      "TypeGrant": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "key",
+              "app"
+            ],
+            "description": "`key` for an API key, `app` for an app someone signed in to."
+          },
+          "id": {
+            "type": "string",
+            "description": "The ID of the key, or the app's client ID."
+          },
+          "label": {
+            "type": "string",
+            "description": "The key's label. Absent for an app."
+          }
+        },
+        "required": [
+          "kind",
+          "id"
+        ],
+        "description": "A key or app whose type map names a type outright."
+      },
+      "BulkCapExceededOrUnknownTypeOrValidationErrorRefusal": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
+                  "bulk_cap_exceeded",
+                  "unknown_type",
+                  "validation_error"
+                ],
+                "description": "A machine-readable code for the error. Use it in your logic."
+              },
+              "message": {
+                "type": "string",
+                "description": "A description of the error for a person to read. It can change, so don't match on it."
+              },
+              "details": {
+                "type": "object",
+                "additionalProperties": {},
+                "description": "More about the error, such as the field it concerns. Each code defines its own details."
+              }
+            },
+            "required": [
+              "code",
+              "message"
+            ],
+            "description": "What went wrong."
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "description": "An error response."
+      },
+      "CoreTypeImmutableOrTypeNotPermittedRefusal": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
+                  "core_type_immutable",
+                  "type_not_permitted"
+                ],
+                "description": "A machine-readable code for the error. Use it in your logic."
+              },
+              "message": {
+                "type": "string",
+                "description": "A description of the error for a person to read. It can change, so don't match on it."
+              },
+              "details": {
+                "type": "object",
+                "additionalProperties": {},
+                "description": "More about the error, such as the field it concerns. Each code defines its own details."
+              }
+            },
+            "required": [
+              "code",
+              "message"
+            ],
+            "description": "What went wrong."
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "description": "An error response."
+      },
+      "TypeMoveBlockedRefusal": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
+                  "type_move_blocked"
                 ],
                 "description": "A machine-readable code for the error. Use it in your logic."
               },
@@ -27781,10 +28023,10 @@
                 "true",
                 "false"
               ],
-              "description": "Delete the type even if items of it exist, in any state. It doesn't cover subtypes or compatibility dependents."
+              "description": "Delete the type even if items of it exist, in any state, or a folder, view or webhook names it. It doesn't cover subtypes or compatibility dependents."
             },
             "required": false,
-            "description": "Delete the type even if items of it exist, in any state. It doesn't cover subtypes or compatibility dependents.",
+            "description": "Delete the type even if items of it exist, in any state, or a folder, view or webhook names it. It doesn't cover subtypes or compatibility dependents.",
             "name": "force",
             "in": "query"
           },
@@ -27948,7 +28190,7 @@
             }
           },
           "409": {
-            "description": "- `type_has_subtypes`: other types name this one as their `parent` (`details.subtype_ids` lists them). Delete them, or give them another parent with `PUT /types/{id}`.\n- `type_in_use`: an item of the type exists, in any state, and `force` isn't `true`.",
+            "description": "- `type_has_subtypes`: other types name this one as their `parent` (`details.subtype_ids` lists them). Delete them, or give them another parent with `PUT /types/{id}`.\n- `type_in_use`: an item of the type exists, in any state, or a folder, view or webhook names it, and `force` isn't `true`. `details` counts the items and lists the settings. Move them with `POST /types/{id}/move`.",
             "content": {
               "application/json": {
                 "schema": {
@@ -28029,6 +28271,429 @@
               },
               "X-RateLimit-Reset": {
                 "$ref": "#/components/headers/X-RateLimit-Reset"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "429": {
+            "description": "`rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RateLimitedRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/X-RateLimit-Limit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/X-RateLimit-Remaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/X-RateLimit-Reset"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              },
+              "Retry-After": {
+                "$ref": "#/components/headers/Retry-After"
+              }
+            }
+          },
+          "500": {
+            "description": "`internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternalErrorRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/X-RateLimit-Limit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/X-RateLimit-Remaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/X-RateLimit-Reset"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "503": {
+            "description": "`write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WriteContentionRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/X-RateLimit-Limit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/X-RateLimit-Remaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/X-RateLimit-Reset"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "507": {
+            "description": "`insufficient_storage`: the disk that holds the instance's data has no room for the request, or the request would leave less free than the instance keeps in reserve. Nothing changed, unless `details.write_outcome` is `unknown`, which means the write may have landed: read what you changed before you repeat it. Free space on the disk, then try the request again.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InsufficientStorageRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/X-RateLimit-Limit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/X-RateLimit-Remaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/X-RateLimit-Reset"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/types/{id}/move": {
+      "post": {
+        "operationId": "moveType",
+        "tags": [
+          "Types"
+        ],
+        "summary": "Move items to another type",
+        "description": "Moves every item of the type, in any state, to another type and queues a bulk-action job. Once every item has moved, it rewrites the folders, views and webhooks that name the type. With `dry_run: true` it returns what it would do.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "The identifier of the type to move items out of, such as `acme.deal`."
+            },
+            "required": true,
+            "description": "The identifier of the type to move items out of, such as `acme.deal`.",
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "name": "X-Marfa-Instance-Id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+            },
+            "description": "The ID of the instance you expect, as `GET /` returns it. If another instance answers at this address, Marfa returns `409 instance_changed` and doesn't write. Leave it out to send the request to whichever instance answers."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "to": {
+                    "type": "string",
+                    "description": "The identifier of the type to move items to, such as `acme.contract`. It must be registered."
+                  },
+                  "properties": {
+                    "type": "object",
+                    "additionalProperties": {},
+                    "description": "Properties to merge into every item as it moves, such as a field the new type requires. A `null` value removes a property."
+                  },
+                  "dry_run": {
+                    "type": "boolean",
+                    "description": "`true` returns the items and settings the move would change and writes nothing. Defaults to `false`."
+                  }
+                },
+                "required": [
+                  "to"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "With `dry_run: true`, returns what the move would do.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TypeMoveDryRun"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/X-RateLimit-Limit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/X-RateLimit-Remaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/X-RateLimit-Reset"
+              }
+            }
+          },
+          "202": {
+            "description": "Returns the queued job. Poll it with `GET /items/bulk-actions/jobs/{id}`. Its `result` lists every item it couldn't move in `errors`, and says in `settings_rewritten` whether it rewrote `settings`. Run the move again to move what remains.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BulkActionJob"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/X-RateLimit-Limit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/X-RateLimit-Remaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/X-RateLimit-Reset"
+              }
+            }
+          },
+          "400": {
+            "description": "- `validation_error`: `to` is malformed or names the type itself.\n- `unknown_type`: no type has the identifier `to`.\n- `bulk_cap_exceeded`: the type holds over 50,000 items.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BulkCapExceededOrUnknownTypeOrValidationErrorRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/X-RateLimit-Limit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/X-RateLimit-Remaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/X-RateLimit-Reset"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`: the request has no credential, or its credential is not valid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnauthorizedRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/X-RateLimit-Limit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/X-RateLimit-Remaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/X-RateLimit-Reset"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "403": {
+            "description": "- `core_type_immutable`: Marfa ships the type, and its items stay in it.\n- `type_not_permitted`: your type map doesn't grant write on both types.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreTypeImmutableOrTypeNotPermittedRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/X-RateLimit-Limit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/X-RateLimit-Remaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/X-RateLimit-Reset"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "404": {
+            "description": "`type_not_found`: no type has this identifier.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TypeNotFoundRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/X-RateLimit-Limit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/X-RateLimit-Remaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/X-RateLimit-Reset"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "409": {
+            "description": "`type_move_blocked`: a folder, view or webhook names the type in a way the move can't rewrite. `details.settings` lists each, with its `reason`. Change them, then move.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/TypeMoveBlockedRefusal"
+                    },
+                    {
+                      "$ref": "#/components/schemas/InstanceChangedRefusal"
+                    }
+                  ]
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/X-RateLimit-Limit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/X-RateLimit-Remaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/X-RateLimit-Reset"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "413": {
+            "description": "`request_too_large`: the request body is larger than this instance accepts.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestTooLargeRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
               },
               "X-Error-Code": {
                 "$ref": "#/components/headers/X-Error-Code"
@@ -57816,6 +58481,7 @@
         "listTypes",
         "replaceType",
         "deleteType",
+        "moveType",
         "normalizeType"
       ]
     },

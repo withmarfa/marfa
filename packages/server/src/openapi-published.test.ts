@@ -332,8 +332,9 @@ describe("published OpenAPI spec", () => {
     // Scoped to `responses`, deliberately: the type-authoring bodies carry
     // the field too, and a check over the whole operation would be
     // satisfied by what a client sends when it is about what it receives.
-    const typeOperations = [...published.entries()].filter(([key]) =>
-      /^(GET|POST|PUT) \/types/.test(key),
+    // A move answers a job or a plan, not a type.
+    const typeOperations = [...published.entries()].filter(
+      ([key]) => /^(GET|POST|PUT) \/types/.test(key) && !key.endsWith("/move"),
     );
     expect(typeOperations.length).toBeGreaterThan(0);
 

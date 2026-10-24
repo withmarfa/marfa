@@ -651,6 +651,28 @@ export interface BulkActionResponse {
     details?: Record<string, unknown>;
   }[];
   blob_hashes_referenced?: number;
+  settings?: TypeSetting[];
+  settings_rewritten?: boolean;
+}
+
+/** A folder, view or webhook setting that names a type. */
+export interface TypeSetting {
+  kind: "folder" | "view" | "webhook";
+  id: string;
+  field: string;
+  reason?: "not_permitted" | "filter_term" | "placement_conflict" | "subtypes";
+  message?: string;
+}
+
+/** What `POST /types/{id}/move` would do, from a dry run. */
+export interface TypeMoveDryRun {
+  dry_run: true;
+  from: string;
+  to: string;
+  matched: number;
+  ids: string[];
+  settings: TypeSetting[];
+  grants: { kind: "key" | "app"; id: string; label?: string }[];
 }
 
 // Async-job envelope. Returned by POST /items/bulk-actions (non-dry-run,

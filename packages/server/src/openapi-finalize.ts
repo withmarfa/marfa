@@ -197,6 +197,7 @@ export const PUBLIC_TAGS: readonly PublicTag[] = [
       "listTypes",
       "replaceType",
       "deleteType",
+      "moveType",
       "normalizeType",
     ],
   },

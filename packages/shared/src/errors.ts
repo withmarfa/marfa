@@ -81,6 +81,12 @@ export enum ErrorCode {
    */
   TYPE_HAS_SUBTYPES = "type_has_subtypes",
   /**
+   * A type move would leave a folder, view or webhook setting naming the old
+   * type that it cannot rewrite. Details carry `settings`, each with its
+   * `reason`.
+   */
+  TYPE_MOVE_BLOCKED = "type_move_blocked",
+  /**
    * A type's stored inheritance chain cannot be resolved: it is circular, or
    * deeper than any resolution walk will follow. Details carry `type_id`.
    *
@@ -486,7 +492,12 @@ export const ERROR_CODES: Record<AnsweredCode, ErrorCodeInfo> = {
   [ErrorCode.TYPE_IN_USE]: {
     status: 409,
     summary:
-      "Items of the type still exist, the bin included, and the delete did not ask to force.",
+      "Items of the type still exist, the bin included, or a folder, view or webhook setting names it, and the delete did not ask to force.",
+  },
+  [ErrorCode.TYPE_MOVE_BLOCKED]: {
+    status: 409,
+    summary:
+      "A folder, view or webhook setting names the type, and the move can't rewrite it. `details.settings` names each, with its `reason`.",
   },
   [ErrorCode.EDGE_TYPE_IN_USE]: {
     status: 409,
@@ -506,7 +517,7 @@ export const ERROR_CODES: Record<AnsweredCode, ErrorCodeInfo> = {
   [ErrorCode.CORE_TYPE_IMMUTABLE]: {
     status: 403,
     summary:
-      "The type ships with the platform, so it cannot be replaced or deleted.",
+      "The type ships with the platform, so it cannot be replaced, deleted or moved out of.",
   },
   [ErrorCode.WEBHOOK_NOT_FOUND]: {
     status: 404,

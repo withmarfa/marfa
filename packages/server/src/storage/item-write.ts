@@ -128,6 +128,9 @@ export interface ItemUpdate extends RowChange {
   retype?: boolean;
   /** What a row missing, unreadable or in the bin answers. */
   not_found?: () => MarfaError;
+  /** A row in the bin is written where it is and stays there, with its
+   *  cascade mark. Only a type move asks for it. */
+  in_bin?: boolean;
 }
 
 /**
@@ -698,11 +701,11 @@ async function updateById(
     write.not_found ??
     (() =>
       new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${write.id} not found`));
-  const row = writableRow(
-    writer,
-    await storage.items.getIncludingTrashed(write.id),
-    notFound,
-  );
+  const found = await storage.items.getIncludingTrashed(write.id);
+  const row =
+    write.in_bin === true
+      ? readableRow(writer, found, notFound)
+      : writableRow(writer, found, notFound);
   assertTypeWrite(writer, row);
   const retypeTo =
     write.retype === true &&
@@ -715,7 +718,16 @@ async function updateById(
   } else if (write.declared_type !== undefined) {
     requireDeclaredTypeMatches(write.declared_type, row);
   }
-  return await changeRow(storage, writer, row, write, retypeTo, {});
+  return await changeRow(
+    storage,
+    writer,
+    row,
+    write,
+    retypeTo,
+    {},
+    false,
+    write.in_bin === true,
+  );
 }
 
 /**
@@ -734,6 +746,7 @@ async function changeRow(
   /** An upsert writes the row whatever it carries: landing on it is the
    *  write. */
   upsert = false,
+  inBin = false,
 ): Promise<ItemWriteResult> {
   return await naming(row.id, async () => {
     const resultingType = retypeTo ?? row.type;
@@ -850,6 +863,7 @@ async function changeRow(
           blob_proof: change.blob_proof ?? undefined,
         }),
         refuse_unproven_file: writer.kind === "credential",
+        ...(inBin && { in_bin: true }),
       });
       if ("error" in updated) {
         return { outcome: "conflict", id: row.id, conflict: updated };
@@ -1151,6 +1165,17 @@ function writableRow(
   return writableRowOf(row, (type) => mayRead(writer, type), notFound);
 }
 
+/** The row a write names, in the bin included, refused as missing where it
+ *  is not there or the writer may not read its type. */
+function readableRow(
+  writer: ItemWriter,
+  row: Item | null,
+  notFound: () => MarfaError,
+): Item {
+  if (!row || !mayRead(writer, row.type)) throw notFound();
+  return row;
+}
+
 /** A lifecycle door's row, in the bin included where the move starts from
  *  there. */
 async function lifecycleRow(
@@ -1163,8 +1188,7 @@ async function lifecycleRow(
   const row = await storage.items.getIncludingTrashed(id);
   const notFound = () => new MarfaError(ErrorCode.ITEM_NOT_FOUND, message);
   if (!includeTrashed) return writableRow(writer, row, notFound);
-  if (!row || !mayRead(writer, row.type)) throw notFound();
-  return row;
+  return readableRow(writer, row, notFound);
 }
 
 function staleAgainst(

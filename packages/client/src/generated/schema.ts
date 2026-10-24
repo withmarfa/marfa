@@ -752,6 +752,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/types/{id}/move": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Move items to another type
+         * @description Moves every item of the type, in any state, to another type and queues a bulk-action job. Once every item has moved, it rewrites the folders, views and webhooks that name the type. With `dry_run: true` it returns what it would do.
+         */
+        post: operations["moveType"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/types/normalize": {
         parameters: {
             query?: never;
@@ -2483,10 +2503,14 @@ export interface components {
             dry_run: boolean;
             /** @description On a dry run, the ID of every matched item. On a job, the IDs of the items it changed, if it changed from 1 to 100 of them; absent otherwise. */
             ids?: string[];
-            /** @description On a job, the first 100 items it left unchanged, each with its error. Absent otherwise. */
+            /** @description On a job, the first 100 items it left unchanged, each with its error, or on a type move every one. Absent otherwise. */
             errors?: components["schemas"]["BulkActionError"][];
             /** @description On a purge job, how many distinct blobs the purged items referenced, whether or not anything still references them. Absent otherwise. */
             blob_hashes_referenced?: number;
+            /** @description On a type move, every folder, view and webhook setting that named the old type when the job finished. Absent otherwise. */
+            settings?: components["schemas"]["TypeSetting"][];
+            /** @description On a type move, `true` if Marfa rewrote `settings` to name the new type. `false` if an item of the old type remains or a setting has a `reason`: Marfa then rewrote none of them. Absent otherwise. */
+            settings_rewritten?: boolean;
         };
         /** @description An item a bulk action left unchanged, and why. */
         BulkActionError: {
@@ -2500,6 +2524,25 @@ export interface components {
             details?: {
                 [key: string]: unknown;
             };
+        };
+        /** @description A folder, view or webhook setting that names a type. */
+        TypeSetting: {
+            /**
+             * @description What holds the setting.
+             * @enum {string}
+             */
+            kind: "folder" | "view" | "webhook";
+            /** @description The ID of the folder, view or webhook. */
+            id: string;
+            /** @description The setting that names the type: `query.types`, `query.filter`, `defaults.type`, `first_placement` or `type_filter`. */
+            field: string;
+            /**
+             * @description Why a move can't rewrite the setting: `not_permitted`, you can't change it; `filter_term`, a `type` term would answer differently; `placement_conflict`, it places the types apart; `subtypes`, a webhook can't name both. Absent when it can.
+             * @enum {string}
+             */
+            reason?: "not_permitted" | "filter_term" | "placement_conflict" | "subtypes";
+            /** @description What to change before moving, for a person to read. Present with `reason`. */
+            message?: string;
         };
         /**
          * @description A field: an own field (`title`, `created_at`, `updated_at`, `occurred_at`, `type`, `state`, `tier`, `tags`) or `properties.<name>`.
@@ -3813,6 +3856,89 @@ export interface components {
                  * @enum {string}
                  */
                 code: "type_has_subtypes" | "type_in_use";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
+                message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
+                details?: {
+                    [key: string]: unknown;
+                };
+            };
+        };
+        /** @description What a type move would do, written nowhere. */
+        TypeMoveDryRun: {
+            /**
+             * @description Always `true`.
+             * @enum {boolean}
+             */
+            dry_run: true;
+            /** @description The type the items are in now. */
+            from: string;
+            /** @description The type the items would move to. */
+            to: string;
+            /** @description How many items of `from` the move would take, in any state. */
+            matched: number;
+            /** @description The IDs of those items. */
+            ids: string[];
+            /** @description Every folder, view and webhook setting that names `from`, which the move rewrites to name `to` once every item has moved. */
+            settings: components["schemas"]["TypeSetting"][];
+            /** @description The keys and apps whose type map names `from`, which the move doesn't change. Keys are listed if you have `keys.manage`, and apps if you have `grants.manage`. */
+            grants: components["schemas"]["TypeGrant"][];
+        };
+        /** @description A key or app whose type map names a type outright. */
+        TypeGrant: {
+            /**
+             * @description `key` for an API key, `app` for an app someone signed in to.
+             * @enum {string}
+             */
+            kind: "key" | "app";
+            /** @description The ID of the key, or the app's client ID. */
+            id: string;
+            /** @description The key's label. Absent for an app. */
+            label?: string;
+        };
+        /** @description An error response. */
+        BulkCapExceededOrUnknownTypeOrValidationErrorRefusal: {
+            /** @description What went wrong. */
+            error: {
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
+                code: "bulk_cap_exceeded" | "unknown_type" | "validation_error";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
+                message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
+                details?: {
+                    [key: string]: unknown;
+                };
+            };
+        };
+        /** @description An error response. */
+        CoreTypeImmutableOrTypeNotPermittedRefusal: {
+            /** @description What went wrong. */
+            error: {
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
+                code: "core_type_immutable" | "type_not_permitted";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
+                message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
+                details?: {
+                    [key: string]: unknown;
+                };
+            };
+        };
+        /** @description An error response. */
+        TypeMoveBlockedRefusal: {
+            /** @description What went wrong. */
+            error: {
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
+                code: "type_move_blocked";
                 /** @description A description of the error for a person to read. It can change, so don't match on it. */
                 message: string;
                 /** @description More about the error, such as the field it concerns. Each code defines its own details. */
@@ -14590,7 +14716,7 @@ export interface operations {
     deleteType: {
         parameters: {
             query?: {
-                /** @description Delete the type even if items of it exist, in any state. It doesn't cover subtypes or compatibility dependents. */
+                /** @description Delete the type even if items of it exist, in any state, or a folder, view or webhook names it. It doesn't cover subtypes or compatibility dependents. */
                 force?: "true" | "false";
             };
             header?: {
@@ -14685,7 +14811,7 @@ export interface operations {
             };
             /**
              * @description - `type_has_subtypes`: other types name this one as their `parent` (`details.subtype_ids` lists them). Delete them, or give them another parent with `PUT /types/{id}`.
-             *     - `type_in_use`: an item of the type exists, in any state, and `force` isn't `true`.
+             *     - `type_in_use`: an item of the type exists, in any state, or a folder, view or webhook names it, and `force` isn't `true`. `details` counts the items and lists the settings. Move them with `POST /types/{id}/move`.
              */
             409: {
                 headers: {
@@ -14726,6 +14852,219 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CompatibleWithViolationRefusal"];
+                };
+            };
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
+            429: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RateLimitedRefusal"];
+                };
+            };
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
+            500: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InternalErrorRefusal"];
+                };
+            };
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            503: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WriteContentionRefusal"];
+                };
+            };
+            /** @description `insufficient_storage`: the disk that holds the instance's data has no room for the request, or the request would leave less free than the instance keeps in reserve. Nothing changed, unless `details.write_outcome` is `unknown`, which means the write may have landed: read what you changed before you repeat it. Free space on the disk, then try the request again. */
+            507: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InsufficientStorageRefusal"];
+                };
+            };
+        };
+    };
+    moveType: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description The ID of the instance you expect, as `GET /` returns it. If another instance answers at this address, Marfa returns `409 instance_changed` and doesn't write. Leave it out to send the request to whichever instance answers. */
+                "X-Marfa-Instance-Id"?: string;
+            };
+            path: {
+                /** @description The identifier of the type to move items out of, such as `acme.deal`. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @description The identifier of the type to move items to, such as `acme.contract`. It must be registered. */
+                    to: string;
+                    /** @description Properties to merge into every item as it moves, such as a field the new type requires. A `null` value removes a property. */
+                    properties?: {
+                        [key: string]: unknown;
+                    };
+                    /** @description `true` returns the items and settings the move would change and writes nothing. Defaults to `false`. */
+                    dry_run?: boolean;
+                };
+            };
+        };
+        responses: {
+            /** @description With `dry_run: true`, returns what the move would do. */
+            200: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TypeMoveDryRun"];
+                };
+            };
+            /** @description Returns the queued job. Poll it with `GET /items/bulk-actions/jobs/{id}`. Its `result` lists every item it couldn't move in `errors`, and says in `settings_rewritten` whether it rewrote `settings`. Run the move again to move what remains. */
+            202: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BulkActionJob"];
+                };
+            };
+            /**
+             * @description - `validation_error`: `to` is malformed or names the type itself.
+             *     - `unknown_type`: no type has the identifier `to`.
+             *     - `bulk_cap_exceeded`: the type holds over 50,000 items.
+             */
+            400: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BulkCapExceededOrUnknownTypeOrValidationErrorRefusal"];
+                };
+            };
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            401: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UnauthorizedRefusal"];
+                };
+            };
+            /**
+             * @description - `core_type_immutable`: Marfa ships the type, and its items stay in it.
+             *     - `type_not_permitted`: your type map doesn't grant write on both types.
+             */
+            403: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CoreTypeImmutableOrTypeNotPermittedRefusal"];
+                };
+            };
+            /** @description `type_not_found`: no type has this identifier. */
+            404: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TypeNotFoundRefusal"];
+                };
+            };
+            /** @description `type_move_blocked`: a folder, view or webhook names the type in a way the move can't rewrite. `details.settings` lists each, with its `reason`. Change them, then move. */
+            409: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TypeMoveBlockedRefusal"] | components["schemas"]["InstanceChangedRefusal"];
+                };
+            };
+            /** @description `request_too_large`: the request body is larger than this instance accepts. */
+            413: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RequestTooLargeRefusal"];
                 };
             };
             /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */

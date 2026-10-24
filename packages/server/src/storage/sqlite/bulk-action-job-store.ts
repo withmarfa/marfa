@@ -44,7 +44,7 @@ export async function scanPendingPropertyPatches(
     .where(
       and(
         openJob,
-        eq(bulkActionJobs.action, "update_properties"),
+        inArray(bulkActionJobs.action, PROPERTY_WRITING_ACTIONS),
         ...(cursor === undefined ? [] : [gt(bulkActionJobs.id, cursor)]),
       ),
     )
@@ -58,8 +58,12 @@ export async function scanPendingPropertyPatches(
   };
 }
 
+/** The actions whose stored input carries properties to write. */
+const PROPERTY_WRITING_ACTIONS = ["update_properties", "type_move"];
+
 function propertyPatch(input: string): unknown {
-  return (JSON.parse(input) as { patch?: unknown }).patch;
+  const parsed = JSON.parse(input) as { patch?: unknown; properties?: unknown };
+  return parsed.patch ?? parsed.properties;
 }
 
 /**
@@ -95,7 +99,7 @@ export class SqliteBulkActionJobStore implements BulkActionJobStore {
         .all();
       const row = rows[0];
       if (!row) throw new Error("bulk_action_jobs INSERT returned no row");
-      if (input.action === "update_properties")
+      if (PROPERTY_WRITING_ACTIONS.includes(input.action))
         await liftOrphanReports(tx, [propertyPatch(row.input)]);
       return rowToJob(row);
     });
@@ -239,15 +243,20 @@ export class SqliteBulkActionJobStore implements BulkActionJobStore {
       }
       const samples = JSON.parse(current.checkpoint_json) as BulkActionSamples;
       const succeeded = current.succeeded_count + delta.succeeded.length;
+      // A type move reports every item it left, so a person can deal with
+      // each before running it again.
+      const move = current.action === "type_move";
       const checkpoint: BulkActionSamples = {
         ids:
           succeeded <= RESPONSE_SAMPLE_CAP
             ? [...samples.ids, ...delta.succeeded]
             : [],
-        errors: [
-          ...samples.errors,
-          ...delta.errors.slice(0, RESPONSE_SAMPLE_CAP),
-        ].slice(0, RESPONSE_SAMPLE_CAP),
+        errors: move
+          ? [...samples.errors, ...delta.errors]
+          : [
+              ...samples.errors,
+              ...delta.errors.slice(0, RESPONSE_SAMPLE_CAP),
+            ].slice(0, RESPONSE_SAMPLE_CAP),
       };
       const changes = {
         next_offset: toOffset,
@@ -259,7 +268,8 @@ export class SqliteBulkActionJobStore implements BulkActionJobStore {
         checkpoint_json: JSON.stringify(checkpoint),
         worker_heartbeat_at: now,
       };
-      const finished = toOffset === current.matched_count;
+      // A type move completes only after its settings step.
+      const finished = toOffset === current.matched_count && !move;
       const rows = await this.db
         .update(bulkActionJobs)
         .set({
@@ -287,6 +297,7 @@ export class SqliteBulkActionJobStore implements BulkActionJobStore {
     lease: BulkActionJobLease,
     expectedOffset: number,
     now: string,
+    outcome?: Record<string, unknown>,
   ): Promise<boolean> {
     return this.db.transaction(async () => {
       const current = await this.getById(lease.jobId);
@@ -300,7 +311,7 @@ export class SqliteBulkActionJobStore implements BulkActionJobStore {
         .update(bulkActionJobs)
         .set({
           status: "completed",
-          result: JSON.stringify(summarizeJob(current)),
+          result: JSON.stringify({ ...summarizeJob(current), ...outcome }),
           finished_at: now,
           worker_heartbeat_at: null,
         })

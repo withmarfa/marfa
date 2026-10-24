@@ -75,19 +75,19 @@
     "calls": {
       "MetadataStore.addTags": 1,
       "MetadataStore.removeTag": 1,
-      "writeItem": 6
+      "writeItem": 8
     }
   },
   "bulk-actions/worker.ts": {
-    "boundary": "Audited resource-changing chunk plus checkpoint; leases/recovery/terminal status and failed-only checkpoints are operational. bulk-audit.test.ts and recovery-sweep.test.ts.",
+    "boundary": "Audited resource-changing chunk plus checkpoint; a type move's settings rewrite, completion and audit commit together. Leases/recovery/terminal status and failed-only checkpoints are operational. bulk-audit.test.ts and recovery-sweep.test.ts.",
     "calls": {
-      "BulkActionJobStore.beginChunk": 2,
+      "BulkActionJobStore.beginChunk": 3,
       "BulkActionJobStore.checkpointChunk": 2,
       "BulkActionJobStore.claimNext": 1,
-      "BulkActionJobStore.completeOwned": 1,
-      "BulkActionJobStore.failOwned": 2,
+      "BulkActionJobStore.completeOwned": 2,
+      "BulkActionJobStore.failOwned": 3,
       "BulkActionJobStore.recoverStale": 1,
-      "runAuditedTransaction": 1
+      "runAuditedTransaction": 2
     }
   },
   "enrichment/sweeper.ts": {
@@ -405,6 +405,13 @@
       "runAuditedTransaction": 3
     }
   },
+  "routes/type-move.ts": {
+    "boundary": "Audited enqueue of a type move's job; a dry run writes nothing. bulk-audit.test.ts.",
+    "calls": {
+      "BulkActionJobStore.create": 1,
+      "runAuditedTransaction": 1
+    }
+  },
   "routes/webhooks.ts": {
     "boundary": "Audited subscription and owned failed-delivery redelivery transitions; no audit on duplicate/refusal; audit-atomicity.test.ts.",
     "calls": {
@@ -483,6 +490,14 @@
     "calls": {
       "VersionStore.deleteByIds": 1,
       "runAuditedTransaction": 1
+    }
+  },
+  "type-move/settings.ts": {
+    "boundary": "Contained subwrites: the worker's audited type move finish owns the folder, view and webhook rewrites; bulk-audit.test.ts.",
+    "calls": {
+      "WebhookDeliveryStore.cancelUnselected": 1,
+      "WebhookStore.update": 1,
+      "writeItem": 1
     }
   },
   "webhooks/delivery.ts": {
