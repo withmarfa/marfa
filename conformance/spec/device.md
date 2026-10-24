@@ -770,11 +770,11 @@ While a hydration of a slice of every type has started and not completed, and th
 
 ### `device/hydrate-every-type-interrupted`
 
-When a device hydrates a slice of every type after an interrupted hydration, a device MUST read every page of the slice again.
+When a device hydrates a slice of every type after an interrupted hydration of that slice, a device MUST resume it from the page the interrupted hydration reached, on the item listing naming no type.
 
-**Reason:** `device/hydrate-not-resumed` holds for this slice too.
+**Reason:** `device/hydrate-resumes` holds for this slice too, and the listing it carries on is the one the interrupted hydration walked.
 
-**Tests:** `device/hydrate-every-type.test.ts › reads the whole slice again when a hydration stopped part way is run again`.
+**Tests:** `device/hydrate-every-type.test.ts › resumes a hydration of every type stopped part way from the page it reached`.
 
 ### `device/hydrate-surrogate-pair`
 

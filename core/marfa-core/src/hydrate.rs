@@ -2137,6 +2137,10 @@ mod tests {
     /// A page of the listing holding rows of the types named, each an id and
     /// a type.
     fn page_of(rows: &[(&str, &str)]) -> Answer {
+        page_then(rows, None)
+    }
+
+    fn page_then(rows: &[(&str, &str)], next: Option<&str>) -> Answer {
         let data: Vec<Value> = rows
             .iter()
             .map(|(id, row_type)| {
@@ -2146,7 +2150,7 @@ mod tests {
                 json!({"item": payload["item"], "metadata": payload["metadata"], "listed": true})
             })
             .collect();
-        let body = json!({"data": data, "next_cursor": null});
+        let body = json!({"data": data, "next_cursor": next});
         scripted::certified(scripted::json(200, &body.to_string()))
     }
 
@@ -2389,8 +2393,7 @@ mod tests {
     }
 
     #[test]
-    fn a_slice_of_every_type_stopped_part_way_is_read_whole_again() {
-        // A stop that came after the copy was cleared leaves it unfinished.
+    fn a_slice_of_every_type_stopped_part_way_resumes_naming_no_type() {
         let server = Scripted::start();
         let core = copy(&server);
         server.on(
@@ -2398,9 +2401,9 @@ mod tests {
             vec![
                 Answer::Slow {
                     after: std::time::Duration::from_millis(300),
-                    answer: Box::new(page_of(&[("a", "core.note")])),
+                    answer: Box::new(page_then(&[("a", "core.note")], Some("after-a"))),
                 },
-                page_of(&[("a", "core.note"), ("b", "acme.thing")]),
+                page_of(&[("b", "acme.thing")]),
             ],
         );
         at_head(&server);
@@ -2415,12 +2418,13 @@ mod tests {
         assert_eq!(core.status().unwrap().hydration, Hydration::InProgress);
 
         let report = hydrate_every_type(&core).unwrap();
-        assert_eq!(
-            report.items, 2,
-            "the second run did not read the slice whole"
-        );
+        assert!(report.resumed, "the second run did not resume the first");
+        assert_eq!(report.restarted, None);
+        assert_eq!([report.items, report.pages, report.pages_total], [2, 1, 2]);
         assert_eq!(core.status().unwrap().hydration, Hydration::Complete);
-        assert_eq!(server.seen("/items").len(), 2);
+        let seen = server.seen("/items");
+        assert_eq!(seen.len(), 2, "the resumed run read a page it held");
+        assert!(seen[1].query.contains("after-a"), "{}", seen[1].query);
         assert!(
             server
                 .seen("/items")
