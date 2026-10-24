@@ -3286,75 +3286,58 @@ mod tests {
         );
     }
 
-    /// A copy holding every type takes a row of a namespace registered after
-    /// it hydrated, with no second hydration, and never takes a `system.*`
-    /// row or the event for one.
+    fn system_events() -> Answer {
+        stream(
+            vec![
+                connected(),
+                event(
+                    "11",
+                    "item.created",
+                    &item_payload("item.created", "feed", "system.connection", 1),
+                ),
+                event(
+                    "12",
+                    "item.created",
+                    &item_payload("item.created", "pinned", "system.connection", 1),
+                ),
+                event(
+                    "13",
+                    "item.created",
+                    &item_payload("item.created", "note", NOTE, 1),
+                ),
+                stream_live(Some("13")),
+            ],
+            Then::End,
+        )
+    }
+
+    /// A copy of every type takes no `system.*` row by event, unless the row
+    /// is pinned, which keeps taking its updates whatever the slice.
     #[test]
-    fn a_copy_of_every_type_takes_a_namespace_registered_after_it_hydrated() {
+    fn a_copy_of_every_type_takes_no_system_row_that_is_not_pinned() {
         let server = Scripted::start();
         server.on(
             "/types",
-            vec![types(&[
-                (NOTE, None),
-                ("acme.thing", None),
-                ("system.connection", None),
-            ])],
+            vec![types(&[(NOTE, None), ("system.connection", None)])],
         );
-        server.on(
-            "/events",
-            vec![
-                stream(
-                    vec![
-                        connected(),
-                        event(
-                            "11",
-                            "item.created",
-                            &item_payload("item.created", "late", "acme.thing", 1),
-                        ),
-                        event(
-                            "12",
-                            "item.created",
-                            &item_payload("item.created", "feed", "system.connection", 1),
-                        ),
-                        stream_live(Some("12")),
-                    ],
-                    Then::End,
-                ),
-                stream(
-                    vec![
-                        connected(),
-                        event(
-                            "11",
-                            "item.created",
-                            &item_payload("item.created", "late", "acme.thing", 1),
-                        ),
-                        event(
-                            "12",
-                            "item.created",
-                            &item_payload("item.created", "feed", "system.connection", 1),
-                        ),
-                        stream_live(Some("12")),
-                    ],
-                    Then::End,
-                ),
-            ],
-        );
+        server.on("/events", vec![system_events(), system_events()]);
         let (_dir, core) = hydrated(&server);
         store::meta_set(&core.conn().unwrap(), store::META_SLICE_TYPES, "[\"*\"]").unwrap();
+        store::pin(&core.conn().unwrap(), "pinned").unwrap();
 
-        let report = core.catch_up().unwrap();
+        core.catch_up().unwrap();
 
-        assert!(report.catalog_changed);
-        assert!(
-            core.get("late").unwrap().is_some(),
-            "a row of a namespace registered after the hydration was not taken"
-        );
+        assert!(core.get("note").unwrap().is_some());
         assert_eq!(
             core.get("feed").unwrap(),
             None,
             "a slice of every type took a system row"
         );
-        assert_eq!(stored_cursor(&core).as_deref(), Some("12"));
+        assert!(
+            core.get("pinned").unwrap().is_some(),
+            "a pinned system row stopped taking its updates"
+        );
+        assert_eq!(stored_cursor(&core).as_deref(), Some("13"));
     }
 
     #[test]

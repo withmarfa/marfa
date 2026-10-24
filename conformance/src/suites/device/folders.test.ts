@@ -1726,51 +1726,57 @@ describe("what a folder's search holds", () => {
 });
 
 describe("a search naming no type", () => {
-  it("takes every type, and any default type, where its search names no type", async () => {
-    const system = "01a00000-0000-7000-8000-0000000002c1";
-    const note = "01a00000-0000-7000-8000-0000000002c2";
-    harness = await folderHarness("folder-every-type", {
-      settings: { search: {}, defaults: { type: "core.bookmark" } },
-      events: [
-        copyReplay("3", [
-          copyItemEvent(
-            "2",
-            "item.created",
-            wireItem({
-              id: system,
-              type: "system.connection",
-              properties: { title: "c" },
-            }),
-          ),
-          copyItemEvent(
-            "3",
-            "item.created",
-            wireItem({ id: note, properties: { title: "n", body: "b\n" } }),
-          ),
-        ]),
-        copyLiveReplay("3", []),
-      ],
-    });
-    scriptFolderWrites(harness);
-    acceptUploads(harness.server);
-    put(harness, "new.md", "---\ntitle: New\n---\nbody\n");
-    put(harness, "photo.png", "not really a picture");
-    const pushed = await harness.folder.push();
-    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
-    const types = sentCreates(harness)
-      .map((sent) => String(sent.type))
-      .sort();
-    expect(
-      types,
-      "a file of some type was left out of a search naming none",
-    ).toHaveLength(2);
-    expect(types[0]).toBe("core.bookmark");
-    expect(types[1]).toMatch(/^core\.file/);
-    expect((await harness.folder.device().get(note)).ok).toBe(true);
-    expect(
-      (await harness.folder.device().get(system)).ok,
-      "a slice of every type took a system row",
-    ).toBe(false);
+  it("takes every type, and any default type, where its search names no type or the star", async () => {
+    // The star is every type but `system.*`, so a folder naming it holds,
+    // writes and takes exactly what a folder naming no type does.
+    for (const search of [{}, { types: ["*"] }, { types: [" * "] }]) {
+      const system = "01a00000-0000-7000-8000-0000000002c1";
+      const note = "01a00000-0000-7000-8000-0000000002c2";
+      harness = await folderHarness("folder-every-type", {
+        settings: { search, defaults: { type: "core.bookmark" } },
+        events: [
+          copyReplay("3", [
+            copyItemEvent(
+              "2",
+              "item.created",
+              wireItem({
+                id: system,
+                type: "system.connection",
+                properties: { title: "c" },
+              }),
+            ),
+            copyItemEvent(
+              "3",
+              "item.created",
+              wireItem({ id: note, properties: { title: "n", body: "b\n" } }),
+            ),
+          ]),
+          copyLiveReplay("3", []),
+        ],
+      });
+      scriptFolderWrites(harness);
+      acceptUploads(harness.server);
+      put(harness, "new.md", "---\ntitle: New\n---\nbody\n");
+      put(harness, "photo.png", "not really a picture");
+      const pushed = await harness.folder.push();
+      expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+      const types = sentCreates(harness)
+        .map((sent) => String(sent.type))
+        .sort();
+      expect(
+        types,
+        `a file of some type was left out of a search naming ${JSON.stringify(search)}`,
+      ).toHaveLength(2);
+      expect(types[0]).toBe("core.bookmark");
+      expect(types[1]).toMatch(/^core\.file/);
+      expect((await harness.folder.device().get(note)).ok).toBe(true);
+      expect(
+        (await harness.folder.device().get(system)).ok,
+        `a slice of every type took a system row: ${JSON.stringify(search)}`,
+      ).toBe(false);
+      await harness.stop();
+      harness = undefined;
+    }
   });
 });
 

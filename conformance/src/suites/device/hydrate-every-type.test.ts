@@ -1,13 +1,10 @@
 import { describe, it, expect, afterEach } from "vitest";
+import { startHarness, scriptHydration, type Harness } from "./harness.js";
 import {
-  startHarness,
-  scriptHydration,
-  scriptKey,
-  type Harness,
-} from "./harness.js";
-import {
-  copyHeldLog,
+  answers,
+  copyHeadRead,
   copyItemEvent,
+  copyReplay,
   typeCatalog,
   wireItem,
   wireType,
@@ -16,8 +13,7 @@ import {
 /**
  * A slice of every type, declared as `*` alone, for an app and a folder alike
  * (`device/hydrate-every-type`). The listing it reads names no type, which
- * leaves `system.*` out, so a namespace registered after the hydration needs
- * no second one.
+ * leaves `system.*` out.
  */
 
 let harness: Harness | undefined;
@@ -70,7 +66,10 @@ describe("a slice of every type", () => {
 
     // The witness: the same rows named by type are read by their own
     // listings.
-    const named = await device.hydrate(["core.note", "core.bookmark"], "library");
+    const named = await device.hydrate(
+      ["core.note", "core.bookmark"],
+      "library",
+    );
     expect(named.ok && named.value.items).toBe(2);
     expect(
       listings(harness).some((query) => query.includes("type=core.note")),
@@ -78,7 +77,7 @@ describe("a slice of every type", () => {
     ).toBe(true);
   });
 
-  it("refuses the star beside another type before any request, and takes it said twice", async () => {
+  it("refuses the star beside a type that is not a system type before any request, and takes it said twice", async () => {
     harness = await startHarness("every-type-mixed");
     const { server, device } = harness;
     scriptHydration(server, { head: "10", rows: ROWS });
@@ -91,7 +90,7 @@ describe("a slice of every type", () => {
       const refused = await device.hydrate(types, "library");
       expect(
         refused.ok,
-        `hydrating ${JSON.stringify(types)} was accepted, so a slice of every type can carry types that add nothing`,
+        `hydrating ${JSON.stringify(types)} was accepted, so a slice of every type can carry a type the caller may have meant to name instead`,
       ).toBe(false);
       if (!refused.ok) expect(refused.refusal.code).toBe("invalid");
     }
@@ -104,54 +103,75 @@ describe("a slice of every type", () => {
     expect((await device.hydrate(["*", "*"], "library")).ok).toBe(true);
   });
 
-  it("takes an item of a namespace registered after it hydrated, with no second hydration, and never a system row", async () => {
-    harness = await startHarness("every-type-late");
+  it("takes the star beside a system type, and holds that type as well", async () => {
+    harness = await startHarness("every-type-beside-system");
+    const { server, device } = harness;
+    scriptHydration(server, {
+      head: "10",
+      catalog: typeCatalog([wireType("system.folder", { parent: undefined })]),
+      rows: {
+        ...ROWS,
+        "system.folder": [{ item: { id: "f1", type: "system.folder" } }],
+      },
+    });
+
+    const hydrated = await device.hydrate(["*", "system.folder"], "library");
+    expect(hydrated.ok, JSON.stringify(hydrated)).toBe(true);
+    expect((await device.get("n1")).ok).toBe(true);
+    expect(
+      (await device.get("f1")).ok,
+      "a system type named beside the star was left out",
+    ).toBe(true);
+    // The witness: a system type not named stays out.
+    expect((await device.get("s1")).ok).toBe(false);
+  });
+
+  it("takes no system row by event, but one that is pinned", async () => {
+    harness = await startHarness("every-type-no-system");
     const { server, device } = harness;
     scriptHydration(server, { head: "10", rows: ROWS });
-    // Registered after the hydration: it read the catalog without the type,
-    // every read after with it.
-    let reads = 0;
-    server.copyAnswer("GET", "/types", () => {
-      reads += 1;
-      return typeCatalog(
-        reads > 1 ? [wireType("acme.late", { parent: undefined })] : [],
-      );
-    });
-    scriptKey(server);
+    const settings = (version: number, title: string) =>
+      wireItem({
+        id: "settings",
+        type: "system.folder",
+        version,
+        properties: { title },
+      });
+    server.copyAnswer(
+      "GET",
+      "/items/settings",
+      answers.updated(settings(1, "pinned")),
+    );
     server.copyAnswer(
       "GET",
       "/events",
-      copyHeldLog([
+      copyReplay("13", [
         copyItemEvent(
           "11",
           "item.created",
-          wireItem({ id: "late", type: "acme.late" }),
-        ),
-        copyItemEvent(
-          "12",
-          "item.created",
           wireItem({ id: "feed", type: "system.connection" }),
         ),
+        copyItemEvent("12", "item.updated", settings(2, "changed")),
+        copyItemEvent("13", "item.created", wireItem({ id: "later" })),
       ]),
+      copyHeadRead("13"),
     );
     expect((await device.hydrate(["*"], "library")).ok).toBe(true);
-    const hydrations = listings(harness).length;
+    expect((await device.pin("settings")).ok).toBe(true);
 
     const caught = await device.catchUp();
     expect(caught.ok, JSON.stringify(caught)).toBe(true);
-    expect(
-      (await device.get("late")).ok,
-      "an item of a namespace registered after the hydration was dropped, so an app holding every type has to hydrate again to see it",
-    ).toBe(true);
+    // The witness: the stream carried rows a slice of every type takes.
+    expect((await device.get("later")).ok).toBe(true);
     expect(
       (await device.get("feed")).ok,
       "a system event entered a slice of every type",
     ).toBe(false);
+    const held = await device.get("settings");
     expect(
-      listings(harness).length,
-      "the item arrived by a listing, not by its event",
-    ).toBe(hydrations);
-    if (caught.ok) expect(caught.value.cursor).toBe("12");
+      held.ok && held.value.properties.title,
+      "a pinned system row stopped taking its updates in a slice of every type",
+    ).toBe("changed");
   });
 
   it("counts every type but system.* as the items expected, and leaves the count out where the server gave none", async () => {

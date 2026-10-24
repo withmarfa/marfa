@@ -563,9 +563,10 @@ impl Core {
     /// old slice to the new copy. A caller stops its follow first. A watch is
     /// not stopped: the hydration takes its stream, and gives it back.
     ///
-    /// `types` is the slice's types, or `store::EVERY_TYPE` alone for every
-    /// type but `system.*`, which a namespace registered later joins with no
-    /// second hydration. `EVERY_TYPE` beside another type is `Invalid`.
+    /// `types` is the slice's types. `store::EVERY_TYPE` alone is every type
+    /// but `system.*`, hydrated in one pass with no need to read the catalog
+    /// and name its types first; beside `system.*` types it adds them, and
+    /// beside any other type it is `Invalid`.
     pub fn hydrate(&self, types: &[String], tier: SliceTier) -> Result<HydrateReport> {
         self.hydrate_with(types, tier, &[])
     }
@@ -590,7 +591,7 @@ impl Core {
     }
 
     /// Holds every edge of `edge_types` the key reads, whichever ends the
-    /// copy holds.
+    /// copy holds. `types` reads as in [`Core::hydrate`].
     pub fn hydrate_with(
         &self,
         types: &[String],

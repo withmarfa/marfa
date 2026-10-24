@@ -524,13 +524,13 @@ If a hydration declares no type, then a device MUST refuse it `invalid` before i
 
 **Tests:** `device/hydration.test.ts › refuses an empty type list before reading anything`.
 
-### `device/hydrate-every-type-alone`
+### `device/hydrate-every-type-not-beside-types`
 
-If a hydration declares `*` beside another type, then a device MUST refuse it `invalid` before it reads anything.
+If a hydration declares `*` beside a type that is not a `system.*` type, then a device MUST refuse it `invalid` before it reads anything.
 
-**Reason:** `*` is every type but `system.*`, so a type beside it adds nothing and a caller that wrote one meant something else.
+**Reason:** `*` is every type but `system.*`, so a type beside it that is not a `system.*` type is one the caller either meant to name instead of `*` or already holds, and the slice a caller means is not clear. A `system.*` type beside it adds the rows `*` leaves out (`device/hydrate-every-type-beside-system`).
 
-**Tests:** `device/hydrate-every-type.test.ts › refuses the star beside another type before any request, and takes it said twice`.
+**Tests:** `device/hydrate-every-type.test.ts › refuses the star beside a type that is not a system type before any request, and takes it said twice`.
 
 ### `device/hydrate-grammar`
 
@@ -670,25 +670,23 @@ When a hydration completes, a device MUST report the types, tier and edge types 
 
 ### `device/hydrate-every-type`
 
-When a hydration declares `*` alone, or a folder whose search names no type hydrates its copy, a device MUST read the item listing naming no type, which leaves `system.*` out (`folders/search-default-types`), and report the slice's types as `*`.
+When a hydration declares `*` alone, or a folder whose search names no type or names `*` hydrates its copy, a device MUST read the item listing naming no type, which leaves `system.*` out (`folders/search-default-types`), and report the slice's types as `*`.
 
-**Tests:** `device/hydrate-every-type.test.ts › hydrates every type but system.* from the listing naming no type`, `device/folders.test.ts › holds exactly what its search matches`, `› takes every type, and any default type, where its search names no type`.
+**Tests:** `device/hydrate-every-type.test.ts › hydrates every type but system.* from the listing naming no type`, `device/hydrate-every-type-live.test.ts › holds every type registered before the hydration in one pass, and takes a later item of each by its event`, `device/folders.test.ts › holds exactly what its search matches`, `› takes every type, and any default type, where its search names no type or the star`.
 
-### `device/hydrate-every-type-registered-later`
+### `device/hydrate-every-type-beside-system`
 
-While a device's slice is every type and its reach is unchanged, a device MUST apply an event for an item of a type its catalog did not hold when it hydrated, without a second hydration.
+When a hydration declares `*` beside `system.*` types, a device MUST hold every type but `system.*` and the declared `system.*` types.
 
-**Reason:** an app that wants everything should not read its slice twice because the catalog it hydrated under was older than the one the stream carries. A type registered on the server changes the reach (`reach/moves-type-topology`), which expires every copy whatever its slice (`device/reach-changed`), so this holds for a catalog the copy read again under the reach it holds.
-
-**Tests:** `device/hydrate-every-type.test.ts › takes an item of a namespace registered after it hydrated, with no second hydration, and never a system row`, `device/hydrate-every-type-live.test.ts › holds every type registered before the hydration in one pass, and takes a later item of each by its event`.
+**Tests:** `device/hydrate-every-type.test.ts › takes the star beside a system type, and holds that type as well`, `device/hydrate-every-type-live.test.ts › holds every type registered before the hydration in one pass, and takes a later item of each by its event`.
 
 ### `device/hydrate-every-type-no-system`
 
-While a device's slice is every type, a device MUST NOT apply an event for a `system.*` item.
+While a device's slice is `*` alone, a device MUST NOT apply an event for a `system.*` item that is not pinned.
 
-**Reason:** the listing the slice reads leaves `system.*` out (`folders/search-default-types`), so a copy that took one by event would hold what no hydration of the same slice holds.
+**Reason:** the listing the slice reads leaves `system.*` out (`folders/search-default-types`), so a copy that took one by event would hold what no hydration of the same slice holds. A pinned row keeps taking its updates, whatever the slice.
 
-**Tests:** `device/hydrate-every-type.test.ts › takes an item of a namespace registered after it hydrated, with no second hydration, and never a system row`.
+**Tests:** `device/hydrate-every-type.test.ts › takes no system row by event, but one that is pinned`.
 
 ### `device/hydrate-every-type-expected`
 

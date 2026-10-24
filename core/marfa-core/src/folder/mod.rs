@@ -1050,7 +1050,7 @@ fn whole_edge_types(settings: &Settings, edge_types: &EdgeTypes, catalog: &Catal
         whole.push(crate::filter::PARENT_OF.into());
     }
     // A search of files alone holds no document to embed one.
-    let documents = settings.types().is_empty()
+    let documents = settings.names_every_type()
         || settings
             .types()
             .iter()
@@ -1465,12 +1465,9 @@ impl Folder {
 
     fn file_type_of(&self, path: &Path, settings: &Settings, catalog: &Catalog) -> Option<String> {
         let file_type = bytes_type(path, catalog)?;
-        let types = settings.types();
-        (types.is_empty()
-            || types
-                .iter()
-                .any(|declared| catalog.matches(declared, &file_type)))
-        .then_some(file_type)
+        settings
+            .holds_type(catalog, &file_type)
+            .then_some(file_type)
     }
 
     /// A document's links and lines, to read once every file is bound.

@@ -90,4 +90,6 @@ it("holds every type registered before the hydration in one pass, and takes a la
   const refused = await copy.hydrate(["*", types[0]!], "library");
   expect(refused.ok).toBe(false);
   if (!refused.ok) expect(refused.refusal.code).toBe("invalid");
+  const beside = await copy.hydrate(["*", "system.folder"], "library");
+  expect(beside.ok, JSON.stringify(beside)).toBe(true);
 });

@@ -230,13 +230,20 @@ impl Settings {
         Ok(())
     }
 
-    pub(crate) fn holds_type(&self, catalog: &Catalog, named: &str) -> bool {
+    /// Whether the search names no type or names `*`: every type but
+    /// `system.*`. The one reading of the star, so a folder naming it holds,
+    /// writes and reports exactly what a folder naming no type does.
+    pub(crate) fn names_every_type(&self) -> bool {
         self.search.types.is_empty()
             || self
                 .search
                 .types
                 .iter()
-                .any(|declared| catalog.matches(declared, named))
+                .any(|named| named.trim() == crate::store::EVERY_TYPE)
+    }
+
+    pub(crate) fn holds_type(&self, catalog: &Catalog, named: &str) -> bool {
+        crate::store::declares_type(catalog, &self.slice_types(), named)
     }
 
     /// What the search holds, as clauses on `items`: the one evaluation a
@@ -248,11 +255,15 @@ impl Settings {
         clauses: &mut Vec<String>,
         values: &mut Vec<Value>,
     ) -> Result<()> {
-        let types = &self.search.types;
-        if !types.is_empty() && !types.iter().any(|named| named == crate::store::EVERY_TYPE) {
+        if !self.names_every_type() {
             let mut alternatives = Vec::new();
-            for named in types {
-                crate::query::narrow_by_type(catalog, Some(named), &mut alternatives, values)?;
+            for named in &self.search.types {
+                crate::query::narrow_by_type(
+                    catalog,
+                    Some(named.trim()),
+                    &mut alternatives,
+                    values,
+                )?;
             }
             clauses.push(format!("({})", alternatives.join(" OR ")));
         }
@@ -324,7 +335,7 @@ impl Settings {
         if !named.is_empty() {
             named.sort_unstable();
             let named = named.join(", ");
-            return Err(unanswerable(if self.search.types.is_empty() {
+            return Err(unanswerable(if self.names_every_type() {
                 format!(
                     "the folder holds every type but `system.*`, and this copy's slice does not take {named}; hydrate with them, or with every type the key reads"
                 )
@@ -360,15 +371,14 @@ impl Settings {
     /// type or names `*`, which `narrow` reads as every type, and the types
     /// otherwise.
     pub(crate) fn slice_types(&self) -> Vec<String> {
-        let types = &self.search.types;
-        if types.is_empty()
-            || types
-                .iter()
-                .any(|named| named.trim() == crate::store::EVERY_TYPE)
-        {
+        if self.names_every_type() {
             vec![crate::store::EVERY_TYPE.to_string()]
         } else {
-            types.iter().map(|named| named.trim().to_string()).collect()
+            self.search
+                .types
+                .iter()
+                .map(|named| named.trim().to_string())
+                .collect()
         }
     }
 
@@ -390,11 +400,15 @@ impl Settings {
             .r#type
             .clone()
             .or_else(|| {
+                if self.names_every_type() {
+                    return None;
+                }
                 self.search
                     .types
                     .iter()
+                    .map(|declared| declared.trim())
                     .find(|declared| !catalog.matches(super::FILE_TYPE, declared))
-                    .cloned()
+                    .map(str::to_string)
             })
             .unwrap_or_else(|| DOCUMENT_TYPE.to_string())
     }
@@ -550,6 +564,37 @@ mod tests {
         let unheld = read(json!({ "search": { "types": ["core.note"] }, "defaults": { "type": "core.bookmark" } }))
             .unwrap();
         assert!(unheld.check_types(&catalog).is_err());
+    }
+
+    #[test]
+    fn a_search_naming_the_star_is_read_as_a_search_naming_no_type() {
+        let catalog = Catalog::load(&crate::store::testing::conn()).unwrap();
+        let clauses = |settings: &Settings| {
+            let (mut clauses, mut values) = (Vec::new(), Vec::new());
+            settings
+                .narrow(&catalog, &mut clauses, &mut values)
+                .unwrap();
+            (clauses, values)
+        };
+        let none = read(json!({ "defaults": { "type": "core.bookmark" } })).unwrap();
+        for types in [json!(["*"]), json!([" * "]), json!(["*", "core.note"])] {
+            let starred = read(json!({
+                "search": { "types": types },
+                "defaults": { "type": "core.bookmark" },
+            }))
+            .unwrap();
+            assert!(starred.holds_type(&catalog, "core.note"), "{types}");
+            assert!(starred.holds_type(&catalog, "acme.thing"), "{types}");
+            assert!(starred.check_types(&catalog).is_ok(), "{types}");
+            assert_eq!(starred.slice_types(), none.slice_types(), "{types}");
+            assert_eq!(clauses(&starred), clauses(&none), "{types}");
+            assert_eq!(starred.new_type(&catalog), "core.bookmark", "{types}");
+        }
+        let starred = read(json!({ "search": { "types": ["*"] } })).unwrap();
+        assert_eq!(starred.new_type(&catalog), "core.note");
+        // The witness: a named type still holds only itself.
+        let named = read(json!({ "search": { "types": ["core.bookmark"] } })).unwrap();
+        assert!(!named.holds_type(&catalog, "core.note"));
     }
 
     #[test]

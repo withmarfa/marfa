@@ -522,8 +522,8 @@ fn listed_tier(declared: Option<&str>, tier: SliceTier) -> SliceTier {
     }
 }
 
-/// `*` alone is every type but `system.*`; beside another type it is refused,
-/// since a slice of every type has nothing to add to.
+/// `*` is every type but `system.*`, so it stands beside `system.*` types,
+/// which it adds, and beside no other.
 fn declared_types(types: &[String]) -> Result<Vec<String>> {
     let mut declared = Vec::new();
     for raw in types {
@@ -540,9 +540,13 @@ fn declared_types(types: &[String]) -> Result<Vec<String>> {
     if declared.is_empty() {
         return Err(CoreError::Invalid("declare at least one type".into()));
     }
-    if declared.len() > 1 && declared.iter().any(|name| name == store::EVERY_TYPE) {
+    if declared.iter().any(|name| name == store::EVERY_TYPE)
+        && declared
+            .iter()
+            .any(|name| name != store::EVERY_TYPE && !store::is_system(name))
+    {
         return Err(CoreError::Invalid(format!(
-            "`{}` is every type but system.*, so it stands alone: leave out the other types, or name the types without it",
+            "`{}` is every type but system.*, so it stands beside system.* types only: leave out the other types, or name the types without it",
             store::EVERY_TYPE
         )));
     }
@@ -1884,6 +1888,47 @@ mod tests {
             core.hydrate_until(&[], SliceTier::Library, &[], &AtomicBool::new(false)),
             Err(CoreError::Invalid(_))
         ));
+    }
+
+    #[test]
+    fn a_slice_of_every_type_takes_named_system_types_beside_it() {
+        for types in [vec!["*", "system.folder"], vec!["system.folder", " * "]] {
+            let server = Scripted::start();
+            let core = copy(&server);
+            server.on(
+                "/types",
+                vec![scripted::certified(scripted::types(&[
+                    ("core.note", None),
+                    ("system.folder", None),
+                ]))],
+            );
+            server.on(
+                "/keys/current",
+                vec![scripted::certified(scripted::refusal(403, "forbidden"))],
+            );
+            // The first answer is the probe of the named type.
+            server.on(
+                "/items",
+                vec![
+                    page_of(&[]),
+                    page_of(&[("a", "core.note")]),
+                    page_of(&[("f", "system.folder")]),
+                ],
+            );
+            at_head(&server);
+            let types: Vec<String> = types.iter().map(|name| name.to_string()).collect();
+
+            let report = core
+                .hydrate_until(&types, SliceTier::Library, &[], &AtomicBool::new(false))
+                .unwrap();
+
+            assert_eq!(report.items, 2, "{types:?}");
+            assert!(core.get("a").unwrap().is_some(), "{types:?}");
+            assert!(
+                core.get("f").unwrap().is_some(),
+                "{types:?}: a system type named beside the star was left out"
+            );
+        }
     }
 
     #[test]
