@@ -83,8 +83,8 @@ export function edgeTypeFromStored(json: string): EdgeTypeSchema {
     Partial<Pick<EdgeTypeSchema, "label">>;
   // `label` follows `id`, where a registration puts it, so a stored row and
   // the same registration read the same when an archive restore compares them.
-  const { id, ...rest } = stored;
-  return { id, label: namedLabel(stored.label) ?? labelFromId(id), ...rest };
+  const { id, label, ...rest } = stored;
+  return { id, label: namedLabel(label) ?? labelFromId(id), ...rest };
 }
 
 /** Removes a custom edge-type schema from the runtime overlay. */
