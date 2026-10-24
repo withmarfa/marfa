@@ -389,6 +389,7 @@ impl CliError {
                 CoreError::Unauthorized { .. } | CoreError::SignedOut { .. } => Exit::Credential,
                 CoreError::Io(_)
                 | CoreError::StorageFull(_)
+                | CoreError::NoRoom { .. }
                 | CoreError::RateLimited { .. }
                 | CoreError::Server { .. }
                 | CoreError::Network(_)

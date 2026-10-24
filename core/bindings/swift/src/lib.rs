@@ -1067,6 +1067,14 @@ pub enum MarfaError {
         reason: String,
         message: String,
     },
+    /// The volume holding the file cache has less room than a fetch still has
+    /// to receive.
+    NoRoom {
+        hash: String,
+        size: u64,
+        free: u64,
+        message: String,
+    },
     /// The server speaks a contract this build was not made for, and its
     /// answer was not read.
     ContractMismatch {
@@ -1121,6 +1129,7 @@ impl MarfaError {
             | MarfaError::StreamIncomplete { message, .. }
             | MarfaError::WrongServer { message, .. }
             | MarfaError::BytesAbsent { message, .. }
+            | MarfaError::NoRoom { message, .. }
             | MarfaError::ContractMismatch { message, .. }
             | MarfaError::Canceled { message }
             | MarfaError::FirstSyncWaiting { message }
@@ -1163,6 +1172,7 @@ impl MarfaError {
             MarfaError::StreamIncomplete { .. } => marfa_core::CoreErrorKind::StreamIncomplete,
             MarfaError::WrongServer { .. } => marfa_core::CoreErrorKind::WrongServer,
             MarfaError::BytesAbsent { .. } => marfa_core::CoreErrorKind::BytesAbsent,
+            MarfaError::NoRoom { .. } => marfa_core::CoreErrorKind::NoRoom,
             MarfaError::ContractMismatch { .. } => marfa_core::CoreErrorKind::ContractMismatch,
             MarfaError::Canceled { .. } => marfa_core::CoreErrorKind::Canceled,
             MarfaError::FirstSyncWaiting { .. } => marfa_core::CoreErrorKind::FirstSyncWaiting,
@@ -1246,6 +1256,12 @@ impl From<marfa_core::CoreError> for MarfaError {
             E::BytesAbsent { hash, reason } => MarfaError::BytesAbsent {
                 hash,
                 reason,
+                message,
+            },
+            E::NoRoom { hash, size, free } => MarfaError::NoRoom {
+                hash,
+                size,
+                free,
                 message,
             },
             E::ContractMismatch {
@@ -2586,6 +2602,11 @@ mod tests {
                 hash: text(),
                 reason: text(),
             },
+            E::NoRoom {
+                hash: text(),
+                size: 5,
+                free: 3,
+            },
             E::ContractMismatch {
                 origin: text(),
                 served: None,
@@ -2947,6 +2968,15 @@ mod tests {
                 }
                 .into(),
                 "BytesAbsent",
+            ),
+            (
+                E::NoRoom {
+                    hash: "sha256:h".into(),
+                    size: 5,
+                    free: 4,
+                }
+                .into(),
+                "NoRoom",
             ),
             (
                 E::ContractMismatch {

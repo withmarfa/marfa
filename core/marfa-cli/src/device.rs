@@ -309,8 +309,8 @@ pub enum BlobsCommand {
         /// Omit it to show the budget in force. Setting one also removes
         /// files to fit it, and reports the bytes removed.
         value: Option<String>,
-        /// Remove the files read longest ago until the budget holds, and
-        /// report the bytes removed.
+        /// Remove files larger than the budget, then the files read longest
+        /// ago, until the budget holds, and report the bytes removed.
         #[arg(long)]
         trim: bool,
     },

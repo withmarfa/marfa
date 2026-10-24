@@ -1418,6 +1418,154 @@ When bytes a device kept have been taken away from beside the store, a device MU
 
 **Tests:** `device/folders-placement.test.ts › keeps no copy beside the store of bytes its file holds, and fetches them again when asked`.
 
+### `device/blob-fetch-bound-stated`
+
+When a device fetches bytes that a file in its working copy states a size for, a device MUST bound the fetch by that size.
+
+**Tests:** `device/large-files.test.ts › is fetched and read, whatever the budget`.
+
+### `device/blob-fetch-bound-not-budget`
+
+When a device fetches bytes, a device MUST NOT refuse or cut the fetch because its size is larger than the file budget.
+
+**Reason:** a file larger than the file budget is still a file a person asked for. The budget says what the cache keeps once nothing reads it, not what a device may fetch.
+
+**Tests:** `device/large-files.test.ts › is fetched and read, whatever the budget`.
+
+### `device/blob-fetch-bound-file-only`
+
+When a device fetches bytes, a device MUST take the size that bounds the fetch only from an item whose type is `core.file` or a subtype of it.
+
+**Reason:** the server stamps `size_bytes` on a file from the bytes it holds and on no other type, so another type's `size_bytes` is a writer's claim that could cut a fetch short.
+
+**Tests:** `device/large-files.test.ts › is bounded by the link where only a note states a smaller size for the same bytes`.
+
+### `device/blob-fetch-bound-link`
+
+When a device fetches bytes that no file in its working copy states a size for, a device MUST bound the fetch by the length the link states.
+
+**Tests:** `device/large-files.test.ts › is fetched with no stated size, bounded by the link's length`.
+
+### `device/blob-fetch-unsized-refused`
+
+If a device fetches bytes that no file in its working copy states a size for and the link states no length, then a device MUST refuse the ask `bytes_absent`.
+
+**Reason:** a fetch with no bound would fill the volume for a link that never ends.
+
+**Tests:** `device/large-files.test.ts › is refused where the link states no length and the copy states no size`.
+
+### `device/blob-fetch-unsized-keeps-none`
+
+If a device refuses a fetch because it has no bound, then a device MUST NOT keep any of what the link sent.
+
+**Tests:** `device/large-files.test.ts › is refused where the link states no length and the copy states no size`.
+
+### `device/blob-fetch-overlong-refused`
+
+If a link sends more bytes than the bound of the fetch, then a device MUST refuse the ask `bytes_absent`.
+
+**Tests:** `device/large-files.test.ts › is refused when the link sends more than the size the copy states, leaving nothing`.
+
+### `device/blob-fetch-overlong-keeps-none`
+
+If a device refuses a fetch because the link sent more bytes than its bound, then a device MUST NOT keep any of the bytes, whole or partial.
+
+**Tests:** `device/large-files.test.ts › is refused when the link sends more than the size the copy states, leaving nothing`.
+
+### `device/blob-fetch-no-room`
+
+If the volume that holds the file cache has fewer free bytes than the fetch still has to receive, then a device MUST refuse the ask `no_room`, naming the size of the file and the bytes free, before it receives any byte.
+
+**Reason:** a fetch the volume cannot hold fails after it has spent the link's data and the volume's space.
+
+**Tests:** `device/large-files.test.ts › is refused before it starts, naming the size and the space free, leaving nothing`, `› is taken where the bytes still to come fit, though the whole file would not`.
+
+### `device/blob-fetch-no-room-leaves-none`
+
+If a device refuses a fetch `no_room`, then a device MUST leave no file of that fetch in the file cache, including any partial file an earlier fetch of the same bytes left.
+
+**Tests:** `device/large-files.test.ts › is refused before it starts, naming the size and the space free, leaving nothing`, `› is refused for the bytes still to come when part of the file is held, and drops what was held`.
+
+### `device/blob-fetch-no-room-takes-partials`
+
+If the volume that holds the file cache has fewer free bytes than a fetch still has to receive, then a device MUST take the partial files of other bytes that no fetch holds before it refuses the ask `no_room`.
+
+**Reason:** a partial file left by a fetch that stopped is space the person did not choose to spend, and no file budget bounds it until a trim runs.
+
+**Tests:** `device/large-files.test.ts › is taken by a fetch the volume has no room for, before the ask is refused`.
+
+### `device/blob-fetch-disk-full-refused`
+
+If the volume fills while a device writes fetched bytes, then a device MUST refuse the ask `storage_full`.
+
+**Tests:** `device/large-files.test.ts › drops the bytes held when the disk fills part way, so the space is given back`.
+
+### `device/blob-fetch-disk-full-drops`
+
+If the volume fills while a device writes fetched bytes, then a device MUST NOT keep the bytes written so far.
+
+**Reason:** the partial file is the space the volume lacks, and a fetch that is retried once there is room starts again.
+
+**Tests:** `device/large-files.test.ts › drops the bytes held when the disk fills part way, so the space is given back`.
+
+### `device/blob-fetch-resume-kept`
+
+If a fetch stops before it has all the bytes because the link broke or went quiet, then a device MUST keep the bytes received in the file cache, named by the hash and not as the blob.
+
+**Tests:** `device/large-files.test.ts › resumes with a range request against a server that honours ranges, on a new link`, `› is taken when the link goes quiet part way, as a link that stops`.
+
+### `device/blob-fetch-resume-not-answered`
+
+While a device holds only the first part of a blob's bytes, a device MUST NOT answer those bytes as the blob.
+
+**Tests:** `device/large-files.test.ts › resumes with a range request against a server that honours ranges, on a new link`, `› is taken when the link goes quiet part way, as a link that stops`.
+
+### `device/blob-fetch-resume-range`
+
+When a device fetches bytes of which it holds the first part from an earlier fetch, a device MUST ask the link for the rest with a `Range` request that begins at the first byte it does not hold.
+
+**Tests:** `device/large-files.test.ts › resumes with a range request against a server that honours ranges, on a new link`.
+
+### `device/blob-fetch-resume-new-link`
+
+When a device resumes a fetch, a device MUST ask the server for the blob's link again.
+
+**Reason:** the link of the earlier fetch may have expired.
+
+**Tests:** `device/large-files.test.ts › resumes with a range request against a server that honours ranges, on a new link`.
+
+### `device/blob-fetch-resume-appends`
+
+If the link answers a `Range` request `206` with a `Content-Range` that begins at the first byte the device does not hold and ends at the last byte of the file, then a device MUST append the body to the bytes it holds.
+
+**Tests:** `device/large-files.test.ts › resumes with a range request against a server that honours ranges, on a new link`.
+
+### `device/blob-fetch-resume-restarts`
+
+If the link answers a `Range` request `200`, then a device MUST discard the bytes it holds and receive the whole file from the start.
+
+**Tests:** `device/large-files.test.ts › starts again from nothing against a server that answers a range request with 200`.
+
+### `device/blob-fetch-resume-other-fails`
+
+If the link answers a `Range` request with any other status, or with a `206` whose range does not begin where the bytes held end, or whose last byte is before its first or is not the last byte of the whole, then a device MUST refuse the ask `bytes_absent`.
+
+**Reason:** the range comes from a server the device does not control, so a last byte at the largest number a 64-bit count holds is an answer to refuse, never one to add to.
+
+**Tests:** `device/large-files.test.ts › fails on any other answer to a range request, and on a range that does not begin where the bytes held end`, `› fails on a range whose last byte overflows or lies past the whole`.
+
+### `device/blob-fetch-resume-hash`
+
+If the hash of a resumed fetch's whole file differs from the blob's name, then a device MUST refuse the ask `decoding`.
+
+**Tests:** `device/large-files.test.ts › keeps nothing of a resumed fetch whose whole does not hash to the blob's name`.
+
+### `device/blob-fetch-resume-hash-not-kept`
+
+If the hash of a resumed fetch's whole file differs from the blob's name, then a device MUST NOT keep the bytes, whole or partial.
+
+**Tests:** `device/large-files.test.ts › keeps nothing of a resumed fetch whose whole does not hash to the blob's name`.
+
 ### `device/upload-copied`
 
 When a device queues an upload, a device MUST copy the file's bytes beside the store, named by their hash, so that a later change to the file does not change what is sent.
@@ -1556,9 +1704,11 @@ While the file budget is to keep every file, a device MUST NOT take away bytes i
 
 ### `device/file-budget-reported`
 
-A device MUST report in its state report the setting, the budget in force, which is none while every file is kept, and the bytes the cache holds.
+A device MUST report in its state report the setting, the budget in force, which is none while every file is kept, and the bytes the cache holds, which are those of every kept file and every partial file a fetch left or is writing.
 
-**Tests:** `device/file-cache.test.ts › gives the default budget from the volume's size and free space, counting what it holds`, `› keeps every file fetched when told to, and reports no budget`.
+**Reason:** a partial file takes the volume's space as a kept file does, and a count that left it out would be too small for a trim to work from.
+
+**Tests:** `device/file-cache.test.ts › gives the default budget from the volume's size and free space, counting what it holds`, `› keeps every file fetched when told to, and reports no budget`, `device/large-files.test.ts › counts in the bytes held, and a trim takes it where no fetch holds it`.
 
 ### `device/file-budget-held-unknown`
 
@@ -1618,7 +1768,7 @@ When a caller sets the file budget or asks a device to trim, a device MUST answe
 
 ### `device/file-trim-order`
 
-When a device takes bytes away to fit the file budget, a device MUST take those read longest ago first.
+When a device takes bytes away to fit the file budget, a device MUST take those read longest ago first, after any bytes of a file larger than the budget (`device/file-trim-oversize-first`).
 
 **Tests:** `device/file-cache.test.ts › runs after a fetch, takes the bytes read longest ago first and stops when the rest fit`.
 
@@ -1644,6 +1794,36 @@ While a caller waits for a device to answer where bytes are held, or to answer a
 
 **Tests:** `device/file-cache.test.ts › keeps the bytes being read, under a budget of zero`.
 
+### `device/file-trim-oversize-first`
+
+When a device takes bytes away to fit the file budget, a device MUST take bytes of a file larger than the budget before any other, whenever they were read.
+
+**Reason:** such a file cannot fit however much else is taken, so a trim that went by reading alone would empty the cache and still not fit.
+
+**Tests:** `device/large-files.test.ts › is taken first when a trim fits the budget, whenever it was read`.
+
+### `device/file-trim-protected-oversize-uncounted`
+
+When a device takes bytes away to fit the file budget, a device MUST NOT count against the budget the bytes of a file larger than the budget that a caller is reading or a queued upload names.
+
+**Reason:** the bytes are read, or a queued upload names them, so no trim can take them. Counting them would take every other file for bytes that stay, and the next trim, once nothing protects them, takes them first.
+
+**Tests:** `device/large-files.test.ts › keeps the other files the budget holds, and takes the large one first at the next trim`.
+
+### `device/file-trim-counts-partials`
+
+When a device takes bytes away to fit the file budget, a device MUST count the partial files of fetches with the bytes it holds.
+
+**Tests:** `device/large-files.test.ts › counts in the bytes held, and a trim takes it where no fetch holds it`.
+
+### `device/file-trim-takes-unheld-partials`
+
+When a device takes bytes away to fit the file budget, a device MUST take a partial file that no fetch holds as it takes a kept file.
+
+**Reason:** a partial file that no fetch holds is a fetch that stopped, and a person who gave the cache a budget gave the partial file's space to it.
+
+**Tests:** `device/large-files.test.ts › counts in the bytes held, and a trim takes it where no fetch holds it`.
+
 ### `device/file-fetched-unbacked`
 
 Where the platform's backup honors a mark on a file, which on Apple platforms is the one `NSURL`'s `isExcludedFromBackup` sets, when a device keeps bytes it fetched, a device MUST mark their file excluded from backups.
@@ -1651,6 +1831,14 @@ Where the platform's backup honors a mark on a file, which on Apple platforms is
 **Reason:** the server holds the bytes a device fetched, so a backup of them would copy a person's files twice.
 
 **Tests:** `device/file-cache.test.ts › keeps the bytes it fetched out of backups, and the bytes of an upload in them`.
+
+### `device/file-partial-unbacked`
+
+Where the platform's backup honors a mark on a file, when a device makes the partial file of a fetch, a device MUST mark it excluded from backups.
+
+**Reason:** a partial file is bytes a device fetched, which the server holds, and a fetch that stops leaves it behind for a resume.
+
+**Tests:** `device/file-cache.test.ts › keeps the partial file of a fetch that stopped out of backups`.
 
 ### `device/file-upload-backed-up`
 
@@ -1662,9 +1850,9 @@ Where the platform's backup honors a mark on a file or a folder, a device MUST N
 
 ### `device/file-backup-failure-said`
 
-Where the platform's backup honors a mark on a file, if a device cannot mark the file of bytes it fetched excluded from backups, then a device MUST say why in its state report until it next marks a file of fetched bytes.
+Where the platform's backup honors a mark on a file, if a device cannot mark the file of bytes it fetched, or the partial file of a fetch, excluded from backups, then a device MUST say why in its state report until it next marks a file of fetched bytes.
 
-**Tests:** `device/file-cache.test.ts › says in its state report when fetched bytes cannot be kept out of backups`.
+**Tests:** `device/file-cache.test.ts › says in its state report when fetched bytes cannot be kept out of backups`, `› says in its state report when the partial file of a fetch cannot be kept out of backups`.
 
 ## The server the CLI talks to
 

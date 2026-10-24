@@ -41,6 +41,7 @@ hex.workspace = true
 [dev-dependencies]
 rusqlite = { workspace = true, features = ["hooks"] }
 tempfile = "3"
+flate2 = "1"
 
 [target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]
 # `mac_os_10_8_features` declares `kCFURLIsExcludedFromBackupKey`.

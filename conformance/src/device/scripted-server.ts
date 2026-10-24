@@ -79,6 +79,15 @@ export type Answer =
       status: number;
       body: Buffer;
       contentType?: string;
+      /** Headers sent beside the type and length, such as `content-range`. */
+      headers?: Record<string, string>;
+      /**
+       * Sends the whole length in the header and only this many bytes of the
+       * body, then drops the connection: a link that dies part way.
+       */
+      cut?: number;
+      /** Sends no length, as a link does that streams what it has. */
+      unsized?: boolean;
     }
   /** The connection dies mid-answer: what a device sees when a network goes. */
   | { kind: "drop" }
@@ -462,9 +471,19 @@ export class ScriptedServer {
     if (answer.kind === "bytes") {
       response.writeHead(answer.status, {
         "content-type": answer.contentType ?? "application/octet-stream",
-        "content-length": String(answer.body.length),
+        ...(answer.unsized === true
+          ? {}
+          : { "content-length": String(answer.body.length) }),
+        ...answer.headers,
       });
-      response.end(answer.body);
+      if (answer.cut === undefined) {
+        response.end(answer.body);
+        return;
+      }
+      const socket = response.socket;
+      response.write(answer.body.subarray(0, answer.cut), () => {
+        socket?.destroy();
+      });
       return;
     }
     if (answer.kind === "json") {

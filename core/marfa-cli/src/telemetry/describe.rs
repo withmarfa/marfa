@@ -101,6 +101,7 @@ fn core_error(error: &CoreError) -> &'static str {
         CoreError::BytesAbsent { .. } => {
             "a blob's bytes are not held here and could not be fetched"
         }
+        CoreError::NoRoom { .. } => "a file does not fit in the space free",
         CoreError::ContractMismatch { .. } => {
             "the server speaks a different contract than this build"
         }
