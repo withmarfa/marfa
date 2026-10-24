@@ -241,7 +241,11 @@ pub(crate) fn attachments_of(
         if let Some(size) = entries.get(&format!(".partial-{hex}")) {
             report.partial_bytes += size;
         }
-        if let Some(size) = entries.get(&hex) {
+        // Held bytes a read failed on stay not held until a fetch finds them
+        // readable again.
+        if let Some(size) = entries.get(&hex)
+            && misses.get(&hex).map(String::as_str) != Some(NotHeldReason::Failed.as_str())
+        {
             report.held += group.files;
             report.held_bytes += size;
             continue;
@@ -559,6 +563,7 @@ pub(crate) mod tests {
             attachment("c", 'c', None),
             attachment("d", 'd', Some(7)),
             attachment("d2", 'd', None),
+            attachment("e", 'e', Some(5)),
             crate::store::Attachment {
                 item_id: "bad".into(),
                 hash: "not a hash".into(),
@@ -568,17 +573,22 @@ pub(crate) mod tests {
         let entries = std::collections::HashMap::from([
             (hex('a'), 10),
             (format!(".partial-{}", hex('b')), 12),
+            (hex('e'), 5),
         ]);
         let misses = std::collections::HashMap::from([
             (hex('b'), "no_room".to_string()),
             (hex('a'), "unreachable".to_string()),
+            (hex('e'), NotHeldReason::Failed.as_str().to_string()),
         ]);
         let report = attachments_of(&found, 2, &entries, &misses);
         assert_eq!(report.held, 2);
         assert_eq!(report.held_bytes, 10);
         assert_eq!(report.partial_bytes, 12);
-        assert_eq!(report.not_held, 6);
-        assert_eq!(report.not_held_bytes, 37);
+        assert_eq!(
+            report.not_held, 7,
+            "held bytes a read failed on counted as held"
+        );
+        assert_eq!(report.not_held_bytes, 42);
         let reasons: Vec<_> = report
             .not_held_by_reason
             .iter()
@@ -589,6 +599,7 @@ pub(crate) mod tests {
             [
                 (NotHeldReason::NotFetched, 3, 7, 2),
                 (NotHeldReason::NoRoom, 1, 30, 0),
+                (NotHeldReason::Failed, 1, 5, 0),
                 (NotHeldReason::NotInCopy, 2, 0, 2),
             ]
         );

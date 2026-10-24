@@ -2504,10 +2504,11 @@ impl Core {
         let groups = file_cache::by_bytes(&store::attachments(&*self.conn()?)?);
         // Written in one transaction once the fetch ends, however it ends.
         let mut notes = Vec::new();
+        let mut readable = Vec::new();
         let mut wanted = Vec::new();
         for (hex, group) in groups {
             match cache.held(&hex) {
-                Ok(Some(_)) => {}
+                Ok(Some(_)) => readable.push(hex),
                 Ok(None) => wanted.push((hex, group.stated)),
                 Err(_) => notes.push((hex, Why::Failed)),
             }
@@ -2524,6 +2525,9 @@ impl Core {
         {
             let mut conn = self.conn()?;
             let tx = conn.transaction()?;
+            for hex in &readable {
+                store::set_attachment_miss(&tx, hex, None)?;
+            }
             for (hex, why) in &notes {
                 store::set_attachment_miss(&tx, hex, Some(why.as_str()))?;
             }

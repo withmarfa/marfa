@@ -1207,7 +1207,8 @@ fn pull<G>(
         {
             free = room();
         }
-        drop(read);
+        // `read` holds the store until the partial file is left or dropped,
+        // so no edge can make this file an attachment in between.
         if let Some(free) = free
             && free < needed
         {
