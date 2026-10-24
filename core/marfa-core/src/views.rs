@@ -26,7 +26,6 @@ pub struct ViewRow {
 pub struct ViewGroup {
     pub key: Value,
     pub count: u64,
-    pub sum: Option<f64>,
 }
 
 impl ViewRow {
@@ -42,26 +41,6 @@ impl ViewRow {
             version: item.version,
             state: item.state,
             settings: item.properties,
-        })
-    }
-
-    fn layout(&self, id: Option<&str>) -> Result<&Value> {
-        let layouts = self
-            .settings
-            .get("layouts")
-            .and_then(Value::as_array)
-            .ok_or_else(|| invalid("the view has no layouts"))?;
-        match id {
-            Some(id) => layouts
-                .iter()
-                .find(|layout| layout.get("id").and_then(Value::as_str) == Some(id)),
-            None => layouts.first(),
-        }
-        .ok_or_else(|| {
-            invalid(&format!(
-                "the view has no layout {}",
-                id.unwrap_or("(default)")
-            ))
         })
     }
 }
@@ -91,40 +70,31 @@ impl Core {
     pub fn list_in_view(
         &self,
         id: &str,
-        layout: Option<&str>,
         limit: Option<u32>,
         offset: Option<u32>,
     ) -> Result<Rows<(Item, Shown)>> {
-        self.list_in_view_with(id, layout, limit, offset, &mut Unreadable::Refuse)
+        self.list_in_view_with(id, limit, offset, &mut Unreadable::Refuse)
     }
 
     pub fn list_in_view_kept(
         &self,
         id: &str,
-        layout: Option<&str>,
         limit: Option<u32>,
         offset: Option<u32>,
     ) -> Result<Rows<(Item, Shown)>> {
-        self.list_in_view_with(
-            id,
-            layout,
-            limit,
-            offset,
-            &mut Unreadable::Keep(HashMap::new()),
-        )
+        self.list_in_view_with(id, limit, offset, &mut Unreadable::Keep(HashMap::new()))
     }
 
     fn list_in_view_with(
         &self,
         id: &str,
-        layout: Option<&str>,
         limit: Option<u32>,
         offset: Option<u32>,
         unreadable: &mut Unreadable,
     ) -> Result<Rows<(Item, Shown)>> {
         store::read_marked(&mut *self.conn()?, |conn, completeness| {
             let scope = scope(conn, id, completeness)?;
-            let order = sort_sql(scope.view.layout(layout)?, &scope.catalog)?;
+            let order = sort_sql(&scope.view.settings, &scope.catalog)?;
             let limit = match (limit, offset) {
                 (None, None) => String::new(),
                 (limit, offset) => format!(
@@ -186,12 +156,7 @@ impl Core {
 
     /// A missing zone uses the device's current local zone. An explicit IANA
     /// name lets an app keep the same buckets while presenting another zone.
-    pub fn view_groups(
-        &self,
-        id: &str,
-        layout: &str,
-        time_zone: Option<&str>,
-    ) -> Result<Rows<ViewGroup>> {
+    pub fn view_groups(&self, id: &str, time_zone: Option<&str>) -> Result<Rows<ViewGroup>> {
         let zone = time_zone
             .map(|name| {
                 name.parse::<chrono_tz::Tz>()
@@ -200,8 +165,7 @@ impl Core {
             .transpose()?;
         store::read_marked(&mut *self.conn()?, |conn, completeness| {
             let scope = scope(conn, id, completeness)?;
-            let layout = scope.view.layout(Some(layout))?;
-            let group = layout.get("group");
+            let group = scope.view.settings.get("group");
             let by = group.and_then(|g| g.get("by")).and_then(Value::as_str);
             let bucket = group.and_then(|g| g.get("bucket")).and_then(Value::as_str);
             if let Some(bucket) = bucket {
@@ -215,20 +179,6 @@ impl Core {
                     return Err(invalid("a date bucket requires a date field"));
                 }
             }
-            let sum = layout
-                .get("y")
-                .and_then(|y| y.get("sum"))
-                .and_then(Value::as_str);
-            let sum_sql = match sum {
-                Some(field) => {
-                    let name = property_name(field)?;
-                    let path = quoted(&format!("$.{}", Value::String(name.into())));
-                    format!(
-                        "CASE WHEN json_valid(items.properties) THEN CASE WHEN json_type(items.properties,{path}) IN ('integer','real') THEN json_extract(items.properties,{path}) ELSE 0 END ELSE 0 END"
-                    )
-                }
-                None => "NULL".into(),
-            };
             let (key_sql, join) = match by {
                 None => ("'null'".into(), String::new()),
                 Some("tags") => (
@@ -260,15 +210,15 @@ impl Core {
                 }
                 Some(field) => (field_sql(field, &scope.catalog, true)?, String::new()),
             };
-            let reads_properties = sum.is_some()
-                || by.is_some_and(|field| field == "title" || field.starts_with("properties."));
+            let reads_properties =
+                by.is_some_and(|field| field == "title" || field.starts_with("properties."));
             let readable = if reads_properties {
                 "CASE WHEN json_valid(items.properties) THEN json_type(items.properties) = 'object' ELSE 0 END"
             } else {
                 "1"
             };
             let sql = format!(
-                "SELECT {key_sql}, {sum_sql}, {readable}, items.id FROM items {join} WHERE {}",
+                "SELECT {key_sql}, {readable}, items.id FROM items {join} WHERE {}",
                 scope.clauses.join(" AND ")
             );
             let mut statement = conn.prepare(&sql)?;
@@ -280,8 +230,8 @@ impl Core {
             let mut rows = statement.query(rusqlite::params_from_iter(params.iter()))?;
             let mut groups: HashMap<String, ViewGroup> = HashMap::new();
             while let Some(row) = rows.next()? {
-                if !row.get::<_, bool>(2)? {
-                    let item_id: String = row.get(3)?;
+                if !row.get::<_, bool>(1)? {
+                    let item_id: String = row.get(2)?;
                     return Err(invalid(&format!(
                         "this copy cannot group the view: item {item_id} has unreadable properties"
                     )));
@@ -295,23 +245,11 @@ impl Core {
                 }
                 let entry = groups
                     .entry(group_identity(&key))
-                    .or_insert_with(|| ViewGroup {
-                        key,
-                        count: 0,
-                        sum: sum.map(|_| 0.0),
-                    });
+                    .or_insert_with(|| ViewGroup { key, count: 0 });
                 entry.count = entry
                     .count
                     .checked_add(1)
                     .ok_or_else(|| invalid("view group count exceeds its range"))?;
-                if let Some(total) = entry.sum.as_mut() {
-                    *total += row.get::<_, f64>(1)?;
-                    if !total.is_finite() {
-                        return Err(invalid(
-                            "the sum of a view group is outside the finite number range",
-                        ));
-                    }
-                }
             }
             let hidden: std::collections::HashSet<String> = group
                 .and_then(|g| g.get("hidden"))
@@ -391,7 +329,12 @@ fn scope(conn: &Connection, id: &str, completeness: Completeness) -> Result<Scop
         .map_err(view_error)?;
     let (mut clauses, mut values) = (Vec::new(), Vec::new());
     settings
-        .narrow(&catalog, &mut clauses, &mut values)
+        .narrow(
+            &catalog,
+            &store::whole_edge_types(conn)?,
+            &mut clauses,
+            &mut values,
+        )
         .map_err(view_error)?;
     Ok(Scope {
         view,
@@ -488,15 +431,15 @@ fn field_sql(field: &str, catalog: &Catalog, json: bool) -> Result<String> {
     })
 }
 
-fn sort_sql(layout: &Value, catalog: &Catalog) -> Result<String> {
-    let Some(keys) = layout.get("sort") else {
+fn sort_sql(settings: &Map<String, Value>, catalog: &Catalog) -> Result<String> {
+    let Some(keys) = settings.get("sort") else {
         return Ok("ORDER BY items.occurred_at DESC, items.id DESC".into());
     };
     let keys = keys
         .as_array()
-        .ok_or_else(|| invalid("layout sort must be a list"))?;
+        .ok_or_else(|| invalid("a view sort must be a list"))?;
     if keys.len() > 10 {
-        return Err(invalid("a layout accepts at most 10 sort keys"));
+        return Err(invalid("a view accepts at most 10 sort keys"));
     }
     if keys.is_empty() {
         return Ok("ORDER BY items.occurred_at DESC, items.id DESC".into());
@@ -644,14 +587,21 @@ mod tests {
         .unwrap();
     }
 
-    fn view(core: &Core, layout: Value) {
+    fn view(core: &Core, settings: Value) {
         let conn = core.conn().unwrap();
         let row = wire_item(
             "view",
             "system.view",
             "active",
             "2026-01-01T00:00:00Z",
-            json!({"title":"Notes","query":{"types":["core.note"]},"layouts":[layout]}),
+            json!({"title":"Notes","query":{"types":["core.note"]}})
+                .as_object()
+                .unwrap()
+                .iter()
+                .chain(settings.as_object().unwrap())
+                .map(|(key, value)| (key.clone(), value.clone()))
+                .collect::<serde_json::Map<_, _>>()
+                .into(),
         );
         store::put_server_item(
             &conn,
@@ -663,7 +613,7 @@ mod tests {
     }
 
     fn ids(core: &Core) -> Vec<String> {
-        core.list_in_view("view", Some("list"), None, None)
+        core.list_in_view("view", None, None)
             .unwrap()
             .rows
             .into_iter()
@@ -689,40 +639,30 @@ mod tests {
         put(&core, "i", json!({}), &[]);
         view(
             &core,
-            json!({"id":"list","kind":"list","sort":[{"by":"properties.rank","direction":"asc"}]}),
+            json!({"sort":[{"by":"properties.rank","direction":"asc"}]}),
         );
         assert_eq!(ids(&core), ["a", "b", "c", "e", "d", "f", "g", "h", "i"]);
         view(
             &core,
-            json!({"id":"list","kind":"list","sort":[{"by":"properties.rank","direction":"desc"}]}),
+            json!({"sort":[{"by":"properties.rank","direction":"desc"}]}),
         );
         assert_eq!(ids(&core), ["d", "e", "c", "a", "b", "f", "g", "h", "i"]);
     }
 
     #[test]
-    fn tag_groups_count_each_item_once_and_sum_only_numbers() {
+    fn tag_groups_count_each_item_once() {
         let core = copy();
         put(&core, "a", json!({"amount":5}), &["x", "y"]);
         put(&core, "b", json!({"amount":"9"}), &["x"]);
         put(&core, "c", json!({}), &[]);
-        view(
-            &core,
-            json!({"id":"list","kind":"chart","group":{"by":"tags","order":["y"]},"y":{"sum":"properties.amount"}}),
-        );
+        view(&core, json!({"group":{"by":"tags","order":["y"]}}));
         let groups = core
-            .view_groups("view", "list", Some("Europe/London"))
+            .view_groups("view", Some("Europe/London"))
             .unwrap()
             .rows;
         assert_eq!(
-            groups
-                .iter()
-                .map(|g| (&g.key, g.count, g.sum))
-                .collect::<Vec<_>>(),
-            vec![
-                (&json!("y"), 1, Some(5.0)),
-                (&json!("x"), 2, Some(5.0)),
-                (&Value::Null, 1, Some(0.0))
-            ]
+            groups.iter().map(|g| (&g.key, g.count)).collect::<Vec<_>>(),
+            vec![(&json!("y"), 1), (&json!("x"), 2), (&Value::Null, 1)]
         );
     }
 
@@ -734,42 +674,34 @@ mod tests {
         }
         view(
             &core,
-            json!({"id":"list","kind":"table","sort":[{"by":"properties.rank","direction":"asc"},{"by":"title","direction":"desc"}]}),
+            json!({"sort":[{"by":"properties.rank","direction":"asc"},{"by":"title","direction":"desc"}]}),
         );
         assert_eq!(ids(&core), ["a", "b", "c"]);
         assert_eq!(
-            core.list_in_view("view", None, Some(1), Some(1))
-                .unwrap()
-                .rows[0]
+            core.list_in_view("view", Some(1), Some(1)).unwrap().rows[0]
                 .0
                 .id,
             "b"
         );
         assert!(
-            core.list_in_view("view", None, Some(0), None)
+            core.list_in_view("view", Some(0), None)
                 .unwrap()
                 .rows
                 .is_empty()
         );
         assert!(
-            core.list_in_view("view", None, Some(u32::MAX), Some(u32::MAX))
+            core.list_in_view("view", Some(u32::MAX), Some(u32::MAX))
                 .unwrap()
                 .rows
                 .is_empty()
         );
         view(
             &core,
-            json!({"id":"list","kind":"list","sort":[{"by":"properties.unknown","direction":"desc"}],"group":{"by":"properties.unknown"}}),
+            json!({"sort":[{"by":"properties.unknown","direction":"desc"}],"group":{"by":"properties.unknown"}}),
         );
         assert_eq!(ids(&core), ["a", "b", "c"]);
-        let groups = core.view_groups("view", "list", None).unwrap().rows;
+        let groups = core.view_groups("view", None).unwrap().rows;
         assert_eq!((groups[0].key.clone(), groups[0].count), (Value::Null, 3));
-        assert!(
-            core.list_in_view("view", Some("missing"), None, None)
-                .unwrap_err()
-                .to_string()
-                .contains("layout")
-        );
     }
 
     #[test]
@@ -778,15 +710,9 @@ mod tests {
         put(&core, "a", json!({}), &[]);
         put(&core, "b", json!({}), &[]);
         for field in ["created_at", "updated_at", "occurred_at"] {
-            view(
-                &core,
-                json!({"id":"list","kind":"list","sort":[{"by":field,"direction":"desc"}]}),
-            );
+            view(&core, json!({"sort":[{"by":field,"direction":"desc"}]}));
             assert_eq!(ids(&core), ["b", "a"]);
-            view(
-                &core,
-                json!({"id":"list","kind":"list","sort":[{"by":field,"direction":"asc"}]}),
-            );
+            view(&core, json!({"sort":[{"by":field,"direction":"asc"}]}));
             assert_eq!(ids(&core), ["a", "b"]);
         }
     }
@@ -834,10 +760,10 @@ mod tests {
         ] {
             view(
                 &core,
-                json!({"id":"list","kind":"chart","group":{"by":"properties.date","bucket":bucket},"y":"count"}),
+                json!({"group":{"by":"properties.date","bucket":bucket}}),
             );
             assert_eq!(
-                core.view_groups("view", "list", Some("Europe/London"))
+                core.view_groups("view", Some("Europe/London"))
                     .unwrap()
                     .rows
                     .into_iter()
@@ -847,7 +773,7 @@ mod tests {
             );
         }
         assert!(
-            core.view_groups("view", "list", Some("Unknown/Zone"))
+            core.view_groups("view", Some("Unknown/Zone"))
                 .unwrap_err()
                 .to_string()
                 .contains("time zone")
@@ -880,11 +806,8 @@ mod tests {
                 .unwrap();
             }
         }
-        view(
-            &core,
-            json!({"id":"list","kind":"board","group":{"by":"edge[parent-of]"}}),
-        );
-        let groups = core.view_groups("view", "list", None).unwrap().rows;
+        view(&core, json!({"group":{"by":"edge[parent-of]"}}));
+        let groups = core.view_groups("view", None).unwrap().rows;
         assert_eq!(
             groups
                 .iter()
@@ -892,11 +815,8 @@ mod tests {
                 .collect::<Vec<_>>(),
             [(json!("b"), 1), (json!("c"), 1), (Value::Null, 2)]
         );
-        view(
-            &core,
-            json!({"id":"list","kind":"board","group":{"by":"backref[parent-of]"}}),
-        );
-        let groups = core.view_groups("view", "list", None).unwrap().rows;
+        view(&core, json!({"group":{"by":"backref[parent-of]"}}));
+        let groups = core.view_groups("view", None).unwrap().rows;
         assert_eq!(
             groups
                 .iter()
@@ -906,53 +826,129 @@ mod tests {
         );
         store::meta_set(&core.conn().unwrap(), store::META_SLICE_EDGE_TYPES, "[]").unwrap();
         assert!(
-            core.view_groups("view", "list", None)
+            core.view_groups("view", None)
                 .unwrap_err()
                 .to_string()
                 .contains("not held whole")
         );
     }
 
+    fn link(core: &Core, id: &str, source: &str, target: &str, edge_type: &str) {
+        store::upsert_edge(
+            &core.conn().unwrap(),
+            &crate::wire::WireEdge {
+                id: id.into(),
+                source_id: source.into(),
+                target_id: target.into(),
+                edge_type: edge_type.into(),
+                properties: Default::default(),
+                version: 1,
+                created_at: "2026-01-01T00:00:00Z".into(),
+                updated_at: "2026-01-01T00:00:00Z".into(),
+            },
+        )
+        .unwrap();
+    }
+
+    fn filtered(core: &Core, filter: &str) {
+        view(
+            core,
+            json!({"query":{"types":["core.note"],"filter":filter}}),
+        );
+    }
+
     #[test]
-    fn grouping_honors_hidden_values_and_refuses_nonfinite_sums() {
+    fn a_view_of_one_folders_items_follows_the_edge_and_leaves_the_rest() {
         let core = copy();
-        put(&core, "a", json!({"amount":1e308}), &["x"]);
-        put(&core, "b", json!({"amount":1e308}), &["y"]);
-        view(
-            &core,
-            json!({"id":"list","kind":"chart","group":{"by":"tags","hidden":["x"]},"y":{"sum":"properties.amount"}}),
-        );
-        let groups = core.view_groups("view", "list", None).unwrap().rows;
-        assert_eq!((groups.len(), groups[0].key.clone()), (1, json!("y")));
-        view(
-            &core,
-            json!({"id":"list","kind":"chart","y":{"sum":"properties.amount"}}),
-        );
+        for id in ["a", "b", "c", "d"] {
+            put(&core, id, json!({}), &[]);
+        }
+        link(&core, "e1", "a", "folder-1", "in-folder");
+        link(&core, "e2", "b", "folder-1", "in-folder");
+        link(&core, "e3", "c", "folder-2", "in-folder");
+        filtered(&core, r#"edge[in-folder] eq "folder-1""#);
+        assert_eq!(ids(&core), ["b", "a"]);
+        filtered(&core, "edge[in-folder] not_exists");
+        assert_eq!(ids(&core), ["d"]);
+    }
+
+    #[test]
+    fn a_view_by_source_lists_only_items_from_that_source() {
+        let core = copy();
+        put(&core, "a", json!({}), &[]);
+        put(&core, "b", json!({}), &[]);
+        core.conn()
+            .unwrap()
+            .execute("UPDATE items SET source = 'feed-reader' WHERE id = 'b'", [])
+            .unwrap();
+        filtered(&core, r#"source eq "feed-reader""#);
+        assert_eq!(ids(&core), ["b"]);
+        filtered(&core, r#"source neq "feed-reader""#);
+        assert_eq!(ids(&core), ["a"]);
+    }
+
+    #[test]
+    fn a_view_by_backref_is_answered_where_the_edge_type_is_held_whole_and_refused_otherwise() {
+        let core = copy();
+        for id in ["a", "b", "c"] {
+            put(&core, id, json!({}), &[]);
+        }
+        link(&core, "e1", "a", "b", "parent-of");
+        link(&core, "e2", "a", "c", "parent-of");
+        filtered(&core, r#"backref[parent-of] eq "a""#);
+        let refusal = core.list_in_view("view", None, None).unwrap_err();
         assert!(
-            core.view_groups("view", "list", None)
+            matches!(refusal, crate::CoreError::Invalid(_))
+                && refusal.to_string().contains("backref"),
+            "{refusal}"
+        );
+        store::meta_set(
+            &core.conn().unwrap(),
+            store::META_SLICE_EDGE_TYPES,
+            r#"["parent-of"]"#,
+        )
+        .unwrap();
+        assert_eq!(ids(&core), ["c", "b"]);
+        filtered(&core, "backref[parent-of] not_exists");
+        assert_eq!(ids(&core), ["a"]);
+        filtered(&core, "backref[references] exists");
+        assert!(
+            core.view_groups("view", None)
                 .unwrap_err()
                 .to_string()
-                .contains("finite number")
+                .contains("backref")
         );
+    }
+
+    #[test]
+    fn grouping_honors_hidden_values() {
+        let core = copy();
+        put(&core, "a", json!({}), &["x"]);
+        put(&core, "b", json!({}), &["y"]);
+        view(&core, json!({"group":{"by":"tags"}}));
+        assert_eq!(core.view_groups("view", None).unwrap().rows.len(), 2);
+        view(&core, json!({"group":{"by":"tags","hidden":["x"]}}));
+        let groups = core.view_groups("view", None).unwrap().rows;
+        assert_eq!((groups.len(), groups[0].key.clone()), (1, json!("y")));
     }
 
     #[test]
     fn evaluation_refuses_partial_hydration_or_a_slice_missing_a_tier() {
         let core = copy();
         put(&core, "a", json!({"title":"pasta"}), &[]);
-        view(&core, json!({"id":"list","kind":"list"}));
+        view(&core, json!({}));
         assert_eq!(ids(&core), ["a"]);
         assert_eq!(
             core.search_in_view("pasta", "view", 10).unwrap().rows.len(),
             1
         );
         assert_eq!(
-            core.list_views().unwrap().rows[0].settings["layouts"][0]["id"],
-            "list"
+            core.list_views().unwrap().rows[0].settings["query"]["types"][0],
+            "core.note"
         );
         store::meta_set(&core.conn().unwrap(), store::META_SLICE_TIER, "library").unwrap();
         assert!(
-            core.list_in_view("view", None, None, None)
+            core.list_in_view("view", None, None)
                 .unwrap_err()
                 .to_string()
                 .contains("all tier")
@@ -964,7 +960,7 @@ mod tests {
                 .contains("all tier")
         );
         assert!(
-            core.view_groups("view", "list", None)
+            core.view_groups("view", None)
                 .unwrap_err()
                 .to_string()
                 .contains("all tier")
@@ -977,11 +973,11 @@ mod tests {
         )
         .unwrap();
         assert!(matches!(
-            core.list_in_view("view", None, None, None),
+            core.list_in_view("view", None, None),
             Err(crate::CoreError::HydrationIncomplete)
         ));
         assert!(matches!(
-            core.view_groups("view", "list", None),
+            core.view_groups("view", None),
             Err(crate::CoreError::HydrationIncomplete)
         ));
         assert!(matches!(
@@ -1010,11 +1006,11 @@ mod tests {
             crate::Completeness::Stale
         );
         assert!(matches!(
-            core.list_in_view("view", None, None, None),
+            core.list_in_view("view", None, None),
             Err(crate::CoreError::HydrationIncomplete)
         ));
         assert!(matches!(
-            core.view_groups("view", "list", None),
+            core.view_groups("view", None),
             Err(crate::CoreError::HydrationIncomplete)
         ));
         assert!(matches!(
@@ -1029,15 +1025,9 @@ mod tests {
         put(&core, "b", json!({}), &["a", "y"]);
         put(&core, "c", json!({}), &["b"]);
         put(&core, "d", json!({}), &[]);
-        view(
-            &core,
-            json!({"id":"list","kind":"list","sort":[{"by":"tags","direction":"asc"}]}),
-        );
+        view(&core, json!({"sort":[{"by":"tags","direction":"asc"}]}));
         assert_eq!(ids(&core), ["b", "c", "a", "d"]);
-        view(
-            &core,
-            json!({"id":"list","kind":"list","sort":[{"by":"tags","direction":"desc"}]}),
-        );
+        view(&core, json!({"sort":[{"by":"tags","direction":"desc"}]}));
         assert_eq!(ids(&core), ["a", "c", "b", "d"]);
     }
 
@@ -1049,17 +1039,17 @@ mod tests {
         put(&core, "c", json!({"rank":true}), &[]);
         view(
             &core,
-            json!({"id":"list","kind":"board","group":{"by":"properties.rank","order":[1.0]}}),
+            json!({"group":{"by":"properties.rank","order":[1.0]}}),
         );
-        let groups = core.view_groups("view", "list", None).unwrap().rows;
+        let groups = core.view_groups("view", None).unwrap().rows;
         assert_eq!(groups.len(), 2);
         assert_eq!(groups[0].count, 2);
         assert_eq!(groups[1].key, json!(true));
         view(
             &core,
-            json!({"id":"list","kind":"board","group":{"by":"properties.rank","hidden":[1.0]}}),
+            json!({"group":{"by":"properties.rank","hidden":[1.0]}}),
         );
-        let groups = core.view_groups("view", "list", None).unwrap().rows;
+        let groups = core.view_groups("view", None).unwrap().rows;
         assert_eq!(groups.len(), 1);
         assert_eq!(groups[0].key, json!(true));
     }
@@ -1071,45 +1061,34 @@ mod tests {
         put(&core, "b", json!({"rank":9007199254740992u64}), &[]);
         view(
             &core,
-            json!({"id":"list","kind":"list","sort":[{"by":"properties.rank","direction":"asc"}]}),
+            json!({"sort":[{"by":"properties.rank","direction":"asc"}]}),
         );
         assert_eq!(ids(&core), ["a", "b"]);
     }
     #[test]
-    fn an_ungrouped_layout_returns_one_total_and_a_missing_layout_is_refused() {
+    fn an_ungrouped_view_returns_one_count_and_stored_layouts_are_ignored() {
         let core = copy();
         put(&core, "a", json!({"amount":2}), &[]);
         put(&core, "b", json!({"amount":"3"}), &[]);
         put(&core, "c", json!({}), &[]);
         view(
             &core,
-            json!({"id":"list","kind":"chart","y":{"sum":"properties.amount"}}),
+            json!({"layouts":[{"id":"list","kind":"chart","group":{"by":"tags"},"sort":[{"by":"title","direction":"asc"}]}]}),
         );
-        let groups = core.view_groups("view", "list", None).unwrap().rows;
+        let groups = core.view_groups("view", None).unwrap().rows;
         assert_eq!(
             groups,
             vec![super::ViewGroup {
                 key: Value::Null,
-                count: 3,
-                sum: Some(2.0)
+                count: 3
             }]
         );
-        assert!(
-            core.view_groups("view", "absent", None)
-                .unwrap_err()
-                .to_string()
-                .contains("no layout")
-        );
+        assert_eq!(ids(&core), ["c", "b", "a"]);
         core.conn()
             .unwrap()
             .execute("DELETE FROM items WHERE type = 'core.note'", [])
             .unwrap();
-        assert!(
-            core.view_groups("view", "list", None)
-                .unwrap()
-                .rows
-                .is_empty()
-        );
+        assert!(core.view_groups("view", None).unwrap().rows.is_empty());
     }
 
     #[test]
@@ -1142,11 +1121,11 @@ mod tests {
         }
         view(
             &core,
-            json!({"id":"list","kind":"list","sort":[{"by":"title","direction":"asc"}],"group":{"by":"title"}}),
+            json!({"sort":[{"by":"title","direction":"asc"}],"group":{"by":"title"}}),
         );
         assert_eq!(ids(&core), ["b", "a"]);
         assert_eq!(
-            core.view_groups("view", "list", None)
+            core.view_groups("view", None)
                 .unwrap()
                 .rows
                 .into_iter()
@@ -1160,7 +1139,7 @@ mod tests {
         let core = copy();
         put(&core, "a", json!({"title":"A","rank":1}), &["x"]);
         for by in ["title", "properties.rank", "properties.unknown"] {
-            view(&core, json!({"id":"list","kind":"board","group":{"by":by}}));
+            view(&core, json!({"group":{"by":by}}));
             for raw in ["{broken", "[]", "null", "true"] {
                 core.conn()
                     .unwrap()
@@ -1169,31 +1148,17 @@ mod tests {
                         [r#"{"title":"A","rank":1}"#],
                     )
                     .unwrap();
-                assert_eq!(
-                    core.view_groups("view", "list", None).unwrap().rows[0].count,
-                    1
-                );
+                assert_eq!(core.view_groups("view", None).unwrap().rows[0].count, 1);
                 core.conn()
                     .unwrap()
                     .execute("UPDATE items SET properties = ? WHERE id = 'a'", [raw])
                     .unwrap();
-                assert!(
-                    core.view_groups("view", "list", None).is_err(),
-                    "{by}: {raw}"
-                );
+                assert!(core.view_groups("view", None).is_err(), "{by}: {raw}");
             }
         }
-        view(
-            &core,
-            json!({"id":"list","kind":"chart","group":{"by":"tags"},"y":{"sum":"properties.rank"}}),
-        );
-        assert!(core.view_groups("view", "list", None).is_err());
-        view(
-            &core,
-            json!({"id":"list","kind":"board","group":{"by":"tags"}}),
-        );
+        view(&core, json!({"group":{"by":"tags"}}));
         assert_eq!(
-            core.view_groups("view", "list", None).unwrap().rows[0].key,
+            core.view_groups("view", None).unwrap().rows[0].key,
             json!("x")
         );
     }

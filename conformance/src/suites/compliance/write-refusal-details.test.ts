@@ -134,10 +134,7 @@ describe("a refusal caused by a missing grant names it", () => {
       level: "write",
     });
 
-    const view = await writer.createView({
-      title: "refused",
-      layouts: [{ id: "main", kind: "list" }],
-    });
+    const view = await writer.createView({ title: "refused" });
     expect(view.status).toBe(403);
     expect(view.error?.error.details?.grant).toEqual({
       kind: "type",

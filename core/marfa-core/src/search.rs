@@ -41,6 +41,7 @@ pub(crate) fn search(
     filter::narrow(
         filters.filter.as_deref(),
         filters.beneath.as_deref(),
+        &store::whole_edge_types(conn)?,
         &mut clauses,
         &mut values,
     )?;

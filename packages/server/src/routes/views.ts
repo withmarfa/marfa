@@ -43,7 +43,6 @@ import {
 } from "./_item-query.js";
 
 const VIEW_TYPE = "system.view";
-const MAX_LAYOUTS = 50;
 
 // ---------------------------------------------------------------------------
 // Fields
@@ -81,20 +80,9 @@ const FieldSchema = z
   .describe(`A field: ${FIELD_WORDS}.`)
   .openapi("ViewField", { example: "properties.status" });
 
-const DateFieldSchema = z
-  .string()
-  .regex(fieldPattern([...DATE_FIELDS, PROPERTY].join("|")), {
-    message:
-      "A date field is `created_at`, `updated_at`, `occurred_at` or `properties.<name>`",
-  });
-
-const PropertyFieldSchema = z.string().regex(fieldPattern(PROPERTY), {
-  message: "This option takes `properties.<name>`",
-});
-
 const GroupValueSchema = z
   .union([z.string(), z.number(), z.boolean(), z.null()])
-  .describe("A value of the field the layout groups by.");
+  .describe("A value of the field the view groups by.");
 
 // ---------------------------------------------------------------------------
 // Schemas
@@ -119,24 +107,6 @@ const ViewQuerySchema = itemQuerySchema(
     .openapi("ViewTier"),
 );
 
-const LayoutKindSchema = z
-  .enum([
-    "list",
-    "table",
-    "board",
-    "gallery",
-    "calendar",
-    "timeline",
-    "chart",
-    "map",
-  ])
-  .describe(
-    "How a layout shows items. `list`: rows. `table`: rows with columns. `board`: columns by `group`. `gallery`: cards. `calendar`: on dates. `timeline`: as spans. `chart`: as a chart. `map`: on a map.",
-  )
-  .openapi("ViewLayoutKind");
-
-type LayoutKind = z.infer<typeof LayoutKindSchema>;
-
 const SortSchema = z
   .strictObject({
     by: FieldSchema.describe("The field to sort by."),
@@ -144,7 +114,12 @@ const SortSchema = z
       .enum(["asc", "desc"])
       .describe("`asc` sorts smallest first, `desc` largest first."),
   })
-  .openapi("ViewSort", { description: "One key a layout sorts by." });
+  .openapi("ViewSort", { description: "One key a view sorts by." });
+
+const SortsSchema = z
+  .array(SortSchema)
+  .max(10)
+  .describe("The keys the view sorts by, first key first.");
 
 const GroupSchema = z
   .strictObject({
@@ -171,77 +146,9 @@ const GroupSchema = z
       .array(GroupValueSchema)
       .max(1000)
       .optional()
-      .describe("The values whose groups the layout leaves out."),
+      .describe("The values whose groups the view leaves out."),
   })
-  .openapi("ViewGroup", { description: "How a layout groups its items." });
-
-const ChartValueSchema = z
-  .union([
-    z.literal("count"),
-    z.strictObject({
-      sum: PropertyFieldSchema.describe(
-        "The number property whose values are added up.",
-      ),
-    }),
-  ])
-  .describe(
-    'What a chart measures: `count` of items, or `{ "sum": "properties.<name>" }`.',
-  );
-
-const LayoutSchema = z
-  .strictObject({
-    id: maxStringLength(z.string().min(1), 100).describe(
-      "The layout's ID, unique in the view, which an app keeps to reopen it.",
-    ),
-    kind: LayoutKindSchema.describe("How the layout shows items."),
-    title: maxStringLength(z.string().min(1), 500)
-      .optional()
-      .describe("The layout's name. Absent, an app names it by its kind."),
-    sort: z
-      .array(SortSchema)
-      .max(10)
-      .optional()
-      .describe("The keys the layout sorts by, first key first."),
-    group: GroupSchema.optional().describe(
-      "How the layout groups its items. A `board` requires it.",
-    ),
-    shown: z
-      .array(FieldSchema)
-      .max(200)
-      .optional()
-      .describe("The fields the layout shows, in order."),
-    image: PropertyFieldSchema.optional().describe(
-      "For a `gallery`, the property that holds each card's image.",
-    ),
-    date: DateFieldSchema.optional().describe(
-      "For a `calendar`, the date field that places each item.",
-    ),
-    start: DateFieldSchema.optional().describe(
-      "For a `timeline`, the date field each span starts at. Required for a `timeline`.",
-    ),
-    end: DateFieldSchema.optional().describe(
-      "For a `calendar` or `timeline`, the date field each span ends at. Required for a `timeline`.",
-    ),
-    x: FieldSchema.optional().describe(
-      "For a `chart`, the field along its horizontal axis.",
-    ),
-    y: ChartValueSchema.optional(),
-    location: PropertyFieldSchema.optional().describe(
-      "For a `map`, the property that holds each item's place.",
-    ),
-  })
-  .openapi("ViewLayout", {
-    description:
-      "One way a view shows its items. A layout takes only the options its `kind` takes, and never narrows which items the view lists.",
-  });
-
-const LayoutsSchema = z
-  .array(LayoutSchema)
-  .min(1)
-  .max(MAX_LAYOUTS)
-  .describe("How the view shows its items, in order. At least one.");
-
-type Layout = z.infer<typeof LayoutSchema>;
+  .openapi("ViewGroup", { description: "How a view groups its items." });
 
 const TitleSchema = maxStringLength(z.string().min(1), 500);
 
@@ -250,7 +157,10 @@ const CreateViewSchema = z.strictObject({
   query: ViewQuerySchema.optional().describe(
     "Which items the view lists. Absent lists every item the reading key can read, except `system.*`.",
   ),
-  layouts: LayoutsSchema,
+  sort: SortsSchema.optional(),
+  group: GroupSchema.optional().describe(
+    "How the view groups the items it lists.",
+  ),
 });
 
 const UpdateViewSchema = z.strictObject({
@@ -265,9 +175,15 @@ const UpdateViewSchema = z.strictObject({
   query: ViewQuerySchema.optional().describe(
     "A new query, which replaces the current one whole.",
   ),
-  layouts: LayoutsSchema.optional().describe(
-    "New layouts, which replace the current ones whole. At least one.",
+  sort: SortsSchema.optional().describe(
+    "A new sort, which replaces the current one whole.",
   ),
+  group: z
+    .union([GroupSchema, z.null()])
+    .optional()
+    .describe(
+      "A new grouping, which replaces the current one whole. `null` removes the grouping.",
+    ),
 });
 
 const IdParam = z.object({
@@ -280,7 +196,6 @@ export const VIEW_SCHEMAS_DESCRIBED_BY_REFERENCE: Readonly<
 > = {
   ViewField: FieldSchema,
   ViewTier: ViewQuerySchema.shape.tier.unwrap(),
-  ViewLayoutKind: LayoutKindSchema,
   ViewSort: SortSchema,
   ViewGroup: GroupSchema,
 };
@@ -288,34 +203,6 @@ export const VIEW_SCHEMAS_DESCRIBED_BY_REFERENCE: Readonly<
 // ---------------------------------------------------------------------------
 // Validation the schemas cannot express
 // ---------------------------------------------------------------------------
-
-const KIND_ONLY_OPTIONS = [
-  "image",
-  "date",
-  "start",
-  "end",
-  "x",
-  "y",
-  "location",
-] as const;
-
-/** The kind-only options each kind takes, and those it requires. */
-const KINDS: Record<
-  LayoutKind,
-  {
-    takes: readonly (typeof KIND_ONLY_OPTIONS)[number][];
-    requires: readonly string[];
-  }
-> = {
-  list: { takes: [], requires: [] },
-  table: { takes: [], requires: [] },
-  board: { takes: [], requires: ["group"] },
-  gallery: { takes: ["image"], requires: [] },
-  calendar: { takes: ["date", "end"], requires: [] },
-  timeline: { takes: ["start", "end"], requires: ["start", "end"] },
-  chart: { takes: ["x", "y"], requires: [] },
-  map: { takes: ["location"], requires: [] },
-};
 
 function isDateField(field: string): boolean {
   return DATE_FIELDS.has(field) || field.startsWith("properties.");
@@ -343,60 +230,24 @@ function assertGroupBy(path: string, by: string): void {
   }
 }
 
-function assertLayout(path: string, layout: Layout): void {
-  const kind = KINDS[layout.kind];
-  for (const option of KIND_ONLY_OPTIONS) {
-    if (layout[option] !== undefined && !kind.takes.includes(option)) {
-      throw settingRefusal(
-        ErrorCode.VALIDATION_ERROR,
-        `${path}.${option}`,
-        `A ${layout.kind} layout does not take ${option}`,
-      );
-    }
-  }
-  for (const option of kind.requires) {
-    if (layout[option as keyof Layout] === undefined) {
-      const field = `${path}.${option}`;
-      throw new MarfaError(
-        ErrorCode.MISSING_REQUIRED_FIELD,
-        `A ${layout.kind} layout requires ${option}`,
-        { field },
-      );
-    }
-  }
-  if (layout.group !== undefined) {
-    assertGroupBy(`${path}.group.by`, layout.group.by);
-    if (layout.group.bucket !== undefined && !isDateField(layout.group.by)) {
-      throw settingRefusal(
-        ErrorCode.VALIDATION_ERROR,
-        `${path}.group.bucket`,
-        `${layout.group.by} is not a date field, so it takes no bucket`,
-      );
-    }
-  }
-}
+type UpdateSettings = Omit<z.infer<typeof UpdateViewSchema>, "version">;
 
 interface Settings {
   query?: z.infer<typeof ViewQuerySchema> | undefined;
-  layouts?: Layout[] | undefined;
+  group?: z.infer<typeof GroupSchema> | null | undefined;
 }
 
-function assertSettings({ query, layouts }: Settings): void {
+function assertSettings({ query, group }: Settings): void {
   if (query !== undefined) assertItemQuery("query", query);
-  const seen = new Map<string, number>();
-  layouts?.forEach((layout, i) => {
-    const path = `layouts.${String(i)}`;
-    const first = seen.get(layout.id);
-    if (first !== undefined) {
-      throw settingRefusal(
-        ErrorCode.VALIDATION_ERROR,
-        `${path}.id`,
-        `Layout id "${layout.id}" is already used by layouts.${String(first)}`,
-      );
-    }
-    seen.set(layout.id, i);
-    assertLayout(path, layout);
-  });
+  if (group === undefined || group === null) return;
+  assertGroupBy("group.by", group.by);
+  if (group.bucket !== undefined && !isDateField(group.by)) {
+    throw settingRefusal(
+      ErrorCode.VALIDATION_ERROR,
+      "group.bucket",
+      `${group.by} is not a date field, so it takes no bucket`,
+    );
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -463,7 +314,7 @@ const notFound = {
 };
 
 const SETTING_MALFORMED =
-  "- `validation_error`: a setting is malformed or undeclared, such as a repeated layout `id`. `details.errors[0].path` or `details.unknown_body_fields` names it.";
+  "- `validation_error`: a setting is malformed or undeclared, `details.errors[0].path` or `details.unknown_body_fields` names it.";
 
 const SETTING_TYPE_UNKNOWN =
   "- `unknown_type`: `query.types` names a type that isn't registered.";
@@ -475,7 +326,7 @@ const createViewRoute = createRoute({
   tags: ["Views"],
   summary: "Create a view",
   description:
-    "Creates a view: a `system.view` item whose properties say which items it lists and how its layouts show them. The item endpoints can't write one.",
+    "Creates a view: a `system.view` item whose properties say which items it lists, in what order and how they group. The item endpoints can't write one.",
   security: [{ bearerAuth: [] }],
   middleware: writesViews,
   request: {
@@ -499,7 +350,7 @@ const createViewRoute = createRoute({
           ]),
         },
       },
-      description: `${SETTING_MALFORMED}\n- \`missing_required_field\`: \`title\`, \`layouts\` or a part a layout requires is missing. \`details.field\` names it.\n${SETTING_TYPE_UNKNOWN}`,
+      description: `${SETTING_MALFORMED}\n- \`missing_required_field\`: \`title\` is missing. \`details.field\` names it.\n${SETTING_TYPE_UNKNOWN}`,
     },
     ...unauthorized,
     ...notPermitted,
@@ -513,7 +364,7 @@ const updateViewRoute = createRoute({
   tags: ["Views"],
   summary: "Update a view",
   description:
-    "Updates a view's title, query or layouts. Each one you send replaces the current value whole, and those you leave out stay as they are. Send the `version` you read.",
+    "Updates a view's title, query, sort or group. Each one you send replaces the current value whole, and those you leave out stay as they are. Send `group: null` to remove the grouping. Send the `version` you read.",
   security: [{ bearerAuth: [] }],
   middleware: writesViews,
   request: {
@@ -539,7 +390,7 @@ const updateViewRoute = createRoute({
           ]),
         },
       },
-      description: `- \`validation_error\`: no setting, or a malformed or undeclared setting; \`details\` names it.\n- \`missing_required_field\`: \`version\` or a required layout part is missing; \`details.field\` names it.\n${SETTING_TYPE_UNKNOWN}\n- \`invalid_id\`: the ID is invalid.\n- \`invalid_transition\`: the view is revoked.`,
+      description: `- \`validation_error\`: no setting, or a malformed or undeclared setting; \`details\` names it.\n- \`missing_required_field\`: \`version\` is missing; \`details.field\` names it.\n${SETTING_TYPE_UNKNOWN}\n- \`invalid_id\`: the ID is invalid.\n- \`invalid_transition\`: the view is revoked.`,
     },
     ...unauthorized,
     ...notPermitted,
@@ -585,6 +436,19 @@ const deleteViewRoute = createRoute({
     ...notFound,
   },
 });
+
+/**
+ * The properties a change writes. A merge cannot remove a property, so a
+ * `group` of `null` is a clear: the store removes it, and at a stale version
+ * treats it as a change to `group` alone.
+ */
+function changedProperties({ group, ...rest }: UpdateSettings): {
+  properties: Record<string, unknown>;
+  clear_properties?: string[];
+} {
+  if (group === null) return { properties: rest, clear_properties: ["group"] };
+  return { properties: group === undefined ? rest : { ...rest, group } };
+}
 
 /** The row a view write left, which every create and change leaves. */
 function written(result: ItemWriteResult): { item: Item; metadata: Metadata } {
@@ -660,7 +524,8 @@ export function viewRoutes(storage: Storage) {
           {
             op: "update",
             id,
-            properties: settings,
+            ...changedProperties(settings),
+            prune_undeclared_properties: true,
             version,
             blob_proof: requestBlobProof(c, storage),
           },

@@ -1423,7 +1423,7 @@ export const CONSENT_SCOPE_DESCRIPTIONS: Record<string, string> = {
   // System
   "system.connection": "Connections to other apps and services.",
   "system.folder": "The settings of your folders.",
-  "system.view": "Your saved lists of items and their layouts.",
+  "system.view": "Your saved lists of items, with their sort and grouping.",
 
   // Edge types: relationships between items.
   //

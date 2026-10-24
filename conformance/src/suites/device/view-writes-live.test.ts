@@ -25,7 +25,7 @@ interface View {
   settings: Record<string, unknown>;
 }
 
-const layouts = [{ id: "main", kind: "list" }];
+const sort = [{ by: "title", direction: "asc" }];
 let client: MarfaClient;
 let ctx: TestContext;
 let apiUrl: string;
@@ -68,7 +68,7 @@ async function copy(name: string, url?: string, key?: string) {
 }
 
 async function create(title: string) {
-  const made = value(await device.call<View>("createView", { title, layouts }));
+  const made = value(await device.call<View>("createView", { title, sort }));
   trackView(ctx, made.id);
   return made;
 }
@@ -106,7 +106,7 @@ it("creates, changes and deletes through the view door, holding each answer and 
   expect(changed.settings).toMatchObject({
     title: "Renamed",
     query: { types: ["core.note"] },
-    layouts,
+    sort,
   });
   expect(value(await device.call("view", created.id))).toEqual(changed);
   const served = await client.getItem(created.id);
@@ -120,8 +120,66 @@ it("creates, changes and deletes through the view door, holding each answer and 
   expect(value(await device.queue())).toEqual([]);
 });
 
+it("clears a view's group with null, holding the ungrouped view the server holds", async () => {
+  const tag = `clear-group-${ctx.runId}`;
+  for (const title of ["First", "Second"]) {
+    const note = await client.createItem({
+      type: "core.note",
+      tags: [tag],
+      properties: { title, body: "" },
+    });
+    expect(note.ok, JSON.stringify(note.error)).toBe(true);
+    trackItem(ctx, note.data.item.id);
+  }
+  value(await device.catchUp());
+  const made = value(
+    await device.call<View>("createView", {
+      title: "Cleared group",
+      query: { types: ["core.note"], filter: `tags contains "${tag}"` },
+      sort,
+      group: { by: "tags" },
+    }),
+  );
+  trackView(ctx, made.id);
+  // The witness: the copy reads the view grouped before the clear.
+  const grouped = value(
+    await device.call<{ groups: { key: unknown; count: number }[] }>(
+      "viewGroups",
+      made.id,
+    ),
+  );
+  expect(grouped.groups).toEqual([{ key: tag, count: 2 }]);
+
+  const cleared = value(
+    await device.call<View>(
+      "changeView",
+      made.id,
+      { group: null },
+      made.version,
+    ),
+  );
+  expect(cleared.version).toBe(2);
+  expect(cleared.settings).toEqual({
+    title: "Cleared group",
+    query: { types: ["core.note"], filter: `tags contains "${tag}"` },
+    sort,
+  });
+  expect(value(await device.call("view", made.id))).toEqual(cleared);
+  const ungrouped = value(
+    await device.call<{ groups: { key: unknown; count: number }[] }>(
+      "viewGroups",
+      made.id,
+    ),
+  );
+  expect(ungrouped.groups).toEqual([{ key: null, count: 2 }]);
+  expect((await client.getItem(made.id)).data.item.properties).toEqual(
+    cleared.settings,
+  );
+  expect(value(await device.queue())).toEqual([]);
+});
+
 it("replays a create with the same idempotency key as one view", async () => {
-  const settings = { title: `Replay ${ctx.runId}`, layouts };
+  const settings = { title: `Replay ${ctx.runId}`, sort };
   const key = randomUUID();
   const first = value(await device.call<View>("createView", settings, key));
   trackView(ctx, first.id);
@@ -243,7 +301,7 @@ it("reports a query refusal without changing a held view", async () => {
   for (const operation of [
     device.call("createView", {
       title: `Invalid query ${ctx.runId}`,
-      layouts,
+      sort,
       query: { filter: "tags eq" },
     }),
     device.call("changeView", created.id, { query: { filter: "tags eq" } }, 2),
@@ -270,7 +328,7 @@ it("reports missing system.view write access for every view write and preserves 
   value(await reader.hydrate(["system.view"], "all"));
   const before = value(await reader.call("view", created.id));
   for (const operation of [
-    reader.call("createView", { title: "No access", layouts }),
+    reader.call("createView", { title: "No access", sort }),
     reader.call("changeView", created.id, { title: "No access" }, 1),
     reader.call("deleteView", created.id),
   ]) {
@@ -294,7 +352,7 @@ it("fails every write without a reachable or configured server and queues nothin
   ] as const) {
     const offline = await copy(name, address, key);
     for (const operation of [
-      offline.call("createView", { title: "Offline", layouts }),
+      offline.call("createView", { title: "Offline", sort }),
       offline.call("changeView", created.id, { title: "Offline" }, 1),
       offline.call("deleteView", created.id),
     ]) {

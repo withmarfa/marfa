@@ -1093,20 +1093,6 @@
         ],
         "description": "A tier: `library`, `feed`, or `all` for both."
       },
-      "ViewLayoutKind": {
-        "type": "string",
-        "enum": [
-          "list",
-          "table",
-          "board",
-          "gallery",
-          "calendar",
-          "timeline",
-          "chart",
-          "map"
-        ],
-        "description": "How a layout shows items. `list`: rows. `table`: rows with columns. `board`: columns by `group`. `gallery`: cards. `calendar`: on dates. `timeline`: as spans. `chart`: as a chart. `map`: on a map."
-      },
       "ViewSort": {
         "type": "object",
         "properties": {
@@ -1134,7 +1120,7 @@
           "direction"
         ],
         "additionalProperties": false,
-        "description": "One key a layout sorts by."
+        "description": "One key a view sorts by."
       },
       "ViewGroup": {
         "type": "object",
@@ -1171,7 +1157,7 @@
                   "type": "null"
                 }
               ],
-              "description": "A value of the field the layout groups by."
+              "description": "A value of the field the view groups by."
             },
             "maxItems": 1000,
             "description": "The values whose groups come first, in this order. Other groups follow."
@@ -1193,17 +1179,17 @@
                   "type": "null"
                 }
               ],
-              "description": "A value of the field the layout groups by."
+              "description": "A value of the field the view groups by."
             },
             "maxItems": 1000,
-            "description": "The values whose groups the layout leaves out."
+            "description": "The values whose groups the view leaves out."
           }
         },
         "required": [
           "by"
         ],
         "additionalProperties": false,
-        "description": "How a layout groups its items."
+        "description": "How a view groups its items."
       },
       "InstanceDescription": {
         "type": "object",
@@ -6798,125 +6784,6 @@
         },
         "additionalProperties": false,
         "description": "Which items the view lists. Absent lists every item the reading key can read, except `system.*`."
-      },
-      "ViewLayout": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 100,
-            "description": "The layout's ID, unique in the view, which an app keeps to reopen it."
-          },
-          "kind": {
-            "allOf": [
-              {
-                "$ref": "#/components/schemas/ViewLayoutKind"
-              },
-              {
-                "description": "How the layout shows items."
-              }
-            ]
-          },
-          "title": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 500,
-            "description": "The layout's name. Absent, an app names it by its kind."
-          },
-          "sort": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/ViewSort"
-            },
-            "maxItems": 10,
-            "description": "The keys the layout sorts by, first key first."
-          },
-          "group": {
-            "allOf": [
-              {
-                "$ref": "#/components/schemas/ViewGroup"
-              },
-              {
-                "description": "How the layout groups its items. A `board` requires it."
-              }
-            ]
-          },
-          "shown": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/ViewField"
-            },
-            "maxItems": 200,
-            "description": "The fields the layout shows, in order."
-          },
-          "image": {
-            "type": "string",
-            "pattern": "^(?:properties\\.[A-Za-z_][A-Za-z0-9_]*)$",
-            "description": "For a `gallery`, the property that holds each card's image."
-          },
-          "date": {
-            "type": "string",
-            "pattern": "^(?:created_at|updated_at|occurred_at|properties\\.[A-Za-z_][A-Za-z0-9_]*)$",
-            "description": "For a `calendar`, the date field that places each item."
-          },
-          "start": {
-            "type": "string",
-            "pattern": "^(?:created_at|updated_at|occurred_at|properties\\.[A-Za-z_][A-Za-z0-9_]*)$",
-            "description": "For a `timeline`, the date field each span starts at. Required for a `timeline`."
-          },
-          "end": {
-            "type": "string",
-            "pattern": "^(?:created_at|updated_at|occurred_at|properties\\.[A-Za-z_][A-Za-z0-9_]*)$",
-            "description": "For a `calendar` or `timeline`, the date field each span ends at. Required for a `timeline`."
-          },
-          "x": {
-            "allOf": [
-              {
-                "$ref": "#/components/schemas/ViewField"
-              },
-              {
-                "description": "For a `chart`, the field along its horizontal axis."
-              }
-            ]
-          },
-          "y": {
-            "anyOf": [
-              {
-                "type": "string",
-                "enum": [
-                  "count"
-                ]
-              },
-              {
-                "type": "object",
-                "properties": {
-                  "sum": {
-                    "type": "string",
-                    "pattern": "^(?:properties\\.[A-Za-z_][A-Za-z0-9_]*)$",
-                    "description": "The number property whose values are added up."
-                  }
-                },
-                "required": [
-                  "sum"
-                ],
-                "additionalProperties": false
-              }
-            ],
-            "description": "What a chart measures: `count` of items, or `{ \"sum\": \"properties.<name>\" }`."
-          },
-          "location": {
-            "type": "string",
-            "pattern": "^(?:properties\\.[A-Za-z_][A-Za-z0-9_]*)$",
-            "description": "For a `map`, the property that holds each item's place."
-          }
-        },
-        "required": [
-          "id",
-          "kind"
-        ],
-        "additionalProperties": false,
-        "description": "One way a view shows its items. A layout takes only the options its `kind` takes, and never narrows which items the view lists."
       },
       "InvalidIdOrInvalidTransitionOrMissingRequiredFieldOrUnknownTypeOrValidationErrorRefusal": {
         "type": "object",
@@ -37063,7 +36930,7 @@
           "Views"
         ],
         "summary": "Create a view",
-        "description": "Creates a view: a `system.view` item whose properties say which items it lists and how its layouts show them. The item endpoints can't write one.",
+        "description": "Creates a view: a `system.view` item whose properties say which items it lists, in what order and how they group. The item endpoints can't write one.",
         "security": [
           {
             "bearerAuth": []
@@ -37085,19 +36952,27 @@
                   "query": {
                     "$ref": "#/components/schemas/ViewQuery"
                   },
-                  "layouts": {
+                  "sort": {
                     "type": "array",
                     "items": {
-                      "$ref": "#/components/schemas/ViewLayout"
+                      "$ref": "#/components/schemas/ViewSort"
                     },
-                    "minItems": 1,
-                    "maxItems": 50,
-                    "description": "How the view shows its items, in order. At least one."
+                    "maxItems": 10,
+                    "description": "The keys the view sorts by, first key first."
+                  },
+                  "group": {
+                    "allOf": [
+                      {
+                        "$ref": "#/components/schemas/ViewGroup"
+                      },
+                      {
+                        "description": "How the view groups the items it lists."
+                      }
+                    ]
                   }
                 },
                 "required": [
-                  "title",
-                  "layouts"
+                  "title"
                 ],
                 "additionalProperties": false
               }
@@ -37136,7 +37011,7 @@
             }
           },
           "400": {
-            "description": "- `validation_error`: a setting is malformed or undeclared, such as a repeated layout `id`. `details.errors[0].path` or `details.unknown_body_fields` names it.\n- `missing_required_field`: `title`, `layouts` or a part a layout requires is missing. `details.field` names it.\n- `unknown_type`: `query.types` names a type that isn't registered.",
+            "description": "- `validation_error`: a setting is malformed or undeclared, `details.errors[0].path` or `details.unknown_body_fields` names it.\n- `missing_required_field`: `title` is missing. `details.field` names it.\n- `unknown_type`: `query.types` names a type that isn't registered.",
             "content": {
               "application/json": {
                 "schema": {
@@ -37489,7 +37364,7 @@
           "Views"
         ],
         "summary": "Update a view",
-        "description": "Updates a view's title, query or layouts. Each one you send replaces the current value whole, and those you leave out stay as they are. Send the `version` you read.",
+        "description": "Updates a view's title, query, sort or group. Each one you send replaces the current value whole, and those you leave out stay as they are. Send `group: null` to remove the grouping. Send the `version` you read.",
         "security": [
           {
             "bearerAuth": []
@@ -37555,14 +37430,24 @@
                       }
                     ]
                   },
-                  "layouts": {
+                  "sort": {
                     "type": "array",
                     "items": {
-                      "$ref": "#/components/schemas/ViewLayout"
+                      "$ref": "#/components/schemas/ViewSort"
                     },
-                    "minItems": 1,
-                    "maxItems": 50,
-                    "description": "New layouts, which replace the current ones whole. At least one."
+                    "maxItems": 10,
+                    "description": "A new sort, which replaces the current one whole."
+                  },
+                  "group": {
+                    "anyOf": [
+                      {
+                        "$ref": "#/components/schemas/ViewGroup"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "description": "A new grouping, which replaces the current one whole. `null` removes the grouping."
                   }
                 },
                 "required": [
@@ -37605,7 +37490,7 @@
             }
           },
           "400": {
-            "description": "- `validation_error`: no setting, or a malformed or undeclared setting; `details` names it.\n- `missing_required_field`: `version` or a required layout part is missing; `details.field` names it.\n- `unknown_type`: `query.types` names a type that isn't registered.\n- `invalid_id`: the ID is invalid.\n- `invalid_transition`: the view is revoked.",
+            "description": "- `validation_error`: no setting, or a malformed or undeclared setting; `details` names it.\n- `missing_required_field`: `version` is missing; `details.field` names it.\n- `unknown_type`: `query.types` names a type that isn't registered.\n- `invalid_id`: the ID is invalid.\n- `invalid_transition`: the view is revoked.",
             "content": {
               "application/json": {
                 "schema": {
@@ -57980,7 +57865,7 @@
     },
     {
       "name": "Views",
-      "description": "Saved lists of items and how to show them, held as `system.view` items.",
+      "description": "Saved lists of items with their sort and grouping, held as `system.view` items.",
       "x-operation-order": [
         "createView",
         "updateView",

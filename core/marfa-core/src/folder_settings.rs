@@ -55,10 +55,12 @@ impl Core {
     /// The items the folder's query holds, as its own pass holds them. A
     /// query the slice cannot answer whole is refused `Invalid`, never
     /// answered in part: a type or tier outside the slice, `beneath` without
-    /// `parent-of` held whole, and a `backref` condition, which no copy
-    /// holds the edges to answer. Part way through a hydration it answers
-    /// from the rows that have arrived, marked `Partial`, and a folder row
-    /// that has not arrived is refused `HydrationIncomplete`.
+    /// `parent-of` held whole, and a `backref` condition, whatever edge
+    /// types the copy holds whole: a folder's pass on disk cannot follow it,
+    /// and `Settings::of` refuses it before the copy is read. Part way
+    /// through a hydration it answers from the rows that have arrived, marked
+    /// `Partial`, and a folder row that has not arrived is refused
+    /// `HydrationIncomplete`.
     pub fn list_in_folder(
         &self,
         id: &str,
@@ -152,7 +154,7 @@ impl Core {
         store::refuse_unless_usable(&conn)?;
         let catalog = catalog::Catalog::load(&conn)?;
         let (mut clauses, mut values) = (Vec::new(), Vec::new());
-        settings.narrow(&catalog, &mut clauses, &mut values)?;
+        settings.narrow(&catalog, &[], &mut clauses, &mut values)?;
         query::list_where(&conn, &clauses, &values, Sort::default(), None, None)
     }
 
@@ -332,7 +334,7 @@ fn folder_scope(
     let catalog = catalog::Catalog::load(conn)?;
     settings.refuse_unless_answerable(conn, &catalog)?;
     let (mut clauses, mut values) = (Vec::new(), Vec::new());
-    settings.narrow(&catalog, &mut clauses, &mut values)?;
+    settings.narrow(&catalog, &[], &mut clauses, &mut values)?;
     Ok((catalog, clauses, values))
 }
 

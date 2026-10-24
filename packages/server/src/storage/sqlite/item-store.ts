@@ -636,6 +636,16 @@ function itemFilterConditions(
   return conditions;
 }
 
+function withoutKeys(
+  properties: Record<string, unknown>,
+  keys: readonly string[] | undefined,
+): Record<string, unknown> {
+  if (keys === undefined) return properties;
+  return Object.fromEntries(
+    Object.entries(properties).filter(([key]) => !keys.includes(key)),
+  );
+}
+
 /**
  * What a write leaves the row holding, judged against the type the row ends
  * up as, at the current version and a stale one alike. Judged only where the
@@ -648,7 +658,13 @@ function judgeResult(
   rowType: string,
   result: Record<string, unknown>,
 ): Record<string, unknown> {
-  if (input.properties === undefined && input.type === undefined) return result;
+  if (
+    input.properties === undefined &&
+    input.clear_properties === undefined &&
+    input.type === undefined
+  ) {
+    return result;
+  }
   const resultingType = input.type ?? rowType;
   const fields = input.prune_undeclared_properties
     ? getTypeSchema(resultingType)?.fields
@@ -1573,10 +1589,13 @@ export class SqliteItemStore implements ItemStore {
         const merged = judgeResult(
           input,
           row.type,
-          mergeUpdateProperties(
-            currentProps,
-            incomingProps,
-            input.properties_mode ?? "merge",
+          withoutKeys(
+            mergeUpdateProperties(
+              currentProps,
+              incomingProps,
+              input.properties_mode ?? "merge",
+            ),
+            input.clear_properties,
           ),
         );
         return await this.persistUpdate(tx, row, {
@@ -1666,13 +1685,16 @@ export class SqliteItemStore implements ItemStore {
             !(replacing && value === null) && !serverSize(key, value),
         ),
       );
-      const clearedProperties = replacing
-        ? Object.keys(ancestor.properties).filter(
-            (key) =>
-              !Object.hasOwn(clientProps, key) &&
-              !(sized && key === "size_bytes"),
-          )
-        : [];
+      const clearedProperties = [
+        ...(replacing
+          ? Object.keys(ancestor.properties).filter(
+              (key) =>
+                !Object.hasOwn(clientProps, key) &&
+                !(sized && key === "size_bytes"),
+            )
+          : []),
+        ...(input.clear_properties ?? []),
+      ];
 
       const result = detectConflict({
         clientProperties: clientProps,

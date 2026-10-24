@@ -1830,7 +1830,8 @@ marfa views create [OPTIONS]
 | `--body <JSON>` | The settings as a JSON object, inline. |
 | `--title <TITLE>` | The view's name. |
 | `--query <JSON>` | Which items the view lists, as a JSON object: `types`, `tier`, `state`, `filter` and `beneath`. |
-| `--layouts <JSON>` | How the view shows its items, as a JSON array of layouts, each with an `id` and a `kind`. |
+| `--sort <JSON>` | The keys the view sorts by, as a JSON array of `{"by", "direction"}` objects, first key first. |
+| `--group <JSON>` | How the view groups its items, as a JSON object: `by`, and optionally `bucket`, `order` and `hidden`. `null` removes the grouping, on a change. |
 | `--idempotency-key <KEY>` | Sent as `Idempotency-Key`, so a repeat is answered from the record rather than written twice. |
 
 ### marfa views change
@@ -1852,7 +1853,8 @@ marfa views change [OPTIONS] --version <VERSION> <ID>
 | `--body <JSON>` | The settings as a JSON object, inline. |
 | `--title <TITLE>` | The view's name. |
 | `--query <JSON>` | Which items the view lists, as a JSON object: `types`, `tier`, `state`, `filter` and `beneath`. |
-| `--layouts <JSON>` | How the view shows its items, as a JSON array of layouts, each with an `id` and a `kind`. |
+| `--sort <JSON>` | The keys the view sorts by, as a JSON array of `{"by", "direction"}` objects, first key first. |
+| `--group <JSON>` | How the view groups its items, as a JSON object: `by`, and optionally `bucket`, `order` and `hidden`. `null` removes the grouping, on a change. |
 | `--idempotency-key <KEY>` | Sent as `Idempotency-Key`, so a repeat is answered from the record rather than written twice. |
 
 ### marfa views delete
@@ -2586,14 +2588,13 @@ marfa device items list [OPTIONS]
 | `--tag <TAG>` | Items must carry every tag given. |
 | `--occurred-after <TIME>` | Exclusive lower bound on the item's own time, RFC 3339. |
 | `--occurred-before <TIME>` | Exclusive upper bound on the item's own time, RFC 3339. |
-| `--filter <EXPR>` | An expression in the server's listing grammar, answered as the server answers `filter`; a `backref` condition is refused. |
+| `--filter <EXPR>` | An expression in the server's listing grammar, answered as the server answers `filter`; a `backref` condition is refused unless the copy holds its edge type whole. |
 | `--beneath <ID>` | Only this item and what it reaches along `parent-of` edges. |
 | `--sort <SORT>` | The time to order by. One of `created-at`, `updated-at`, `occurred-at`. Default: `created-at`. |
 | `--direction <DIRECTION>` | Newest first, or oldest. One of `asc`, `desc`. Default: `desc`. |
 | `--limit <LIMIT>` | How many items at most. |
 | `--offset <OFFSET>` | How many items to skip first. |
-| `--view <ID>` | Only what this view selects, ordered by its layout; refused with a reason where the copy cannot answer the query whole. |
-| `--layout <ID>` | The layout whose sort to use; without it, use the view's first layout. |
+| `--view <ID>` | Only what this view selects, in the view's own sort; refused with a reason where the copy cannot answer the query whole. |
 
 Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 
@@ -2927,7 +2928,7 @@ Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 
 ### marfa device views
 
-Views and their layout groups, read from the local copy.
+Views and their groups, read from the local copy.
 
 ```text
 marfa device views [OPTIONS] <COMMAND>
@@ -2961,10 +2962,10 @@ Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 
 ### marfa device views groups
 
-List a layout's groups, item counts, and numeric sums where requested.
+List a view's groups and the item count of each.
 
 ```text
-marfa device views groups [OPTIONS] --layout <ID> <ID>
+marfa device views groups [OPTIONS] <ID>
 ```
 
 | Argument | Description |
@@ -2973,7 +2974,6 @@ marfa device views groups [OPTIONS] --layout <ID> <ID>
 
 | Option | Description |
 | --- | --- |
-| `--layout <ID>` | The layout to group by. |
 | `--time-zone <ZONE>` | An IANA time zone for date buckets; otherwise use the device's zone. |
 
 Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
@@ -2998,7 +2998,7 @@ marfa device search [OPTIONS] <QUERY>
 | `--all-states` | Every state, not just the active one. |
 | `--type <TYPE>` | A type identifier; its subtypes are included. |
 | `--tag <TAG>` | Hits must carry every tag given. |
-| `--filter <EXPR>` | An expression in the server's listing grammar, answered as the server answers `filter`; a `backref` condition is refused. |
+| `--filter <EXPR>` | An expression in the server's listing grammar, answered as the server answers `filter`; a `backref` condition is refused unless the copy holds its edge type whole. |
 | `--beneath <ID>` | Only this item and what it reaches along `parent-of` edges. |
 | `--limit <LIMIT>` | How many hits at most. Default: `20`. |
 | `--view <ID>` | Only what this view's query selects; refused with a reason where the copy cannot answer the query whole. |

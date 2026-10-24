@@ -143,7 +143,7 @@ it.each(IDEMPOTENT_WRITE_DOORS)(
           body = { version: folder.version, title: "Changed folder" };
       }
     } else if (door.includes("views")) {
-      const view = { title: "View", layouts: [{ id: "main", kind: "list" }] };
+      const view = { title: "View" };
       if (method === "POST") body = view;
       else {
         const created = await request(ctx.app, "POST", "/views", {

@@ -667,14 +667,11 @@ mod tests {
                 "views",
                 "groups",
                 "view-id",
-                "--layout",
-                "board",
                 "--time-zone",
                 "Europe/London",
             ],
             vec![
-                "device", "items", "list", "--view", "view-id", "--layout", "board", "--limit",
-                "2", "--offset", "1",
+                "device", "items", "list", "--view", "view-id", "--limit", "2", "--offset", "1",
             ],
             vec!["device", "search", "words", "--view", "view-id"],
         ] {
@@ -685,7 +682,10 @@ mod tests {
         for words in [
             vec!["device", "items", "list", "--folder", "view-id"],
             vec!["device", "search", "words", "--folder", "view-id"],
-            vec!["device", "items", "list", "--layout", "board"],
+            vec![
+                "device", "items", "list", "--view", "view-id", "--layout", "board",
+            ],
+            vec!["device", "views", "groups", "view-id", "--layout", "board"],
             vec![
                 "device",
                 "items",

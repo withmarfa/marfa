@@ -16,7 +16,7 @@ import { requireBinary } from "./harness.js";
 let client: MarfaClient;
 let ctx: TestContext;
 let device: CliDevice;
-let view: string;
+const views = new Map<string, string>();
 const fields = [
   "properties.probe",
   "created_at",
@@ -70,23 +70,21 @@ beforeAll(async () => {
       trackItem(ctx, created.data.item.id);
     }
   }
-  const saved = await client.createView({
-    title: "Sort parity",
-    query: {
-      types: ["core.note", "core.media.book"],
-      filter: `tags contains "${ctx.source}"`,
-    },
-    layouts: fields.flatMap((by, index) =>
-      directions.map((direction) => ({
-        id: `${index}-${direction}`,
-        kind: "list",
+  for (const by of fields) {
+    for (const direction of directions) {
+      const saved = await client.createView({
+        title: `Sort parity ${by} ${direction}`,
+        query: {
+          types: ["core.note", "core.media.book"],
+          filter: `tags contains "${ctx.source}"`,
+        },
         sort: [{ by, direction }],
-      })),
-    ),
-  });
-  expect(saved.ok, JSON.stringify(saved.error)).toBe(true);
-  view = saved.data.item.id;
-  trackView(ctx, view);
+      });
+      expect(saved.ok, JSON.stringify(saved.error)).toBe(true);
+      views.set(`${by} ${direction}`, saved.data.item.id);
+      trackView(ctx, saved.data.item.id);
+    }
+  }
   device = new CliDevice({
     binary: requireBinary(),
     store: newStore("views-parity"),
@@ -107,7 +105,7 @@ afterAll(async () => {
 });
 
 it("returns the same rows in the same order as the server for each shared sort", async () => {
-  for (const [index, sort] of fields.entries()) {
+  for (const sort of fields) {
     for (const direction of directions) {
       const remote: string[] = [];
       let cursor: string | undefined;
@@ -131,9 +129,7 @@ it("returns the same rows in the same order as the server for each shared sort",
             "items",
             "list",
             "--view",
-            view,
-            "--layout",
-            `${index}-${direction}`,
+            views.get(`${sort} ${direction}`)!,
             "--limit",
             "4",
             "--offset",

@@ -63,6 +63,7 @@ pub(crate) fn list_with(
     filter::narrow(
         filters.filter.as_deref(),
         filters.beneath.as_deref(),
+        &store::whole_edge_types(conn)?,
         &mut clauses,
         &mut values,
     )?;

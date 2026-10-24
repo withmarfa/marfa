@@ -16,8 +16,8 @@ let harness: Harness | undefined;
 const VIEW = "01a00000-0000-7000-8000-00000000face";
 const id = (n: number) =>
   `01a00000-0000-7000-8000-${n.toString().padStart(12, "0")}`;
-type Group = { key: unknown; count: number; sum: number | null };
-type Layout = Record<string, unknown>;
+type Group = { key: unknown; count: number };
+type Settings = Record<string, unknown>;
 
 afterEach(async () => {
   await harness?.stop();
@@ -32,7 +32,7 @@ function value<T>(answer: Outcome<T>): T {
 
 async function copy(
   items: Array<{ item: WireItemOptions; tags?: string[] }>,
-  layouts: Layout[],
+  settings: Settings,
   options: {
     query?: Record<string, unknown>;
     whole?: string[];
@@ -41,6 +41,7 @@ async function copy(
     partial?: boolean;
   } = {},
 ) {
+  await harness?.stop();
   harness = await startHarness("views");
   scriptHydration(harness.server, {
     head: "1",
@@ -53,7 +54,7 @@ async function copy(
             properties: {
               title: "Offline view",
               query: { types: ["core.note"], ...options.query },
-              layouts,
+              ...settings,
             },
           },
         },
@@ -88,30 +89,20 @@ async function copy(
   return harness.device;
 }
 
-async function listed(layout = "list", page: string[] = []): Promise<string[]> {
+async function listed(page: string[] = []): Promise<string[]> {
   const answer = value(
-    await harness!.device.attempt([
-      "items",
-      "list",
-      "--view",
-      VIEW,
-      "--layout",
-      layout,
-      ...page,
-    ]),
+    await harness!.device.attempt(["items", "list", "--view", VIEW, ...page]),
   ) as { completeness: string; items: Item[] };
   expect(answer.completeness).toBe("complete");
   return answer.items.map((item) => item.id);
 }
 
-async function groups(layout = "groups", zone?: string): Promise<Group[]> {
+async function groups(zone?: string): Promise<Group[]> {
   const answer = value(
     await harness!.device.attempt([
       "views",
       "groups",
       VIEW,
-      "--layout",
-      layout,
       ...(zone ? ["--time-zone", zone] : []),
     ]),
   ) as { completeness: string; groups: Group[] };
@@ -120,10 +111,8 @@ async function groups(layout = "groups", zone?: string): Promise<Group[]> {
 }
 
 it("reads the saved views and their settings offline", async () => {
-  const device = await copy(
-    [{ item: { id: id(1) } }],
-    [{ id: "list", kind: "list" }],
-  );
+  const settings = { sort: [{ by: "title", direction: "asc" }] };
+  const device = await copy([{ item: { id: id(1) } }], settings);
   const requests = harness!.server.requests.length;
   const views = value(await device.attempt(["views", "list"])) as {
     views: Array<{ id: string }>;
@@ -132,10 +121,7 @@ it("reads the saved views and their settings offline", async () => {
   expect(value(await device.attempt(["views", "get", VIEW]))).toMatchObject({
     id: VIEW,
     state: "active",
-    settings: {
-      title: "Offline view",
-      layouts: [{ id: "list", kind: "list" }],
-    },
+    settings: { title: "Offline view", ...settings },
   });
   expect(await listed()).toEqual([id(1)]);
   expect(harness!.server.requests).toHaveLength(requests);
@@ -166,13 +152,7 @@ it.each(["asc", "desc"])(
           properties: probe === undefined ? {} : { probe },
         },
       })),
-      [
-        {
-          id: "list",
-          kind: "list",
-          sort: [{ by: "properties.probe", direction }],
-        },
-      ],
+      { sort: [{ by: "properties.probe", direction }] },
     );
     const ordered =
       direction === "asc"
@@ -183,38 +163,30 @@ it.each(["asc", "desc"])(
     const paged: string[] = [];
     for (let offset = 0; offset < values.length; offset += 3)
       paged.push(
-        ...(await listed("list", ["--limit", "3", "--offset", String(offset)])),
+        ...(await listed(["--limit", "3", "--offset", String(offset)])),
       );
     expect(paged).toEqual(expected);
   },
 );
 
 it("orders several keys in their declared order and accepts a field no item has", async () => {
-  await copy(
-    [
-      { item: { id: id(1), properties: { team: "b", rank: 1 } } },
-      { item: { id: id(2), properties: { team: "a", rank: 1 } } },
-      { item: { id: id(3), properties: { team: "a", rank: 2 } } },
-      { item: { id: id(4), properties: { team: "a" } } },
+  const items = [
+    { item: { id: id(1), properties: { team: "b", rank: 1 } } },
+    { item: { id: id(2), properties: { team: "a", rank: 1 } } },
+    { item: { id: id(3), properties: { team: "a", rank: 2 } } },
+    { item: { id: id(4), properties: { team: "a" } } },
+  ];
+  await copy(items, {
+    sort: [
+      { by: "properties.team", direction: "asc" },
+      { by: "properties.rank", direction: "desc" },
     ],
-    [
-      {
-        id: "list",
-        kind: "table",
-        sort: [
-          { by: "properties.team", direction: "asc" },
-          { by: "properties.rank", direction: "desc" },
-        ],
-      },
-      {
-        id: "missing",
-        kind: "list",
-        sort: [{ by: "properties.absent", direction: "desc" }],
-      },
-    ],
-  );
+  });
   expect(await listed()).toEqual([3, 2, 4, 1].map(id));
-  expect(await listed("missing")).toEqual([1, 2, 3, 4].map(id));
+  await copy(items, {
+    sort: [{ by: "properties.absent", direction: "desc" }],
+  });
+  expect(await listed()).toEqual([1, 2, 3, 4].map(id));
 });
 
 it.each([
@@ -246,7 +218,7 @@ it.each([
       },
       tags: [["c"], ["a"], ["b"]][index],
     })),
-    [{ id: "list", kind: "list", sort: [{ by, direction: "asc" }] }],
+    { sort: [{ by, direction: "asc" }] },
     by === "type"
       ? {
           query: { types: ["core.note", "core.task"] },
@@ -257,60 +229,40 @@ it.each([
   expect(await listed()).toEqual([2, 3, 1].map(id));
 });
 
-it("counts scalar and missing groups and sums only number properties", async () => {
+it("counts scalar and missing groups", async () => {
   await copy(
     [
-      { item: { id: id(1), properties: { status: "open", amount: 3 } } },
-      { item: { id: id(2), properties: { status: "open", amount: -1.5 } } },
-      { item: { id: id(3), properties: { status: "open", amount: "9" } } },
-      { item: { id: id(4), properties: { status: "closed", amount: true } } },
-      { item: { id: id(5), properties: { status: null, amount: 2 } } },
+      { item: { id: id(1), properties: { status: "open" } } },
+      { item: { id: id(2), properties: { status: "open" } } },
+      { item: { id: id(3), properties: { status: "open" } } },
+      { item: { id: id(4), properties: { status: "closed" } } },
+      { item: { id: id(5), properties: { status: null } } },
       { item: { id: id(6), properties: {} } },
     ],
-    [
-      {
-        id: "groups",
-        kind: "chart",
-        group: { by: "properties.status", order: ["open"] },
-        y: { sum: "properties.amount" },
-      },
-    ],
+    { group: { by: "properties.status", order: ["open"] } },
   );
   expect(await groups()).toEqual([
-    { key: "open", count: 3, sum: 1.5 },
-    { key: "closed", count: 1, sum: 0 },
-    { key: null, count: 2, sum: 2 },
+    { key: "open", count: 3 },
+    { key: "closed", count: 1 },
+    { key: null, count: 2 },
   ]);
 });
 
 it("counts an item in each tag group and honors ordered and hidden groups", async () => {
-  await copy(
-    [
-      { item: { id: id(1), properties: { amount: 2 } }, tags: ["a", "b"] },
-      { item: { id: id(2), properties: { amount: 3 } }, tags: ["b"] },
-      { item: { id: id(3), properties: {} }, tags: [] },
-    ],
-    [
-      {
-        id: "groups",
-        kind: "chart",
-        group: { by: "tags", order: ["b"] },
-        y: { sum: "properties.amount" },
-      },
-      {
-        id: "hidden",
-        kind: "board",
-        group: { by: "tags", hidden: ["a", null] },
-      },
-    ],
-  );
+  const items = [
+    { item: { id: id(1) }, tags: ["a", "b"] },
+    { item: { id: id(2) }, tags: ["b"] },
+    { item: { id: id(3) }, tags: [] },
+  ];
+  await copy(items, { group: { by: "tags", order: ["b"] } });
   expect(await groups()).toEqual([
-    { key: "b", count: 2, sum: 5 },
-    { key: "a", count: 1, sum: 2 },
-    { key: null, count: 1, sum: 0 },
+    { key: "b", count: 2 },
+    { key: "a", count: 1 },
+    { key: null, count: 1 },
   ]);
-  expect(await groups("hidden")).toEqual([{ key: "b", count: 2, sum: null }]);
-  expect(await listed("hidden")).toHaveLength(3);
+  await copy(items, { group: { by: "tags", hidden: ["a", null] } });
+  expect(await groups()).toEqual([{ key: "b", count: 2 }]);
+  expect(await listed()).toHaveLength(3);
 });
 
 it.each(["edge", "backref"])(
@@ -318,30 +270,24 @@ it.each(["edge", "backref"])(
   async (end) => {
     const device = await copy(
       [1, 2, 3].map((n) => ({ item: { id: id(n) } })),
-      [{ id: "groups", kind: "board", group: { by: `${end}[references]` } }],
+      { group: { by: `${end}[references]` } },
       { whole: ["references"] },
     );
     expect(await groups()).toEqual(
       end === "edge"
         ? [
-            { key: id(2), count: 1, sum: null },
-            { key: id(3), count: 2, sum: null },
-            { key: null, count: 1, sum: null },
+            { key: id(2), count: 1 },
+            { key: id(3), count: 2 },
+            { key: null, count: 1 },
           ]
         : [
-            { key: id(1), count: 2, sum: null },
-            { key: id(2), count: 1, sum: null },
-            { key: null, count: 1, sum: null },
+            { key: id(1), count: 2 },
+            { key: id(2), count: 1 },
+            { key: null, count: 1 },
           ],
     );
     value(await device.hydrate(["system.view", "core.note"], "all"));
-    const refused = await device.attempt([
-      "views",
-      "groups",
-      VIEW,
-      "--layout",
-      "groups",
-    ]);
+    const refused = await device.attempt(["views", "groups", VIEW]);
     expect(refused.ok).toBe(false);
     if (!refused.ok)
       expect(refused.refusal.raw).toMatch(
@@ -367,16 +313,10 @@ it.each([
       ].map((when, index) => ({
         item: { id: id(index + 1), properties: { when } },
       })),
-      [
-        {
-          id: "groups",
-          kind: "board",
-          group: { by: "properties.when", bucket },
-        },
-      ],
+      { group: { by: "properties.when", bucket } },
     );
     // Paris advances from UTC+1 to UTC+2 during March 29.
-    const result = await groups("groups", "Europe/Paris");
+    const result = await groups("Europe/Paris");
     const expected =
       bucket === "day" ? ["2026-03-29", "2026-03-30", "2027-01-01"] : keys;
     expect(result.map((group) => group.key)).toEqual(expected);
@@ -384,9 +324,9 @@ it.each([
       bucket === "day" || bucket === "week" ? [2, 1, 1] : [3, 1],
     );
     expect(result.reduce((count, group) => count + group.count, 0)).toBe(4);
-    expect(
-      (await groups("groups", "UTC")).map((group) => group.key),
-    ).not.toEqual(expected);
+    expect((await groups("UTC")).map((group) => group.key)).not.toEqual(
+      expected,
+    );
   },
 );
 
@@ -397,72 +337,49 @@ it("keeps missing and invalid dates in the missing bucket", async () => {
       { item: { id: id(2), properties: { when: "not a date" } } },
       { item: { id: id(3), properties: {} } },
     ],
-    [
-      {
-        id: "groups",
-        kind: "board",
-        group: { by: "properties.when", bucket: "day" },
-      },
-    ],
+    { group: { by: "properties.when", bucket: "day" } },
   );
-  expect(await groups("groups", "Europe/Paris")).toEqual([
-    { key: "2026-10-25", count: 1, sum: null },
-    { key: null, count: 2, sum: null },
+  expect(await groups("Europe/Paris")).toEqual([
+    { key: "2026-10-25", count: 1 },
+    { key: null, count: 2 },
   ]);
 });
 
 it("uses the device time zone when a caller names none", async () => {
   await copy(
     [{ item: { id: id(1), properties: { when: "2026-03-29T23:30:00Z" } } }],
-    [
-      {
-        id: "groups",
-        kind: "board",
-        group: { by: "properties.when", bucket: "day" },
-      },
-    ],
+    { group: { by: "properties.when", bucket: "day" } },
   );
   const previous = process.env.TZ;
   try {
     process.env.TZ = "Europe/Paris";
-    expect(await groups()).toEqual([
-      { key: "2026-03-30", count: 1, sum: null },
-    ]);
+    expect(await groups()).toEqual([{ key: "2026-03-30", count: 1 }]);
     process.env.TZ = "UTC";
-    expect(await groups()).toEqual([
-      { key: "2026-03-29", count: 1, sum: null },
-    ]);
+    expect(await groups()).toEqual([{ key: "2026-03-29", count: 1 }]);
   } finally {
     if (previous === undefined) delete process.env.TZ;
     else process.env.TZ = previous;
   }
 });
 
-it("pages a large copy by its layout and counts the whole matching set", async () => {
+it("pages a large copy by its sort and counts the whole matching set", async () => {
   const size = 4097;
   await copy(
     Array.from({ length: size }, (_, index) => ({
       item: {
         id: id(index + 1),
-        properties: { rank: size - index, amount: 2 },
+        properties: { rank: size - index },
       },
     })),
-    [
-      {
-        id: "list",
-        kind: "chart",
-        sort: [{ by: "properties.rank", direction: "asc" }],
-        group: { by: "properties.absent" },
-        y: { sum: "properties.amount" },
-      },
-    ],
+    {
+      sort: [{ by: "properties.rank", direction: "asc" }],
+      group: { by: "properties.absent" },
+    },
   );
-  expect(await listed("list", ["--limit", "3"])).toEqual(
+  expect(await listed(["--limit", "3"])).toEqual(
     [size, size - 1, size - 2].map(id),
   );
-  expect(await groups("list")).toEqual([
-    { key: null, count: size, sum: 2 * size },
-  ]);
+  expect(await groups()).toEqual([{ key: null, count: size }]);
 });
 
 const unanswerableCases = [
@@ -476,7 +393,7 @@ it.each(unanswerableCases)(
   async (query, reason) => {
     const device = await copy(
       [{ item: { id: id(1) } }],
-      [{ id: "list", kind: "list" }],
+      {},
       {
         query: { tier: "library", ...query },
         tier: "library",
@@ -486,7 +403,7 @@ it.each(unanswerableCases)(
     for (const args of [
       ["items", "list", "--view", VIEW],
       ["search", "body", "--view", VIEW],
-      ["views", "groups", VIEW, "--layout", "list"],
+      ["views", "groups", VIEW],
     ]) {
       const refused = await device.attempt(args);
       expect(refused.ok, JSON.stringify(refused)).toBe(false);
@@ -498,7 +415,7 @@ it.each(unanswerableCases)(
 it("refuses a partially hydrated view instead of reporting partial totals", async () => {
   const device = await copy(
     [1, 2].map((n) => ({ item: { id: id(n) } })),
-    [{ id: "list", kind: "list" }],
+    {},
     { partial: true },
   );
   const partial = value(await device.listAnswer());
@@ -509,7 +426,7 @@ it("refuses a partially hydrated view instead of reporting partial totals", asyn
 });
 
 it("accepts --view and refuses the removed --folder option", async () => {
-  await copy([{ item: { id: id(1) } }], [{ id: "list", kind: "list" }]);
+  await copy([{ item: { id: id(1) } }], {});
   expect(await listed()).toEqual([id(1)]);
   expect(
     value(await harness!.device.attempt(["search", "body", "--view", VIEW])),
@@ -526,4 +443,70 @@ it("accepts --view and refuses the removed --folder option", async () => {
     expect(refused.status).not.toBe(0);
     expect(refused.stderr).toContain("unexpected argument '--folder'");
   }
+});
+
+it("lists the items holding an edge to one item and those of one source", async () => {
+  const items = [1, 2, 3].map((n) => ({
+    item: { id: id(n), source: n === 3 ? "other" : "inkwell" },
+  }));
+  await copy(
+    items,
+    { sort: [{ by: "created_at", direction: "asc" }] },
+    {
+      query: { filter: `edge[references] eq "${id(3)}"` },
+      whole: ["references"],
+    },
+  );
+  expect(await listed()).toEqual([1, 2].map(id));
+  await copy(items, {}, { query: { filter: 'source eq "inkwell"' } });
+  expect((await listed()).sort()).toEqual([1, 2].map(id));
+  await copy(items, {}, { query: { filter: 'source eq "other"' } });
+  expect(await listed()).toEqual([id(3)]);
+});
+
+it("answers a backref condition where the copy holds the edge type whole and refuses it where it does not", async () => {
+  const items = [1, 2, 3].map((n) => ({ item: { id: id(n) } }));
+  const whole = { whole: ["references"] };
+  await copy(
+    items,
+    {},
+    { query: { filter: "backref[references] exists" }, ...whole },
+  );
+  expect((await listed()).sort()).toEqual([2, 3].map(id));
+  await copy(
+    items,
+    {},
+    { query: { filter: "backref[references] not_exists" }, ...whole },
+  );
+  expect(await listed()).toEqual([id(1)]);
+  const device = await copy(
+    items,
+    {},
+    { query: { filter: "backref[references] exists" } },
+  );
+  const refused = await device.attempt(["items", "list", "--view", VIEW]);
+  expect(refused.ok).toBe(false);
+  if (!refused.ok)
+    expect(refused.refusal.raw).toMatch(/references.*whole|whole.*references/);
+});
+
+it("reads a view's sort and ignores layouts stored with it", async () => {
+  await copy(
+    ["c", "a", "b"].map((title, index) => ({
+      item: { id: id(index + 1), properties: { title } },
+    })),
+    {
+      sort: [{ by: "title", direction: "asc" }],
+      layouts: [
+        {
+          id: "main",
+          kind: "list",
+          sort: [{ by: "title", direction: "desc" }],
+          group: { by: "title" },
+        },
+      ],
+    },
+  );
+  expect(await listed()).toEqual([2, 3, 1].map(id));
+  expect(await groups()).toEqual([{ key: null, count: 3 }]);
 });

@@ -46,7 +46,10 @@ interface Refusal {
   conflicting_fields?: string[];
 }
 
-const LIST = [{ id: "main", kind: "list" }];
+const TOO_MANY_SORT_KEYS = Array.from({ length: 11 }, () => ({
+  by: "title",
+  direction: "asc",
+}));
 
 async function keyWith(
   label: string,
@@ -66,11 +69,7 @@ async function view(
   settings: Record<string, unknown> = {},
   by: MarfaClient = client,
 ): Promise<{ id: string; version: number }> {
-  const r = await by.createView({
-    title: "A view",
-    layouts: LIST,
-    ...settings,
-  });
+  const r = await by.createView({ title: "A view", ...settings });
   expect(r.status, JSON.stringify(r.error)).toBe(201);
   trackView(ctx, r.data.item.id);
   return { id: r.data.item.id, version: r.data.item.version };
@@ -96,7 +95,7 @@ async function parentedView(): Promise<{ parentId: string; id: string }> {
 }
 
 describe("the view door", () => {
-  it("creates a view as a system.view with every layout kind, read back through the item doors", async () => {
+  it("creates a view as a system.view with its query, sort and group, read back through the item doors", async () => {
     const settings = {
       title: "Reading",
       query: {
@@ -106,62 +105,15 @@ describe("the view door", () => {
         filter: 'tags contains "reading"',
         beneath: "01920000-0000-7000-8000-000000000000",
       },
-      layouts: [
-        {
-          id: "rows",
-          kind: "list",
-          title: "Rows",
-          sort: [
-            { by: "updated_at", direction: "desc" },
-            { by: "title", direction: "asc" },
-          ],
-          shown: ["title", "tags", "properties.status"],
-        },
-        {
-          id: "grid",
-          kind: "table",
-          group: { by: "edge[parent-of]" },
-          shown: ["title", "type", "state", "tier", "created_at"],
-        },
-        {
-          id: "board",
-          kind: "board",
-          group: {
-            by: "properties.status",
-            order: ["todo", "doing", null],
-            hidden: [false, 3],
-          },
-        },
-        { id: "cards", kind: "gallery", image: "properties.cover" },
-        {
-          id: "month",
-          kind: "calendar",
-          date: "occurred_at",
-          end: "properties.ends",
-          group: { by: "backref[about]" },
-        },
-        {
-          id: "spans",
-          kind: "timeline",
-          start: "properties.starts",
-          end: "properties.ends",
-          group: { by: "created_at", bucket: "week" },
-        },
-        {
-          id: "count",
-          kind: "chart",
-          x: "properties.status",
-          y: "count",
-          group: { by: "properties.due", bucket: "month" },
-        },
-        {
-          id: "sum",
-          kind: "chart",
-          x: "type",
-          y: { sum: "properties.amount" },
-        },
-        { id: "places", kind: "map", location: "properties.place" },
+      sort: [
+        { by: "updated_at", direction: "desc" },
+        { by: "properties.status", direction: "asc" },
       ],
+      group: {
+        by: "properties.status",
+        order: ["todo", "doing", null],
+        hidden: [false, 3],
+      },
     };
     const r = await client.createView(settings);
     expect(r.status, JSON.stringify(r.error)).toBe(201);
@@ -184,6 +136,21 @@ describe("the view door", () => {
     expect(listed.data.data.map((row) => row.id)).toContain(item.id);
   });
 
+  it("takes a view of one folder's items, of one source and of items nothing points at", async () => {
+    const folder = "01920000-0000-7000-8000-000000000001";
+    for (const filter of [
+      `edge[in-folder] eq "${folder}"`,
+      'source eq "inkwell"',
+      "backref[parent-of] not_exists",
+      `backref[in-folder] eq "${folder}" AND tags contains "x"`,
+    ]) {
+      const r = await client.createView({ title: filter, query: { filter } });
+      expect(r.status, `${filter}: ${JSON.stringify(r.error)}`).toBe(201);
+      trackView(ctx, r.data.item.id);
+      expect(r.data.item.properties.query).toEqual({ filter });
+    }
+  });
+
   it("changes a view at its version, merges a stale change to another setting, and refuses one to the same", async () => {
     const { id } = await view({ query: { tier: "feed" } });
     const changed = await client.updateView(id, {
@@ -194,16 +161,15 @@ describe("the view door", () => {
     await expectMatchesSchema("PATCH", "/views/{id}", 200, changed.data);
     expect(changed.data.item.version).toBe(2);
 
-    const layouts = [
-      { id: "b", kind: "table", shown: ["title"] },
-      { id: "a", kind: "board", group: { by: "state" } },
-    ];
-    const merged = await client.updateView(id, { version: 1, layouts });
+    const sort = [{ by: "title", direction: "asc" }];
+    const group = { by: "state" };
+    const merged = await client.updateView(id, { version: 1, sort, group });
     expect(merged.status, JSON.stringify(merged.error)).toBe(200);
     expect(merged.data.item.properties).toEqual({
       title: "Renamed",
       query: { tier: "feed" },
-      layouts,
+      sort,
+      group,
     });
 
     const stale = await client.updateView(id, {
@@ -217,6 +183,114 @@ describe("the view door", () => {
     expect(refusal.conflicting_fields).toEqual(["title"]);
     const kept = await client.getItem(id);
     expect(kept.data.item.properties.title).toBe("Renamed");
+  });
+
+  it("clears a view's group with null, leaving every other setting as held, and takes a stale clear only where the group is unchanged", async () => {
+    const sort = [{ by: "title", direction: "asc" }];
+    const query = { tier: "feed" };
+    const { id } = await view({ query, sort, group: { by: "state" } });
+    // The witness: the view reads grouped before the clear.
+    const grouped = await client.getItem(id);
+    expect(grouped.data.item.properties.group).toEqual({ by: "state" });
+
+    const cleared = await client.updateView(id, { version: 1, group: null });
+    expect(cleared.status, JSON.stringify(cleared.error)).toBe(200);
+    await expectMatchesSchema("PATCH", "/views/{id}", 200, cleared.data);
+    expect(cleared.data.item.version).toBe(2);
+    const read = await client.getItem(id);
+    expect(read.data.item.properties).toEqual({
+      title: "A view",
+      query,
+      sort,
+    });
+    expect(Object.hasOwn(read.data.item.properties, "group")).toBe(false);
+
+    // A stale clear of a group nobody changed since applies, and a change to
+    // another setting made since stays.
+    const again = await view({ group: { by: "state" } });
+    const renamed = await client.updateView(again.id, {
+      version: 1,
+      title: "Renamed",
+    });
+    expect(renamed.status).toBe(200);
+    const merged = await client.updateView(again.id, {
+      version: 1,
+      group: null,
+    });
+    expect(merged.status, JSON.stringify(merged.error)).toBe(200);
+    expect(merged.data.item.properties).toEqual({ title: "Renamed" });
+
+    // A stale clear of a group changed since collides on the group alone.
+    const moved = await view({ group: { by: "state" } });
+    expect(
+      (
+        await client.updateView(moved.id, {
+          version: 1,
+          group: { by: "tier" },
+        })
+      ).status,
+    ).toBe(200);
+    const stale = await client.updateView(moved.id, {
+      version: 1,
+      group: null,
+      title: "Not lost",
+    });
+    expect(stale.status).toBe(409);
+    const refusal = stale.error as unknown as Refusal;
+    expect(refusal.error.code).toBe("version_conflict");
+    expect(refusal.conflicting_fields).toEqual(["group"]);
+    const kept = await client.getItem(moved.id);
+    expect(kept.data.item.properties).toEqual({
+      title: "A view",
+      group: { by: "tier" },
+    });
+
+    // A stale clear of a group the caller's version never held changes
+    // nothing, and the answer shows the group that stands.
+    const ungrouped = await view();
+    expect(
+      (
+        await client.updateView(ungrouped.id, {
+          version: 1,
+          group: { by: "tier" },
+        })
+      ).status,
+    ).toBe(200);
+    const nothing = await client.updateView(ungrouped.id, {
+      version: 1,
+      group: null,
+    });
+    expect(nothing.status, JSON.stringify(nothing.error)).toBe(200);
+    expect(nothing.data.item.properties.group).toEqual({ by: "tier" });
+
+    // A change to the group made since does not collide with a stale change
+    // to another setting.
+    const other = await client.updateView(moved.id, {
+      version: 1,
+      title: "Other",
+    });
+    expect(other.status, JSON.stringify(other.error)).toBe(200);
+    expect(other.data.item.properties).toEqual({
+      title: "Other",
+      group: { by: "tier" },
+    });
+  });
+
+  it("refuses null for every setting but a change's group", async () => {
+    const { id } = await view();
+    const create = await client.createView({ title: "refused", group: null });
+    expect(create.status).toBe(400);
+    expect((create.error as unknown as Refusal).error.code).toBe(
+      "validation_error",
+    );
+    for (const setting of ["title", "query", "sort"]) {
+      const r = await client.updateView(id, { version: 1, [setting]: null });
+      expect(r.status, setting).toBe(400);
+      const refusal = r.error as unknown as Refusal;
+      expect(refusal.error.code, setting).toBe("validation_error");
+      expect(refusal.error.details?.errors?.[0]?.path, setting).toBe(setting);
+    }
+    expect((await client.getItem(id)).data.item.version).toBe(1);
   });
 
   it("refuses a change naming no version or no setting, and a change or delete of an id that is not a view", async () => {
@@ -365,7 +439,7 @@ describe("the view door", () => {
     ] as const) {
       const narrow = await keyWith(label, map);
       const answers = [
-        await narrow.createView({ title: "refused", layouts: LIST }),
+        await narrow.createView({ title: "refused" }),
         await narrow.updateView(target.id, { version: 1, title: "x" }),
         await narrow.deleteView(target.id),
       ];
@@ -402,121 +476,39 @@ describe("the view door", () => {
   });
 
   it.each([
-    [{ layouts: [] }, "validation_error", "layouts"],
     [
-      { layouts: [{ id: "", kind: "list" }] },
+      { sort: [{ by: "body", direction: "asc" }] },
       "validation_error",
-      "layouts.0.id",
+      "sort.0.by",
+    ],
+    [
+      { sort: [{ by: "title", direction: "up" }] },
+      "validation_error",
+      "sort.0.direction",
     ],
     [
       {
-        layouts: [
-          { id: "a", kind: "list" },
-          { id: "a", kind: "table" },
-        ],
+        sort: TOO_MANY_SORT_KEYS,
       },
       "validation_error",
-      "layouts.1.id",
+      "sort",
+    ],
+    [{ group: { by: "owner" } }, "validation_error", "group.by"],
+    [{ group: { by: "edge[no-such-edge]" } }, "validation_error", "group.by"],
+    [
+      { group: { by: "title", bucket: "month" } },
+      "validation_error",
+      "group.bucket",
     ],
     [
-      { layouts: [{ id: "a", kind: "kanban" }] },
+      { group: { by: "edge[about]", bucket: "day" } },
       "validation_error",
-      "layouts.0.kind",
+      "group.bucket",
     ],
     [
-      { layouts: [{ id: "a", kind: "list", image: "properties.cover" }] },
+      { group: { by: "created_at", bucket: "decade" } },
       "validation_error",
-      "layouts.0.image",
-    ],
-    [
-      {
-        layouts: [
-          {
-            id: "a",
-            kind: "board",
-            group: { by: "state" },
-            date: "created_at",
-          },
-        ],
-      },
-      "validation_error",
-      "layouts.0.date",
-    ],
-    [
-      { layouts: [{ id: "a", kind: "calendar", start: "created_at" }] },
-      "validation_error",
-      "layouts.0.start",
-    ],
-    [
-      { layouts: [{ id: "a", kind: "map", x: "title" }] },
-      "validation_error",
-      "layouts.0.x",
-    ],
-    [
-      {
-        layouts: [
-          { id: "a", kind: "list", sort: [{ by: "body", direction: "asc" }] },
-        ],
-      },
-      "validation_error",
-      "layouts.0.sort.0.by",
-    ],
-    [
-      {
-        layouts: [{ id: "a", kind: "table", shown: ["title", "properties."] }],
-      },
-      "validation_error",
-      "layouts.0.shown.1",
-    ],
-    [
-      { layouts: [{ id: "a", kind: "list", group: { by: "owner" } }] },
-      "validation_error",
-      "layouts.0.group.by",
-    ],
-    [
-      {
-        layouts: [
-          { id: "a", kind: "list", group: { by: "edge[no-such-edge]" } },
-        ],
-      },
-      "validation_error",
-      "layouts.0.group.by",
-    ],
-    [
-      {
-        layouts: [
-          { id: "a", kind: "list", group: { by: "title", bucket: "month" } },
-        ],
-      },
-      "validation_error",
-      "layouts.0.group.bucket",
-    ],
-    [
-      {
-        layouts: [
-          {
-            id: "a",
-            kind: "list",
-            group: { by: "edge[about]", bucket: "day" },
-          },
-        ],
-      },
-      "validation_error",
-      "layouts.0.group.bucket",
-    ],
-    [
-      { layouts: [{ id: "a", kind: "gallery", image: "title" }] },
-      "validation_error",
-      "layouts.0.image",
-    ],
-    [
-      {
-        layouts: [
-          { id: "a", kind: "timeline", start: "title", end: "updated_at" },
-        ],
-      },
-      "validation_error",
-      "layouts.0.start",
+      "group.bucket",
     ],
     [{ query: { filter: "tags eq" } }, "validation_error", "query.filter"],
     [
@@ -538,11 +530,7 @@ describe("the view door", () => {
     async (settings, code, path) => {
       const { id } = await view();
       for (const r of [
-        await client.createView({
-          title: "refused",
-          layouts: LIST,
-          ...settings,
-        }),
+        await client.createView({ title: "refused", ...settings }),
         await client.updateView(id, { version: 1, ...settings }),
       ]) {
         expect(r.status).toBe(400);
@@ -555,59 +543,41 @@ describe("the view door", () => {
     },
   );
 
-  it("takes a chart measuring a number property and refuses one summing a field that is not a property", async () => {
-    // The witness: the same layout with a property is taken.
-    await view({
-      layouts: [{ id: "a", kind: "chart", y: { sum: "properties.amount" } }],
-    });
-    const r = await client.createView({
-      title: "refused",
-      layouts: [{ id: "a", kind: "chart", y: { sum: "title" } }],
-    });
-    expect(r.status).toBe(400);
-    const refusal = r.error as unknown as Refusal;
-    expect(refusal.error.code).toBe("validation_error");
-    expect(refusal.error.details?.errors?.[0]?.path).toMatch(/^layouts\.0\.y/);
+  it("takes a sort and a group on a date, an edge and a property, and refuses none of them", async () => {
+    // The witness for the refusals above: the same settings, well formed.
+    for (const settings of [
+      { sort: [{ by: "properties.amount", direction: "desc" }] },
+      { sort: [{ by: "tags", direction: "asc" }] },
+      { group: { by: "created_at", bucket: "week" } },
+      { group: { by: "edge[about]" } },
+      { group: { by: "backref[about]" } },
+      { group: { by: "properties.due", bucket: "month" } },
+    ]) {
+      const r = await client.createView({ title: "taken", ...settings });
+      expect(r.status, JSON.stringify([settings, r.error])).toBe(201);
+      trackView(ctx, r.data.item.id);
+    }
   });
 
-  it.each([
-    [{ title: undefined }, "title"],
-    [{ layouts: undefined }, "layouts"],
-    [{ layouts: [{ kind: "list" }] }, "layouts.0.id"],
-    [{ layouts: [{ id: "a" }] }, "layouts.0.kind"],
-    [{ layouts: [{ id: "a", kind: "board" }] }, "layouts.0.group"],
-    [
-      { layouts: [{ id: "a", kind: "timeline", start: "created_at" }] },
-      "layouts.0.end",
-    ],
-    [
-      { layouts: [{ id: "a", kind: "timeline", end: "created_at" }] },
-      "layouts.0.start",
-    ],
-  ])(
-    "refuses a create missing %j with missing_required_field naming %s",
-    async (settings, field) => {
-      const body: Record<string, unknown> = {
-        title: "refused",
-        layouts: LIST,
-        ...settings,
-      };
-      for (const [name, value] of Object.entries(body)) {
-        if (value === undefined) Reflect.deleteProperty(body, name);
-      }
-      const r = await client.createView(body);
-      expect(r.status).toBe(400);
-      const refusal = r.error as unknown as Refusal;
-      expect(refusal.error.code).toBe("missing_required_field");
-      expect(refusal.error.details?.field).toBe(field);
-    },
-  );
+  it("refuses a create missing its title with missing_required_field naming title", async () => {
+    const r = await client.createView({ sort: [] });
+    expect(r.status).toBe(400);
+    const refusal = r.error as unknown as Refusal;
+    expect(refusal.error.code).toBe("missing_required_field");
+    expect(refusal.error.details?.field).toBe("title");
+    // The witness: the same body with a title is taken.
+    const taken = await client.createView({ title: "taken", sort: [] });
+    expect(taken.status).toBe(201);
+    trackView(ctx, taken.data.item.id);
+  });
 
   it("refuses a key a view setting does not declare, naming its path from the body, on a create and on a change", async () => {
     const { id } = await view();
     const extra = {
       query: { tags: ["x"] },
-      layouts: [{ id: "a", kind: "list", color: "red", filter: "x" }],
+      sort: [{ by: "title", direction: "asc", nulls: "last" }],
+      group: { by: "state", color: "red" },
+      layouts: [{ id: "main", kind: "list" }],
       owner: "x",
     };
     for (const r of [
@@ -619,7 +589,13 @@ describe("the view door", () => {
       expect(refusal.error.code).toBe("validation_error");
       expect(
         [...(refusal.error.details?.unknown_body_fields ?? [])].sort(),
-      ).toEqual(["layouts.0.color", "layouts.0.filter", "owner", "query.tags"]);
+      ).toEqual([
+        "group.color",
+        "layouts",
+        "owner",
+        "query.tags",
+        "sort.0.nulls",
+      ]);
     }
   });
 
@@ -629,7 +605,7 @@ describe("the view door", () => {
       client.rawRequest<{ item: { id: string } }>("/views", {
         method: "POST",
         headers: { "Idempotency-Key": key },
-        body: { title: "once", layouts: LIST },
+        body: { title: "once" },
       });
     const first = await send();
     expect(first.status).toBe(201);
@@ -652,8 +628,8 @@ describe("the view door", () => {
       [
         "POST",
         "/views",
-        ["/views", { title: "a", layouts: LIST }],
-        ["/views", { title: "b", layouts: LIST }],
+        ["/views", { title: "a" }],
+        ["/views", { title: "b" }],
       ],
       [
         "PATCH",

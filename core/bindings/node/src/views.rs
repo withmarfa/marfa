@@ -30,7 +30,6 @@ pub struct ViewGroup {
     #[napi(ts_type = "string | number | boolean | null")]
     pub key: serde_json::Value,
     pub count: i64,
-    pub sum: Option<f64>,
 }
 
 #[napi(object)]
@@ -206,13 +205,12 @@ impl MarfaCore {
         &self,
         env: Env,
         id: String,
-        layout: Option<String>,
         limit: Option<u32>,
         offset: Option<u32>,
     ) -> Result<Listing> {
         let rows = self
             .inner
-            .list_in_view(&id, layout.as_deref(), limit, offset)
+            .list_in_view(&id, limit, offset)
             .map_err(|error| failure(env, error))?;
         Ok(Listing {
             items: rows
@@ -255,12 +253,11 @@ impl MarfaCore {
         &self,
         env: Env,
         id: String,
-        layout: String,
         time_zone: Option<String>,
     ) -> Result<ViewGroups> {
         let rows = self
             .inner
-            .view_groups(&id, &layout, time_zone.as_deref())
+            .view_groups(&id, time_zone.as_deref())
             .map_err(|error| failure(env, error))?;
         Ok(ViewGroups {
             groups: rows
@@ -269,7 +266,6 @@ impl MarfaCore {
                 .map(|group| ViewGroup {
                     key: group.key,
                     count: count(group.count),
-                    sum: group.sum,
                 })
                 .collect(),
             completeness: rows.completeness.into(),

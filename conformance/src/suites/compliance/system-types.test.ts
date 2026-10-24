@@ -109,9 +109,8 @@ describe("system.* set", () => {
 
   it("refuses a system.view write on every item door, from a key the view door admits", async () => {
     const np = await narrowClient("np-view-write");
-    const layouts = [{ id: "main", kind: "list" }];
     // The witness: this key writes a view through its own door.
-    const made = await np.createView({ title: "item doors", layouts });
+    const made = await np.createView({ title: "item doors" });
     expect(made.status).toBe(201);
     const viewId = made.data.item.id;
     trackView(ctx, viewId);
@@ -125,7 +124,7 @@ describe("system.* set", () => {
     const answers = [
       await np.createItem({
         type: "system.view",
-        properties: { title: "x", layouts },
+        properties: { title: "x" },
       }),
       await np.updateItem(viewId, { version: 1, properties: { title: "x" } }),
       await np.deleteItem(viewId),
@@ -134,7 +133,7 @@ describe("system.* set", () => {
         version: 1,
         type: "system.view",
         retype: true,
-        properties: { title: "x", layouts },
+        properties: { title: "x" },
       }),
     ];
     for (const r of answers) {
@@ -142,7 +141,7 @@ describe("system.* set", () => {
       expect(r.error?.error.code).toBe("type_not_permitted");
     }
     const bulk = await np.bulkItems([
-      { type: "system.view", properties: { title: "x", layouts } },
+      { type: "system.view", properties: { title: "x" } },
     ]);
     expect(bulk.status).toBe(403);
     expect(bulk.error?.error.code).toBe("bulk_atomic_rollback");

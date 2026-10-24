@@ -100,6 +100,8 @@ interface RowChange {
   properties?: Record<string, unknown>;
   properties_mode?: "merge" | "replace";
   prune_undeclared_properties?: boolean;
+  /** Properties removed from the row: `StoredUpdateItemInput.clear_properties`. */
+  clear_properties?: readonly string[];
   tier?: Tier;
   occurred_at?: string;
   source_id?: string;
@@ -806,6 +808,7 @@ async function changeRow(
     const writesRow =
       upsert ||
       change.properties !== undefined ||
+      change.clear_properties !== undefined ||
       change.tier !== undefined ||
       change.occurred_at !== undefined ||
       change.source_id !== undefined ||
@@ -817,6 +820,9 @@ async function changeRow(
         writer: await versionWriter(storage, writer),
         properties: change.properties,
         prune_undeclared_properties: change.prune_undeclared_properties,
+        ...(change.clear_properties !== undefined && {
+          clear_properties: change.clear_properties,
+        }),
         ...(change.properties_mode !== undefined && {
           properties_mode: change.properties_mode,
         }),

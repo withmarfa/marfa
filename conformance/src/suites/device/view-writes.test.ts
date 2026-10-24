@@ -16,7 +16,7 @@ it("returns an accepted change when its read-back fails, leaving refresh to a la
     const id = "01a00000-0000-7000-8000-00000000face";
     const settings = {
       title: "Before",
-      layouts: [{ id: "list", kind: "list" }],
+      sort: [{ by: "title", direction: "asc" }],
     };
     const row = { id, type: "system.view", properties: settings };
     scriptHydration(server, {
