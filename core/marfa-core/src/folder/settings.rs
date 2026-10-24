@@ -356,6 +356,22 @@ impl Settings {
         &self.search.types
     }
 
+    /// The types a copy of the folder declares: `*` where the search names no
+    /// type or names `*`, which `narrow` reads as every type, and the types
+    /// otherwise.
+    pub(crate) fn slice_types(&self) -> Vec<String> {
+        let types = &self.search.types;
+        if types.is_empty()
+            || types
+                .iter()
+                .any(|named| named.trim() == crate::store::EVERY_TYPE)
+        {
+            vec![crate::store::EVERY_TYPE.to_string()]
+        } else {
+            types.iter().map(|named| named.trim().to_string()).collect()
+        }
+    }
+
     pub fn tier(&self) -> Tier {
         self.search.tier.unwrap_or(Tier::Library)
     }

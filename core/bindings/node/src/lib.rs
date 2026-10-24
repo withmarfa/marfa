@@ -1946,7 +1946,9 @@ impl MarfaCore {
     }
 
     /// Replaces the local copy with the declared types at `tier`, one tier or
-    /// `all` for both.
+    /// `all` for both. `["*"]` alone is every type but `system.*`, including a
+    /// namespace registered after the hydration; beside another type it is
+    /// refused `invalid`.
     #[napi]
     pub fn hydrate(
         &self,

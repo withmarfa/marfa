@@ -21,11 +21,10 @@ pub(crate) fn hydrate(
     types: &[String],
     tier: SliceTier,
     edge_types: &[String],
-    every_type: bool,
     stop: &AtomicBool,
 ) -> Result<HydrateReport> {
     let previous = crate::reach::Context::capture_build(&*core.conn()?).ok();
-    let result = hydrate_inner(core, http, types, tier, edge_types, every_type, stop);
+    let result = hydrate_inner(core, http, types, tier, edge_types, stop);
     let result = result.map_err(|error| match previous {
         Some(context) => context.failed(core, error).unwrap_or_else(|error| error),
         None => error,
@@ -39,14 +38,9 @@ fn hydrate_inner(
     types: &[String],
     tier: SliceTier,
     edge_types: &[String],
-    every_type: bool,
     stop: &AtomicBool,
 ) -> Result<HydrateReport> {
-    let types = if every_type && types.is_empty() {
-        vec![store::EVERY_TYPE.to_string()]
-    } else {
-        declared_types(types)?
-    };
+    let types = declared_types(types)?;
     let edge_types = declared_edge_types(edge_types)?;
     // Nothing is cleared until the copy is about to be replaced, so a stop
     // raised before then leaves it as it was.
@@ -528,11 +522,13 @@ fn listed_tier(declared: Option<&str>, tier: SliceTier) -> SliceTier {
     }
 }
 
+/// `*` alone is every type but `system.*`; beside another type it is refused,
+/// since a slice of every type has nothing to add to.
 fn declared_types(types: &[String]) -> Result<Vec<String>> {
     let mut declared = Vec::new();
     for raw in types {
         let name = raw.trim();
-        if !type_pattern(name)? {
+        if name != store::EVERY_TYPE && !type_pattern(name)? {
             return Err(CoreError::Invalid(format!(
                 "not a type to declare: {raw:?}; {GRAMMAR}, or a namespace under .*"
             )));
@@ -543,6 +539,12 @@ fn declared_types(types: &[String]) -> Result<Vec<String>> {
     }
     if declared.is_empty() {
         return Err(CoreError::Invalid("declare at least one type".into()));
+    }
+    if declared.len() > 1 && declared.iter().any(|name| name == store::EVERY_TYPE) {
+        return Err(CoreError::Invalid(format!(
+            "`{}` is every type but system.*, so it stands alone: leave out the other types, or name the types without it",
+            store::EVERY_TYPE
+        )));
     }
     Ok(declared)
 }
@@ -1757,5 +1759,260 @@ mod tests {
         assert_eq!(status.items_expected, None);
         ready.store(true, Ordering::SeqCst);
         assert!(hydrating.join().unwrap().is_ok());
+    }
+
+    /// A page of the listing holding rows of the types named, each an id and
+    /// a type.
+    fn page_of(rows: &[(&str, &str)]) -> Answer {
+        let data: Vec<Value> = rows
+            .iter()
+            .map(|(id, row_type)| {
+                let payload: Value =
+                    serde_json::from_str(&scripted::item_payload("item.updated", id, row_type, 1))
+                        .unwrap();
+                json!({"item": payload["item"], "metadata": payload["metadata"], "listed": true})
+            })
+            .collect();
+        let body = json!({"data": data, "next_cursor": null});
+        scripted::certified(scripted::json(200, &body.to_string()))
+    }
+
+    fn at_head(server: &Scripted) {
+        server.on(
+            "/events",
+            vec![
+                scripted::stream(
+                    vec![scripted::copy_marker("stream_cursor", "10")],
+                    Then::End,
+                ),
+                scripted::stream(
+                    vec![
+                        scripted::copy_marker("stream_cursor", "10"),
+                        scripted::copy_marker("stream_live", "10"),
+                    ],
+                    Then::End,
+                ),
+            ],
+        );
+    }
+
+    fn hydrate_every_type(core: &Core) -> crate::Result<crate::HydrateReport> {
+        core.hydrate_until(
+            &["*".into()],
+            SliceTier::Library,
+            &[],
+            &AtomicBool::new(false),
+        )
+    }
+
+    #[test]
+    fn a_slice_of_every_type_reads_the_listing_naming_no_type_and_holds_every_type_but_system() {
+        let server = Scripted::start();
+        let core = copy(&server);
+        server.on(
+            "/types",
+            vec![scripted::certified(scripted::types(&[
+                ("core.note", None),
+                ("acme.thing", None),
+                ("system.connection", None),
+            ]))],
+        );
+        server.on(
+            "/items",
+            vec![page_of(&[("a", "core.note"), ("b", "acme.thing")])],
+        );
+        at_head(&server);
+
+        let report = hydrate_every_type(&core).unwrap();
+
+        assert_eq!(report.items, 2);
+        assert_eq!(report.types, vec!["*".to_string()]);
+        let listings = server.seen("/items");
+        assert_eq!(listings.len(), 1);
+        assert!(
+            !listings[0].query.contains("type="),
+            "a slice of every type named a type: {}",
+            listings[0].query
+        );
+        assert_eq!(core.status().unwrap().slice_types, vec!["*".to_string()]);
+        assert!(core.get("b").unwrap().is_some());
+    }
+
+    #[test]
+    fn a_slice_of_every_type_refuses_the_star_beside_another_type_before_any_request() {
+        for types in [
+            vec!["*", "core.note"],
+            vec!["core.note", "*"],
+            vec!["*", "acme.*"],
+        ] {
+            let server = Scripted::start();
+            let core = copy(&server);
+            let before = server.asked();
+            let refused = core
+                .hydrate_until(
+                    &types
+                        .iter()
+                        .map(|name| name.to_string())
+                        .collect::<Vec<_>>(),
+                    SliceTier::Library,
+                    &[],
+                    &AtomicBool::new(false),
+                )
+                .unwrap_err();
+            assert!(
+                matches!(refused, CoreError::Invalid(_)),
+                "{types:?}: {refused:?}"
+            );
+            assert_eq!(server.asked(), before, "{types:?} reached the server");
+        }
+        // The witnesses: the star alone, repeated, is one declaration, and
+        // an empty list is still refused.
+        let server = Scripted::start();
+        let core = copy(&server);
+        server.on("/items", vec![page_of(&[])]);
+        at_head(&server);
+        assert!(
+            core.hydrate_until(
+                &["*".into(), " * ".into()],
+                SliceTier::Library,
+                &[],
+                &AtomicBool::new(false),
+            )
+            .is_ok()
+        );
+        assert!(matches!(
+            core.hydrate_until(&[], SliceTier::Library, &[], &AtomicBool::new(false)),
+            Err(CoreError::Invalid(_))
+        ));
+    }
+
+    #[test]
+    fn a_slice_of_every_type_expects_every_type_but_system_and_leaves_the_count_out_where_none_came()
+     {
+        let server = Scripted::start();
+        server.on(
+            "/items/stats",
+            vec![scripted::json(
+                200,
+                r#"{"core.note":2,"acme.thing":3,"system.connection":7}"#,
+            )],
+        );
+        server.on("/items", vec![page_of(&[("a", "core.note")])]);
+        let core = copy(&server);
+        let ready = std::sync::Arc::new(AtomicBool::new(false));
+        server.on(
+            "/events",
+            vec![
+                scripted::stream(
+                    vec![scripted::copy_marker("stream_cursor", "10")],
+                    Then::End,
+                ),
+                Answer::WaitFor {
+                    ready: std::sync::Arc::clone(&ready),
+                    answer: Box::new(scripted::stream(
+                        vec![
+                            scripted::copy_marker("stream_cursor", "10"),
+                            scripted::copy_marker("stream_live", "10"),
+                        ],
+                        Then::End,
+                    )),
+                },
+            ],
+        );
+        let hydrating = {
+            let core = std::sync::Arc::clone(&core);
+            std::thread::spawn(move || hydrate_every_type(&core))
+        };
+        server.wait_for("/events", 2, std::time::Duration::from_secs(10));
+        let status = core.status().unwrap();
+        assert_eq!(
+            status.items_expected,
+            Some(5),
+            "the count of a slice of every type took a system type, or left a type out"
+        );
+        let asked = server.seen("/items/stats");
+        assert!(
+            !asked[0].query.contains("include=system"),
+            "{}",
+            asked[0].query
+        );
+        ready.store(true, Ordering::SeqCst);
+        hydrating.join().unwrap().unwrap();
+
+        // The count is left out, not zero, where the server gives none.
+        let server = Scripted::start();
+        server.on("/items/stats", vec![scripted::refusal(500, "internal")]);
+        server.on("/items", vec![page_of(&[("a", "core.note")])]);
+        let core = copy(&server);
+        let ready = std::sync::Arc::new(AtomicBool::new(false));
+        server.on(
+            "/events",
+            vec![
+                scripted::stream(
+                    vec![scripted::copy_marker("stream_cursor", "10")],
+                    Then::End,
+                ),
+                Answer::WaitFor {
+                    ready: std::sync::Arc::clone(&ready),
+                    answer: Box::new(scripted::stream(
+                        vec![
+                            scripted::copy_marker("stream_cursor", "10"),
+                            scripted::copy_marker("stream_live", "10"),
+                        ],
+                        Then::End,
+                    )),
+                },
+            ],
+        );
+        let hydrating = {
+            let core = std::sync::Arc::clone(&core);
+            std::thread::spawn(move || hydrate_every_type(&core))
+        };
+        server.wait_for("/events", 2, std::time::Duration::from_secs(10));
+        assert_eq!(core.status().unwrap().items_expected, None);
+        ready.store(true, Ordering::SeqCst);
+        hydrating.join().unwrap().unwrap();
+    }
+
+    #[test]
+    fn a_slice_of_every_type_stopped_part_way_is_read_whole_again() {
+        // A stop that came after the copy was cleared leaves it unfinished.
+        let server = Scripted::start();
+        let core = copy(&server);
+        server.on(
+            "/items",
+            vec![
+                Answer::Slow {
+                    after: std::time::Duration::from_millis(300),
+                    answer: Box::new(page_of(&[("a", "core.note")])),
+                },
+                page_of(&[("a", "core.note"), ("b", "acme.thing")]),
+            ],
+        );
+        at_head(&server);
+        let stop = AtomicBool::new(false);
+        std::thread::scope(|scope| {
+            let hydrating =
+                scope.spawn(|| core.hydrate_until(&["*".into()], SliceTier::Library, &[], &stop));
+            server.wait_for("/items", 1, std::time::Duration::from_secs(5));
+            stop.store(true, Ordering::Relaxed);
+            let _ = hydrating.join().unwrap();
+        });
+        assert_eq!(core.status().unwrap().hydration, Hydration::InProgress);
+
+        let report = hydrate_every_type(&core).unwrap();
+        assert_eq!(
+            report.items, 2,
+            "the second run did not read the slice whole"
+        );
+        assert_eq!(core.status().unwrap().hydration, Hydration::Complete);
+        assert_eq!(server.seen("/items").len(), 2);
+        assert!(
+            server
+                .seen("/items")
+                .iter()
+                .all(|seen| !seen.query.contains("type=")),
+            "a run named a type"
+        );
     }
 }

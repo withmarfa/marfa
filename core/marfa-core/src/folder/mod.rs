@@ -712,8 +712,12 @@ impl Folder {
         crate::store::pin(&*self.core.conn()?, &self.folder)?;
         let catalog = Catalog::load(&planning)?;
         let whole = whole_edge_types(&settings, &edge_types, &catalog);
-        self.core
-            .hydrate_every_type_or(settings.types(), settings.tier().into(), &whole, stop)
+        self.core.hydrate_until(
+            &settings.slice_types(),
+            settings.tier().into(),
+            &whole,
+            stop,
+        )
     }
 
     /// `None` where the copy already answers for the slice the settings ask.
@@ -740,11 +744,8 @@ impl Folder {
             return Ok(true);
         };
         let held: HashSet<&str> = types.iter().map(String::as_str).collect();
-        let asked: HashSet<&str> = if settings.types().is_empty() {
-            HashSet::from([crate::store::EVERY_TYPE])
-        } else {
-            settings.types().iter().map(|name| name.trim()).collect()
-        };
+        let asked_types = settings.slice_types();
+        let asked: HashSet<&str> = asked_types.iter().map(String::as_str).collect();
         let Ok(edge_types) = EdgeTypes::load(&conn) else {
             return Ok(true);
         };
