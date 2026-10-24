@@ -2826,8 +2826,9 @@ pub fn start_refill(conn: &Connection) -> Result<(), CoreError> {
 
 /// The end of a hydration that filled the copy again in place, after its walk
 /// and its replay: takes out each row neither brought, but for a pinned row
-/// and one a waiting write names, then each such edge but one a waiting write
-/// names. Answers the rows and the edges it took out.
+/// and one a waiting write names as its item or as an end of an edge, then
+/// each such edge but one a waiting write names. Answers the rows and the
+/// edges it took out.
 pub fn sweep_refill(conn: &Connection) -> Result<(u64, u64), CoreError> {
     let unbrought = |sql: &str| -> Result<Vec<String>, CoreError> {
         let mut statement = conn.prepare(sql)?;
@@ -2835,6 +2836,24 @@ pub fn sweep_refill(conn: &Connection) -> Result<(u64, u64), CoreError> {
         Ok(rows.collect::<Result<Vec<String>, _>>()?)
     };
     let whole = whole_edge_types(conn)?;
+    // An edge write's ends are the columns it was queued with, the ends a
+    // move in its payload names, and the ends the edge the copy shows has.
+    let named: HashSet<String> = unbrought(&format!(
+        "SELECT id FROM (
+         SELECT item_id AS id FROM queue WHERE {WAITING}
+         UNION SELECT target_id FROM queue WHERE {WAITING}
+         UNION SELECT json_extract(payload, '$.source_id') FROM queue
+                WHERE {WAITING} AND edge_id IS NOT NULL AND json_valid(payload)
+         UNION SELECT json_extract(payload, '$.target_id') FROM queue
+                WHERE {WAITING} AND edge_id IS NOT NULL AND json_valid(payload)
+         UNION SELECT edges.source_id FROM edges JOIN queue ON queue.edge_id = edges.id
+                WHERE {WAITING}
+         UNION SELECT edges.target_id FROM edges JOIN queue ON queue.edge_id = edges.id
+                WHERE {WAITING}
+         ) WHERE id IS NOT NULL"
+    ))?
+    .into_iter()
+    .collect();
     let mut items = 0;
     for id in unbrought(
         "SELECT id FROM items
@@ -2842,7 +2861,7 @@ pub fn sweep_refill(conn: &Connection) -> Result<(u64, u64), CoreError> {
             AND NOT EXISTS (SELECT 1 FROM pins WHERE pins.item_id = items.id)
           ORDER BY id",
     )? {
-        if !item_waits(conn, &id)? && evict_item(conn, &id, &whole)? {
+        if !named.contains(&id) && evict_item(conn, &id, &whole)? {
             items += 1;
         }
     }
@@ -3122,19 +3141,26 @@ pub fn purge_item(conn: &Connection, id: &str) -> Result<bool, CoreError> {
     Ok(removed || unpinned)
 }
 
-/// Keeps the edges of a type in `whole`, and edges drawn to the item, as a
-/// hydration holds them.
+/// Keeps the edges of a type in `whole`, edges drawn to the item, as a
+/// hydration holds them, and an edge a waiting write names, with what is kept
+/// beneath it, until that write is answered.
 pub fn evict_item(conn: &Connection, id: &str, whole: &[String]) -> Result<bool, CoreError> {
     crate::body::rule::rows_changed(conn)?;
     crate::body::rule::item_changing(conn, id, None)?;
     let kept = vec!["?"; whole.len()].join(", ");
+    let waits =
+        format!("id NOT IN (SELECT edge_id FROM queue WHERE edge_id IS NOT NULL AND {WAITING})");
     let edges = if whole.is_empty() {
-        "source_id = ?1".to_string()
+        format!("source_id = ?1 AND {waits}")
     } else {
-        format!("source_id = ?1 AND edge_type NOT IN ({kept})")
+        format!("source_id = ?1 AND edge_type NOT IN ({kept}) AND {waits}")
     };
     remove_item(conn, id, &edges, whole)
 }
+
+/// A queued write the server has yet to take: unanswered, blocked or dead,
+/// as `waiting_writes` reads them.
+const WAITING: &str = "(verdict IS NULL OR verdict IN ('blocked', 'dead'))";
 
 /// The one way a row leaves the copy, with the edges `edges` names (a
 /// condition on `edges`, `?1` the row's id, then `kept`): what is kept

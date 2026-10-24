@@ -511,14 +511,19 @@ pub enum Hydration {
     InProgress,
     Complete,
     /// A catch-up or a held stream learned that the server's log no longer
-    /// continues from the kept cursor, or any call that reads the root (a
-    /// catch-up, a held stream, a drain, a pin or a folder's settings edit)
-    /// found another instance at the origin. Set only on that answer: a store
-    /// whose cursor aged out and has not asked since still reports
-    /// `Complete`. A copy whose cursor aged out answers local reads marked
-    /// `stale` and queues writes until a hydration fills it again in place;
-    /// any other expired copy refuses both, where `Never` answers them.
+    /// continues from the kept cursor in a way the copy cannot be filled
+    /// again over (`Stale`), or any call that reads the root (a catch-up, a
+    /// held stream, a drain, a pin or a folder's settings edit) found another
+    /// instance at the origin. Set only on that answer. Local reads and
+    /// writes are refused, where `Never` answers them.
     Expired,
+    /// A catch-up or a held stream learned that the event log let the kept
+    /// cursor go. Set only on that answer: a store whose cursor aged out and
+    /// has not asked since still reports `Complete`. Local reads answer what
+    /// the copy holds marked `stale`, and writes are queued, from then until
+    /// a hydration has filled it again in place, through that hydration and
+    /// an interrupted one.
+    Stale,
 }
 
 /// Whether a local list or search was read from a whole copy; from one a
@@ -558,6 +563,7 @@ impl Hydration {
             Hydration::InProgress => "in_progress",
             Hydration::Complete => "complete",
             Hydration::Expired => "expired",
+            Hydration::Stale => "stale",
         }
     }
 }

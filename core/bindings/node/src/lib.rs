@@ -54,6 +54,7 @@ pub enum Hydration {
     InProgress,
     Complete,
     Expired,
+    Stale,
 }
 
 /// Whether a local list or search was read from a whole copy; from one a
@@ -843,6 +844,7 @@ impl From<marfa_core::Hydration> for Hydration {
             marfa_core::Hydration::InProgress => Hydration::InProgress,
             marfa_core::Hydration::Complete => Hydration::Complete,
             marfa_core::Hydration::Expired => Hydration::Expired,
+            marfa_core::Hydration::Stale => Hydration::Stale,
         }
     }
 }

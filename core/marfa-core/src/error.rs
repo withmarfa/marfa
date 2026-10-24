@@ -311,6 +311,7 @@ fn copy_expired(reason: &str) -> String {
         crate::http::INSTANCE_CHANGED => {
             "another Marfa now answers at this address; rebuild the copy from it".to_string()
         }
+        crate::catch_up::CATCHUP_TOO_OLD => "the server's event log no longer holds the point this copy had reached; refill the copy from the server, which keeps what it holds and the changes not yet sent".to_string(),
         "reach_invalid" => "this copy holds no proof it can accept of what the credential may read; rebuild the copy from the server".to_string(),
         sentence => {
             return format!(
@@ -403,12 +404,15 @@ mod tests {
             invalid.contains("holds no proof it can accept"),
             "{invalid}"
         );
+        let aged = said("catchup_too_old");
+        assert!(aged.contains("keeps what it holds"), "{aged}");
         // The reason is named, so a caller can tell why the copy expired.
         for reason in [
             "credential_ended",
             "reach_changed",
             "instance_changed",
             "reach_invalid",
+            "catchup_too_old",
         ] {
             assert!(said(reason).contains(&format!("({reason})")), "{reason}");
         }
@@ -428,6 +432,7 @@ mod tests {
             "reach_changed",
             "reach_invalid",
             "instance_changed",
+            "catchup_too_old",
             "the event log no longer holds the cursor 4",
         ] {
             let text = said(reason);

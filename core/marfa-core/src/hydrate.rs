@@ -189,6 +189,7 @@ fn attempt(
     // raised before then leaves it as it was.
     crate::catch_up::refuse_if_stopped(stop)?;
     let (mut instance, mut cursor, mut fence) = read_head(http, stop)?;
+    expire_if_built_elsewhere(core, &instance, &fence)?;
     let mut under_reach = http.for_reach(&fence);
     crate::catch_up::refuse_if_stopped(stop)?;
     let (mut catalog_rows, registered_types, unregistered_types, registered_any) =
@@ -197,22 +198,12 @@ fn attempt(
         // A registration changes what the instance's reach certifies, so
         // the head and the catalog read before it are of a reach that has gone.
         (instance, cursor, fence) = read_head(http, stop)?;
+        expire_if_built_elsewhere(core, &instance, &fence)?;
         under_reach = http.for_reach(&fence);
         catalog_rows = under_reach.catalog()?;
     }
     let plain = http;
     let http = &under_reach;
-    {
-        let mut conn = core.conn()?;
-        if store::hydrated(&conn)?
-            && (store::meta_get(&conn, crate::reach::FENCE)?.as_deref() != Some(&fence)
-                || store::meta_get(&conn, store::META_INSTANCE_ID)?.as_deref() != Some(&instance))
-        {
-            let tx = conn.transaction()?;
-            crate::reach::expire(&tx)?;
-            tx.commit()?;
-        }
-    }
     refuse_unheld(&catalog_rows, types, edge_types)?;
     let start = match restart {
         Some(reason) => Start::Fresh(Some(reason)),
@@ -259,8 +250,12 @@ fn attempt(
             // when the instance, the reach and the slice are those it was
             // built under; anything else may hold rows the key no longer
             // reads, so it is cleared first.
-            let in_place = store::refill(&tx)?
-                .is_some_and(|refill| refill.instance == instance && refill.reach == fence)
+            // A log that ends before the head the refill began from is a
+            // server restored to an earlier point, whose rows the later
+            // versions held would refuse.
+            let in_place = restarted != Some(HydrateRestart::HeadPastLog)
+                && store::refill(&tx)?
+                    .is_some_and(|refill| refill.instance == instance && refill.reach == fence)
                 && store::meta_get(&tx, store::META_SLICE_TYPES)?
                     == Some(serde_json::to_string(types)?)
                 && store::meta_get(&tx, store::META_SLICE_TIER)?.as_deref() == Some(tier.as_str())
@@ -581,6 +576,26 @@ fn attempt(
         }))
     })();
     result.map_err(|error| context.failed(core, error).unwrap_or_else(|error| error))
+}
+
+/// A whole or stale copy built under another instance or reach than the head
+/// names may hold rows the key no longer reads, so it stops answering at once,
+/// before a later step of the hydration can fail and leave it answering.
+fn expire_if_built_elsewhere(core: &Core, instance: &str, fence: &str) -> Result<()> {
+    let mut conn = core.conn()?;
+    let elsewhere = if store::hydrated(&conn)? {
+        store::meta_get(&conn, crate::reach::FENCE)?.as_deref() != Some(fence)
+            || store::meta_get(&conn, store::META_INSTANCE_ID)?.as_deref() != Some(instance)
+    } else {
+        store::refill(&conn)?
+            .is_some_and(|built| built.instance != instance || built.reach != fence)
+    };
+    if elsewhere {
+        let tx = conn.transaction()?;
+        crate::reach::expire(&tx)?;
+        tx.commit()?;
+    }
+    Ok(())
 }
 
 /// Where an interrupted hydration of this slice reached, if it can carry on

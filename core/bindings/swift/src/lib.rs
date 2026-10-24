@@ -355,6 +355,7 @@ pub enum Hydration {
     InProgress,
     Complete,
     Expired,
+    Stale,
 }
 
 /// How the cache of fetched files chooses its budget.
@@ -2253,6 +2254,7 @@ impl Core {
                 marfa_core::Hydration::InProgress => Hydration::InProgress,
                 marfa_core::Hydration::Complete => Hydration::Complete,
                 marfa_core::Hydration::Expired => Hydration::Expired,
+                marfa_core::Hydration::Stale => Hydration::Stale,
             },
             items: status.items,
             items_expected: status.items_expected,

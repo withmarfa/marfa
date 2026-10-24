@@ -268,6 +268,13 @@ pub enum DeviceCommand {
     /// counted them, `items_expected`. Set the first against the second to
     /// show how far it has come; the item count also holds pinned rows and
     /// writes still waiting.
+    ///
+    /// The hydration is `never`, `in_progress`, `complete`, `stale` or
+    /// `expired`. A stale copy is one the server's event log no longer
+    /// reaches: it answers reads marked stale and takes writes until a
+    /// hydration has filled it again in place, and stays stale while that
+    /// hydration runs. An expired copy refuses reads and writes until a
+    /// hydration, which empties it first.
     Status,
     /// The item types the copy holds, read from it alone, the ones an app
     /// declares for it, and the server's.

@@ -3103,6 +3103,8 @@ What the local copy holds and where it came from.
 
 While a hydration fills the copy, the report also gives the rows its listings have brought, `items_listed` under --json, and the items the server counted for the slice when the hydration started, where it counted them, `items_expected`. Set the first against the second to show how far it has come; the item count also holds pinned rows and writes still waiting.
 
+The hydration is `never`, `in_progress`, `complete`, `stale` or `expired`. A stale copy is one the server's event log no longer reaches: it answers reads marked stale and takes writes until a hydration has filled it again in place, and stays stale while that hydration runs. An expired copy refuses reads and writes until a hydration, which empties it first.
+
 ```text
 marfa device status [OPTIONS]
 ```

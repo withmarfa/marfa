@@ -868,7 +868,19 @@ impl Core {
     fn claim_stream_once_hydrated(&self, stop: &AtomicBool) -> Result<Option<StreamClaim<'_>>> {
         let mut waited = false;
         loop {
-            match catch_up::refuse_unless_current(&mut *self.conn()?) {
+            let mut conn = self.conn()?;
+            let answer = catch_up::refuse_unless_current(&mut conn);
+            // A refill under way is waited for as a first hydration is; a
+            // stale copy no refill has begun is refused.
+            let waits = match &answer {
+                Err(CoreError::NoCursor | CoreError::HydrationIncomplete) => true,
+                Err(CoreError::CopyExpired { reason }) if reason == catch_up::CATCHUP_TOO_OLD => {
+                    !store::hydration_complete(&conn)?
+                }
+                _ => false,
+            };
+            drop(conn);
+            match answer {
                 Ok(()) => match self.try_claim_stream(Mover::Follow) {
                     Ok(claim) => return Ok(Some(claim)),
                     // The hydration waited for holds it until it has
@@ -876,7 +888,7 @@ impl Core {
                     Err(Mover::Hydration | Mover::CatchUp) if waited => {}
                     Err(_) => return Err(one_at_a_time()),
                 },
-                Err(CoreError::NoCursor | CoreError::HydrationIncomplete) => {
+                Err(_) if waits => {
                     #[cfg(debug_assertions)]
                     if !waited {
                         fault::hold(|| "follow-waiting");
@@ -2020,7 +2032,7 @@ impl Core {
         self.lock.refuse_unless_writer()?;
         refuse_invalid_names(&draft.tags, &draft.properties)?;
         self.refuse_unwritable_type(&draft.r#type)?;
-        store::refuse_unless_usable(&*self.conn()?)?;
+        store::refuse_unless_writable(&*self.conn()?)?;
         let file = std::fs::File::open(path).map_err(|error| {
             CoreError::Invalid(format!("{} cannot be read: {error}", path.display()))
         })?;
@@ -2066,7 +2078,7 @@ impl Core {
     ) -> Result<QueuedWrite> {
         self.lock.refuse_unless_writer()?;
         refuse_invalid_names(&[], &edit.properties)?;
-        store::refuse_unless_usable(&*self.conn()?)?;
+        store::refuse_unless_writable(&*self.conn()?)?;
         let file = std::fs::File::open(path).map_err(|error| {
             CoreError::Invalid(format!("{} cannot be read: {error}", path.display()))
         })?;
@@ -2083,8 +2095,15 @@ impl Core {
     ) -> Result<QueuedWrite> {
         refuse_invalid_names(&[], &edit.properties)?;
         // Before any bytes are taken in, as `refuse_unwritable_type` is.
-        if let Some(held) = store::item_by_id(&*self.conn()?, id)? {
-            refuse_system_type(&held.r#type)?;
+        {
+            let conn = self.conn()?;
+            let completeness = store::refuse_unless_writable(&conn)?;
+            if !store::item_held(&conn, id)? {
+                store::refuse_unless_held(completeness)?;
+            }
+            if let Some(held) = store::item_by_id(&conn, id)? {
+                refuse_system_type(&held.r#type)?;
+            }
         }
         if let Some(r#type) = &edit.r#type {
             refuse_system_type(r#type)?;
@@ -2132,7 +2151,7 @@ impl Core {
         then: impl FnOnce(&Connection, &catalog::Catalog, &QueuedWrite, &blob::Taken) -> Result<T>,
     ) -> Result<T> {
         self.lock.refuse_unless_writer()?;
-        store::refuse_unless_usable(&*self.conn()?)?;
+        store::refuse_unless_writable(&*self.conn()?)?;
         let file = std::fs::File::open(path).map_err(|error| {
             CoreError::Invalid(format!("{} cannot be read: {error}", path.display()))
         })?;
@@ -2147,7 +2166,7 @@ impl Core {
         then: impl FnOnce(&Connection, &catalog::Catalog, &QueuedWrite, &blob::Taken) -> Result<T>,
     ) -> Result<T> {
         self.lock.refuse_unless_writer()?;
-        store::refuse_unless_usable(&*self.conn()?)?;
+        store::refuse_unless_writable(&*self.conn()?)?;
         let cache = self.cache()?;
         let queued = {
             // Until the upload is queued, nothing but this hold keeps its
@@ -2174,7 +2193,10 @@ impl Core {
         self.lock.refuse_unless_writer()?;
         {
             let conn = self.conn()?;
-            store::refuse_unless_usable(&conn)?;
+            let completeness = store::refuse_unless_writable(&conn)?;
+            if !store::item_held(&conn, target)? {
+                store::refuse_unless_held(completeness)?;
+            }
             // A row in the bin reads as absent, and a file attached to it
             // would be linked to something nobody can open.
             if store::item_by_id(&conn, target)?.is_none() {
@@ -2232,7 +2254,7 @@ impl Core {
 
     pub fn add_file(&self, path: &Path, attachment: &Attachment, tags: &[String]) -> Result<Added> {
         self.lock.refuse_unless_writer()?;
-        store::refuse_unless_usable(&*self.conn()?)?;
+        store::refuse_unless_writable(&*self.conn()?)?;
         let (mime_type, mut draft) = file_draft(path, attachment, tags);
         refuse_invalid_names(&draft.tags, &draft.properties)?;
         self.refuse_unwritable_type(&draft.r#type)?;
@@ -2674,19 +2696,23 @@ impl Core {
             None => None,
         };
         let event_cursor = store::meta_get(&tx, store::META_EVENT_CURSOR)?;
-        let hydration = if !store::hydration_complete(&tx)? {
+        let hydration = if store::refilling(&tx)? {
+            Hydration::Stale
+        } else if !store::hydration_complete(&tx)? {
             Hydration::InProgress
         } else if store::hydrated(&tx)? {
             Hydration::Complete
         } else if store::holds_slice(&tx)? {
-            // A slice and no cursor: the log aged past the cursor.
+            // A slice and no cursor, reach or instance, and no refill owed.
             Hydration::Expired
         } else {
             Hydration::Never
         };
         let filling = |key| -> Result<Option<u64>> {
             Ok(match hydration {
-                Hydration::InProgress => {
+                // A stale copy holds these only while its refill runs or
+                // was interrupted.
+                Hydration::InProgress | Hydration::Stale => {
                     store::meta_get(&tx, key)?.and_then(|count| count.parse().ok())
                 }
                 _ => None,
