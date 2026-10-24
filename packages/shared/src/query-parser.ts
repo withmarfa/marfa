@@ -570,6 +570,19 @@ export interface TypeTermRewrite {
   rewritten: boolean;
   /** Each `type` term, as written, whose answer the move changes and that cannot be rewritten. */
   unsafe: string[];
+  /** Present when the filter can't be rewritten at all, and kept as it is:
+   *  `filter`, it doesn't parse; `rewrite`, the rewritten filter wouldn't. */
+  unreadable?: "filter" | "rewrite";
+}
+
+function parses(input: string): boolean {
+  try {
+    parseFilter(input);
+    return true;
+  } catch (err) {
+    if (err instanceof MarfaError) return false;
+    throw err;
+  }
 }
 
 /** Answers a `type` term for one type id the way the SQL in `filter-sql.ts` does. */
@@ -605,16 +618,17 @@ function asciiLower(s: string): string {
  * Rewrites the `type` terms of a filter for a type move from `from` to `to`.
  * An `eq` or `neq` naming `from` names `to` instead. Any other `type` term
  * whose answer differs between the two ids is reported as unsafe. Every other
- * byte of the filter is kept.
- *
- * @throws MarfaError with VALIDATION_ERROR when the filter does not parse
+ * byte of the filter is kept. A stored filter may predate today's parser, so
+ * one that doesn't parse, or wouldn't once rewritten, is answered rather than
+ * thrown.
  */
 export function rewriteTypeTerms(
   input: string,
   from: string,
   to: string,
 ): TypeTermRewrite {
-  parseFilter(input);
+  const kept = { filter: input, rewritten: false, unsafe: [] };
+  if (!parses(input)) return { ...kept, unreadable: "filter" };
   const tokens = tokenize(input);
   const unsafe: string[] = [];
   const edits: { start: number; end: number; text: string }[] = [];
@@ -647,5 +661,7 @@ export function rewriteTypeTerms(
   for (const edit of edits.reverse()) {
     filter = filter.slice(0, edit.start) + edit.text + filter.slice(edit.end);
   }
+  if (edits.length > 0 && !parses(filter))
+    return { ...kept, unreadable: "rewrite" };
   return { filter, rewritten: edits.length > 0, unsafe };
 }

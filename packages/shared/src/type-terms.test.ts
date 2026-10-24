@@ -54,4 +54,27 @@ describe("rewriteTypeTerms", () => {
       unsafe: [],
     });
   });
+
+  it("answers a filter that doesn't parse as unreadable, without throwing", () => {
+    expect(
+      rewriteTypeTerms(
+        'type eq "acme.deal" AND (',
+        "acme.deal",
+        "acme.contract",
+      ),
+    ).toEqual({
+      filter: 'type eq "acme.deal" AND (',
+      rewritten: false,
+      unsafe: [],
+      unreadable: "filter",
+    });
+  });
+
+  it("answers a rewrite that would be over the length limit as unreadable", () => {
+    const filter = `type eq "acme.deal" OR properties.title eq "${"x".repeat(2000)}"`;
+    expect(filter.length).toBeLessThanOrEqual(2048);
+    expect(
+      rewriteTypeTerms(filter, "acme.deal", "acme.contractwithalongername"),
+    ).toEqual({ filter, rewritten: false, unsafe: [], unreadable: "rewrite" });
+  });
 });
