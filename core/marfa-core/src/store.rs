@@ -670,11 +670,15 @@ pub fn read_completeness(conn: &Connection) -> Result<Completeness, CoreError> {
 }
 
 /// The instance and reach a copy whose cursor aged out was built under, which
-/// a hydration under the same ones fills again in place.
+/// a hydration under the same ones fills again in place, and the cursor it
+/// held then.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Refill {
     pub instance: String,
     pub reach: String,
+    /// A head behind it is a server restored to an earlier point, which may
+    /// never have held the versions the copy holds.
+    pub cursor: String,
 }
 
 pub fn refill(conn: &Connection) -> Result<Option<Refill>, CoreError> {
@@ -691,6 +695,14 @@ pub fn refilling(conn: &Connection) -> Result<bool, CoreError> {
 /// write is to be queued against is told by `refuse_unless_held`.
 pub fn refuse_unless_writable(conn: &Connection) -> Result<Completeness, CoreError> {
     read_completeness(conn)
+}
+
+/// For an edge write: a copy that is not whole takes none. A page still to
+/// arrive can bring the server's edge, at another version or between other
+/// ends, beneath a write queued against the edge the copy shows, and leave
+/// that write to run against an edge nobody saw.
+pub fn refuse_unless_whole(conn: &Connection) -> Result<(), CoreError> {
+    refuse_unless_held(refuse_unless_writable(conn)?)
 }
 
 /// A row or an edge a copy that is not whole does not hold may be one the

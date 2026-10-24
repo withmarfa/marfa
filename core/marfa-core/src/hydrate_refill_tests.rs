@@ -128,6 +128,12 @@ fn aged_out(server: &Scripted) -> Arc<Core> {
 
 /// `aged_out` for `core`, a copy `scripted_copy` made.
 fn aged_out_on(server: &Scripted, core: Arc<Core>) -> Arc<Core> {
+    aged_out_after(server, core, |_| {})
+}
+
+/// `aged_out_on`, with `before` done to the whole copy before its cursor ages
+/// out.
+fn aged_out_after(server: &Scripted, core: Arc<Core>, before: impl FnOnce(&Core)) -> Arc<Core> {
     crate::stop_tests::holding_a_catalog(&core);
     put(
         &core,
@@ -139,6 +145,7 @@ fn aged_out_on(server: &Scripted, core: Arc<Core>) -> Arc<Core> {
         ],
     );
     store::pin(&core.conn().unwrap(), "pinned").unwrap();
+    before(&core);
     server.on(
         "/events",
         vec![scripted::stream(
@@ -654,35 +661,41 @@ fn a_held_row_only_the_replay_brings_keeps_the_edges_it_reads() {
 #[test]
 fn a_refill_keeps_the_rows_a_waiting_edge_write_names_as_either_end() {
     let server = Scripted::start();
-    let core = aged_out(&server);
-    put(
-        &core,
-        &[
-            row("moved-to", 1, &[]),
-            row("aimed-at", 1, &[]),
-            row("idle", 1, &[]),
-        ],
-    );
-    // `stays` moves from `kept` to `moved-to`, and a new edge points at
-    // `aimed-at`; the walk brings neither row.
-    core.update_edge(
-        "stays",
-        &crate::EdgeEdit {
-            base_version: Some(1),
-            source_id: Some("moved-to".into()),
-            ..Default::default()
-        },
-    )
-    .unwrap()
-    .unwrap();
-    let aimed = core
-        .create_edge(&crate::EdgeDraft {
-            source_id: "kept".into(),
-            target_id: "aimed-at".into(),
-            edge_type: "core.related".into(),
-            ..Default::default()
-        })
+    let mut aimed = None;
+    // The edge writes are queued while the copy is whole: one that is not
+    // takes none (`device/write-edge-refused-incomplete`).
+    let core = aged_out_after(&server, copy(&server), |core| {
+        put(
+            core,
+            &[
+                row("moved-to", 1, &[]),
+                row("aimed-at", 1, &[]),
+                row("idle", 1, &[]),
+            ],
+        );
+        // `stays` moves from `kept` to `moved-to`, and a new edge points at
+        // `aimed-at`; the walk brings neither row.
+        core.update_edge(
+            "stays",
+            &crate::EdgeEdit {
+                base_version: Some(1),
+                source_id: Some("moved-to".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap()
         .unwrap();
+        aimed = Some(
+            core.create_edge(&crate::EdgeDraft {
+                source_id: "kept".into(),
+                target_id: "aimed-at".into(),
+                edge_type: "core.related".into(),
+                ..Default::default()
+            })
+            .unwrap(),
+        );
+    });
+    let aimed = aimed.unwrap();
     server.on("/items", refill_pages());
     server.on("/items/bulk-get", vec![pinned_row()]);
     server.on("/events", vec![head("60"), replay(vec![], "60")]);
@@ -1090,5 +1103,276 @@ fn a_follow_waits_out_a_refill_begun_and_refuses_a_stale_copy_none_has_begun() {
             .recv_timeout(std::time::Duration::from_secs(5))
             .expect("the waiting follow did not end when stopped"),
         Ok(crate::FollowReport::default())
+    );
+}
+
+#[test]
+fn a_refusal_of_the_credential_or_reach_before_a_refill_reads_a_page_ends_the_stale_copy() {
+    // The witness: a refusal that says nothing of the credential or the
+    // reach leaves the copy stale.
+    let server = Scripted::start();
+    let core = aged_out(&server);
+    server.on("/events", vec![scripted::refusal(503, "unavailable")]);
+    assert!(hydrate(&core).is_err());
+    assert_eq!(listed(&core).unwrap().0, Completeness::Stale);
+
+    for (path, answer, reason) in [
+        (
+            "/events",
+            scripted::refusal(401, "unauthorized"),
+            "credential_ended",
+        ),
+        (
+            "/types",
+            scripted::refusal(409, "reach_changed"),
+            "reach_changed",
+        ),
+    ] {
+        let server = Scripted::start();
+        let core = aged_out(&server);
+        server.on("/events", vec![head("60")]);
+        server.on(path, vec![answer]);
+
+        assert_eq!(
+            hydrate(&core),
+            Err(CoreError::CopyExpired {
+                reason: reason.into()
+            })
+        );
+
+        assert_eq!(
+            listed(&core),
+            Err(CoreError::HydrationIncomplete),
+            "{reason}: the copy still answered stale"
+        );
+        assert_eq!(
+            core.add_tag("kept", "mine"),
+            Err(CoreError::HydrationIncomplete),
+            "{reason}: the copy still took a write"
+        );
+        assert_eq!(core.status().unwrap().hydration, crate::Hydration::Expired);
+        assert_eq!(
+            store::meta_get(&core.conn().unwrap(), store::META_REFILL).unwrap(),
+            None
+        );
+    }
+}
+
+#[test]
+fn a_server_restored_before_any_refill_clears_rather_than_fill_over_later_versions() {
+    let server = Scripted::start();
+    // The copy holds `kept` at version 5, read before its cursor 10 aged out.
+    let core = aged_out_after(&server, copy(&server), |core| {
+        put(core, &[row("kept", 5, &[])]);
+    });
+    assert_eq!(core.get("kept").unwrap().unwrap().version, 5);
+
+    // The server is restored from a backup whose log ends at 2, holding
+    // `kept` at version 2.
+    server.on(
+        "/items",
+        vec![page(
+            vec![row("kept", 2, &[]), row("changed", 1, &[])],
+            None,
+        )],
+    );
+    server.on("/items/bulk-get", vec![pinned_row()]);
+    server.on("/events", vec![head("2"), replay(vec![], "2")]);
+    let report = hydrate(&core).unwrap();
+
+    assert!(
+        !report.in_place,
+        "a refill of a restored server filled over rows it may never have held"
+    );
+    assert_eq!(
+        core.get("kept").unwrap().unwrap().version,
+        2,
+        "the copy kept a version the restored server never had"
+    );
+    assert_eq!(
+        ids(&listed(&core).unwrap().1),
+        ["changed", "kept", "pinned"]
+    );
+}
+
+#[test]
+fn a_refill_from_a_head_level_with_the_cursor_it_held_fills_in_place() {
+    let server = Scripted::start();
+    let core = aged_out(&server);
+    server.on("/items", refill_pages());
+    server.on("/items/bulk-get", vec![pinned_row()]);
+    server.on("/events", vec![head("10"), replay(vec![], "10")]);
+    assert!(hydrate(&core).unwrap().in_place);
+}
+
+#[test]
+fn an_edge_write_waits_for_a_whole_copy_and_an_item_write_does_not() {
+    let server = Scripted::start();
+    let core = aged_out(&server);
+    let queued = core.queue().unwrap().len();
+    let moved = crate::EdgeEdit {
+        base_version: Some(1),
+        target_id: Some("gone".into()),
+        ..Default::default()
+    };
+    let created = crate::EdgeDraft {
+        source_id: "kept".into(),
+        target_id: "gone".into(),
+        edge_type: "core.related".into(),
+        ..Default::default()
+    };
+    let mut edited = crate::EdgeEdit {
+        base_version: Some(1),
+        ..Default::default()
+    };
+    edited.properties.insert("note".into(), json!("mine"));
+    assert_eq!(
+        core.create_edge(&created).map(|_| ()),
+        Err(CoreError::HydrationIncomplete)
+    );
+    assert_eq!(
+        core.update_edge("stays", &moved).map(|_| ()),
+        Err(CoreError::HydrationIncomplete)
+    );
+    assert_eq!(
+        core.update_edge("stays", &edited).map(|_| ()),
+        Err(CoreError::HydrationIncomplete)
+    );
+    assert_eq!(
+        core.delete_edge("stays").map(|_| ()),
+        Err(CoreError::HydrationIncomplete)
+    );
+    assert_eq!(core.queue().unwrap().len(), queued);
+    assert_eq!(
+        store::edge_by_id(&core.conn().unwrap(), "stays")
+            .unwrap()
+            .map(|edge| edge.target_id),
+        Some("changed".into())
+    );
+    // An item write is still taken.
+    core.add_tag("kept", "mine").unwrap();
+
+    server.on("/items", refill_pages());
+    server.on("/items/bulk-get", vec![pinned_row()]);
+    server.on("/events", vec![head("60"), replay(vec![], "60")]);
+    hydrate(&core).unwrap();
+
+    // The witness: the whole copy takes each of them.
+    core.update_edge("stays", &edited).unwrap().unwrap();
+    core.create_edge(&crate::EdgeDraft {
+        target_id: "added".into(),
+        ..created
+    })
+    .unwrap();
+    core.delete_edge("stays").unwrap();
+}
+
+#[test]
+fn an_edge_write_part_way_through_a_first_fill_is_refused() {
+    let server = Scripted::start();
+    let core = first_fill_interrupted(&server);
+    let new = core
+        .create_item(&crate::stop_tests::note(None))
+        .unwrap()
+        .item_id
+        .unwrap();
+    assert_eq!(
+        core.create_edge(&crate::EdgeDraft {
+            source_id: "held".into(),
+            target_id: new,
+            edge_type: "core.related".into(),
+            ..Default::default()
+        })
+        .map(|_| ()),
+        Err(CoreError::HydrationIncomplete)
+    );
+    assert_eq!(core.queue().unwrap().len(), 1);
+}
+
+/// `row`, a note whose body links to `linked` by id, with the `references`
+/// edge `edge` that link made.
+fn linking_row(id: &str, version: i64, linked: &str, edge: &str) -> Value {
+    let mut row = row(id, version, &[]);
+    row["item"]["properties"]["body"] = json!(format!("see [[{linked}]]"));
+    let mut reference = edge_of(edge, id, linked);
+    reference["edge_type"] = json!(crate::body::rule::LINK_EDGE);
+    row["item"]["edges"] = json!({
+        crate::body::rule::LINK_EDGE: {"data": [reference], "next_cursor": null}
+    });
+    row
+}
+
+#[test]
+fn a_body_edit_of_a_held_note_with_links_is_queued_while_the_copy_is_stale() {
+    let server = Scripted::start();
+    let core = aged_out_after(&server, copy(&server), |core| {
+        put(core, &[linking_row("linking", 1, "kept", "link")]);
+    });
+    assert!(edge_held(&core, "link"));
+    let mut edit = Edit {
+        base_version: Some(1),
+        ..Default::default()
+    };
+    edit.properties
+        .insert("body".into(), json!("see [[changed]] and not the other"));
+
+    let queued = core.update_item("linking", &edit).unwrap();
+
+    assert_eq!(
+        core.get("linking").unwrap().unwrap().properties["body"],
+        json!("see [[changed]] and not the other")
+    );
+    let waiting = core.queue().unwrap();
+    assert_eq!(
+        waiting
+            .iter()
+            .map(|row| row.id.as_str())
+            .collect::<Vec<_>>(),
+        [queued.id.as_str()],
+        "the edit queued edge writes while the copy was not whole"
+    );
+    let checks: i64 = core
+        .conn()
+        .unwrap()
+        .query_row(
+            "SELECT count(*) FROM body_checks WHERE write_id = ?1",
+            [&queued.id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(checks, 1, "the edit's links are not read on its answer");
+    assert_eq!(
+        core.body_links("linking"),
+        Err(CoreError::HydrationIncomplete)
+    );
+
+    server.on(
+        "/items",
+        vec![page(
+            vec![
+                linking_row("linking", 1, "kept", "link"),
+                row("kept", 1, &[]),
+                row("changed", 1, &[]),
+            ],
+            None,
+        )],
+    );
+    server.on("/items/bulk-get", vec![pinned_row()]);
+    server.on("/events", vec![head("60"), replay(vec![], "60")]);
+    hydrate(&core).unwrap();
+
+    // Whole again, the copy answers the links the edit's body carries.
+    let links = core.body_links("linking").unwrap();
+    assert_eq!(
+        links
+            .links
+            .iter()
+            .map(|link| link.name.as_str())
+            .collect::<Vec<_>>(),
+        ["changed"]
+    );
+    assert_eq!(
+        core.get("linking").unwrap().unwrap().properties["body"],
+        json!("see [[changed]] and not the other")
     );
 }

@@ -27,12 +27,7 @@ pub(crate) fn hydrate(
     edge_types: &[String],
     stop: &AtomicBool,
 ) -> Result<HydrateReport> {
-    let previous = crate::reach::Context::capture_build(&*core.conn()?).ok();
     let result = hydrate_inner(core, http, types, tier, edge_types, stop);
-    let result = result.map_err(|error| match previous {
-        Some(context) => context.failed(core, error).unwrap_or_else(|error| error),
-        None => error,
-    });
     crate::catch_up::unless_stopped(result, stop)
 }
 
@@ -49,6 +44,7 @@ fn hydrate_inner(
     let mut restart = None;
     let mut pages = 0;
     loop {
+        let before = crate::reach::Before::capture(&*core.conn()?)?;
         match attempt(
             core,
             http,
@@ -58,7 +54,9 @@ fn hydrate_inner(
             restart,
             &mut pages,
             stop,
-        )? {
+        )
+        .map_err(|error| before.failed(core, error).unwrap_or_else(|error| error))?
+        {
             Attempt::Done(report) => return Ok(report),
             // Only an attempt that would resume asks to start again, and one
             // that starts again never resumes, so this goes round at most
@@ -250,12 +248,16 @@ fn attempt(
             // when the instance, the reach and the slice are those it was
             // built under; anything else may hold rows the key no longer
             // reads, so it is cleared first.
-            // A log that ends before the head the refill began from is a
-            // server restored to an earlier point, whose rows the later
-            // versions held would refuse.
+            // A log that ends before the head the refill began from, or
+            // before the cursor the copy held when it went stale, is a server
+            // restored to an earlier point, whose rows the later versions held
+            // would refuse.
             let in_place = restarted != Some(HydrateRestart::HeadPastLog)
-                && store::refill(&tx)?
-                    .is_some_and(|refill| refill.instance == instance && refill.reach == fence)
+                && store::refill(&tx)?.is_some_and(|refill| {
+                    refill.instance == instance
+                        && refill.reach == fence
+                        && not_behind(&cursor, &refill.cursor)
+                })
                 && store::meta_get(&tx, store::META_SLICE_TYPES)?
                     == Some(serde_json::to_string(types)?)
                 && store::meta_get(&tx, store::META_SLICE_TIER)?.as_deref() == Some(tier.as_str())
@@ -576,6 +578,15 @@ fn attempt(
         }))
     })();
     result.map_err(|error| context.failed(core, error).unwrap_or_else(|error| error))
+}
+
+/// Whether the head `head` is at or past the cursor `held`: a log that ends
+/// before the cursor a copy held is a server restored to an earlier point.
+fn not_behind(head: &str, held: &str) -> bool {
+    matches!(
+        (crate::reach::cursor(head), crate::reach::cursor(held)),
+        (Some(head), Some(held)) if head >= held
+    )
 }
 
 /// A whole or stale copy built under another instance or reach than the head

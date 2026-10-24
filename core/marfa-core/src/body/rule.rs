@@ -740,18 +740,22 @@ pub(crate) fn derive(
     Ok(())
 }
 
-/// Defers reading the body an edit based on an earlier version leaves until
-/// its answer: the copy cannot say what such an edit changed of the body,
-/// only what the server's row holds once it lands.
+/// Defers reading the body a write leaves on `host`, which held `old`, until
+/// its answer, for an edit based on an earlier version and for any write a
+/// copy that is not whole takes. The copy cannot say what the first changed
+/// of the body, only what the server's row holds once it lands; and the
+/// second would queue edge writes a copy that is not whole takes none of,
+/// against names the rows still to arrive may answer. A write is answered
+/// only once the copy is whole.
 pub(crate) fn derive_on_answer(
     conn: &Connection,
-    catalog: &Catalog,
-    before: &Item,
+    host: &str,
+    old: &str,
     write: &str,
 ) -> Result<()> {
     conn.execute(
         "INSERT OR REPLACE INTO body_checks (write_id, item_id, body) VALUES (?1, ?2, ?3)",
-        params![write, before.id, body_of(catalog, before)],
+        params![write, host, old],
     )?;
     Ok(())
 }
@@ -2910,7 +2914,8 @@ mod tests {
         {
             let conn = core.conn().unwrap();
             let before = store::item_by_id(&conn, &host).unwrap().unwrap();
-            derive_on_answer(&conn, &Catalog::load(&conn).unwrap(), &before, &write.id).unwrap();
+            let old = body_of(&Catalog::load(&conn).unwrap(), &before).to_string();
+            derive_on_answer(&conn, &host, &old, &write.id).unwrap();
             // The server took the edit, and its row keeps one link of the two.
             conn.execute(
                 "UPDATE queue SET verdict = 'accepted' WHERE id = ?1",

@@ -191,14 +191,16 @@ impl Context {
             let in_place = crate::catch_up::divergence(reason)
                 == Some(crate::model::HydrateRestart::HeadAgedOut)
                 && (!self.building || store::refilling(&tx)?);
+            let cursor = store::meta_get(&tx, store::META_EVENT_CURSOR)?;
             expire(&tx)?;
-            if in_place {
+            if in_place && let Some(cursor) = cursor {
                 store::meta_set(
                     &tx,
                     store::META_REFILL,
                     &serde_json::to_string(&store::Refill {
                         instance: self.instance.clone(),
                         reach: self.fence.clone(),
+                        cursor,
                     })?,
                 )?;
             }
@@ -229,6 +231,44 @@ impl Context {
             .as_deref()
             .and_then(cursor)
             .ok_or_else(invalid)
+    }
+}
+
+/// What the copy was as a hydration's attempt began, so a refusal of the
+/// credential or the reach before the attempt holds a context of its own still
+/// ends what the copy answers. A stale copy holds no reach to capture a
+/// context under, so its generation alone says it is the same copy.
+pub(crate) struct Before {
+    generation: u64,
+    context: Option<Context>,
+}
+
+impl Before {
+    pub(crate) fn capture(conn: &Connection) -> Result<Self> {
+        Ok(Self {
+            generation: revision(conn, GENERATION)?,
+            context: Context::capture_build(conn).ok(),
+        })
+    }
+
+    pub(crate) fn failed(&self, core: &Core, error: CoreError) -> Result<CoreError> {
+        let CoreError::CopyExpired { reason } = &error else {
+            return Ok(error);
+        };
+        if let Some(context) = &self.context {
+            return context.expire(core, reason);
+        }
+        let mut conn = core.conn()?;
+        let tx = conn.transaction()?;
+        if self.generation == revision(&tx, GENERATION)?
+            && store::refilling(&tx)?
+            && crate::catch_up::divergence(reason)
+                != Some(crate::model::HydrateRestart::HeadAgedOut)
+        {
+            expire(&tx)?;
+        }
+        tx.commit()?;
+        Ok(error)
     }
 }
 

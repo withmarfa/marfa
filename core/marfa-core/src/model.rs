@@ -520,9 +520,9 @@ pub enum Hydration {
     /// A catch-up or a held stream learned that the event log let the kept
     /// cursor go. Set only on that answer: a store whose cursor aged out and
     /// has not asked since still reports `Complete`. Local reads answer what
-    /// the copy holds marked `stale`, and writes are queued, from then until
-    /// a hydration has filled it again in place, through that hydration and
-    /// an interrupted one.
+    /// the copy holds marked `stale`, and writes but edge writes are queued,
+    /// from then until a hydration has filled it again in place, through that
+    /// hydration and an interrupted one.
     Stale,
 }
 

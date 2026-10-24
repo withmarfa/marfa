@@ -1487,7 +1487,7 @@ impl Core {
     pub(crate) fn write_create(&self, draft: &Draft, body: Body) -> Result<QueuedWrite> {
         self.lock.refuse_unless_writer()?;
         let mut conn = self.conn()?;
-        store::refuse_unless_writable(&conn)?;
+        let completeness = store::refuse_unless_writable(&conn)?;
         let tx = conn.transaction()?;
         let catalog = catalog::Catalog::load(&tx)?;
         let queued = queue_create(&tx, &catalog, draft, &[], self.credential().as_deref())?;
@@ -1499,7 +1499,11 @@ impl Core {
                 .transpose()?
                 .flatten()
         {
-            body::rule::derive(&tx, &catalog, "", &item, &queued.id)?;
+            if completeness == Completeness::Complete {
+                body::rule::derive(&tx, &catalog, "", &item, &queued.id)?;
+            } else {
+                body::rule::derive_on_answer(&tx, &item.id, "", &queued.id)?;
+            }
         }
         tx.commit()?;
         Ok(queued)
@@ -1585,10 +1589,12 @@ impl Core {
             && let Some(before) = before
             && let Some(after) = store::item_by_id(&tx, id)?
         {
-            if edit.base_version.is_some_and(|base| base < before.version) {
-                body::rule::derive_on_answer(&tx, &catalog, &before, &queued.id)?;
+            let old = body::rule::body_of(&catalog, &before).to_string();
+            if completeness != Completeness::Complete
+                || edit.base_version.is_some_and(|base| base < before.version)
+            {
+                body::rule::derive_on_answer(&tx, id, &old, &queued.id)?;
             } else {
-                let old = body::rule::body_of(&catalog, &before).to_string();
                 body::rule::derive(&tx, &catalog, &old, &after, &queued.id)?;
             }
         }
@@ -1776,7 +1782,7 @@ impl Core {
     pub fn create_edge(&self, draft: &EdgeDraft) -> Result<QueuedWrite> {
         self.lock.refuse_unless_writer()?;
         let mut conn = self.conn()?;
-        store::refuse_unless_writable(&conn)?;
+        store::refuse_unless_whole(&conn)?;
         let tx = conn.transaction()?;
         let queued = queue_edge(&tx, draft, &[])?;
         tx.commit()?;
@@ -1792,9 +1798,8 @@ impl Core {
     pub fn update_edge(&self, id: &str, edit: &EdgeEdit) -> Result<Option<QueuedWrite>> {
         self.lock.refuse_unless_writer()?;
         let mut conn = self.conn()?;
-        let completeness = store::refuse_unless_writable(&conn)?;
+        store::refuse_unless_whole(&conn)?;
         let Some(held) = store::edge_by_id(&conn, id)? else {
-            store::refuse_unless_held(completeness)?;
             return Err(CoreError::NotFound {
                 code: "edge_not_found".into(),
                 message: format!("{id} is not an edge this copy holds"),
@@ -1872,10 +1877,7 @@ impl Core {
     pub fn delete_edge(&self, id: &str) -> Result<QueuedWrite> {
         self.lock.refuse_unless_writer()?;
         let mut conn = self.conn()?;
-        let completeness = store::refuse_unless_writable(&conn)?;
-        if store::edge_by_id(&conn, id)?.is_none() {
-            store::refuse_unless_held(completeness)?;
-        }
+        store::refuse_unless_whole(&conn)?;
         let held = held_edge(&conn, id)?;
         let tx = conn.transaction()?;
         let queued = queue_edge_delete(&tx, &held, &[])?;

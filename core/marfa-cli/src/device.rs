@@ -53,7 +53,10 @@ pub enum DeviceCommand {
     /// answering, marked stale, and takes writes to the rows it holds and
     /// new ones, which wait to be sent, until the hydration finishes and
     /// removes the rows the server no longer lists. Any other hydration
-    /// empties the copy first.
+    /// empties the copy first. Until the copy is whole, a write to an edge is
+    /// refused `hydration_incomplete`, since a page still to arrive could
+    /// bring the server's edge in place of the one the write was made
+    /// against.
     Hydrate {
         /// Comma-separated type identifiers, such as core.note,core.file, or
         /// `*` alone for every type but `system.*`, hydrated in one pass
@@ -271,9 +274,9 @@ pub enum DeviceCommand {
     ///
     /// The hydration is `never`, `in_progress`, `complete`, `stale` or
     /// `expired`. A stale copy is one the server's event log no longer
-    /// reaches: it answers reads marked stale and takes writes until a
-    /// hydration has filled it again in place, and stays stale while that
-    /// hydration runs. An expired copy refuses reads and writes until a
+    /// reaches: it answers reads marked stale and takes writes, but not to
+    /// edges, until a hydration has filled it again in place, and stays
+    /// stale while that hydration runs. An expired copy refuses reads and writes until a
     /// hydration, which empties it first.
     Status,
     /// The item types the copy holds, read from it alone, the ones an app
