@@ -1186,6 +1186,7 @@ describe("an interrupted hydration", () => {
     const { server, device } = harness;
     const pinReads = (): number => readsOf(server, "pinned");
     const pinsBefore = pinReads();
+    const requestsBefore = server.requests.length;
     const hydrating = device.hold([
       "hydrate",
       "--types",
@@ -1196,14 +1197,15 @@ describe("an interrupted hydration", () => {
     try {
       await vi.waitFor(
         () => {
-          const replayed = server.requests.findIndex(
+          const requests = server.requests.slice(requestsBefore);
+          const replayed = requests.findIndex(
             (request) =>
               request.pathname === "/events" &&
               request.headers["last-event-id"] === "10",
           );
           expect(replayed, hydrating.stderr).toBeGreaterThan(-1);
           expect(
-            server.requests
+            requests
               .slice(replayed)
               .some((request) => request.pathname === "/types"),
             hydrating.stderr,
