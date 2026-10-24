@@ -1,5 +1,7 @@
 import { defineConfig } from "vitest/config";
-import { sharedTestBudget } from "./vitest.shared.js";
+import { sharedTestBudget, silenceTelemetry } from "./vitest.shared.js";
+
+silenceTelemetry();
 
 export default defineConfig({
   test: {

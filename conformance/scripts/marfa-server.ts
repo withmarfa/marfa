@@ -79,6 +79,7 @@ import {
   writeOwnerSession,
   type SharedOwnerSession,
 } from "../src/client/owner-session.js";
+import { silenceTelemetry } from "../../vitest.shared.js";
 import { FRESH_SERVER_LOGS } from "../src/utils/fresh-server.js";
 import {
   STOP_SIGNALS,
@@ -486,6 +487,9 @@ async function startServer(args: BootOptions): Promise<Started> {
   const hooks = args.nodeEnv !== "production";
   env.MARFA_TEST_HOOKS = String(hooks);
   delete env.MARFA_TEST_CLOCK_OFFSET_MS;
+  // A throwaway server reports nothing, whatever the shell sets; a setting the
+  // caller names below still wins.
+  silenceTelemetry(env);
   // What the caller names wins over every default above.
   Object.assign(env, args.env);
   // The command-line port wins over the environment, including --env PORT.

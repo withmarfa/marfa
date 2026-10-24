@@ -1,5 +1,9 @@
 import { defineConfig } from "vitest/config";
 
+import { silenceTelemetry } from "../../vitest.shared.ts";
+
+silenceTelemetry();
+
 export default defineConfig({
   test: {
     // Global setup refuses a stale build and sweeps temporary directories
