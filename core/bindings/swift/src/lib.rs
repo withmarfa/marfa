@@ -396,6 +396,10 @@ pub struct FileCache {
     /// Why the files fetched last could not be kept out of backups; none
     /// once a fetched file is marked.
     pub backup_mark_failure: Option<String>,
+    /// The files attached to items the copy holds, which stay on the device
+    /// outside the budget; none while a hydration fills the copy, for a
+    /// folder's copy, and where the cache could not be read.
+    pub attachments: Option<Attachments>,
 }
 
 impl From<marfa_core::FileCache> for FileCache {
@@ -407,8 +411,102 @@ impl From<marfa_core::FileCache> for FileCache {
             held_unreadable: cache.held_unreadable,
             volume_unreadable: cache.volume_unreadable,
             backup_mark_failure: cache.backup_mark_failure,
+            attachments: cache.attachments.map(Into::into),
         }
     }
+}
+
+/// Why an attachment's bytes are not held.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum NotHeldReason {
+    /// No fetch of them has been asked for since they became an attachment.
+    NotFetched,
+    /// The volume had no room for them, or for an attachment before them in
+    /// the same fetch.
+    NoRoom,
+    /// The server, or the link it gave, could not be reached, or the link
+    /// stopped sending part way.
+    Unreachable,
+    /// The server holds no bytes by that hash.
+    Absent,
+    /// The fetch failed otherwise.
+    Failed,
+    /// The edge is held but its file item is not.
+    NotInCopy,
+}
+
+impl From<marfa_core::NotHeldReason> for NotHeldReason {
+    fn from(reason: marfa_core::NotHeldReason) -> Self {
+        use marfa_core::NotHeldReason as Why;
+        match reason {
+            Why::NotFetched => NotHeldReason::NotFetched,
+            Why::NoRoom => NotHeldReason::NoRoom,
+            Why::Unreachable => NotHeldReason::Unreachable,
+            Why::Absent => NotHeldReason::Absent,
+            Why::Failed => NotHeldReason::Failed,
+            Why::NotInCopy => NotHeldReason::NotInCopy,
+        }
+    }
+}
+
+/// The attachments not held for one reason.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct NotHeld {
+    pub reason: NotHeldReason,
+    pub attachments: u64,
+    /// The bytes they state, counted once for files that share them.
+    pub bytes: u64,
+    /// How many of them state no size, so add nothing to `bytes`.
+    pub unstated: u64,
+}
+
+/// The files attached to items the copy holds.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct Attachments {
+    /// The file items whose bytes the cache holds whole.
+    pub held: u64,
+    /// Their bytes, counted once for files that share them.
+    pub held_bytes: u64,
+    /// The bytes of partial files of attachments.
+    pub partial_bytes: u64,
+    /// The attachments whose bytes the cache does not hold whole.
+    pub not_held: u64,
+    /// The bytes they state, counted once for files that share them.
+    pub not_held_bytes: u64,
+    pub not_held_by_reason: Vec<NotHeld>,
+}
+
+impl From<marfa_core::Attachments> for Attachments {
+    fn from(found: marfa_core::Attachments) -> Self {
+        Attachments {
+            held: found.held,
+            held_bytes: found.held_bytes,
+            partial_bytes: found.partial_bytes,
+            not_held: found.not_held,
+            not_held_bytes: found.not_held_bytes,
+            not_held_by_reason: found
+                .not_held_by_reason
+                .into_iter()
+                .map(|group| NotHeld {
+                    reason: group.reason.into(),
+                    attachments: group.attachments,
+                    bytes: group.bytes,
+                    unstated: group.unstated,
+                })
+                .collect(),
+        }
+    }
+}
+
+/// What a fetch of the attachments did.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct KeptFetch {
+    /// The files whose bytes it fetched, counted once for files that share
+    /// them.
+    pub fetched: u64,
+    pub fetched_bytes: u64,
+    /// The attachments after it, as the state report gives them.
+    pub attachments: Option<Attachments>,
 }
 
 #[derive(Debug, Clone, uniffi::Record)]
@@ -2483,6 +2581,21 @@ impl Core {
         Ok(self.inner.trim_files()?)
     }
 
+    /// Fetches the bytes of every file attached to an item the copy holds
+    /// that the cache does not hold whole, smallest first, and answers what
+    /// it fetched and the attachments after it. Stops at the first the disk
+    /// has no room for, or once the server cannot be reached. Run after a
+    /// hydration and after a catch-up. Refused to a reading handle and for a
+    /// folder's copy.
+    pub fn fetch_kept(&self, stop: Option<Arc<Stop>>) -> Result<KeptFetch, MarfaError> {
+        let fetched = self.inner.fetch_kept_until(&flag_of(stop))?;
+        Ok(KeptFetch {
+            fetched: fetched.fetched,
+            fetched_bytes: fetched.fetched_bytes,
+            attachments: fetched.attachments.map(Into::into),
+        })
+    }
+
     /// Whether a blob's bytes are held beside the store, with no request.
     pub fn blob_held(&self, hash: String) -> Result<bool, MarfaError> {
         Ok(self.inner.blob_held(&hash)?)
@@ -3163,6 +3276,64 @@ mod tests {
             .add_file(file, Attachment::default(), vec!["kept".into()])
             .unwrap();
         assert!(added.item.item_id.is_some());
+    }
+
+    #[test]
+    fn attachments_cross_in_the_file_cache_and_a_fetch_of_them() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("core.sqlite").display().to_string();
+        // Nothing listens there: a fetch with nothing to fetch asks nothing.
+        let core = Core::open(
+            path.clone(),
+            Some("http://127.0.0.1:9".into()),
+            Some("k".into()),
+            None,
+        )
+        .unwrap();
+        let none = Attachments {
+            held: 0,
+            held_bytes: 0,
+            partial_bytes: 0,
+            not_held: 0,
+            not_held_bytes: 0,
+            not_held_by_reason: Vec::new(),
+        };
+        assert_eq!(core.file_cache().unwrap().attachments, Some(none));
+        let host = core
+            .create_item(Draft {
+                r#type: "core.note".into(),
+                properties: object(serde_json::json!({ "title": "Host", "body": "" })),
+                id: None,
+                tags: Vec::new(),
+                tier: None,
+                source: None,
+                source_id: None,
+                occurred_at: None,
+                base_version: None,
+            })
+            .unwrap()
+            .item_id
+            .unwrap();
+        let file = dir.path().join("photo.png");
+        std::fs::write(&file, b"a photo").unwrap();
+        core.attach(host, file.display().to_string(), Attachment::default())
+            .unwrap();
+
+        let fetched = core.fetch_kept(None).unwrap();
+        assert_eq!((fetched.fetched, fetched.fetched_bytes), (0, 0));
+        let attachments = fetched.attachments.expect("no attachments");
+        assert_eq!((attachments.held, attachments.held_bytes), (1, 7));
+        assert_eq!(
+            core.set_file_budget(FileBudget::Bytes { bytes: 0 })
+                .unwrap(),
+            0
+        );
+
+        let reader = Core::open_reader(path).unwrap();
+        assert!(matches!(
+            reader.fetch_kept(None),
+            Err(MarfaError::ReadingHandle { .. })
+        ));
     }
 
     #[test]
