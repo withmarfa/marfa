@@ -2660,7 +2660,7 @@ describe("the working copy says what it is", () => {
 
     expect((await device.catchUp()).ok).toBe(false);
     const after = await device.status();
-    expect(after.ok && after.value.hydration).toBe("expired");
+    expect(after.ok && after.value.hydration).toBe("stale");
     // The copy takes the write and keeps it for after the refill.
     const write = await device.create({
       type: "core.note",

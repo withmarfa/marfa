@@ -203,7 +203,7 @@ export interface Status {
   event_cursor?: string | null;
   /** The instance the copy was hydrated from, as the server's root named it. */
   instance_id?: string | null;
-  hydration: "never" | "in_progress" | "complete" | "expired";
+  hydration: "never" | "in_progress" | "complete" | "stale" | "expired";
   items: number;
   /** While a hydration fills the copy, the items its slice held on the
    *  server when it started, where the server counted them. */

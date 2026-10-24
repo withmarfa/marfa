@@ -2127,6 +2127,48 @@ describe("catch-up keeps the copy to its slice", () => {
     ).not.toContain("leaves");
   });
 
+  it("keeps an edge a queued write names when its source leaves the slice", async () => {
+    harness = await startHarness("eviction-queued-edge");
+    const { server, device } = harness;
+    scriptHydration(server, {
+      head: "10",
+      rows: {
+        "core.note": [{ item: { id: "stays" } }, { item: { id: "leaves" } }],
+      },
+    });
+    server.copyAnswer(
+      "GET",
+      "/events",
+      copyReplay("11", [
+        copyItemEvent(
+          "11",
+          "item.updated",
+          wireItem({ id: "leaves", tier: "feed", version: 2 }),
+        ),
+      ]),
+    );
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    const linked = await device.createEdge({
+      source: "leaves",
+      target: "stays",
+      type: "core.related",
+    });
+    expect(linked.ok, JSON.stringify(linked)).toBe(true);
+    const queued = await device.queue();
+
+    expect((await device.catchUp()).ok).toBe(true);
+    // The witness: the row the edge leaves from went.
+    const held = await device.list();
+    expect(held.ok && held.value.map((item) => item.id)).toEqual(["stays"]);
+    const edges = await device.edgesTo("stays");
+    expect(edges.ok, JSON.stringify(edges)).toBe(true);
+    expect(
+      edges.ok && edges.value.map((edge) => edge.source_id),
+      "the row that left took an edge the person is still waiting to send",
+    ).toEqual(["leaves"]);
+    expect(await device.queue()).toEqual(queued);
+  });
+
   describe("a slice of both tiers", () => {
     const rows = {
       "core.note": [
@@ -3301,10 +3343,11 @@ describe("catch-up keeps the copy to its slice", () => {
     expect((await device.pin("settings")).ok).toBe(true);
     expect((await device.catchUp()).ok).toBe(false);
     // The witness: the cursor aged out with the pin in place.
-    const expired = await device.status();
-    expect(
-      expired.ok && [expired.value.hydration, expired.value.pinned],
-    ).toEqual(["expired", ["settings"]]);
+    const stale = await device.status();
+    expect(stale.ok && [stale.value.hydration, stale.value.pinned]).toEqual([
+      "stale",
+      ["settings"],
+    ]);
 
     const again = await device.hydrate(["core.note"], "library");
     expect(again.ok, JSON.stringify(again)).toBe(true);
@@ -4225,13 +4268,12 @@ describe("a cursor the log no longer holds", () => {
     expect(found.ok, JSON.stringify(found)).toBe(true);
     expect(found.ok && found.value.completeness).toBe("stale");
 
-    // What the report says about a store in this state. `expired` and not
+    // What the report says about a store in this state. `stale` and not
     // `never`, which is a copy that holds nothing, nor `complete`, which is
-    // a copy that can still be kept current: this one holds its slice and
-    // its rows and can no longer follow the server. The advice a caller
-    // acts on is the same either way — hydrate — but `never` would have
-    // said the copy is empty, and a caller deciding whether to keep
-    // answering from it reads that and is wrong.
+    // a copy that can still be kept current, nor `expired`, which is a copy
+    // whose reads are refused: this one holds its slice and its rows,
+    // answers from them, and can no longer follow the server. A caller
+    // deciding whether to keep answering from it reads the word.
     const reported = await device.status();
     expect(
       reported.ok,
@@ -4240,25 +4282,25 @@ describe("a cursor the log no longer holds", () => {
     if (reported.ok) {
       expect(
         reported.value.hydration,
-        "an aged-out store did not report itself as expired, so a caller weighing whether the copy in hand is worth anything is told the wrong thing about it",
-      ).toBe("expired");
-      // The witness for the word. `expired` is only worth having on a
+        "an aged-out store did not report itself as stale, so a caller weighing whether the copy in hand is worth anything is told the wrong thing about it",
+      ).toBe("stale");
+      // The witness for the word. `stale` is only worth having on a
       // store that has something in it: with the slice and the rows gone,
-      // the two words would describe the same store and either would do.
+      // it would describe an empty store and promise rows that are not there.
       // The rows, not only the declaration — the declaration survives a
       // store with nothing in it, and what the word promises a caller is
       // that the copy in hand is still worth something.
       expect(
         reported.value.slice_types,
-        "the report says the slice is empty as well, so `expired` is a guess rather than a reading of what the store holds",
+        "the report says the slice is empty as well, so `stale` is a guess rather than a reading of what the store holds",
       ).toContain("core.note");
       expect(
         reported.value.items,
-        "the aging took the rows with it, so `expired` describes an empty store and promises a caller a copy that is not there",
+        "the aging took the rows with it, so `stale` describes an empty store and promises a caller a copy that is not there",
       ).toBe(1);
       expect(
         reported.value.event_cursor ?? null,
-        "the store still holds a cursor, so `expired` is not about the aging at all",
+        "the store still holds a cursor, so `stale` is not about the aging at all",
       ).toBeNull();
     }
 
