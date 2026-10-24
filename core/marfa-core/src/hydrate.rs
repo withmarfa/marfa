@@ -594,9 +594,16 @@ fn head_held(http: &Http, head: &str, stop: &AtomicBool) -> Result<Option<Hydrat
     for _ in 0..HEAD_ATTEMPTS {
         crate::catch_up::refuse_if_stopped(stop)?;
         let asked = head.to_string();
-        let reader = crate::catch_up::ask_unless_stopped(stop, http, move |http| {
+        // A stream resumed under a reach that is no longer the key's is
+        // refused before it starts (`reach/copy-reach-refused`).
+        let reader = match crate::catch_up::ask_unless_stopped(stop, http, move |http| {
             http.open_events(Some(&asked), HEAD_READ_TIMEOUT)
-        })?;
+        }) {
+            Err(CoreError::CopyExpired { reason }) if reason == "reach_changed" => {
+                return Ok(Some(HydrateRestart::ReachChanged));
+            }
+            reader => reader?,
+        };
         let mut frames = Frames::new(BufReader::new(reader));
         let mut opened = false;
         loop {
