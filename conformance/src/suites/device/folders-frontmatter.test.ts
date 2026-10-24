@@ -73,8 +73,12 @@ afterEach(async () => {
 function edgeRows(
   items: WireItemOptions[],
   edges: WireEdgeOptions[],
-): Record<string, Array<{ item: WireItemOptions }>> {
-  const rows: Record<string, Array<{ item: WireItemOptions }>> = {};
+  tags: Record<string, string[]> = {},
+): Record<string, Array<{ item: WireItemOptions; tags?: string[] }>> {
+  const rows: Record<
+    string,
+    Array<{ item: WireItemOptions; tags?: string[] }>
+  > = {};
   for (const item of items) {
     const drawn: Record<string, { data: unknown[]; next_cursor: null }> = {};
     for (const edge of edges.filter((held) => held.source_id === item.id)) {
@@ -87,6 +91,7 @@ function edgeRows(
     const asked = (item.type ?? "core.note").split(".").slice(0, 2).join(".");
     (rows[asked] ??= []).push({
       item: { ...item, edges: drawn },
+      tags: tags[item.id],
     });
   }
   return rows;
@@ -119,13 +124,15 @@ async function edgeHarness(
     confirm?: boolean;
     hydrate?: boolean;
     beforeAdd?: (server: ScriptedServer) => void;
+    /** The tags each item carries, by id. */
+    tags?: Record<string, string[]>;
   } = {},
 ): Promise<{ harness: FolderHarness; door: EdgeDoor }> {
   const whole = (type: string) =>
     edges.filter((edge) => edge.edge_type === type);
   const made = await folderHarness(label, {
     settings: options.settings,
-    rows: edgeRows(items, edges),
+    rows: edgeRows(items, edges, options.tags),
     edges: {
       "parent-of": whole("parent-of"),
       "attached-to": whole("attached-to"),
@@ -3902,6 +3909,71 @@ describe("embedded files", () => {
         ).toEqual([]);
       },
     );
+
+    it("is not put back when a paused removal is restored with an unmatched document that stays deleted", async () => {
+      const plan: WireItemOptions = {
+        id: host,
+        properties: { title: "Plan", body: "no picture\n" },
+      };
+      const made = await edgeHarness(
+        "folder-attached-restored-unmatched",
+        [plan, fileRow(scan, "scan.png", png(2))],
+        [attached(edgeId(31), scan, host)],
+        {
+          settings: {
+            query: { types: ["core.note"], filter: 'tags contains "a"' },
+            removal_threshold: { files: 1, fraction: 0.25 },
+          },
+          tags: { [host]: ["a"] },
+          events: [
+            copyReplay("2", [
+              copyItemEvent("2", "metadata.changed", wireItem(plan), {
+                tags: ["b"],
+              }),
+            ]),
+          ],
+        },
+      );
+      harness = made.harness;
+      scriptBlob(harness.server, png(2));
+      expect((await harness.folder.pull()).ok).toBe(true);
+      expect(images(harness)).toEqual(["scan.png"]);
+      expect((await harness.folder.device().catchUp()).ok).toBe(true);
+      const unmatched = await harness.folder.pull();
+      expect(unmatched.ok && unmatched.value.unmatched).toBe(1);
+      rmSync(join(harness.dir, "Plan.md"));
+      rmSync(join(harness.dir, "scan.png"));
+      const paused = await harness.folder.push();
+      expect(paused.ok && paused.value.scan.paused).toBe(2);
+
+      const restored = await harness.folder.restore();
+      expect(restored.ok, JSON.stringify(restored)).toBe(true);
+      if (!restored.ok) return;
+      expect(existsSync(join(harness.dir, "Plan.md"))).toBe(false);
+      expect(
+        images(harness),
+        "the restore put back the attachment of a note whose deletion it kept",
+      ).toEqual([]);
+      expect(restored.value.put_back).toBe(0);
+      // Both deletions are the person's again, so the next push holds them
+      // together, and confirming sends both.
+      const again = await harness.folder.push();
+      expect(again.ok && again.value.scan.paused).toBe(2);
+      const confirmed = await harness.folder.confirm();
+      expect(confirmed.ok && confirmed.value.deleted).toBe(2);
+      expect((await harness.folder.push()).ok).toBe(true);
+      const deleted = harness.server.requests
+        .filter(
+          (request) =>
+            request.method === "DELETE" &&
+            /^\/items\/[^/]+$/.test(request.pathname),
+        )
+        .map((request) => request.pathname)
+        .sort();
+      expect(deleted, "the attachment was not deleted with its note").toEqual(
+        [`/items/${host}`, `/items/${scan}`].sort(),
+      );
+    });
   });
 });
 

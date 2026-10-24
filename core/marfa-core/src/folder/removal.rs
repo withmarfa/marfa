@@ -97,7 +97,7 @@ impl Folder {
             )
         };
         let members = self.members(&settings)?;
-        let attachments = self.written_with_documents(&settings, &members)?;
+        let attachments = self.written_with_documents(&settings, &members, &disk)?;
         let mut marked = Vec::new();
         for path in &disk {
             let (bound, held) = {

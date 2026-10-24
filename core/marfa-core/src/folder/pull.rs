@@ -465,7 +465,7 @@ impl Folder {
                 continue;
             }
             let taken = match &bound {
-                None if !*unmatched => peers.let_go(&item.id),
+                None if !*unmatched => peers.let_go(&item.id, &members),
                 _ => None,
             };
             let placed = self.placement(&item.id)?;
@@ -1439,17 +1439,21 @@ impl Folder {
 
     /// The files a pull writes as the embeds or attachments of documents
     /// here: those of members, and of bound documents in a state the query
-    /// holds.
+    /// holds whose file is not among `missing`, since no pull writes back an
+    /// unmatched document.
     pub(super) fn written_with_documents(
         &self,
         settings: &Settings,
         members: &HashSet<String>,
+        missing: &[String],
     ) -> Result<HashSet<String>> {
         let lists = settings.lists()?;
+        let missing: HashSet<&str> = missing.iter().map(String::as_str).collect();
         let (catalog, bound) = {
             let conn = self.core.conn()?;
             let bound: HashSet<String> = state::every_bound(&conn)?
                 .into_iter()
+                .filter(|bound| !missing.contains(bound.path.as_str()))
                 .map(|bound| bound.item_id)
                 .collect();
             (Catalog::load(&conn)?, bound)

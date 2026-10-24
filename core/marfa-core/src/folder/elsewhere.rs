@@ -168,8 +168,9 @@ impl Peer {
 
     /// Whether the item is attached to a document it has a file of, embedded
     /// or not, so its own file is that document's attachment; where its copy
-    /// cannot say, it is taken to be.
-    fn attached_here(&self, item_id: &str) -> bool {
+    /// cannot say, it is taken to be. A document moving to `taking`, which
+    /// holds it where this folder does not, takes its attachment along.
+    fn attached_here(&self, item_id: &str, taking: &HashSet<String>) -> bool {
         let Some(folder) = &self.folder else {
             return false;
         };
@@ -177,6 +178,22 @@ impl Peer {
             edges.iter().any(|edge| {
                 edge.edge_type == super::embeds::ATTACHMENT_EDGE
                     && self.bound_to(&edge.target_id).is_some()
+                    && !(taking.contains(&edge.target_id)
+                        && self.holds(&edge.target_id) == Some(false))
+            })
+        })
+    }
+
+    /// Whether its query holds a document the item is attached to, so its
+    /// file of the item is that document's attachment.
+    fn holds_document_of(&self, item_id: &str) -> bool {
+        let Some(folder) = &self.folder else {
+            return false;
+        };
+        folder.core.edges_from(item_id).is_ok_and(|edges| {
+            edges.iter().any(|edge| {
+                edge.edge_type == super::embeds::ATTACHMENT_EDGE
+                    && self.holds(&edge.target_id) == Some(true)
             })
         })
     }
@@ -691,18 +708,24 @@ impl<'a> Peers<'a> {
         }
     }
 
-    /// Whether another folder holds the item with a file of it already.
+    /// Whether another folder holds the item, or a document it is attached
+    /// to, with a file of it already.
     pub(super) fn filed_elsewhere(&self, item_id: &str) -> bool {
         self.all().iter().any(|peer| {
-            peer.holds(item_id) == Some(true)
+            (peer.holds(item_id) == Some(true) || peer.holds_document_of(item_id))
                 && peer
                     .bound_to(item_id)
                     .is_some_and(|bound| peer.present(&bound.path))
         })
     }
 
-    /// A file another folder let go of, holding the bytes it wrote, to take in.
-    pub(super) fn let_go(&self, item_id: &str) -> Option<(super::transfer::Entry, state::Bound)> {
+    /// A file another folder let go of, holding the bytes it wrote, to take
+    /// in to the folder whose members are `taking`.
+    pub(super) fn let_go(
+        &self,
+        item_id: &str,
+        taking: &HashSet<String>,
+    ) -> Option<(super::transfer::Entry, state::Bound)> {
         for peer in self.all() {
             let Some(bound) = peer.bound_to(item_id) else {
                 continue;
@@ -713,7 +736,7 @@ impl<'a> Peers<'a> {
                 || !peer.present(&bound.path)
                 || peer.holds(item_id) != Some(false)
                 || peer.left_by_state(item_id)
-                || peer.attached_here(item_id)
+                || peer.attached_here(item_id, taking)
             {
                 continue;
             }

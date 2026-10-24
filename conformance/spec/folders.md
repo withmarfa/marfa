@@ -5106,11 +5106,19 @@ When an item left another folder by state, a device MUST NOT take in that folder
 
 ### `folders/take-in-attachment-excluded`
 
-When a document in another registered folder embeds an item or has it attached, and that folder has a file of the document, a device MUST NOT take in that folder's file of the item.
+When a document in another registered folder embeds an item or has it attached, that folder has a file of the document, and that folder's query still holds the document or the receiving folder's query does not, a device MUST NOT take in that folder's file of the item.
 
 **Reason:** the file is the document's attachment there, whatever folder holds the item on its own, so taking it in would take it from beside its document.
 
 **Tests:** `device/folders-one-mac.test.ts › keeps a file %s a note while another folder on the Mac holds the file, and writes nothing again`.
+
+### `folders/take-in-attachment-with-document`
+
+When a document moves from another registered folder's query into a folder's query, and the other folder has a file of an item the document embeds or has attached, a device MUST take in that file for the folder the document moved to, as it takes in the document's own file.
+
+**Reason:** the other folder no longer writes the file once its document leaves, so a file written anew instead would leave the other folder's copy unmatched for good.
+
+**Tests:** `device/folders-one-mac.test.ts › moves a note's attachment with the note to another notes folder when %s hears first`.
 
 ### `folders/take-in-destination-kept`
 
@@ -5251,6 +5259,14 @@ While a document in a folder embeds an item or has it attached, a device MUST NO
 **Reason:** the pull that lets the file go writes it again beside its document, so every pull would remove and write the same file.
 
 **Tests:** `device/folders-one-mac.test.ts › keeps a file %s a note while another folder on the Mac holds the file, and writes nothing again`.
+
+### `folders/let-go-attachment-with-document`
+
+When this folder no longer holds an item or any document the item is attached to, and another registered folder's query holds a document the item is attached to and that folder has its own file of the item, a device MUST remove this folder's unchanged owned file of the item and count it as `let_go`.
+
+**Reason:** the other folder writes the file beside the document it holds, so a file kept here would stay unmatched for good.
+
+**Tests:** `device/folders-one-mac.test.ts › moves a note's attachment with the note to another notes folder when %s hears first`.
 
 ### `folders/unmatched-missing-not-rewritten`
 
@@ -5802,11 +5818,11 @@ When a paused disk removal is restored and the missing files’ items still matc
 
 ### `folders/restore-disk-attachments`
 
-When a paused disk removal is restored and a missing file's item is outside the folder's query but a document the folder holds embeds it or has it attached, a device MUST write the missing file back from the held copy and count it as `put_back`.
+When a paused disk removal is restored and a missing file's item is outside the folder's query but a document the folder holds embeds it or has it attached, a device MUST write the missing file back from the held copy and count it as `put_back`, unless every such document is outside the query and its own file is among the missing files.
 
-**Reason:** a pull writes such a file with its document, so restoring the document alone would leave the file for the next scan to trash.
+**Reason:** a pull writes such a file with its document, so restoring the document alone would leave the file for the next scan to trash. A document outside the query stays deleted, as `folders/restore-unmatched-count` says, so its attachment goes with it rather than stay unmatched for good.
 
-**Tests:** `device/folders-frontmatter.test.ts › is put back with its document when a paused removal is restored, %s`.
+**Tests:** `device/folders-frontmatter.test.ts › is put back with its document when a paused removal is restored, %s`, `› is not put back when a paused removal is restored with an unmatched document that stays deleted`.
 
 ### `folders/restore-disk-files-put-back-count`
 

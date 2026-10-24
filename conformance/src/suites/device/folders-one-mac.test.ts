@@ -1799,6 +1799,88 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     },
   );
 
+  it.each(["the folder it left", "the folder it moved to"])(
+    "moves a note's attachment with the note to another notes folder when %s hears first",
+    async (first) => {
+      const bytes = Buffer.from([
+        0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x23, 0xd4,
+      ]);
+      const plan = {
+        id: "01a00000-0000-7000-8000-0000000023d4",
+        properties: { title: "Plan", body: "the plan\n" },
+      };
+      const scan = {
+        id: "01a00000-0000-7000-8000-0000000023d5",
+        type: "core.file.image",
+        properties: {
+          title: "scan.png",
+          blob_ref: hashOf(bytes),
+          mime_type: "image/png",
+        },
+      };
+      const { a, b, edges } = await onOneMac(
+        `attachment-moves-with-note-${first.split(" ").at(-1)!}`,
+        { query: { types: ["core.note"], filter: 'tags contains "a"' } },
+        { query: { types: ["core.note"], filter: 'tags contains "b"' } },
+        {
+          "core.note": [{ item: plan, tags: ["a"] }],
+          "core.file": [{ item: scan }],
+        },
+        (server) => scriptBlob(server, bytes),
+        [
+          {
+            id: "01a00000-0000-7000-8000-0000000023d6",
+            source_id: scan.id,
+            target_id: plan.id,
+            edge_type: "attached-to",
+          },
+        ],
+      );
+      expect((await a.folder.pull()).ok).toBe(true);
+      expect((await b.folder.pull()).ok).toBe(true);
+      expect(readFileSync(join(a.dir, "scan.png"))).toEqual(bytes);
+
+      edges.events.push(
+        copyItemEvent(
+          String(edges.events.length + 2),
+          "metadata.changed",
+          wireItem(plan),
+          { tags: ["b"] },
+        ),
+      );
+      const leftFirst = first === "the folder it left";
+      if (leftFirst) expect((await a.folder.push()).ok).toBe(true);
+      const took = await b.folder.push();
+      expect(took.ok, JSON.stringify(took)).toBe(true);
+      if (!took.ok) return;
+      expect(
+        [took.value.pull?.taken, took.value.pull?.written],
+        "the folder the note moved to took in the note and not its attachment",
+      ).toEqual(leftFirst ? [2, 0] : [0, 2]);
+      expect(readFileSync(join(b.dir, "scan.png"))).toEqual(bytes);
+      expect(existsSync(join(b.dir, "Plan.md"))).toBe(true);
+      const letGo = await a.folder.push();
+      expect(letGo.ok, JSON.stringify(letGo)).toBe(true);
+      if (!letGo.ok) return;
+      expect(letGo.value.pull?.let_go).toBe(leftFirst ? 0 : 2);
+      await pastTheGrace();
+      for (const pass of ["first", "second"]) {
+        const left = await a.folder.push();
+        expect(left.ok, JSON.stringify(left)).toBe(true);
+        if (!left.ok) return;
+        expect(
+          [left.value.pull?.unmatched, left.value.pull?.written],
+          `past the grace, the ${pass} pass of the folder the note left kept its attachment`,
+        ).toEqual([0, 0]);
+      }
+      expect(existsSync(join(a.dir, "scan.png"))).toBe(false);
+      expect(existsSync(join(a.dir, "Plan.md"))).toBe(false);
+      expect(deletesOf(a.server, scan.id) + deletesOf(a.server, plan.id)).toBe(
+        0,
+      );
+    },
+  );
+
   it("keeps a file saved back where another folder took the item's file from as the item's while its binding lasts", async () => {
     const plan = {
       id: "01a00000-0000-7000-8000-0000000023b1",
