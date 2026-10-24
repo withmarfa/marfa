@@ -9,6 +9,12 @@ The Rust engine every native client embeds: a local SQLite working copy of a sli
 | `bindings/swift` | The UniFFI crate and `build.sh`, which packages it for `withmarfa/marfa-swift`; a cargo workspace of its own |
 | `bindings/node`  | The napi-rs module `@withmarfa/core`                                                                         |
 
+## Identify an instance
+
+`marfa_core::instance_description(url)` reads the public JSON description without a working copy or a credential. The Swift binding exports the same call and an `InstanceDescription` record with `name`, `version`, optional `release`, `instance_id`, `contract`, and `features`.
+
+The read preserves the address's path prefix, requests JSON, and sends no credential, including one embedded in the URL. It returns the configured display name, or the server's default `Marfa`; it does not invent a name when the answer is malformed. Connection failures, HTTP refusals, redirects, and malformed descriptions return errors. A description can be read from a server on another contract so a client can identify it before opening a working copy; this does not establish contract compatibility or access to any data.
+
 ## The binary
 
 `marfa --help` lists every command, the exit codes and the `--json` error shape; `marfa operations` maps each published operation to its command. `marfa device --db PATH` is a working copy, and `marfa folders` a folder on disk that carries its own store.

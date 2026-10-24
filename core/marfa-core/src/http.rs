@@ -834,6 +834,44 @@ impl Http {
         ))
     }
 
+    /// Readable on another contract, so a client can identify the server before opening a copy.
+    pub fn instance_description(&self) -> Result<crate::InstanceDescription, CoreError> {
+        let mut anonymous = self.clone();
+        // ureq derives Basic authorization from URL userinfo even without a header.
+        let _ = anonymous.base.set_username("");
+        let _ = anonymous.base.set_password(None);
+        let reply = anonymous.fetch(
+            Call {
+                method: Method::Get,
+                segments: &[""],
+                params: &[],
+                headers: &[],
+                body: CallBody::None,
+                credential: false,
+                stream: false,
+            },
+            false,
+        )?;
+        let ReplyBody::Text(body) = reply.body else {
+            return Err(CoreError::Decoding(
+                "the root answered with a stream".into(),
+            ));
+        };
+        if !(200..300).contains(&reply.status) {
+            return Err(anonymous.refused(
+                reply.status,
+                reply.contract.is_some(),
+                &body,
+                reply.retry_after_seconds,
+            ));
+        }
+        let description: crate::InstanceDescription = serde_json::from_str(&body)?;
+        if description.instance_id.is_empty() {
+            return Err(CoreError::Decoding("the root names no instance".into()));
+        }
+        Ok(description)
+    }
+
     /// The instance the server says it is, which its root answers to anyone.
     pub fn instance_id(&self) -> Result<String, CoreError> {
         self.confirm_origin()?;
