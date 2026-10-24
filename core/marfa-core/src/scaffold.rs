@@ -388,10 +388,14 @@ mod tests {
         for parent in ["core.note", "user.base", "acme.base.thing"] {
             scaffold_type("user.child", Some(parent), None, &[]).unwrap();
         }
-        let optional_body = refusal("user.child", Some("core.note"), &[field("body", "string")]);
+        let optional_from = refusal(
+            "user.child",
+            Some("core.message"),
+            &[field("from", "string")],
+        );
         assert!(
-            optional_body.contains("cannot make optional"),
-            "{optional_body}"
+            optional_from.contains("cannot make optional"),
+            "{optional_from}"
         );
         let reshaped = refusal(
             "user.child",
@@ -451,9 +455,16 @@ mod tests {
         .unwrap();
         scaffold_type(
             "user.child",
+            Some("core.message"),
+            None,
+            &[required("from", "string")],
+        )
+        .unwrap();
+        scaffold_type(
+            "user.child",
             Some("core.note"),
             None,
-            &[required("body", "string")],
+            &[field("body", "string")],
         )
         .unwrap();
         scaffold_type(

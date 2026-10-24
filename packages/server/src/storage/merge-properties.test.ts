@@ -42,8 +42,8 @@ describe("an ordinary update", () => {
   });
 
   it("keeps a null on a required field so validation can still refuse it", () => {
-    const incoming = resolveIncomingProperties("core.note", { body: null });
-    expect(incoming).toEqual({ body: null });
+    const incoming = resolveIncomingProperties("core.task", { title: null });
+    expect(incoming).toEqual({ title: null });
   });
 
   it("resolves a type registered at runtime, not only a shipped one", () => {

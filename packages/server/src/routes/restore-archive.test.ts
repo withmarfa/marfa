@@ -1816,7 +1816,7 @@ describe("POST /restore of rows their type no longer shapes", () => {
     const cases: [string, Record<string, unknown>, string][] = [
       [
         "a core type's shape",
-        { type: "core.note", properties: {} },
+        { type: "core.task", properties: {} },
         "invalid_properties",
       ],
       [
@@ -1870,7 +1870,7 @@ describe("POST /restore of rows their type no longer shapes", () => {
     // The witness: a core type the build ships still refuses a row that
     // breaks its shape, for the same kind of line.
     const refused = await restoreLines([
-      row({ id: shipped, type: "core.note", properties: {} }),
+      row({ id: shipped, type: "core.task", properties: {} }),
     ]);
     expect(refused.status).toBe(400);
     expect((await errorOf(refused)).code).toBe("invalid_properties");

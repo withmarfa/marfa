@@ -99,7 +99,7 @@ describe("getResolvedFields", () => {
     const fields = getResolvedFields("core.note");
     expect(fields).toBeDefined();
     expect(fields).toHaveProperty("body");
-    expect(fields).toHaveProperty("body.required", true);
+    expect(fields?.body?.required).toBeUndefined();
     expect(fields).toHaveProperty("title");
     expect(fields).toHaveProperty("language");
     expect(fields).toHaveProperty("attachments");
@@ -119,7 +119,9 @@ describe("getResolvedFields", () => {
 
   it("subtype fields override parent fields of the same name", () => {
     const fields = getResolvedFields("core.media.article");
-    expect(fields).toHaveProperty("body.required", true);
+    expect(fields).toHaveProperty("title.required", true);
+    expect(fields).toHaveProperty("body");
+    expect(fields?.body?.required).toBeUndefined();
   });
 
   it("returns undefined for unknown type", () => {
@@ -159,13 +161,20 @@ describe("validateProperties", () => {
   });
 
   it("rejects missing required field", () => {
-    const result = validateProperties("core.note", {
-      title: "My note",
+    const result = validateProperties("core.task", {
+      notes: "No title",
     });
     expect(result.success).toBe(false);
     if (!result.success) {
-      expect(result.errors.some((e) => e.field === "body")).toBe(true);
+      expect(result.errors.some((e) => e.field === "title")).toBe(true);
     }
+  });
+
+  it("accepts a note with no properties at all", () => {
+    expect(validateProperties("core.note", {}).success).toBe(true);
+    expect(
+      validateProperties("core.note", { title: "Only a title" }).success,
+    ).toBe(true);
   });
 
   it("preserves custom fields (passthrough)", () => {
@@ -451,10 +460,10 @@ describe("validateProperties", () => {
   });
 
   it("still rejects null on a required field", () => {
-    const result = validateProperties("core.note", { body: null });
+    const result = validateProperties("core.task", { title: null });
     expect(result.success).toBe(false);
     if (!result.success) {
-      expect(result.errors.some((e) => e.field === "body")).toBe(true);
+      expect(result.errors.some((e) => e.field === "title")).toBe(true);
     }
   });
   it("round-trips other Unicode and control chars unchanged", () => {
@@ -525,8 +534,8 @@ describe("coerceNullProperties", () => {
   });
 
   it("preserves null on a required field for downstream rejection", () => {
-    const out = coerceNullProperties("core.note", { body: null });
-    expect(out).toEqual({ body: null });
+    const out = coerceNullProperties("core.task", { title: null });
+    expect(out).toEqual({ title: null });
   });
 
   it("drops null on unknown / custom keys (passthrough-optional)", () => {
@@ -560,7 +569,7 @@ describe("core.message — light cross-platform message", () => {
       ["body", "from", "to"].sort(),
     );
     const fields = getResolvedFields("core.message");
-    expect(fields).toHaveProperty("body.required", true);
+    expect(fields?.body?.required).toBeUndefined();
     expect(fields).toHaveProperty("from.required", true);
     // `to` is optional — `required: true` should be absent.
     expect(fields?.to?.required).toBeUndefined();
@@ -584,14 +593,11 @@ describe("core.message — light cross-platform message", () => {
     expect(result.success).toBe(true);
   });
 
-  it("rejects a message missing body", () => {
+  it("accepts a message missing body", () => {
     const result = validateProperties("core.message", {
       from: "+447700900000",
     });
-    expect(result.success).toBe(false);
-    if (!result.success) {
-      expect(result.errors.some((e) => e.field === "body")).toBe(true);
-    }
+    expect(result.success).toBe(true);
   });
 
   it("rejects a message missing from", () => {
@@ -747,14 +753,18 @@ describe("validateTypeSchema — inheritance rule", () => {
   });
 
   it("rejects a child type that loosens an inherited required field", () => {
-    // core.note requires body; a child cannot make it optional and still be
-    // readable by anything that expects a note.
+    // core.task requires title; a child cannot make it optional and still be
+    // readable by anything that expects a task.
     const result = validateTypeSchema({
-      id: "acme.loose_note",
-      parent: "core.note",
+      id: "acme.loose_task",
+      parent: "core.task",
       version: 1,
       fields: {
-        body: { type: "string", description: "Optional here", required: false },
+        title: {
+          type: "string",
+          description: "Optional here",
+          required: false,
+        },
       },
     });
     expect(result.success).toBe(false);

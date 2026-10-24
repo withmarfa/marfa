@@ -672,14 +672,14 @@ describe("GET /types/:id — inheritance resolution", () => {
 
 describe("compatible_with at the gate and on the wire", () => {
   it("rejects a false claim with 422 compatible_with_violation", async () => {
-    // core.note requires body; a claim that omits it does not hold, and the
+    // core.task requires title; a claim that omits it does not hold, and the
     // refusal names the mechanism so a client can act on it.
     const res = await request(ctx.app, "POST", "/types", {
       key: ctx.workingKey,
       body: {
-        id: "demo.hollow_note",
+        id: "demo.hollow_task",
         version: 1,
-        compatible_with: ["core.note"],
+        compatible_with: ["core.task"],
         fields: { week_of: { type: "date" } },
       },
     });

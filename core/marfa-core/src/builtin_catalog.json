@@ -936,8 +936,7 @@
     },
     "body": {
      "type": "string",
-     "description": "The article text",
-     "required": true
+     "description": "The article text"
     },
     "author": {
      "type": "string",
@@ -1445,8 +1444,7 @@
    "fields": {
     "body": {
      "type": "string",
-     "description": "The message text",
-     "required": true
+     "description": "The message text"
     },
     "from": {
      "type": "string",
@@ -1477,8 +1475,7 @@
    "fields": {
     "body": {
      "type": "string",
-     "description": "The note text",
-     "required": true
+     "description": "The note text"
     },
     "title": {
      "type": "string",
