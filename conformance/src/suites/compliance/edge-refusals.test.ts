@@ -161,6 +161,7 @@ describe("POST /edges refusals", () => {
 
     const registered = `mock.registered.${ctx.runId}`;
     const reg = await client.registerEdgeType({
+      label: "Test edge type",
       id: registered,
       cardinality: "many-to-many",
     });

@@ -399,6 +399,7 @@ describe("the edge listing answers only what the credential may read", () => {
   it("drops an edge whose source is a type the credential cannot read", async () => {
     const edgeType = `mock.disclosure.src.${ctx.runId}`;
     const registered = await client.registerEdgeType({
+      label: "Test edge type",
       id: edgeType,
       cardinality: "many-to-many",
     });
@@ -478,6 +479,7 @@ describe("the edge listing answers only what the credential may read", () => {
   it("drops an edge of an edge type the credential cannot read", async () => {
     const edgeType = `mock.disclosure.kind.${ctx.runId}`;
     const registered = await client.registerEdgeType({
+      label: "Test edge type",
       id: edgeType,
       cardinality: "many-to-many",
     });
@@ -532,6 +534,7 @@ describe("the edge listing answers only what the credential may read", () => {
     // so. The single door reads the same way for the same reason.
     const edgeType = `mock.disclosure.trashed.${ctx.runId}`;
     const registered = await client.registerEdgeType({
+      label: "Test edge type",
       id: edgeType,
       cardinality: "many-to-many",
     });
@@ -582,6 +585,7 @@ describe("the edge listing answers only what the credential may read", () => {
     // truncate its copy silently and never learn it had.
     const edgeType = `mock.disclosure.paged.${ctx.runId}`;
     const registered = await client.registerEdgeType({
+      label: "Test edge type",
       id: edgeType,
       cardinality: "many-to-many",
     });
@@ -689,6 +693,7 @@ describe("the doors under an item answer only what the credential may read", () 
   async function kind(label: string): Promise<string> {
     const id = `mock.underitem.${label}.${ctx.runId}`;
     const registered = await client.registerEdgeType({
+      label: "Test edge type",
       id,
       cardinality: "many-to-many",
     });

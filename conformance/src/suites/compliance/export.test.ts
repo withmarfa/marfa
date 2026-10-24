@@ -220,6 +220,7 @@ describe("export", () => {
     const unseenKind = `mock.export.unseen.${ctx.runId}`;
     for (const id of [seenKind, unseenKind]) {
       const registered = await client.registerEdgeType({
+        label: "Test edge type",
         id,
         cardinality: "many-to-many",
       });
@@ -726,6 +727,7 @@ describe("the archive's contents", () => {
       ).ok,
     ).toBe(true);
     const edgeType = await client.registerEdgeType({
+      label: "Test edge type",
       id: edgeTypeId,
       cardinality: "many-to-many",
     });

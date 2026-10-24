@@ -193,6 +193,7 @@ describe("concurrent edge writes", () => {
     for (let round = 0; round < ROUNDS; round += 1) {
       const edgeType = `mock.race-${String(round)}.${ctx.runId}`;
       const registered = await client.registerEdgeType({
+        label: "Test edge type",
         id: edgeType,
         cardinality: "many-to-many",
       });

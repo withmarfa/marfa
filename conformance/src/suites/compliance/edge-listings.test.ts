@@ -48,6 +48,7 @@ async function makeItem(label: string): Promise<string> {
 async function registerEdgeType(label: string): Promise<string> {
   const id = `mock.${label}.${ctx.runId}`;
   const reg = await client.registerEdgeType({
+    label: "Test edge type",
     id,
     cardinality: "many-to-many",
   });

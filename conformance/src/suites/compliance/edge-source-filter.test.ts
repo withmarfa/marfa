@@ -40,6 +40,7 @@ beforeAll(async () => {
   // that other files write to still holds only this file's.
   edgeType = `mock.sourcefilter.${ctx.runId}`;
   const registered = await client.registerEdgeType({
+    label: "Test edge type",
     id: edgeType,
     cardinality: "many-to-many",
   });

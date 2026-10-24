@@ -50,6 +50,7 @@ describe("custom edge-type registration", () => {
   it("lists the shipped edge types and a registered one", async () => {
     const etId = `mock.listed.${ctx.runId}`;
     const reg = await client.registerEdgeType({
+      label: "Test edge type",
       id: etId,
       cardinality: "one-to-many",
     });
@@ -96,6 +97,7 @@ describe("custom edge-type registration", () => {
   it("deletes a registered edge type and answers 404 for it afterwards", async () => {
     const etId = `mock.deleted.${ctx.runId}`;
     const reg = await client.registerEdgeType({
+      label: "Test edge type",
       id: etId,
       cardinality: "many-to-many",
     });
@@ -135,6 +137,7 @@ describe("custom edge-type registration", () => {
     // able to tell which registry refused it.
     const etId = `mock.dangling.${ctx.runId}`;
     const reg = await client.registerEdgeType({
+      label: "Test edge type",
       id: etId,
       cardinality: "many-to-many",
     });
@@ -187,6 +190,7 @@ describe("custom edge-type registration", () => {
     // having closed: a registration nothing uses goes on the first ask.
     const etId = `mock.unused.${ctx.runId}`;
     const reg = await client.registerEdgeType({
+      label: "Test edge type",
       id: etId,
       cardinality: "many-to-many",
     });
@@ -213,6 +217,7 @@ describe("custom edge-type registration", () => {
     // the door.
     const etId = `mock.no-schema-write.${ctx.runId}`;
     const reg = await client.registerEdgeType({
+      label: "Test edge type",
       id: etId,
       cardinality: "many-to-many",
     });
@@ -244,10 +249,11 @@ describe("custom edge-type registration", () => {
     const ownReversed = `mock.own-delete-reversed.${ctx.runId}`;
     const otherReverse = `mock.other-delete-from.${ctx.runId}`;
     for (const body of [
-      { id: own, cardinality: "many-to-many" as const },
-      { id: other, cardinality: "many-to-many" as const },
+      { id: own, label: "Own", cardinality: "many-to-many" as const },
+      { id: other, label: "Other", cardinality: "many-to-many" as const },
       {
         id: ownReversed,
+        label: "Own reversed",
         cardinality: "many-to-many" as const,
         reverse_name: otherReverse,
       },
@@ -317,6 +323,7 @@ describe("custom edge-type registration", () => {
     });
 
     const r = await noSchemaClient.registerEdgeType({
+      label: "Test edge type",
       id: `mock.no-schema.${ctx.runId}`,
       cardinality: "many-to-many",
     });
@@ -349,6 +356,7 @@ describe("custom edge-type registration", () => {
     });
 
     const mine = await scoped.registerEdgeType({
+      label: "Test edge type",
       id: own,
       cardinality: "many-to-many",
     });
@@ -356,6 +364,7 @@ describe("custom edge-type registration", () => {
     trackEdgeType(ctx, own);
 
     const reversed = await scoped.registerEdgeType({
+      label: "Test edge type",
       id: ownSecond,
       cardinality: "many-to-many",
       reverse_name: other,
@@ -366,6 +375,7 @@ describe("custom edge-type registration", () => {
 
     for (const id of [other, readOnly]) {
       const refused = await scoped.registerEdgeType({
+        label: "Test edge type",
         id,
         cardinality: "many-to-many",
       });
@@ -377,6 +387,7 @@ describe("custom edge-type registration", () => {
       // The witness: the identifier itself registers, to a key whose map
       // reaches it.
       const registered = await client.registerEdgeType({
+        label: "Test edge type",
         id,
         cardinality: "many-to-many",
       });
@@ -387,6 +398,7 @@ describe("custom edge-type registration", () => {
 
   it("rejects a custom type whose id collides with a core edge type", async () => {
     const r = await client.registerEdgeType({
+      label: "Test edge type",
       id: "about",
       cardinality: "many-to-many",
     });
@@ -403,6 +415,7 @@ describe("custom edge-type registration", () => {
     expect(asType.error?.error.code).toBe("invalid_schema");
 
     const r = await client.registerEdgeType({
+      label: "Test edge type",
       id: `mock.banana-prop.${ctx.runId}`,
       cardinality: "many-to-many",
       property_schema: { ripeness: { type: "banana" as "string" } },
@@ -418,6 +431,7 @@ describe("custom edge-type registration", () => {
     // The witness: the same edge type with a known property type registers.
     const etId = `mock.number-prop.${ctx.runId}`;
     const known = await client.registerEdgeType({
+      label: "Test edge type",
       id: etId,
       cardinality: "many-to-many",
       property_schema: { ripeness: { type: "number" } },
@@ -430,6 +444,7 @@ describe("custom edge-type registration", () => {
     const id = `mock.unread-key.${ctx.runId}`;
     const refused = await client.registerEdgeType({
       id,
+      label: "Test edge type",
       cardinality: "many-to-many",
       cascade: "orphan",
       property_schema: {
@@ -452,6 +467,7 @@ describe("custom edge-type registration", () => {
 
     // The witness: the same edge type without those keys registers.
     const mended = await client.registerEdgeType({
+      label: "Test edge type",
       id,
       cardinality: "many-to-many",
       cascade_on_delete: "orphan",
@@ -855,6 +871,7 @@ describe("custom edge-type registration", () => {
   it("says whether Marfa ships each edge type, on the list and on registration", async () => {
     const etId = `mock.shipped.${ctx.runId}`;
     const reg = await client.registerEdgeType({
+      label: "Test edge type",
       id: etId,
       cardinality: "many-to-many",
     });
@@ -888,6 +905,83 @@ describe("custom edge-type registration", () => {
     expect(reverse["references"]).toBeNull();
   });
 
+  it("lists a label and a reverse label on every shipped edge type", async () => {
+    const r = await client.listEdgeTypes();
+    expect(r.ok).toBe(true);
+    const names = Object.fromEntries(
+      r.data.data
+        .filter((t) => !t.id.includes("."))
+        .map((t) => [t.id, [t.label, t.reverse_label]]),
+    );
+    expect(names).toEqual({
+      about: ["About", "Subject of"],
+      "attached-to": ["Attached to", "Attachments"],
+      "authored-by": ["Authored by", "Author of"],
+      "derived-from": ["Derived from", "Basis for"],
+      "in-collection": ["In collection", "Contents"],
+      "in-folder": ["In folder", "Folder contents"],
+      "in-thread": ["In thread", "Messages"],
+      "parent-of": ["Children", "Parent"],
+      references: ["References", "Referenced by"],
+      supersedes: ["Supersedes", "Superseded by"],
+    });
+  });
+
+  it("lists the reverse label a registration names, and the label where it names none", async () => {
+    const named = `mock.labelled.${ctx.runId}`;
+    const alone = `mock.labelled-alone.${ctx.runId}`;
+    const first = await client.registerEdgeType({
+      id: named,
+      label: "Mentees",
+      reverse_label: "Mentor",
+      cardinality: "one-to-many",
+    });
+    expect(first.status).toBe(201);
+    trackEdgeType(ctx, named);
+    await expectMatchesSchema("POST", "/edge-types", 201, first.data);
+    expect(first.data.edge_type.reverse_label).toBe("Mentor");
+    const second = await client.registerEdgeType({
+      id: alone,
+      label: "Related to",
+      cardinality: "many-to-many",
+    });
+    expect(second.status).toBe(201);
+    trackEdgeType(ctx, alone);
+    expect(second.data.edge_type.reverse_label).toBe("Related to");
+
+    const listed = await client.listEdgeTypes();
+    await expectMatchesSchema("GET", "/edge-types", 200, listed.data);
+    const row = (id: string) => listed.data.data.find((t) => t.id === id);
+    expect([row(named)?.label, row(named)?.reverse_label]).toEqual([
+      "Mentees",
+      "Mentor",
+    ]);
+    expect([row(alone)?.label, row(alone)?.reverse_label]).toEqual([
+      "Related to",
+      "Related to",
+    ]);
+  });
+
+  it("refuses a registration without a label with 400 missing_required_field", async () => {
+    const id = `mock.unlabelled.${ctx.runId}`;
+    const refused = await client.registerEdgeType({
+      id,
+      cardinality: "many-to-many",
+    } as never);
+    expect(refused.status).toBe(400);
+    expect(refused.error?.error.code).toBe("missing_required_field");
+    expect(JSON.stringify(refused.error)).toContain("label");
+    // The witness: the same body with a label registers, so the label was
+    // what the refusal was about.
+    const alone = await client.registerEdgeType({
+      id,
+      label: "Unlabelled no more",
+      cardinality: "many-to-many",
+    });
+    expect(alone.status).toBe(201);
+    trackEdgeType(ctx, id);
+  });
+
   it("lists the end whose file writes each shipped edge type", async () => {
     const r = await client.listEdgeTypes();
     expect(r.ok).toBe(true);
@@ -909,6 +1003,7 @@ describe("custom edge-type registration", () => {
     const etId = `mock.reversed.${ctx.runId}`;
     const reverse = `mock.reversed-by.${ctx.runId}`;
     const r = await client.registerEdgeType({
+      label: "Test edge type",
       id: etId,
       cardinality: "one-to-many",
       reverse_name: reverse,
@@ -930,6 +1025,7 @@ describe("custom edge-type registration", () => {
     const first = `mock.reverse-held.${ctx.runId}`;
     const held = `mock.held-by.${ctx.runId}`;
     const r = await client.registerEdgeType({
+      label: "Test edge type",
       id: first,
       cardinality: "many-to-many",
       reverse_name: held,
@@ -954,6 +1050,7 @@ describe("custom edge-type registration", () => {
     ];
     for (const body of cases) {
       const refused = await client.registerEdgeType({
+        label: "Test edge type",
         cardinality: "many-to-many",
         ...body,
       });
@@ -966,6 +1063,7 @@ describe("custom edge-type registration", () => {
     const etId = `mock.written-at.${ctx.runId}`;
     const reverse = `mock.written-by.${ctx.runId}`;
     const r = await client.registerEdgeType({
+      label: "Test edge type",
       id: etId,
       cardinality: "one-to-many",
       reverse_name: reverse,
@@ -978,6 +1076,7 @@ describe("custom edge-type registration", () => {
     // The default is the source, and says so.
     const plainId = `mock.written-default.${ctx.runId}`;
     const plain = await client.registerEdgeType({
+      label: "Test edge type",
       id: plainId,
       cardinality: "many-to-many",
     });
@@ -988,6 +1087,7 @@ describe("custom edge-type registration", () => {
     // An edge no file writes names no end, and needs no name to write it under.
     const noneId = `mock.written-none.${ctx.runId}`;
     const none = await client.registerEdgeType({
+      label: "Test edge type",
       id: noneId,
       cardinality: "many-to-many",
       written_at: "none",
@@ -1000,6 +1100,7 @@ describe("custom edge-type registration", () => {
       "none",
     );
     const bogus = await client.registerEdgeType({
+      label: "Test edge type",
       id: `mock.written-bogus.${ctx.runId}`,
       cardinality: "many-to-many",
       written_at: "nowhere" as never,
@@ -1009,6 +1110,7 @@ describe("custom edge-type registration", () => {
     // The target's file can only write an edge under a name read from the
     // target, so a type written there must declare one.
     const nameless = await client.registerEdgeType({
+      label: "Test edge type",
       id: `mock.written-nameless.${ctx.runId}`,
       cardinality: "one-to-many",
       written_at: "target",
@@ -1017,6 +1119,7 @@ describe("custom edge-type registration", () => {
     expect(nameless.error?.error.code).toBe("validation_error");
 
     const elsewhere = await client.registerEdgeType({
+      label: "Test edge type",
       id: `mock.written-elsewhere.${ctx.runId}`,
       cardinality: "one-to-many",
       ...({ written_at: "middle" } as Record<string, unknown>),
@@ -1036,6 +1139,7 @@ describe("custom edge-type registration", () => {
       "app.two-segments",
     ]) {
       const r = await client.registerEdgeType({
+        label: "Test edge type",
         id,
         cardinality: "many-to-many",
       });
@@ -1048,6 +1152,7 @@ describe("custom edge-type registration", () => {
     // The witnesses: the kebab form a shipped type has, and the dotted form.
     for (const id of [`mock-kebab-${ctx.runId}`, `mock.dotted.${ctx.runId}`]) {
       const r = await client.registerEdgeType({
+        label: "Test edge type",
         id,
         cardinality: "many-to-many",
       });
@@ -1059,6 +1164,7 @@ describe("custom edge-type registration", () => {
   it("refuses an id a registered edge type already holds with 409 conflict, and keeps the first", async () => {
     const etId = `mock.twice.${ctx.runId}`;
     const first = await client.registerEdgeType({
+      label: "Test edge type",
       id: etId,
       cardinality: "one-to-one",
     });
@@ -1066,6 +1172,7 @@ describe("custom edge-type registration", () => {
     trackEdgeType(ctx, etId);
 
     const second = await client.registerEdgeType({
+      label: "Test edge type",
       id: etId,
       cardinality: "many-to-many",
     });
@@ -1082,6 +1189,7 @@ describe("custom edge-type registration", () => {
       ["target_type_constraints", ["core.note", "role:no-such-role"]],
     ] as const) {
       const r = await client.registerEdgeType({
+        label: "Test edge type",
         id: `mock.badrole.${ctx.runId}`,
         cardinality: "many-to-many",
         [field]: constraints,
@@ -1096,6 +1204,7 @@ describe("custom edge-type registration", () => {
 
     const etId = `mock.goodrole.${ctx.runId}`;
     const known = await client.registerEdgeType({
+      label: "Test edge type",
       id: etId,
       cardinality: "many-to-many",
       target_type_constraints: ["role:container"],
@@ -1114,6 +1223,7 @@ describe("custom edge-type registration", () => {
       ["format", { type: "string", format: "thumbnail" }],
     ] as const) {
       const r = await client.registerEdgeType({
+        label: "Test edge type",
         id: `mock.thumb.${ctx.runId}`,
         cardinality: "many-to-many",
         property_schema: { picture: property },
@@ -1125,6 +1235,7 @@ describe("custom edge-type registration", () => {
     // The witness: the same property with the types an edge may carry.
     const etId = `mock.nothumb.${ctx.runId}`;
     const ok = await client.registerEdgeType({
+      label: "Test edge type",
       id: etId,
       cardinality: "many-to-many",
       property_schema: {
@@ -1152,6 +1263,7 @@ describe("custom edge-type registration", () => {
     // The witness: a registered type is deleted at the same door.
     const etId = `mock.deletable.${ctx.runId}`;
     const reg = await client.registerEdgeType({
+      label: "Test edge type",
       id: etId,
       cardinality: "many-to-many",
     });
@@ -1163,6 +1275,7 @@ describe("custom edge-type registration", () => {
   it("answers the edge type list as the whole list, with a null next_cursor", async () => {
     const etId = `mock.wholelist.${ctx.runId}`;
     const reg = await client.registerEdgeType({
+      label: "Test edge type",
       id: etId,
       cardinality: "many-to-many",
     });
@@ -1182,6 +1295,7 @@ describe("custom edge-type registration", () => {
 
   it("refuses a reverse name that is not an edge type identifier", async () => {
     const r = await client.registerEdgeType({
+      label: "Test edge type",
       id: `mock.rev-shape.${ctx.runId}`,
       cardinality: "many-to-many",
       reverse_name: "Not A Name",
@@ -1192,6 +1306,7 @@ describe("custom edge-type registration", () => {
 
   it("rejects registration that attempts extends on a core edge type (custom edges do not inherit)", async () => {
     const r = await client.registerEdgeType({
+      label: "Test edge type",
       id: `mock.extend.${ctx.runId}`,
       cardinality: "many-to-many",
       ...({ extends: "about" } as Record<string, unknown>),
@@ -1243,6 +1358,7 @@ describe("custom edge-type registration", () => {
   it("registered edge type is usable in POST /edges", async () => {
     const etId = `mock.usable.${ctx.runId}`;
     const reg = await client.registerEdgeType({
+      label: "Test edge type",
       id: etId,
       cardinality: "many-to-many",
       cascade_on_delete: "orphan",
@@ -1299,6 +1415,7 @@ describe("the order POST /edge-types asks its refusals in", () => {
 
   it("answers a shipped id as a conflict before it refuses extends", async () => {
     const shipped = await client.registerEdgeType({
+      label: "Test edge type",
       id: "about",
       cardinality: "many-to-many",
       ...extending,
@@ -1308,6 +1425,7 @@ describe("the order POST /edge-types asks its refusals in", () => {
 
     // The witness: an id of its own with the same extends is the refusal of extends.
     const alone = await client.registerEdgeType({
+      label: "Test edge type",
       id: `mock.order-extends.${ctx.runId}`,
       cardinality: "many-to-many",
       ...extending,
@@ -1320,6 +1438,7 @@ describe("the order POST /edge-types asks its refusals in", () => {
     const own = `mock.order-shipped.${ctx.runId}`;
     const scoped = await registrar({ [own]: "write" });
     const shipped = await scoped.registerEdgeType({
+      label: "Test edge type",
       id: "about",
       cardinality: "many-to-many",
     });
@@ -1328,6 +1447,7 @@ describe("the order POST /edge-types asks its refusals in", () => {
 
     // The witness: the same key is refused an id its map does not grant.
     const alone = await scoped.registerEdgeType({
+      label: "Test edge type",
       id: `mock.order-ungranted.${ctx.runId}`,
       cardinality: "many-to-many",
     });
@@ -1340,6 +1460,7 @@ describe("the order POST /edge-types asks its refusals in", () => {
     const ungranted = `mock.order-denied.${ctx.runId}`;
     const scoped = await registrar({ [granted]: "write" });
     const denied = await scoped.registerEdgeType({
+      label: "Test edge type",
       id: ungranted,
       cardinality: "many-to-many",
       ...extending,
@@ -1350,6 +1471,7 @@ describe("the order POST /edge-types asks its refusals in", () => {
 
     // The witness: an id the map grants meets the refusal of extends.
     const alone = await scoped.registerEdgeType({
+      label: "Test edge type",
       id: granted,
       cardinality: "many-to-many",
       ...extending,
@@ -1361,6 +1483,7 @@ describe("the order POST /edge-types asks its refusals in", () => {
   it("refuses a key the edge type does not define before it answers an id a registered edge type holds", async () => {
     const id = `mock.order-unread.${ctx.runId}`;
     const first = await client.registerEdgeType({
+      label: "Test edge type",
       id,
       cardinality: "many-to-many",
     });
@@ -1369,6 +1492,7 @@ describe("the order POST /edge-types asks its refusals in", () => {
 
     const unread = await client.registerEdgeType({
       id,
+      label: "Test edge type",
       cardinality: "many-to-many",
       cascade: "orphan",
     } as never);
@@ -1377,6 +1501,7 @@ describe("the order POST /edge-types asks its refusals in", () => {
 
     // The witness: without the key, the same body is the held id's conflict.
     const alone = await client.registerEdgeType({
+      label: "Test edge type",
       id,
       cardinality: "many-to-many",
     });
@@ -1387,6 +1512,7 @@ describe("the order POST /edge-types asks its refusals in", () => {
   it("refuses extends before a key the edge type does not define", async () => {
     const both = await client.registerEdgeType({
       id: `mock.order-extends-unread.${ctx.runId}`,
+      label: "Test edge type",
       cardinality: "many-to-many",
       cascade: "orphan",
       ...extending,
@@ -1398,6 +1524,7 @@ describe("the order POST /edge-types asks its refusals in", () => {
   it("refuses a key without metadata.edge_types:write before it answers a shipped id", async () => {
     const bare = await registrar({ "*": "write" }, false);
     const refused = await bare.registerEdgeType({
+      label: "Test edge type",
       id: "about",
       cardinality: "many-to-many",
     });
@@ -1407,6 +1534,7 @@ describe("the order POST /edge-types asks its refusals in", () => {
     // The witness: with the grant, the same body is the shipped id's conflict.
     const granted = await registrar({ "*": "write" });
     const alone = await granted.registerEdgeType({
+      label: "Test edge type",
       id: "about",
       cardinality: "many-to-many",
     });
@@ -1419,6 +1547,7 @@ describe("the order POST /edge-types asks its refusals in", () => {
       [`mock.order-identifier.${ctx.runId}`]: "write",
     });
     const malformed = await scoped.registerEdgeType({
+      label: "Test edge type",
       id: "Not An Identifier",
       cardinality: "many-to-many",
     });
@@ -1427,6 +1556,7 @@ describe("the order POST /edge-types asks its refusals in", () => {
 
     // The witness: a well formed id the map does not grant is the map's refusal.
     const alone = await scoped.registerEdgeType({
+      label: "Test edge type",
       id: `mock.order-identifier-denied.${ctx.runId}`,
       cardinality: "many-to-many",
     });
@@ -1483,9 +1613,47 @@ describe("explicit edge-type constraint evolution", () => {
     expect((await client.getEdge(made.data.edge.id)).data.edge).toEqual(before);
   });
 
+  it("changes the labels of a registered edge type in place", async () => {
+    const definition = {
+      id: `mock.evolve-labels.${ctx.runId}`,
+      label: "Kept connection",
+      reverse_label: "Kept by",
+      cardinality: "many-to-many" as const,
+    };
+    expect((await client.registerEdgeType(definition)).status).toBe(201);
+    trackEdgeType(ctx, definition.id);
+    const row = async () =>
+      (await client.listEdgeTypes()).data.data.find(
+        (one) => one.id === definition.id,
+      );
+
+    const evolve = (change: Record<string, unknown>) => {
+      const body = { ...definition, ...change, evolve_constraints: true };
+      return client.registerEdgeType(body);
+    };
+    const renamed = await evolve({
+      label: "Held connection",
+      reverse_label: "Held by",
+    });
+    expect(renamed.status).toBe(200);
+    expect((await row())?.label).toBe("Held connection");
+    expect((await row())?.reverse_label).toBe("Held by");
+
+    // Naming no reverse label makes the label name both ends, and the
+    // reverse label listed follows it rather than a stored copy.
+    const both = await evolve({ label: "Linked", reverse_label: undefined });
+    expect(both.status).toBe(200);
+    expect((await row())?.label).toBe("Linked");
+    expect((await row())?.reverse_label).toBe("Linked");
+    const again = await evolve({ label: "Joined", reverse_label: undefined });
+    expect(again.status).toBe(200);
+    expect((await row())?.reverse_label).toBe("Joined");
+  });
+
   it("refuses narrowing, structural changes, and a missing evolution target", async () => {
     const definition = {
       id: `mock.evolve-refused.${ctx.runId}`,
+      label: "Kept connection",
       cardinality: "many-to-many" as const,
       source_type_constraints: ["core.note"],
     };
@@ -1497,7 +1665,7 @@ describe("explicit edge-type constraint evolution", () => {
     for (const change of [
       { source_type_constraints: ["core.task"] },
       { cardinality: "many-to-one" as const },
-      { label: "Changed" },
+      { description: "Changed" },
     ]) {
       const evolution = { ...definition, ...change, evolve_constraints: true };
       const refused = await client.registerEdgeType(evolution);
@@ -1520,6 +1688,7 @@ describe("explicit edge-type constraint evolution", () => {
   it("treats empty and wildcard constraint lists as unrestricted", async () => {
     const definition = {
       id: `mock.evolve-unrestricted.${ctx.runId}`,
+      label: "Kept connection",
       cardinality: "many-to-many" as const,
       source_type_constraints: [],
     };
@@ -1545,6 +1714,7 @@ describe("explicit edge-type constraint evolution", () => {
 it("preserves an admitted addition when constraint evolutions compete", async () => {
   const definition = {
     id: `mock.evolve-race.${ctx.runId}`,
+    label: "Kept connection",
     cardinality: "many-to-many" as const,
     source_type_constraints: ["core.note"],
   };

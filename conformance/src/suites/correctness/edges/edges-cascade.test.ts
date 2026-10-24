@@ -322,6 +322,7 @@ describe("edge cascade semantics", () => {
   it("custom edge-type with cascade_on_delete=cascade cascades on source delete", async () => {
     const etId = `mock.cascade.${ctx.runId}`;
     const reg = await client.registerEdgeType({
+      label: "Test edge type",
       id: etId,
       cardinality: "many-to-many",
       cascade_on_delete: "cascade",
@@ -357,6 +358,7 @@ describe("edge cascade semantics", () => {
   it("custom edge-type with cascade_on_delete=block refuses source delete while edges exist", async () => {
     const etId = `mock.block.${ctx.runId}`;
     const reg = await client.registerEdgeType({
+      label: "Test edge type",
       id: etId,
       cardinality: "many-to-many",
       cascade_on_delete: "block",
@@ -393,6 +395,7 @@ describe("edge cascade semantics", () => {
   it("names every blocking edge in the cascade, not only the first it meets", async () => {
     const etId = `mock.deepblock.${ctx.runId}`;
     const reg = await client.registerEdgeType({
+      label: "Test edge type",
       id: etId,
       cardinality: "many-to-many",
       cascade_on_delete: "block",
@@ -438,6 +441,7 @@ describe("edge cascade semantics", () => {
   it("names every blocking edge in the cascade on a transition into the bin, as a delete does", async () => {
     const etId = `mock.deepblock-transition.${ctx.runId}`;
     const reg = await client.registerEdgeType({
+      label: "Test edge type",
       id: etId,
       cardinality: "many-to-many",
       cascade_on_delete: "block",
@@ -498,6 +502,7 @@ describe("edge cascade semantics", () => {
     const etId = `mock.purgeblock.${ctx.runId}`;
     const register = async (cascade: "orphan" | "block") => {
       const reg = await client.registerEdgeType({
+        label: "Test edge type",
         id: etId,
         cardinality: "many-to-many",
         cascade_on_delete: cascade,
@@ -593,6 +598,7 @@ describe("edge cascade semantics", () => {
   it("a block edge refuses a transition into the bin as it refuses a delete", async () => {
     const etId = `mock.block-transition.${ctx.runId}`;
     const reg = await client.registerEdgeType({
+      label: "Test edge type",
       id: etId,
       cardinality: "many-to-many",
       cascade_on_delete: "block",
@@ -689,6 +695,7 @@ describe("edge cascade semantics", () => {
   it("refuses a transition into the bin held by a block edge into the row, or on a row the cascade reaches", async () => {
     const etId = `mock.block-reach.${ctx.runId}`;
     const reg = await client.registerEdgeType({
+      label: "Test edge type",
       id: etId,
       cardinality: "many-to-many",
       cascade_on_delete: "block",

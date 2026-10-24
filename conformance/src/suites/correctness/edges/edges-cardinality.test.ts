@@ -150,7 +150,11 @@ describe("cardinality on every write path", () => {
 
   async function register(cardinality: Cardinality): Promise<string> {
     const id = `mock.card.${cardinality}.${ctx.runId}${String(++registered)}`;
-    const r = await client.registerEdgeType({ id, cardinality });
+    const r = await client.registerEdgeType({
+      label: "Test edge type",
+      id,
+      cardinality,
+    });
     expect(r.status).toBe(201);
     trackEdgeType(ctx, id);
     return id;

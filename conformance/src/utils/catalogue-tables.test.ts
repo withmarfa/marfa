@@ -59,6 +59,8 @@ describe("the table of shipped types", () => {
 describe("the table of shipped edge types", () => {
   const PARENT: EdgeTypeRow = {
     id: "parent-of",
+    label: "Children",
+    reverseLabel: "Parent",
     reverseName: "child-of",
     cardinality: "one-to-many",
     cascadeOnDelete: "cascade",
@@ -67,6 +69,8 @@ describe("the table of shipped edge types", () => {
   };
   const CONTAINED: EdgeTypeRow = {
     id: "in-collection",
+    label: "In collection",
+    reverseLabel: "Contents",
     cardinality: "many-to-many",
     cascadeOnDelete: "orphan",
     sourceTypes: ["core.note", "core.task"],
@@ -79,6 +83,10 @@ describe("the table of shipped edge types", () => {
     expect(rows[0]).toContain("`core.note`, `core.task`");
     expect(rows[0]).toContain("Any type with the role `container`");
     expect(rows[0]).toContain("| None ");
+    expect(rows[0]).toContain("| In collection ");
+    expect(rows[0]).toContain("| Contents ");
+    expect(rows[1]).toContain("| Children ");
+    expect(rows[1]).toContain("| Parent ");
     expect(rows[1]).toContain("`child-of`");
     expect(rows[1]).toContain("cascade");
     expect(rows[1]).toContain("Any type");

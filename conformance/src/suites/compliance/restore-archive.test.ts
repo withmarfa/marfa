@@ -751,6 +751,7 @@ describe("a body that is no archive", () => {
 describe("what a restore answers", () => {
   const edgeType = (id: string) => ({
     id,
+    label: "Test edge type",
     cardinality: "many-to-many",
     source_type_constraints: ["*"],
     target_type_constraints: ["*"],
@@ -1078,6 +1079,7 @@ describe("a restore of a registration carrying a key the schema does not define"
       {
         edge_type: {
           id: ids[1],
+          label: "Test edge type",
           cardinality: "many-to-many",
           property_schema: { rank: { type: "number", ...key } },
         },
@@ -1146,6 +1148,7 @@ describe("a restore of an edge type's property formats", () => {
       `${JSON.stringify({
         edge_type: {
           id,
+          label: "Test edge type",
           cardinality: "many-to-many",
           property_schema: { contact: property },
         },
@@ -1245,6 +1248,7 @@ describe("a restore refused after it began", () => {
           {
             edge_type: {
               id: ids.edgeType,
+              label: "Test edge type",
               cardinality: "many-to-many",
               source_type_constraints: ["*"],
               target_type_constraints: ["*"],

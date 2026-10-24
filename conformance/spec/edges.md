@@ -1,6 +1,6 @@
 # Edges
 
-An edge is a typed, directed relationship from a source item to a target item, with its own id, properties and version. An edge type says how edges of that type behave: how many an item holds, which item types they join and what a delete does to the other end. Ten edge types ship, and a key registers more.
+An edge is a typed, directed relationship from a source item to a target item, with its own id, properties and version. An edge type says how edges of that type behave: how many an item holds, which item types they join and what a delete does to the other end. Ten edge types ship, and a key registers more. Every edge type names both ends: its `label` names the source end and its `reverse_label` the target end.
 
 ## Shipped edge types
 
@@ -8,18 +8,18 @@ Every instance ships these edge types, each a row of the table below, which is w
 
 <!-- edge-types-table:start -->
 
-| Edge type       | Reverse name     | Cardinality  | On delete | Source types | Target types                       |
-| --------------- | ---------------- | ------------ | --------- | ------------ | ---------------------------------- |
-| `about`         | None             | many-to-many | orphan    | Any type     | Any type                           |
-| `attached-to`   | `has-attachment` | many-to-many | orphan    | Any type     | Any type                           |
-| `authored-by`   | None             | many-to-many | orphan    | Any type     | Any type                           |
-| `derived-from`  | None             | many-to-many | orphan    | Any type     | Any type                           |
-| `in-collection` | None             | many-to-many | orphan    | Any type     | Any type with the role `container` |
-| `in-folder`     | None             | many-to-many | orphan    | Any type     | `system.folder`                    |
-| `in-thread`     | None             | many-to-one  | orphan    | Any type     | Any type                           |
-| `parent-of`     | `child-of`       | one-to-many  | cascade   | Any type     | Any type                           |
-| `references`    | None             | many-to-many | orphan    | Any type     | Any type                           |
-| `supersedes`    | None             | one-to-one   | orphan    | Any type     | Any type                           |
+| Edge type       | Label         | Reverse label   | Reverse name     | Cardinality  | On delete | Source types | Target types                       |
+| --------------- | ------------- | --------------- | ---------------- | ------------ | --------- | ------------ | ---------------------------------- |
+| `about`         | About         | Subject of      | None             | many-to-many | orphan    | Any type     | Any type                           |
+| `attached-to`   | Attached to   | Attachments     | `has-attachment` | many-to-many | orphan    | Any type     | Any type                           |
+| `authored-by`   | Authored by   | Author of       | None             | many-to-many | orphan    | Any type     | Any type                           |
+| `derived-from`  | Derived from  | Basis for       | None             | many-to-many | orphan    | Any type     | Any type                           |
+| `in-collection` | In collection | Contents        | None             | many-to-many | orphan    | Any type     | Any type with the role `container` |
+| `in-folder`     | In folder     | Folder contents | None             | many-to-many | orphan    | Any type     | `system.folder`                    |
+| `in-thread`     | In thread     | Messages        | None             | many-to-one  | orphan    | Any type     | Any type                           |
+| `parent-of`     | Children      | Parent          | `child-of`       | one-to-many  | cascade   | Any type     | Any type                           |
+| `references`    | References    | Referenced by   | None             | many-to-many | orphan    | Any type     | Any type                           |
+| `supersedes`    | Supersedes    | Superseded by   | None             | one-to-one   | orphan    | Any type     | Any type                           |
 
 <!-- edge-types-table:end -->
 
@@ -1225,6 +1225,14 @@ When a credential sends `GET /edge-types`, the server MUST list `in-collection` 
 
 **Tests:** `device/fidelity.test.ts › matches the edge types a working copy holds and a folder reads its frontmatter lines by`.
 
+### `edges/types-shipped-labels`
+
+When a credential sends `GET /edge-types`, the server MUST list each shipped edge type with the `label` and `reverse_label` of the table above.
+
+**Reason:** a shipped label names the source end and its reverse label the target end, such as `Children` on `parent-of` and `Parent` read from the child. An app shows them as the two headings of one relationship.
+
+**Tests:** `compliance/edge-types.test.ts › lists a label and a reverse label on every shipped edge type`, `device/fidelity.test.ts › matches the edge types a working copy holds and a folder reads its frontmatter lines by`.
+
 ### `edges/types-reverse-names`
 
 When a credential sends `GET /edge-types`, the server MUST list `reverse_name` `child-of` on `parent-of` and `has-attachment` on `attached-to`, and none on `references`.
@@ -1265,9 +1273,25 @@ When the server answers an edge type, on `GET /edge-types` and on the `201` of `
 
 ### `edges/types-register`
 
-When a key sends `POST /edge-types` with an `id` and a `cardinality` it may register and leaves `evolve_constraints` absent or `false`, the server MUST answer `201` with the `edge_type`.
+When a key sends `POST /edge-types` with an `id`, a `label` and a `cardinality` it may register and leaves `evolve_constraints` absent or `false`, the server MUST answer `201` with the `edge_type`.
 
 **Tests:** `compliance/edge-types.test.ts › registers a custom edge type and answers 201`.
+
+### `edges/types-label-required`
+
+If `POST /edge-types` names no `label`, then the server MUST answer `400 missing_required_field` naming it.
+
+**Reason:** an edge type is read by people as well as by code, and an app that listed one by its `id` alone would show a dotted identifier where a heading belongs.
+
+**Tests:** `compliance/edge-types.test.ts › refuses a registration without a label with 400 missing_required_field`.
+
+### `edges/types-reverse-label`
+
+When the server answers an edge type, on `GET /edge-types` and on the `201` or `200` of `POST /edge-types`, the server MUST give `reverse_label` as the type's registered reverse label, or its `label` where it registered none.
+
+**Reason:** `reverse_label` is optional at registration, and an edge type with none names both ends alike, such as `Related to`, so an app shows one list for both directions. The listed value is read from the registration, never stored apart from it, so a later change to the `label` alone leaves no stale reverse label.
+
+**Tests:** `compliance/edge-types.test.ts › lists the reverse label a registration names, and the label where it names none`, `› changes the labels of a registered edge type in place`.
 
 ### `edges/types-usable`
 
@@ -1311,15 +1335,15 @@ When the server refuses `POST /edge-types` for an `id` already registered, the s
 
 ### `edges/types-evolve`
 
-When a key admitted by `edges/types-register-permission` and `edges/types-register-map` sends `POST /edge-types` with `evolve_constraints: true` for a registered edge type and a definition `edges/types-evolve-safe` permits, the server MUST update its endpoint constraints in place and answer `200` with the resulting definition.
+When a key admitted by `edges/types-register-permission` and `edges/types-register-map` sends `POST /edge-types` with `evolve_constraints: true` for a registered edge type and a definition `edges/types-evolve-safe` permits, the server MUST update its endpoint constraints and its labels in place and answer `200` with the resulting definition.
 
-**Tests:** `compliance/edge-types.test.ts › widens endpoint constraints without rewriting held edges`.
+**Tests:** `compliance/edge-types.test.ts › widens endpoint constraints without rewriting held edges`, `› changes the labels of a registered edge type in place`.
 
 ### `edges/types-evolve-safe`
 
-If a constraint evolution removes an existing endpoint constraint token without making that endpoint unrestricted, or changes any definition member other than its endpoint constraints, then the server MUST answer `409 conflict` without changing the definition.
+If a constraint evolution removes an existing endpoint constraint token without making that endpoint unrestricted, or changes any definition member other than its endpoint constraints and its labels, then the server MUST answer `409 conflict` without changing the definition.
 
-**Reason:** retaining every token preserves its subtypes and role members, including future registrations; this conservative operation does not infer equivalent constraint sets from the current type inventory. An empty constraint list and a list containing `*` both permit every type.
+**Reason:** a label is a heading and no rule that an edge or a file depends on, so a key may correct it; a changed cardinality, name or property would reread edges already stored. Retaining every token preserves its subtypes and role members, including future registrations; this conservative operation does not infer equivalent constraint sets from the current type inventory. An empty constraint list and a list containing `*` both permit every type.
 
 **Tests:** `compliance/edge-types.test.ts › refuses narrowing, structural changes, and a missing evolution target`, `› treats empty and wildcard constraint lists as unrestricted`.
 

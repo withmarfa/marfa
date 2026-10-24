@@ -387,7 +387,8 @@ export function typeCatalog(
 /** An edge type as `GET /edge-types` lists it. */
 export interface WireEdgeType {
   id: string;
-  label?: string;
+  label: string;
+  reverse_label: string;
   cardinality: "one-to-one" | "one-to-many" | "many-to-one" | "many-to-many";
   source_type_constraints: string[];
   target_type_constraints: string[];
@@ -409,6 +410,8 @@ export function edgeType(
 ): WireEdgeType {
   return {
     id,
+    label: id,
+    reverse_label: options.label ?? id,
     cardinality: "many-to-many",
     source_type_constraints: ["*"],
     target_type_constraints: ["*"],
@@ -423,19 +426,24 @@ export function edgeType(
 function shipped(
   id: string,
   label: string,
-  options: Partial<Omit<WireEdgeType, "id" | "label" | "shipped">> = {},
+  reverse_label: string,
+  options: Partial<
+    Omit<WireEdgeType, "id" | "label" | "reverse_label" | "shipped">
+  > = {},
 ): WireEdgeType {
-  return edgeType(id, { label, shipped: true, ...options });
+  return edgeType(id, { label, reverse_label, shipped: true, ...options });
 }
 
 /** The shipped edge types as `GET /edge-types` lists them, which
  *  `fidelity.test.ts` holds to the real listing. */
 export const SCRIPTED_EDGE_TYPES: ReadonlyArray<WireEdgeType> = [
-  shipped("about", "About"),
-  shipped("attached-to", "Attached to", { reverse_name: "has-attachment" }),
-  shipped("authored-by", "Authored by"),
-  shipped("derived-from", "Derived from"),
-  shipped("in-collection", "In collection", {
+  shipped("about", "About", "Subject of"),
+  shipped("attached-to", "Attached to", "Attachments", {
+    reverse_name: "has-attachment",
+  }),
+  shipped("authored-by", "Authored by", "Author of"),
+  shipped("derived-from", "Derived from", "Basis for"),
+  shipped("in-collection", "In collection", "Contents", {
     target_type_constraints: ["role:container"],
     property_schema: {
       position: {
@@ -444,7 +452,7 @@ export const SCRIPTED_EDGE_TYPES: ReadonlyArray<WireEdgeType> = [
       },
     },
   }),
-  shipped("in-folder", "In folder", {
+  shipped("in-folder", "In folder", "Folder contents", {
     written_at: "none",
     target_type_constraints: ["system.folder"],
     property_schema: {
@@ -455,7 +463,7 @@ export const SCRIPTED_EDGE_TYPES: ReadonlyArray<WireEdgeType> = [
       },
     },
   }),
-  shipped("in-thread", "In thread", {
+  shipped("in-thread", "In thread", "Messages", {
     cardinality: "many-to-one",
     property_schema: {
       position: {
@@ -464,14 +472,16 @@ export const SCRIPTED_EDGE_TYPES: ReadonlyArray<WireEdgeType> = [
       },
     },
   }),
-  shipped("parent-of", "Parent of", {
+  shipped("parent-of", "Children", "Parent", {
     cardinality: "one-to-many",
     cascade_on_delete: "cascade",
     reverse_name: "child-of",
     written_at: "target",
   }),
-  shipped("references", "References"),
-  shipped("supersedes", "Supersedes", { cardinality: "one-to-one" }),
+  shipped("references", "References", "Referenced by"),
+  shipped("supersedes", "Supersedes", "Superseded by", {
+    cardinality: "one-to-one",
+  }),
 ];
 
 /** The shipped edge types, and any a fixture registers beside them. */

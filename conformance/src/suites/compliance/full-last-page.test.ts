@@ -211,6 +211,7 @@ const seeds: Record<string, () => Promise<Read>> = {
   "GET /edges": async () => {
     const edgeType = `mock.fulllastpage.${ctx.runId}`;
     const registered = await client.registerEdgeType({
+      label: "Test edge type",
       id: edgeType,
       cardinality: "many-to-many",
     });

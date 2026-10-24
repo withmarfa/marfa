@@ -1311,6 +1311,7 @@ describe("what moves a reach", () => {
     const id = `mock.reach.${ctx.runId}`;
     const proof = await bootstrap();
     const registered = await client.registerEdgeType({
+      label: "Test edge type",
       id,
       cardinality: "many-to-many",
     });

@@ -89,7 +89,11 @@ async function edgeTypeOf(
   },
 ): Promise<string> {
   const id = `mock.order-${label}.${ctx.runId}`;
-  const r = await client.registerEdgeType({ id, ...rest });
+  const r = await client.registerEdgeType({
+    label: "Test edge type",
+    id,
+    ...rest,
+  });
   expect(r.status).toBe(201);
   trackEdgeType(ctx, id);
   return id;
@@ -479,6 +483,7 @@ describe("the order POST /edges asks its refusals in", () => {
     await held(source, target, edgeType);
     expect((await client.deleteEdgeType(edgeType, true)).status).toBe(200);
     const again = await client.registerEdgeType({
+      label: "Test edge type",
       id: edgeType,
       cardinality: "many-to-many",
       source_type_constraints: ["core.bookmark"],

@@ -51,7 +51,8 @@ const RECIPE = {
 };
 
 const MENTOR = edgeType("mentor-of", {
-  label: "Mentor of",
+  label: "Mentees",
+  reverse_label: "Mentor",
   cardinality: "one-to-many",
   source_type_constraints: ["core.note"],
   property_schema: { since: { type: "string", description: "When it began" } },
@@ -180,7 +181,8 @@ describe("The type catalog a working copy holds", () => {
     );
     const mentorRead: EdgeType = {
       id: "mentor-of",
-      label: "Mentor of",
+      label: "Mentees",
+      reverse_label: "Mentor",
       description: null,
       cardinality: "one-to-many",
       reverse_name: "mentored-by",

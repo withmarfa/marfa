@@ -245,6 +245,7 @@ describe("what a key is told of an item it cannot read through a readable one", 
   async function hiddenTargetEdge(label: string, signal: AbortSignal) {
     const edgeType = `mock.hidden-${label}.${ctx.runId}`;
     const registered = await client.registerEdgeType({
+      label: "Test edge type",
       id: edgeType,
       cardinality: "many-to-many",
     });
@@ -397,6 +398,7 @@ describe("what a key is told of an item it cannot read through a readable one", 
   it("refuses a delete held by a blocking edge it cannot see, naming no hidden id", async () => {
     const edgeType = `mock.block.${ctx.runId}`;
     const registered = await client.registerEdgeType({
+      label: "Test edge type",
       id: edgeType,
       cardinality: "many-to-many",
       cascade_on_delete: "block",
@@ -473,6 +475,7 @@ describe("a delete refused by a blocking edge whose type the key cannot read", (
   it("counts the edge without naming it, where a key that reads the type is told which", async () => {
     const edgeType = `mock.blockkind.${ctx.runId}`;
     const registered = await client.registerEdgeType({
+      label: "Test edge type",
       id: edgeType,
       cardinality: "many-to-many",
       cascade_on_delete: "block",

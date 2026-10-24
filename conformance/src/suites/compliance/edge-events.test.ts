@@ -391,6 +391,7 @@ describe("the stream answers only the edges a subscriber may read", () => {
     const unseenKind = `mock.stream.${label}.unseen.${ctx.runId}`;
     for (const id of [seenKind, unseenKind]) {
       const registered = await client.registerEdgeType({
+        label: "Test edge type",
         id,
         cardinality: "many-to-many",
       });
