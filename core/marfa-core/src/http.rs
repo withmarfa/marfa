@@ -311,6 +311,30 @@ pub enum Registration {
     Refused { code: String, message: String },
 }
 
+/// What the instance answered to a declared type it holds that differs from
+/// the declaration.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Replacement {
+    Replaced,
+    Refused { code: String, message: String },
+}
+
+/// What `POST /types/normalize` answers, the two definitions it compares.
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct NormalizedType {
+    #[serde(rename = "type")]
+    pub declared: serde_json::Value,
+    /// `None` where the instance holds no type of the declared id.
+    pub registered_type: Option<serde_json::Value>,
+}
+
+impl NormalizedType {
+    /// Whether the instance holds the declaration as it stands.
+    pub fn is_held(&self) -> bool {
+        self.registered_type.as_ref() == Some(&self.declared)
+    }
+}
+
 pub const CONTRACT_HEADER: &str = "X-Marfa-Contract";
 pub const INSTANCE_HEADER: &str = "X-Marfa-Instance-Id";
 /// The code, and the expiry reason, of a write another instance refused.
@@ -1216,10 +1240,11 @@ impl Http {
     }
 
     /// Registers a type the app declared, as `POST /types` takes one. A type
-    /// the instance holds already is held, whatever its shape: the server's
-    /// is the one a copy reads. A refusal the server names is the answer,
-    /// where one that names no contract, or a failure to reach it, is an error
-    /// the caller can try again.
+    /// the instance holds already is held, whatever its shape: the caller
+    /// compares it with `normalized_type` and replaces it with
+    /// `replace_type`. A refusal the server names is the answer, where one
+    /// that names no contract, or a failure to reach it, is an error the
+    /// caller can try again.
     pub fn register_type(&self, definition: &str) -> Result<Registration, CoreError> {
         let reply = self.call(Call {
             method: Method::Post,
@@ -1233,24 +1258,71 @@ impl Http {
         if (200..300).contains(&reply.status) {
             return Ok(Registration::Registered);
         }
-        match self.refused(
+        let refused = self.refused(
             reply.status,
             reply.contract.is_some(),
             &reply.body,
             reply.retry_after_seconds,
+        );
+        if matches!(
+            &refused,
+            CoreError::Server { status: 409, code, .. } if code == "type_already_exists"
         ) {
-            CoreError::Server {
-                status: 409, code, ..
-            } if code == "type_already_exists" => Ok(Registration::Held),
-            // A server that failed or asked to be tried later has not refused
-            // the type, so the hydration is tried again rather than reporting
-            // the type as one the key may not register.
+            return Ok(Registration::Held);
+        }
+        let (code, message) = Self::type_refusal(refused)?;
+        Ok(Registration::Refused { code, message })
+    }
+
+    /// Replaces a registered type with the app's declaration, as
+    /// `PUT /types/{id}` takes one. A refusal the server names leaves the
+    /// type as the server holds it and is the answer; one that names no
+    /// contract, or a failure to reach the server, is an error the caller can
+    /// try again.
+    pub fn replace_type(&self, id: &str, definition: &str) -> Result<Replacement, CoreError> {
+        let reply = self.call(Call {
+            method: Method::Put,
+            segments: &["types", id],
+            params: &[],
+            headers: &[],
+            body: CallBody::Json(definition),
+            credential: true,
+            stream: false,
+        })?;
+        if (200..300).contains(&reply.status) {
+            return Ok(Replacement::Replaced);
+        }
+        let (code, message) = Self::type_refusal(self.refused(
+            reply.status,
+            reply.contract.is_some(),
+            &reply.body,
+            reply.retry_after_seconds,
+        ))?;
+        Ok(Replacement::Refused { code, message })
+    }
+
+    /// `POST /types/normalize`: a declaration and the registered type of its
+    /// id, each as the server normalizes it, so that two definitions which
+    /// mean the same compare equal. A read sent as a `POST`, asked of no
+    /// reach.
+    pub fn normalized_type(&self, definition: &str) -> Result<NormalizedType, CoreError> {
+        let plain = Self {
+            reach: None,
+            ..self.clone()
+        };
+        plain.read_json(&["types", "normalize"], &[], Some(definition))
+    }
+
+    /// The code and message of a refusal the server named, or the error the
+    /// caller can try again: a server that failed or asked to be tried later
+    /// has not refused the type.
+    fn type_refusal(refused: CoreError) -> Result<(String, String), CoreError> {
+        match refused {
             error if error.is_environmental() => Err(error),
             CoreError::Validation { code, message }
             | CoreError::Forbidden { code, message }
-            | CoreError::Server { code, message, .. } => {
-                Ok(Registration::Refused { code, message })
-            }
+            | CoreError::NotFound { code, message }
+            | CoreError::Server { code, message, .. } => Ok((code, message)),
             other => Err(other),
         }
     }

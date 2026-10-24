@@ -204,9 +204,15 @@ pub struct HydrateReport {
     pub registered_types: Vec<String>,
     /// Declared types the instance did not hold and would not take.
     pub unregistered_types: Vec<UnregisteredType>,
+    /// Declared `app.*` types the instance held in another definition and now
+    /// holds as declared.
+    pub replaced_types: Vec<String>,
+    /// Declared `app.*` types the instance holds in another definition and
+    /// would not replace; they stay as the server holds them.
+    pub unreplaced_types: Vec<UnregisteredType>,
 }
 
-/// A declared type the instance refused to register, and why.
+/// A declared type the instance refused to register or to replace, and why.
 #[napi(object)]
 pub struct UnregisteredType {
     pub id: String,
@@ -1718,6 +1724,16 @@ impl From<marfa_core::HydrateReport> for HydrateReport {
             registered_types: report.registered_types,
             unregistered_types: report
                 .unregistered_types
+                .into_iter()
+                .map(|held| UnregisteredType {
+                    id: held.id,
+                    code: held.code,
+                    message: held.message,
+                })
+                .collect(),
+            replaced_types: report.replaced_types,
+            unreplaced_types: report
+                .unreplaced_types
                 .into_iter()
                 .map(|held| UnregisteredType {
                     id: held.id,

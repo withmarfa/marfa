@@ -4054,6 +4054,50 @@ Where a declared type is left unregistered, a device MUST keep a write to it que
 
 **Tests:** `device/save-before-sync-live.test.ts › says which declared types the key could not register, and the server refuses the write that names one`.
 
+### `device/declared-type-replaced`
+
+When a hydration finds that the instance holds a declared `app.*` type whose definition, as the server normalizes it (`types/normalize-answer`), differs from the server's normalization of the declaration, a device MUST replace the type on the instance with the declaration, as `PUT /types/{id}` takes it.
+
+**Reason:** an app that adds a field to a type it declared would otherwise see the instance refuse the field for as long as the older definition stands.
+
+**Tests:** `device/declare-replaces.test.ts › replaces a declared app type the instance holds in another definition, and writes none it holds as declared`, `device/declare-replaces-live.test.ts › replaces a type the app changed, and writes none the server already holds as declared, however the app wrote it`.
+
+### `device/hydrate-replace-unchanged`
+
+When a hydration finds that the instance holds a declared `app.*` type in the definition the server normalizes the declaration to, a device MUST NOT write the type.
+
+**Reason:** the server's normalization ignores key order and any default written out or left out, so a declaration written untidily never causes a write, an audit entry or an event.
+
+**Tests:** `device/declare-replaces.test.ts › replaces a declared app type the instance holds in another definition, and writes none it holds as declared`, `device/declare-replaces-live.test.ts › replaces a type the app changed, and writes none the server already holds as declared, however the app wrote it`.
+
+### `device/hydrate-replace-own`
+
+A device MUST NOT replace a declared type outside the `app.*` namespace.
+
+**Reason:** a type under `user.*` or a publisher's namespace may be written by others, and `device/declaration-refused` keeps Marfa's own out of a declaration.
+
+**Tests:** `device/declare-replaces.test.ts › replaces no type outside the app's own namespace, and refuses to declare one of Marfa's`.
+
+### `device/hydrate-replace-refused`
+
+If the server refuses to replace a declared type, then a device MUST leave the type as the server holds it, report it in `unreplaced_types` with the server's code and message, and complete the hydration.
+
+**Reason:** a key that may register a type may still not change its fields, and the rest of the slice does not depend on it.
+
+**Tests:** `device/declare-replaces.test.ts › keeps the server's definition of a type it refuses to replace, says why, and finishes the hydration`, `device/declare-replaces-live.test.ts › keeps what the server holds of a type it will not replace, says why, and finishes the hydration`.
+
+### `device/hydrate-replaced-said`
+
+When a hydration replaces a declared type, a device MUST report its id in `replaced_types`.
+
+**Tests:** `device/declare-replaces.test.ts › replaces a declared app type the instance holds in another definition, and writes none it holds as declared`.
+
+### `device/hydrate-replace-fails`
+
+If the server answers a comparison or a replacement of a declared type with a failure that clears on its own, then a device MUST fail the hydration rather than report the type as one the server would not replace.
+
+**Tests:** `device/declare-replaces.test.ts › fails the hydration when the server fails mid-way, and replaces on the next one`.
+
 ## Stopping a long call
 
 ### `device/stop-canceled`

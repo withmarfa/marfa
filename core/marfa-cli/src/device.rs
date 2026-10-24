@@ -905,6 +905,18 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
                         held.id, held.code, held.message
                     ));
                 }
+                if !report.replaced_types.is_empty() {
+                    line.push_str(&format!(
+                        "\nreplaced {} on the server",
+                        report.replaced_types.join(",")
+                    ));
+                }
+                for held in &report.unreplaced_types {
+                    line.push_str(&format!(
+                        "\nnot replaced: {} ({}): {}",
+                        held.id, held.code, held.message
+                    ));
+                }
                 line
             })
         }

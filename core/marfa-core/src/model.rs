@@ -405,6 +405,13 @@ pub struct HydrateReport {
     /// them wait for the server's verdict, which is a refusal until a key
     /// that may registers them.
     pub unregistered_types: Vec<UnregisteredType>,
+    /// Declared `app.*` types the instance held in another definition and now
+    /// holds as declared.
+    pub replaced_types: Vec<String>,
+    /// Declared `app.*` types the instance holds in another definition and
+    /// would not replace, which stay as the server holds them. A write to one
+    /// is judged by that definition.
+    pub unreplaced_types: Vec<UnregisteredType>,
 }
 
 /// Why a hydration began again from the first page rather than carry on from
@@ -466,7 +473,7 @@ impl HydrateRestart {
     }
 }
 
-/// A declared type the instance refused to register, and why.
+/// A declared type the instance refused to register or to replace, and why.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct UnregisteredType {
     pub id: String,
