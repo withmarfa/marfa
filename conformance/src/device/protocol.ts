@@ -143,6 +143,48 @@ export interface FileCache {
    * (`device/file-backup-failure-said`).
    */
   backup_mark_failure: string | null;
+  /**
+   * The files attached to items the copy holds, which stay on the device
+   * outside the budget; null while a hydration fills the copy
+   * (`device/attachment-hydrating`).
+   */
+  attachments: Attachments | null;
+}
+
+/** Why an attachment's bytes are not held (`device/attachment-reported`). */
+export type NotHeldReason =
+  | "not_fetched"
+  | "no_room"
+  | "unreachable"
+  | "absent"
+  | "failed"
+  | "not_in_copy";
+
+/** The files attached to items the copy holds, as the state report gives them. */
+export interface Attachments {
+  /** The file items whose bytes the cache holds whole. */
+  held: number;
+  /** Their bytes, counted once for files that share them. */
+  held_bytes: number;
+  /** The bytes of partial files of attachments. */
+  partial_bytes: number;
+  not_held: number;
+  /** The bytes the attachments not held state. */
+  not_held_bytes: number;
+  not_held_by_reason: Array<{
+    reason: NotHeldReason;
+    attachments: number;
+    bytes: number;
+    /** How many of them state no size. */
+    unstated: number;
+  }>;
+}
+
+/** What a fetch of the attachments not held did (`device/attachment-fetch`). */
+export interface KeptFetch {
+  fetched: number;
+  fetched_bytes: number;
+  attachments: Attachments | null;
 }
 
 export interface Status {
@@ -626,6 +668,12 @@ export interface DeviceUnderTest {
     value?: string,
     options?: { trim?: boolean },
   ): Promise<Outcome<{ file_cache: FileCache; trimmed_bytes: number | null }>>;
+  /**
+   * Fetches the bytes of every attachment the cache does not hold whole,
+   * smallest first, stopping where the volume has no room or the server
+   * cannot be reached.
+   */
+  fetchKept(): Promise<Outcome<KeptFetch>>;
   /** The thumbnail an item carries, read from the copy; its bytes to `out`. */
   thumbnail(
     id: string,

@@ -32,6 +32,7 @@ import {
   type SearchHit,
   type SliceTier,
   type FileCache,
+  type KeptFetch,
   type Status,
   type Tier,
 } from "./protocol.js";
@@ -885,6 +886,10 @@ export class CliDevice implements DeviceUnderTest {
     return this.json<{ file_cache: FileCache; trimmed_bytes: number | null }>(
       args,
     );
+  }
+
+  async fetchKept(): Promise<Outcome<KeptFetch>> {
+    return this.json<KeptFetch>(["blobs", "fetch-kept", ...this.server()]);
   }
 
   async attach(

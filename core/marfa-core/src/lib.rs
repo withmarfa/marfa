@@ -78,7 +78,10 @@ pub use catalog::{EdgeType, End, ItemType, ServerCatalog, TypeField, WrittenAt};
 pub use catch_up::{Change, ChangeEvent, FollowReport};
 pub use drain::{DrainReport, DrainVerdict};
 pub use error::{CODES as ERROR_CODES, CoreError, CoreErrorKind};
-pub use file_cache::{DEFAULT_FLOOR as FILE_BUDGET_FLOOR, FileBudget, FileCache};
+pub use file_cache::{
+    Attachments, DEFAULT_FLOOR as FILE_BUDGET_FLOOR, FileBudget, FileCache, KeptFetch, NotHeld,
+    NotHeldReason,
+};
 pub use folder::{
     CaughtUp, Confirmed, Drained, FOLDER_TYPE, FileStatus, FirstSync, Folder, Paused, PullReport,
     Removal, Restored, ScanReport, SendReport, Settings, SettingsFileReport, StatusReport,
@@ -2324,7 +2327,14 @@ impl Core {
         hash: &str,
         stated: Option<u64>,
     ) -> Result<blob::Fetched> {
-        let fetched = blob::fetch(cache, http, hash, stated, || self.kept_blobs());
+        let fetched = blob::fetch(
+            cache,
+            http,
+            hash,
+            stated,
+            || self.kept_blobs(),
+            || self.offline_blobs(),
+        );
         if let Some(mark) = cache.staged_mark() {
             self.write_down_backup_mark(&mark);
         }
@@ -2393,7 +2403,10 @@ impl Core {
         let Some(kept) = self.kept_blobs() else {
             return 0;
         };
-        cache.trim(&kept, |held| {
+        let Some(offline) = self.offline_blobs() else {
+            return 0;
+        };
+        cache.trim(&kept, &offline, |held| {
             let volume = (setting == FileBudget::Default)
                 .then(|| cache.volume())
                 .flatten();
@@ -2430,6 +2443,121 @@ impl Core {
                 .filter_map(|hash| blob::hex_of(hash).ok().map(str::to_string))
                 .collect(),
         )
+    }
+
+    /// The bytes of every attachment, by the hex of their hash; `None` while
+    /// a hydration fills the copy, since the rows that make a file an
+    /// attachment have not all arrived, and where the copy cannot be read.
+    fn offline_blobs(&self) -> Option<HashSet<String>> {
+        let conn = self.conn().ok()?;
+        if !store::hydration_complete(&conn).ok()? {
+            return None;
+        }
+        let (found, _) = store::attachments(&conn).ok()?;
+        Some(file_cache::by_bytes(&found).into_keys().collect())
+    }
+
+    /// Fetches the bytes of every file attached to an item the copy holds
+    /// that the cache does not hold whole, smallest first, resuming any a
+    /// fetch left part way. Stops at the first the volume has no room for,
+    /// or once the server cannot be reached, and writes down why each not
+    /// fetched is not held, which the state report gives. Ended with
+    /// `Canceled` soon after `stop` is raised, between two files. Refused to
+    /// a reading handle and with no server.
+    pub fn fetch_kept_until(&self, stop: &AtomicBool) -> Result<KeptFetch> {
+        use file_cache::NotHeldReason as Why;
+        self.lock.refuse_unless_writer()?;
+        let cache = self.cache()?;
+        if cache.requires_descriptor() {
+            return Err(CoreError::Invalid(
+                "a folder holds the files of its items in the folder itself, and keeps no attachments in a cache".into(),
+            ));
+        }
+        let http = self.http()?;
+        let groups = {
+            let conn = self.conn()?;
+            let (found, _) = store::attachments(&conn)?;
+            let groups = file_cache::by_bytes(&found);
+            // While a hydration fills the copy, a file not seen yet may still
+            // be an attachment, so what was written down of it stays.
+            if store::hydration_complete(&conn)? {
+                for hex in store::kept_misses(&conn)?.into_keys() {
+                    if !groups.contains_key(&hex) {
+                        store::set_kept_miss(&conn, &hex, None)?;
+                    }
+                }
+            }
+            groups
+        };
+        let mut wanted = Vec::new();
+        for (hex, (_, stated)) in groups {
+            if cache.held(&hex)?.is_none() {
+                wanted.push((hex, stated));
+            }
+        }
+        wanted.sort_by(|(a, a_size), (b, b_size)| {
+            (a_size.is_none(), a_size, a).cmp(&(b_size.is_none(), b_size, b))
+        });
+        let note = |hex: &str, why: Option<Why>| -> Result<()> {
+            store::set_kept_miss(&*self.conn()?, hex, why.map(Why::as_str))
+        };
+        let mut report = KeptFetch {
+            fetched: 0,
+            fetched_bytes: 0,
+            attachments: None,
+        };
+        let mut stopped = None;
+        for (at, (hex, stated)) in wanted.iter().enumerate() {
+            catch_up::refuse_if_stopped(stop)?;
+            let hash = format!("{}{hex}", blob::PREFIX);
+            let why = match self.fetch_blob(cache, http, &hash, *stated) {
+                Ok(fetched) => {
+                    report.fetched += 1;
+                    report.fetched_bytes +=
+                        std::fs::metadata(&fetched.path).map_or(0, |held| held.len());
+                    note(hex, None)?;
+                    continue;
+                }
+                Err(CoreError::NoRoom { .. } | CoreError::StorageFull(_)) => {
+                    stopped = Some(Why::NoRoom);
+                    Why::NoRoom
+                }
+                Err(CoreError::BytesAbsent { reason, .. }) => {
+                    let (why, for_all) = blob::why_absent(&reason);
+                    if for_all {
+                        stopped = Some(why);
+                    }
+                    why
+                }
+                Err(
+                    CoreError::Server { status: 500.., .. }
+                    | CoreError::Unnamed { .. }
+                    | CoreError::RateLimited { .. }
+                    | CoreError::Network(_),
+                ) => {
+                    stopped = Some(Why::Unreachable);
+                    Why::Unreachable
+                }
+                Err(
+                    CoreError::Decoding(_)
+                    | CoreError::Server { .. }
+                    | CoreError::NotFound { .. }
+                    | CoreError::Validation { .. }
+                    | CoreError::Redirected { .. }
+                    | CoreError::Io(_),
+                ) => Why::Failed,
+                Err(other) => return Err(other),
+            };
+            note(hex, Some(why))?;
+            if let Some(why) = stopped {
+                for (hex, _) in &wanted[at + 1..] {
+                    note(hex, Some(why))?;
+                }
+                break;
+            }
+        }
+        report.attachments = self.file_cache()?.attachments;
+        Ok(report)
     }
 
     pub fn blob_held(&self, hash: &str) -> Result<bool> {
@@ -2559,25 +2687,51 @@ impl Core {
     fn file_cache_with(&self, conn: &Connection) -> Result<FileCache> {
         let setting =
             FileBudget::stored(store::meta_get(conn, file_cache::META_BUDGET)?.as_deref());
-        let (held, volume) = match &self.cache {
+        let (sizes, volume) = match &self.cache {
             Some(cache) => (
-                cache.held_bytes(),
+                cache.sizes(),
                 (setting == FileBudget::Default)
                     .then(|| cache.volume())
                     .flatten(),
             ),
-            None => (Ok(0), None),
+            None => (Ok(HashMap::new()), None),
         };
-        // An unknown count is worked from as none held, which is the
-        // smaller default budget.
-        let in_force = file_cache::in_force(setting, volume, *held.as_ref().unwrap_or(&0));
+        let held = sizes.as_ref().map(|sizes| sizes.values().sum::<u64>());
+        // A folder holds its files in the folder, so its cache says nothing
+        // of which attachments the device holds.
+        let in_folder = self
+            .cache
+            .as_ref()
+            .is_some_and(blob::Cache::requires_descriptor);
+        let attachments = match &sizes {
+            Ok(sizes) if !in_folder && store::hydration_complete(conn)? => {
+                let (found, not_in_copy) = store::attachments(conn)?;
+                Some(file_cache::attachments_of(
+                    &found,
+                    not_in_copy,
+                    sizes,
+                    &store::kept_misses(conn)?,
+                ))
+            }
+            _ => None,
+        };
+        // Attachments are not counted against the budget, so the default
+        // is worked from the rest. An unknown count is worked from as none
+        // held, which is the smaller default budget.
+        let counted = held.as_ref().map_or(0, |held| {
+            attachments.as_ref().map_or(*held, |attachments| {
+                held.saturating_sub(attachments.held_bytes + attachments.partial_bytes)
+            })
+        });
+        let in_force = file_cache::in_force(setting, volume, counted);
         Ok(FileCache {
             setting,
             budget: in_force.bytes,
             held: held.as_ref().ok().copied(),
-            held_unreadable: held.err(),
+            held_unreadable: held.err().cloned(),
             volume_unreadable: in_force.volume_unreadable,
             backup_mark_failure: store::meta_get(conn, file_cache::META_BACKUP_UNMARKED)?,
+            attachments,
         })
     }
 
@@ -6068,6 +6222,12 @@ mod tests {
             ),
             ("trim_files", reader.trim_files().unwrap_err()),
             (
+                "fetch_kept_until",
+                reader
+                    .fetch_kept_until(&std::sync::atomic::AtomicBool::new(false))
+                    .unwrap_err(),
+            ),
+            (
                 "attach",
                 reader
                     .attach("x", Path::new("no-such-file.png"), &Attachment::default())
@@ -6184,7 +6344,7 @@ mod tests {
         );
         assert_eq!(
             refusals.len(),
-            45,
+            46,
             "an entry has gone from the list above, and a door dropped from \
              it is a door nothing here covers"
         );

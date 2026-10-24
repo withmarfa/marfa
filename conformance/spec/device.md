@@ -1592,11 +1592,11 @@ If a device refuses a fetch `no_room`, then a device MUST leave no file of that 
 
 ### `device/blob-fetch-no-room-takes-partials`
 
-If the volume that holds the file cache has fewer free bytes than a fetch still has to receive, then a device MUST take the partial files of other bytes that no fetch holds before it refuses the ask `no_room`.
+If the volume that holds the file cache has fewer free bytes than a fetch still has to receive, then a device MUST take the partial files of other bytes that no fetch holds and that are not the bytes of an attachment (`device/attachment-kept`) before it refuses the ask `no_room`.
 
 **Reason:** a partial file left by a fetch that stopped is space the person did not choose to spend, and no file budget bounds it until a trim runs.
 
-**Tests:** `device/large-files.test.ts › is taken by a fetch the volume has no room for, before the ask is refused`.
+**Tests:** `device/large-files.test.ts › is taken by a fetch the volume has no room for, before the ask is refused`, `device/attachments-offline.test.ts › leaves the part of an attachment held when another fetch has no room, and takes the part of another file`.
 
 ### `device/blob-fetch-disk-full-refused`
 
@@ -1760,11 +1760,11 @@ The file cache is the folder beside the store that holds the bytes a device fetc
 
 ### `device/file-budget-default`
 
-While the file budget is the default, a device MUST give as its file budget the lesser of the larger of 2 GiB and a tenth of the volume's size, and the bytes the cache holds plus the volume's free bytes less a twentieth of the volume's size, and no less than 256 MiB.
+While the file budget is the default, a device MUST give as its file budget the lesser of the larger of 2 GiB and a tenth of the volume's size, and the bytes the cache holds other than those of attachments (`device/attachment-kept`) plus the volume's free bytes less a twentieth of the volume's size, and no less than 256 MiB.
 
-**Reason:** a tenth of the volume bounds what files take from the person's other uses of it, a twentieth left free keeps the volume usable, and the bytes the cache holds count as free because a trim hands them back. 256 MiB keeps the files in use on a nearly full volume, where a budget of nothing would fetch every file again at each read.
+**Reason:** a tenth of the volume bounds what files take from the person's other uses of it, a twentieth left free keeps the volume usable, and the bytes the cache holds count as free because a trim hands them back. A trim never hands back an attachment's bytes, so they do not count. 256 MiB keeps the files in use on a nearly full volume, where a budget of nothing would fetch every file again at each read.
 
-**Tests:** `device/file-cache.test.ts › gives the default budget from the volume's size and free space, counting what it holds`.
+**Tests:** `device/file-cache.test.ts › gives the default budget from the volume's size and free space, counting what it holds`, `device/attachments-offline.test.ts › is fetched when asked and kept through a trim to a budget of nothing, outside the budget`.
 
 ### `device/file-budget-floor`
 
@@ -1922,7 +1922,7 @@ When a device takes bytes away to fit the file budget, a device MUST count the p
 
 ### `device/file-trim-takes-unheld-partials`
 
-When a device takes bytes away to fit the file budget, a device MUST take a partial file that no fetch holds as it takes a kept file.
+When a device takes bytes away to fit the file budget, a device MUST take a partial file that no fetch holds, and that is not of an attachment's bytes (`device/attachment-kept`), as it takes a kept file.
 
 **Reason:** a partial file that no fetch holds is a fetch that stopped, and a person who gave the cache a budget gave the partial file's space to it.
 
@@ -1957,6 +1957,100 @@ Where the platform's backup honors a mark on a file or a folder, a device MUST N
 Where the platform's backup honors a mark on a file, if a device cannot mark the file of bytes it fetched, or the partial file of a fetch, excluded from backups, then a device MUST say why in its state report until it next marks a file of fetched bytes.
 
 **Tests:** `device/file-cache.test.ts › says in its state report when fetched bytes cannot be kept out of backups`, `› says in its state report when the partial file of a fetch cannot be kept out of backups`.
+
+### `device/attachment-kept`
+
+When a device takes bytes away to fit the file budget, a device MUST NOT take the bytes, or the partial file, of an attachment: a file item out of the bin that is the source of an `attached-to` edge whose target the copy holds out of the bin.
+
+**Reason:** a file attached to an item is part of that item, so a person who can read the item on the device can open its files there too, offline.
+
+**Tests:** `device/attachments-offline.test.ts › is fetched when asked and kept through a trim to a budget of nothing, outside the budget`, `› is kept while one of the items it is attached to is held, and a file attached to none the copy holds is not`, `› resumes an attachment whose fetch stopped part way, and a trim keeps the part held`, `› are unknown while a hydration fills the copy, which trims nothing, and kept again once it is whole or expired`.
+
+### `device/attachment-uncounted`
+
+When a device takes bytes away to fit the file budget, a device MUST NOT count against the budget the bytes, or the partial files, of attachments (`device/attachment-kept`).
+
+**Reason:** no trim can take them, so counting them would take every other file for bytes that stay.
+
+**Tests:** `device/attachments-offline.test.ts › is fetched when asked and kept through a trim to a budget of nothing, outside the budget`.
+
+### `device/attachment-released`
+
+When a file item stops being an attachment (`device/attachment-kept`), because its last `attached-to` edge to an item the copy holds goes, or that item goes to the bin or leaves the copy, a device MUST take its bytes to fit the file budget as it takes any other bytes.
+
+**Tests:** `device/attachments-offline.test.ts › becomes ordinary cached bytes when its edge goes or its item goes to the bin`, `› is kept while one of the items it is attached to is held, and a file attached to none the copy holds is not`.
+
+### `device/file-trim-hydrating-takes-none`
+
+While a hydration fills the copy, a device MUST NOT take bytes away to fit the file budget.
+
+**Reason:** the rows that make a file an attachment (`device/attachment-kept`) may not have arrived yet, so a trim would take bytes it must keep.
+
+**Tests:** `device/attachments-offline.test.ts › are unknown while a hydration fills the copy, which trims nothing, and kept again once it is whole or expired`.
+
+### `device/attachment-fetch`
+
+When a caller asks a device to fetch its attachments (`device/attachment-kept`), a device MUST fetch the bytes of each one the file cache does not hold whole, in order of the size the file item states, smallest first and those that state none last, continuing the partial file of an earlier fetch where the link serves a range.
+
+**Reason:** an app runs the fetch after a hydration and after a catch-up, and the smallest first hold the most files on a volume with little room.
+
+**Tests:** `device/attachments-offline.test.ts › is fetched when asked and kept through a trim to a budget of nothing, outside the budget`, `› stops at the first the disk has no room for, keeps what it holds and says why the rest are not held`, `› resumes an attachment whose fetch stopped part way, and a trim keeps the part held`.
+
+### `device/attachment-fetch-answer`
+
+When a device has fetched its attachments, a device MUST answer how many it fetched, their bytes, and the attachments as its state report gives them (`device/attachment-reported`).
+
+**Tests:** `device/attachments-offline.test.ts › is fetched when asked and kept through a trim to a budget of nothing, outside the budget`, `› stops at the first the disk has no room for, keeps what it holds and says why the rest are not held`.
+
+### `device/attachment-fetch-no-room`
+
+If the volume that holds the file cache has no room for the bytes of an attachment (`device/attachment-kept`) a fetch of attachments asks for, then a device MUST fetch no more attachments in that fetch and keep the bytes it fetched.
+
+**Reason:** the attachments still to fetch are larger, so none would fit.
+
+**Tests:** `device/attachments-offline.test.ts › stops at the first the disk has no room for, keeps what it holds and says why the rest are not held`.
+
+### `device/attachment-fetch-unreachable`
+
+If the server cannot be reached, or answers that it cannot serve, during a fetch of attachments (`device/attachment-kept`), then a device MUST fetch no more attachments in that fetch.
+
+**Tests:** `device/attachments-offline.test.ts › goes on past bytes the server holds none of, and stops once the server cannot be reached`.
+
+### `device/attachment-fetch-absent`
+
+If the server holds none of the bytes of one attachment (`device/attachment-kept`) during a fetch of attachments, then a device MUST go on to fetch the next.
+
+**Tests:** `device/attachments-offline.test.ts › goes on past bytes the server holds none of, and stops once the server cannot be reached`.
+
+### `device/attachment-queued-upload`
+
+While a queued upload names the bytes of an attachment (`device/attachment-kept`), a device MUST count the attachment as held and send no request for its bytes when it fetches its attachments.
+
+**Tests:** `device/attachments-offline.test.ts › fetches nothing for a queued upload that is an attachment, which stays`.
+
+### `device/attachment-reported`
+
+A device MUST report in its state report how many attachments (`device/attachment-kept`) the file cache holds whole and their bytes, counted once for files that share them, the bytes of their partial files, and how many it does not hold and their stated bytes, by why each is not held: not fetched yet, no room, the server unreachable, absent on the server, failed, or not in the copy.
+
+**Reason:** an app tells the person which files are on the device, and why the others are not, from this report.
+
+**Tests:** `device/attachments-offline.test.ts › is fetched when asked and kept through a trim to a budget of nothing, outside the budget`, `› stops at the first the disk has no room for, keeps what it holds and says why the rest are not held`, `› goes on past bytes the server holds none of, and stops once the server cannot be reached`.
+
+### `device/attachment-not-in-copy`
+
+While the copy holds an `attached-to` edge to an item it holds, and does not hold the edge's source, a device MUST report that source in its state report as an attachment not held because it is not in the copy, with no stated bytes.
+
+**Reason:** the slice names the edge type whole but not the file's type, so the device cannot fetch the file, and a count that left it out would say every file is on the device.
+
+**Tests:** `device/attachments-offline.test.ts › counts an edge held whole whose file the slice does not hold as not in the copy`.
+
+### `device/attachment-hydrating`
+
+While a hydration fills the copy, a device MUST report its attachments as unknown.
+
+**Reason:** the rows that make a file an attachment may not have arrived yet.
+
+**Tests:** `device/attachments-offline.test.ts › are unknown while a hydration fills the copy, which trims nothing, and kept again once it is whole or expired`.
 
 ## The server the CLI talks to
 

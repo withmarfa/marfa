@@ -12,7 +12,7 @@ use crate::Result;
 use crate::error::CoreError;
 use crate::http::{Call, CallBody, Http, Method};
 
-const PREFIX: &str = "sha256:";
+pub(crate) const PREFIX: &str = "sha256:";
 
 /// How long the bytes of a fetch that stopped are kept for a resume. A link
 /// is good for seven days at most, and bytes beyond that are not worth the
@@ -366,9 +366,17 @@ impl Cache {
         ))
     }
 
-    /// The bytes of every blob kept, or why they could not all be counted.
-    pub(crate) fn held_bytes(&self) -> std::result::Result<u64, String> {
-        Ok(self.scan()?.iter().map(|held| held.size).sum())
+    /// The size of each entry `scan` finds, by its name in the folder: the
+    /// hex of a kept blob's hash, or `.partial-` and that hex.
+    pub(crate) fn sizes(&self) -> std::result::Result<HashMap<String, u64>, String> {
+        Ok(self
+            .scan()?
+            .into_iter()
+            .map(|held| {
+                let name = held.path.file_name().unwrap_or_default();
+                (name.to_string_lossy().into_owned(), held.size)
+            })
+            .collect())
     }
 
     /// The volume holding the cache: read through the folder held open
@@ -392,18 +400,25 @@ impl Cache {
     /// rest, and are taken when no fetch holds them locked. Bytes named in
     /// `kept`, bytes a caller is reading and partial files a fetch holds stay
     /// whatever the budget, and one of them larger than the budget is not
-    /// counted against it, since no trim can take it. `None` takes nothing. A
-    /// cache that cannot be read takes nothing, since its bytes are not all
-    /// known. Called under `hold`, with `kept` read under it.
+    /// counted against it, since no trim can take it. Bytes named in
+    /// `offline`, and their partial files, stay too and are never counted,
+    /// so `budget` is given the bytes held less theirs. `None` takes nothing.
+    /// A cache that cannot be read takes nothing, since its bytes are not all
+    /// known. Called under `hold`, with `kept` and `offline` read under it.
     pub(crate) fn trim(
         &self,
         kept: &HashSet<String>,
+        offline: &HashSet<String>,
         budget: impl FnOnce(u64) -> Option<u64>,
     ) -> u64 {
         let reading = self.readers();
         let Ok(found) = self.scan() else {
             return 0;
         };
+        let found: Vec<Held> = found
+            .into_iter()
+            .filter(|entry| !offline_entry(offline, &entry.path))
+            .collect();
         let mut total: u64 = found.iter().map(|held| held.size).sum();
         let Some(most) = budget(total) else {
             return 0;
@@ -473,16 +488,30 @@ impl Cache {
         }
     }
 
-    /// Takes the partial files of bytes other than `except`, which no fetch
-    /// holds, and answers how many bytes it took. A fetch the volume has no
-    /// room for makes room this way before it is refused.
-    fn take_other_partials(&self, except: &Path) -> u64 {
+    /// Takes the partial files of bytes other than `except` and `offline`,
+    /// which no fetch holds, and answers how many bytes it took. A fetch the
+    /// volume has no room for makes room this way before it is refused.
+    /// Takes none where `offline` is unknown.
+    fn take_other_partials(
+        &self,
+        except: &Path,
+        offline: impl FnOnce() -> Option<HashSet<String>>,
+    ) -> u64 {
         let Ok(found) = self.scan() else {
+            return 0;
+        };
+        if !found
+            .iter()
+            .any(|entry| entry.partial && entry.path != except)
+        {
+            return 0;
+        }
+        let Some(offline) = offline() else {
             return 0;
         };
         let mut taken = 0;
         for entry in found {
-            if !entry.partial || entry.path == except {
+            if !entry.partial || entry.path == except || offline_entry(&offline, &entry.path) {
                 continue;
             }
             let Some(_lock) = self.lock_partial(&entry.path) else {
@@ -861,7 +890,7 @@ impl Cache {
                 let _ = staging.file.sync_data();
                 self.leave_staging(staging);
                 return Err(absent(format!(
-                    "the bytes stopped arriving after {size} of {end}: {error}"
+                    "{LINK_STOPPED} after {size} of {end}: {error}"
                 )));
             }
         }
@@ -869,7 +898,7 @@ impl Cache {
             let _ = staging.file.sync_data();
             self.leave_staging(staging);
             return Err(absent(format!(
-                "the link ended after {size} of {end} bytes"
+                "{LINK_STOPPED}: the link ended after {size} of {end} bytes"
             )));
         }
         if let Err(error) = staging.file.sync_all() {
@@ -928,6 +957,40 @@ impl Cache {
     }
 }
 
+/// How the reason of a `BytesAbsent` begins where the server could not be
+/// reached, where it holds no bytes by the hash, where the link it gave could
+/// not be reached, and where the link stopped sending part way, so
+/// `why_absent` can tell them apart.
+const SERVER_UNREACHABLE: &str = "the server cannot be reached";
+const SERVER_HOLDS_NONE: &str = "the server holds none";
+const LINK_UNREACHABLE: &str = "the link cannot be reached";
+const LINK_STOPPED: &str = "the bytes stopped arriving";
+
+/// Why a fetch refused `BytesAbsent` for `reason` left the bytes unheld,
+/// and whether a fetch of other bytes from the same server would fare the
+/// same.
+pub(crate) fn why_absent(reason: &str) -> (crate::file_cache::NotHeldReason, bool) {
+    use crate::file_cache::NotHeldReason as Why;
+    if reason.starts_with(SERVER_UNREACHABLE) {
+        (Why::Unreachable, true)
+    } else if reason.starts_with(SERVER_HOLDS_NONE) {
+        (Why::Absent, false)
+    } else if reason.starts_with(LINK_UNREACHABLE) || reason.starts_with(LINK_STOPPED) {
+        (Why::Unreachable, false)
+    } else {
+        (Why::Failed, false)
+    }
+}
+
+/// Whether the entry at `path` holds bytes `offline` names, whole or in part.
+fn offline_entry(offline: &HashSet<String>, path: &Path) -> bool {
+    let name = path.file_name().unwrap_or_default().to_string_lossy();
+    offline.contains(name.as_ref())
+        || name
+            .strip_prefix(".partial-")
+            .is_some_and(|hex| offline.contains(hex))
+}
+
 pub(crate) fn named(hash: &str) -> Result<String> {
     let hex = hex_of(hash)?;
     Ok(format!("{PREFIX}{hex}"))
@@ -954,13 +1017,15 @@ pub(crate) fn hex_of(hash: &str) -> Result<&str> {
 }
 
 /// `stated` is the size the working copy states for the bytes, if it does;
-/// `kept` is as for `Cache::keep`.
+/// `kept` is as for `Cache::keep`; `offline` is the bytes of attachments, by
+/// hex, whose partial files a fetch with no room leaves in place.
 pub(crate) fn fetch(
     cache: &Cache,
     http: &Http,
     hash: &str,
     stated: Option<u64>,
     kept: impl FnOnce() -> Option<HashSet<String>>,
+    offline: impl FnOnce() -> Option<HashSet<String>>,
 ) -> Result<Fetched> {
     let absent = |reason: String| CoreError::BytesAbsent {
         hash: hash.to_string(),
@@ -977,14 +1042,14 @@ pub(crate) fn fetch(
             stream: false,
         })
         .map_err(|error| match error {
-            CoreError::Network(reason) => absent(format!("the server cannot be reached: {reason}")),
+            CoreError::Network(reason) => absent(format!("{SERVER_UNREACHABLE}: {reason}")),
             other => other,
         })?;
     let text = reply.body;
     // Only the server's own 404, naming its contract: a proxy's says nothing
     // about which bytes the server holds.
     if reply.status == 404 && reply.contract.is_some() {
-        return Err(absent(format!("the server holds none: {text}")));
+        return Err(absent(format!("{SERVER_HOLDS_NONE}: {text}")));
     }
     if !(200..300).contains(&reply.status) {
         return Err(http.refused(
@@ -1014,6 +1079,7 @@ pub(crate) fn fetch(
         LINK_IDLE,
         || cache.volume().map(|volume| volume.free),
         kept,
+        offline,
     )
 }
 
@@ -1033,6 +1099,7 @@ const LINK_BODY_MOST: Duration = Duration::from_secs(6 * 60 * 60);
 /// `stated`, or by the length the link states where nothing else does, so no
 /// fetch is unbounded. `room` answers the free space of the volume holding
 /// the cache, `None` where it cannot be read.
+#[allow(clippy::too_many_arguments)]
 fn pull(
     cache: &Cache,
     hash: &str,
@@ -1041,6 +1108,7 @@ fn pull(
     idle: Duration,
     room: impl Fn() -> Option<u64>,
     kept: impl FnOnce() -> Option<HashSet<String>>,
+    offline: impl FnOnce() -> Option<HashSet<String>>,
 ) -> Result<Fetched> {
     let absent = |reason: String| CoreError::BytesAbsent {
         hash: hash.to_string(),
@@ -1118,7 +1186,9 @@ fn pull(
     let start = staging.held;
     let needed = end.saturating_sub(start);
     let mut free = room();
-    if free.is_some_and(|free| free < needed) && cache.take_other_partials(&staging.label) > 0 {
+    if free.is_some_and(|free| free < needed)
+        && cache.take_other_partials(&staging.label, offline) > 0
+    {
         free = room();
     }
     if let Some(free) = free
@@ -1311,7 +1381,7 @@ fn open(link: &str, from: u64) -> std::result::Result<Opened, Refusal> {
     }
     let response = request
         .call()
-        .map_err(|error| Refusal::Other(format!("the link cannot be reached: {error}")))?;
+        .map_err(|error| Refusal::Other(format!("{LINK_UNREACHABLE}: {error}")))?;
     let status = response.status().as_u16();
     if status == 416 {
         return Err(Refusal::Unsatisfiable);
@@ -1409,6 +1479,11 @@ pub(crate) mod tests {
 
     use super::*;
 
+    /// The bytes of every entry the cache holds.
+    fn total(cache: &Cache) -> std::result::Result<u64, String> {
+        Ok(cache.sizes()?.values().sum())
+    }
+
     /// A queue that names no upload.
     pub(crate) fn no_uploads() -> Option<HashSet<String>> {
         Some(HashSet::new())
@@ -1489,6 +1564,7 @@ pub(crate) mod tests {
         );
         cache.trim(
             &HashSet::from([hex_of(&copied.hash).unwrap().to_string()]),
+            &HashSet::new(),
             |_| Some(0),
         );
         assert!(cache.held(&first).unwrap().is_none());
@@ -1575,10 +1651,31 @@ pub(crate) mod tests {
         let within = Duration::from_secs(10);
         // The witness: a limit of exactly the body keeps it.
         let url = linking(bytes.clone(), false);
-        assert!(pull(&cache, &hash, &url, Some(1000), within, || None, no_uploads).is_ok());
+        assert!(
+            pull(
+                &cache,
+                &hash,
+                &url,
+                Some(1000),
+                within,
+                || None,
+                no_uploads,
+                no_uploads
+            )
+            .is_ok()
+        );
         let url = linking(bytes, false);
-        let refused =
-            pull(&cache, &hash, &url, Some(999), within, || None, no_uploads).unwrap_err();
+        let refused = pull(
+            &cache,
+            &hash,
+            &url,
+            Some(999),
+            within,
+            || None,
+            no_uploads,
+            no_uploads,
+        )
+        .unwrap_err();
         assert!(
             matches!(&refused, CoreError::BytesAbsent { reason, .. } if reason.contains("more than")),
             "{refused:?}"
@@ -1680,6 +1777,7 @@ pub(crate) mod tests {
             WITHIN,
             || None,
             no_uploads,
+            no_uploads,
         );
         assert!(
             matches!(first, Err(CoreError::BytesAbsent { .. })),
@@ -1696,6 +1794,7 @@ pub(crate) mod tests {
             Some(5000),
             WITHIN,
             || None,
+            no_uploads,
             no_uploads,
         )
         .unwrap();
@@ -1722,7 +1821,8 @@ pub(crate) mod tests {
                 Some(5000),
                 WITHIN,
                 || None,
-                no_uploads
+                no_uploads,
+                no_uploads,
             )
             .is_err()
         );
@@ -1733,6 +1833,7 @@ pub(crate) mod tests {
             Some(5000),
             WITHIN,
             || None,
+            no_uploads,
             no_uploads,
         )
         .unwrap();
@@ -1755,7 +1856,8 @@ pub(crate) mod tests {
                 Some(5000),
                 WITHIN,
                 || None,
-                no_uploads
+                no_uploads,
+                no_uploads,
             )
             .is_err()
         );
@@ -1771,6 +1873,7 @@ pub(crate) mod tests {
             Some(5000),
             WITHIN,
             || None,
+            no_uploads,
             no_uploads,
         )
         .unwrap_err();
@@ -1793,7 +1896,8 @@ pub(crate) mod tests {
                 Some(5000),
                 WITHIN,
                 || None,
-                no_uploads
+                no_uploads,
+                no_uploads,
             )
             .is_err()
         );
@@ -1810,7 +1914,8 @@ pub(crate) mod tests {
                 Some(5000),
                 WITHIN,
                 || None,
-                no_uploads
+                no_uploads,
+                no_uploads,
             )
             .is_ok()
         );
@@ -1831,6 +1936,7 @@ pub(crate) mod tests {
             Some(5000),
             WITHIN,
             || Some(4999),
+            no_uploads,
             no_uploads,
         )
         .unwrap_err();
@@ -1855,6 +1961,7 @@ pub(crate) mod tests {
             WITHIN,
             || Some(5000),
             no_uploads,
+            no_uploads,
         );
         assert!(kept.is_ok(), "{kept:?}");
     }
@@ -1874,7 +1981,8 @@ pub(crate) mod tests {
                 Some(5000),
                 WITHIN,
                 || None,
-                no_uploads
+                no_uploads,
+                no_uploads,
             )
             .is_err()
         );
@@ -1885,6 +1993,7 @@ pub(crate) mod tests {
             Some(5000),
             WITHIN,
             || Some(2000),
+            no_uploads,
             no_uploads,
         );
         assert!(fetched.is_ok(), "{fetched:?}");
@@ -1906,7 +2015,17 @@ pub(crate) mod tests {
                 let _ = socket.write_all(&bytes);
             }
         });
-        let refused = pull(&cache, &hash, &url, None, WITHIN, || None, no_uploads).unwrap_err();
+        let refused = pull(
+            &cache,
+            &hash,
+            &url,
+            None,
+            WITHIN,
+            || None,
+            no_uploads,
+            no_uploads,
+        )
+        .unwrap_err();
         assert!(
             matches!(&refused, CoreError::BytesAbsent { reason, .. } if reason.contains("no bound")),
             "{refused:?}"
@@ -1958,7 +2077,7 @@ pub(crate) mod tests {
         let (_, small) = kept(&cache, b"aaaaaaaaaa", 0);
         let (_, large) = kept(&cache, &[b'z'; 100], 0);
         let (_, older) = kept(&cache, b"cccccccccc", 300);
-        cache.trim(&HashSet::new(), |_| Some(20));
+        cache.trim(&HashSet::new(), &HashSet::new(), |_| Some(20));
         assert!(!large.exists(), "the file past the budget was kept");
         assert!(
             small.exists() && older.exists(),
@@ -1977,23 +2096,66 @@ pub(crate) mod tests {
         let guard = cache.reading(&format!("sha256:{reading}")).unwrap();
         // 20 bytes besides the two large files, which are protected: they fit
         // a budget of 25, so nothing is taken.
-        assert_eq!(cache.trim(&HashSet::from([named.clone()]), |_| Some(25)), 0);
+        assert_eq!(
+            cache.trim(&HashSet::from([named.clone()]), &HashSet::new(), |_| Some(
+                25
+            )),
+            0
+        );
         assert!(
             oldest.exists() && newest.exists(),
             "the trim emptied the cache for a file it could not take"
         );
         // The witness: under a budget the rest do not fit, it takes the rest.
         assert_eq!(
-            cache.trim(&HashSet::from([named.clone()]), |_| Some(10)),
+            cache.trim(&HashSet::from([named.clone()]), &HashSet::new(), |_| Some(
+                10
+            )),
             10
         );
         assert!(!oldest.exists() && newest.exists());
         // Once nothing protects the large files, the next trim takes them first.
         drop(guard);
         let (_, small) = kept(&cache, b"cccccccccc", 500);
-        cache.trim(&HashSet::from([named]), |_| Some(25));
+        cache.trim(&HashSet::from([named]), &HashSet::new(), |_| Some(25));
         assert!(!large.exists(), "the file past the budget was kept");
         assert!(queued.exists() && small.exists() && newest.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_trim_keeps_attachment_bytes_and_their_partial_files_and_does_not_count_them() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = Cache::beside(&dir.path().join("store.sqlite"));
+        let (attached, whole) = kept(&cache, &[b'a'; 100], 500);
+        let (_, other) = kept(&cache, b"oooooooooo", 0);
+        let partial = partial_of(&cache, &[b'p'; 50], 400);
+        let partial_hex = partial
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .strip_prefix(".partial-")
+            .unwrap()
+            .to_string();
+        let offline = HashSet::from([attached.clone(), partial_hex]);
+        let mut given = None;
+        // 160 bytes are held, and only the 10 of the other file count.
+        let taken = cache.trim(&HashSet::new(), &offline, |held| {
+            given = Some(held);
+            Some(10)
+        });
+        assert_eq!(given, Some(10));
+        assert_eq!(taken, 0);
+        assert!(whole.exists() && partial.exists() && other.exists());
+        // Under a budget of nothing, only the other file goes.
+        assert_eq!(cache.trim(&HashSet::new(), &offline, |_| Some(0)), 10);
+        assert!(whole.exists() && partial.exists() && !other.exists());
+        // The witness: once they are no attachment's, the same trim takes them.
+        assert_eq!(
+            cache.trim(&HashSet::new(), &HashSet::new(), |_| Some(0)),
+            150
+        );
+        assert!(!whole.exists() && !partial.exists());
     }
 
     #[cfg(target_os = "macos")]
@@ -2057,15 +2219,15 @@ pub(crate) mod tests {
         let (_, blob) = kept(&cache, b"aaaaaaaaaa", 0);
         let left = partial_of(&cache, &[b'p'; 30], 500);
         assert!(left.exists());
-        assert_eq!(cache.held_bytes(), Ok(40));
+        assert_eq!(total(&cache), Ok(40));
         // A partial a fetch holds locked counts, and is never taken.
         let held = cache.stage(&name_of(&payload(1))).unwrap();
         assert_eq!(held.held, 0);
         let busy = held.label.clone();
         let mut writing = held;
         writing.file.write_all(&[b'w'; 50]).unwrap();
-        assert_eq!(cache.held_bytes(), Ok(90));
-        let taken = cache.trim(&HashSet::new(), |_| Some(15));
+        assert_eq!(total(&cache), Ok(90));
+        let taken = cache.trim(&HashSet::new(), &HashSet::new(), |_| Some(15));
         assert_eq!(taken, 30);
         assert!(!left.exists(), "a partial no fetch holds was kept");
         assert!(blob.exists() && busy.exists(), "the trim took too much");
@@ -2124,6 +2286,7 @@ pub(crate) mod tests {
             WITHIN,
             room,
             no_uploads,
+            no_uploads,
         );
         assert!(fetched.is_ok(), "{fetched:?}");
         assert!(!other.exists());
@@ -2137,6 +2300,7 @@ pub(crate) mod tests {
             Some(5000),
             WITHIN,
             full,
+            no_uploads,
             no_uploads,
         );
         assert!(
@@ -2196,7 +2360,16 @@ pub(crate) mod tests {
         let dir = tempfile::tempdir().unwrap();
         let cache = Cache::beside(&dir.path().join("store.sqlite"));
         let (url, offered) = gzipping(bytes.clone());
-        let fetched = pull(&cache, &hash, &url, None, WITHIN, || None, no_uploads);
+        let fetched = pull(
+            &cache,
+            &hash,
+            &url,
+            None,
+            WITHIN,
+            || None,
+            no_uploads,
+            no_uploads,
+        );
         assert!(fetched.is_ok(), "{fetched:?}");
         let _ = open(&url, 100);
         let offered = offered.lock().unwrap();
@@ -2243,9 +2416,19 @@ pub(crate) mod tests {
                 WITHIN,
                 || None,
                 no_uploads,
+                no_uploads,
             );
             let url = lying(range);
-            let refused = pull(&cache, &hash, &url, Some(5000), WITHIN, || None, no_uploads);
+            let refused = pull(
+                &cache,
+                &hash,
+                &url,
+                Some(5000),
+                WITHIN,
+                || None,
+                no_uploads,
+                no_uploads,
+            );
             assert!(
                 matches!(refused, Err(CoreError::BytesAbsent { .. })),
                 "{range}: {refused:?}"
@@ -2265,7 +2448,7 @@ pub(crate) mod tests {
         let (reading, read) = kept(&cache, &[b'r'; 100], 0);
         let (named, queued) = kept(&cache, &[b'q'; 100], 0);
         let _guard = cache.reading(&format!("sha256:{reading}")).unwrap();
-        cache.trim(&HashSet::from([named]), |_| Some(10));
+        cache.trim(&HashSet::from([named]), &HashSet::new(), |_| Some(10));
         assert!(read.exists(), "bytes being read were taken");
         assert!(queued.exists(), "bytes an upload names were taken");
     }
@@ -2286,6 +2469,7 @@ pub(crate) mod tests {
             Duration::from_millis(500),
             || None,
             no_uploads,
+            no_uploads,
         )
         .unwrap_err();
         assert!(
@@ -2304,14 +2488,14 @@ pub(crate) mod tests {
         let cache = Cache::beside(&dir.path().join("core.sqlite"));
         let door = format!("/blobs/{hash}/url");
         server.on(&door, vec![crate::scripted::unnamed(401, "access_denied")]);
-        let refused = fetch(&cache, &http, &hash, None, no_uploads).unwrap_err();
+        let refused = fetch(&cache, &http, &hash, None, no_uploads, no_uploads).unwrap_err();
         assert!(
             matches!(refused, CoreError::Unnamed { status: 401, .. }),
             "a gateway's 401 on a blob's link was read as the credential refused: {refused:?}"
         );
         server.on(&door, vec![crate::scripted::refusal(401, "unauthorized")]);
         assert!(matches!(
-            fetch(&cache, &http, &hash, None, no_uploads).unwrap_err(),
+            fetch(&cache, &http, &hash, None, no_uploads, no_uploads).unwrap_err(),
             CoreError::Unauthorized { .. }
         ));
     }
@@ -2457,15 +2641,15 @@ pub(crate) mod tests {
         for cache in caches {
             // A folder not made yet holds nothing, exactly.
             let absent = Cache::beside(&dir.path().join("elsewhere").join("store.sqlite"));
-            assert_eq!(absent.held_bytes(), Ok(0));
+            assert_eq!(total(&absent), Ok(0));
             let (_, path) = kept(&cache, b"cannot be listed", 0);
             let folder = path.parent().unwrap().to_path_buf();
             // The witness: it counts and trims while the folder is readable.
-            assert_eq!(cache.held_bytes(), Ok(16));
+            assert_eq!(total(&cache), Ok(16));
             fs::set_permissions(&folder, fs::Permissions::from_mode(0o000)).unwrap();
             let sealed = fs::read_dir(&folder).is_err() && File::open(&path).is_err();
-            let counted = cache.held_bytes();
-            let taken = cache.trim(&HashSet::new(), |_| Some(0));
+            let counted = total(&cache);
+            let taken = cache.trim(&HashSet::new(), &HashSet::new(), |_| Some(0));
             fs::set_permissions(&folder, fs::Permissions::from_mode(0o755)).unwrap();
             assert!(sealed, "the folder could still be read");
             assert!(
@@ -2477,7 +2661,10 @@ pub(crate) mod tests {
                 path.exists(),
                 "a trim of a cache it could not read took bytes"
             );
-            assert_eq!(cache.trim(&HashSet::new(), |_| Some(0)), 16);
+            assert_eq!(
+                cache.trim(&HashSet::new(), &HashSet::new(), |_| Some(0)),
+                16
+            );
         }
     }
 
@@ -2492,7 +2679,7 @@ pub(crate) mod tests {
         let incoming = cache.dir.join(".incoming-still-arriving");
         fs::write(&incoming, b"half").unwrap();
 
-        cache.trim(&HashSet::from([waiting]), |_| Some(25));
+        cache.trim(&HashSet::from([waiting]), &HashSet::new(), |_| Some(25));
         assert!(!oldest.exists(), "the bytes read longest ago were kept");
         assert!(named.exists(), "bytes an upload still names were taken");
         assert!(!older.exists(), "the trim stopped before the rest fit");
@@ -2504,7 +2691,7 @@ pub(crate) mod tests {
 
         let (_, first) = kept(&cache, b"eeeeeeeeee", 500);
         cache.touch(&first);
-        cache.trim(&HashSet::new(), |_| Some(20));
+        cache.trim(&HashSet::new(), &HashSet::new(), |_| Some(20));
         assert!(first.exists(), "bytes just read were taken first");
         assert!(
             !named.exists(),
@@ -2530,18 +2717,18 @@ pub(crate) mod tests {
             let (_, readable) = kept(&cache, b"readable..", 0);
             let (_, sealed) = kept(&cache, b"sealed....", 100);
             // The witness: both count while both can be opened.
-            assert_eq!(cache.held_bytes(), Ok(20));
+            assert_eq!(total(&cache), Ok(20));
             fs::set_permissions(&sealed, fs::Permissions::from_mode(0o000)).unwrap();
             assert!(
                 File::open(&sealed).is_err(),
                 "the file could still be opened"
             );
             assert_eq!(
-                cache.held_bytes(),
+                total(&cache),
                 Ok(20),
                 "a file that cannot be opened went uncounted, so it was opened"
             );
-            cache.trim(&HashSet::new(), |_| Some(10));
+            cache.trim(&HashSet::new(), &HashSet::new(), |_| Some(10));
             assert!(!sealed.exists(), "the trim could not see a sealed file");
             assert!(readable.exists());
         }

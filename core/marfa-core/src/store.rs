@@ -1820,15 +1820,7 @@ pub fn items_awaiting_their_write(conn: &Connection) -> Result<HashSet<String>, 
 /// properties are not JSON, or whose size is not a whole number above zero,
 /// states none.
 pub fn stated_size(conn: &Connection, hash: &str) -> Result<Option<u64>, CoreError> {
-    let catalog = crate::catalog::Catalog::load(conn)?;
-    let extra = catalog.declared_descendants("core.file");
-    let mut types = String::from("type = 'core.file' OR type LIKE 'core.file.%'");
-    if !extra.is_empty() {
-        types.push_str(&format!(
-            " OR type IN ({})",
-            vec!["?"; extra.len()].join(", ")
-        ));
-    }
+    let (types, extra) = file_types(conn, "type")?;
     let sql = format!(
         "SELECT MAX(size) FROM (
            SELECT CASE WHEN json_valid(properties) THEN
@@ -1844,6 +1836,111 @@ pub fn stated_size(conn: &Connection, hash: &str) -> Result<Option<u64>, CoreErr
     let size: Option<i64> =
         conn.query_row(&sql, rusqlite::params_from_iter(values), |row| row.get(0))?;
     Ok(size.and_then(|size| u64::try_from(size).ok()))
+}
+
+/// A condition on `column` that holds for `core.file` and every type the
+/// catalog declares beneath it, with the values its placeholders take.
+fn file_types(conn: &Connection, column: &str) -> Result<(String, Vec<String>), CoreError> {
+    let catalog = crate::catalog::Catalog::load(conn)?;
+    let extra = catalog.declared_descendants("core.file");
+    let mut types = format!("{column} = 'core.file' OR {column} LIKE 'core.file.%'");
+    if !extra.is_empty() {
+        types.push_str(&format!(
+            " OR {column} IN ({})",
+            vec!["?"; extra.len()].join(", ")
+        ));
+    }
+    Ok((types, extra))
+}
+
+/// A file item the copy holds that is attached to an item the copy holds.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Attachment {
+    pub item_id: String,
+    /// The hash its `blob_ref` names, as written there.
+    pub hash: String,
+    /// The size it states for its bytes, if it states a whole number above
+    /// zero.
+    pub stated: Option<u64>,
+}
+
+/// Every file item the copy holds, out of the bin, that is the source of an
+/// `attached-to` edge whose target the copy holds out of the bin, and how
+/// many sources of such edges the copy holds no row of. A row whose stored
+/// properties are not JSON, or that names its bytes by no text, is none.
+pub fn attachments(conn: &Connection) -> Result<(Vec<Attachment>, u64), CoreError> {
+    let (types, extra) = file_types(conn, "f.type")?;
+    let sql = format!(
+        "SELECT id, hash, size FROM (
+           SELECT f.id AS id,
+                  CASE WHEN json_valid(f.properties) THEN
+                    CASE WHEN json_type(f.properties, '$.blob_ref') = 'text'
+                         THEN json_extract(f.properties, '$.blob_ref') END
+                  END AS hash,
+                  CASE WHEN json_valid(f.properties) THEN
+                    CASE WHEN json_type(f.properties, '$.size_bytes') = 'integer'
+                         THEN json_extract(f.properties, '$.size_bytes') END
+                  END AS size
+             FROM items AS f
+            WHERE ({types}) AND f.state != 'trashed'
+              AND EXISTS (
+                SELECT 1 FROM edges AS e JOIN items AS t ON t.id = e.target_id
+                 WHERE e.source_id = f.id AND e.edge_type = '{ATTACHED_TO}'
+                   AND t.state != 'trashed'))
+          WHERE hash IS NOT NULL
+          ORDER BY id"
+    );
+    let mut statement = conn.prepare(&sql)?;
+    let found = statement
+        .query_map(params_from_iter(extra), |row| {
+            Ok(Attachment {
+                item_id: row.get(0)?,
+                hash: row.get(1)?,
+                stated: row
+                    .get::<_, Option<i64>>(2)?
+                    .and_then(|size| u64::try_from(size).ok())
+                    .filter(|size| *size > 0),
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    let outside: i64 = conn.query_row(
+        &format!(
+            "SELECT COUNT(DISTINCT e.source_id)
+               FROM edges AS e JOIN items AS t ON t.id = e.target_id
+              WHERE e.edge_type = '{ATTACHED_TO}' AND t.state != 'trashed'
+                AND NOT EXISTS (SELECT 1 FROM items AS f WHERE f.id = e.source_id)"
+        ),
+        [],
+        |row| row.get(0),
+    )?;
+    Ok((found, u64::try_from(outside).unwrap_or(0)))
+}
+
+const ATTACHED_TO: &str = "attached-to";
+
+/// Why the last fetch of an attachment's bytes left them unheld, by the hex
+/// of their hash, in the `meta` table under this prefix.
+const META_KEPT_MISS: &str = "kept_miss:";
+
+pub fn kept_misses(conn: &Connection) -> Result<HashMap<String, String>, CoreError> {
+    let mut statement = conn.prepare("SELECT key, value FROM meta WHERE key LIKE ?1 || '%'")?;
+    let found = statement
+        .query_map([META_KEPT_MISS], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(found
+        .into_iter()
+        .filter_map(|(key, value)| Some((key.strip_prefix(META_KEPT_MISS)?.to_string(), value)))
+        .collect())
+}
+
+pub fn set_kept_miss(conn: &Connection, hex: &str, reason: Option<&str>) -> Result<(), CoreError> {
+    let key = format!("{META_KEPT_MISS}{hex}");
+    match reason {
+        Some(reason) => meta_set(conn, &key, reason),
+        None => meta_delete(conn, &key),
+    }
 }
 
 /// The bytes the cache keeps for the queue: those of every upload not yet
@@ -4714,6 +4811,93 @@ mod tests {
             r#"{"blob_ref":"sha256:dd","size_bytes":9999}"#,
         );
         assert_eq!(stated("sha256:dd"), Some(400));
+    }
+
+    #[test]
+    fn an_attachment_is_a_held_file_attached_to_a_held_item_out_of_the_bin() {
+        let temp = tempfile::tempdir().unwrap();
+        let conn = super::open(&temp.path().join("core.sqlite")).unwrap();
+        let put = |id: &str, kind: &str, state: &str, properties: &str| {
+            conn.execute(
+                "INSERT INTO items (id, type, state, version, schema_version, source,
+                   occurred_at, created_at, updated_at, properties)
+                 VALUES (?1, ?2, ?3, 1, 1, 'test', 't', 't', 't', ?4)",
+                [id, kind, state, properties],
+            )
+            .unwrap();
+        };
+        let edge = |id: &str, source: &str, target: &str, kind: &str| {
+            conn.execute(
+                "INSERT INTO edges (id, source_id, target_id, edge_type, properties, version,
+                   created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, '{}', 1, 't', 't')",
+                [id, source, target, kind],
+            )
+            .unwrap();
+        };
+        let found = || {
+            let (found, outside) = super::attachments(&conn).unwrap();
+            let ids: Vec<String> = found.into_iter().map(|found| found.item_id).collect();
+            (ids, outside)
+        };
+        put("note", "core.note", "active", "{}");
+        put("binned", "core.note", "trashed", "{}");
+        put(
+            "photo",
+            "core.file.image",
+            "active",
+            r#"{"blob_ref":"sha256:aa","size_bytes":5}"#,
+        );
+        put(
+            "loose",
+            "core.file",
+            "active",
+            r#"{"blob_ref":"sha256:bb"}"#,
+        );
+        put(
+            "to-bin",
+            "core.file",
+            "active",
+            r#"{"blob_ref":"sha256:cc"}"#,
+        );
+        put(
+            "gone",
+            "core.file",
+            "trashed",
+            r#"{"blob_ref":"sha256:dd"}"#,
+        );
+        put("broken", "core.file", "active", "not json");
+        put(
+            "lookalike",
+            "core.note",
+            "active",
+            r#"{"blob_ref":"sha256:ee"}"#,
+        );
+        assert_eq!(found(), (vec![], 0));
+
+        edge("e1", "photo", "note", "attached-to");
+        edge("e2", "loose", "note", "references");
+        edge("e3", "to-bin", "binned", "attached-to");
+        edge("e4", "gone", "note", "attached-to");
+        edge("e5", "broken", "note", "attached-to");
+        edge("e6", "lookalike", "note", "attached-to");
+        edge("e7", "photo", "absent", "attached-to");
+        edge("e8", "unheld-file", "note", "attached-to");
+        edge("e9", "unheld-file", "binned", "attached-to");
+        let (held, outside) = super::attachments(&conn).unwrap();
+        assert_eq!(
+            held,
+            [super::Attachment {
+                item_id: "photo".into(),
+                hash: "sha256:aa".into(),
+                stated: Some(5),
+            }]
+        );
+        assert_eq!(outside, 1);
+
+        conn.execute("DELETE FROM edges WHERE id = 'e1'", [])
+            .unwrap();
+        assert_eq!(found(), (vec![], 1));
     }
 
     #[test]
