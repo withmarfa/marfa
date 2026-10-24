@@ -1,3 +1,5 @@
+#[cfg(test)]
+mod attachment_tests;
 mod blob;
 mod body;
 mod builtin;
@@ -285,15 +287,13 @@ impl Core {
         let vfs = directory_vfs::DirectoryVfs::new(state.file())?;
         let writer = lock.handle() == Handle::Writer;
         let cache = blob::Cache::anchored(state, store_label, writer)?;
-        if writer {
-            cache.sweep_incoming(INCOMING_GRACE);
-        }
         Self::from_connection(
             store::open_directory(&vfs, store_label)?,
             server,
             lock,
             Some(cache),
         )
+        .map(Core::swept)
     }
 
     #[cfg(unix)]
@@ -345,10 +345,25 @@ impl Core {
         let lock = lock::WriterLock::claim(Some(path))?;
         let cache = blob::Cache::beside(path);
         if lock.handle() == Handle::Writer {
-            cache.sweep_incoming(INCOMING_GRACE);
             owner_only(path)?;
         }
         Self::from_connection(store::open(path)?, server, Arc::new(lock), Some(cache))
+            .map(Core::swept)
+    }
+
+    /// Takes what a process that ended part way left in the cache, for a
+    /// writer, sparing the partial files of attachments.
+    fn swept(self) -> Core {
+        if self.handle() == Handle::Writer
+            && let Some(cache) = &self.cache
+        {
+            let attachments = self
+                .conn()
+                .ok()
+                .and_then(|conn| store::kept_attachments(&conn).ok());
+            cache.sweep_incoming(INCOMING_GRACE, attachments.as_ref());
+        }
+        self
     }
 
     /// Replaces a store `open` refuses with `wrong_schema` by an empty one of
@@ -390,8 +405,7 @@ impl Core {
         }
         let conn = store::replace(path)?;
         let cache = blob::Cache::beside(path);
-        cache.sweep_incoming(INCOMING_GRACE);
-        Self::from_connection(conn, server, Arc::new(lock), Some(cache))
+        Self::from_connection(conn, server, Arc::new(lock), Some(cache)).map(Core::swept)
     }
 
     /// Never claims the writer role, so a helper started before the app
@@ -2333,10 +2347,20 @@ impl Core {
             hash,
             stated,
             || self.kept_blobs(),
-            || self.offline_blobs(),
+            || self.attachments_held(),
         );
         if let Some(mark) = cache.staged_mark() {
             self.write_down_backup_mark(&mark);
+        }
+        if let Ok(hex) = blob::hex_of(hash)
+            && let Some(miss) = match &fetched {
+                Ok(_) => Some(None),
+                Err(error) => kept_miss(error).map(|(why, _)| Some(why)),
+            }
+            && let Ok(conn) = self.conn()
+        {
+            let _ =
+                store::set_attachment_miss(&conn, hex, miss.map(file_cache::NotHeldReason::as_str));
         }
         let fetched = fetched?;
         self.write_down_backup_mark(&fetched.mark);
@@ -2403,10 +2427,14 @@ impl Core {
         let Some(kept) = self.kept_blobs() else {
             return 0;
         };
-        let Some(offline) = self.offline_blobs() else {
+        // Held until the trim ends, so no attachment is made between the
+        // read of the bytes attachments keep and the trim that spares them.
+        let Some((_conn, attachments)) = self.attachments_held() else {
             return 0;
         };
-        cache.trim(&kept, &offline, |held| {
+        #[cfg(debug_assertions)]
+        crate::fault::hold(|| format!("attachments-read:{:p}", self));
+        cache.trim(&kept, &attachments, |held| {
             let volume = (setting == FileBudget::Default)
                 .then(|| cache.volume())
                 .flatten();
@@ -2445,25 +2473,24 @@ impl Core {
         )
     }
 
-    /// The bytes of every attachment, by the hex of their hash; `None` while
-    /// a hydration fills the copy, since the rows that make a file an
-    /// attachment have not all arrived, and where the copy cannot be read.
-    fn offline_blobs(&self) -> Option<HashSet<String>> {
+    /// The bytes attachments keep, by the hex of their hash, with the
+    /// connection that read them, which no attachment is made or ended
+    /// through while it is held. `None` where the copy cannot be read.
+    fn attachments_held(&self) -> Option<(MutexGuard<'_, Connection>, HashSet<String>)> {
         let conn = self.conn().ok()?;
-        if !store::hydration_complete(&conn).ok()? {
-            return None;
-        }
-        let (found, _) = store::attachments(&conn).ok()?;
-        Some(file_cache::by_bytes(&found).into_keys().collect())
+        let kept = store::kept_attachments(&conn).ok()?;
+        Some((conn, kept))
     }
 
     /// Fetches the bytes of every file attached to an item the copy holds
     /// that the cache does not hold whole, smallest first, resuming any a
     /// fetch left part way. Stops at the first the volume has no room for,
-    /// or once the server cannot be reached, and writes down why each not
-    /// fetched is not held, which the state report gives. Ended with
-    /// `Canceled` soon after `stop` is raised, between two files. Refused to
-    /// a reading handle and with no server.
+    /// once the server cannot be reached, and once it asks for a wait longer
+    /// than `RATE_LIMIT_WAITED`; a shorter one is waited out. A file that
+    /// fails otherwise is passed over. Writes down why each not fetched is
+    /// not held, which the state report gives. Ended with `Canceled` soon
+    /// after `stop` is raised, between two files or during a wait. Refused
+    /// to a reading handle and with no server.
     pub fn fetch_kept_until(&self, stop: &AtomicBool) -> Result<KeptFetch> {
         use file_cache::NotHeldReason as Why;
         self.lock.refuse_unless_writer()?;
@@ -2474,90 +2501,86 @@ impl Core {
             ));
         }
         let http = self.http()?;
-        let groups = {
-            let conn = self.conn()?;
-            let (found, _) = store::attachments(&conn)?;
-            let groups = file_cache::by_bytes(&found);
-            // While a hydration fills the copy, a file not seen yet may still
-            // be an attachment, so what was written down of it stays.
-            if store::hydration_complete(&conn)? {
-                for hex in store::kept_misses(&conn)?.into_keys() {
-                    if !groups.contains_key(&hex) {
-                        store::set_kept_miss(&conn, &hex, None)?;
-                    }
-                }
-            }
-            groups
-        };
+        let groups = file_cache::by_bytes(&store::attachments(&*self.conn()?)?);
+        // Written in one transaction once the fetch ends, however it ends.
+        let mut notes = Vec::new();
         let mut wanted = Vec::new();
-        for (hex, (_, stated)) in groups {
-            if cache.held(&hex)?.is_none() {
-                wanted.push((hex, stated));
+        for (hex, group) in groups {
+            match cache.held(&hex) {
+                Ok(Some(_)) => {}
+                Ok(None) => wanted.push((hex, group.stated)),
+                Err(_) => notes.push((hex, Why::Failed)),
             }
         }
         wanted.sort_by(|(a, a_size), (b, b_size)| {
             (a_size.is_none(), a_size, a).cmp(&(b_size.is_none(), b_size, b))
         });
-        let note = |hex: &str, why: Option<Why>| -> Result<()> {
-            store::set_kept_miss(&*self.conn()?, hex, why.map(Why::as_str))
-        };
         let mut report = KeptFetch {
             fetched: 0,
             fetched_bytes: 0,
             attachments: None,
         };
-        let mut stopped = None;
-        for (at, (hex, stated)) in wanted.iter().enumerate() {
+        let ended = self.fetch_wanted(cache, http, &wanted, stop, &mut report, &mut notes);
+        {
+            let mut conn = self.conn()?;
+            let tx = conn.transaction()?;
+            for (hex, why) in &notes {
+                store::set_attachment_miss(&tx, hex, Some(why.as_str()))?;
+            }
+            tx.commit()?;
+        }
+        ended?;
+        report.attachments = self.file_cache()?.attachments;
+        Ok(report)
+    }
+
+    /// The loop of `fetch_kept_until`, which adds to `notes` the files a
+    /// stop leaves unfetched.
+    fn fetch_wanted(
+        &self,
+        cache: &blob::Cache,
+        http: &http::Http,
+        wanted: &[(String, Option<u64>)],
+        stop: &AtomicBool,
+        report: &mut KeptFetch,
+        notes: &mut Vec<(String, file_cache::NotHeldReason)>,
+    ) -> Result<()> {
+        use file_cache::NotHeldReason as Why;
+        let mut waits = 0;
+        let mut at = 0;
+        while let Some((hex, stated)) = wanted.get(at) {
             catch_up::refuse_if_stopped(stop)?;
             let hash = format!("{}{hex}", blob::PREFIX);
-            let why = match self.fetch_blob(cache, http, &hash, *stated) {
+            let error = match self.fetch_blob(cache, http, &hash, *stated) {
                 Ok(fetched) => {
                     report.fetched += 1;
                     report.fetched_bytes +=
                         std::fs::metadata(&fetched.path).map_or(0, |held| held.len());
-                    note(hex, None)?;
+                    at += 1;
                     continue;
                 }
-                Err(CoreError::NoRoom { .. } | CoreError::StorageFull(_)) => {
-                    stopped = Some(Why::NoRoom);
-                    Why::NoRoom
-                }
-                Err(CoreError::BytesAbsent { reason, .. }) => {
-                    let (why, for_all) = blob::why_absent(&reason);
-                    if for_all {
-                        stopped = Some(why);
-                    }
-                    why
-                }
-                Err(
-                    CoreError::Server { status: 500.., .. }
-                    | CoreError::Unnamed { .. }
-                    | CoreError::RateLimited { .. }
-                    | CoreError::Network(_),
-                ) => {
-                    stopped = Some(Why::Unreachable);
-                    Why::Unreachable
-                }
-                Err(
-                    CoreError::Decoding(_)
-                    | CoreError::Server { .. }
-                    | CoreError::NotFound { .. }
-                    | CoreError::Validation { .. }
-                    | CoreError::Redirected { .. }
-                    | CoreError::Io(_),
-                ) => Why::Failed,
-                Err(other) => return Err(other),
+                Err(error) => error,
             };
-            note(hex, Some(why))?;
-            if let Some(why) = stopped {
-                for (hex, _) in &wanted[at + 1..] {
-                    note(hex, Some(why))?;
-                }
+            let Some((why, stops)) = kept_miss(&error) else {
+                return Err(error);
+            };
+            if why == Why::RateLimited
+                && waits < RATE_LIMIT_WAITS
+                && let Some(wait) = error
+                    .retry_after()
+                    .filter(|wait| *wait <= RATE_LIMIT_WAITED)
+            {
+                waits += 1;
+                wait_unless_stopped(wait, stop)?;
+                continue;
+            }
+            at += 1;
+            if stops {
+                notes.extend(wanted[at..].iter().map(|(hex, _)| (hex.clone(), why)));
                 break;
             }
         }
-        report.attachments = self.file_cache()?.attachments;
-        Ok(report)
+        Ok(())
     }
 
     pub fn blob_held(&self, hash: &str) -> Result<bool> {
@@ -2704,24 +2727,27 @@ impl Core {
             .as_ref()
             .is_some_and(blob::Cache::requires_descriptor);
         let attachments = match &sizes {
-            Ok(sizes) if !in_folder && store::hydration_complete(conn)? => {
-                let (found, not_in_copy) = store::attachments(conn)?;
+            Ok(sizes) if !in_folder && !store::attachments_growing(conn)? => {
                 Some(file_cache::attachments_of(
-                    &found,
-                    not_in_copy,
+                    &store::attachments(conn)?,
+                    store::attachments_not_in_copy(conn)?,
                     sizes,
-                    &store::kept_misses(conn)?,
+                    &store::attachment_misses(conn)?,
                 ))
             }
             _ => None,
         };
-        // Attachments are not counted against the budget, so the default
-        // is worked from the rest. An unknown count is worked from as none
-        // held, which is the smaller default budget.
-        let counted = held.as_ref().map_or(0, |held| {
-            attachments.as_ref().map_or(*held, |attachments| {
-                held.saturating_sub(attachments.held_bytes + attachments.partial_bytes)
-            })
+        // The bytes attachments keep are not counted against the budget, as
+        // a trim counts them, so the default is worked from the rest. An
+        // unknown count is worked from as none held, which is the smaller
+        // default budget.
+        let kept = store::kept_attachments(conn)?;
+        let counted = sizes.as_ref().map_or(0, |sizes| {
+            sizes
+                .iter()
+                .filter(|(name, _)| !blob::names_kept(&kept, name))
+                .map(|(_, size)| size)
+                .sum()
         });
         let in_force = file_cache::in_force(setting, volume, counted);
         Ok(FileCache {
@@ -2853,6 +2879,52 @@ impl Core {
 /// A renewal changes the bearer, not the credential, so each upload
 /// recorded as sent with the replaced header is now recorded as sent with
 /// the new one (`store::move_uploads_sent_as`).
+/// The longest wait a server asks for that a fetch of attachments waits out,
+/// and how many such waits it makes in a row, so a server that keeps asking
+/// does not hold it for good.
+const RATE_LIMIT_WAITED: Duration = Duration::from_secs(60);
+const RATE_LIMIT_WAITS: u32 = 3;
+
+/// Why a fetch that failed with `error` leaves an attachment's bytes unheld,
+/// and whether a fetch of other bytes from the same server would fare the
+/// same; `None` where the failure is not one file's, such as a key the
+/// server refuses, which ends a fetch of attachments.
+fn kept_miss(error: &CoreError) -> Option<(file_cache::NotHeldReason, bool)> {
+    use file_cache::NotHeldReason as Why;
+    Some(match error {
+        CoreError::NoRoom { .. } | CoreError::StorageFull(_) => (Why::NoRoom, true),
+        CoreError::BytesAbsent { reason, .. } => blob::why_absent(reason),
+        CoreError::RateLimited { .. } | CoreError::Unnamed { status: 429, .. } => {
+            (Why::RateLimited, true)
+        }
+        CoreError::Server { status: 500.., .. }
+        | CoreError::Unnamed { .. }
+        | CoreError::Network(_) => (Why::Unreachable, true),
+        CoreError::Decoding(_)
+        | CoreError::Server { .. }
+        | CoreError::NotFound { .. }
+        | CoreError::Validation { .. }
+        | CoreError::Redirected { .. }
+        | CoreError::Io(_)
+        | CoreError::Store(_)
+        | CoreError::Invalid(_) => (Why::Failed, false),
+        _ => return None,
+    })
+}
+
+/// Sleeps for `wait`, or until `stop` is raised, which ends it `Canceled`.
+fn wait_unless_stopped(wait: Duration, stop: &AtomicBool) -> Result<()> {
+    let until = std::time::Instant::now() + wait;
+    loop {
+        catch_up::refuse_if_stopped(stop)?;
+        let left = until.saturating_duration_since(std::time::Instant::now());
+        if left.is_zero() {
+            return Ok(());
+        }
+        std::thread::sleep(left.min(Duration::from_millis(50)));
+    }
+}
+
 fn write_down_renewals(conn: &Connection, pending: &Mutex<Vec<(String, String)>>) -> Result<()> {
     let renewals = std::mem::take(
         &mut *pending

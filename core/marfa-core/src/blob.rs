@@ -401,14 +401,15 @@ impl Cache {
     /// `kept`, bytes a caller is reading and partial files a fetch holds stay
     /// whatever the budget, and one of them larger than the budget is not
     /// counted against it, since no trim can take it. Bytes named in
-    /// `offline`, and their partial files, stay too and are never counted,
-    /// so `budget` is given the bytes held less theirs. `None` takes nothing.
-    /// A cache that cannot be read takes nothing, since its bytes are not all
-    /// known. Called under `hold`, with `kept` and `offline` read under it.
+    /// `attachments`, and their partial files, stay too and are never
+    /// counted, so `budget` is given the bytes held less theirs. `None` takes
+    /// nothing. A cache that cannot be read takes nothing, since its bytes
+    /// are not all known. Called under `hold`, with `kept` and `attachments`
+    /// read under it, and no attachment made until it returns.
     pub(crate) fn trim(
         &self,
         kept: &HashSet<String>,
-        offline: &HashSet<String>,
+        attachments: &HashSet<String>,
         budget: impl FnOnce(u64) -> Option<u64>,
     ) -> u64 {
         let reading = self.readers();
@@ -417,7 +418,7 @@ impl Cache {
         };
         let found: Vec<Held> = found
             .into_iter()
-            .filter(|entry| !offline_entry(offline, &entry.path))
+            .filter(|entry| !attachment_entry(attachments, &entry.path))
             .collect();
         let mut total: u64 = found.iter().map(|held| held.size).sum();
         let Some(most) = budget(total) else {
@@ -488,30 +489,18 @@ impl Cache {
         }
     }
 
-    /// Takes the partial files of bytes other than `except` and `offline`,
-    /// which no fetch holds, and answers how many bytes it took. A fetch the
-    /// volume has no room for makes room this way before it is refused.
-    /// Takes none where `offline` is unknown.
-    fn take_other_partials(
-        &self,
-        except: &Path,
-        offline: impl FnOnce() -> Option<HashSet<String>>,
-    ) -> u64 {
+    /// Takes the partial files of bytes other than `except` and
+    /// `attachments`, which no fetch holds, and answers how many bytes it
+    /// took. A fetch the volume has no room for makes room this way before
+    /// it is refused. Called with no attachment made until it returns.
+    fn take_other_partials(&self, except: &Path, attachments: &HashSet<String>) -> u64 {
         let Ok(found) = self.scan() else {
-            return 0;
-        };
-        if !found
-            .iter()
-            .any(|entry| entry.partial && entry.path != except)
-        {
-            return 0;
-        }
-        let Some(offline) = offline() else {
             return 0;
         };
         let mut taken = 0;
         for entry in found {
-            if !entry.partial || entry.path == except || offline_entry(&offline, &entry.path) {
+            if !entry.partial || entry.path == except || attachment_entry(attachments, &entry.path)
+            {
                 continue;
             }
             let Some(_lock) = self.lock_partial(&entry.path) else {
@@ -562,8 +551,14 @@ impl Cache {
     }
 
     /// A process that ended mid-copy leaves its file behind, and only its age
-    /// tells it from a copy still being written.
-    pub(crate) fn sweep_incoming(&self, older_than: Duration) {
+    /// tells it from a copy still being written. The partial files of
+    /// `attachments` stay whatever their age, for a fetch of attachments to
+    /// resume, and no partial file goes where `attachments` is unknown.
+    pub(crate) fn sweep_incoming(
+        &self,
+        older_than: Duration,
+        attachments: Option<&HashSet<String>>,
+    ) {
         let Ok(entries) = self.entries() else {
             return;
         };
@@ -572,7 +567,9 @@ impl Cache {
             let partial = name.starts_with(".partial-");
             let older_than = if name.starts_with(".incoming-") {
                 older_than
-            } else if partial {
+            } else if partial
+                && attachments.is_some_and(|attachments| !names_kept(attachments, &name))
+            {
                 older_than.max(PARTIAL_KEPT)
             } else {
                 continue;
@@ -982,13 +979,22 @@ pub(crate) fn why_absent(reason: &str) -> (crate::file_cache::NotHeldReason, boo
     }
 }
 
-/// Whether the entry at `path` holds bytes `offline` names, whole or in part.
-fn offline_entry(offline: &HashSet<String>, path: &Path) -> bool {
-    let name = path.file_name().unwrap_or_default().to_string_lossy();
-    offline.contains(name.as_ref())
+/// Whether the entry at `path` holds bytes `attachments` names, whole or in
+/// part.
+fn attachment_entry(attachments: &HashSet<String>, path: &Path) -> bool {
+    names_kept(
+        attachments,
+        &path.file_name().unwrap_or_default().to_string_lossy(),
+    )
+}
+
+/// Whether the cache entry named `name` holds bytes `attachments` names,
+/// whole or in part.
+pub(crate) fn names_kept(attachments: &HashSet<String>, name: &str) -> bool {
+    attachments.contains(name)
         || name
             .strip_prefix(".partial-")
-            .is_some_and(|hex| offline.contains(hex))
+            .is_some_and(|hex| attachments.contains(hex))
 }
 
 pub(crate) fn named(hash: &str) -> Result<String> {
@@ -1017,15 +1023,17 @@ pub(crate) fn hex_of(hash: &str) -> Result<&str> {
 }
 
 /// `stated` is the size the working copy states for the bytes, if it does;
-/// `kept` is as for `Cache::keep`; `offline` is the bytes of attachments, by
-/// hex, whose partial files a fetch with no room leaves in place.
-pub(crate) fn fetch(
+/// `kept` is as for `Cache::keep`; `attachments` reads the bytes of
+/// attachments, by hex, whose partial files a fetch with no room leaves in
+/// place, with a guard that keeps any attachment from being made until it
+/// is dropped.
+pub(crate) fn fetch<G>(
     cache: &Cache,
     http: &Http,
     hash: &str,
     stated: Option<u64>,
     kept: impl FnOnce() -> Option<HashSet<String>>,
-    offline: impl FnOnce() -> Option<HashSet<String>>,
+    attachments: impl FnOnce() -> Option<(G, HashSet<String>)>,
 ) -> Result<Fetched> {
     let absent = |reason: String| CoreError::BytesAbsent {
         hash: hash.to_string(),
@@ -1079,7 +1087,7 @@ pub(crate) fn fetch(
         LINK_IDLE,
         || cache.volume().map(|volume| volume.free),
         kept,
-        offline,
+        attachments,
     )
 }
 
@@ -1100,7 +1108,7 @@ const LINK_BODY_MOST: Duration = Duration::from_secs(6 * 60 * 60);
 /// fetch is unbounded. `room` answers the free space of the volume holding
 /// the cache, `None` where it cannot be read.
 #[allow(clippy::too_many_arguments)]
-fn pull(
+fn pull<G>(
     cache: &Cache,
     hash: &str,
     link: &str,
@@ -1108,7 +1116,7 @@ fn pull(
     idle: Duration,
     room: impl Fn() -> Option<u64>,
     kept: impl FnOnce() -> Option<HashSet<String>>,
-    offline: impl FnOnce() -> Option<HashSet<String>>,
+    attachments: impl FnOnce() -> Option<(G, HashSet<String>)>,
 ) -> Result<Fetched> {
     let absent = |reason: String| CoreError::BytesAbsent {
         hash: hash.to_string(),
@@ -1185,21 +1193,35 @@ fn pull(
     }
     let start = staging.held;
     let needed = end.saturating_sub(start);
-    let mut free = room();
-    if free.is_some_and(|free| free < needed)
-        && cache.take_other_partials(&staging.label, offline) > 0
+    let free = room();
+    if let Some(short) = free
+        && short < needed
     {
-        free = room();
-    }
-    if let Some(free) = free
-        && free < needed
-    {
-        cache.drop_staging(staging);
-        return Err(CoreError::NoRoom {
-            hash: hash.to_string(),
-            size: end,
-            free,
-        });
+        let mut free = free;
+        // Unknown attachments take no partial file, and keep this one.
+        let read = attachments();
+        let hex = hex_of(hash)?;
+        let attachment = read.as_ref().is_none_or(|(_, kept)| kept.contains(hex));
+        if let Some((_, kept)) = &read
+            && cache.take_other_partials(&staging.label, kept) > 0
+        {
+            free = room();
+        }
+        drop(read);
+        if let Some(free) = free
+            && free < needed
+        {
+            if attachment {
+                cache.leave_staging(staging);
+            } else {
+                cache.drop_staging(staging);
+            }
+            return Err(CoreError::NoRoom {
+                hash: hash.to_string(),
+                size: end,
+                free,
+            });
+        }
     }
     let body = Bounded {
         inner: Idle::watching(opened.body, idle),
@@ -1489,6 +1511,10 @@ pub(crate) mod tests {
         Some(HashSet::new())
     }
 
+    pub(crate) fn no_attachments() -> Option<((), HashSet<String>)> {
+        Some(((), HashSet::new()))
+    }
+
     #[test]
     fn fetched_bytes_an_upload_names_stay_in_backups_and_so_do_any_where_the_queue_is_unread() {
         let dir = tempfile::tempdir().unwrap();
@@ -1554,7 +1580,7 @@ pub(crate) mod tests {
             .unwrap();
         left.set_modified(SystemTime::now() - Duration::from_secs(7200))
             .unwrap();
-        cache.sweep_incoming(Duration::from_secs(3600));
+        cache.sweep_incoming(Duration::from_secs(3600), Some(&HashSet::new()));
         assert_eq!(
             retained
                 .entry_kind(Path::new(".incoming-old"))
@@ -1660,7 +1686,7 @@ pub(crate) mod tests {
                 within,
                 || None,
                 no_uploads,
-                no_uploads
+                no_attachments
             )
             .is_ok()
         );
@@ -1673,7 +1699,7 @@ pub(crate) mod tests {
             within,
             || None,
             no_uploads,
-            no_uploads,
+            no_attachments,
         )
         .unwrap_err();
         assert!(
@@ -1777,7 +1803,7 @@ pub(crate) mod tests {
             WITHIN,
             || None,
             no_uploads,
-            no_uploads,
+            no_attachments,
         );
         assert!(
             matches!(first, Err(CoreError::BytesAbsent { .. })),
@@ -1795,7 +1821,7 @@ pub(crate) mod tests {
             WITHIN,
             || None,
             no_uploads,
-            no_uploads,
+            no_attachments,
         )
         .unwrap();
         assert_eq!(fs::read(fetched.path).unwrap(), bytes);
@@ -1822,7 +1848,7 @@ pub(crate) mod tests {
                 WITHIN,
                 || None,
                 no_uploads,
-                no_uploads,
+                no_attachments,
             )
             .is_err()
         );
@@ -1834,7 +1860,7 @@ pub(crate) mod tests {
             WITHIN,
             || None,
             no_uploads,
-            no_uploads,
+            no_attachments,
         )
         .unwrap();
         assert_eq!(fs::read(fetched.path).unwrap(), bytes);
@@ -1857,7 +1883,7 @@ pub(crate) mod tests {
                 WITHIN,
                 || None,
                 no_uploads,
-                no_uploads,
+                no_attachments,
             )
             .is_err()
         );
@@ -1874,7 +1900,7 @@ pub(crate) mod tests {
             WITHIN,
             || None,
             no_uploads,
-            no_uploads,
+            no_attachments,
         )
         .unwrap_err();
         assert!(matches!(refused, CoreError::Decoding(_)), "{refused:?}");
@@ -1897,7 +1923,7 @@ pub(crate) mod tests {
                 WITHIN,
                 || None,
                 no_uploads,
-                no_uploads,
+                no_attachments,
             )
             .is_err()
         );
@@ -1915,7 +1941,7 @@ pub(crate) mod tests {
                 WITHIN,
                 || None,
                 no_uploads,
-                no_uploads,
+                no_attachments,
             )
             .is_ok()
         );
@@ -1937,7 +1963,7 @@ pub(crate) mod tests {
             WITHIN,
             || Some(4999),
             no_uploads,
-            no_uploads,
+            no_attachments,
         )
         .unwrap_err();
         assert!(
@@ -1961,7 +1987,7 @@ pub(crate) mod tests {
             WITHIN,
             || Some(5000),
             no_uploads,
-            no_uploads,
+            no_attachments,
         );
         assert!(kept.is_ok(), "{kept:?}");
     }
@@ -1982,7 +2008,7 @@ pub(crate) mod tests {
                 WITHIN,
                 || None,
                 no_uploads,
-                no_uploads,
+                no_attachments,
             )
             .is_err()
         );
@@ -1994,7 +2020,7 @@ pub(crate) mod tests {
             WITHIN,
             || Some(2000),
             no_uploads,
-            no_uploads,
+            no_attachments,
         );
         assert!(fetched.is_ok(), "{fetched:?}");
     }
@@ -2023,7 +2049,7 @@ pub(crate) mod tests {
             WITHIN,
             || None,
             no_uploads,
-            no_uploads,
+            no_attachments,
         )
         .unwrap_err();
         assert!(
@@ -2137,10 +2163,10 @@ pub(crate) mod tests {
             .strip_prefix(".partial-")
             .unwrap()
             .to_string();
-        let offline = HashSet::from([attached.clone(), partial_hex]);
+        let attachments = HashSet::from([attached.clone(), partial_hex]);
         let mut given = None;
         // 160 bytes are held, and only the 10 of the other file count.
-        let taken = cache.trim(&HashSet::new(), &offline, |held| {
+        let taken = cache.trim(&HashSet::new(), &attachments, |held| {
             given = Some(held);
             Some(10)
         });
@@ -2148,7 +2174,7 @@ pub(crate) mod tests {
         assert_eq!(taken, 0);
         assert!(whole.exists() && partial.exists() && other.exists());
         // Under a budget of nothing, only the other file goes.
-        assert_eq!(cache.trim(&HashSet::new(), &offline, |_| Some(0)), 10);
+        assert_eq!(cache.trim(&HashSet::new(), &attachments, |_| Some(0)), 10);
         assert!(whole.exists() && partial.exists() && !other.exists());
         // The witness: once they are no attachment's, the same trim takes them.
         assert_eq!(
@@ -2260,12 +2286,101 @@ pub(crate) mod tests {
         staging.file.set_modified(SystemTime::now() - week).unwrap();
         let label = staging.label.clone();
         let other = Cache::beside(&dir.path().join("store.sqlite"));
-        other.sweep_incoming(Duration::ZERO);
+        other.sweep_incoming(Duration::ZERO, Some(&HashSet::new()));
         assert!(label.exists(), "the sweep took a partial a fetch holds");
         // The witness: once let go, the same old partial is swept.
         cache.leave_staging(staging);
-        other.sweep_incoming(Duration::ZERO);
+        other.sweep_incoming(Duration::ZERO, Some(&HashSet::new()));
         assert!(!label.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_startup_sweep_spares_the_partial_file_of_an_attachment_however_old() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = Cache::beside(&dir.path().join("store.sqlite"));
+        let hash = name_of(&payload(8));
+        let mut staging = cache.stage(&hash).unwrap();
+        staging.file.write_all(b"some bytes").unwrap();
+        let week = PARTIAL_KEPT + Duration::from_secs(60);
+        staging.file.set_modified(SystemTime::now() - week).unwrap();
+        let label = staging.label.clone();
+        cache.leave_staging(staging);
+        let attached = HashSet::from([hex_of(&hash).unwrap().to_string()]);
+        cache.sweep_incoming(Duration::ZERO, Some(&attached));
+        assert!(
+            label.exists(),
+            "the sweep took the partial file of an attachment"
+        );
+        cache.sweep_incoming(Duration::ZERO, None);
+        assert!(
+            label.exists(),
+            "the sweep took a partial file with attachments unknown"
+        );
+        // The witness: once no attachment's, the same old partial is swept.
+        cache.sweep_incoming(Duration::ZERO, Some(&HashSet::new()));
+        assert!(!label.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_fetch_of_an_attachment_short_of_room_keeps_its_partial_file() {
+        let bytes = payload(5000);
+        let hash = name_of(&bytes);
+        let dir = tempfile::tempdir().unwrap();
+        let cache = Cache::beside(&dir.path().join("store.sqlite"));
+        let link = ranged(bytes.clone(), true, Some(3000));
+        let partial = cache
+            .dir
+            .join(format!(".partial-{}", hex_of(&hash).unwrap()));
+        let stopped = pull(
+            &cache,
+            &hash,
+            &link.url,
+            Some(5000),
+            WITHIN,
+            || None,
+            no_uploads,
+            no_attachments,
+        );
+        assert!(stopped.is_err());
+        assert_eq!(fs::metadata(&partial).unwrap().len(), 3000);
+        let attached = || Some(((), HashSet::from([hex_of(&hash).unwrap().to_string()])));
+        let refused = pull(
+            &cache,
+            &hash,
+            &link.url,
+            Some(5000),
+            WITHIN,
+            || Some(1000),
+            no_uploads,
+            attached,
+        );
+        assert!(
+            matches!(refused, Err(CoreError::NoRoom { .. })),
+            "{refused:?}"
+        );
+        assert_eq!(
+            fs::metadata(&partial).map(|held| held.len()).ok(),
+            Some(3000),
+            "a fetch with no room dropped the part of an attachment it held"
+        );
+        // The witness: for bytes no attachment's, the same refusal drops it.
+        let refused = pull(
+            &cache,
+            &hash,
+            &link.url,
+            Some(5000),
+            WITHIN,
+            || Some(1000),
+            no_uploads,
+            no_attachments,
+        );
+        assert!(
+            matches!(refused, Err(CoreError::NoRoom { .. })),
+            "{refused:?}"
+        );
+        assert!(!partial.exists());
     }
 
     #[cfg(unix)]
@@ -2286,7 +2401,7 @@ pub(crate) mod tests {
             WITHIN,
             room,
             no_uploads,
-            no_uploads,
+            no_attachments,
         );
         assert!(fetched.is_ok(), "{fetched:?}");
         assert!(!other.exists());
@@ -2301,7 +2416,7 @@ pub(crate) mod tests {
             WITHIN,
             full,
             no_uploads,
-            no_uploads,
+            no_attachments,
         );
         assert!(
             matches!(refused, Err(CoreError::NoRoom { .. })),
@@ -2368,7 +2483,7 @@ pub(crate) mod tests {
             WITHIN,
             || None,
             no_uploads,
-            no_uploads,
+            no_attachments,
         );
         assert!(fetched.is_ok(), "{fetched:?}");
         let _ = open(&url, 100);
@@ -2416,7 +2531,7 @@ pub(crate) mod tests {
                 WITHIN,
                 || None,
                 no_uploads,
-                no_uploads,
+                no_attachments,
             );
             let url = lying(range);
             let refused = pull(
@@ -2427,7 +2542,7 @@ pub(crate) mod tests {
                 WITHIN,
                 || None,
                 no_uploads,
-                no_uploads,
+                no_attachments,
             );
             assert!(
                 matches!(refused, Err(CoreError::BytesAbsent { .. })),
@@ -2469,7 +2584,7 @@ pub(crate) mod tests {
             Duration::from_millis(500),
             || None,
             no_uploads,
-            no_uploads,
+            no_attachments,
         )
         .unwrap_err();
         assert!(
@@ -2488,14 +2603,14 @@ pub(crate) mod tests {
         let cache = Cache::beside(&dir.path().join("core.sqlite"));
         let door = format!("/blobs/{hash}/url");
         server.on(&door, vec![crate::scripted::unnamed(401, "access_denied")]);
-        let refused = fetch(&cache, &http, &hash, None, no_uploads, no_uploads).unwrap_err();
+        let refused = fetch(&cache, &http, &hash, None, no_uploads, no_attachments).unwrap_err();
         assert!(
             matches!(refused, CoreError::Unnamed { status: 401, .. }),
             "a gateway's 401 on a blob's link was read as the credential refused: {refused:?}"
         );
         server.on(&door, vec![crate::scripted::refusal(401, "unauthorized")]);
         assert!(matches!(
-            fetch(&cache, &http, &hash, None, no_uploads, no_uploads).unwrap_err(),
+            fetch(&cache, &http, &hash, None, no_uploads, no_attachments).unwrap_err(),
             CoreError::Unauthorized { .. }
         ));
     }
@@ -2603,9 +2718,9 @@ pub(crate) mod tests {
         let left = cache.dir.join(".incoming-left-by-a-crash");
         fs::write(&left, b"half").unwrap();
         let held = cache.keep(EMPTY, &b""[..], no_uploads).unwrap().path;
-        cache.sweep_incoming(Duration::from_secs(3600));
+        cache.sweep_incoming(Duration::from_secs(3600), Some(&HashSet::new()));
         assert!(left.exists());
-        cache.sweep_incoming(Duration::ZERO);
+        cache.sweep_incoming(Duration::ZERO, Some(&HashSet::new()));
         assert!(!left.exists());
         assert!(
             held.exists(),

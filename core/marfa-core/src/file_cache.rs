@@ -81,9 +81,10 @@ pub struct FileCache {
     /// once they could, and off Apple platforms, where nothing is marked.
     pub backup_mark_failure: Option<String>,
     /// The files attached to items the copy holds, which stay on the device
-    /// outside the budget; `None` while a hydration fills the copy, since
-    /// its rows have not all arrived, for a folder's copy, which holds its
-    /// files in the folder, and where the cache could not be read.
+    /// outside the budget; `None` from the start of a hydration until one
+    /// completes, since the copy's rows have not all arrived, for a folder's
+    /// copy, which holds its files in the folder, and where the cache could
+    /// not be read.
     pub attachments: Option<Attachments>,
 }
 
@@ -130,6 +131,9 @@ pub enum NotHeldReason {
     /// The server, or the link it gave, could not be reached, or the link
     /// stopped sending part way.
     Unreachable,
+    /// The server asked the device to wait longer than a fetch of
+    /// attachments waits, before this attachment or one before it.
+    RateLimited,
     /// The server holds no bytes by that hash.
     Absent,
     /// The fetch failed otherwise: the link answered what does not continue
@@ -147,6 +151,7 @@ impl NotHeldReason {
             NotHeldReason::NotFetched => "not_fetched",
             NotHeldReason::NoRoom => "no_room",
             NotHeldReason::Unreachable => "unreachable",
+            NotHeldReason::RateLimited => "rate_limited",
             NotHeldReason::Absent => "absent",
             NotHeldReason::Failed => "failed",
             NotHeldReason::NotInCopy => "not_in_copy",
@@ -157,6 +162,7 @@ impl NotHeldReason {
         match text {
             "no_room" => NotHeldReason::NoRoom,
             "unreachable" => NotHeldReason::Unreachable,
+            "rate_limited" => NotHeldReason::RateLimited,
             "absent" => NotHeldReason::Absent,
             "failed" => NotHeldReason::Failed,
             _ => NotHeldReason::NotFetched,
@@ -175,19 +181,29 @@ pub struct KeptFetch {
     pub attachments: Option<Attachments>,
 }
 
-/// The attachments, grouped by the hex of the hash of their bytes, with the
-/// size each group states, the largest any of its files states.
+/// The attachments that share one hash.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct Group {
+    pub(crate) files: u64,
+    /// The largest size any of them states.
+    pub(crate) stated: Option<u64>,
+    /// How many of them state no size.
+    pub(crate) unstated: u64,
+}
+
+/// The attachments, grouped by the hex of the hash of their bytes.
 pub(crate) fn by_bytes(
     found: &[crate::store::Attachment],
-) -> std::collections::BTreeMap<String, (u64, Option<u64>)> {
-    let mut groups = std::collections::BTreeMap::<String, (u64, Option<u64>)>::new();
+) -> std::collections::BTreeMap<String, Group> {
+    let mut groups = std::collections::BTreeMap::<String, Group>::new();
     for attachment in found {
         let Ok(hex) = crate::blob::hex_of(&attachment.hash) else {
             continue;
         };
-        let group = groups.entry(hex.to_string()).or_insert((0, None));
-        group.0 += 1;
-        group.1 = group.1.max(attachment.stated);
+        let group = groups.entry(hex.to_string()).or_default();
+        group.files += 1;
+        group.stated = group.stated.max(attachment.stated);
+        group.unstated += u64::from(attachment.stated.is_none());
     }
     groups
 }
@@ -210,35 +226,38 @@ pub(crate) fn attachments_of(
         not_held_by_reason: Vec::new(),
     };
     let mut reasons = std::collections::BTreeMap::<NotHeldReason, NotHeld>::new();
-    let mut miss = |reason: NotHeldReason, attachments: u64, stated: Option<u64>| {
+    let mut miss = |reason: NotHeldReason, group: Group| {
         let entry = reasons.entry(reason).or_insert(NotHeld {
             reason,
             attachments: 0,
             bytes: 0,
             unstated: 0,
         });
-        entry.attachments += attachments;
-        match stated {
-            Some(bytes) => entry.bytes += bytes,
-            None => entry.unstated += attachments,
-        }
+        entry.attachments += group.files;
+        entry.bytes += group.stated.unwrap_or(0);
+        entry.unstated += group.unstated;
     };
-    for (hex, (count, stated)) in by_bytes(found) {
+    for (hex, group) in by_bytes(found) {
         if let Some(size) = entries.get(&format!(".partial-{hex}")) {
             report.partial_bytes += size;
         }
         if let Some(size) = entries.get(&hex) {
-            report.held += count;
+            report.held += group.files;
             report.held_bytes += size;
             continue;
         }
         let reason = misses.get(&hex).map_or(NotHeldReason::NotFetched, |text| {
             NotHeldReason::stored(text)
         });
-        miss(reason, count, stated);
+        miss(reason, group);
     }
     if not_in_copy > 0 {
-        miss(NotHeldReason::NotInCopy, not_in_copy, None);
+        let outside = Group {
+            files: not_in_copy,
+            stated: None,
+            unstated: not_in_copy,
+        };
+        miss(NotHeldReason::NotInCopy, outside);
     }
     report.not_held_by_reason = reasons.into_values().collect();
     report.not_held = report
@@ -539,6 +558,7 @@ pub(crate) mod tests {
             attachment("b", 'b', Some(30)),
             attachment("c", 'c', None),
             attachment("d", 'd', Some(7)),
+            attachment("d2", 'd', None),
             crate::store::Attachment {
                 item_id: "bad".into(),
                 hash: "not a hash".into(),
@@ -557,7 +577,7 @@ pub(crate) mod tests {
         assert_eq!(report.held, 2);
         assert_eq!(report.held_bytes, 10);
         assert_eq!(report.partial_bytes, 12);
-        assert_eq!(report.not_held, 5);
+        assert_eq!(report.not_held, 6);
         assert_eq!(report.not_held_bytes, 37);
         let reasons: Vec<_> = report
             .not_held_by_reason
@@ -567,7 +587,7 @@ pub(crate) mod tests {
         assert_eq!(
             reasons,
             [
-                (NotHeldReason::NotFetched, 2, 7, 1),
+                (NotHeldReason::NotFetched, 3, 7, 2),
                 (NotHeldReason::NoRoom, 1, 30, 0),
                 (NotHeldReason::NotInCopy, 2, 0, 2),
             ]
