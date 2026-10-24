@@ -31,8 +31,15 @@ const WRITER = fileURLToPath(new URL("./backup-writer.ts", import.meta.url));
 const roots: string[] = [];
 const writers: ChildProcess[] = [];
 
-afterEach(() => {
-  for (const writer of writers.splice(0)) writer.kill("SIGKILL");
+afterEach(async () => {
+  await Promise.all(
+    writers.splice(0).map(async (writer) => {
+      if (writer.exitCode !== null || writer.signalCode !== null) return;
+      const exited = new Promise((resolve) => writer.once("exit", resolve));
+      writer.kill("SIGKILL");
+      await exited;
+    }),
+  );
   for (const root of roots.splice(0)) {
     rmSync(root, { recursive: true, force: true });
   }
@@ -48,6 +55,8 @@ interface Writer {
   child: ChildProcess;
   /** The highest number the writer has printed, which it has committed. */
   acked: () => number;
+  request: (count: number) => number;
+  write: (count: number) => Promise<void>;
 }
 
 async function startWriter(directory: string): Promise<Writer> {
@@ -55,7 +64,7 @@ async function startWriter(directory: string): Promise<Writer> {
     process.execPath,
     ["--import", "tsx", WRITER, directory],
     {
-      stdio: ["ignore", "pipe", "inherit"],
+      stdio: ["pipe", "pipe", "inherit"],
     },
   );
   writers.push(child);
@@ -66,7 +75,25 @@ async function startWriter(directory: string): Promise<Writer> {
     partial = lines.pop() ?? "";
     for (const line of lines) acked = Math.max(acked, Number(line));
   });
-  const writer = { child, acked: () => acked };
+  const request = (count: number): number => {
+    const target = acked + count;
+    child.stdin.write(`${String(count)}\n`);
+    return target;
+  };
+  const writer = {
+    child,
+    acked: () => acked,
+    request,
+    write: async (count: number) => {
+      const target = request(count);
+      await until(() => {
+        if (child.exitCode !== null || child.signalCode !== null) {
+          throw new Error("writer exited before acknowledging its batch");
+        }
+        return acked >= target;
+      });
+    },
+  };
   await until(() => acked > 0);
   return writer;
 }
@@ -125,21 +152,45 @@ function expectWhole(restored: Restored, ackedBefore: number): void {
   expect(restored.rows).toBe(restored.highest);
 }
 
+async function checkCopy(
+  directory: string,
+  ackedBefore: number,
+): Promise<void> {
+  try {
+    expectWhole(await restore(directory), ackedBefore);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+}
+
 /** The files of a data directory a copier reads one after another. */
-function copyOneAfterAnother(from: string, to: string): Promise<void> {
-  return (async () => {
-    mkdirSync(to, { recursive: true });
-    for (const name of ["marfa.db", "marfa.db-wal"]) {
-      if (existsSync(join(from, name)))
-        cpSync(join(from, name), join(to, name));
-      // Time passes between one file and the next, as it does for a tool
-      // that reads a database and then the many files beside it.
-      await pause(40);
-    }
-  })();
+async function copyOneAfterAnother(
+  from: string,
+  to: string,
+  betweenFiles: () => Promise<void>,
+): Promise<void> {
+  mkdirSync(to, { recursive: true });
+  cpSync(join(from, "marfa.db"), join(to, "marfa.db"));
+  await betweenFiles();
+  cpSync(join(from, "marfa.db-wal"), join(to, "marfa.db-wal"));
 }
 
 describe("copying a running instance's data directory", () => {
+  it("does not grow the fixture while the parent is checking a copy", async () => {
+    const root = freshRoot();
+    const live = join(root, "live");
+    mkdirSync(live);
+    const writer = await startWriter(live);
+
+    await pause(100);
+    expect(writer.acked()).toBe(1);
+    await writer.write(32);
+    await pause(100);
+    expect(writer.acked()).toBe(33);
+    await writer.write(32);
+    expect(writer.acked()).toBe(65);
+  });
+
   // The witness for everything below: the same copy, taken the same way,
   // without a read transaction held, is not a restorable database.
   it("restores a copy that reads the files one after another across a checkpoint to a database that is not whole", async () => {
@@ -190,14 +241,20 @@ describe("copying a running instance's data directory", () => {
     const writer = await startWriter(live);
 
     for (let trial = 0; trial < 8; trial += 1) {
-      await pause(30 + trial * 17);
+      const previous = writer.acked();
+      const writing = writer.write(500);
+      await until(() => writer.acked() > previous);
       const ackedBefore = writer.acked();
       writer.child.kill("SIGSTOP");
       const image = join(root, `image-${String(trial)}`);
-      cpSync(live, image, { recursive: true });
-      writer.child.kill("SIGCONT");
+      try {
+        cpSync(live, image, { recursive: true });
+      } finally {
+        writer.child.kill("SIGCONT");
+        await writing;
+      }
 
-      expectWhole(await restore(image), ackedBefore);
+      await checkCopy(image, ackedBefore);
     }
   }, 120_000);
 
@@ -208,14 +265,16 @@ describe("copying a running instance's data directory", () => {
 
     for (let trial = 0; trial < 3; trial += 1) {
       const writer = await startWriter(live);
-      await pause(100 + trial * 60);
+      const previous = writer.acked();
+      writer.request(500);
+      await until(() => writer.acked() > previous);
       const ackedBefore = writer.acked();
       writer.child.kill("SIGKILL");
       await new Promise((resolve) => writer.child.once("exit", resolve));
       const image = join(root, `killed-${String(trial)}`);
       cpSync(live, image, { recursive: true });
 
-      expectWhole(await restore(image), ackedBefore);
+      await checkCopy(image, ackedBefore);
     }
   }, 120_000);
 
@@ -226,22 +285,22 @@ describe("copying a running instance's data directory", () => {
     const writer = await startWriter(live);
 
     for (let trial = 0; trial < 12; trial += 1) {
-      await pause(20 + trial * 11);
       const ackedBefore = writer.acked();
       // What `sqlite3 marfa.db "BEGIN; SELECT 1 FROM sqlite_master;"` held
       // open does: the log is not restarted while a reader is on it.
       const reader = createClient({ url: `file:${join(live, "marfa.db")}` });
-      await reader.execute("BEGIN");
-      await reader.execute("SELECT count(*) FROM probe");
       const copy = join(root, `held-${String(trial)}`);
       try {
-        await copyOneAfterAnother(live, copy);
+        await reader.execute("BEGIN");
+        await reader.execute("SELECT count(*) FROM probe");
+        // These commits cross the automatic checkpoint threshold while
+        // the reader prevents the WAL from restarting between files.
+        await copyOneAfterAnother(live, copy, () => writer.write(500));
       } finally {
-        await reader.execute("COMMIT");
         reader.close();
       }
 
-      expectWhole(await restore(copy), ackedBefore);
+      await checkCopy(copy, ackedBefore);
     }
   }, 120_000);
 

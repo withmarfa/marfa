@@ -1,5 +1,5 @@
-import { expect, it } from "vitest";
-import { mkdtemp } from "node:fs/promises";
+import { expect, it, onTestFinished } from "vitest";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createConnection } from "./connection.js";
@@ -10,6 +10,7 @@ const VALUES =
 
 it("refuses a key row that leaves out its type permissions", async () => {
   const dir = await mkdtemp(join(tmpdir(), "marfa-key-permissions-"));
+  onTestFinished(() => rm(dir, { recursive: true, force: true }));
   const connection = await createConnection(join(dir, "test.db"));
   try {
     await expect(
@@ -21,6 +22,6 @@ it("refuses a key row that leaves out its type permissions", async () => {
       `INSERT INTO api_keys (${COLUMNS}, type_permissions) VALUES (${VALUES}, '{}')`,
     );
   } finally {
-    connection.raw.close();
+    await connection.close();
   }
 });
