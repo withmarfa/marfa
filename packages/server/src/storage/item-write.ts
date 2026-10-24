@@ -99,6 +99,7 @@ export type ItemWriter =
 interface RowChange {
   properties?: Record<string, unknown>;
   properties_mode?: "merge" | "replace";
+  prune_undeclared_properties?: boolean;
   tier?: Tier;
   occurred_at?: string;
   source_id?: string;
@@ -815,6 +816,7 @@ async function changeRow(
       const updated = await itemWrites(storage).update(row.id, {
         writer: await versionWriter(storage, writer),
         properties: change.properties,
+        prune_undeclared_properties: change.prune_undeclared_properties,
         ...(change.properties_mode !== undefined && {
           properties_mode: change.properties_mode,
         }),

@@ -6,6 +6,7 @@ import {
   collectItemEvents,
   createTestContext,
   mintWorkingKey,
+  overwritePropertiesUnchecked,
   request,
   seedOauthBearer,
   settle,
@@ -337,6 +338,113 @@ describe("POST /folders", () => {
 });
 
 describe("PATCH /folders/{id}", () => {
+  it("cleans a stale nonconflicting change but preserves stored settings on a conflict", async () => {
+    const folder = await createFolder({ title: "Original", include: ["*.md"] });
+    const changed = await request(ctx.app, "PATCH", `/folders/${folder.id}`, {
+      key: ctx.workingKey,
+      body: { version: 1, title: "Current" },
+    });
+    expect(changed.status).toBe(200);
+    const stored = {
+      title: "Current",
+      include: ["*.md"],
+      search: { tier: "feed" },
+    };
+    await overwritePropertiesUnchecked(ctx.storage, folder.id, stored);
+    const conflict = await request(ctx.app, "PATCH", `/folders/${folder.id}`, {
+      key: ctx.workingKey,
+      body: { version: 1, title: "Conflicting" },
+    });
+    expect(conflict.status).toBe(409);
+    expect((await ctx.storage.items.get(folder.id))?.properties).toEqual(
+      stored,
+    );
+    expect((await ctx.storage.items.get(folder.id))?.version).toBe(2);
+    const merged = await request(ctx.app, "PATCH", `/folders/${folder.id}`, {
+      key: ctx.workingKey,
+      body: { version: 1, query: { tier: "library" } },
+    });
+    expect(merged.status).toBe(200);
+    expect((await body<{ item: Item }>(merged)).item.properties).toEqual({
+      title: "Current",
+      include: ["*.md"],
+      query: { tier: "library" },
+    });
+    expect((await ctx.storage.items.get(folder.id))?.version).toBe(3);
+  });
+
+  it.each([false, true])(
+    "drops undeclared stored settings on a change (whole: %s)",
+    async (whole) => {
+      const settings = {
+        title: "Existing folder",
+        defaults: { type: "core.note", tags: ["kept"] },
+        include: ["*.md"],
+        ignore: ["drafts/"],
+        first_placement: { "core.note": "Notes" },
+        removal_threshold: { files: 12 },
+      };
+      const folder = await createFolder(settings);
+      const stored = {
+        ...settings,
+        search: { types: ["core.note"] },
+        obsolete: true,
+      };
+      await overwritePropertiesUnchecked(ctx.storage, folder.id, stored);
+      expect((await ctx.storage.items.get(folder.id))?.properties).toEqual(
+        stored,
+      );
+
+      const refused = await request(ctx.app, "PATCH", `/folders/${folder.id}`, {
+        key: ctx.workingKey,
+        body: { version: 1, query: { tier: "invalid" } },
+      });
+      expect(refused.status).toBe(400);
+      expect((await ctx.storage.items.get(folder.id))?.properties).toEqual(
+        stored,
+      );
+
+      const query = { types: ["core.note"], tier: "all" };
+      const changed = await request(ctx.app, "PATCH", `/folders/${folder.id}`, {
+        key: ctx.workingKey,
+        body: { version: 1, ...(whole ? settings : {}), query },
+      });
+      expect(changed.status).toBe(200);
+      expect((await body<{ item: Item }>(changed)).item).toMatchObject({
+        version: 2,
+        properties: { ...settings, query },
+      });
+      expect((await ctx.storage.items.get(folder.id))?.properties).toEqual({
+        ...settings,
+        query,
+      });
+
+      const stale = await request(ctx.app, "PATCH", `/folders/${folder.id}`, {
+        key: ctx.workingKey,
+        body: { version: 1, ignore: ["private/"] },
+      });
+      expect(stale.status).toBe(200);
+      expect((await body<{ item: Item }>(stale)).item.properties).toEqual({
+        ...settings,
+        query,
+        ignore: ["private/"],
+      });
+      const conflict = await request(
+        ctx.app,
+        "PATCH",
+        `/folders/${folder.id}`,
+        {
+          key: ctx.workingKey,
+          body: { version: 1, query: { tier: "feed" } },
+        },
+      );
+      expect(conflict.status).toBe(409);
+      expect((await body<ErrorBody>(conflict)).conflicting_fields).toEqual([
+        "query",
+      ]);
+    },
+  );
+
   it("changes at the current version, merges a stale change to another setting, and refuses one to the same", async () => {
     const folder = await createFolder({ title: "Versions", include: ["a"] });
     const first = await request(ctx.app, "PATCH", `/folders/${folder.id}`, {

@@ -647,11 +647,19 @@ function judgeResult(
   input: StoredUpdateItemInput,
   rowType: string,
   result: Record<string, unknown>,
-): void {
-  if (input.properties === undefined && input.type === undefined) return;
+): Record<string, unknown> {
+  if (input.properties === undefined && input.type === undefined) return result;
   const resultingType = input.type ?? rowType;
+  const fields = input.prune_undeclared_properties
+    ? getTypeSchema(resultingType)?.fields
+    : undefined;
+  if (fields !== undefined) {
+    result = Object.fromEntries(
+      Object.entries(result).filter(([key]) => Object.hasOwn(fields, key)),
+    );
+  }
   const validation = validateProperties(resultingType, result);
-  if (validation.success) return;
+  if (validation.success) return result;
   const detail = validation.errors
     .map((e) => `${e.field}: ${e.message}`)
     .join("; ");
@@ -1562,12 +1570,15 @@ export class SqliteItemStore implements ItemStore {
         // not this write's.
         await writeVersion(currentProps);
 
-        const merged = mergeUpdateProperties(
-          currentProps,
-          incomingProps,
-          input.properties_mode ?? "merge",
+        const merged = judgeResult(
+          input,
+          row.type,
+          mergeUpdateProperties(
+            currentProps,
+            incomingProps,
+            input.properties_mode ?? "merge",
+          ),
         );
-        judgeResult(input, row.type, merged);
         return await this.persistUpdate(tx, row, {
           id,
           input,
@@ -1799,7 +1810,7 @@ export class SqliteItemStore implements ItemStore {
         resolvedFields = result.changedFields;
       }
 
-      judgeResult(input, row.type, resolvedProperties);
+      resolvedProperties = judgeResult(input, row.type, resolvedProperties);
 
       // Same invariant as the fast path above: the version being left behind
       // is snapshotted so a later stale write can merge against it.

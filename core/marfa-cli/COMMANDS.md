@@ -2867,7 +2867,7 @@ Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 
 ### marfa device folders change
 
-Change a folder's settings through the folder operations, at once, each named one replaced whole.
+Change a folder's settings through the folder operations, at once, each named one replaced whole. Omitted settings stay. Every accepted change removes stored properties the current folder type does not declare.
 
 ```text
 marfa device folders change [OPTIONS] --version <VERSION> <ID>
@@ -3701,7 +3701,7 @@ marfa folders create [OPTIONS]
 
 ### marfa folders change
 
-Change a folder's settings on the server, each named one replaced whole.
+Change a folder's settings on the server, each named one replaced whole. Omitted settings stay. Every accepted change removes stored properties the current folder type does not declare, including with --file or --body.
 
 ```text
 marfa folders change [OPTIONS] --version <VERSION> <ID>
