@@ -1126,11 +1126,12 @@ mod tests {
                 scope.spawn(|| supervise(|| machine.read(listed), &stop, machine, record, timing));
             let bound = Instant::now() + Duration::from_secs(10);
             while !until(machine) && !running.is_finished() {
-                assert!(
-                    Instant::now() < bound,
-                    "never came to pass: {:?}",
-                    machine.told()
-                );
+                if Instant::now() >= bound {
+                    // The supervisor is stopped first: the scope waits for it
+                    // before this panic can end the test.
+                    stop.store(true, Ordering::SeqCst);
+                    panic!("never came to pass: {:?}", machine.told());
+                }
                 std::thread::sleep(Duration::from_millis(2));
             }
             stop.store(true, Ordering::SeqCst);
@@ -1504,7 +1505,17 @@ mod tests {
             ],
         );
         let listing = listed(&["/a"]);
-        supervised(&machine, &listing, |machine| {
+        // A watch that is still running 150 milliseconds after it told it
+        // watches is told to have recovered, and its end is then told again.
+        // These watches end at once, so a loaded machine that stalls one for
+        // that long would break the count; no watch here may recover.
+        let temp = tempfile::tempdir().unwrap();
+        let record = WatchRecord::at(temp.path().join("record.json"), 1, Duration::from_secs(5));
+        let timing = Timing {
+            recovered: Duration::from_secs(3600),
+            ..quick()
+        };
+        supervised_timed(&machine, &listing, &record, timing, |machine| {
             machine.opened("/a") == 4
                 && lock(&machine.ended).len() == 3
                 && count(machine, "unwatched /a watch") == 1
