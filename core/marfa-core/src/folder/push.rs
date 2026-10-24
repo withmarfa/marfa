@@ -386,6 +386,7 @@ impl Folder {
         self.place(&item_id, &file.key, withheld)?;
         let kept = Kept {
             bytes: true,
+            blob: file.source.as_deref().map(crate::blob::name_of),
             ..Kept::default()
         };
         self.bind_scanned(file, &item_id, Vec::new(), Vec::new(), kept)
@@ -756,6 +757,7 @@ impl Folder {
                 writes,
                 named,
                 bytes: false,
+                blob: bound.and_then(|bound| bound.blob.clone()),
             },
         )?;
         work.push(self.edge_work(file, item_id, bound));
@@ -972,6 +974,11 @@ impl Folder {
         let kept = Kept {
             writes: bound.writes.clone(),
             bytes: true,
+            blob: if bound.content_hash == file.hash {
+                bound.blob.clone()
+            } else {
+                file.source.as_deref().map(crate::blob::name_of)
+            },
             ..Kept::default()
         };
         self.bind_scanned(file, &held.id, Vec::new(), Vec::new(), kept)?;
@@ -1001,6 +1008,7 @@ impl Folder {
                         None => presentation,
                     }
                 }),
+                blob: kept.blob,
                 written_hash: None,
                 links,
                 lines,

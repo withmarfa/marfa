@@ -1,12 +1,12 @@
 use super::{
     BTreeMap, BoundFiles, Captured, Catalog, ControlFlow, CoreError, Directory, Duration,
     EdgeTypes, EdgeWork, Flagged, Folder, HashMap, HashSet, ID_FIELD, Item, ItemState,
-    LOCAL_ADMISSION_REFUSAL, Lists, Look, OnceCell, Path, PathBuf, Peers, RENAME_GRACE, Resolver,
-    Result, ScanReport, Scanned, Settings, Unsure, Value, Waiting, Walked, beside, bytes_of,
-    captured_identities, carries_frontmatter, changed_within, document, embeds, executable, fields,
-    id_named, identity, is_document, landing, line_of, lines, local_properties_refusal, name_of,
-    named_by_its_file, near_limit, one_per_name, placement, stat_metadata, state, suited,
-    swap_root, text_of, typed_title,
+    LOCAL_ADMISSION_REFUSAL, Lists, Look, Names, OnceCell, Path, PathBuf, Peers, RENAME_GRACE,
+    Resolver, Result, ScanReport, Scanned, Settings, Unsure, Value, Waiting, Walked, beside,
+    bytes_of, captured_identities, carries_frontmatter, changed_within, document, embeds,
+    executable, fields, id_named, identity, is_document, landing, line_of, lines,
+    local_properties_refusal, name_of, named_by_its_file, near_limit, one_per_name, placement,
+    stat_metadata, state, suited, swap_root, text_of, typed_title,
 };
 
 /// The text the scan keeps of a file. A document whose bytes are not UTF-8
@@ -106,8 +106,36 @@ pub(super) enum Missing {
     /// Still bound and journaled, until the folder it went to binds it.
     Arriving,
     Unsure(String),
+    /// Changed elsewhere in what the file showed: still bound and journaled,
+    /// for a pull to write back.
+    Changed,
     Deleted,
     Gone,
+}
+
+/// Bounded, so a row another device keeps changing ends the sweep's decision
+/// with its file written back rather than holding the sweep.
+const DECIDE_ATTEMPTS: usize = 3;
+
+/// Read once for every missing file a sweep or a confirm lets go of.
+#[derive(Default)]
+pub(super) struct Sweep {
+    members: OnceCell<HashSet<String>>,
+    shown: OnceCell<(EdgeTypes, Names)>,
+}
+
+impl Sweep {
+    fn shown(&self, folder: &Folder, catalog: &Catalog) -> Result<&(EdgeTypes, Names)> {
+        if let Some(shown) = self.shown.get() {
+            return Ok(shown);
+        }
+        let conn = folder.core.conn()?;
+        let loaded = (
+            EdgeTypes::load(&conn)?,
+            Names::load(&conn, catalog, &BoundFiles)?,
+        );
+        Ok(self.shown.get_or_init(|| loaded))
+    }
 }
 
 /// A pair this cannot read has not passed, since a delete cannot be taken
@@ -1499,6 +1527,7 @@ impl Folder {
                     continue;
                 }
                 taken.insert(item.id.clone());
+                let blob = bytes_of(&item, catalog).map(str::to_string);
                 claims[at] = Some(Claim {
                     item_id: item.id.clone(),
                     bound: Some(state::Bound {
@@ -1507,6 +1536,7 @@ impl Folder {
                         identity: None,
                         content_hash: file.hash.clone(),
                         presentation: None,
+                        blob,
                         // The item's own bytes, as a pull would have written
                         // them, so the file is the folder's to take away.
                         written_hash: Some(file.hash.clone()),
@@ -1769,7 +1799,7 @@ impl Folder {
         }
         state::set_paused(&*self.core.conn()?, state::Removal::Disk, &[])?;
         let now = crate::store::iso_at(crate::clock::system_time());
-        let members = OnceCell::new();
+        let sweep = Sweep::default();
         for state::Journaled {
             path,
             item_id,
@@ -1788,9 +1818,9 @@ impl Folder {
                 Some(state::Kept::Arriving) if !full => continue,
                 _ => {}
             }
-            match self.let_go_missing(&path, &item_id, settings, peers, &members)? {
+            match self.let_go_missing(&path, &item_id, settings, peers, &sweep)? {
                 Missing::Moved => report.moved_away += 1,
-                Missing::Arriving => {}
+                Missing::Arriving | Missing::Changed => {}
                 Missing::Unsure(reason) => report.unsure.push(Unsure { path, reason }),
                 Missing::Deleted => {
                     report.deleted += 1;
@@ -1808,7 +1838,7 @@ impl Folder {
         item_id: &str,
         settings: &Settings,
         peers: &Peers<'_>,
-        members: &OnceCell<HashSet<String>>,
+        sweep: &Sweep,
     ) -> Result<Missing> {
         // Only a row gone or in the bin sends nothing; anything else the store
         // says is an error, not a reason to skip the delete.
@@ -1823,12 +1853,10 @@ impl Folder {
         // server refuses a second delete `404`.
         let mut leaves = true;
         let missing = if let Some(item) = held.filter(|item| item.state != ItemState::Trashed) {
-            let holds = self.holds(item_id, settings, members);
+            let holds = self.holds(item_id, settings, &sweep.members);
+            let catalog = Catalog::load(&*self.core.conn()?)?;
             let look = match &bound {
-                Some(bound) => {
-                    let catalog = Catalog::load(&*self.core.conn()?)?;
-                    peers.moved_to(bound, holds, bytes_of(&item, &catalog).is_some())
-                }
+                Some(bound) => peers.moved_to(bound, holds, bytes_of(&item, &catalog).is_some()),
                 None => Look::Nowhere,
             };
             match look {
@@ -1844,19 +1872,57 @@ impl Folder {
                         &*self.core.conn()?,
                         path,
                         item_id,
-                        &state::Kept::Arriving,
+                        Some(&state::Kept::Arriving),
                     )?;
                     return Ok(Missing::Arriving);
                 }
                 // Held as a delete is while offline, until it can be told.
                 Look::Unsure(reason) => {
                     let kept = state::Kept::Unsure(reason.clone());
-                    state::journal_keep(&*self.core.conn()?, path, item_id, &kept)?;
+                    state::journal_keep(&*self.core.conn()?, path, item_id, Some(&kept))?;
                     return Ok(Missing::Unsure(reason));
                 }
                 Look::Nowhere => {
-                    self.core.delete_item(item_id)?;
-                    Missing::Deleted
+                    let mut item = item;
+                    let mut attempts = 0;
+                    loop {
+                        // No pull writes the file of an item the search no
+                        // longer holds, so the person's delete of it stands.
+                        let changed = match bound.as_ref().filter(|_| holds) {
+                            Some(bound) => {
+                                let (edge_types, names) = sweep.shown(self, &catalog)?;
+                                self.changed_while_missing(
+                                    &item,
+                                    bound,
+                                    (&catalog, edge_types, names),
+                                )?
+                            }
+                            None => false,
+                        };
+                        // A row that goes on moving while the sweep decides is
+                        // as good as changed.
+                        if changed || attempts == DECIDE_ATTEMPTS {
+                            // Unkept, so the pull reaches it.
+                            state::journal_keep(&*self.core.conn()?, path, item_id, None)?;
+                            return Ok(Missing::Changed);
+                        }
+                        #[cfg(debug_assertions)]
+                        crate::fault::hold(|| format!("folder-sweep-decided:{item_id}"));
+                        // Queued at the version decided on, so a change heard
+                        // meanwhile is decided again rather than trashed.
+                        if self.core.delete_item_at(item_id, item.version)?.is_some() {
+                            break Missing::Deleted;
+                        }
+                        attempts += 1;
+                        let newer = {
+                            let conn = self.core.conn()?;
+                            crate::store::items_by_ids(&conn, &[item_id.to_string()])?.pop()
+                        };
+                        match newer.filter(|item| item.state != ItemState::Trashed) {
+                            Some(newer) => item = newer,
+                            None => break Missing::Gone,
+                        }
+                    }
                 }
             }
         } else {

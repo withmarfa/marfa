@@ -82,7 +82,7 @@ pub use placement::PLACEMENT_EDGE;
 use placement::{beside, cleaned, path_of, suited};
 use pull::{Departing, PullPlan};
 pub use registry::{REGISTRY_ENV, Registered, Registry};
-use scan::Missing;
+use scan::{Missing, Sweep};
 
 pub use settings::{FOLDER_TYPE, Settings};
 pub use settings_file::SettingsFileReport;
@@ -1503,6 +1503,7 @@ impl Folder {
             writes: bound.map(|bound| bound.writes.clone()).unwrap_or_default(),
             named: named.cloned(),
             bytes: false,
+            blob: bound.and_then(|bound| bound.blob.clone()),
         };
         self.bind_scanned(file, item_id, links, lines, kept)
     }
@@ -2028,6 +2029,8 @@ struct Kept {
     /// Bound as a file item, whose binding holds no presentation, as a pull's
     /// does: its bytes are no text.
     bytes: bool,
+    /// The blob a file item's file was sent as, or last agreed at.
+    blob: Option<String>,
 }
 
 fn blank(value: &Value) -> bool {
@@ -2209,6 +2212,7 @@ mod tests {
             identity: None,
             content_hash: "hash".into(),
             presentation: None,
+            blob: None,
             written_hash: None,
             links: Vec::new(),
             lines: Vec::new(),
@@ -3557,11 +3561,22 @@ mod tests {
             serde_json::json!({ "search": {} }),
             None,
         );
-        for name in ["held.txt", "graced.txt"] {
-            std::fs::write(dir.path().join(name), "words\n").unwrap();
+        let names = ["restored.txt", "held.txt", "graced.txt"];
+        for name in names {
+            std::fs::write(dir.path().join(name), format!("{name} words\n")).unwrap();
         }
-        assert_eq!(folder.scan().unwrap().created, 2);
-        let ids = ["held.txt", "graced.txt"].map(|name| landed(&folder, name));
+        assert_eq!(folder.scan().unwrap().created, 3);
+        let [restored, held_id, graced] = names.map(|name| landed(&folder, name));
+
+        // The witness: a missing file no other folder holds is written back
+        // with its item's change.
+        std::fs::remove_file(dir.path().join("restored.txt")).unwrap();
+        assert_eq!(folder.scan().unwrap().missing, 1);
+        changed_elsewhere(&folder, &restored, "changed elsewhere");
+        let pulled = folder.pull().unwrap();
+        assert!(dir.path().join("restored.txt").exists(), "{pulled:?}");
+        assert_eq!(pulled.revived, 1, "{pulled:?}");
+
         for name in ["held.txt", "graced.txt"] {
             std::fs::remove_file(dir.path().join(name)).unwrap();
         }
@@ -3586,28 +3601,150 @@ mod tests {
             quick.unsure, held.unsure,
             "a quick pass forgot why it holds"
         );
-        {
-            let conn = folder.core.conn().unwrap();
-            for id in &ids {
-                conn.execute(
-                    "UPDATE items SET version = 2,
-                       properties = json_set(properties, '$.body', 'changed elsewhere')
-                     WHERE id = ?1",
-                    [id],
-                )
-                .unwrap();
-            }
+        for id in [&held_id, &graced] {
+            changed_elsewhere(&folder, id, "changed elsewhere");
         }
 
+        // Past the grace or inside it, a file that may have moved to a folder
+        // the registry no longer names stays unwritten.
         let pulled = folder.pull().unwrap();
-        // The witness: a missing file the sweep has not decided on yet is
-        // written back with the item's change, as before the grace ends.
-        assert!(dir.path().join("graced.txt").exists(), "{pulled:?}");
-        assert!(
-            !dir.path().join("held.txt").exists(),
-            "a missing file whose move cannot be told was written back"
-        );
+        for name in ["held.txt", "graced.txt"] {
+            assert!(
+                !dir.path().join(name).exists(),
+                "{name}, whose move cannot be told, was written back: {pulled:?}"
+            );
+        }
+        assert_eq!(pulled.revived, 0, "{pulled:?}");
         assert_eq!(pulled.elsewhere, 0, "{pulled:?}");
+    }
+
+    #[test]
+    fn a_sweep_queues_no_delete_of_an_item_changed_elsewhere_while_it_decides() {
+        let (_, _registry) = registry::tests::own_registry();
+        let (dir, folder) = folder_with(
+            "01a00000-0000-7000-8000-0000000000c2",
+            serde_json::json!({ "search": {} }),
+            None,
+        );
+        std::fs::write(dir.path().join("note.txt"), "the person's words\n").unwrap();
+        assert_eq!(folder.scan().unwrap().created, 1);
+        let id = landed(&folder, "note.txt");
+        std::fs::remove_file(dir.path().join("note.txt")).unwrap();
+        assert_eq!(folder.scan().unwrap().missing, 1);
+        past_the_grace(&folder, "note.txt");
+
+        // A follow applies another device's change once the sweep has
+        // found nothing changed and before it queues the delete.
+        let point = &format!("folder-sweep-decided:{id}");
+        crate::fault::arm(point);
+        // The sweep stays on this thread, which holds this test's registry.
+        let swept = std::thread::scope(|scope| {
+            let following = scope.spawn(|| {
+                let waited = std::time::Instant::now();
+                while crate::fault::waiting(point) == 0 {
+                    if waited.elapsed() > Duration::from_secs(10) {
+                        crate::fault::release(point);
+                        panic!("the sweep never decided");
+                    }
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+                changed_elsewhere(&folder, &id, "changed elsewhere");
+                crate::fault::release(point);
+            });
+            let swept = folder.scan();
+            following.join().unwrap();
+            swept
+        })
+        .unwrap();
+        let deletes: Vec<_> = folder
+            .core
+            .queue()
+            .unwrap()
+            .into_iter()
+            .filter(|write| write.kind == crate::model::WriteKind::DeleteItem)
+            .map(|write| write.base_version)
+            .collect();
+        assert_eq!(
+            deletes,
+            Vec::<Option<i64>>::new(),
+            "a delete was queued over a change the sweep never saw: {swept:?}"
+        );
+        assert!(swept.trashed.is_empty(), "{swept:?}");
+        let pulled = folder.pull().unwrap();
+        assert_eq!(pulled.revived, 1, "{pulled:?}");
+        assert!(
+            std::fs::read_to_string(dir.path().join("note.txt"))
+                .unwrap()
+                .contains("changed elsewhere")
+        );
+    }
+
+    #[test]
+    fn a_sweep_with_no_server_trashes_a_file_item_whose_bytes_it_no_longer_holds() {
+        let (_, _registry) = registry::tests::own_registry();
+        let (dir, folder) = folder_with(
+            "01a00000-0000-7000-8000-0000000000c3",
+            serde_json::json!({ "search": {} }),
+            None,
+        );
+        for name in ["kept.bin", "changed.bin"] {
+            std::fs::write(dir.path().join(name), name.as_bytes()).unwrap();
+        }
+        assert_eq!(folder.scan().unwrap().created, 2);
+        let [unchanged, changed] = ["kept.bin", "changed.bin"].map(|name| landed(&folder, name));
+        // As a pull leaves a file item it wrote: its bytes on the disk alone.
+        folder
+            .core
+            .conn()
+            .unwrap()
+            .execute(
+                "DELETE FROM queue WHERE kind = ?1",
+                [crate::model::WriteKind::UploadBlob.as_str()],
+            )
+            .unwrap();
+        let catalog = Catalog::load(&folder.core.conn().unwrap()).unwrap();
+        for id in [&unchanged, &changed] {
+            let item = folder.core.get(id).unwrap().unwrap();
+            let blob = bytes_of(&item, &catalog).unwrap();
+            folder.core.let_go_blob(blob);
+            assert!(folder.core.blob_file(blob).is_err(), "{blob} is still held");
+        }
+        for name in ["kept.bin", "changed.bin"] {
+            std::fs::remove_file(dir.path().join(name)).unwrap();
+        }
+        assert_eq!(folder.scan().unwrap().missing, 2);
+        // The witness: bytes changed elsewhere bring the file back.
+        folder
+            .core
+            .conn()
+            .unwrap()
+            .execute(
+                "UPDATE items SET version = version + 1,
+                   properties = json_set(properties, '$.blob_ref', ?2)
+                 WHERE id = ?1",
+                [&changed, &crate::blob::name_of(b"theirs")],
+            )
+            .unwrap();
+        for name in ["kept.bin", "changed.bin"] {
+            past_the_grace(&folder, name);
+        }
+        let swept = folder.scan().unwrap();
+        assert_eq!(swept.trashed, ["kept.bin"], "{swept:?}");
+        let deleted: Vec<_> = folder
+            .core
+            .queue()
+            .unwrap()
+            .into_iter()
+            .filter(|write| write.kind == crate::model::WriteKind::DeleteItem)
+            .filter_map(|write| write.item_id)
+            .collect();
+        assert_eq!(deleted, [unchanged]);
+        assert_eq!(kept(&folder, "changed.bin"), None);
+        assert!(
+            state::bound_at(&folder.core.conn().unwrap(), "changed.bin")
+                .unwrap()
+                .is_some()
+        );
     }
 
     /// As if another device had changed the item's body to `body`.

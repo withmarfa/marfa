@@ -220,6 +220,7 @@ mod tests {
             content_hash: hash.clone(),
             written_hash: Some(hash),
             presentation: None,
+            blob: None,
             links: Vec::new(),
             lines: Vec::new(),
             edit_line: None,

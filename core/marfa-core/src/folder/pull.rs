@@ -1,10 +1,14 @@
 use super::{
     ATTACHMENT_EDGE, BoundFiles, Catalog, CoreError, EdgeTypes, FOLDER_TYPE, Flagged, Folder,
-    HashMap, HashSet, Item, ItemState, Lists, Mode, Names, OFlags, Path, Peers, Result, Serialize,
-    Settings, SettingsFileReport, Uncarried, Value, beside, bytes_of, carries_frontmatter, cleaned,
-    document, executable, fields, identity, landing, line_of, name_of, names, path_of, placement,
-    plainly_inside, read_file, stat_metadata, state, suited, transfer,
+    HashMap, HashSet, Item, ItemState, Lists, Look, Mode, Names, OFlags, Path, Peers, Result,
+    Serialize, Settings, SettingsFileReport, Uncarried, Value, beside, bytes_of,
+    carries_frontmatter, cleaned, document, executable, fields, identity, landing, line_of,
+    name_of, names, path_of, placement, plainly_inside, read_file, stat_metadata, state, suited,
+    transfer,
 };
+
+/// What a render of an item's file reads besides the item.
+pub(super) type Basis<'a> = (&'a Catalog, &'a EdgeTypes, &'a Names);
 
 /// Bounded, so a copy that keeps changing ends the pull with
 /// `local_copy_changed` rather than holding it for good.
@@ -44,6 +48,8 @@ struct Rendering<'a> {
     edge_types: &'a EdgeTypes,
     names: &'a Names,
     lists: &'a Lists,
+    peers: &'a Peers<'a>,
+    members: &'a HashSet<String>,
 }
 
 impl Rendering<'_> {
@@ -580,6 +586,8 @@ impl Folder {
             edge_types: &edge_types,
             names: &names,
             lists: &lists,
+            peers: &peers,
+            members: &members,
         };
         let mut refused = HashSet::new();
         for entry in placing {
@@ -824,7 +832,11 @@ impl Folder {
         // the scan's, and its journaled delete stands.
         if let Some(bound) = &bound
             && bytes_of(item, catalog).is_none()
-            && self.deleted_as_agreed(item, bound, rendering)?
+            && self.deleted_as_agreed(
+                item,
+                bound,
+                (rendering.catalog, rendering.edge_types, rendering.names),
+            )?
         {
             return Ok(PlacementWrite::Done);
         }
@@ -877,6 +889,28 @@ impl Folder {
             }
             None => false,
         };
+        // Written back from a change made elsewhere, a file moved to another
+        // folder here would read there as a copy; the moved file brings the
+        // change to the item once that folder binds it. A move that cannot be
+        // told yet is the grace sweep's to tell.
+        if !in_place
+            && let Some(bound) = bound
+            && !self.exists(self.root.join(&bound.path))
+            && journaled_for(&*self.core.conn()?, &bound.path, &item.id)?
+        {
+            match rendering.peers.moved_to(
+                bound,
+                rendering.members.contains(&item.id),
+                bytes_of(item, catalog).is_some(),
+            ) {
+                Look::Nowhere => {}
+                Look::Moved | Look::Arriving => {
+                    report.elsewhere += 1;
+                    return Ok(PlacementWrite::Done);
+                }
+                Look::Unsure(_) => return Ok(PlacementWrite::Done),
+            }
+        }
         // Read before a move queues the placement, which is no edit the
         // file holds.
         let waiting: HashSet<String> =
@@ -933,6 +967,7 @@ impl Folder {
                     identity: None,
                     content_hash: hash.clone(),
                     presentation: presentation.clone(),
+                    blob: bytes_of(item, catalog).map(str::to_string),
                     written_hash: Some(hash),
                     links: wrote,
                     lines,
@@ -1001,6 +1036,7 @@ impl Folder {
             identity,
             content_hash: hash.clone(),
             presentation: presentation.clone(),
+            blob: bytes_of(item, catalog).map(str::to_string),
             written_hash: Some(hash.clone()),
             links: wrote.clone(),
             lines: lines.clone(),
@@ -1271,6 +1307,7 @@ impl Folder {
             identity,
             content_hash: theirs.content_hash.clone(),
             presentation: theirs.presentation.clone(),
+            blob: theirs.blob.clone(),
             written_hash: Some(theirs.content_hash.clone()),
             links: theirs.links.clone(),
             lines: theirs.lines.clone(),
@@ -1543,11 +1580,29 @@ impl Folder {
         Ok(Some(ended))
     }
 
+    /// Whether another device changed a missing file's item in what the file
+    /// showed, so the file comes back rather than the item going to the bin
+    /// (`folders/missing-file-changed-revives`). Told from the copy alone,
+    /// with no server and no held bytes: a file item by the blob its binding
+    /// last agreed at, a document by its agreed presentation.
+    pub(super) fn changed_while_missing(
+        &self,
+        item: &Item,
+        bound: &state::Bound,
+        basis: Basis<'_>,
+    ) -> Result<bool> {
+        match bytes_of(item, basis.0) {
+            // A binding that names no blob cannot tell, so the file comes back.
+            Some(blob) => Ok(bound.agreed_blob(blob) != Some(true)),
+            None => Ok(!self.deleted_as_agreed(item, bound, basis)?),
+        }
+    }
+
     fn deleted_as_agreed(
         &self,
         item: &Item,
         bound: &state::Bound,
-        rendering: &Rendering<'_>,
+        (catalog, edge_types, names): Basis<'_>,
     ) -> Result<bool> {
         if self.exists(self.root.join(&bound.path))
             || !journaled_for(&*self.core.conn()?, &bound.path, &item.id)?
@@ -1565,9 +1620,9 @@ impl Folder {
             item,
             &bound.path,
             line,
-            rendering.catalog,
-            rendering.edge_types,
-            (rendering.names, previous.as_ref(), &bound.lines),
+            catalog,
+            edge_types,
+            (names, previous.as_ref(), &bound.lines),
         )?;
         let Ok(text) = rendered.text else {
             return Ok(false);
@@ -1591,7 +1646,7 @@ impl Folder {
             .fold(presented.presentation(), |presented, field| {
                 presented.with(field, None)
             });
-            agreed.agrees(&presented, rendering.edge_types)
+            agreed.agrees(&presented, edge_types)
         }))
     }
 
@@ -1905,6 +1960,8 @@ mod tests {
                 names: &names,
                 edge_types: &edge_types,
                 lists: &lists,
+                peers: &Peers::of(&folder, None),
+                members: &HashSet::new(),
             };
             let entry = Placing {
                 item: &item,
@@ -1954,6 +2011,7 @@ mod tests {
                     identity: None,
                     content_hash: state::hash(b"---\ntitle: a\n---\nbody\n"),
                     presentation: None,
+                    blob: None,
                     written_hash: None,
                     links: Vec::new(),
                     lines: Vec::new(),
@@ -1980,6 +2038,8 @@ mod tests {
                 names: &names,
                 edge_types: &edge_types,
                 lists: &lists,
+                peers: &Peers::of(&folder, None),
+                members: &HashSet::new(),
             };
             let entry = Placing {
                 item: &item,

@@ -223,6 +223,10 @@ CREATE TABLE IF NOT EXISTS folder_files (
   identity TEXT,
   content_hash TEXT NOT NULL,
   presentation TEXT,
+  -- A file item's blob, as its item named it when the file was last written
+  -- or sent: `content_hash` is no blob hash, and once the file is gone only
+  -- this tells whether another device changed its bytes. Null for a document.
+  blob TEXT,
   written_hash TEXT,
   links TEXT NOT NULL,
   edge_lines TEXT NOT NULL,
