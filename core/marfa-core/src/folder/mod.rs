@@ -1632,6 +1632,16 @@ impl Folder {
         self.drain_in(false)
     }
 
+    /// Whether the queue holds a write no drain has answered, as a pull's
+    /// placement or edit leaves one. Taken as yes where the queue cannot be
+    /// read.
+    pub(super) fn has_unanswered_writes(&self) -> bool {
+        self.core
+            .conn()
+            .and_then(|conn| crate::store::has_unanswered_writes(&conn))
+            .unwrap_or(true)
+    }
+
     /// `drain`, for a watch where `watched`, which waits out
     /// `placement::GIVE_WAY_REREAD` before it reads again for a give-way.
     pub(super) fn drain_in(&self, watched: bool) -> Result<Drained> {

@@ -439,3 +439,89 @@ fn a_watch_whose_tell_panics_ends_and_lets_the_folder_go() {
     assert!(panicked, "the panic did not reach the caller");
     Folder::open(dir.path(), None).expect("the watch let the folder go");
 }
+
+/// How many passes a watch has started in this process.
+fn passes() -> usize {
+    marfa_core::fault::reached("folder-pass-start")
+}
+
+#[test]
+#[ignore = "needs a running server"]
+fn a_watch_of_a_quiet_folder_runs_no_pass_and_one_for_a_file_it_takes() {
+    marfa_core::fault::observe(true);
+    registry();
+    let dir = temporary_folder();
+    let tag = nonce();
+    let settings = serde_json::json!({
+        "query": { "types": ["core.note"], "filter": format!("tags contains \"{tag}\"") },
+        "defaults": { "tags": [tag] },
+        "ignore": ["/Repos/"],
+    });
+    let id = seed(&["folder", &nonce(), &settings.to_string()]);
+    let folder = Folder::add(dir.path(), &id, Some(server()), None).unwrap();
+    folder.confirm_first_sync().unwrap();
+    note(dir.path(), "Before");
+
+    let stop = AtomicBool::new(false);
+    let (told, events) = mpsc::channel::<WatchEvent>();
+    std::thread::scope(|scope| {
+        let _raise = Raise(&stop);
+        scope.spawn(|| {
+            folder.watch(&stop, |event| {
+                let _ = told.send(event);
+                Ok::<(), ()>(())
+            })
+        });
+        let until = Instant::now() + Duration::from_secs(60);
+        // At rest once the file is sent and no pass has started for longer
+        // than a few ticks.
+        let mut seen = (passes(), Instant::now());
+        loop {
+            std::thread::sleep(Duration::from_millis(100));
+            let now = passes();
+            if now != seen.0 {
+                seen = (now, Instant::now());
+            }
+            if seen.1.elapsed() > Duration::from_secs(4) {
+                break;
+            }
+            assert!(
+                Instant::now() < until,
+                "the watch kept running passes on a folder with nothing to do"
+            );
+        }
+        assert!(
+            events
+                .try_iter()
+                .any(|event| matches!(event, WatchEvent::Passed(pass) if pass.scan.created == 1)),
+            "the first pass never sent the file"
+        );
+
+        // A build in a folder the settings ignore.
+        let before = passes();
+        for round in 0..10 {
+            let build = dir.path().join(format!("Repos/app/target/{round}"));
+            std::fs::create_dir_all(&build).unwrap();
+            std::fs::write(build.join("out.o"), "object").unwrap();
+            std::thread::sleep(Duration::from_millis(150));
+        }
+        std::thread::sleep(Duration::from_secs(3));
+        assert_eq!(passes(), before, "an ignored folder's files started a pass");
+
+        // The witness: a file the folder takes does.
+        note(dir.path(), "After");
+        let until = Instant::now() + Duration::from_secs(30);
+        while passes() == before {
+            assert!(Instant::now() < until, "a new note started no pass");
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        let found = loop {
+            match events.recv_timeout(Duration::from_secs(30)) {
+                Ok(WatchEvent::Passed(pass)) if pass.scan.created == 1 => break pass,
+                Ok(_) => {}
+                Err(_) => panic!("the new note was never sent"),
+            }
+        };
+        assert!(found.drain.report.answered >= 1, "{:?}", found.drain);
+    });
+}

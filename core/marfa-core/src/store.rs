@@ -1851,6 +1851,17 @@ pub fn waiting_writes(conn: &Connection) -> Result<Vec<QueuedWrite>, CoreError> 
     )
 }
 
+/// Whether any write is yet to be sent or answered. A write the server
+/// answered, accepted or refused, or one released only by a person, has a
+/// verdict.
+pub fn has_unanswered_writes(conn: &Connection) -> Result<bool, CoreError> {
+    Ok(conn.query_row(
+        "SELECT EXISTS (SELECT 1 FROM queue WHERE verdict IS NULL)",
+        [],
+        |row| row.get(0),
+    )?)
+}
+
 /// The items with a create or edit the server has yet to answer: none
 /// answered and none dead, since a dead write is not sent again unless it
 /// is released.
