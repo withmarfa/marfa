@@ -652,9 +652,11 @@ pub fn refuse_unless_usable(conn: &Connection) -> Result<(), CoreError> {
     }
 }
 
-/// For a local list, search or read by id: a whole copy answers complete, and
-/// one a hydration has started and not completed answers from the rows that
-/// have arrived, as partial. A copy whose cursor has gone is still refused.
+/// For a local list, search or read by id: a whole copy answers complete; one
+/// whose cursor aged out answers the rows it held, as stale, until a hydration
+/// fills it again in place; one a hydration has started and not completed
+/// answers from the rows that have arrived, as partial. Any other expired copy
+/// is refused.
 pub fn read_completeness(conn: &Connection) -> Result<Completeness, CoreError> {
     if hydrated(conn)? || never_synced(conn)? {
         Ok(Completeness::Complete)

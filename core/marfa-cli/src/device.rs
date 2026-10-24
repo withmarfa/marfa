@@ -47,6 +47,13 @@ pub enum DeviceCommand {
     /// key's reach, the slice or the catalog has changed since, the server's
     /// event log no longer holds the point it started from or ends before
     /// it, or the server refuses the page cursor it kept.
+    ///
+    /// A copy whose cursor the server's event log no longer holds is filled
+    /// again in place for the same slice, server and key: it keeps
+    /// answering, marked stale, and takes writes to the rows it holds and
+    /// new ones, which wait to be sent, until the hydration finishes and
+    /// removes the rows the server no longer lists. Any other hydration
+    /// empties the copy first.
     Hydrate {
         /// Comma-separated type identifiers, such as core.note,core.file, or
         /// `*` alone for every type but `system.*`, hydrated in one pass

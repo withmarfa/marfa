@@ -2457,6 +2457,8 @@ Replace the local copy with the declared types at one tier, or both.
 
 A hydration that stopped before it finished carries on from the page it had reached when run again for the same slice. It starts again from the first page, and says why, when another instance answers, the key's reach, the slice or the catalog has changed since, the server's event log no longer holds the point it started from or ends before it, or the server refuses the page cursor it kept.
 
+A copy whose cursor the server's event log no longer holds is filled again in place for the same slice, server and key: it keeps answering, marked stale, and takes writes to the rows it holds and new ones, which wait to be sent, until the hydration finishes and removes the rows the server no longer lists. Any other hydration empties the copy first.
+
 ```text
 marfa device hydrate [OPTIONS] --types <TYPE> --tier <TIER>
 ```
