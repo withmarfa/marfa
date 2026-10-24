@@ -781,6 +781,9 @@ export async function folderHarness(
     events?: Responder[];
     /** Rows to a page of the item listing, as `scriptHydration` takes it. */
     pageSize?: number;
+    /** Scripts what the add itself reads, such as a row a waiting first
+     *  sync's plan reads by id. */
+    beforeAdd?: (server: ScriptedServer) => void;
     /** Whether a page of the item listing dies unanswered, as
      *  `scriptHydration` takes it. */
     drop?: (offset: number) => boolean;
@@ -837,6 +840,7 @@ export async function folderHarness(
     mkdirSync(dirname(join(dir, name)), { recursive: true });
     writeFileSync(join(dir, name), text);
   }
+  options.beforeAdd?.(server);
   const added = await folder.add(settings.id, { confirm: options.confirm });
   if (!added.ok) {
     await stop();

@@ -187,6 +187,22 @@ impl PullReport {
     }
 }
 
+/// The name a new file of `item` takes, from its title or else its id.
+pub(super) fn new_name(item: &Item, catalog: &Catalog) -> String {
+    let title = item
+        .properties
+        .get(fields::title_field(catalog, &item.r#type))
+        .and_then(Value::as_str)
+        .filter(|title| !title.trim().is_empty())
+        .unwrap_or(&item.id);
+    // A file item's title is a file's name already, extension and all.
+    if bytes_of(item, catalog).is_some() {
+        name_from_title(title, None)
+    } else {
+        name_from_title(title, Some(".md"))
+    }
+}
+
 /// A file's name for a title, with `extension` where the title carries none.
 fn name_from_title(title: &str, extension: Option<&str>) -> String {
     let stem = names::title_stem(title);
@@ -360,7 +376,7 @@ impl Folder {
                     hosts.push((item, path));
                 }
             }
-            self.embedded(&hosts, &catalog, &lists)?
+            self.embedded(&hosts, &members, &catalog, &lists)?
         };
         report.embeds = embedded.reports;
         let missing: Vec<String> = embedded
@@ -373,6 +389,15 @@ impl Folder {
         for (item, unmatched) in &mut work {
             *unmatched &= !embedded.at.contains_key(&item.id);
         }
+        // A file here only as an attachment leaves with its documents, as
+        // `remove_departed` takes it away; it is not kept as unmatched.
+        let mut gone_with = HashSet::new();
+        for (item, unmatched) in &work {
+            if *unmatched && self.left_with_its_documents(&item.id, &members, &settings)? {
+                gone_with.insert(item.id.clone());
+            }
+        }
+        work.retain(|(item, _)| !gone_with.contains(&item.id));
         // Held by the file embedding it whatever state the query narrows to;
         // a trashed one's file goes as any trashed item's does.
         work.extend(
@@ -1531,7 +1556,13 @@ impl Folder {
             None if !crate::store::purged(&*self.core.conn()?, &row.item_id)? => {
                 return Ok(Departing::No);
             }
-            Some(item) if settings.holds_state(item.state) => return Ok(Departing::No),
+            Some(item)
+                if settings.holds_state(item.state)
+                    && (row.blob.is_none()
+                        || !self.left_with_its_documents(&item.id, members, settings)?) =>
+            {
+                return Ok(Departing::No);
+            }
             _ => {}
         }
         Ok(match self.read(self.root.join(&row.path)) {
@@ -1545,6 +1576,45 @@ impl Folder {
             // Bytes it cannot read are not shown to be the folder's own.
             Err(error) => Departing::Unread(error.to_string()),
         })
+    }
+
+    /// Whether an item the query does not hold is attached to documents
+    /// and every one of them left the folder by its state or was purged, so
+    /// its file, there only as their attachment, leaves with them. An item
+    /// attached to nothing, such as one whose edge was taken away, stays as
+    /// any unmatched file does, and so does one attached to a document still
+    /// in a state the query holds, wherever that document is.
+    fn left_with_its_documents(
+        &self,
+        item_id: &str,
+        members: &HashSet<String>,
+        settings: &Settings,
+    ) -> Result<bool> {
+        if members.contains(item_id) {
+            return Ok(false);
+        }
+        let documents: Vec<String> = self
+            .core
+            .edges_from(item_id)?
+            .into_iter()
+            .filter(|edge| edge.edge_type == ATTACHMENT_EDGE)
+            .map(|edge| edge.target_id)
+            .collect();
+        if documents.is_empty() {
+            return Ok(false);
+        }
+        let conn = self.core.conn()?;
+        let held = crate::store::items_by_ids(&conn, &documents)?;
+        for document in &documents {
+            let gone = match held.iter().find(|item| &item.id == document) {
+                Some(item) => !settings.holds_state(item.state),
+                None => crate::store::purged(&conn, document)?,
+            };
+            if !gone {
+                return Ok(false);
+            }
+        }
+        Ok(true)
     }
 
     /// A journal row here is a file put back since its scan, so it asks for
@@ -1761,18 +1831,7 @@ impl Folder {
         if let Some(bound) = bound {
             return Some(staying(bound.path.clone()));
         }
-        let title = item
-            .properties
-            .get(fields::title_field(catalog, &item.r#type))
-            .and_then(Value::as_str)
-            .filter(|title| !title.trim().is_empty())
-            .unwrap_or(&item.id);
-        // A file item's title is a file's name already, extension and all.
-        let name = if bytes_of(item, catalog).is_some() {
-            name_from_title(title, None)
-        } else {
-            name_from_title(title, Some(".md"))
-        };
+        let name = new_name(item, catalog);
         match settings.first_placement_for(&item.r#type, catalog) {
             Some(dir) => cleaned(&format!("{dir}/{name}")),
             None => Some(name),
