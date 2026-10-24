@@ -145,9 +145,9 @@ export interface FileCache {
   backup_mark_failure: string | null;
   /**
    * The files attached to items the copy holds, which stay on the device
-   * outside the budget; null while a hydration fills the copy
-   * (`device/attachment-hydrating`), for a folder's copy, and where the
-   * cache cannot be read.
+   * outside the budget; null from the start of a hydration until one
+   * completes (`device/attachment-hydrating`), for a folder's copy, and
+   * where the cache cannot be read.
    */
   attachments: Attachments | null;
 }
@@ -157,6 +157,7 @@ export type NotHeldReason =
   | "not_fetched"
   | "no_room"
   | "unreachable"
+  | "rate_limited"
   | "absent"
   | "failed"
   | "not_in_copy";

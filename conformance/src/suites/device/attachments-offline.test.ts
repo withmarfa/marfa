@@ -1,4 +1,10 @@
-import { existsSync, readFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  readFileSync,
+  readdirSync,
+  utimesSync,
+} from "node:fs";
 import { afterEach, describe, expect, it } from "vitest";
 import type { CliDevice } from "../../device/cli-adapter.js";
 import {
@@ -502,6 +508,113 @@ describe("a fetch of the attachments", () => {
     expect(await attachmentsOf(device)).toMatchObject({ partial_bytes: 3000 });
   });
 
+  it("keeps the part of an attachment it has no room to finish, and resumes it once there is room", async () => {
+    const video = bytesOf(21, 5000);
+    harness = await startHarness("no-room-resume");
+    const { server, device } = harness;
+    scriptHydration(server, {
+      head: "10",
+      rows: {
+        "core.note": [note("note")],
+        "core.file": [file("video", video, ["note"])],
+      },
+    });
+    const asked = cutOnce(harness, video);
+    expect(
+      (await device.hydrate(["core.note", "core.file"], "library")).ok,
+    ).toBe(true);
+    expect(await fetchKept(device)).toMatchObject({ fetched: 0 });
+    expect(await attachmentsOf(device)).toMatchObject({ partial_bytes: 3000 });
+
+    const short = await withFault(`volume=${String(TB)}:1000`, () =>
+      fetchKept(device),
+    );
+    expect(short).toMatchObject({ fetched: 0 });
+    expect(await attachmentsOf(device)).toMatchObject({
+      partial_bytes: 3000,
+      not_held_by_reason: [{ reason: "no_room", attachments: 1 }],
+    });
+
+    expect(await fetchKept(device)).toMatchObject({ fetched: 1 });
+    expect(asked.at(-1)).toBe("bytes=3000-");
+    expect(readFileSync(heldAt(device, video))).toEqual(video);
+  });
+
+  it("waits out a rate limit of a minute or less, and stops at a longer one", async () => {
+    const [waited, stopped, after] = [
+      bytesOf(22, 10),
+      bytesOf(23, 20),
+      bytesOf(24, 30),
+    ];
+    harness = await startHarness("rate-limited");
+    const { server, device } = harness;
+    scriptHydration(server, {
+      head: "10",
+      rows: {
+        "core.note": [note("note")],
+        "core.file": [
+          file("waited", waited, ["note"]),
+          file("stopped", stopped, ["note"]),
+          file("after", after, ["note"]),
+        ],
+      },
+    });
+    const limited = (seconds: string): Answer => ({
+      kind: "json",
+      status: 429,
+      headers: { "retry-after": seconds },
+      body: { error: { code: "rate_limited", message: "Too many requests" } },
+    });
+    server.copyAnswer("GET", `/blobs/${hashOf(waited)}/url`, limited("1"));
+    scriptBlob(server, waited);
+    server.copyAnswer("GET", `/blobs/${hashOf(stopped)}/url`, limited("120"));
+    scriptBlob(server, after);
+    expect(
+      (await device.hydrate(["core.note", "core.file"], "library")).ok,
+    ).toBe(true);
+
+    expect(await fetchKept(device)).toMatchObject({
+      fetched: 1,
+      fetched_bytes: 10,
+    });
+    expect(readFileSync(heldAt(device, waited))).toEqual(waited);
+    expect(linkAsks(harness, waited)).toBe(2);
+    expect(linkAsks(harness, stopped)).toBe(1);
+    expect(linkAsks(harness, after)).toBe(0);
+    expect(await attachmentsOf(device)).toMatchObject({
+      held: 1,
+      not_held: 2,
+      not_held_by_reason: [
+        { reason: "rate_limited", attachments: 2, bytes: 50, unstated: 0 },
+      ],
+    });
+  });
+
+  it("goes on past a held file it cannot read", async () => {
+    const sealed = bytesOf(25, 10);
+    const later = bytesOf(26, 20);
+    harness = await hydratedWith(
+      "unreadable",
+      ["note"],
+      [file("sealed", sealed, ["note"]), file("later", later, ["note"])],
+      [sealed, later],
+    );
+    const { device } = harness;
+    expect((await device.blob(hashOf(sealed))).ok).toBe(true);
+    const path = heldAt(device, sealed);
+    chmodSync(path, 0o000);
+    try {
+      expect(await fetchKept(device)).toMatchObject({
+        fetched: 1,
+        fetched_bytes: 20,
+      });
+    } finally {
+      chmodSync(path, 0o600);
+    }
+    expect(readFileSync(heldAt(device, later))).toEqual(later);
+    expect(linkAsks(harness, sealed)).toBe(1);
+  });
+
   it("fetches nothing for a queued upload that is an attachment, which stays", async () => {
     harness = await hydratedHarness("queued-upload", {
       rows: { "core.note": [note("note")] },
@@ -527,7 +640,7 @@ describe("a fetch of the attachments", () => {
 });
 
 describe("the attachments of a copy", () => {
-  it("are unknown while a hydration fills the copy, which trims nothing, and kept again once it is whole or expired", async () => {
+  it("are unknown from the start of a hydration until one completes, while a trim keeps their bytes and takes the rest", async () => {
     const photo = bytesOf(16, 90);
     const loose = bytesOf(17, 40);
     let cut = false;
@@ -572,14 +685,16 @@ describe("the attachments of a copy", () => {
     const filling = await device.status();
     expect(filling.ok && filling.value.hydration).toBe("in_progress");
     expect(filling.ok && filling.value.file_cache.attachments).toBeNull();
-    expect(await budget(device, "0")).toBe(0);
-    expect(existsSync(heldAt(device, photo))).toBe(true);
-    expect(existsSync(heldAt(device, loose))).toBe(true);
+    // The rows that made the photo an attachment have not arrived again,
+    // and its bytes stay; the budget still holds for the rest.
+    expect(await budget(device, "0")).toBe(40);
+    expect(readFileSync(heldAt(device, photo))).toEqual(photo);
+    expect(existsSync(heldAt(device, loose))).toBe(false);
 
-    // The witness: whole again, a trim takes the loose file and keeps the
-    // attachment.
     cut = false;
     expect((await device.hydrate(types, "library")).ok).toBe(true);
+    expect(await attachmentsOf(device)).toMatchObject({ held: 1 });
+    expect((await device.blob(hashOf(loose))).ok).toBe(true);
     expect(await budget(device, "0")).toBe(40);
     expect(readFileSync(heldAt(device, photo))).toEqual(photo);
 
@@ -591,6 +706,80 @@ describe("the attachments of a copy", () => {
     expect(await attachmentsOf(device)).toMatchObject({ held: 1 });
     expect(await budget(device, "0")).toBe(0);
     expect(readFileSync(heldAt(device, photo))).toEqual(photo);
+  });
+
+  it("keep the part of their bytes a fetch left, however old, when the device next opens", async () => {
+    const video = bytesOf(27, 5000);
+    const clip = bytesOf(28, 5000);
+    harness = await startHarness("sweep");
+    const { server, device } = harness;
+    scriptHydration(server, {
+      head: "10",
+      rows: {
+        "core.note": [note("note")],
+        "core.file": [file("video", video, ["note"]), file("clip", clip)],
+      },
+    });
+    cutOnce(harness, video);
+    cutOnce(harness, clip);
+    expect(
+      (await device.hydrate(["core.note", "core.file"], "library")).ok,
+    ).toBe(true);
+    expect(await fetchKept(device)).toMatchObject({ fetched: 0 });
+    expect((await device.blob(hashOf(clip))).ok).toBe(false);
+    const blobs = `${device.store}.blobs`;
+    const partials = readdirSync(blobs).filter((name) =>
+      name.startsWith(".partial-"),
+    );
+    expect(partials).toHaveLength(2);
+    // Older than the week a link is good for.
+    const aged = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000);
+    for (const name of partials) utimesSync(`${blobs}/${name}`, aged, aged);
+
+    expect(await attachmentsOf(device)).toMatchObject({ partial_bytes: 3000 });
+    const left = readdirSync(blobs).filter((name) =>
+      name.startsWith(".partial-"),
+    );
+    // The witness: the part of the file that is no attachment went.
+    expect(left).toEqual([`.partial-${hashOf(video).slice("sha256:".length)}`]);
+    expect((await cacheOf(device)).held).toBe(3000);
+  });
+
+  it("write down why one is not held whatever fetch missed it, until its bytes arrive", async () => {
+    const photo = bytesOf(29, 70);
+    harness = await startHarness("miss-through-read");
+    const { server, device } = harness;
+    scriptHydration(server, {
+      head: "10",
+      rows: {
+        "core.note": [note("note")],
+        "core.file": [file("photo", photo, ["note"])],
+      },
+    });
+    server.copyAnswer(
+      "GET",
+      `/blobs/${hashOf(photo)}/url`,
+      refusal(404, "blob_not_found", "Blob not found"),
+    );
+    scriptBlob(server, photo);
+    expect(
+      (await device.hydrate(["core.note", "core.file"], "library")).ok,
+    ).toBe(true);
+    expect(await attachmentsOf(device)).toMatchObject({
+      not_held_by_reason: [{ reason: "not_fetched", attachments: 1 }],
+    });
+
+    expect((await device.blob(hashOf(photo))).ok).toBe(false);
+    expect(await attachmentsOf(device)).toMatchObject({
+      not_held_by_reason: [{ reason: "absent", attachments: 1, bytes: 70 }],
+    });
+
+    expect((await device.blob(hashOf(photo))).ok).toBe(true);
+    expect(await attachmentsOf(device)).toMatchObject({
+      held: 1,
+      not_held: 0,
+      not_held_by_reason: [],
+    });
   });
 
   it("counts an edge held whole whose file the slice does not hold as not in the copy", async () => {
