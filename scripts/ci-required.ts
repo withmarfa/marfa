@@ -448,9 +448,18 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
     WORKSPACE,
   ],
   [/^eslint\.config\.js$/, ["workspace"]],
+  [/^vitest\.config\.ts$/, ["workspace", "version-fields", "control-socket"]],
+  // The conformance config and its server script import it too.
   [
-    /^vitest\.(config|shared)\.ts$/,
-    ["workspace", "version-fields", "control-socket"],
+    /^vitest\.shared\.ts$/,
+    [
+      "workspace",
+      "version-fields",
+      "control-socket",
+      ...CONFORMANCE,
+      "cli-scenarios",
+      "restore-drill",
+    ],
   ],
   // Prettier skips what Git ignores, and a freshness check that asks
   // `git status` cannot see an ignored file.

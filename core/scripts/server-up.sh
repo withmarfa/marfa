@@ -18,6 +18,10 @@
 set -euo pipefail
 umask 077
 
+# The server this boots is throwaway, so it reports nothing, whatever the shell sets.
+# shellcheck source=no-telemetry.sh
+source "$(dirname "${BASH_SOURCE[0]}")/no-telemetry.sh"
+
 repo="${MARFA_SERVER_REPO:-$(cd "$(dirname "$0")/../.." && pwd)}"
 # The server imports its page assets from a generated file Git does not track.
 # Standard output carries the environment this script prints, so the build

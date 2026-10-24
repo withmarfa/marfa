@@ -1,6 +1,9 @@
 import "dotenv/config";
 import { defineConfig } from "vitest/config";
+import { silenceTelemetry } from "../vitest.shared.js";
 import WeightedShards from "./src/utils/shard-sequencer.js";
+
+silenceTelemetry();
 
 export default defineConfig({
   test: {

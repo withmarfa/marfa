@@ -2,6 +2,11 @@
 # Cargo's runner (`.cargo/config.toml`). Kernel limits hold after the test
 # runner is gone; a runaway query fills the disk through an unlinked SQLite
 # temporary file no listing shows. Only test binaries, which live in `deps`.
+#
+# A test run also sends no telemetry, whatever the developer's shell sets: the
+# binary under test and every server a test boots inherit this environment, and
+# many commands here fail on purpose. A test that wants telemetry sets its own
+# environment explicitly (`tests/telemetry.rs` clears it first).
 set -euo pipefail
 
 # Never raises a limit; a refused change fails the run rather than uncapping.
@@ -18,6 +23,8 @@ if [[ "$(basename "$(dirname "$1")")" == deps ]]; then
   cap -f 1048576
   # Processor seconds for the whole binary, every test in it.
   cap -t 600
+  # shellcheck source=no-telemetry.sh
+  source "$(dirname "${BASH_SOURCE[0]}")/no-telemetry.sh"
   # A test that opens a folder lists it in the registry; never the person's.
   # Cargo uses this runner only when run from under `core/`, so marfa-core's
   # unit tests also keep out of it in `Registry::located`.

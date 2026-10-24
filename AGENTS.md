@@ -16,6 +16,7 @@ The server (`packages/`), the Rust core every native client embeds (`core/`), an
 - SQLite is the only database. Removed means gone: no shims, aliases, migration paths or compatibility flags.
 - No personal details of any machine or person: no absolute paths, hostnames, account names, credentials, or a real machine or person as an example value. No time estimates.
 - No test touches the login keychain or raises a dialog.
+- A test run sends no telemetry, whatever the shell sets: `core/scripts/no-telemetry.sh` (the cargo test runner, `server-up.sh` and `binding-proof.sh`) and `silenceTelemetry` in `vitest.shared.ts` (every Vitest config and `conformance/scripts/marfa-server.ts`) clear the `OTEL_*`, `MARFA_OTEL_*` and `MARFA_POSTHOG_*` settings and set `OTEL_SDK_DISABLED=true`; a test that wants telemetry sets its own environment.
 
 ## Evidence
 

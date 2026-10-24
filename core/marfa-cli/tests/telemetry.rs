@@ -1648,3 +1648,89 @@ fn a_proxy_in_the_environment_is_still_used_for_a_post_to_another_host() {
     );
     assert!(!tunnels.iter().any(|line| line.contains(TOKEN)));
 }
+
+// ---- A test run in a shell that has telemetry settings ----
+
+/// The test runner (`.cargo/config.toml`) around a failing `marfa` command,
+/// started in a parent environment that names a collector and PostHog the way a
+/// developer's shell would. `through_runner` false runs the same command with no
+/// runner, which is the witness that the settings do reach it.
+#[cfg(unix)]
+fn failing_command_in_a_shell_with_telemetry(
+    collector: &Collector,
+    posthog: &Collector,
+    through_runner: bool,
+) -> Ran {
+    use std::os::unix::fs::PermissionsExt;
+
+    let store = store();
+    let folder = tempfile::Builder::new()
+        .prefix("marfa-telemetry-runner-")
+        .tempdir()
+        .unwrap();
+    // The runner limits only the binaries cargo puts in a `deps` folder.
+    let deps = folder.path().join("deps");
+    std::fs::create_dir(&deps).unwrap();
+    let probe = deps.join("probe");
+    std::fs::write(
+        &probe,
+        "#!/bin/sh\nexec \"$MARFA_BIN\" --json device --db \"$STORE\" catch-up\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&probe, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    let runner = Path::new(env!("CARGO_MANIFEST_DIR")).join("../scripts/test-limits.sh");
+    let mut command = if through_runner {
+        let mut command = Command::new(runner);
+        command.arg(&probe);
+        command
+    } else {
+        Command::new(&probe)
+    };
+    let started = Instant::now();
+    let output = command
+        .env_clear()
+        .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+        .env("TMPDIR", folder.path())
+        .env("MARFA_BIN", env!("CARGO_BIN_EXE_marfa"))
+        .env("STORE", store.as_os_str())
+        .env("MARFA_KEYCHAIN", folder.path().join("no-keychain"))
+        .env("MARFA_API_URL", closed_port())
+        .env("MARFA_API_KEY", "marfa_k1_not_a_key")
+        .env("OTEL_EXPORTER_OTLP_ENDPOINT", &collector.url)
+        .env("OTEL_EXPORTER_OTLP_HEADERS", "authorization=Bearer planted")
+        .env("OTEL_SERVICE_NAME", "a-developers-shell")
+        .env("MARFA_POSTHOG_HOST", &posthog.url)
+        .env("MARFA_POSTHOG_PROJECT_TOKEN", TOKEN)
+        .output()
+        .unwrap();
+    Ran {
+        code: output.status.code().unwrap(),
+        stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+        stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+        took: started.elapsed(),
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn a_test_run_in_a_shell_with_telemetry_settings_sends_nothing_from_a_failing_command() {
+    // The witness: with no runner, the same command in the same shell reports
+    // the failure to both.
+    let collector = Collector::open(Reply::Answer(200));
+    let posthog = Collector::open(Reply::Answer(200));
+    let bare = failing_command_in_a_shell_with_telemetry(&collector, &posthog, false);
+    assert_eq!(bare.code, 4, "{}", bare.stderr);
+    assert!(!collector.spans().is_empty(), "the trace was sent");
+    assert_eq!(posthog.events().len(), 1, "the exception was sent");
+
+    // Through the runner every test binary runs under, nothing reaches either.
+    let collector = Collector::open(Reply::Answer(200));
+    let posthog = Collector::open(Reply::Answer(200));
+    let ran = failing_command_in_a_shell_with_telemetry(&collector, &posthog, true);
+    assert_eq!(ran.code, 4, "{}", ran.stderr);
+    assert!(ran.stderr.contains("\"no_cursor\""), "{}", ran.stderr);
+    assert_eq!(collector.connections.load(Ordering::SeqCst), 0);
+    assert_eq!(posthog.connections.load(Ordering::SeqCst), 0);
+    assert!(collector.received().is_empty() && posthog.received().is_empty());
+}

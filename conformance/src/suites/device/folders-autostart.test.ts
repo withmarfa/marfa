@@ -1156,6 +1156,7 @@ describe("the watch run by a service manager", () => {
     // A collector nothing answers at: the trace is tried and given up.
     const watch = harness.folder.watchEvery({
       OTEL_EXPORTER_OTLP_ENDPOINT: "http://127.0.0.1:9",
+      OTEL_SDK_DISABLED: "false",
     });
     held.push(watch);
     await vi.waitFor(
