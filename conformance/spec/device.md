@@ -4228,6 +4228,100 @@ When a caller narrows `device items list` or `device search` by a saved view, th
 
 **Tests:** `device/views.test.ts › accepts --view and refuses the removed --folder option`.
 
+## Views written through a copy
+
+### `device/view-write-at-once`
+
+When a caller creates, changes, or deletes a view through a working copy, a device MUST send the write to `POST /views`, `PATCH /views/{id}`, or `DELETE /views/{id}` before the call returns.
+
+**Tests:** `device/view-writes-live.test.ts › creates, changes and deletes through the view door, holding each answer and queueing nothing`.
+
+### `device/view-write-unqueued`
+
+When a caller creates, changes, or deletes a view through a working copy, a device MUST NOT queue the write.
+
+**Tests:** `device/view-writes-live.test.ts › creates, changes and deletes through the view door, holding each answer and queueing nothing`, `› fails every write without a reachable or configured server and queues nothing`.
+
+### `device/view-write-held`
+
+When the server accepts a view create or change, a certified read-back succeeds, and the copy's slice or a pin still takes the row without an intervening purge, a device MUST hold the view's ID, version, state, and settings from that read-back before the call returns, unless the copy already holds a newer row.
+
+**Tests:** `device/view-writes-live.test.ts › creates, changes and deletes through the view door, holding each answer and queueing nothing`, `› holds the server's merge of a stale change to a setting nobody changed`.
+
+### `device/view-write-readback-failed`
+
+If the server accepts a view create or change but its read-back fails, then a device MUST return the accepted write's answer.
+
+**Reason:** a read-back failure does not undo an accepted write; the next catch-up can refresh the held row.
+
+**Tests:** `device/view-writes.test.ts › returns an accepted change when its read-back fails, leaving refresh to a later read`.
+
+### `device/view-create-replay`
+
+When a caller retries a view create with the same settings and idempotency key, a device MUST return the same view ID and version without creating another view.
+
+**Tests:** `device/view-writes-live.test.ts › replays a create with the same idempotency key as one view`.
+
+### `device/view-change-version`
+
+When a caller changes a view through a working copy, a device MUST send the version the caller names with the changed settings.
+
+**Tests:** `device/view-writes-live.test.ts › refuses a stale conflicting change without changing the copy or the server`, `› holds the server's merge of a stale change to a setting nobody changed`.
+
+### `device/view-change-conflict`
+
+If the server refuses a view change with `409 version_conflict`, then a device MUST report `server` with status `409` and server code `version_conflict`.
+
+**Tests:** `device/view-writes-live.test.ts › refuses a stale conflicting change without changing the copy or the server`.
+
+### `device/view-write-refused-kept`
+
+If the server refuses a view change or delete, then a device MUST preserve the view the working copy held before the call.
+
+**Tests:** `device/view-writes-live.test.ts › refuses a stale conflicting change without changing the copy or the server`, `› preserves a revoked view when its change is refused and permits its deletion`, `› reports a query refusal without changing a held view`, `› reports missing system.view write access for every view write and preserves the copy`.
+
+### `device/view-delete-held`
+
+When the server accepts a view delete through a working copy that has not been replaced while the request was in flight, a device MUST remove the held view before the call returns.
+
+**Tests:** `device/view-writes-live.test.ts › creates, changes and deletes through the view door, holding each answer and queueing nothing`, `› preserves a revoked view when its change is refused and permits its deletion`.
+
+### `device/view-delete-gone`
+
+If the server refuses a view delete because the view is already gone, then a device MUST report `not_found` with server code `item_not_found`.
+
+**Tests:** `device/view-writes-live.test.ts › refuses a second delete as item_not_found with nothing queued`.
+
+### `device/view-change-revoked`
+
+If the server refuses a change to a revoked view with `invalid_transition`, then a device MUST report `validation` with server code `invalid_transition`.
+
+**Tests:** `device/view-writes-live.test.ts › preserves a revoked view when its change is refused and permits its deletion`.
+
+### `device/view-write-query-refused`
+
+If the server refuses a view's query with `validation_error`, then a device MUST report `validation` with server code `validation_error`.
+
+**Tests:** `device/view-writes-live.test.ts › reports a query refusal without changing a held view`.
+
+### `device/view-write-forbidden`
+
+If the server refuses a view create, change, or delete because the caller lacks write access to `system.view`, then a device MUST report `forbidden` with server code `type_not_permitted`.
+
+**Tests:** `device/view-writes-live.test.ts › reports missing system.view write access for every view write and preserves the copy`.
+
+### `device/view-write-offline`
+
+If a view write through a working copy cannot reach the configured server, then a device MUST refuse it with `network`.
+
+**Tests:** `device/view-writes-live.test.ts › fails every write without a reachable or configured server and queues nothing`.
+
+### `device/view-write-no-server`
+
+While no server is configured for a working copy, a device MUST refuse a view create, change, or delete with `no_server`.
+
+**Tests:** `device/view-writes-live.test.ts › fails every write without a reachable or configured server and queues nothing`.
+
 ## Folders, read and written from a copy
 
 A working copy reads a `system.folder` that its slice or a pin takes, answers a list or a search in it, and writes its settings through the folder operations.

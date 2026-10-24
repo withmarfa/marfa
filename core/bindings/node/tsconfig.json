@@ -9,5 +9,11 @@
     "target": "es2022",
     "types": ["node"]
   },
-  "files": ["scripts/proof.mjs", "test/follow.test.mjs", "test/drain.test.mjs", "test/watch.test.mjs"]
+  "files": [
+    "scripts/proof.mjs",
+    "test/follow.test.mjs",
+    "test/drain.test.mjs",
+    "test/watch.test.mjs",
+    "test/view-writes.test.mjs"
+  ]
 }

@@ -1,4 +1,4 @@
-//! Views read from the working copy without contacting the server.
+//! Local view reads and writes through the server's view door.
 
 use crate::{Completeness, Core, Found, ItemState, JsonObject, JsonValue, Listing, MarfaError};
 
@@ -40,6 +40,40 @@ fn row(value: marfa_core::ViewRow) -> ViewRow {
 
 #[uniffi::export]
 impl Core {
+    pub fn create_view(
+        &self,
+        settings: JsonObject,
+        idempotency_key: Option<String>,
+    ) -> Result<ViewRow, MarfaError> {
+        Ok(row(self.inner.create_view(
+            &settings.into_map()?,
+            idempotency_key.as_deref(),
+        )?))
+    }
+
+    pub fn change_view(
+        &self,
+        id: String,
+        changes: JsonObject,
+        version: i64,
+        idempotency_key: Option<String>,
+    ) -> Result<ViewRow, MarfaError> {
+        Ok(row(self.inner.change_view(
+            &id,
+            &changes.into_map()?,
+            version,
+            idempotency_key.as_deref(),
+        )?))
+    }
+
+    pub fn delete_view(
+        &self,
+        id: String,
+        idempotency_key: Option<String>,
+    ) -> Result<(), MarfaError> {
+        Ok(self.inner.delete_view(&id, idempotency_key.as_deref())?)
+    }
+
     pub fn list_views(&self) -> Result<Views, MarfaError> {
         let rows = self.inner.list_views()?;
         Ok(Views {
@@ -106,6 +140,41 @@ impl Core {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn view_writes_cross_the_swift_boundary_and_keep_offline_errors() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = Core::open(
+            dir.path().join("copy.sqlite").display().to_string(),
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        let settings: JsonObject =
+            json!({"title":"Notes","query":{},"layouts":[{"id":"list","kind":"list"}]})
+                .as_object()
+                .unwrap()
+                .clone()
+                .into();
+        assert!(matches!(
+            core.create_view(settings, Some("create-view".into())),
+            Err(MarfaError::NoServer { .. })
+        ));
+        let changes: JsonObject = json!({"title":"Renamed"})
+            .as_object()
+            .unwrap()
+            .clone()
+            .into();
+        assert!(matches!(
+            core.change_view("view".into(), changes, 1, Some("change-view".into())),
+            Err(MarfaError::NoServer { .. })
+        ));
+        assert!(matches!(
+            core.delete_view("view".into(), Some("delete-view".into())),
+            Err(MarfaError::NoServer { .. })
+        ));
+    }
 
     #[test]
     fn views_cross_the_swift_boundary_with_json_settings_and_scalar_group_keys() {

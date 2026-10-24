@@ -5,6 +5,7 @@ use crate::{Core, Result, error::CoreError, http::Http, store};
 pub(crate) const FENCE: &str = "reach";
 const GENERATION: &str = "copy_generation";
 const PINS: &str = "pin_revision";
+const PURGES: &str = "purge_revision";
 
 pub(crate) fn valid_fence(value: &str) -> bool {
     value.len() == 64
@@ -91,6 +92,14 @@ pub(crate) fn advance_generation(conn: &Connection) -> Result<()> {
 }
 pub(crate) fn pins_changed(conn: &Connection) -> Result<()> {
     advance(conn, PINS)
+}
+
+pub(crate) fn purge_revision(conn: &Connection) -> Result<u64> {
+    revision(conn, PURGES)
+}
+
+pub(crate) fn purged(conn: &Connection) -> Result<()> {
+    advance(conn, PURGES)
 }
 
 #[derive(Debug, Clone)]

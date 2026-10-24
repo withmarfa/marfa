@@ -1,9 +1,14 @@
-//! Views read from the working copy without contacting the server.
+//! Local view reads and writes through the server's view door.
+
+use std::sync::Arc;
 
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
 
-use crate::{Completeness, Found, ItemState, Listing, MarfaCore, SearchHit, count, failure, item};
+use crate::{
+    Completeness, Found, ItemState, Listing, MarfaCore, SearchHit, count, failure, item, record,
+    rethrown,
+};
 
 #[napi(object)]
 pub struct ViewRow {
@@ -43,8 +48,138 @@ fn row(value: marfa_core::ViewRow) -> ViewRow {
     }
 }
 
+enum ViewWrite {
+    Create,
+    Change { id: String, version: i64 },
+}
+
+pub struct WriteView {
+    core: Arc<marfa_core::Core>,
+    write: ViewWrite,
+    settings: serde_json::Map<String, serde_json::Value>,
+    idempotency_key: Option<String>,
+    failed: Option<marfa_core::CoreError>,
+}
+
+#[napi]
+impl Task for WriteView {
+    type Output = marfa_core::ViewRow;
+    type JsValue = ViewRow;
+
+    fn compute(&mut self) -> Result<Self::Output> {
+        match &self.write {
+            ViewWrite::Create => self
+                .core
+                .create_view(&self.settings, self.idempotency_key.as_deref()),
+            ViewWrite::Change { id, version } => self.core.change_view(
+                id,
+                &self.settings,
+                *version,
+                self.idempotency_key.as_deref(),
+            ),
+        }
+        .map_err(|error| record(&mut self.failed, error))
+    }
+
+    fn resolve(&mut self, _: Env, value: Self::Output) -> Result<Self::JsValue> {
+        Ok(row(value))
+    }
+
+    fn reject(&mut self, env: Env, error: Error) -> Result<Self::JsValue> {
+        Err(rethrown(env, self.failed.take(), error))
+    }
+}
+
+pub struct DeleteView {
+    core: Arc<marfa_core::Core>,
+    id: String,
+    idempotency_key: Option<String>,
+    failed: Option<marfa_core::CoreError>,
+}
+
+#[napi]
+impl Task for DeleteView {
+    type Output = ();
+    type JsValue = ();
+
+    fn compute(&mut self) -> Result<Self::Output> {
+        self.core
+            .delete_view(&self.id, self.idempotency_key.as_deref())
+            .map_err(|error| record(&mut self.failed, error))
+    }
+
+    fn resolve(&mut self, _: Env, _: Self::Output) -> Result<Self::JsValue> {
+        Ok(())
+    }
+
+    fn reject(&mut self, env: Env, error: Error) -> Result<Self::JsValue> {
+        Err(rethrown(env, self.failed.take(), error))
+    }
+}
+
+fn settings_object(
+    env: Env,
+    value: serde_json::Value,
+) -> Result<serde_json::Map<String, serde_json::Value>> {
+    match value {
+        serde_json::Value::Object(settings) => Ok(settings),
+        _ => Err(failure(
+            env,
+            marfa_core::CoreError::Invalid("view settings must be an object".into()),
+        )),
+    }
+}
+
 #[napi]
 impl MarfaCore {
+    #[napi]
+    pub fn create_view(
+        &self,
+        env: Env,
+        #[napi(ts_arg_type = "Record<string, unknown>")] settings: serde_json::Value,
+        idempotency_key: Option<String>,
+    ) -> Result<AsyncTask<WriteView>> {
+        Ok(AsyncTask::new(WriteView {
+            core: Arc::clone(&self.inner),
+            write: ViewWrite::Create,
+            settings: settings_object(env, settings)?,
+            idempotency_key,
+            failed: None,
+        }))
+    }
+
+    #[napi]
+    pub fn change_view(
+        &self,
+        env: Env,
+        id: String,
+        #[napi(ts_arg_type = "Record<string, unknown>")] changes: serde_json::Value,
+        version: i64,
+        idempotency_key: Option<String>,
+    ) -> Result<AsyncTask<WriteView>> {
+        Ok(AsyncTask::new(WriteView {
+            core: Arc::clone(&self.inner),
+            write: ViewWrite::Change { id, version },
+            settings: settings_object(env, changes)?,
+            idempotency_key,
+            failed: None,
+        }))
+    }
+
+    #[napi]
+    pub fn delete_view(
+        &self,
+        id: String,
+        idempotency_key: Option<String>,
+    ) -> AsyncTask<DeleteView> {
+        AsyncTask::new(DeleteView {
+            core: Arc::clone(&self.inner),
+            id,
+            idempotency_key,
+            failed: None,
+        })
+    }
+
     #[napi]
     pub fn list_views(&self, env: Env) -> Result<Views> {
         let rows = self
