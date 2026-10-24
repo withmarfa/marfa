@@ -329,6 +329,19 @@ pub enum BlobsCommand {
         #[arg(long)]
         trim: bool,
     },
+    /// Fetch the files attached to items the store holds that it does not
+    /// hold yet, smallest first, resuming any fetch that stopped part way.
+    ///
+    /// Attached files stay on the device outside the budget while the item
+    /// they are attached to is held, and so does the part of one a fetch
+    /// left, which this resumes. Run it after `device hydrate` and after
+    /// each `device catch-up`. It waits out a server that asks for a wait of
+    /// a minute or less, and stops at the first file the disk has no room
+    /// for, once the server cannot be reached, or once it asks for a longer
+    /// wait. A file that fails otherwise is passed over. It reports the
+    /// attached files not held and why. Ctrl-C stops it between two files
+    /// or during a wait.
+    FetchKept,
 }
 
 #[derive(Debug, Subcommand)]
@@ -1243,6 +1256,22 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
                     },
                 )
             }
+            BlobsCommand::FetchKept => {
+                stop_on_interrupt();
+                let core = store.open_with_server(named)?;
+                let fetched = core.fetch_kept_until(stop_after(None))?;
+                output::report(&fetched, json, || {
+                    let mut text = format!(
+                        "fetched {} attached file(s), {} byte(s)",
+                        fetched.fetched, fetched.fetched_bytes
+                    );
+                    if let Some(attachments) = &fetched.attachments {
+                        text.push('\n');
+                        text.push_str(&attachments_text(attachments));
+                    }
+                    text
+                })
+            }
         },
         DeviceCommand::Search {
             query,
@@ -1700,6 +1729,48 @@ fn file_cache_text(cache: &marfa_core::FileCache) -> String {
         text.push_str(&format!(
             "\nfetched files could not be kept out of backups: {failure}"
         ));
+    }
+    text.push('\n');
+    match &cache.attachments {
+        Some(attachments) => text.push_str(&attachments_text(attachments)),
+        None => text.push_str("attached files unknown"),
+    }
+    text
+}
+
+fn attachments_text(attachments: &marfa_core::Attachments) -> String {
+    let mut text = format!(
+        "attached files held {}, {} byte(s) outside the budget",
+        attachments.held,
+        attachments.held_bytes + attachments.partial_bytes
+    );
+    if attachments.not_held > 0 {
+        text.push_str(&format!(
+            "\nattached files not held {}, {} byte(s)",
+            attachments.not_held, attachments.not_held_bytes
+        ));
+        for why in &attachments.not_held_by_reason {
+            let reason = match why.reason {
+                marfa_core::NotHeldReason::NotFetched => "not fetched yet",
+                marfa_core::NotHeldReason::NoRoom => "no room on the disk",
+                marfa_core::NotHeldReason::Unreachable => "the server could not be reached",
+                marfa_core::NotHeldReason::RateLimited => "the server asked for a longer wait",
+                marfa_core::NotHeldReason::Absent => "the server holds none",
+                marfa_core::NotHeldReason::Failed => "the fetch failed",
+                marfa_core::NotHeldReason::NotInCopy => "the file is outside the slice",
+            };
+            text.push_str(&format!(
+                "\n  {}: {}, {} byte(s){}",
+                reason,
+                why.attachments,
+                why.bytes,
+                if why.unstated > 0 {
+                    format!(", {} stating no size", why.unstated)
+                } else {
+                    String::new()
+                }
+            ));
+        }
     }
     text
 }

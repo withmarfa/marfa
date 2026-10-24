@@ -1820,30 +1820,249 @@ pub fn items_awaiting_their_write(conn: &Connection) -> Result<HashSet<String>, 
 /// properties are not JSON, or whose size is not a whole number above zero,
 /// states none.
 pub fn stated_size(conn: &Connection, hash: &str) -> Result<Option<u64>, CoreError> {
-    let catalog = crate::catalog::Catalog::load(conn)?;
-    let extra = catalog.declared_descendants("core.file");
-    let mut types = String::from("type = 'core.file' OR type LIKE 'core.file.%'");
-    if !extra.is_empty() {
-        types.push_str(&format!(
-            " OR type IN ({})",
-            vec!["?"; extra.len()].join(", ")
-        ));
-    }
-    let sql = format!(
-        "SELECT MAX(size) FROM (
-           SELECT CASE WHEN json_valid(properties) THEN
-                    CASE WHEN json_extract(properties, '$.blob_ref') = ?
-                          AND json_type(properties, '$.size_bytes') = 'integer'
-                         THEN json_extract(properties, '$.size_bytes') END
-                  END AS size
-             FROM items WHERE {types})
-         WHERE size > 0"
-    );
-    let mut values = vec![hash.to_string()];
-    values.extend(extra);
-    let size: Option<i64> =
-        conn.query_row(&sql, rusqlite::params_from_iter(values), |row| row.get(0))?;
+    let size: Option<i64> = conn.query_row(
+        &format!(
+            "WITH RECURSIVE {FILE_TYPES}
+             SELECT MAX(size) FROM (
+               SELECT CASE WHEN json_valid(properties) THEN
+                        CASE WHEN json_extract(properties, '$.blob_ref') = ?1
+                              AND json_type(properties, '$.size_bytes') = 'integer'
+                             THEN json_extract(properties, '$.size_bytes') END
+                      END AS size
+                 FROM items AS f WHERE {IS_FILE})
+             WHERE size > 0"
+        ),
+        [hash],
+        |row| row.get(0),
+    )?;
     Ok(size.and_then(|size| u64::try_from(size).ok()))
+}
+
+/// `core.file` and every type the catalog sets beneath it, as a common table
+/// expression of a `WITH RECURSIVE`; `UNION` ends a cycle of parents.
+const FILE_TYPES: &str = "file_types(id) AS (
+    SELECT 'core.file'
+    UNION SELECT types.id FROM types JOIN file_types ON types.parent = file_types.id)";
+
+/// Whether the item `f` is of a file type, beneath `FILE_TYPES`.
+const IS_FILE: &str = "(f.type LIKE 'core.file.%' OR f.type IN (SELECT id FROM file_types))";
+
+/// A file item the copy holds that is attached to an item the copy holds.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Attachment {
+    pub item_id: String,
+    /// The hash its `blob_ref` names, as written there.
+    pub hash: String,
+    /// The size it states for its bytes, if it states a whole number above
+    /// zero.
+    pub stated: Option<u64>,
+}
+
+/// Every file item the copy holds, out of the bin, that is the source of an
+/// `attached-to` edge whose target the copy holds out of the bin. A row whose
+/// stored properties are not JSON, or that names its bytes by no text, is
+/// none.
+pub fn attachments(conn: &Connection) -> Result<Vec<Attachment>, CoreError> {
+    attachments_where(conn, "1", &[])
+}
+
+/// The attachments among `ids` and among the sources of `attached-to` edges
+/// to `ids`: those a change to the rows or edges of `ids` can make or end.
+fn attachments_touching(conn: &Connection, ids: &[&str]) -> Result<Vec<Attachment>, CoreError> {
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let marks = vec!["?"; ids.len()].join(", ");
+    attachments_where(
+        conn,
+        &format!(
+            "(f.id IN ({marks}) OR f.id IN (
+               SELECT source_id FROM edges
+                WHERE edge_type = '{ATTACHED_TO}' AND target_id IN ({marks})))"
+        ),
+        &[ids, ids].concat(),
+    )
+}
+
+fn attachments_where(
+    conn: &Connection,
+    condition: &str,
+    values: &[&str],
+) -> Result<Vec<Attachment>, CoreError> {
+    let sql = format!(
+        "WITH RECURSIVE {FILE_TYPES}
+         SELECT id, hash, size FROM (
+           SELECT f.id AS id,
+                  CASE WHEN json_valid(f.properties) THEN
+                    CASE WHEN json_type(f.properties, '$.blob_ref') = 'text'
+                         THEN json_extract(f.properties, '$.blob_ref') END
+                  END AS hash,
+                  CASE WHEN json_valid(f.properties) THEN
+                    CASE WHEN json_type(f.properties, '$.size_bytes') = 'integer'
+                         THEN json_extract(f.properties, '$.size_bytes') END
+                  END AS size
+             FROM items AS f
+            WHERE {IS_FILE} AND f.state != 'trashed'
+              AND EXISTS (
+                SELECT 1 FROM edges AS e JOIN items AS t ON t.id = e.target_id
+                 WHERE e.source_id = f.id AND e.edge_type = '{ATTACHED_TO}'
+                   AND t.state != 'trashed')
+              AND {condition})
+          WHERE hash IS NOT NULL
+          ORDER BY id"
+    );
+    let mut statement = conn.prepare_cached(&sql)?;
+    let found = statement
+        .query_map(params_from_iter(values), |row| {
+            Ok(Attachment {
+                item_id: row.get(0)?,
+                hash: row.get(1)?,
+                stated: row
+                    .get::<_, Option<i64>>(2)?
+                    .and_then(|size| u64::try_from(size).ok())
+                    .filter(|size| *size > 0),
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(found)
+}
+
+/// How many sources of `attached-to` edges to items the copy holds out of
+/// the bin the copy holds no row of.
+pub fn attachments_not_in_copy(conn: &Connection) -> Result<u64, CoreError> {
+    let outside: i64 = conn.query_row(
+        &format!(
+            "SELECT COUNT(DISTINCT e.source_id)
+               FROM edges AS e JOIN items AS t ON t.id = e.target_id
+              WHERE e.edge_type = '{ATTACHED_TO}' AND t.state != 'trashed'
+                AND NOT EXISTS (SELECT 1 FROM items AS f WHERE f.id = e.source_id)"
+        ),
+        [],
+        |row| row.get(0),
+    )?;
+    Ok(u64::try_from(outside).unwrap_or(0))
+}
+
+const ATTACHED_TO: &str = "attached-to";
+
+/// Present from the start of a hydration until one completes: the copy is
+/// not whole, so a file whose rows have not arrived again may still be an
+/// attachment, and the kept set (`attachment_bytes`) only grows. Not cleared
+/// when the copy expires, which can happen part way.
+const META_ATTACHMENTS_GROWING: &str = "attachments_growing";
+
+fn hexes(found: &[Attachment]) -> HashSet<String> {
+    found
+        .iter()
+        .filter_map(|attachment| crate::blob::hex_of(&attachment.hash).ok())
+        .map(str::to_string)
+        .collect()
+}
+
+/// The bytes the file cache keeps for attachments, by the hex of their hash.
+pub fn kept_attachments(conn: &Connection) -> Result<HashSet<String>, CoreError> {
+    let mut statement = conn.prepare_cached("SELECT hex FROM attachment_bytes")?;
+    let found = statement
+        .query_map([], |row| row.get(0))?
+        .collect::<Result<HashSet<String>, _>>()?;
+    Ok(found)
+}
+
+/// Whether the kept set may only grow, because the copy is not whole.
+pub fn attachments_growing(conn: &Connection) -> Result<bool, CoreError> {
+    Ok(meta_get(conn, META_ATTACHMENTS_GROWING)?.is_some())
+}
+
+/// Called in the transaction that starts a hydration, before it clears the
+/// copy.
+pub fn attachments_start_growing(conn: &Connection) -> Result<(), CoreError> {
+    meta_set(conn, META_ATTACHMENTS_GROWING, "1")
+}
+
+/// Called in the transaction that completes a hydration: the copy is whole,
+/// so the kept set becomes exactly its attachments.
+pub fn attachments_whole(conn: &Connection) -> Result<(), CoreError> {
+    meta_delete(conn, META_ATTACHMENTS_GROWING)?;
+    reconcile_attachments(conn)
+}
+
+/// Adds every attachment the copy holds to the kept set and, unless it is
+/// growing, takes out the bytes no attachment names. For a store opened by
+/// this build's writer, whose kept set may not have been kept.
+pub fn reconcile_attachments(conn: &Connection) -> Result<(), CoreError> {
+    let now = hexes(&attachments(conn)?);
+    if !attachments_growing(conn)? {
+        for hex in kept_attachments(conn)?.difference(&now) {
+            conn.execute("DELETE FROM attachment_bytes WHERE hex = ?1", [hex])?;
+        }
+    }
+    let mut insert =
+        conn.prepare_cached("INSERT OR IGNORE INTO attachment_bytes (hex) VALUES (?1)")?;
+    for hex in now {
+        insert.execute([hex])?;
+    }
+    Ok(())
+}
+
+/// The kept bytes a change to the rows or edges of `ids` can end, read
+/// before the change, for `attachments_changed` after it.
+fn attachments_before(conn: &Connection, ids: &[&str]) -> Result<HashSet<String>, CoreError> {
+    Ok(hexes(&attachments_touching(conn, ids)?))
+}
+
+/// Brings the kept set up to a change to the rows or edges of `ids`, in the
+/// transaction that made it: the bytes of an attachment it made are added,
+/// and the bytes in `before` that no attachment names now go, unless the set
+/// is growing.
+fn attachments_changed(
+    conn: &Connection,
+    ids: &[&str],
+    before: HashSet<String>,
+) -> Result<(), CoreError> {
+    let now = hexes(&attachments_touching(conn, ids)?);
+    let mut insert =
+        conn.prepare_cached("INSERT OR IGNORE INTO attachment_bytes (hex) VALUES (?1)")?;
+    for hex in &now {
+        insert.execute([hex])?;
+    }
+    if before.is_subset(&now) || attachments_growing(conn)? {
+        return Ok(());
+    }
+    for hex in before.difference(&now) {
+        let named = [format!("{}{hex}", crate::blob::PREFIX), hex.clone()];
+        let named: Vec<&str> = named.iter().map(String::as_str).collect();
+        let condition = "CASE WHEN json_valid(f.properties)
+                           THEN json_extract(f.properties, '$.blob_ref') END IN (?, ?)";
+        if attachments_where(conn, condition, &named)?.is_empty() {
+            conn.execute("DELETE FROM attachment_bytes WHERE hex = ?1", [hex])?;
+        }
+    }
+    Ok(())
+}
+
+/// Why the last fetch of each kept attachment's bytes left them unheld, by
+/// hex. Bytes that arrived, or no fetch has failed, have none.
+pub fn attachment_misses(conn: &Connection) -> Result<HashMap<String, String>, CoreError> {
+    let mut statement =
+        conn.prepare_cached("SELECT hex, miss FROM attachment_bytes WHERE miss IS NOT NULL")?;
+    let found = statement
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+        .collect::<Result<HashMap<String, String>, _>>()?;
+    Ok(found)
+}
+
+/// Writes down why a fetch left the bytes `hex` unheld, or clears it with
+/// `None` once they arrive. Bytes no attachment names are left alone.
+pub fn set_attachment_miss(
+    conn: &Connection,
+    hex: &str,
+    reason: Option<&str>,
+) -> Result<(), CoreError> {
+    conn.execute(
+        "UPDATE attachment_bytes SET miss = ?2 WHERE hex = ?1",
+        params![hex, reason],
+    )?;
+    Ok(())
 }
 
 /// The bytes the cache keeps for the queue: those of every upload not yet
@@ -2229,6 +2448,8 @@ pub fn replace_catalog(conn: &Connection, catalog: &WireCatalog) -> Result<bool,
         }
         let next = held.map_or(1, |version| version + 1);
         meta_set(conn, META_CATALOG_VERSION, &next.to_string())?;
+        // Which types are files is the catalog's to say.
+        reconcile_attachments(conn)?;
         Ok(true)
     })
 }
@@ -2552,6 +2773,7 @@ pub fn upsert_item(
     ItemState::from_str_checked(&item.state)?;
     crate::body::rule::rows_changed(conn)?;
     crate::body::rule::item_changing(conn, &item.id, Some(item))?;
+    let before = attachments_before(conn, &[&item.id])?;
     conn.execute(
         "INSERT INTO items (id, type, state, tier, version, schema_version, source, source_id, occurred_at, created_at, updated_at, properties)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
@@ -2587,7 +2809,8 @@ pub fn upsert_item(
     let seq: i64 = conn.query_row("SELECT seq FROM items WHERE id = ?1", [&item.id], |row| {
         row.get(0)
     })?;
-    index_row(conn, seq, &item.id, &item.state, &item.properties, indexing)
+    index_row(conn, seq, &item.id, &item.state, &item.properties, indexing)?;
+    attachments_changed(conn, &[&item.id], before)
 }
 
 /// Moves everything the copy says about the minted id `local` onto
@@ -2597,6 +2820,7 @@ pub fn adopt_answered_id(conn: &Connection, local: &str, answered: &str) -> Resu
     if local == answered {
         return Ok(());
     }
+    let before = attachments_before(conn, &[local, answered])?;
     conn.execute(
         "DELETE FROM items_fts WHERE rowid IN (SELECT seq FROM items WHERE id = ?1)",
         [local],
@@ -2662,7 +2886,7 @@ pub fn adopt_answered_id(conn: &Connection, local: &str, answered: &str) -> Resu
             )?;
         }
     }
-    Ok(())
+    attachments_changed(conn, &[local, answered], before)
 }
 
 /// Moves the copy onto `answered`, the held row a refused create's natural
@@ -2823,6 +3047,7 @@ fn remove_item(
     edges: &str,
     kept: &[String],
 ) -> Result<bool, CoreError> {
+    let before = attachments_before(conn, &[id])?;
     crate::reach::forget_listed(conn, id)?;
     drop_beneath(conn, Subject::Item, id)?;
     conn.execute(
@@ -2855,7 +3080,9 @@ fn remove_item(
     for edge in leaving {
         changed |= forget_edge(conn, &edge)?;
     }
-    Ok(conn.execute("DELETE FROM items WHERE id = ?1", [id])? > 0 || changed)
+    let removed = conn.execute("DELETE FROM items WHERE id = ?1", [id])? > 0;
+    attachments_changed(conn, &[id], before)?;
+    Ok(removed || changed)
 }
 
 pub fn whole_edge_types(conn: &Connection) -> Result<Vec<String>, CoreError> {
@@ -2946,6 +3173,10 @@ pub fn item_held(conn: &Connection, id: &str) -> Result<bool, CoreError> {
 
 pub fn upsert_edge(conn: &Connection, edge: &WireEdge) -> Result<(), CoreError> {
     crate::body::rule::edge_changing(conn, edge)?;
+    let mut ends = edge_sources(conn, &edge.id)?;
+    ends.push(edge.source_id.clone());
+    let ends: Vec<&str> = ends.iter().map(String::as_str).collect();
+    let before = attachments_before(conn, &ends)?;
     conn.execute(
         "INSERT INTO edges (id, source_id, target_id, edge_type, properties, version, created_at, updated_at)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
@@ -2965,7 +3196,17 @@ pub fn upsert_edge(conn: &Connection, edge: &WireEdge) -> Result<(), CoreError> 
             edge.updated_at,
         ],
     )?;
-    Ok(())
+    attachments_changed(conn, &ends, before)
+}
+
+/// The source of the edge `id` as the copy holds it, which a change to the
+/// edge can make or end an attachment of.
+fn edge_sources(conn: &Connection, id: &str) -> Result<Vec<String>, CoreError> {
+    let mut statement = conn.prepare_cached("SELECT source_id FROM edges WHERE id = ?1")?;
+    let found = statement
+        .query_map([id], |row| row.get(0))?
+        .collect::<Result<Vec<String>, _>>()?;
+    Ok(found)
 }
 
 /// Takes the edge out of what the copy shows and nothing else: for a write
@@ -2973,7 +3214,12 @@ pub fn upsert_edge(conn: &Connection, edge: &WireEdge) -> Result<(), CoreError> 
 /// `forget_edge`.
 pub fn delete_edge(conn: &Connection, id: &str) -> Result<bool, CoreError> {
     crate::body::rule::edge_leaving(conn, id)?;
-    Ok(conn.execute("DELETE FROM edges WHERE id = ?1", [id])? > 0)
+    let ends = edge_sources(conn, id)?;
+    let ends: Vec<&str> = ends.iter().map(String::as_str).collect();
+    let before = attachments_before(conn, &ends)?;
+    let deleted = conn.execute("DELETE FROM edges WHERE id = ?1", [id])? > 0;
+    attachments_changed(conn, &ends, before)?;
+    Ok(deleted)
 }
 
 /// The edge and its baseline leave together. Read-back debt requires its own
@@ -4532,10 +4778,12 @@ pub fn replace_tags(conn: &Connection, item_id: &str, tags: &[String]) -> Result
 pub fn set_item_state(conn: &Connection, id: &str, state: ItemState) -> Result<bool, CoreError> {
     crate::body::rule::rows_changed(conn)?;
     crate::body::rule::item_changing(conn, id, None)?;
+    let before = attachments_before(conn, &[id])?;
     let changed = conn.execute(
         "UPDATE items SET state = ?2 WHERE id = ?1",
         params![id, state.as_str()],
     )?;
+    attachments_changed(conn, &[id], before)?;
     if changed > 0 && state == ItemState::Trashed {
         // A trashed row is out of the local index, as in `index_row`.
         conn.execute(
@@ -4714,6 +4962,96 @@ mod tests {
             r#"{"blob_ref":"sha256:dd","size_bytes":9999}"#,
         );
         assert_eq!(stated("sha256:dd"), Some(400));
+    }
+
+    #[test]
+    fn an_attachment_is_a_held_file_attached_to_a_held_item_out_of_the_bin() {
+        let temp = tempfile::tempdir().unwrap();
+        let conn = super::open(&temp.path().join("core.sqlite")).unwrap();
+        let put = |id: &str, kind: &str, state: &str, properties: &str| {
+            conn.execute(
+                "INSERT INTO items (id, type, state, version, schema_version, source,
+                   occurred_at, created_at, updated_at, properties)
+                 VALUES (?1, ?2, ?3, 1, 1, 'test', 't', 't', 't', ?4)",
+                [id, kind, state, properties],
+            )
+            .unwrap();
+        };
+        let edge = |id: &str, source: &str, target: &str, kind: &str| {
+            conn.execute(
+                "INSERT INTO edges (id, source_id, target_id, edge_type, properties, version,
+                   created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, '{}', 1, 't', 't')",
+                [id, source, target, kind],
+            )
+            .unwrap();
+        };
+        let found = || {
+            let found = super::attachments(&conn).unwrap();
+            let ids: Vec<String> = found.into_iter().map(|found| found.item_id).collect();
+            (ids, super::attachments_not_in_copy(&conn).unwrap())
+        };
+        put("note", "core.note", "active", "{}");
+        put("binned", "core.note", "trashed", "{}");
+        put(
+            "photo",
+            "core.file.image",
+            "active",
+            r#"{"blob_ref":"sha256:aa","size_bytes":5}"#,
+        );
+        put(
+            "loose",
+            "core.file",
+            "active",
+            r#"{"blob_ref":"sha256:bb"}"#,
+        );
+        put(
+            "to-bin",
+            "core.file",
+            "active",
+            r#"{"blob_ref":"sha256:cc"}"#,
+        );
+        put(
+            "gone",
+            "core.file",
+            "trashed",
+            r#"{"blob_ref":"sha256:dd"}"#,
+        );
+        put("broken", "core.file", "active", "not json");
+        put(
+            "lookalike",
+            "core.note",
+            "active",
+            r#"{"blob_ref":"sha256:ee"}"#,
+        );
+        assert_eq!(found(), (vec![], 0));
+
+        edge("e1", "photo", "note", "attached-to");
+        edge("e2", "loose", "note", "references");
+        edge("e3", "to-bin", "binned", "attached-to");
+        edge("e4", "gone", "note", "attached-to");
+        edge("e5", "broken", "note", "attached-to");
+        edge("e6", "lookalike", "note", "attached-to");
+        edge("e7", "photo", "absent", "attached-to");
+        edge("e8", "unheld-file", "note", "attached-to");
+        edge("e9", "unheld-file", "binned", "attached-to");
+        let (held, outside) = (
+            super::attachments(&conn).unwrap(),
+            super::attachments_not_in_copy(&conn).unwrap(),
+        );
+        assert_eq!(
+            held,
+            [super::Attachment {
+                item_id: "photo".into(),
+                hash: "sha256:aa".into(),
+                stated: Some(5),
+            }]
+        );
+        assert_eq!(outside, 1);
+
+        conn.execute("DELETE FROM edges WHERE id = 'e1'", [])
+            .unwrap();
+        assert_eq!(found(), (vec![], 1));
     }
 
     #[test]
@@ -7038,7 +7376,7 @@ mod tests {
             .collect();
         assert_eq!(
             crate::folder::state::hash(named.as_bytes()),
-            "7bfa7c1669955474",
+            "4b7cee0d33e0f40a",
             "the shape of a table changed, which refuses every store made before it"
         );
         // The comment strip reads `--` alone, so a block comment would ride

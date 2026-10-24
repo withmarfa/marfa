@@ -13,9 +13,10 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { FileBudgetKind, MarfaCore } from "../index.js";
+import { scripted, storeFor } from "./copy-fixture.mjs";
 
 /** @param {(path: string) => void} body */
 function inStore(body) {
@@ -167,4 +168,42 @@ test("a blob is kept from every trim until its promise resolves", async () => {
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("attachments are reported and fetched through the module, and kept through a trim", async (t) => {
+  const server = await scripted([]);
+  t.after(server.close);
+  const path = storeFor(t);
+  const core = MarfaCore.open(path, server.url, "k");
+  assert.deepEqual(core.fileCache().attachments, {
+    held: 0,
+    heldBytes: 0,
+    partialBytes: 0,
+    notHeld: 0,
+    notHeldBytes: 0,
+    notHeldByReason: [],
+  });
+
+  const host = core.createItem({
+    type: "core.note",
+    properties: { title: "Host", body: "" },
+  });
+  const file = join(dirname(path), "photo.png");
+  writeFileSync(file, "a photo");
+  await core.attach(host.itemId ?? "", file);
+  const asked = server.asked();
+  const fetched = await core.fetchKept();
+  assert.equal(fetched.fetched, 0);
+  assert.equal(fetched.fetchedBytes, 0);
+  assert.equal(fetched.attachments?.held, 1);
+  assert.equal(fetched.attachments?.heldBytes, Buffer.byteLength("a photo"));
+  assert.equal(server.asked(), asked, "an attachment held was fetched");
+  assert.equal(core.status().fileCache.attachments?.held, 1);
+  assert.equal(
+    core.setFileBudget({ kind: FileBudgetKind.Bytes, bytes: 0 }),
+    0,
+  );
+
+  const reader = MarfaCore.openReader(path);
+  await assert.rejects(reader.fetchKept(), { code: "reading_handle" });
 });

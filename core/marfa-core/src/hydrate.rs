@@ -257,6 +257,7 @@ fn attempt(
             let tx = conn.transaction()?;
             crate::reach::advance_generation(&tx)?;
             store::meta_set(&tx, store::META_HYDRATE_STATE, store::HYDRATE_IN_PROGRESS)?;
+            store::attachments_start_growing(&tx)?;
             store::meta_set(&tx, store::META_EVENT_CURSOR, &cursor)?;
             store::meta_set(&tx, crate::reach::FENCE, &fence)?;
             store::meta_set(&tx, store::META_INSTANCE_ID, &instance)?;
@@ -533,6 +534,7 @@ fn attempt(
             store::meta_delete(&tx, store::META_ITEMS_EXPECTED)?;
             store::meta_delete(&tx, store::META_ITEMS_LISTED)?;
             store::meta_delete(&tx, store::META_HYDRATE_RESUME)?;
+            store::attachments_whole(&tx)?;
             let counts = (store::count(&tx, "items")?, store::count(&tx, "edges")?);
             tx.commit()?;
             counts

@@ -3485,6 +3485,18 @@ marfa device blobs budget [OPTIONS] [VALUE]
 
 Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 
+### marfa device blobs fetch-kept
+
+Fetch the files attached to items the store holds that it does not hold yet, smallest first, resuming any fetch that stopped part way.
+
+Attached files stay on the device outside the budget while the item they are attached to is held, and so does the part of one a fetch left, which this resumes. Run it after `device hydrate` and after each `device catch-up`. It waits out a server that asks for a wait of a minute or less, and stops at the first file the disk has no room for, once the server cannot be reached, or once it asks for a longer wait. A file that fails otherwise is passed over. It reports the attached files not held and why. Ctrl-C stops it between two files or during a wait.
+
+```text
+marfa device blobs fetch-kept [OPTIONS]
+```
+
+Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
+
 ## folders
 
 Folders on this machine, a directory that holds a slice as files, and their settings on the server.

@@ -261,6 +261,70 @@ pub struct FileCache {
     /// Why the files fetched last could not be kept out of backups; absent
     /// once a fetched file is marked.
     pub backup_mark_failure: Option<String>,
+    /// The files attached to items the copy holds, which stay on the device
+    /// outside the budget; absent from the start of a hydration until one
+    /// completes, for a folder's copy, and where the cache could not be read.
+    pub attachments: Option<Attachments>,
+}
+
+/// Why an attachment's bytes are not held.
+#[napi(string_enum = "snake_case")]
+pub enum NotHeldReason {
+    /// No fetch of them has been asked for since they became an attachment.
+    NotFetched,
+    /// The volume had no room for them, or for an attachment before them in
+    /// the same fetch.
+    NoRoom,
+    /// The server, or the link it gave, could not be reached, or the link
+    /// stopped sending part way.
+    Unreachable,
+    /// The server asked for a wait longer than a fetch of attachments
+    /// makes, before them or an attachment before them in the same fetch.
+    RateLimited,
+    /// The server holds no bytes by that hash.
+    Absent,
+    /// The fetch failed otherwise.
+    Failed,
+    /// The edge is held but its file item is not.
+    NotInCopy,
+}
+
+/// The attachments not held for one reason.
+#[napi(object)]
+pub struct NotHeld {
+    pub reason: NotHeldReason,
+    pub attachments: i64,
+    /// The bytes they state, counted once for files that share them.
+    pub bytes: i64,
+    /// How many of them state no size, so add nothing to `bytes`.
+    pub unstated: i64,
+}
+
+/// The files attached to items the copy holds.
+#[napi(object)]
+pub struct Attachments {
+    /// The file items whose bytes the cache holds whole.
+    pub held: i64,
+    /// Their bytes, counted once for files that share them.
+    pub held_bytes: i64,
+    /// The bytes of partial files of attachments.
+    pub partial_bytes: i64,
+    /// The attachments whose bytes the cache does not hold whole.
+    pub not_held: i64,
+    /// The bytes they state, counted once for files that share them.
+    pub not_held_bytes: i64,
+    pub not_held_by_reason: Vec<NotHeld>,
+}
+
+/// What a fetch of the attachments did.
+#[napi(object)]
+pub struct KeptFetch {
+    /// The files whose bytes it fetched, counted once for files that share
+    /// them.
+    pub fetched: i64,
+    pub fetched_bytes: i64,
+    /// The attachments after it, as the state report gives them.
+    pub attachments: Option<Attachments>,
 }
 
 #[napi(object)]
@@ -802,6 +866,44 @@ impl From<marfa_core::FileCache> for FileCache {
             held_unreadable: cache.held_unreadable,
             volume_unreadable: cache.volume_unreadable,
             backup_mark_failure: cache.backup_mark_failure,
+            attachments: cache.attachments.map(Into::into),
+        }
+    }
+}
+
+impl From<marfa_core::NotHeldReason> for NotHeldReason {
+    fn from(reason: marfa_core::NotHeldReason) -> Self {
+        use marfa_core::NotHeldReason as Why;
+        match reason {
+            Why::NotFetched => NotHeldReason::NotFetched,
+            Why::NoRoom => NotHeldReason::NoRoom,
+            Why::Unreachable => NotHeldReason::Unreachable,
+            Why::RateLimited => NotHeldReason::RateLimited,
+            Why::Absent => NotHeldReason::Absent,
+            Why::Failed => NotHeldReason::Failed,
+            Why::NotInCopy => NotHeldReason::NotInCopy,
+        }
+    }
+}
+
+impl From<marfa_core::Attachments> for Attachments {
+    fn from(found: marfa_core::Attachments) -> Self {
+        Attachments {
+            held: count(found.held),
+            held_bytes: count(found.held_bytes),
+            partial_bytes: count(found.partial_bytes),
+            not_held: count(found.not_held),
+            not_held_bytes: count(found.not_held_bytes),
+            not_held_by_reason: found
+                .not_held_by_reason
+                .into_iter()
+                .map(|group| NotHeld {
+                    reason: group.reason.into(),
+                    attachments: count(group.attachments),
+                    bytes: count(group.bytes),
+                    unstated: count(group.unstated),
+                })
+                .collect(),
         }
     }
 }
@@ -1681,6 +1783,36 @@ pub struct Drain {
     core: Arc<marfa_core::Core>,
     stop: Arc<AtomicBool>,
     failed: Option<marfa_core::CoreError>,
+}
+
+pub struct FetchKept {
+    core: Arc<marfa_core::Core>,
+    stop: Arc<AtomicBool>,
+    failed: Option<marfa_core::CoreError>,
+}
+
+#[napi]
+impl Task for FetchKept {
+    type Output = marfa_core::KeptFetch;
+    type JsValue = KeptFetch;
+
+    fn reject(&mut self, env: Env, error: Error) -> Result<Self::JsValue> {
+        Err(rethrown(env, self.failed.take(), error))
+    }
+
+    fn compute(&mut self) -> Result<Self::Output> {
+        self.core
+            .fetch_kept_until(&self.stop)
+            .map_err(|error| record(&mut self.failed, error))
+    }
+
+    fn resolve(&mut self, _: Env, fetched: Self::Output) -> Result<Self::JsValue> {
+        Ok(KeptFetch {
+            fetched: count(fetched.fetched),
+            fetched_bytes: count(fetched.fetched_bytes),
+            attachments: fetched.attachments.map(Into::into),
+        })
+    }
 }
 
 pub struct ReadServerCatalog {
@@ -2623,6 +2755,23 @@ impl MarfaCore {
             .trim_files()
             .map(count)
             .map_err(|error| failure(env, error))
+    }
+
+    /// Fetches the bytes of every file attached to an item the copy holds
+    /// that the cache does not hold whole, smallest first, and answers what
+    /// it fetched and the attachments after it, resuming the part of one an
+    /// earlier fetch left. Waits out a server that asks for a wait of a
+    /// minute or less, and stops at the first the disk has no room for, once
+    /// the server cannot be reached, or once it asks for a longer wait; one
+    /// that fails otherwise is passed over. Run after a hydration and after
+    /// a catch-up. Refused to a reading handle and for a folder's copy.
+    #[napi]
+    pub fn fetch_kept(&self, stop: Option<&Stop>) -> AsyncTask<FetchKept> {
+        AsyncTask::new(FetchKept {
+            core: Arc::clone(&self.inner),
+            failed: None,
+            stop: flag_of(stop),
+        })
     }
 
     /// Whether a blob's bytes are held beside the store, with no request.

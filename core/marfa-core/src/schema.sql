@@ -305,3 +305,13 @@ CREATE TABLE IF NOT EXISTS body_checks (
 CREATE TABLE IF NOT EXISTS body_pins (
   item_id TEXT PRIMARY KEY
 ) WITHOUT ROWID;
+
+-- The bytes the file cache keeps for files attached to items, by the hex of
+-- their hash, with why the last fetch left them unheld. Kept in the
+-- transaction that makes or ends an attachment, and only added to while the
+-- copy is not whole, so a trim never takes bytes an attachment not yet
+-- arrived again still names.
+CREATE TABLE IF NOT EXISTS attachment_bytes (
+  hex TEXT PRIMARY KEY,
+  miss TEXT
+) WITHOUT ROWID;

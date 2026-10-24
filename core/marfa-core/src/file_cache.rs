@@ -80,6 +80,201 @@ pub struct FileCache {
     /// Why the last bytes fetched could not be kept out of backups; `None`
     /// once they could, and off Apple platforms, where nothing is marked.
     pub backup_mark_failure: Option<String>,
+    /// The files attached to items the copy holds, which stay on the device
+    /// outside the budget; `None` from the start of a hydration until one
+    /// completes, since the copy's rows have not all arrived, for a folder's
+    /// copy, which holds its files in the folder, and where the cache could
+    /// not be read.
+    pub attachments: Option<Attachments>,
+}
+
+/// The files attached to items the copy holds (`device/attachment-kept`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Attachments {
+    /// The file items whose bytes the cache holds whole.
+    pub held: u64,
+    /// The bytes of those files, counted once for files that share them.
+    /// They are in `FileCache::held`, and not counted against the budget.
+    pub held_bytes: u64,
+    /// The bytes of partial files of attachments, which stay for a resume
+    /// and are not counted against the budget either.
+    pub partial_bytes: u64,
+    /// The attachments whose bytes the cache does not hold whole.
+    pub not_held: u64,
+    /// The bytes those attachments state, counted once for files that share
+    /// them; an attachment that states no size adds none.
+    pub not_held_bytes: u64,
+    /// The attachments not held, by why.
+    pub not_held_by_reason: Vec<NotHeld>,
+}
+
+/// The attachments not held for one reason.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct NotHeld {
+    pub reason: NotHeldReason,
+    pub attachments: u64,
+    /// The bytes they state, counted once for files that share them.
+    pub bytes: u64,
+    /// How many of them state no size, so add nothing to `bytes`.
+    pub unstated: u64,
+}
+
+/// Why an attachment's bytes are not held.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NotHeldReason {
+    /// No fetch of them has been asked for since they became an attachment.
+    NotFetched,
+    /// The volume had no room for them, or for an attachment before them in
+    /// the same fetch.
+    NoRoom,
+    /// The server, or the link it gave, could not be reached, or the link
+    /// stopped sending part way.
+    Unreachable,
+    /// The server asked the device to wait longer than a fetch of
+    /// attachments waits, before this attachment or one before it.
+    RateLimited,
+    /// The server holds no bytes by that hash.
+    Absent,
+    /// The fetch failed otherwise: the link answered what does not continue
+    /// or match the bytes, or the server answered what could not be read.
+    Failed,
+    /// The edge is held but its file item is not, since the slice holds
+    /// `attached-to` edges whole and not the file's type, so the device
+    /// does not know which bytes it names.
+    NotInCopy,
+}
+
+impl NotHeldReason {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            NotHeldReason::NotFetched => "not_fetched",
+            NotHeldReason::NoRoom => "no_room",
+            NotHeldReason::Unreachable => "unreachable",
+            NotHeldReason::RateLimited => "rate_limited",
+            NotHeldReason::Absent => "absent",
+            NotHeldReason::Failed => "failed",
+            NotHeldReason::NotInCopy => "not_in_copy",
+        }
+    }
+
+    pub(crate) fn stored(text: &str) -> NotHeldReason {
+        match text {
+            "no_room" => NotHeldReason::NoRoom,
+            "unreachable" => NotHeldReason::Unreachable,
+            "rate_limited" => NotHeldReason::RateLimited,
+            "absent" => NotHeldReason::Absent,
+            "failed" => NotHeldReason::Failed,
+            _ => NotHeldReason::NotFetched,
+        }
+    }
+}
+
+/// What a fetch of the attachments not held did.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct KeptFetch {
+    /// The files whose bytes it fetched, counted once for files that share
+    /// them.
+    pub fetched: u64,
+    pub fetched_bytes: u64,
+    /// The attachments after it, as the state report gives them.
+    pub attachments: Option<Attachments>,
+}
+
+/// The attachments that share one hash.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct Group {
+    pub(crate) files: u64,
+    /// The largest size any of them states.
+    pub(crate) stated: Option<u64>,
+    /// How many of them state no size.
+    pub(crate) unstated: u64,
+}
+
+/// The attachments, grouped by the hex of the hash of their bytes.
+pub(crate) fn by_bytes(
+    found: &[crate::store::Attachment],
+) -> std::collections::BTreeMap<String, Group> {
+    let mut groups = std::collections::BTreeMap::<String, Group>::new();
+    for attachment in found {
+        let Ok(hex) = crate::blob::hex_of(&attachment.hash) else {
+            continue;
+        };
+        let group = groups.entry(hex.to_string()).or_default();
+        group.files += 1;
+        group.stated = group.stated.max(attachment.stated);
+        group.unstated += u64::from(attachment.stated.is_none());
+    }
+    groups
+}
+
+/// The report of `found`, with `not_in_copy` edges whose file item the copy
+/// does not hold, the cache's entries by name and size in `entries`, and the
+/// reason the last fetch left each unheld by hex in `misses`.
+pub(crate) fn attachments_of(
+    found: &[crate::store::Attachment],
+    not_in_copy: u64,
+    entries: &std::collections::HashMap<String, u64>,
+    misses: &std::collections::HashMap<String, String>,
+) -> Attachments {
+    let mut report = Attachments {
+        held: 0,
+        held_bytes: 0,
+        partial_bytes: 0,
+        not_held: 0,
+        not_held_bytes: 0,
+        not_held_by_reason: Vec::new(),
+    };
+    let mut reasons = std::collections::BTreeMap::<NotHeldReason, NotHeld>::new();
+    let mut miss = |reason: NotHeldReason, group: Group| {
+        let entry = reasons.entry(reason).or_insert(NotHeld {
+            reason,
+            attachments: 0,
+            bytes: 0,
+            unstated: 0,
+        });
+        entry.attachments += group.files;
+        entry.bytes += group.stated.unwrap_or(0);
+        entry.unstated += group.unstated;
+    };
+    for (hex, group) in by_bytes(found) {
+        if let Some(size) = entries.get(&format!(".partial-{hex}")) {
+            report.partial_bytes += size;
+        }
+        // Held bytes a read failed on stay not held until a fetch finds them
+        // readable again.
+        if let Some(size) = entries.get(&hex)
+            && misses.get(&hex).map(String::as_str) != Some(NotHeldReason::Failed.as_str())
+        {
+            report.held += group.files;
+            report.held_bytes += size;
+            continue;
+        }
+        let reason = misses.get(&hex).map_or(NotHeldReason::NotFetched, |text| {
+            NotHeldReason::stored(text)
+        });
+        miss(reason, group);
+    }
+    if not_in_copy > 0 {
+        let outside = Group {
+            files: not_in_copy,
+            stated: None,
+            unstated: not_in_copy,
+        };
+        miss(NotHeldReason::NotInCopy, outside);
+    }
+    report.not_held_by_reason = reasons.into_values().collect();
+    report.not_held = report
+        .not_held_by_reason
+        .iter()
+        .map(|reason| reason.attachments)
+        .sum();
+    report.not_held_bytes = report
+        .not_held_by_reason
+        .iter()
+        .map(|reason| reason.bytes)
+        .sum();
+    report
 }
 
 /// The figures of the volume that holds the cache.
@@ -351,6 +546,63 @@ pub(crate) mod tests {
             Some(9)
         );
         assert_eq!(in_force(FileBudget::KeepAll, Some(volume), 0).bytes, None);
+    }
+
+    #[test]
+    fn attachments_are_counted_by_file_and_their_bytes_once_by_hash() {
+        let hex = |c: char| c.to_string().repeat(64);
+        let attachment = |id: &str, c: char, stated: Option<u64>| crate::store::Attachment {
+            item_id: id.into(),
+            hash: format!("sha256:{}", hex(c)),
+            stated,
+        };
+        let found = [
+            attachment("a1", 'a', Some(10)),
+            attachment("a2", 'a', Some(10)),
+            attachment("b", 'b', Some(30)),
+            attachment("c", 'c', None),
+            attachment("d", 'd', Some(7)),
+            attachment("d2", 'd', None),
+            attachment("e", 'e', Some(5)),
+            crate::store::Attachment {
+                item_id: "bad".into(),
+                hash: "not a hash".into(),
+                stated: Some(1),
+            },
+        ];
+        let entries = std::collections::HashMap::from([
+            (hex('a'), 10),
+            (format!(".partial-{}", hex('b')), 12),
+            (hex('e'), 5),
+        ]);
+        let misses = std::collections::HashMap::from([
+            (hex('b'), "no_room".to_string()),
+            (hex('a'), "unreachable".to_string()),
+            (hex('e'), NotHeldReason::Failed.as_str().to_string()),
+        ]);
+        let report = attachments_of(&found, 2, &entries, &misses);
+        assert_eq!(report.held, 2);
+        assert_eq!(report.held_bytes, 10);
+        assert_eq!(report.partial_bytes, 12);
+        assert_eq!(
+            report.not_held, 7,
+            "held bytes a read failed on counted as held"
+        );
+        assert_eq!(report.not_held_bytes, 42);
+        let reasons: Vec<_> = report
+            .not_held_by_reason
+            .iter()
+            .map(|why| (why.reason, why.attachments, why.bytes, why.unstated))
+            .collect();
+        assert_eq!(
+            reasons,
+            [
+                (NotHeldReason::NotFetched, 3, 7, 2),
+                (NotHeldReason::NoRoom, 1, 30, 0),
+                (NotHeldReason::Failed, 1, 5, 0),
+                (NotHeldReason::NotInCopy, 2, 0, 2),
+            ]
+        );
     }
 
     #[test]
