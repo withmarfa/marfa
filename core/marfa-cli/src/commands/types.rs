@@ -290,7 +290,7 @@ pub fn move_shortfall(from: &str, job: &Value) -> Option<String> {
         ));
     }
     Some(format!(
-        "the settings that name {from} weren't changed: {}. Deal with these, then run the move again.",
+        "the move left {from} in use: {}. Deal with these, then run the move again.",
         why.join("; ")
     ))
 }

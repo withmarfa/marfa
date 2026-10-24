@@ -490,8 +490,7 @@ export class BulkActionWorker {
    * A type move's last step, once every chunk has run: in one transaction,
    * the settings naming the old type are rewritten if no item of it remains
    * and none of them is blocked, and the job completes saying which and what
-   * is left. Any
-   * failure rolls the rewrite back whole, and the job fails.
+   * is left. Any failure rolls the rewrite back whole, and the job fails.
    */
   private async finishTypeMove(
     job: BulkActionJobRow,
