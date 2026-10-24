@@ -25,7 +25,7 @@ interface View {
   settings: Record<string, unknown>;
 }
 
-const layouts = [{ id: "main", kind: "list" }];
+const sort = [{ by: "title", direction: "asc" }];
 let client: MarfaClient;
 let ctx: TestContext;
 let apiUrl: string;
@@ -68,7 +68,7 @@ async function copy(name: string, url?: string, key?: string) {
 }
 
 async function create(title: string) {
-  const made = value(await device.call<View>("createView", { title, layouts }));
+  const made = value(await device.call<View>("createView", { title, sort }));
   trackView(ctx, made.id);
   return made;
 }
@@ -106,7 +106,7 @@ it("creates, changes and deletes through the view door, holding each answer and 
   expect(changed.settings).toMatchObject({
     title: "Renamed",
     query: { types: ["core.note"] },
-    layouts,
+    sort,
   });
   expect(value(await device.call("view", created.id))).toEqual(changed);
   const served = await client.getItem(created.id);
@@ -121,7 +121,7 @@ it("creates, changes and deletes through the view door, holding each answer and 
 });
 
 it("replays a create with the same idempotency key as one view", async () => {
-  const settings = { title: `Replay ${ctx.runId}`, layouts };
+  const settings = { title: `Replay ${ctx.runId}`, sort };
   const key = randomUUID();
   const first = value(await device.call<View>("createView", settings, key));
   trackView(ctx, first.id);
@@ -243,7 +243,7 @@ it("reports a query refusal without changing a held view", async () => {
   for (const operation of [
     device.call("createView", {
       title: `Invalid query ${ctx.runId}`,
-      layouts,
+      sort,
       query: { filter: "tags eq" },
     }),
     device.call("changeView", created.id, { query: { filter: "tags eq" } }, 2),
@@ -270,7 +270,7 @@ it("reports missing system.view write access for every view write and preserves 
   value(await reader.hydrate(["system.view"], "all"));
   const before = value(await reader.call("view", created.id));
   for (const operation of [
-    reader.call("createView", { title: "No access", layouts }),
+    reader.call("createView", { title: "No access", sort }),
     reader.call("changeView", created.id, { title: "No access" }, 1),
     reader.call("deleteView", created.id),
   ]) {
@@ -294,7 +294,7 @@ it("fails every write without a reachable or configured server and queues nothin
   ] as const) {
     const offline = await copy(name, address, key);
     for (const operation of [
-      offline.call("createView", { title: "Offline", layouts }),
+      offline.call("createView", { title: "Offline", sort }),
       offline.call("changeView", created.id, { title: "Offline" }, 1),
       offline.call("deleteView", created.id),
     ]) {

@@ -374,7 +374,7 @@ When `GET /items` names a `type` in the `system.` namespace, the server MUST lis
 
 **Reason:** a caller that asks for `system.folder` has already said what it wants, so the default that leaves `system.*` items out of a listing does not apply to it.
 
-**Tests:** `compliance/folders.test.ts › creates a folder as a system.folder, read back through the item doors`, `compliance/views.test.ts › creates a view as a system.view with every layout kind, read back through the item doors`.
+**Tests:** `compliance/folders.test.ts › creates a folder as a system.folder, read back through the item doors`, `compliance/views.test.ts › creates a view as a system.view with its query, sort and group, read back through the item doors`.
 
 ## The filter expression
 

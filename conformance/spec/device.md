@@ -1312,11 +1312,19 @@ If a filter compares a field with `null` by an operator that takes a value, then
 
 ### `device/filter-backref`
 
-If a local list or a local search names a `backref` condition, then a device MUST refuse it `invalid`, carrying no server code.
+If a local list or a local search names a `backref` condition on an edge type the copy does not hold whole, then a device MUST refuse it `invalid`, carrying no server code.
 
-**Reason:** a copy holds the edges its own items draw and not an edge drawn to one of them from a row outside the slice, so it would miss rows such a condition selects.
+**Reason:** a copy that does not hold the edge type whole holds the edges its own items draw and not an edge drawn to one of them from a row outside the slice, so it would miss rows such a condition selects.
 
-**Tests:** `device/local-refusals.test.ts › refuses a backref condition on a list and a search`.
+**Tests:** `device/local-refusals.test.ts › refuses a backref condition on a list and a search where the copy does not hold the edge type whole`.
+
+### `device/filter-backref-whole`
+
+Where the copy holds the named edge type whole, when a local list or a local search names a `backref[<type>]` condition, a device MUST answer it from the edges the copy holds.
+
+**Reason:** the copy holds every edge of the type, so no row is missed.
+
+**Tests:** `device/local-refusals.test.ts › answers a backref condition on a list and a search where the copy holds the edge type whole`.
 
 ### `device/filter-hidden-edge-type`
 
@@ -4258,25 +4266,25 @@ When a caller lists views or reads a held view by ID, a device MUST return the h
 
 ### `device/view-sort-property`
 
-When a caller reads a view's layout sorted by a property, a device MUST order its rows as `search-and-filters/sort-property-ascending`, `search-and-filters/sort-property-descending`, `search-and-filters/sort-property-missing`, and `search-and-filters/sort-property-ties` specify.
+When a caller reads a view sorted by a property, a device MUST order its rows as `search-and-filters/sort-property-ascending`, `search-and-filters/sort-property-descending`, `search-and-filters/sort-property-missing`, and `search-and-filters/sort-property-ties` specify.
 
-**Tests:** `device/views.test.ts › orders mixed property scalars and missing values %s with ascending ID ties`, `› pages a large copy by its layout and counts the whole matching set`, `device/views-live.test.ts › returns the same rows in the same order as the server for each shared sort`.
+**Tests:** `device/views.test.ts › orders mixed property scalars and missing values %s with ascending ID ties`, `› pages a large copy by its sort and counts the whole matching set`, `device/views-live.test.ts › returns the same rows in the same order as the server for each shared sort`.
 
 ### `device/view-sort-own`
 
-When a caller reads a view's layout sorted by an own field, a device MUST order the rows by that field's value, using the type's title field for `title` and the lexically first tag for `tags`, with untagged items last.
+When a caller reads a view sorted by an own field, a device MUST order the rows by that field's value, using the type's title field for `title` and the lexically first tag for `tags`, with untagged items last.
 
 **Tests:** `device/views.test.ts › sorts the own field %s`.
 
 ### `device/view-sort-keys`
 
-When a layout names several sort keys, a device MUST compare the keys in their declared order with ascending item IDs breaking ties, except for a single timestamp key whose ties follow its direction.
+When a view names several sort keys, a device MUST compare the keys in their declared order with ascending item IDs breaking ties, except for a single timestamp key whose ties follow its direction.
 
 **Tests:** `device/views.test.ts › orders several keys in their declared order and accepts a field no item has`, `device/views-live.test.ts › returns the same rows in the same order as the server for each shared sort`.
 
 ### `device/view-sort-missing`
 
-When a layout sorts by a property no item holds, a device MUST return the matching rows in ascending item ID order.
+When a view sorts by a property no item holds, a device MUST return the matching rows in ascending item ID order.
 
 **Tests:** `device/views.test.ts › orders several keys in their declared order and accepts a field no item has`.
 
@@ -4288,63 +4296,81 @@ When a caller pages a view's sorted items with a limit and offset, a device MUST
 
 ### `device/view-group-value`
 
-When a caller reads a layout's groups by a field, a device MUST return one group per distinct scalar value and a null group for missing, null, object, or array values, with each group's item count.
+When a caller reads a view's groups by a field, a device MUST return one group per distinct scalar value and a null group for missing, null, object, or array values, with each group's item count.
 
-**Tests:** `device/views.test.ts › counts scalar and missing groups and sums only number properties`.
+**Tests:** `device/views.test.ts › counts scalar and missing groups`.
 
 ### `device/view-group-tags`
 
-When a caller reads a layout grouped by tags, a device MUST count each item once in every tag group it belongs to and each untagged item once in the null group.
+When a caller reads a view grouped by tags, a device MUST count each item once in every tag group it belongs to and each untagged item once in the null group.
 
 **Tests:** `device/views.test.ts › counts an item in each tag group and honors ordered and hidden groups`.
 
 ### `device/view-group-order`
 
-When a caller reads a layout's groups, a device MUST return the groups named by `group.order` first in that order, followed by remaining scalar groups in ascending value order and the null group last.
+When a caller reads a view's groups, a device MUST return the groups named by `group.order` first in that order, followed by remaining scalar groups in ascending value order and the null group last.
 
-**Tests:** `device/views.test.ts › counts scalar and missing groups and sums only number properties`, `› counts an item in each tag group and honors ordered and hidden groups`.
+**Tests:** `device/views.test.ts › counts scalar and missing groups`, `› counts an item in each tag group and honors ordered and hidden groups`.
 
 ### `device/view-group-hidden`
 
-When a layout names `group.hidden`, a device MUST omit those groups from its group answer without narrowing the layout's item listing.
+When a view names `group.hidden`, a device MUST omit those groups from its group answer without narrowing the view's item listing.
 
 **Tests:** `device/views.test.ts › counts an item in each tag group and honors ordered and hidden groups`.
 
 ### `device/view-group-edge`
 
-Where the copy holds the named edge type whole, when a caller reads a layout grouped by `edge[<type>]` or `backref[<type>]`, a device MUST count each item once per distinct outgoing target or incoming source respectively, with items having no such edge in the null group.
+Where the copy holds the named edge type whole, when a caller reads a view grouped by `edge[<type>]` or `backref[<type>]`, a device MUST count each item once per distinct outgoing target or incoming source respectively, with items having no such edge in the null group.
 
 **Tests:** `device/views.test.ts › groups by each %s other end only with the edge type held whole`.
 
 ### `device/view-group-edge-refusal`
 
-If a layout groups by an edge type the copy does not hold whole, then a device MUST refuse its groups with `invalid`, naming the edge type and the need to hold it whole.
+If a view groups by an edge type the copy does not hold whole, then a device MUST refuse its groups with `invalid`, naming the edge type and the need to hold it whole.
 
 **Tests:** `device/views.test.ts › groups by each %s other end only with the edge type held whole`.
 
 ### `device/view-date-bucket`
 
-When a layout buckets a date field by day, week, month, or year, a device MUST group timestamps by their calendar date in the caller's time zone or the device's time zone when none is named, identifying each group by its first date as `YYYY-MM-DD`, with weeks beginning on Monday.
+When a view buckets a date field by day, week, month, or year, a device MUST group timestamps by their calendar date in the caller's time zone or the device's time zone when none is named, identifying each group by its first date as `YYYY-MM-DD`, with weeks beginning on Monday.
 
 **Tests:** `device/views.test.ts › buckets %s by local calendar dates across a DST change`, `› uses the device time zone when a caller names none`.
 
 ### `device/view-date-missing`
 
-When a layout buckets a date field, a device MUST count missing or invalid dates in the null group.
+When a view buckets a date field, a device MUST count missing or invalid dates in the null group.
 
 **Tests:** `device/views.test.ts › keeps missing and invalid dates in the missing bucket`.
 
-### `device/view-group-sum`
-
-When a chart layout names `y.sum`, a device MUST report each group's sum of that number property's finite numeric values, with missing and non-number values contributing zero.
-
-**Tests:** `device/views.test.ts › counts scalar and missing groups and sums only number properties`, `› counts an item in each tag group and honors ordered and hidden groups`.
-
 ### `device/view-unanswerable`
 
-If a view's query asks for a type or tier outside the slice, `beneath` without `parent-of` held whole, or a `backref` condition, then a device MUST refuse its item list, search, and groups with `invalid`, naming the reason.
+If a view's query asks for a type or tier outside the slice, `beneath` without `parent-of` held whole, or a `backref` condition on an edge type the copy does not hold whole, then a device MUST refuse its item list, search, and groups with `invalid`, naming the reason.
 
-**Tests:** `device/views.test.ts › refuses an unanswerable view with the reason (%j)`.
+**Tests:** `device/views.test.ts › refuses an unanswerable view with the reason (%j)`, `› answers a backref condition where the copy holds the edge type whole and refuses it where it does not`.
+
+### `device/view-filter-edge`
+
+When a caller reads a view whose `query.filter` holds an `edge` term or a `source` term, a device MUST list the items the term selects as `edges/filter-edge-full` and `search-and-filters/source-narrows` specify, from the edges the copy holds for them.
+
+**Reason:** a view of one folder's items is `edge[in-folder] eq "<folder id>"`, which a working copy answers without the server.
+
+**Tests:** `device/views.test.ts › lists the items holding an edge to one item and those of one source`.
+
+### `device/view-filter-backref`
+
+Where the copy holds the named edge type whole, when a caller reads a view whose `query.filter` holds a `backref[<type>]` term, a device MUST list the items the term selects, counting the incoming edges the copy holds without checking that the key may read their sources.
+
+**Reason:** the copy holds every edge of the type, so it answers the term as the server does for a key that reads every source.
+
+**Tests:** `device/views.test.ts › answers a backref condition where the copy holds the edge type whole and refuses it where it does not`.
+
+### `device/view-layouts-ignored`
+
+When a caller reads a view that holds a `layouts` setting, a device MUST order and group its items by the view's `sort` and `group` alone.
+
+**Reason:** `layouts` is not a setting a view declares (`views/settings`), so nothing in it is a sort or a group.
+
+**Tests:** `device/views.test.ts › reads a view's sort and ignores layouts stored with it`.
 
 ### `device/view-incomplete`
 
@@ -4478,7 +4504,7 @@ When a caller reads a folder the copy holds, a device MUST answer its state and 
 
 When a caller reads a folder the copy holds whose query carries a `backref` condition, a device MUST answer its settings.
 
-**Reason:** the server takes such a folder (`items/folder-create`), and an app shows it by its title though no copy can answer its query.
+**Reason:** the server takes such a folder (`items/folder-create`), and an app shows it by its title though a copy that does not hold the edge type whole cannot answer its query.
 
 **Tests:** `device/folder-settings-live.test.ts › refuses settings no folder follows before anything is sent, and fails offline with nothing kept`.
 
@@ -4514,9 +4540,9 @@ If a device refuses a list in a folder because its slice cannot answer the folde
 
 ### `device/folder-list-backref`
 
-If a folder's query carries a `backref` condition, then a device MUST refuse a list in that folder `invalid`, naming the condition.
+If a folder's query carries a `backref` condition on an edge type the copy does not hold whole, then a device MUST refuse a list in that folder `invalid`, naming the condition.
 
-**Reason:** a copy holds the edges its items draw but not every edge drawn to them, so it would otherwise ignore the condition.
+**Reason:** a copy that does not hold the edge type whole holds the edges its items draw but not every edge drawn to them, so it would otherwise ignore the condition.
 
 **Tests:** `device/folder-settings-live.test.ts › refuses settings no folder follows before anything is sent, and fails offline with nothing kept`.
 
@@ -4568,7 +4594,7 @@ If a folder write through a working copy cannot reach the server, then a device 
 
 If folder settings sent through a working copy carry a `backref` condition, then a device MUST refuse them `invalid` before anything is sent.
 
-**Reason:** the server takes a `backref` condition, which no copy can answer, so a folder made with one could be followed by no folder on disk and listed in no copy.
+**Reason:** the server takes a `backref` condition, which a folder on disk cannot follow and a copy answers only where it holds the edge type whole, so a folder made with one could be followed by no folder on disk.
 
 **Tests:** `device/folder-settings-live.test.ts › refuses settings no folder follows before anything is sent, and fails offline with nothing kept`.
 

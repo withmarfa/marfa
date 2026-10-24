@@ -882,8 +882,6 @@ describe("a retained answer after its credential is narrowed", () => {
   });
 });
 
-const LAYOUTS = [{ id: "main", kind: "list" }];
-
 const DOORS = [
   "POST /items",
   "PATCH /items/{id}",
@@ -929,7 +927,7 @@ async function prepare(door: string): Promise<Prepared> {
     return made.data.item;
   };
   const view = async (): Promise<MarfaItem> => {
-    const made = await client.createView({ title: "A view", layouts: LAYOUTS });
+    const made = await client.createView({ title: "A view" });
     expect(made.status, JSON.stringify(made.error)).toBe(201);
     trackView(ctx, made.data.item.id);
     return made.data.item;
@@ -999,7 +997,7 @@ async function prepare(door: string): Promise<Prepared> {
       return {
         method,
         path: template,
-        body: { title: "A view", layouts: LAYOUTS },
+        body: { title: "A view" },
       };
     case "PATCH /views/{id}": {
       const made = await view();

@@ -225,7 +225,7 @@ describe("a device refuses a filter outside the listing grammar", () => {
 });
 
 describe("a device refuses a condition its copy cannot answer as the server does", () => {
-  it("refuses a backref condition on a list and a search", async () => {
+  it("refuses a backref condition on a list and a search where the copy does not hold the edge type whole", async () => {
     harness = await hydrated("backref-filter");
     const { device } = harness;
     // The witness: a refusal the server makes carries its code where the
@@ -269,6 +269,36 @@ describe("a device refuses a condition its copy cannot answer as the server does
         ).toEqual(["invalid", null]);
       }
     }
+  });
+
+  it("answers a backref condition on a list and a search where the copy holds the edge type whole", async () => {
+    harness = await startHarness("backref-whole");
+    const { device, server } = harness;
+    scriptHydration(server, {
+      head: "10",
+      rows: { "core.note": [{ item: { id: "n1" } }, { item: { id: "n2" } }] },
+      edges: {
+        "parent-of": [{ id: "e1", source_id: "n1", target_id: "n2" }],
+      },
+    });
+    expect(
+      (
+        await device.hydrate(["core.note"], "library", {
+          edgeTypes: ["parent-of"],
+        })
+      ).ok,
+    ).toBe(true);
+    const ids = async (filter: string) => {
+      const listed = await device.list({ filter });
+      expect(listed.ok, JSON.stringify(listed)).toBe(true);
+      return listed.ok ? listed.value.map((item) => item.id) : [];
+    };
+    expect(await ids("backref[parent-of] exists")).toEqual(["n2"]);
+    expect(await ids("backref[parent-of] not_exists")).toEqual(["n1"]);
+    const searched = await device.search("n2", {
+      filter: "backref[parent-of] exists",
+    });
+    expect(searched.ok, JSON.stringify(searched)).toBe(true);
   });
 });
 
