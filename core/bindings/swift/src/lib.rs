@@ -200,7 +200,8 @@ pub struct HydrateReport {
     pub edge_types: Vec<String>,
     pub items: u64,
     pub edges: u64,
-    /// The listing pages this call read.
+    /// The listing pages this call read, those of a walk it then started
+    /// again from the first page included.
     pub pages: u64,
     /// The listing pages the hydration read in all, those of the interrupted
     /// calls it resumed included.
