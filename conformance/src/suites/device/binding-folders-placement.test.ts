@@ -77,14 +77,22 @@ async function restedTurn(
   await own.device.hooks.hold("folder-watch-turn");
   await own.device.hooks.release("folder-pass-ended");
   await untilHeld(own.device, "folder-watch-turn");
+  // A wake already queued (a retry notice from the follow, say) can end the
+  // receive before the wait arms and send the watch back to the held turn.
+  // Seeing the watch held at the turn with no receive armed is certain
+  // evidence of that, so it is let through again until a receive arms.
   await own.device.hooks.release("folder-watch-turn");
   await own.device.hooks.hold("folder-watch-turn");
   await vi.waitFor(
     async () => {
-      expect(
-        (await own.device.clock.waits()).some((wait) => wait.askedMs === 1_000),
-        "the folder has not armed its next receive",
-      ).toBe(true);
+      const armed = (await own.device.clock.waits()).some(
+        (wait) => wait.askedMs === 1_000,
+      );
+      if (!armed && (await own.device.hooks.waiting("folder-watch-turn")) > 0) {
+        await own.device.hooks.release("folder-watch-turn");
+        await own.device.hooks.hold("folder-watch-turn");
+      }
+      expect(armed, "the folder has not armed its next receive").toBe(true);
     },
     { timeout: 10_000, interval: 20 },
   );
