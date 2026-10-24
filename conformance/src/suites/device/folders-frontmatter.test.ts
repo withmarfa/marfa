@@ -258,7 +258,7 @@ describe("edges in frontmatter", () => {
       ],
       {
         settings: {
-          search: { types: ["core.note", "core.file"] },
+          query: { types: ["core.note", "core.file"] },
           defaults: { type: "core.note" },
         },
       },
@@ -1323,7 +1323,7 @@ describe("edges in frontmatter", () => {
         edge_type: "about",
       })),
       {
-        settings: { search: { types: ["core.note"], state: ["active"] } },
+        settings: { query: { types: ["core.note"], state: ["active"] } },
         events: [
           (): Answer =>
             copyReplay("2", [copyItemEvent("2", "item.updated", archived)]),
@@ -1972,7 +1972,7 @@ describe("embedded files", () => {
       (rows[asked] ??= []).push({ item });
     }
     const made = await folderHarness(label, {
-      settings: { search: { types } },
+      settings: { query: { types } },
       rows,
       edges: { "attached-to": attachments },
       hydrate: false,
@@ -2014,7 +2014,7 @@ describe("embedded files", () => {
   }
 
   it("sends an embedded file with its file", async () => {
-    // A folder of notes, whose search holds no file type.
+    // A folder of notes, whose query holds no file type.
     harness = await folderHarness("folder-embed-push");
     const edges = new EdgeDoor();
     scriptFolderWrites(harness, { edges });
@@ -2074,7 +2074,7 @@ describe("embedded files", () => {
     ).toBeLessThan(order.indexOf("/items pic.png"));
     expect(
       pushed.value.pull?.unmatched,
-      "an embedded file outside the search was flagged as an item the folder no longer holds",
+      "an embedded file outside the query was flagged as an item the folder no longer holds",
     ).toBe(0);
     expect(
       frontOf(harness, "Other.md"),
@@ -2122,7 +2122,7 @@ describe("embedded files", () => {
       ],
       {
         settings: {
-          search: { types: ["core.note"] },
+          query: { types: ["core.note"] },
           first_placement: { "core.note": "notes" },
         },
       },
@@ -2968,7 +2968,7 @@ describe("embedded files", () => {
     ]);
   });
 
-  it("holds attachments whole only where its search holds a document", async () => {
+  it("holds attachments whole only where its query holds a document", async () => {
     const wholeTypes = (made: FolderHarness): Array<string | null> => [
       ...new Set(
         made.server.requests
@@ -2982,26 +2982,26 @@ describe("embedded files", () => {
       "a folder of notes did not hold attached-to whole, so the check below is about nothing",
     ).toContain("attached-to");
     second = await folderHarness("folder-embed-whole-files", {
-      settings: { search: { types: ["core.file"] } },
+      settings: { query: { types: ["core.file"] } },
     });
     expect(
       wholeTypes(second),
       "a folder of files alone, which embeds nothing, held every attachment whole",
     ).not.toContain("attached-to");
     const every = await folderHarness("folder-embed-whole-every", {
-      settings: { search: {} },
+      settings: { query: {} },
     });
     try {
       expect(
         wholeTypes(every),
-        "a search naming no type, which holds notes, did not hold attachments whole",
+        "a query naming no type, which holds notes, did not hold attachments whole",
       ).toContain("attached-to");
     } finally {
       await every.stop();
     }
   });
 
-  it("keeps an embedded file archived elsewhere where its search holds active items only", async () => {
+  it("keeps an embedded file archived elsewhere where its query holds active items only", async () => {
     const gone = "01a00000-0000-7000-8000-00000000e2f1";
     const picRow = fileRow(pic, "pic.png", png(1));
     const goneRow: WireItemOptions = {
@@ -3017,7 +3017,7 @@ describe("embedded files", () => {
       ],
       [attached("01a00000-0000-7000-8000-00000000e2f2", pic, host)],
       {
-        settings: { search: { types: ["core.note"], state: ["active"] } },
+        settings: { query: { types: ["core.note"], state: ["active"] } },
         events: [
           copyReplay("3", [
             copyItemEvent(
@@ -3258,7 +3258,7 @@ describe("what frontmatter says", () => {
     const id = "01a00000-0000-7000-8000-0000000013a1";
     harness = await folderHarness("folder-own-fields", {
       settings: {
-        search: { types: ["core.note", "core.bookmark"] },
+        query: { types: ["core.note", "core.bookmark"] },
         defaults: { tags: ["inbox"] },
       },
       rows: {
@@ -3311,7 +3311,7 @@ describe("what frontmatter says", () => {
     ).toEqual(["core.bookmark", "library"]);
     expect(
       saved?.properties,
-      "an own field travelled as a property, where every later pull writes it twice and a search never finds it",
+      "an own field travelled as a property, where every later pull writes it twice and a query never finds it",
     ).toEqual({
       url: "https://example.com",
       body: "A page.\n",
@@ -3544,7 +3544,7 @@ describe("what frontmatter says", () => {
     const event = "01a00000-0000-7000-8000-0000000013d1";
     const highlight = "01a00000-0000-7000-8000-0000000013d2";
     harness = await folderHarness("folder-display-hints", {
-      settings: { search: { types: ["core.event", "core.highlight"] } },
+      settings: { query: { types: ["core.event", "core.highlight"] } },
       rows: {
         "core.event": [
           {
@@ -3620,7 +3620,7 @@ describe("what frontmatter says", () => {
     // (`types/read-display-hints`), so the folder falls back to `title`
     // (`device/catalog-type-read`).
     harness = await folderHarness("folder-partial-hints", {
-      settings: { search: { types: ["user.quote"] } },
+      settings: { query: { types: ["user.quote"] } },
       catalog: {
         kind: "json",
         status: 200,
@@ -3666,7 +3666,7 @@ describe("what frontmatter says", () => {
   it("reports a type that declares a property no file can carry, and keeps it", async () => {
     const id = "01a00000-0000-7000-8000-0000000013e1";
     harness = await folderHarness("folder-uncarried-property", {
-      settings: { search: { types: ["user.ticket"] } },
+      settings: { query: { types: ["user.ticket"] } },
       catalog: {
         kind: "json",
         status: 200,
@@ -3732,7 +3732,7 @@ describe("what frontmatter says", () => {
   it("retypes an item whose frontmatter changes its type", async () => {
     const id = "01a00000-0000-7000-8000-0000000013f1";
     harness = await folderHarness("folder-retype", {
-      settings: { search: { types: ["core.note", "core.bookmark"] } },
+      settings: { query: { types: ["core.note", "core.bookmark"] } },
       rows: {
         "core.note": [
           { item: { id, properties: { title: "Link", body: "a page\n" } } },
@@ -3768,7 +3768,7 @@ describe("what frontmatter says", () => {
     const tagged = "01a00000-0000-7000-8000-000000001402";
     const shelving = "01a00000-0000-7000-8000-000000001403";
     harness = await folderHarness("folder-retype-refused", {
-      settings: { search: { types: ["core.note", "core.bookmark"] } },
+      settings: { query: { types: ["core.note", "core.bookmark"] } },
       rows: {
         "core.note": [
           { item: { id, properties: { title: "Link", body: "a page\n" } } },
@@ -3973,7 +3973,7 @@ describe("what frontmatter says", () => {
       properties: { title: "Link", body: "as read\n" },
     };
     harness = await folderHarness("folder-own-fields-stale", {
-      settings: { search: { types: ["core.note", "core.bookmark"] } },
+      settings: { query: { types: ["core.note", "core.bookmark"] } },
       rows: {
         "core.note": [
           {
@@ -4211,7 +4211,7 @@ describe("what frontmatter says", () => {
     const plain = "01a00000-0000-7000-8000-000000001473";
     harness = await folderHarness("folder-retype-body-fields", {
       settings: {
-        search: { types: ["core.note", "core.bookmark", "core.event"] },
+        query: { types: ["core.note", "core.bookmark", "core.event"] },
       },
       rows: {
         "core.bookmark": [
@@ -4291,7 +4291,7 @@ describe("what frontmatter says", () => {
     const id = "01a00000-0000-7000-8000-000000001481";
     const named = "01a00000-0000-7000-8000-000000001482";
     harness = await folderHarness("folder-own-lines-unwritten", {
-      settings: { search: { types: ["core.note", "core.bookmark"] } },
+      settings: { query: { types: ["core.note", "core.bookmark"] } },
       rows: {
         "core.note": [
           {
@@ -4887,7 +4887,7 @@ describe("what frontmatter says", () => {
     const ahead = "01a00000-0000-7000-8000-000000001524";
     const edges = new EdgeDoor();
     harness = await folderHarness("folder-quoted-version", {
-      settings: { search: { types: ["core.note", "core.bookmark"] } },
+      settings: { query: { types: ["core.note", "core.bookmark"] } },
       rows: {
         "core.note": [
           {
@@ -4980,7 +4980,7 @@ describe("what frontmatter says", () => {
   it("lets a file go once a later save lands after a refused one", async () => {
     const id = "01a00000-0000-7000-8000-000000001531";
     harness = await folderHarness("folder-refused-then-landed", {
-      settings: { search: { types: ["core.note", "core.bookmark"] } },
+      settings: { query: { types: ["core.note", "core.bookmark"] } },
       rows: {
         "core.note": [
           { item: { id, properties: { title: "T", body: "as read\n" } } },
@@ -5448,7 +5448,7 @@ describe("what frontmatter says", () => {
       label: string,
     ): Promise<{ id: string; rows: Map<string, DoorRow> }> {
       harness = await folderHarness(label, {
-        settings: { search: { types: ["core.note", "core.bookmark"] } },
+        settings: { query: { types: ["core.note", "core.bookmark"] } },
       });
       const rows = scriptFolderWrites(harness);
       expect((await harness.folder.pull()).ok).toBe(true);
@@ -5511,7 +5511,7 @@ describe("what frontmatter says", () => {
       const { id, rows } = await madeFromForeign("folder-type-foreign-first");
       const row = rows.get(id)!;
       second = await folderHarness("folder-type-foreign-second", {
-        settings: { search: { types: ["core.note", "core.bookmark"] } },
+        settings: { query: { types: ["core.note", "core.bookmark"] } },
         rows: {
           "core.note": [
             {
@@ -5581,7 +5581,7 @@ describe("what frontmatter says", () => {
     it("replaces an app's type property with the word the person writes on the line", async () => {
       const id = "01a00000-0000-7000-8000-0000000099f1";
       harness = await folderHarness("folder-type-foreign-over-app", {
-        settings: { search: { types: ["core.note", "core.bookmark"] } },
+        settings: { query: { types: ["core.note", "core.bookmark"] } },
         rows: {
           "core.note": [
             {

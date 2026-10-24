@@ -388,7 +388,7 @@ impl Folder {
         };
         let row = added.row_on_server()?;
         // The catalog the hydration would read, so a default type the
-        // search does not hold is refused before anything is bound.
+        // query does not hold is refused before anything is bound.
         {
             let catalog = added.core.http()?.catalog()?;
             let conn = added.core.conn()?;
@@ -712,12 +712,8 @@ impl Folder {
         crate::store::pin(&*self.core.conn()?, &self.folder)?;
         let catalog = Catalog::load(&planning)?;
         let whole = whole_edge_types(&settings, &edge_types, &catalog);
-        self.core.hydrate_until(
-            &settings.slice_types(),
-            settings.tier().into(),
-            &whole,
-            stop,
-        )
+        self.core
+            .hydrate_until(&settings.slice_types(), settings.tier(), &whole, stop)
     }
 
     /// `None` where the copy already answers for the slice the settings ask.
@@ -754,7 +750,7 @@ impl Folder {
             whole_edge_types(&settings, &edge_types, &Catalog::load(&conn)?)
                 .into_iter()
                 .collect();
-        Ok(held != asked || tier != settings.tier().into() || whole != wanted)
+        Ok(held != asked || tier != settings.tier() || whole != wanted)
     }
 
     pub fn catch_up(&self) -> Result<CaughtUp> {
@@ -1046,10 +1042,10 @@ impl Folder {
 fn whole_edge_types(settings: &Settings, edge_types: &EdgeTypes, catalog: &Catalog) -> Vec<String> {
     let mut whole = edge_types.written_at_targets();
     // `beneath` walks `parent-of` from rows the slice may not hold.
-    if settings.search.beneath.is_some() {
+    if settings.query.beneath.is_some() {
         whole.push(crate::filter::PARENT_OF.into());
     }
-    // A search of files alone holds no document to embed one.
+    // A query of files alone holds no document to embed one.
     let documents = settings.names_every_type()
         || settings
             .types()
@@ -2427,7 +2423,7 @@ mod tests {
 
     /// A folder over a fresh directory, with a copy that holds its settings.
     fn scanned_folder() -> (ScannedDir, Folder) {
-        scanned_folder_with(serde_json::json!({ "search": {} }), None)
+        scanned_folder_with(serde_json::json!({ "query": {} }), None)
     }
 
     /// A scanned folder's directory, with the registry of its own the test
@@ -2701,7 +2697,7 @@ mod tests {
         let invalid: Vec<u8> = vec![0x80; 400_000];
         for (name, bytes) in [("big.md", valid.as_bytes()), ("big.txt", &invalid)] {
             let (dir, folder) = scanned_folder_with(
-                serde_json::json!({ "search": {}, "defaults": { "type": "user.large_text" } }),
+                serde_json::json!({ "query": {}, "defaults": { "type": "user.large_text" } }),
                 Some(serde_json::json!([
                     {
                         "id": "user.large_text",
@@ -2897,7 +2893,7 @@ mod tests {
     /// size warning is created and warned of.
     fn large_text_folder() -> (ScannedDir, Folder) {
         scanned_folder_with(
-            serde_json::json!({ "search": {}, "defaults": { "type": "user.large_text" } }),
+            serde_json::json!({ "query": {}, "defaults": { "type": "user.large_text" } }),
             Some(serde_json::json!([
                 {
                     "id": "user.large_text",
@@ -3032,7 +3028,7 @@ mod tests {
     fn a_file_items_bytes_at_a_document_name_embed_nothing() {
         for name in ["notes.md", "notes.markdown"] {
             let (dir, folder) = scanned_folder_with(
-                serde_json::json!({ "search": { "types": ["core.note", "core.file.audio"] } }),
+                serde_json::json!({ "query": { "types": ["core.note", "core.file.audio"] } }),
                 None,
             );
             let path = |file: &str| dir.path().join(file);
@@ -3064,12 +3060,12 @@ mod tests {
     }
 
     #[test]
-    fn a_file_item_moved_from_a_document_name_is_followed_whatever_the_search_says() {
+    fn a_file_item_moved_from_a_document_name_is_followed_whatever_the_query_says() {
         // The witness first: from a name that is no document, the move is
-        // followed though the search holds no type for `archive.bin`.
+        // followed though the query holds no type for `archive.bin`.
         for via in [None, Some("notes.md"), Some("notes.markdown")] {
             let (dir, folder) = scanned_folder_with(
-                serde_json::json!({ "search": { "types": ["core.note", "core.file.audio"] } }),
+                serde_json::json!({ "query": { "types": ["core.note", "core.file.audio"] } }),
                 None,
             );
             let path = |file: &str| dir.path().join(file);
@@ -3512,9 +3508,9 @@ mod tests {
     #[test]
     fn a_file_kept_for_the_folder_it_moved_to_is_looked_for_there_once_a_full_pass() {
         let (_, _registry) = registry::tests::own_registry();
-        let search = serde_json::json!({ "search": {} });
-        let (from, a) = folder_with("01a00000-0000-7000-8000-0000000000b1", search.clone(), None);
-        let (to, b) = folder_with("01a00000-0000-7000-8000-0000000000b2", search, None);
+        let query = serde_json::json!({ "query": {} });
+        let (from, a) = folder_with("01a00000-0000-7000-8000-0000000000b1", query.clone(), None);
+        let (to, b) = folder_with("01a00000-0000-7000-8000-0000000000b2", query, None);
         b.scan().unwrap();
         std::fs::write(from.path().join("photo.bin"), [7, 7, 7]).unwrap();
         assert_eq!(a.scan().unwrap().created, 1);
@@ -3556,7 +3552,7 @@ mod tests {
         let (registry, _registry) = registry::tests::own_registry();
         let (dir, folder) = folder_with(
             "01a00000-0000-7000-8000-0000000000c1",
-            serde_json::json!({ "search": {} }),
+            serde_json::json!({ "query": {} }),
             None,
         );
         let names = ["restored.txt", "held.txt", "graced.txt"];
@@ -3621,7 +3617,7 @@ mod tests {
         let (_, _registry) = registry::tests::own_registry();
         let (dir, folder) = folder_with(
             "01a00000-0000-7000-8000-0000000000c2",
-            serde_json::json!({ "search": {} }),
+            serde_json::json!({ "query": {} }),
             None,
         );
         std::fs::write(dir.path().join("note.txt"), "the person's words\n").unwrap();
@@ -3682,7 +3678,7 @@ mod tests {
         let (_, _registry) = registry::tests::own_registry();
         let (dir, folder) = folder_with(
             "01a00000-0000-7000-8000-0000000000c3",
-            serde_json::json!({ "search": {} }),
+            serde_json::json!({ "query": {} }),
             None,
         );
         for name in ["kept.bin", "changed.bin"] {

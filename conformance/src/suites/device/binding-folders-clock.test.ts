@@ -34,7 +34,7 @@ async function prepared(label: string, files: Record<string, string> = {}) {
   const harness = await bindingFolderHarness(label, {
     files,
     settings: {
-      search: { types: ["core.note"] },
+      query: { types: ["core.note"] },
       removal_threshold: { files: 100, fraction: 1 },
     },
     events: [

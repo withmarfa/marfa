@@ -94,7 +94,7 @@ describe("folder settings and retained directory identity", () => {
     const sent = scriptFolderChanges(harness);
     writeFileSync(
       settingsFile(harness),
-      "title: folder\nsearch:\n  types:\n    - core.note\ninclude:\n  - '*.md'\n",
+      "title: folder\nquery:\n  types:\n    - core.note\ninclude:\n  - '*.md'\n",
     );
     expect((await harness.bound.testOpen()).ok).toBe(true);
     const refused = await harness.bound.testSubmitSettingsFile();

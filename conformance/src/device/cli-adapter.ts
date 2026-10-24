@@ -262,7 +262,7 @@ export class CliDevice implements DeviceUnderTest {
     return this.invokeText([...this.prefix(), "items", "get", id]);
   }
 
-  /** What a folder's search holds, answered from the copy (`device/folder-list`). */
+  /** What a folder's query holds, answered from the copy (`device/folder-list`). */
   async listInFolder(
     folder: string,
     page: { limit?: number; offset?: number } = {},
@@ -1090,9 +1090,9 @@ export class CliDevice implements DeviceUnderTest {
 /** A `system.folder`'s settings, as the folder door takes them. */
 export interface FolderSettings {
   title?: string;
-  search?: {
+  query?: {
     types?: string[];
-    tier?: Tier;
+    tier?: Tier | "all";
     state?: Array<"active" | "archived">;
     filter?: string;
     beneath?: string;
@@ -1245,14 +1245,14 @@ export interface PullReport {
    *  settings change, or the item's placement moves on (`folders/placement-refusal-no-repeat`). */
   unplaced: number;
   outside: number;
-  /** Files of items trashed, purged or out of the search's states, taken
+  /** Files of items trashed, purged or out of the query's states, taken
    *  away (`folders/departed-file-removed` and `folders/purged-file-remove`). */
   removed: number;
   /** Of `removed`, the files of items purged (`folders/purged-file-count`). */
   purged: number;
   /** The same, left where they are because the person changed them. */
   kept: number;
-  /** Files whose item the search no longer matches otherwise, left where
+  /** Files whose item the query no longer matches otherwise, left where
    *  they are (`folders/unmatched-file-kept`). */
   unmatched: number;
   /** Files left in place whose items left elsewhere in a large removal
@@ -1346,7 +1346,7 @@ export interface SendOnlyReport {
   exit: number;
 }
 
-/** A file the folder keeps whose item its search no longer matches (`folders/unmatched-list`). */
+/** A file the folder keeps whose item its query no longer matches (`folders/unmatched-list`). */
 export interface UnmatchedFile {
   path: string;
   item_id?: string;
@@ -1522,7 +1522,7 @@ export class CliFolder {
     return said.ok ? { ok: true, value: said.value.text } : said;
   }
 
-  /** The files the folder keeps whose items its search no longer matches. */
+  /** The files the folder keeps whose items its query no longer matches. */
   async unmatched(): Promise<Outcome<{ unmatched: UnmatchedFile[] }>> {
     return this.run(["folders", "unmatched", this.dir]);
   }

@@ -14,7 +14,7 @@ import {
 import { requireBinary } from "./harness.js";
 
 /**
- * A working copy reads a folder's settings, answers its search, and writes its
+ * A working copy reads a folder's settings, answers its query, and writes its
  * settings through the folder door (the device chapter's section "Folders, read
  * and written from a copy"), against the real server and the real binary.
  */
@@ -100,7 +100,7 @@ beforeAll(async () => {
     "shelf",
     await serverFolder({
       title: `Shelf ${ctx.runId}`,
-      search: { types: [typeId], filter: `tags contains "${tagged}"` },
+      query: { types: [typeId], filter: `tags contains "${tagged}"` },
     }),
   );
   device = copy("library");
@@ -113,12 +113,12 @@ afterAll(async () => {
   if (ctx) await cleanup(ctx);
 });
 
-describe("a copy reads a folder's settings and answers its search", () => {
+describe("a copy reads a folder's settings and answers its query", () => {
   it("holds the folders a slice names, at either tier", async () => {
     const held = value(await device.folder(id("shelf")));
     expect(held.state).toBe("active");
     expect(held.settings.title).toBe(`Shelf ${ctx.runId}`);
-    expect(held.settings).toMatchObject({ search: { types: [typeId] } });
+    expect(held.settings).toMatchObject({ query: { types: [typeId] } });
 
     const feed = copy("feed");
     value(await feed.hydrate([typeId, FOLDER_TYPE], "feed"));
@@ -129,7 +129,7 @@ describe("a copy reads a folder's settings and answers its search", () => {
     expect(rows.map((row) => row.id)).toEqual([id("feed")]);
   });
 
-  it("lists and searches in a folder what the folder's search holds", async () => {
+  it("lists and searches in a folder what the folder's query holds", async () => {
     const listed = value(await device.listInFolder(id("shelf")));
     expect(listed.map((row) => row.id).sort()).toEqual(
       [id("active"), id("archived")].sort(),
@@ -155,18 +155,18 @@ describe("a copy reads a folder's settings and answers its search", () => {
     expect(page).toHaveLength(1);
   });
 
-  it("refuses a folder search its slice cannot answer whole, and a folder it does not hold", async () => {
+  it("refuses a folder query its slice cannot answer whole, and a folder it does not hold", async () => {
     const wide = await serverFolder({
       title: `Wide ${ctx.runId}`,
-      search: { types: [typeId, "core.task"] },
+      query: { types: [typeId, "core.task"] },
     });
     const feedTier = await serverFolder({
       title: `Feed ${ctx.runId}`,
-      search: { types: [typeId], tier: "feed" },
+      query: { types: [typeId], tier: "feed" },
     });
     const beneath = await serverFolder({
       title: `Beneath ${ctx.runId}`,
-      search: { types: [typeId], beneath: id("active") },
+      query: { types: [typeId], beneath: id("active") },
     });
     value(await device.catchUp());
     for (const [folder, names] of [
@@ -214,7 +214,7 @@ describe("a copy writes a folder's settings through the folder door", () => {
     const created = value(
       await device.createFolder({
         title: `Made ${ctx.runId}`,
-        search: { types: [typeId], filter: `tags contains "${tagged}"` },
+        query: { types: [typeId], filter: `tags contains "${tagged}"` },
       }),
     );
     trackFolder(ctx, created.id);
@@ -261,7 +261,7 @@ describe("a copy writes a folder's settings through the folder door", () => {
     const backref = refused(
       await device.createFolder({
         title,
-        search: { filter: "backref[parent-of] exists" },
+        query: { filter: "backref[parent-of] exists" },
       }),
     );
     expect(backref.code, backref.raw).toBe("invalid");
@@ -275,7 +275,7 @@ describe("a copy writes a folder's settings through the folder door", () => {
     // and the copy reads, and revokes, a folder it could not have made.
     const served = await serverFolder({
       title,
-      search: { filter: "backref[parent-of] exists" },
+      query: { filter: "backref[parent-of] exists" },
     });
     value(await device.catchUp());
     expect(value(await device.folder(served)).settings.title).toBe(title);
@@ -293,23 +293,20 @@ describe("a copy writes a folder's settings through the folder door", () => {
     expect(value(await offline.queue())).toEqual([]);
   });
 
-  it("refuses settings the server would refuse, or defaults its search would not hold, before anything is sent", async () => {
+  it("refuses settings the server would refuse, or defaults its query would not hold, before anything is sent", async () => {
     const title = `Refused ${ctx.runId}`;
     for (const [settings, code] of [
+      [{ title, query: { types: [typeId], filter: "title eq" } }, "validation"],
       [
-        { title, search: { types: [typeId], filter: "title eq" } },
+        { title, query: { types: [typeId] }, defaults: { tags: [""] } },
         "validation",
       ],
       [
-        { title, search: { types: [typeId] }, defaults: { tags: [""] } },
-        "validation",
-      ],
-      [
-        { title, search: { types: [typeId] }, defaults: { type: "core.task" } },
+        { title, query: { types: [typeId] }, defaults: { type: "core.task" } },
         "invalid",
       ],
       [
-        { title, search: { types: [typeId] }, defaults: { tier: "feed" } },
+        { title, query: { types: [typeId] }, defaults: { tier: "feed" } },
         "invalid",
       ],
     ] as const) {
@@ -326,7 +323,7 @@ describe("a copy writes a folder's settings through the folder door", () => {
     expect(listed.data.data, "a refused folder reached the server").toEqual([]);
 
     // A change is held to the settings it leaves: alone, a default type
-    // is held by a search of every type, and the shelf searches one other.
+    // is held by a query of every type, and the shelf queries one other.
     const before = await client.getItem(id("shelf"));
     expect(before.ok, JSON.stringify(before.error)).toBe(true);
     const change = refused(

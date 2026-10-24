@@ -1,4 +1,4 @@
-//! A folder's settings read from the copy, its search answered from the copy,
+//! A folder's settings read from the copy, its query answered from the copy,
 //! and its settings written through the folder door. The door is the only one
 //! that writes a `system.folder` (`items/folder-create` and
 //! `items/system-types`), so a write here is sent at once and never queued.
@@ -52,8 +52,8 @@ impl Core {
         self.get(id)?.as_ref().map(FolderRow::of).transpose()
     }
 
-    /// The items the folder's search holds, as its own pass holds them. A
-    /// search the slice cannot answer whole is refused `Invalid`, never
+    /// The items the folder's query holds, as its own pass holds them. A
+    /// query the slice cannot answer whole is refused `Invalid`, never
     /// answered in part: a type or tier outside the slice, `beneath` without
     /// `parent-of` held whole, and a `backref` condition, which no copy
     /// holds the edges to answer. Part way through a hydration it answers
@@ -434,7 +434,7 @@ mod tests {
         put(&core, "feed", "core.note", "active", "feed", &["x"]);
         let settings = json!({
             "title": "Tagged notes",
-            "search": { "types": ["core.note"], "filter": "tags contains \"x\"" },
+            "query": { "types": ["core.note"], "filter": "tags contains \"x\"" },
         });
         folder(&core, "active", settings.clone());
         let expected = vec!["active", "archived", "recipe"];
@@ -457,7 +457,7 @@ mod tests {
         folder(
             &core,
             "active",
-            json!({ "title": "Archived", "search": { "types": ["core.note"], "state": ["archived"] } }),
+            json!({ "title": "Archived", "query": { "types": ["core.note"], "state": ["archived"] } }),
         );
         assert_eq!(listed(&core).unwrap(), ["archived"]);
         let page = core
@@ -468,22 +468,26 @@ mod tests {
     }
 
     #[test]
-    fn a_copy_of_both_tiers_answers_a_folder_of_either_with_that_tier_alone() {
+    fn a_copy_of_both_tiers_answers_each_folder_query_tier() {
         let core = copy(None, &["core.note", FOLDER_TYPE], "all", &[]);
         put(&core, "shelved", "core.note", "active", "library", &[]);
         put(&core, "inbox", "core.note", "active", "feed", &[]);
-        for (tier, held) in [("library", "shelved"), ("feed", "inbox")] {
+        for (tier, held) in [
+            ("library", vec!["shelved"]),
+            ("feed", vec!["inbox"]),
+            ("all", vec!["inbox", "shelved"]),
+        ] {
             folder(
                 &core,
                 "active",
-                json!({ "title": tier, "search": { "types": ["core.note"], "tier": tier } }),
+                json!({ "title": tier, "query": { "types": ["core.note"], "tier": tier } }),
             );
-            assert_eq!(listed(&core).unwrap(), [held], "{tier}");
+            assert_eq!(listed(&core).unwrap(), held, "{tier}");
         }
     }
 
     #[test]
-    fn a_search_the_copy_cannot_answer_whole_is_refused_never_answered_in_part() {
+    fn a_query_the_copy_cannot_answer_whole_is_refused_never_answered_in_part() {
         let refused = |core: &Core, settings: Value| {
             folder(core, "active", settings);
             match listed(core) {
@@ -494,11 +498,11 @@ mod tests {
         let notes = copy(None, &["core.note", FOLDER_TYPE], "library", &[]);
         put(&notes, "note", "core.note", "active", "library", &[]);
         put(&notes, "parent", "core.note", "active", "library", &[]);
-        // The witness: a search the slice answers is listed.
+        // The witness: a query the slice answers is listed.
         folder(
             &notes,
             "active",
-            json!({ "title": "Notes", "search": { "types": ["core.note"] } }),
+            json!({ "title": "Notes", "query": { "types": ["core.note"] } }),
         );
         assert_eq!(listed(&notes).unwrap(), ["note", "parent"]);
         let every = refused(&notes, json!({ "title": "All" }));
@@ -506,23 +510,25 @@ mod tests {
         assert!(!every.contains("core.note"), "{every}");
         let feed = refused(
             &notes,
-            json!({ "title": "Feed", "search": { "types": ["core.note"], "tier": "feed" } }),
+            json!({ "title": "Feed", "query": { "types": ["core.note"], "tier": "feed" } }),
         );
         assert!(feed.contains("feed"), "{feed}");
+        let all = refused(
+            &notes,
+            json!({ "query": { "types": ["core.note"], "tier": "all" } }),
+        );
+        assert!(all.contains("all tier"), "{all}");
         let beneath = refused(
             &notes,
-            json!({ "title": "Under", "search": { "types": ["core.note"], "beneath": "parent" } }),
+            json!({ "title": "Under", "query": { "types": ["core.note"], "beneath": "parent" } }),
         );
         assert!(beneath.contains("parent-of"), "{beneath}");
         let backref = refused(
             &notes,
-            json!({ "title": "Back", "search": { "filter": "backref[parent-of] exists" } }),
+            json!({ "title": "Back", "query": { "filter": "backref[parent-of] exists" } }),
         );
         assert!(backref.contains("backref"), "{backref}");
-        let unknown = refused(
-            &notes,
-            json!({ "title": "Near", "search": { "near": "x" } }),
-        );
+        let unknown = refused(&notes, json!({ "title": "Near", "query": { "near": "x" } }));
         assert!(unknown.contains("near"), "{unknown}");
         let revoked = {
             folder(&notes, "revoked", json!({ "title": "Gone" }));
@@ -541,7 +547,7 @@ mod tests {
         folder(
             &whole,
             "active",
-            json!({ "title": "Under", "search": { "beneath": "task" } }),
+            json!({ "title": "Under", "query": { "beneath": "task" } }),
         );
         assert_eq!(listed(&whole).unwrap(), ["task"]);
     }
@@ -602,7 +608,7 @@ mod tests {
         let server = Scripted::start();
         server.on("/", vec![scripted::root(scripted::INSTANCE)]);
         let core = copy(Some(&server), &["core.note", FOLDER_TYPE], "library", &[]);
-        let settings = json!({ "title": "Notes", "search": { "types": ["core.note"] } });
+        let settings = json!({ "title": "Notes", "query": { "types": ["core.note"] } });
         server.on(
             "/folders",
             vec![scripted::json(
@@ -625,8 +631,7 @@ mod tests {
         assert_eq!(core.folder(FOLDER).unwrap().unwrap().version, 1);
         assert!(listed(&core).unwrap().is_empty());
 
-        let changed_settings =
-            json!({ "title": "Recipes", "search": { "types": ["user.recipe"] } });
+        let changed_settings = json!({ "title": "Recipes", "query": { "types": ["user.recipe"] } });
         server.on(
             &format!("/folders/{FOLDER}"),
             vec![scripted::json(
@@ -638,7 +643,7 @@ mod tests {
             &format!("/items/{FOLDER}"),
             vec![read_back("active", 2, changed_settings.clone())],
         );
-        let changes = json!({ "title": "Recipes", "search": { "types": ["user.recipe"] } });
+        let changes = json!({ "title": "Recipes", "query": { "types": ["user.recipe"] } });
         let changed = core
             .change_folder(FOLDER, changes.as_object().unwrap(), 1, None)
             .unwrap();
@@ -688,7 +693,7 @@ mod tests {
         let server = Scripted::start();
         server.on("/", vec![scripted::root(scripted::INSTANCE)]);
         let backref =
-            json!({ "title": "Back", "search": { "filter": "backref[parent-of] exists" } });
+            json!({ "title": "Back", "query": { "filter": "backref[parent-of] exists" } });
         let mut revoked = backref.clone();
         revoked["revoked_at"] = json!("2026-01-02T00:00:00Z");
         server.on(
@@ -704,8 +709,8 @@ mod tests {
         );
         let core = copy(Some(&server), &["core.note", FOLDER_TYPE], "library", &[]);
         folder(&core, "active", backref);
-        // A folder whose search no copy answers is still read, and refused
-        // only where its search would be answered.
+        // A folder whose query no copy answers is still read, and refused
+        // only where its query would be answered.
         assert!(core.folder(FOLDER).unwrap().is_some());
         assert!(matches!(listed(&core), Err(CoreError::Invalid(_))));
         let answered_row = core.revoke_folder(FOLDER, None).unwrap();
@@ -754,9 +759,9 @@ mod tests {
         server.on("/", vec![scripted::root(scripted::INSTANCE)]);
         let core = copy(Some(&server), &["core.note", FOLDER_TYPE], "library", &[]);
         for settings in [
-            json!({ "title": "Back", "search": { "filter": "backref[parent-of] exists" } }),
-            json!({ "title": "Near", "search": { "near": "x" } }),
-            json!({ "title": "Off", "search": { "types": ["core.note"] }, "defaults": { "type": "core.task" } }),
+            json!({ "title": "Back", "query": { "filter": "backref[parent-of] exists" } }),
+            json!({ "title": "Near", "query": { "near": "x" } }),
+            json!({ "title": "Off", "query": { "types": ["core.note"] }, "defaults": { "type": "core.task" } }),
         ] {
             assert!(
                 core.create_folder(settings.as_object().unwrap(), None)
@@ -767,7 +772,7 @@ mod tests {
         folder(
             &core,
             "active",
-            json!({ "title": "Notes", "search": { "types": ["core.note"] } }),
+            json!({ "title": "Notes", "query": { "types": ["core.note"] } }),
         );
         let mismatched = json!({ "defaults": { "type": "core.task" } });
         assert!(

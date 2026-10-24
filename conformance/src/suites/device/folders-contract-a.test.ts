@@ -72,12 +72,12 @@ it("records each folder's distinct store identity in the shared registry", async
   }
 });
 
-it("materializes only readable copy rows reached by a beneath search", async () => {
+it("materializes only readable copy rows reached by a beneath query", async () => {
   const root = "01a00000-0000-7000-8000-00000000a201";
   const child = "01a00000-0000-7000-8000-00000000a202";
   const unreadable = "01a00000-0000-7000-8000-00000000a203";
   harness = await folderHarness("contract-readable-beneath", {
-    settings: { search: { types: ["core.note"], beneath: root } },
+    settings: { query: { types: ["core.note"], beneath: root } },
     rows: {
       "core.note": [
         { item: { id: root, properties: { title: "Root", body: "root\n" } } },
@@ -246,7 +246,7 @@ describe("document admission contract", () => {
   it("uses core.note without a type default and preserves explicit empty tags and titles", async () => {
     harness = await folderHarness("contract-default-document", {
       settings: {
-        search: {},
+        query: {},
         defaults: {
           tags: ["default-tag"],
           properties: { title: "Default title" },
@@ -874,7 +874,7 @@ describe("remaining document field boundaries", () => {
   it("applies default properties to documents but not file items", async () => {
     harness = await folderHarness("contract-file-defaults", {
       settings: {
-        search: {},
+        query: {},
         defaults: { tags: ["default"], properties: { language: "en" } },
       },
     });
@@ -959,7 +959,7 @@ describe("remaining document field boundaries", () => {
   it("writes current own fields over a behind file without sending the old fields", async () => {
     const id = "01a00000-0000-7000-8000-000000000ab2";
     harness = await folderHarness("contract-behind-render", {
-      settings: { search: { types: ["core.note", "core.bookmark"] } },
+      settings: { query: { types: ["core.note", "core.bookmark"] } },
       rows: {
         "core.note": [
           {

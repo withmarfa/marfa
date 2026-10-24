@@ -43,7 +43,7 @@ async function addNotes(name: string): Promise<string> {
     "create",
     "--title",
     unique(`listed-${name}`),
-    "--search",
+    "--query",
     JSON.stringify({ types: ["core.note"] }),
   ]);
   trackFolder(c.ctx, settings.item.id);
@@ -94,7 +94,7 @@ describe("a folder round trip", () => {
         "create",
         "--title",
         unique("preserved"),
-        "--search",
+        "--query",
         JSON.stringify({ types: ["core.note"] }),
       ]);
       trackFolder(c.ctx, settings.item.id);
@@ -287,7 +287,7 @@ describe("a folder round trip", () => {
       "create",
       "--title",
       unique("styled-folder"),
-      "--search",
+      "--query",
       JSON.stringify({ types: ["core.note"] }),
     ]);
     trackFolder(c.ctx, settings.item.id);
@@ -423,7 +423,7 @@ describe("a folder round trip", () => {
       "create",
       "--title",
       unique("linked-ancestor"),
-      "--search",
+      "--query",
       JSON.stringify({ types: ["core.note"] }),
     ]);
     trackFolder(c.ctx, settings.item.id);
@@ -504,7 +504,7 @@ describe("a folder round trip", () => {
       "create",
       "--title",
       unique("climbed-link"),
-      "--search",
+      "--query",
       JSON.stringify({ types: ["core.note"] }),
     ]);
     trackFolder(c.ctx, settings.item.id);
@@ -812,7 +812,7 @@ describe("a folder round trip", () => {
             "create",
             "--title",
             unique(title),
-            "--search",
+            "--query",
             JSON.stringify({ types: ["core.note"] }),
           ]);
           trackFolder(c.ctx, settings.item.id);
@@ -876,7 +876,7 @@ describe("a folder round trip", () => {
           "create",
           "--title",
           unique("refolded"),
-          "--search",
+          "--query",
           JSON.stringify({ types: ["core.note"] }),
         ]);
         trackFolder(c.ctx, settings.item.id);
@@ -945,7 +945,7 @@ describe("a folder round trip", () => {
       "create",
       "--title",
       unique("missing-climb"),
-      "--search",
+      "--query",
       JSON.stringify({ types: ["core.note"] }),
     ]);
     trackFolder(c.ctx, settings.item.id);
@@ -995,7 +995,7 @@ describe("a folder round trip", () => {
       "create",
       "--title",
       unique("in-step"),
-      "--search",
+      "--query",
       JSON.stringify({ types: ["core.note"] }),
     ]);
     trackFolder(c.ctx, settings.item.id);
@@ -1042,7 +1042,7 @@ describe("a folder round trip", () => {
       "create",
       "--title",
       unique("in-step-confirmed"),
-      "--search",
+      "--query",
       JSON.stringify({ types: ["core.note"] }),
     ]);
     trackFolder(c.ctx, settings.item.id);
@@ -1082,7 +1082,7 @@ describe("a folder round trip", () => {
       "create",
       "--title",
       unique("conflicted"),
-      "--search",
+      "--query",
       JSON.stringify({ types: ["core.note"] }),
     ]);
     trackFolder(c.ctx, settings.item.id);
@@ -1149,7 +1149,7 @@ describe("a folder round trip", () => {
       "create",
       "--title",
       unique("conflicted-watch"),
-      "--search",
+      "--query",
       JSON.stringify({ types: ["core.note"] }),
     ]);
     trackFolder(c.ctx, settings.item.id);
@@ -1210,7 +1210,7 @@ describe("a folder round trip", () => {
       "create",
       "--title",
       unique("asks-first"),
-      "--search",
+      "--query",
       JSON.stringify({ types: ["core.note"] }),
     ]);
     trackFolder(c.ctx, settings.item.id);
@@ -1259,7 +1259,7 @@ describe("a folder round trip", () => {
       "create",
       "--title",
       unique("cli-folder"),
-      "--search",
+      "--query",
       JSON.stringify({ types: ["core.note"] }),
     ]);
     trackFolder(c.ctx, settings.item.id);
@@ -1462,7 +1462,7 @@ describe("a folder round trip", () => {
   /** A folder following a new `system.folder`, hydrated. */
   async function follow(
     name: string,
-    search: Record<string, unknown>,
+    query: Record<string, unknown>,
   ): Promise<{ folder: string; id: string; store: string }> {
     const folder = join(dir, name);
     mkdirSync(folder);
@@ -1471,8 +1471,8 @@ describe("a folder round trip", () => {
       "create",
       "--title",
       unique(name),
-      "--search",
-      JSON.stringify(search),
+      "--query",
+      JSON.stringify(query),
     ]);
     trackFolder(c.ctx, settings.item.id);
     await c.cli.json([

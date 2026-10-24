@@ -1,3 +1,4 @@
+import { getTypeSchema } from "@withmarfa/shared";
 import type { Item, TypePermission } from "@withmarfa/shared";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { TestContext } from "../test-utils.js";
@@ -49,7 +50,7 @@ describe("POST /folders", () => {
     await settle();
     const folder = await createFolder({
       title: "Project",
-      search: { types: ["core.note"], state: ["active"] },
+      query: { types: ["core.note"], state: ["active"] },
       include: ["*.md"],
     });
     await settle();
@@ -61,13 +62,61 @@ describe("POST /folders", () => {
       version: 1,
       properties: {
         title: "Project",
-        search: { types: ["core.note"], state: ["active"] },
+        query: { types: ["core.note"], state: ["active"] },
         include: ["*.md"],
       },
     });
     expect(
       seen.events.some((e) => e.type === "created" && e.item.id === folder.id),
     ).toBe(true);
+  });
+
+  it("declares query in the folder type", () => {
+    const fields = getTypeSchema("system.folder")!.fields;
+    expect(fields.query).toMatchObject({ type: "object" });
+    expect(fields.search).toBeUndefined();
+  });
+
+  it.each(["library", "feed", "all"])(
+    "holds query tier %s on creation and change",
+    async (tier) => {
+      const folder = await createFolder({
+        title: "Both tiers",
+        query: { tier },
+      });
+      expect(folder.properties.query).toEqual({ tier });
+      const changed = await request(ctx.app, "PATCH", `/folders/${folder.id}`, {
+        key: ctx.workingKey,
+        body: { version: 1, query: { tier } },
+      });
+      expect(changed.status).toBe(200);
+      expect(
+        (await body<{ item: Item }>(changed)).item.properties.query,
+      ).toEqual({ tier });
+    },
+  );
+
+  it("refuses search as an unknown setting on creation and change", async () => {
+    const folder = await createFolder({ title: "Query" });
+    for (const res of [
+      await create({ title: "Search", search: { tier: "library" } }),
+      await request(ctx.app, "PATCH", `/folders/${folder.id}`, {
+        key: ctx.workingKey,
+        body: { version: 1, search: { tier: "library" } },
+      }),
+    ]) {
+      expect(res.status).toBe(400);
+      const refusal = await body<{
+        error: {
+          code: string;
+          message: string;
+          details: { unknown_body_fields: string[] };
+        };
+      }>(res);
+      expect(refusal.error.code).toBe("validation_error");
+      expect(refusal.error.details.unknown_body_fields).toEqual(["search"]);
+      expect(refusal.error.message).toContain("search");
+    }
   });
 
   it("gates on write to system.folder in the type map", async () => {
@@ -93,15 +142,12 @@ describe("POST /folders", () => {
   });
 
   it.each([
-    [{ search: { types: ["core.nope"] } }, "unknown_type", "search.types.0"],
-    [{ search: { types: ["Bad Type"] } }, "validation_error", "search.types.0"],
-    [{ search: { filter: "tags eq" } }, "validation_error", "search.filter"],
-    [
-      { search: { beneath: "not an id" } },
-      "validation_error",
-      "search.beneath",
-    ],
-    [{ search: { state: ["trashed"] } }, "validation_error", "search.state.0"],
+    [{ query: { tier: "unknown" } }, "validation_error", "query.tier"],
+    [{ query: { types: ["core.nope"] } }, "unknown_type", "query.types.0"],
+    [{ query: { types: ["Bad Type"] } }, "validation_error", "query.types.0"],
+    [{ query: { filter: "tags eq" } }, "validation_error", "query.filter"],
+    [{ query: { beneath: "not an id" } }, "validation_error", "query.beneath"],
+    [{ query: { state: ["trashed"] } }, "validation_error", "query.state.0"],
     [{ defaults: { type: "core.nope" } }, "unknown_type", "defaults.type"],
     [
       { defaults: { edges: { "no-such-edge": [] } } },
@@ -141,9 +187,9 @@ describe("POST /folders", () => {
       "first_placement.core.note",
     ],
     [
-      { search: { types: ["system.folder"] } },
+      { query: { types: ["system.folder"] } },
       "validation_error",
-      "search.types.0",
+      "query.types.0",
     ],
     [
       { defaults: { type: "system.folder" } },
@@ -193,10 +239,10 @@ describe("POST /folders", () => {
   it("names a setting a block does not declare by its path from the body, on a create and on a change", async () => {
     const folder = await createFolder({ title: "Target" });
     for (const res of [
-      await create({ title: "Bad", search: { owner: "x" } }),
+      await create({ title: "Bad", query: { owner: "x" } }),
       await request(ctx.app, "PATCH", `/folders/${folder.id}`, {
         key: ctx.workingKey,
-        body: { version: 1, search: { owner: "x" } },
+        body: { version: 1, query: { owner: "x" } },
       }),
     ]) {
       expect(res.status).toBe(400);
@@ -205,7 +251,7 @@ describe("POST /folders", () => {
       }>(res);
       expect(refusal.error.code).toBe("validation_error");
       expect(refusal.error.details?.unknown_body_fields).toEqual([
-        "search.owner",
+        "query.owner",
       ]);
     }
   });
@@ -266,7 +312,7 @@ describe("POST /folders", () => {
   it("takes a placement that climbs and comes back inside, on a create and on a change", async () => {
     const settings = {
       first_placement: { "core.note": "Notes/../Tickets/./Open" },
-      search: {
+      query: {
         types: ["core.note"],
         filter: 'tags contains "project"',
         beneath: "01920000-0000-7000-8000-000000000000",

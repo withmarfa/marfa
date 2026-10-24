@@ -58,7 +58,7 @@ it("resolves body links through real server lookup and keeps their removal after
     trackItem(ctx, remote.data.item.id);
     const settings = await client.createFolder({
       title: `Body links ${ctx.runId}`,
-      search: { types: ["core.note"], filter: `source eq "${ctx.source}"` },
+      query: { types: ["core.note"], filter: `source eq "${ctx.source}"` },
     });
     expect(settings.ok, JSON.stringify(settings.error)).toBe(true);
     trackFolder(ctx, settings.data.item.id);

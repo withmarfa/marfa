@@ -104,7 +104,7 @@ impl Folder {
                 let Some(bound) = state::bound_at(&conn, path)? else {
                     continue;
                 };
-                // No pull writes back an item the search's states no longer hold, so
+                // No pull writes back an item the query's states no longer hold, so
                 // bound it would be journaled again.
                 let held = crate::store::items_by_ids(&conn, std::slice::from_ref(&bound.item_id))?
                     .pop()
@@ -120,7 +120,7 @@ impl Folder {
                 continue;
             }
             // A missing unmatched file remains the person's deletion: the pull
-            // never writes a new file for an item outside the search.
+            // never writes a new file for an item outside the query.
             if !members.contains(&bound.item_id) {
                 continue;
             }

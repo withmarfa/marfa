@@ -2588,7 +2588,7 @@ marfa device items list [OPTIONS]
 | `--direction <DIRECTION>` | Newest first, or oldest. One of `asc`, `desc`. Default: `desc`. |
 | `--limit <LIMIT>` | How many items at most. |
 | `--offset <OFFSET>` | How many items to skip first. |
-| `--folder <ID>` | Only what this `system.folder`'s search holds, as the folder holds it; refused where the copy's slice cannot answer the search whole. |
+| `--folder <ID>` | Only what this `system.folder`'s query holds, as the folder holds it; refused where the copy's slice cannot answer the query whole. |
 
 Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 
@@ -2850,7 +2850,7 @@ marfa device folders create [OPTIONS]
 | `--file <PATH>` | A file holding the settings as a JSON object; `-` reads stdin. |
 | `--body <JSON>` | The settings as a JSON object, inline. |
 | `--title <TITLE>` | The folder's name. |
-| `--search <JSON>` | Which items the folder holds, as a JSON object: `types`, `tier`, `state`, `filter` and `beneath`. |
+| `--query <JSON>` | Which items the folder holds, as a JSON object: `types`, `tier`, `state`, `filter` and `beneath`. |
 | `--defaults <JSON>` | What a new file takes where it leaves a blank, as a JSON object: `type`, `tier`, `properties`, `tags` and `edges`. |
 | `--include <PATTERN>` | A gitignore pattern for the paths the folder takes, repeatable; a dot-led path only where a pattern names it, and never a secret. |
 | `--ignore <PATTERN>` | A gitignore pattern for the paths the folder leaves alone, repeatable; it wins over an include pattern. |
@@ -2878,7 +2878,7 @@ marfa device folders change [OPTIONS] --version <VERSION> <ID>
 | `--file <PATH>` | A file holding the settings as a JSON object; `-` reads stdin. |
 | `--body <JSON>` | The settings as a JSON object, inline. |
 | `--title <TITLE>` | The folder's name. |
-| `--search <JSON>` | Which items the folder holds, as a JSON object: `types`, `tier`, `state`, `filter` and `beneath`. |
+| `--query <JSON>` | Which items the folder holds, as a JSON object: `types`, `tier`, `state`, `filter` and `beneath`. |
 | `--defaults <JSON>` | What a new file takes where it leaves a blank, as a JSON object: `type`, `tier`, `properties`, `tags` and `edges`. |
 | `--include <PATTERN>` | A gitignore pattern for the paths the folder takes, repeatable; a dot-led path only where a pattern names it, and never a secret. |
 | `--ignore <PATTERN>` | A gitignore pattern for the paths the folder leaves alone, repeatable; it wins over an include pattern. |
@@ -2943,7 +2943,7 @@ marfa device search [OPTIONS] <QUERY>
 | `--filter <EXPR>` | An expression in the server's listing grammar, answered as the server answers `filter`; a `backref` condition is refused. |
 | `--beneath <ID>` | Only this item and what it reaches along `parent-of` edges. |
 | `--limit <LIMIT>` | How many hits at most. Default: `20`. |
-| `--folder <ID>` | Only what this `system.folder`'s search holds, as the folder holds it; refused where the copy's slice cannot answer the search whole. |
+| `--folder <ID>` | Only what this `system.folder`'s query holds, as the folder holds it; refused where the copy's slice cannot answer the query whole. |
 
 Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 
@@ -3539,7 +3539,7 @@ marfa folders restore [OPTIONS] <DIR>
 
 ### marfa folders hydrate
 
-Pull what the folder's search needs into its working copy.
+Pull what the folder's query needs into its working copy.
 
 ```text
 marfa folders hydrate [OPTIONS] <DIR>
@@ -3563,7 +3563,7 @@ marfa folders scan [OPTIONS] <DIR>
 
 ### marfa folders pull
 
-Write what the folder's search matches out as files.
+Write what the folder's query matches out as files.
 
 ```text
 marfa folders pull [OPTIONS] <DIR>
@@ -3591,7 +3591,7 @@ marfa folders push [OPTIONS] <DIR>
 
 ### marfa folders unmatched
 
-List the files the folder keeps whose items its search no longer matches, as the last pull left them, and with `--remove` take them away. A file goes only after a confirmation at a terminal or `--yes`, and only while its bytes are the ones the folder wrote and no edit of it waits to be sent; any other is kept and said. The item stays in Marfa as it was, and the folder's placement of it ends, sent at the next push. Takes away no `held`, `outside` or `unreached` file. With `--remove`, a watch holding the folder lets it go while this runs, and this is refused if the process holding the folder does not let it go within 10 seconds. Delete an unmatched file with this, not by hand: a file deleted by hand sends a delete of its item.
+List the files the folder keeps whose items its query no longer matches, as the last pull left them, and with `--remove` take them away. A file goes only after a confirmation at a terminal or `--yes`, and only while its bytes are the ones the folder wrote and no edit of it waits to be sent; any other is kept and said. The item stays in Marfa as it was, and the folder's placement of it ends, sent at the next push. Takes away no `held`, `outside` or `unreached` file. With `--remove`, a watch holding the folder lets it go while this runs, and this is refused if the process holding the folder does not let it go within 10 seconds. Delete an unmatched file with this, not by hand: a file deleted by hand sends a delete of its item.
 
 ```text
 marfa folders unmatched [OPTIONS] <DIR>
@@ -3619,7 +3619,7 @@ marfa folders create [OPTIONS]
 | `--file <PATH>` | A file holding the settings as a JSON object; `-` reads stdin. |
 | `--body <JSON>` | The settings as a JSON object, inline. |
 | `--title <TITLE>` | The folder's name. |
-| `--search <JSON>` | Which items the folder holds, as a JSON object: `types`, `tier`, `state`, `filter` and `beneath`. |
+| `--query <JSON>` | Which items the folder holds, as a JSON object: `types`, `tier`, `state`, `filter` and `beneath`. |
 | `--defaults <JSON>` | What a new file takes where it leaves a blank, as a JSON object: `type`, `tier`, `properties`, `tags` and `edges`. |
 | `--include <PATTERN>` | A gitignore pattern for the paths the folder takes, repeatable; a dot-led path only where a pattern names it, and never a secret. |
 | `--ignore <PATTERN>` | A gitignore pattern for the paths the folder leaves alone, repeatable; it wins over an include pattern. |
@@ -3645,7 +3645,7 @@ marfa folders change [OPTIONS] --version <VERSION> <ID>
 | `--file <PATH>` | A file holding the settings as a JSON object; `-` reads stdin. |
 | `--body <JSON>` | The settings as a JSON object, inline. |
 | `--title <TITLE>` | The folder's name. |
-| `--search <JSON>` | Which items the folder holds, as a JSON object: `types`, `tier`, `state`, `filter` and `beneath`. |
+| `--query <JSON>` | Which items the folder holds, as a JSON object: `types`, `tier`, `state`, `filter` and `beneath`. |
 | `--defaults <JSON>` | What a new file takes where it leaves a blank, as a JSON object: `type`, `tier`, `properties`, `tags` and `edges`. |
 | `--include <PATTERN>` | A gitignore pattern for the paths the folder takes, repeatable; a dot-led path only where a pattern names it, and never a secret. |
 | `--ignore <PATTERN>` | A gitignore pattern for the paths the folder leaves alone, repeatable; it wins over an include pattern. |

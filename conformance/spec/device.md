@@ -670,9 +670,9 @@ When a hydration completes, a device MUST report the types, tier and edge types 
 
 ### `device/hydrate-every-type`
 
-When a hydration declares `*` alone, or a folder whose search names no type or names `*` hydrates its copy, a device MUST read the item listing naming no type, which leaves `system.*` out (`folders/search-default-types`), and report the slice's types as `*`.
+When a hydration declares `*` alone, or a folder whose query names no type or names `*` hydrates its copy, a device MUST read the item listing naming no type, which leaves `system.*` out (`folders/search-default-types`), and report the slice's types as `*`.
 
-**Tests:** `device/hydrate-every-type.test.ts › hydrates every type but system.* from the listing naming no type`, `device/hydrate-every-type-live.test.ts › holds every type registered before the hydration in one pass, and takes a later item of each by its event`, `device/folders.test.ts › holds exactly what its search matches`, `› takes every type, and any default type, where its search names no type or the star`.
+**Tests:** `device/hydrate-every-type.test.ts › hydrates every type but system.* from the listing naming no type`, `device/hydrate-every-type-live.test.ts › holds every type registered before the hydration in one pass, and takes a later item of each by its event`, `device/folders.test.ts › holds exactly what its query matches`, `› takes every type, and any default type, where its query names no type or the star`.
 
 ### `device/hydrate-every-type-beside-system`
 
@@ -3916,45 +3916,45 @@ When a caller reads a folder the copy holds, a device MUST answer its state and 
 
 ### `device/folder-read-backref`
 
-When a caller reads a folder the copy holds whose search carries a `backref` condition, a device MUST answer its settings.
+When a caller reads a folder the copy holds whose query carries a `backref` condition, a device MUST answer its settings.
 
-**Reason:** the server takes such a folder (`items/folder-create`), and an app shows it by its title though no copy can answer its search.
+**Reason:** the server takes such a folder (`items/folder-create`), and an app shows it by its title though no copy can answer its query.
 
 **Tests:** `device/folder-settings-live.test.ts › refuses settings no folder follows before anything is sent, and fails offline with nothing kept`.
 
 ### `device/folder-list`
 
-When a caller lists or searches in a folder, a device MUST answer the items of the search's types and their subtypes, at the search's tier, in the states it names or `active` and `archived` where it names none, that its `filter` matches, and no `system.*` row.
+When a caller lists or searches in a folder, a device MUST answer the items of the query's types and their subtypes, in the tiers the query holds, in the states it names or `active` and `archived` where it names none, that its `filter` matches, and no `system.*` row.
 
 **Reason:** an app that shows a folder beside the folder on disk would otherwise show one set of items there and another in the files, with nothing to say which is right (`folders/search-match`).
 
-**Tests:** `device/folder-settings-live.test.ts › lists and searches in a folder what the folder's search holds`.
+**Tests:** `device/folder-settings-live.test.ts › lists and searches in a folder what the folder's query holds`.
 
 ### `device/folder-list-beneath`
 
-Where the copy holds `parent-of` whole, when a caller lists in a folder whose search names `beneath` an item, a device MUST answer the items that `beneath` holds, the named item among them.
+Where the copy holds `parent-of` whole, when a caller lists in a folder whose query names `beneath` an item, a device MUST answer the items that `beneath` holds, the named item among them.
 
-**Tests:** `device/folder-settings-live.test.ts › refuses a folder search its slice cannot answer whole, and a folder it does not hold`.
+**Tests:** `device/folder-settings-live.test.ts › refuses a folder query its slice cannot answer whole, and a folder it does not hold`.
 
 ### `device/folder-unanswerable`
 
-If the copy's slice does not take a type or the tier that a folder's search can hold, or the search names `beneath` while the copy does not hold `parent-of` whole, then a device MUST refuse a list or a search in that folder `invalid`.
+If the copy's slice does not take every type and tier that a folder's query can hold, or the query names `beneath` while the copy does not hold `parent-of` whole, then a device MUST refuse a list or a search in that folder `invalid`.
 
 **Reason:** answered from part of the folder, a list reads as the whole of it, which is the wrong answer hardest to notice.
 
-**Tests:** `device/folder-settings-live.test.ts › refuses a folder search its slice cannot answer whole, and a folder it does not hold`.
+**Tests:** `device/folder-settings-live.test.ts › refuses a folder query its slice cannot answer whole, and a folder it does not hold`.
 
 ### `device/folder-unanswerable-named`
 
-If a device refuses a list in a folder because its slice cannot answer the folder's search, then a device MUST name in the refusal the type, the tier or `parent-of` that the slice lacks.
+If a device refuses a list in a folder because its slice cannot answer the folder's query, then a device MUST name in the refusal the type, the tier or `parent-of` that the slice lacks.
 
 **Reason:** the remedy is a hydration with what is named.
 
-**Tests:** `device/folder-settings-live.test.ts › refuses a folder search its slice cannot answer whole, and a folder it does not hold`.
+**Tests:** `device/folder-settings-live.test.ts › refuses a folder query its slice cannot answer whole, and a folder it does not hold`.
 
 ### `device/folder-list-backref`
 
-If a folder's search carries a `backref` condition, then a device MUST refuse a list in that folder `invalid`, naming the condition.
+If a folder's query carries a `backref` condition, then a device MUST refuse a list in that folder `invalid`, naming the condition.
 
 **Reason:** a copy holds the edges its items draw but not every edge drawn to them, so it would otherwise ignore the condition.
 
@@ -3972,7 +3972,7 @@ If a folder is revoked, then a device MUST refuse a list or a search in it `inva
 
 If the row a list in a folder names is not a `system.folder`, then a device MUST refuse the list `invalid`, naming `system.folder`.
 
-**Tests:** `device/folder-settings-live.test.ts › refuses a folder search its slice cannot answer whole, and a folder it does not hold`.
+**Tests:** `device/folder-settings-live.test.ts › refuses a folder query its slice cannot answer whole, and a folder it does not hold`.
 
 ### `device/folder-not-held`
 
@@ -3980,7 +3980,7 @@ If the copy does not hold a folder, then a device MUST refuse a list or a search
 
 **Reason:** the remedy is to hold the folder, by a pin or by naming `system.folder` in the slice, not to change the slice's types.
 
-**Tests:** `device/folder-settings-live.test.ts › refuses a folder search its slice cannot answer whole, and a folder it does not hold`.
+**Tests:** `device/folder-settings-live.test.ts › refuses a folder query its slice cannot answer whole, and a folder it does not hold`.
 
 ### `device/folder-write-at-once`
 
@@ -4018,23 +4018,23 @@ If folder settings sent through a working copy carry a `filter` the listing gram
 
 **Reason:** the server refuses such a filter (`items/folder-setting-invalid`), and a default tag the server refuses on an item would be refused on every new file the folder makes.
 
-**Tests:** `device/folder-settings-live.test.ts › refuses settings the server would refuse, or defaults its search would not hold, before anything is sent`.
+**Tests:** `device/folder-settings-live.test.ts › refuses settings the server would refuse, or defaults its query would not hold, before anything is sent`.
 
 ### `device/folder-write-defaults`
 
-If folder settings sent through a working copy name a default type or a default tier that the folder's search does not hold, then a device MUST refuse them `invalid` before anything is sent.
+If folder settings sent through a working copy name a default type or a default tier that the folder's query does not hold, then a device MUST refuse them `invalid` before anything is sent.
 
 **Reason:** a new file made with such a default would fall outside its own folder (`folders/default-search-refusal`), and the server takes the settings.
 
-**Tests:** `device/folder-settings-live.test.ts › refuses settings the server would refuse, or defaults its search would not hold, before anything is sent`.
+**Tests:** `device/folder-settings-live.test.ts › refuses settings the server would refuse, or defaults its query would not hold, before anything is sent`.
 
 ### `device/folder-change-as-stands`
 
 When a caller changes a folder the copy holds, a device MUST check the settings as they will stand after the change.
 
-**Reason:** a change to the defaults alone can be one the search they stand beside does not hold.
+**Reason:** a change to the defaults alone can be one the query they stand beside does not hold.
 
-**Tests:** `device/folder-settings-live.test.ts › refuses settings the server would refuse, or defaults its search would not hold, before anything is sent`.
+**Tests:** `device/folder-settings-live.test.ts › refuses settings the server would refuse, or defaults its query would not hold, before anything is sent`.
 
 ### `device/folder-write-held`
 
@@ -4046,7 +4046,7 @@ When a folder operation accepts a write and the copy's slice or a pin takes the 
 
 ### `device/folder-write-accepted`
 
-When a folder operation accepts a write to a folder whose search carries a `backref` condition, a device MUST answer the write as accepted.
+When a folder operation accepts a write to a folder whose query carries a `backref` condition, a device MUST answer the write as accepted.
 
 **Reason:** the write has taken effect, and a caller told it failed would send it again.
 

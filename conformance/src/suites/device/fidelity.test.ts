@@ -1855,7 +1855,7 @@ describe("the scripted answers match the server's", () => {
   it("matches the refusal of a second placement of one item in one folder", async () => {
     const made = await client.rawRequest("/folders", {
       method: "POST",
-      body: { title: "fidelity", search: { types: ["core.note"] } },
+      body: { title: "fidelity", query: { types: ["core.note"] } },
     });
     expect(
       made.ok,
@@ -3352,7 +3352,7 @@ it("matches copy marker tuples and conditional listing proofs", async (context) 
   // only where `include` names `system` (`items/bulk-get-system`).
   const folder = await client.createFolder({
     title: `fidelity ${ctx.runId}`,
-    search: { types: ["core.note"], filter: `source eq "${ctx.source}"` },
+    query: { types: ["core.note"], filter: `source eq "${ctx.source}"` },
   });
   expect(folder.ok, JSON.stringify(folder.error)).toBe(true);
   trackFolder(ctx, folder.data.item.id);

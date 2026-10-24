@@ -54,20 +54,20 @@ const MAX_DEFAULT_EDGE_TARGETS = 100;
 // Schemas
 // ---------------------------------------------------------------------------
 
-const FolderSearchSchema = itemQuerySchema(
+const FolderQuerySchema = itemQuerySchema(
   {
-    name: "FolderSearch",
-    description: "The search that decides which items a folder holds.",
+    name: "FolderQuery",
+    description: "The query that decides which items a folder holds.",
     types:
       "The types the folder holds, each with its subtypes. Empty or absent holds every type the machine's key can read, except `system.*`.",
-    tier: "The tier the folder holds. Absent means `library`.",
+    tier: "The tiers the folder holds: `library`, `feed`, or `all` for both. Absent means `library`.",
     state: "The states the folder holds. Absent means both.",
     filter:
       "A filter expression, as on `GET /items`, that narrows what the folder holds.",
     beneath:
       "An item ID. The folder holds that item and everything under it by `parent-of`, at any depth.",
   },
-  TierEnum,
+  z.enum(["library", "feed", "all"]),
 );
 
 const FolderDefaultsSchema = z
@@ -128,7 +128,7 @@ const RemovalThresholdSchema = z
   });
 
 const settingsShape = {
-  search: FolderSearchSchema.describe("Which items the folder holds."),
+  query: FolderQuerySchema.describe("Which items the folder holds."),
   defaults: FolderDefaultsSchema.describe(
     "What a new file takes where its frontmatter leaves a blank.",
   ),
@@ -156,7 +156,7 @@ const CreateFolderSchema = z.strictObject({
   title: maxStringLength(z.string().min(1), 500).describe(
     "The folder's title.",
   ),
-  search: settingsShape.search.optional(),
+  query: settingsShape.query.optional(),
   defaults: settingsShape.defaults.optional(),
   include: settingsShape.include.optional(),
   ignore: settingsShape.ignore.optional(),
@@ -175,7 +175,7 @@ const UpdateFolderSchema = z.strictObject({
   title: maxStringLength(z.string().min(1), 500)
     .optional()
     .describe("A new title for the folder."),
-  search: settingsShape.search.optional(),
+  query: settingsShape.query.optional(),
   defaults: settingsShape.defaults.optional(),
   include: settingsShape.include.optional(),
   ignore: settingsShape.ignore.optional(),
@@ -192,8 +192,8 @@ const IdParam = z.object({
 // ---------------------------------------------------------------------------
 
 function assertSettings(settings: Settings): void {
-  const { search, defaults, first_placement: placement } = settings;
-  if (search !== undefined) assertItemQuery("search", search);
+  const { query, defaults, first_placement: placement } = settings;
+  if (query !== undefined) assertItemQuery("query", query);
   if (defaults?.type !== undefined) {
     assertKnownType("defaults.type", defaults.type);
   }

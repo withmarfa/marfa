@@ -100,7 +100,7 @@ async function twoFolders(
 
 function tagged(tag: string): FolderSettings {
   return {
-    search: { types: ["core.note"], filter: `tags contains "${tag}"` },
+    query: { types: ["core.note"], filter: `tags contains "${tag}"` },
     defaults: { tags: [tag] },
   };
 }
@@ -188,7 +188,7 @@ describe("a watch of every folder", () => {
     }, WAIT);
     expect(watch.running(), watch.stderr).toBe(true);
     expect(read(a, "Server A.md")).toContain("Server A body");
-    // Each folder holds only what its search names.
+    // Each folder holds only what its query names.
     expect(existsSync(join(a.dir, "Server B.md"))).toBe(false);
     const lines = linesOf(watch);
     expect(

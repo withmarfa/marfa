@@ -642,7 +642,7 @@ describe("identity", () => {
     const bytes = Buffer.from("bytes\n");
     harness = await folderHarness("folder-id-not-read", {
       settings: {
-        search: { types: ["core.note", "core.file"] },
+        query: { types: ["core.note", "core.file"] },
         defaults: { type: "core.note" },
       },
       rows: {
@@ -708,7 +708,7 @@ describe("identity", () => {
   it("reads a .txt file whatever the case of its extension", async () => {
     harness = await folderHarness("folder-txt-case", {
       settings: {
-        search: { types: ["core.note", "core.file"] },
+        query: { types: ["core.note", "core.file"] },
         defaults: { type: "core.note" },
       },
     });
@@ -1390,7 +1390,7 @@ describe("what a pull does with a file whose item stops matching", () => {
     const edges = new EdgeDoor();
     harness = await folderHarness(label, {
       settings: {
-        search: {
+        query: {
           types: ["core.note"],
           ...(options.filter === undefined ? {} : { filter: options.filter }),
           ...(options.state === undefined ? {} : { state: options.state }),
@@ -1496,7 +1496,7 @@ describe("what a pull does with a file whose item stops matching", () => {
     if (!pushed.ok) return;
     expect(
       pushed.value.pull?.unmatched,
-      "the witness: the item left the search and its file stayed",
+      "the witness: the item left the query and its file stayed",
     ).toBe(1);
     expect(existsSync(join(harness!.dir, "going.md"))).toBe(true);
     expect(
@@ -1634,7 +1634,7 @@ describe("what a pull does with a file whose item stops matching", () => {
 
   it("removes the file of an item that leaves by state", async () => {
     harness = await folderHarness("folder-leaves-by-state", {
-      settings: { search: { types: ["core.note"], state: ["active"] } },
+      settings: { query: { types: ["core.note"], state: ["active"] } },
       rows: { "core.note": [{ item: departed }] },
       events: [
         copyReplay("2", [
@@ -1669,7 +1669,7 @@ describe("what a pull does with a file whose item stops matching", () => {
       properties: { title: "trashed", body: "body\n" },
     };
     harness = await folderHarness("folder-journaled-departure", {
-      settings: { search: { types: ["core.note"], state: ["active"] } },
+      settings: { query: { types: ["core.note"], state: ["active"] } },
       rows: { "core.note": [{ item: archived }, { item: trashed }] },
       events: [
         copyReplay("3", [
@@ -1869,7 +1869,7 @@ describe("what a pull does with a file whose item stops matching", () => {
 
   it("takes away a file put back after its delete was journaled, once its item leaves by state, and sends no delete", async () => {
     harness = await folderHarness("folder-put-back-departed", {
-      settings: { search: { types: ["core.note"], state: ["active"] } },
+      settings: { query: { types: ["core.note"], state: ["active"] } },
       rows: { "core.note": [{ item: departed }] },
       events: [
         copyReplay("2", [
@@ -1906,7 +1906,7 @@ describe("what a pull does with a file whose item stops matching", () => {
 
   it("holds the file of an item that leaves by state where it cannot be read, and does not call it kept", async () => {
     harness = await folderHarness("folder-departed-unreadable", {
-      settings: { search: { types: ["core.note"], state: ["active"] } },
+      settings: { query: { types: ["core.note"], state: ["active"] } },
       rows: { "core.note": [{ item: departed }] },
       events: [
         copyReplay("2", [
@@ -1951,7 +1951,7 @@ describe("what a pull does with a file whose item stops matching", () => {
     };
     harness = await folderHarness("folder-unmatched-current", {
       settings: {
-        search: { types: ["core.note"], filter: 'tags contains "keep"' },
+        query: { types: ["core.note"], filter: 'tags contains "keep"' },
       },
       rows: { "core.note": [{ item, tags: ["keep"] }] },
       events: [
@@ -1968,7 +1968,7 @@ describe("what a pull does with a file whose item stops matching", () => {
       },
     });
     expect((await harness.folder.pull()).ok).toBe(true);
-    // Another device sets `status: b`, and the item leaves the search.
+    // Another device sets `status: b`, and the item leaves the query.
     door?.update(item.id, { properties: { status: "b" }, version: 1 });
     expect((await harness.folder.device().catchUp()).ok).toBe(true);
     const pulled = await harness.folder.pull();
@@ -1992,7 +1992,7 @@ describe("what a pull does with a file whose item stops matching", () => {
   it("keeps a file whose item no longer matches, flagged", async () => {
     harness = await folderHarness("folder-unmatched", {
       settings: {
-        search: { types: ["core.note"], filter: 'tags contains "keep"' },
+        query: { types: ["core.note"], filter: 'tags contains "keep"' },
       },
       rows: { "core.note": [{ item: departed, tags: ["keep"] }] },
       events: [
@@ -2027,7 +2027,7 @@ describe("what a pull does with a file whose item stops matching", () => {
     expect([scanned.value.created, scanned.value.updated]).toEqual([0, 1]);
   });
 
-  it("keeps the file of an item a narrowed search leaves out, flagged, and sends its edits to it", async () => {
+  it("keeps the file of an item a narrowed query leaves out, flagged, and sends its edits to it", async () => {
     let changed: Record<string, unknown> = {};
     harness = await folderHarness("folder-narrowed-out", {
       rows: { "core.note": [{ item: departed }] },
@@ -2041,7 +2041,7 @@ describe("what a pull does with a file whose item stops matching", () => {
     scriptFolderWrites(harness);
     expect((await harness.folder.pull()).ok).toBe(true);
     const id = idIn(harness, "going.md");
-    harness.settings.settings = { search: { types: ["core.bookmark"] } };
+    harness.settings.settings = { query: { types: ["core.bookmark"] } };
     harness.settings.version = 2;
     changed = folderItem(harness.settings);
     const pushed = await harness.folder.push();
@@ -2050,12 +2050,12 @@ describe("what a pull does with a file whose item stops matching", () => {
     expect(pushed.value.catch_up.hydrated).not.toBeNull();
     expect(
       pushed.value.pull?.unmatched,
-      "the copy let go of a bound file's row when the search narrowed, so the file is bound to nothing",
+      "the copy let go of a bound file's row when the query narrowed, so the file is bound to nothing",
     ).toBe(1);
     await editedReachesItsItem(harness, departed.id, id);
   });
 
-  it("keeps the file of an item retyped out of its search elsewhere, flagged, and sends its edits to it", async () => {
+  it("keeps the file of an item retyped out of its query elsewhere, flagged, and sends its edits to it", async () => {
     const retyped = { ...departed, type: "core.bookmark", version: 2 };
     harness = await folderHarness("folder-retyped-out", {
       rows: { "core.note": [{ item: departed }] },
@@ -2082,7 +2082,7 @@ describe("what a pull does with a file whose item stops matching", () => {
     expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
     expect(
       pushed.ok && pushed.value.pull?.unmatched,
-      "the copy let go of a bound file's row retyped out of the search, so the file is bound to nothing",
+      "the copy let go of a bound file's row retyped out of the query, so the file is bound to nothing",
     ).toBe(1);
     await editedReachesItsItem(harness, departed.id, id);
   });
@@ -2256,7 +2256,7 @@ describe("what a pull does with a file whose item is purged", () => {
     expect(text.ok && text.value).toContain(
       "1 file(s) of items purged removed",
     );
-    expect(text.ok && text.value).not.toContain("trashed or out of the search");
+    expect(text.ok && text.value).not.toContain("trashed or out of the query");
   });
 
   it("says while watching that a purged item's file was removed", async () => {
@@ -2751,7 +2751,7 @@ describe("what a folder never does to a person's text", () => {
     });
     const [toolBytes, laterBytes] = [1, 2].map((n) => Buffer.from([n, n, n]));
     harness = await folderHarness("folder-quarantine", {
-      settings: { search: { types: ["core.file", "core.note"] } },
+      settings: { query: { types: ["core.file", "core.note"] } },
       rows: {
         "core.file": [
           { item: fileItem(tool, "tool.bin", toolBytes, { executable: true }) },
@@ -3285,7 +3285,7 @@ describe("what a folder never does to a person's text", () => {
     };
     const kept = "01a00000-0000-7000-8000-00000000fa92";
     harness = await folderHarness("folder-last-look", {
-      settings: { search: { types: ["core.note"], state: ["active"] } },
+      settings: { query: { types: ["core.note"], state: ["active"] } },
       rows: {
         "core.note": [
           { item: going },

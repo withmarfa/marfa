@@ -1317,7 +1317,7 @@ describe("between writers", () => {
     });
     const settings = await client.createFolder({
       title: named("Body edges folder"),
-      search: { types: ["core.note"], filter: `source eq "${ctx.source}"` },
+      query: { types: ["core.note"], filter: `source eq "${ctx.source}"` },
     });
     expect(settings.ok, JSON.stringify(settings.error)).toBe(true);
     trackFolder(ctx, settings.data.item.id);

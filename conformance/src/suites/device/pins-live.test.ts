@@ -215,7 +215,7 @@ it("reads the pinned rows outside its slice 100 to a request under its reach, no
 it("holds a pinned folder row, and keeps a pin whose row went to the bin without a row", async () => {
   const folder = await client.createFolder({
     title: `Pins ${ctx.runId}`,
-    search: { types: [slice], filter: `source eq "${ctx.source}"` },
+    query: { types: [slice], filter: `source eq "${ctx.source}"` },
   });
   expect(folder.ok, JSON.stringify(folder.error)).toBe(true);
   trackFolder(ctx, folder.data.item.id);

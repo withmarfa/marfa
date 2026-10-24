@@ -4475,10 +4475,14 @@ export interface components {
             };
         };
         /** @description Which items the folder holds. */
-        FolderSearch: {
+        FolderQuery: {
             /** @description The types the folder holds, each with its subtypes. Empty or absent holds every type the machine's key can read, except `system.*`. */
             types?: string[];
-            tier?: components["schemas"]["Tier"] & unknown;
+            /**
+             * @description The tiers the folder holds: `library`, `feed`, or `all` for both. Absent means `library`.
+             * @enum {string}
+             */
+            tier?: "library" | "feed" | "all";
             /** @description The states the folder holds. Absent means both. */
             state?: ("active" | "archived")[];
             /** @description A filter expression, as on `GET /items`, that narrows what the folder holds. */
@@ -18131,7 +18135,7 @@ export interface operations {
                 "application/json": {
                     /** @description The folder's title. */
                     title: string;
-                    search?: components["schemas"]["FolderSearch"];
+                    query?: components["schemas"]["FolderQuery"];
                     defaults?: components["schemas"]["FolderDefaults"];
                     /** @description Gitignore patterns, relative to the folder's root, for the paths the folder takes. Empty or absent takes every path. A dot-led name is taken only if a pattern names it. Secrets and files a machine or editor writes for itself are never taken. */
                     include?: string[];
@@ -18348,7 +18352,7 @@ export interface operations {
                     version: number;
                     /** @description A new title for the folder. */
                     title?: string;
-                    search?: components["schemas"]["FolderSearch"];
+                    query?: components["schemas"]["FolderQuery"];
                     defaults?: components["schemas"]["FolderDefaults"];
                     /** @description Gitignore patterns, relative to the folder's root, for the paths the folder takes. Empty or absent takes every path. A dot-led name is taken only if a pattern names it. Secrets and files a machine or editor writes for itself are never taken. */
                     include?: string[];

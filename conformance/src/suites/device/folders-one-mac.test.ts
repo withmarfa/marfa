@@ -322,9 +322,9 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     const moving = "01a00000-0000-7000-8000-0000000015c2";
     const { a, b, edges } = await onOneMac(
       "copy-or-move",
-      { search: { types: ["core.note"] } },
-      // Its copy holds every note, and its search none of these.
-      { search: { types: ["core.note"], filter: 'tags contains "b"' } },
+      { query: { types: ["core.note"] } },
+      // Its copy holds every note, and its query none of these.
+      { query: { types: ["core.note"], filter: 'tags contains "b"' } },
       {
         "core.note": [
           { item: { id: kept, properties: { title: "Kept", body: "k\n" } } },
@@ -378,8 +378,8 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
   it("makes a new item of a text note moved to another folder as Markdown, and keeps its words", async () => {
     const { a, b } = await onOneMac(
       "move-text-as-markdown",
-      { search: { types: ["core.note"] } },
-      { search: { types: ["core.note"] } },
+      { query: { types: ["core.note"] } },
+      { query: { types: ["core.note"] } },
       { "core.note": [] },
     );
     put(a, "Loose.txt", "loose words\n");
@@ -433,8 +433,8 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     const gone = "01a00000-0000-7000-8000-0000000016f2";
     const { a, b } = await onOneMac(
       "unreadable-move",
-      { search: { types: ["core.note"] } },
-      { search: { types: ["core.bookmark"] } },
+      { query: { types: ["core.note"] } },
+      { query: { types: ["core.bookmark"] } },
       {
         "core.note": [
           {
@@ -487,8 +487,8 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     const deleted = "01a00000-0000-7000-8000-0000000016d2";
     const { a, b } = await onOneMac(
       "move-not-trash",
-      { search: { types: ["core.note"] } },
-      { search: { types: ["core.bookmark"] } },
+      { query: { types: ["core.note"] } },
+      { query: { types: ["core.bookmark"] } },
       {
         "core.note": [
           { item: { id: moved, properties: { title: "Moved", body: "m\n" } } },
@@ -558,8 +558,8 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
   it("does not write back a file moved to another folder between a pass's scan and its pull", async () => {
     const { a, b } = await onOneMac(
       "pass-moved-away",
-      { search: { types: ["core.note"] } },
-      { search: { types: ["core.bookmark"] } },
+      { query: { types: ["core.note"] } },
+      { query: { types: ["core.bookmark"] } },
       {},
     );
     put(a, "Moved.md", "---\ntitle: Moved\n---\nwords\n");
@@ -601,8 +601,8 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     const namesake = "01a00000-0000-7000-8000-0000000016e3";
     const { a, b } = await onOneMac(
       "trash-found-nowhere",
-      { search: { types: ["core.note"] } },
-      { search: { types: ["core.bookmark"] } },
+      { query: { types: ["core.note"] } },
+      { query: { types: ["core.bookmark"] } },
       {
         "core.note": [
           { item: { id: gone, properties: { title: "Gone", body: "g\n" } } },
@@ -678,8 +678,8 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     };
     const { a, b, edges } = await onOneMac(
       "ordinary-source-denial",
-      { search: { types: ["core.note"], filter: 'tags contains "a"' } },
-      { search: { types: ["core.note"], filter: 'tags contains "b"' } },
+      { query: { types: ["core.note"], filter: 'tags contains "a"' } },
+      { query: { types: ["core.note"], filter: 'tags contains "b"' } },
       {
         "core.note": [
           { item: plan, tags: ["a"] },
@@ -761,8 +761,8 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
       };
       const { a, b, edges } = await onOneMac(
         "protected-source",
-        { search: { types: ["core.note"], filter: 'tags contains "a"' } },
-        { search: { types: ["core.note"], filter: 'tags contains "b"' } },
+        { query: { types: ["core.note"], filter: 'tags contains "a"' } },
+        { query: { types: ["core.note"], filter: 'tags contains "b"' } },
         {
           "core.note": [
             { item: locked, tags: ["a"] },
@@ -989,8 +989,8 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
       };
       const { a, b, edges } = await onOneMac(
         "protected-copy-failure",
-        { search: { types: ["core.note"], filter: 'tags contains "a"' } },
-        { search: { types: ["core.note"], filter: 'tags contains "b"' } },
+        { query: { types: ["core.note"], filter: 'tags contains "a"' } },
+        { query: { types: ["core.note"], filter: 'tags contains "b"' } },
         { "core.note": [{ item, tags: ["a"] }] },
       );
       expect((await a.folder.pull()).ok).toBe(true);
@@ -1107,8 +1107,8 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     };
     const { a, b, edges } = await onOneMac(
       "take-in",
-      { search: { types: ["core.note"], filter: 'tags contains "a"' } },
-      { search: { types: ["core.note"], filter: 'tags contains "b"' } },
+      { query: { types: ["core.note"], filter: 'tags contains "a"' } },
+      { query: { types: ["core.note"], filter: 'tags contains "b"' } },
       {
         "core.note": [
           { item: plan, tags: ["a"] },
@@ -1121,7 +1121,7 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     expect(existsSync(join(a.dir, "Plan.md"))).toBe(true);
     expect(existsSync(join(b.dir, "Plan.md"))).toBe(false);
 
-    // Retagged elsewhere: the first folder's search lets it go, the
+    // Retagged elsewhere: the first folder's query lets it go, the
     // other's takes it.
     edges.events.push(
       copyItemEvent(
@@ -1230,8 +1230,8 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     };
     const { a, b, edges } = await onOneMac(
       "placement-ends",
-      { search: { types: ["core.note"], filter: 'tags contains "a"' } },
-      { search: { types: ["core.note"], filter: 'tags contains "b"' } },
+      { query: { types: ["core.note"], filter: 'tags contains "a"' } },
+      { query: { types: ["core.note"], filter: 'tags contains "b"' } },
       {
         "core.note": [
           { item: plan, tags: ["a"] },
@@ -1309,8 +1309,8 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     };
     const { a, b, edges } = await onOneMac(
       "placement-let-go-fails",
-      { search: { types: ["core.note"], filter: 'tags contains "a"' } },
-      { search: { types: ["core.note"], filter: 'tags contains "b"' } },
+      { query: { types: ["core.note"], filter: 'tags contains "a"' } },
+      { query: { types: ["core.note"], filter: 'tags contains "b"' } },
       { "core.note": [{ item: brief, tags: ["a"] }] },
     );
     expect((await a.folder.push()).ok).toBe(true);
@@ -1374,8 +1374,8 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     };
     const { a, b, edges } = await onOneMac(
       "placement-kept-on-move",
-      { search: { types: ["core.note"], filter: 'tags contains "a"' } },
-      { search: { types: ["core.note"], filter: 'tags contains "b"' } },
+      { query: { types: ["core.note"], filter: 'tags contains "a"' } },
+      { query: { types: ["core.note"], filter: 'tags contains "b"' } },
       { "core.note": [{ item: plan, tags: ["a"] }] },
     );
     expect((await a.folder.push()).ok).toBe(true);
@@ -1389,7 +1389,7 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     expect(swept.value.scan.moved_away).toBe(1);
     expect(
       edges.placements(a.settings.id).get(plan.id),
-      "a folder ended its placement of an item its own search still holds",
+      "a folder ended its placement of an item its own query still holds",
     ).toBe("Plan.md");
     expect(deletesOf(a.server, plan.id)).toBe(0);
   });
@@ -1407,8 +1407,8 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
       };
       const { a, b, edges } = await onOneMac(
         "take-in-no-replace",
-        { search: { types: ["core.note"], filter: 'tags contains "a"' } },
-        { search: { types: ["core.note"], filter: 'tags contains "b"' } },
+        { query: { types: ["core.note"], filter: 'tags contains "a"' } },
+        { query: { types: ["core.note"], filter: 'tags contains "b"' } },
         {
           "core.note": [
             { item: plan, tags: ["a"] },
@@ -1497,9 +1497,9 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
       const gone = { ...photo, id: "01a00000-0000-7000-8000-0000000023e2" };
       const { a, b, edges } = await onOneMac(
         "identical-move-destination",
-        { search: { types: ["core.file.image"], filter: 'tags contains "a"' } },
+        { query: { types: ["core.file.image"], filter: 'tags contains "a"' } },
         {
-          search: {
+          query: {
             types: ["core.file.image"],
             filter: 'tags contains "b"',
             state: ["active"],
@@ -1662,8 +1662,8 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     };
     const { a, b, edges } = await onOneMac(
       "bytes-moved",
-      { search: { types: ["core.file.image"], filter: 'tags contains "a"' } },
-      { search: { types: ["core.file.image"], filter: 'tags contains "b"' } },
+      { query: { types: ["core.file.image"], filter: 'tags contains "a"' } },
+      { query: { types: ["core.file.image"], filter: 'tags contains "b"' } },
       { "core.file.image": [{ item: photo, tags: ["a"] }] },
       (server) => {
         scriptBlob(server, bytes);
@@ -1719,8 +1719,8 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     };
     const { a, b, edges } = await onOneMac(
       "saved-back",
-      { search: { types: ["core.note"], filter: 'tags contains "a"' } },
-      { search: { types: ["core.note"], filter: 'tags contains "b"' } },
+      { query: { types: ["core.note"], filter: 'tags contains "a"' } },
+      { query: { types: ["core.note"], filter: 'tags contains "b"' } },
       { "core.note": [{ item: plan, tags: ["a"] }] },
     );
     expect((await a.folder.pull()).ok).toBe(true);
@@ -1763,8 +1763,8 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
   it("does not take another folder's file with the same bytes for a moved one", async () => {
     const { a, b } = await onOneMac(
       "same-bytes",
-      { search: { types: ["core.note"] } },
-      { search: { types: ["core.bookmark"] } },
+      { query: { types: ["core.note"] } },
+      { query: { types: ["core.bookmark"] } },
       {},
     );
     put(a, "Loose.txt", "shared words\n");
@@ -1797,15 +1797,15 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     let third: FolderRow | undefined;
     const { a } = await onOneMac(
       "unreadable-registry",
-      { search: { types: ["core.note"] } },
-      { search: { types: ["core.bookmark"] } },
+      { query: { types: ["core.note"] } },
+      { query: { types: ["core.bookmark"] } },
       {
         "core.note": [
           { item: { id: gone, properties: { title: "Gone", body: "g\n" } } },
         ],
       },
       (server) => {
-        third = scriptFolderRow(server, { search: { types: ["core.note"] } });
+        third = scriptFolderRow(server, { query: { types: ["core.note"] } });
       },
     );
     expect((await a.folder.pull()).ok).toBe(true);
@@ -1874,8 +1874,8 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     };
     const { a, edges } = await onOneMac(
       "held-no-write",
-      { search: { types: ["core.note"] } },
-      { search: { types: ["core.bookmark"] } },
+      { query: { types: ["core.note"] } },
+      { query: { types: ["core.bookmark"] } },
       { "core.note": [{ item: held }, { item: graced }, { item: restored }] },
     );
     const changeElsewhere = (...items: Array<typeof held>): void => {
@@ -1946,9 +1946,9 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     };
     const { a, b, door, edges } = await onOneMac(
       "move-changed-elsewhere",
-      { search: { types: ["core.note"] } },
-      // Its copy holds the note, and its search does not.
-      { search: { types: ["core.bookmark"] } },
+      { query: { types: ["core.note"] } },
+      // Its copy holds the note, and its query does not.
+      { query: { types: ["core.bookmark"] } },
       { "core.note": [{ item: moved }] },
     );
     expect((await a.folder.pull()).ok).toBe(true);
@@ -2023,8 +2023,8 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     };
     const { a, b, door, edges } = await onOneMac(
       "two-files-changed-elsewhere",
-      { search: { types: ["core.note"] } },
-      { search: { types: ["core.note"] } },
+      { query: { types: ["core.note"] } },
+      { query: { types: ["core.note"] } },
       { "core.note": [{ item: shared }] },
     );
     expect((await a.folder.pull()).ok).toBe(true);
@@ -2069,8 +2069,8 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     };
     const { a, b, door, edges } = await onOneMac(
       "move-unreadable-changed-elsewhere",
-      { search: { types: ["core.note"] } },
-      { search: { types: ["core.bookmark"] } },
+      { query: { types: ["core.note"] } },
+      { query: { types: ["core.bookmark"] } },
       { "core.note": [{ item: moved }] },
     );
     expect((await a.folder.pull()).ok).toBe(true);
@@ -2132,8 +2132,8 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     const photo = "01a00000-0000-7000-8000-0000000043d3";
     const { a, b, door, edges } = await onOneMac(
       "delete-unreadable-changed-elsewhere",
-      { search: { types: ["core.note", "core.file"] } },
-      { search: { types: ["core.bookmark"] } },
+      { query: { types: ["core.note", "core.file"] } },
+      { query: { types: ["core.bookmark"] } },
       {
         "core.note": [{ item: changed }, { item: plain }],
         "core.file": [
@@ -2222,7 +2222,7 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
   it("refuses a folder inside another, and walks past a folder inside it", async () => {
     harness = await folderHarness("nested-outer", {
       settings: {
-        search: { types: ["core.note"] },
+        query: { types: ["core.note"] },
         first_placement: { "core.note": "inner/" },
       },
       rows: {
@@ -2238,7 +2238,7 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     });
     // Before the item doors, whose read would answer for any id.
     const innerRow = scriptFolderRow(harness.server, {
-      search: { types: ["core.note"] },
+      query: { types: ["core.note"] },
     });
     scriptFolderWrites(harness);
     const inside = (dir: string): CliFolder =>
@@ -2376,8 +2376,8 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     const moved = "01a00000-0000-7000-8000-0000000040c1";
     const { a, b } = await onOneMac(
       "copy-and-delete",
-      { search: { types: ["core.note"] } },
-      { search: { types: ["core.bookmark"] } },
+      { query: { types: ["core.note"] } },
+      { query: { types: ["core.bookmark"] } },
       {
         "core.note": [
           { item: { id: moved, properties: { title: "Moved", body: "m\n" } } },
@@ -2423,8 +2423,8 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
   it("takes a file moved in by copy and delete by the bytes the folder it left bound", async () => {
     const { a, b } = await onOneMac(
       "bytes-follow",
-      { search: { types: ["core.note"] } },
-      { search: { types: ["core.bookmark"] } },
+      { query: { types: ["core.note"] } },
+      { query: { types: ["core.bookmark"] } },
       {},
     );
     put(a, "Early.txt", "scanned there first\n");
@@ -2461,8 +2461,8 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     const bytesOf = (name: string) => Buffer.from(`the bytes of ${name}\n`);
     const { a, b, edges } = await onOneMac(
       "file-item-document-name",
-      { search: { types: ["core.file"] } },
-      { search: { types: ["core.bookmark"] } },
+      { query: { types: ["core.file"] } },
+      { query: { types: ["core.bookmark"] } },
       {
         "core.file": Object.values(files).map(([id, name]) => ({
           item: {
@@ -2542,8 +2542,8 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
       const both = { types: ["core.file", "core.note"] };
       const { a, b, edges } = await onOneMac(
         `both-hold-${first}`,
-        { search: both },
-        { search: both, ignore: ["*.dat"] },
+        { query: both },
+        { query: both, ignore: ["*.dat"] },
         {
           "core.file": Object.values(files).map(([id, name]) => ({
             item: {
@@ -2606,7 +2606,7 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
         await leaving();
       }
       // Once taken there, the folder it left lets the bindings go and, as
-      // its search still holds the items, writes their files again.
+      // its query still holds the items, writes their files again.
       const settled = await a.folder.push();
       expect(settled.ok, JSON.stringify(settled)).toBe(true);
       expect((await b.folder.push()).ok).toBe(true);
@@ -2650,8 +2650,8 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     });
     const { a, b } = await onOneMac(
       "moved-unseen",
-      { search: { types: ["core.note"] } },
-      { search: { types: ["core.bookmark"] } },
+      { query: { types: ["core.note"] } },
+      { query: { types: ["core.bookmark"] } },
       {
         "core.note": [note(shown, "Shown"), note(unseen, "Unseen")],
       },
@@ -2732,8 +2732,8 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     const kept = "01a00000-0000-7000-8000-0000000040e1";
     const { a, b } = await onOneMac(
       "moved-then-saved",
-      { search: { types: ["core.note"] } },
-      { search: { types: ["core.bookmark"] } },
+      { query: { types: ["core.note"] } },
+      { query: { types: ["core.bookmark"] } },
       {
         "core.note": [
           { item: { id: kept, properties: { title: "Kept", body: "k\n" } } },
@@ -2767,8 +2767,8 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     };
     const { a, b, edges } = await onOneMac(
       "unmatched-copied-across",
-      { search: { types: ["core.note"], filter: 'tags contains "a"' } },
-      { search: { types: ["core.note"], filter: 'tags contains "b"' } },
+      { query: { types: ["core.note"], filter: 'tags contains "a"' } },
+      { query: { types: ["core.note"], filter: 'tags contains "b"' } },
       { "core.note": [{ item: plan, tags: ["a"] }] },
     );
     expect((await a.folder.pull()).ok).toBe(true);
@@ -2803,8 +2803,8 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
   it("holds a delete where several files in another folder have its bytes", async () => {
     const { a, b } = await onOneMac(
       "bytes-many",
-      { search: { types: ["core.note"] } },
-      { search: { types: ["core.bookmark"] } },
+      { query: { types: ["core.note"] } },
+      { query: { types: ["core.bookmark"] } },
       {},
     );
     put(a, "Loose.txt", "shared words\n");
@@ -2830,8 +2830,8 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
   it("follows identical files moved by identity, and makes identical copies new items", async () => {
     const { a, b } = await onOneMac(
       "identical-files",
-      { search: { types: ["core.note"] } },
-      { search: { types: ["core.bookmark"] } },
+      { query: { types: ["core.note"] } },
+      { query: { types: ["core.bookmark"] } },
       {},
     );
     for (const name of ["One.txt", "Two.txt"]) put(a, name, "twins\n");
@@ -2861,8 +2861,8 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     const photo = "01a00000-0000-7000-8000-0000000041b1";
     const { a, b } = await onOneMac(
       "file-item-both",
-      { search: { types: ["core.note", "core.file"] } },
-      { search: { types: ["core.file"] } },
+      { query: { types: ["core.note", "core.file"] } },
+      { query: { types: ["core.file"] } },
       {
         "core.file": [
           {
@@ -2900,8 +2900,8 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     const shared = "01a00000-0000-7000-8000-0000000041c1";
     const { a, b } = await onOneMac(
       "copy-into-holder",
-      { search: { types: ["core.note"] } },
-      { search: { types: ["core.note"] } },
+      { query: { types: ["core.note"] } },
+      { query: { types: ["core.note"] } },
       {
         "core.note": [
           {
@@ -2947,9 +2947,9 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     };
     const { a, b, edges } = await onOneMac(
       "let-go-edited",
-      { search: { types: ["core.note"], filter: 'tags contains "a"' } },
+      { query: { types: ["core.note"], filter: 'tags contains "a"' } },
       {
-        search: {
+        query: {
           types: ["core.note", "core.file"],
           filter: 'tags contains "b"',
         },
@@ -3042,8 +3042,8 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     };
     const { a, b, edges } = await onOneMac(
       "left-by-state",
-      { search: { types: ["core.note"], state: ["active"] } },
-      { search: { types: ["core.note"], state: ["archived"] } },
+      { query: { types: ["core.note"], state: ["active"] } },
+      { query: { types: ["core.note"], state: ["archived"] } },
       { "core.note": [{ item: plan }] },
     );
     expect((await a.folder.pull()).ok).toBe(true);
@@ -3097,7 +3097,7 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
   it("lists a folder under the folder it follows now, once, and drops one whose state was removed", async () => {
     harness = await folderHarness("registry-entries");
     const other = scriptFolderRow(harness.server, {
-      search: { types: ["core.note"] },
+      query: { types: ["core.note"] },
     });
     // Its state removed by hand and the directory added again under
     // another folder: listed under the one it follows now.
@@ -3134,8 +3134,8 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     const moved = "01a00000-0000-7000-8000-0000000041e1";
     const { a, b } = await onOneMac(
       "registry-lost",
-      { search: { types: ["core.note"] } },
-      { search: { types: ["core.bookmark"] } },
+      { query: { types: ["core.note"] } },
+      { query: { types: ["core.bookmark"] } },
       {
         "core.note": [
           { item: { id: moved, properties: { title: "Moved", body: "m\n" } } },
@@ -3176,8 +3176,8 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     const moved = "01a00000-0000-7000-8000-0000000041f1";
     const { a, b } = await onOneMac(
       "folder-renamed",
-      { search: { types: ["core.note"] } },
-      { search: { types: ["core.bookmark"] } },
+      { query: { types: ["core.note"] } },
+      { query: { types: ["core.bookmark"] } },
       {
         "core.note": [
           { item: { id: moved, properties: { title: "Moved", body: "m\n" } } },
@@ -3251,8 +3251,8 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     let more: FolderRow | undefined;
     const { a, b } = await onOneMac(
       `root-replaced-${site}`,
-      { search: { types: ["core.note"] } },
-      { search: { types: ["core.bookmark"] } },
+      { query: { types: ["core.note"] } },
+      { query: { types: ["core.bookmark"] } },
       {
         "core.note": [
           {
@@ -3262,7 +3262,7 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
       },
       (server) => {
         more = scriptFolderRow(server, {
-          search: { types: ["core.event"] },
+          query: { types: ["core.event"] },
         });
       },
     );
@@ -3332,11 +3332,11 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     let more: FolderRow | undefined;
     const { a, b } = await onOneMac(
       "root-replaced-other",
-      { search: { types: ["core.note"] } },
-      { search: { types: ["core.bookmark"] } },
+      { query: { types: ["core.note"] } },
+      { query: { types: ["core.bookmark"] } },
       {},
       (server) => {
-        more = scriptFolderRow(server, { search: { types: ["core.event"] } });
+        more = scriptFolderRow(server, { query: { types: ["core.event"] } });
       },
     );
     const third = await folderHarness("root-replaced-other-c", {
@@ -3370,8 +3370,8 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
   it("lists each folder with the identity of the directory it opened, and drops one that records none once its state is removed", async () => {
     const { a, b } = await onOneMac(
       "root-recorded",
-      { search: { types: ["core.note"] } },
-      { search: { types: ["core.bookmark"] } },
+      { query: { types: ["core.note"] } },
+      { query: { types: ["core.bookmark"] } },
       {},
     );
     const rootOf = new Map(
@@ -3443,8 +3443,8 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     const gone = "01a00000-0000-7000-8000-0000000042a1";
     const { a, b } = await onOneMac(
       "unreadable-folder",
-      { search: { types: ["core.note"] } },
-      { search: { types: ["core.bookmark"] } },
+      { query: { types: ["core.note"] } },
+      { query: { types: ["core.bookmark"] } },
       {
         "core.note": [
           { item: { id: gone, properties: { title: "Gone", body: "g\n" } } },
@@ -3483,8 +3483,8 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     const gone = "01a00000-0000-7000-8000-0000000040f1";
     const { a, b } = await onOneMac(
       "partial-walk",
-      { search: { types: ["core.note"] } },
-      { search: { types: ["core.bookmark"] } },
+      { query: { types: ["core.note"] } },
+      { query: { types: ["core.bookmark"] } },
       {
         "core.note": [
           { item: { id: gone, properties: { title: "Gone", body: "g\n" } } },
@@ -3523,8 +3523,8 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     };
     const { a, b } = await onOneMac(
       "two-files",
-      { search: { types: ["core.note"] } },
-      { search: { types: ["core.note"] } },
+      { query: { types: ["core.note"] } },
+      { query: { types: ["core.note"] } },
       { "core.note": [{ item: shared }] },
     );
     expect((await a.folder.pull()).ok).toBe(true);
@@ -3577,8 +3577,8 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     const deleted = "01a00000-0000-7000-8000-0000000018b2";
     const { a, b } = await onOneMac(
       "move-dot-led",
-      { search: { types: ["core.note"] } },
-      { search: { types: ["core.bookmark"] }, include: [".notes/"] },
+      { query: { types: ["core.note"] } },
+      { query: { types: ["core.bookmark"] }, include: [".notes/"] },
       {
         "core.note": [
           { item: { id: moved, properties: { title: "Moved", body: "m\n" } } },
@@ -3616,10 +3616,10 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     const { a, b } = await onOneMac(
       "confirm-looks",
       {
-        search: { types: ["core.note"] },
+        query: { types: ["core.note"] },
         removal_threshold: { files: 2, fraction: 0.25 },
       },
-      { search: { types: ["core.bookmark"] } },
+      { query: { types: ["core.bookmark"] } },
       {
         "core.note": ids.map((id, n) => ({
           item: { id, properties: { title: `Note ${String(n)}`, body: "b\n" } },
@@ -3658,10 +3658,10 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     const { a, door, edges } = await onOneMac(
       "confirm-changed-elsewhere",
       {
-        search: { types: ["core.note"] },
+        query: { types: ["core.note"] },
         removal_threshold: { files: 2, fraction: 0.25 },
       },
-      { search: { types: ["core.bookmark"] } },
+      { query: { types: ["core.bookmark"] } },
       {
         "core.note": ids.map((id, n) => ({
           item: { id, properties: { title: `Note ${String(n)}`, body: "b\n" } },
@@ -3706,10 +3706,10 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     const { a, b } = await onOneMac(
       "confirm-not-text",
       {
-        search: { types: ["core.note"] },
+        query: { types: ["core.note"] },
         removal_threshold: { files: 2, fraction: 0.25 },
       },
-      { search: { types: ["core.bookmark"] } },
+      { query: { types: ["core.bookmark"] } },
       {
         "core.note": ids.map((id, n) => ({
           item: { id, properties: { title: `Note ${String(n)}`, body: "b\n" } },
@@ -3757,8 +3757,8 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     ] as const;
     const { a } = await onOneMac(
       "scan-trashes-file-item",
-      { search: { types: ["core.file.image"] } },
-      { search: { types: ["core.bookmark"] } },
+      { query: { types: ["core.file.image"] } },
+      { query: { types: ["core.bookmark"] } },
       {
         "core.file.image": rows.map(([id, name]) => ({
           item: {
@@ -3814,10 +3814,10 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     const { a } = await onOneMac(
       "confirm-file-items",
       {
-        search: { types: ["core.file.image"] },
+        query: { types: ["core.file.image"] },
         removal_threshold: { files: 2, fraction: 0.25 },
       },
-      { search: { types: ["core.bookmark"] } },
+      { query: { types: ["core.bookmark"] } },
       {
         "core.file.image": files.map(([id, name]) => ({
           item: {
@@ -3871,8 +3871,8 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     const kept = "01a00000-0000-7000-8000-000000001842";
     const { a, b } = await onOneMac(
       "not-text-alone",
-      { search: { types: ["core.note"] } },
-      { search: { types: ["core.bookmark"] } },
+      { query: { types: ["core.note"] } },
+      { query: { types: ["core.bookmark"] } },
       {
         "core.note": [
           { item: { id: gone, properties: { title: "Gone", body: "g\n" } } },
@@ -3918,8 +3918,8 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     const gone = "01a00000-0000-7000-8000-000000001852";
     const { a, b } = await onOneMac(
       "move-utf16",
-      { search: { types: ["core.note"] } },
-      { search: { types: ["core.bookmark"] } },
+      { query: { types: ["core.note"] } },
+      { query: { types: ["core.bookmark"] } },
       {
         "core.note": [
           { item: { id: moved, properties: { title: "Moved", body: "m\n" } } },
@@ -3971,8 +3971,8 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     };
     const { a, b, edges } = await onOneMac(
       "take-in-cut-off",
-      { search: { types: ["core.note"], filter: 'tags contains "a"' } },
-      { search: { types: ["core.note"], filter: 'tags contains "b"' } },
+      { query: { types: ["core.note"], filter: 'tags contains "a"' } },
+      { query: { types: ["core.note"], filter: 'tags contains "b"' } },
       { "core.note": [{ item: plan, tags: ["a"] }] },
     );
     expect((await a.folder.pull()).ok).toBe(true);
@@ -4009,8 +4009,8 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     };
     const { a, b, edges } = await onOneMac(
       "let-go-last-look",
-      { search: { types: ["core.note"], filter: 'tags contains "a"' } },
-      { search: { types: ["core.note"], filter: 'tags contains "b"' } },
+      { query: { types: ["core.note"], filter: 'tags contains "a"' } },
+      { query: { types: ["core.note"], filter: 'tags contains "b"' } },
       { "core.note": [{ item: brief, tags: ["a"] }] },
     );
     expect((await a.folder.pull()).ok).toBe(true);

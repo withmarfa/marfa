@@ -1026,7 +1026,7 @@ describe("a folder's first sync", () => {
   it("sends a file larger than a single request may carry on its own door, and the rest in pages", async () => {
     const large = "user.large_text";
     folder = await folderHarness("pages-folder-large", {
-      settings: { search: { types: ["core.note", large] } },
+      settings: { query: { types: ["core.note", large] } },
       catalog: typeCatalog([
         wireType(large, {
           bodyField: "body",

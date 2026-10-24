@@ -19,7 +19,7 @@ pub struct FileStatus {
     pub item_id: Option<String>,
     /// `in_step`, `waiting`, `held`, `unmatched`, `unreached` or `outside`.
     /// `outside` is a file that is not bound and that the folder does not
-    /// take: an empty file item, or a file the search holds no type for. It is
+    /// take: an empty file item, or a file the query holds no type for. It is
     /// not the pull report's `outside` count, which is an item whose path the
     /// folder will not write to.
     pub status: &'static str,
@@ -370,8 +370,8 @@ impl Folder {
             return waits(FileStatus::new(key, None, "waiting"), vec!["scan"]);
         }
         entry.because(
-            "search",
-            "the search holds no type this file would be, so it is left alone",
+            "query",
+            "the query holds no type this file would be, so it is left alone",
         )
     }
 
@@ -555,7 +555,7 @@ mod tests {
                 "system.folder",
                 "active",
                 "2026-01-01T00:00:00Z",
-                serde_json::json!({ "search": {"types": ["core.note"]} }),
+                serde_json::json!({ "query": {"types": ["core.note"]} }),
             ),
             None,
             &Indexing::default(),

@@ -277,7 +277,6 @@ impl Folder {
         let mut members = self.members(&settings)?;
         let listed = self.core.list(
             &crate::model::ListFilters {
-                tier: Some(settings.tier()),
                 all_states: true,
                 ..Default::default()
             },
@@ -309,7 +308,7 @@ impl Folder {
                 skipped.push(item.id);
             }
         }
-        // A bound file whose item left the search, but not by state or the
+        // A bound file whose item left the query, but not by state or the
         // bin, is kept current as a member's is and flagged; it never gets a
         // new file.
         let outside: Vec<String> = bound_items
@@ -373,7 +372,7 @@ impl Folder {
         for (item, unmatched) in &mut work {
             *unmatched &= !embedded.at.contains_key(&item.id);
         }
-        // Held by the file embedding it whatever state the search narrows to;
+        // Held by the file embedding it whatever state the query narrows to;
         // a trashed one's file goes as any trashed item's does.
         work.extend(
             found

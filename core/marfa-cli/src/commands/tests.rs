@@ -1031,7 +1031,7 @@ fn blobs_are_fetched_as_a_stream_and_a_link_carries_its_ttl() {
 fn a_folder_takes_its_settings_from_json_and_flags_and_refuses_one_given_twice() {
     let created = folders::create_request(&folders::CreateArgs {
         settings: folders::SettingsArgs {
-            body: Some(r#"{"search":{"types":["core.note"]}}"#.into()),
+            body: Some(r#"{"query": {"types":["core.note"]}}"#.into()),
             title: Some("Project".into()),
             include: vec!["*.md".into()],
             first_placement: vec!["core.note=Notes".into()],
@@ -1045,7 +1045,7 @@ fn a_folder_takes_its_settings_from_json_and_flags_and_refuses_one_given_twice()
     assert_eq!(
         body(&created),
         &json!({
-            "search": { "types": ["core.note"] },
+            "query": { "types": ["core.note"] },
             "title": "Project",
             "include": ["*.md"],
             "first_placement": { "core.note": "Notes" },

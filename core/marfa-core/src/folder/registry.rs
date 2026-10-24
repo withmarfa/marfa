@@ -2121,7 +2121,7 @@ pub(in crate::folder) mod tests {
     }
 
     /// Answers an add of `folder` as a server holding it does, up to the
-    /// listing: its row, the catalog its search reads, and a credential that
+    /// listing: its row, the catalog its query reads, and a credential that
     /// is not a key, of which no placement grant is asked.
     fn served(server: &crate::scripted::Scripted, folder: &str) {
         use crate::scripted::{json, refusal, types};
@@ -2130,7 +2130,7 @@ pub(in crate::folder) mod tests {
             vec![json(
                 200,
                 &format!(
-                    r#"{{"item":{{"id":"{folder}","type":"system.folder","properties":{{"title":"folder","search":{{"types":["core.note"]}}}},"state":"active","version":1,"schema_version":1,"source":"test","occurred_at":"2026-01-01T00:00:00Z","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}},"metadata":{{"tags":[]}}}}"#
+                    r#"{{"item":{{"id":"{folder}","type":"system.folder","properties":{{"title":"folder","query":{{"types":["core.note"]}}}},"state":"active","version":1,"schema_version":1,"source":"test","occurred_at":"2026-01-01T00:00:00Z","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}},"metadata":{{"tags":[]}}}}"#
                 ),
             )],
         );

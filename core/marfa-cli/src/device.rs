@@ -159,8 +159,8 @@ pub enum DeviceCommand {
         /// How many hits at most.
         #[arg(long, default_value_t = 20)]
         limit: usize,
-        /// Only what this `system.folder`'s search holds, as the folder holds
-        /// it; refused where the copy's slice cannot answer the search whole.
+        /// Only what this `system.folder`'s query holds, as the folder holds
+        /// it; refused where the copy's slice cannot answer the query whole.
         #[arg(long, value_name = "ID", conflicts_with_all = ["state", "all_states", "type_", "tags", "filter", "beneath"])]
         folder: Option<String>,
     },
@@ -728,13 +728,13 @@ pub struct ListArgs {
     /// How many items to skip first.
     #[arg(long)]
     pub offset: Option<u32>,
-    /// Only what this `system.folder`'s search holds, as the folder holds
-    /// it; refused where the copy's slice cannot answer the search whole.
+    /// Only what this `system.folder`'s query holds, as the folder holds
+    /// it; refused where the copy's slice cannot answer the query whole.
     #[arg(long, value_name = "ID", conflicts_with_all = FOLDER_SCOPED)]
     pub folder: Option<String>,
 }
 
-/// The narrowing a folder's own search sets.
+/// The narrowing a folder's own query sets.
 const FOLDER_SCOPED: [&str; 9] = [
     "type_",
     "state",

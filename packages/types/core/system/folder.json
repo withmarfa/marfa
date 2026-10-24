@@ -8,13 +8,13 @@
       "type": "string",
       "description": "The folder's name"
     },
-    "search": {
+    "query": {
       "type": "object",
-      "description": "Which items the folder holds. `types`: type identifiers, each with its subtypes; empty or absent holds every type the folder's key reads. `tier`: `library` or `feed`, the one tier the folder holds; absent is `library`. `state`: `active`, `archived` or both; absent is both. `filter`: an expression in the listing grammar's `filter`. `beneath`: an item id; the item and everything under it by `parent-of`."
+      "description": "Which items the folder holds. `types`: type identifiers, each with its subtypes; empty or absent holds every type the folder's key reads. `tier`: `library`, `feed`, or `all` for both tiers; absent is `library`. `state`: `active`, `archived` or both; absent is both. `filter`: an expression in the listing grammar's `filter`. `beneath`: an item id; the item and everything under it by `parent-of`."
     },
     "defaults": {
       "type": "object",
-      "description": "What a new file takes where its frontmatter leaves a blank, never applied to an edit: `type`, `tier`, `properties`, `tags`, and `edges` as a map from edge type to item ids, each edge running from the new file to the item named except `parent-of`, which runs from the item named so the new file is its child; a folder whose search follows an edge gives every new file that edge."
+      "description": "What a new file takes where its frontmatter leaves a blank, never applied to an edit: `type`, `tier`, `properties`, `tags`, and `edges` as a map from edge type to item ids, each edge running from the new file to the item named except `parent-of`, which runs from the item named so the new file is its child; a folder whose query follows an edge gives every new file that edge."
     },
     "include": {
       "type": "array",

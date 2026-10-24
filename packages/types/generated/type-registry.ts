@@ -574,8 +574,8 @@ const systemFolder: TypeSchema = {
   version: 0,
   fields: {
     title: { type: "string", description: "The folder's name", required: true },
-    search: { type: "object", description: "Which items the folder holds. `types`: type identifiers, each with its subtypes; empty or absent holds every type the folder's key reads. `tier`: `library` or `feed`, the one tier the folder holds; absent is `library`. `state`: `active`, `archived` or both; absent is both. `filter`: an expression in the listing grammar's `filter`. `beneath`: an item id; the item and everything under it by `parent-of`." },
-    defaults: { type: "object", description: "What a new file takes where its frontmatter leaves a blank, never applied to an edit: `type`, `tier`, `properties`, `tags`, and `edges` as a map from edge type to item ids, each edge running from the new file to the item named except `parent-of`, which runs from the item named so the new file is its child; a folder whose search follows an edge gives every new file that edge." },
+    query: { type: "object", description: "Which items the folder holds. `types`: type identifiers, each with its subtypes; empty or absent holds every type the folder's key reads. `tier`: `library`, `feed`, or `all` for both tiers; absent is `library`. `state`: `active`, `archived` or both; absent is both. `filter`: an expression in the listing grammar's `filter`. `beneath`: an item id; the item and everything under it by `parent-of`." },
+    defaults: { type: "object", description: "What a new file takes where its frontmatter leaves a blank, never applied to an edit: `type`, `tier`, `properties`, `tags`, and `edges` as a map from edge type to item ids, each edge running from the new file to the item named except `parent-of`, which runs from the item named so the new file is its child; a folder whose query follows an edge gives every new file that edge." },
     include: { type: "array", description: "Paths the folder takes, as gitignore patterns relative to its root; empty or absent takes every path. A dot-led path is taken only where a line names a dot-led name on its way, and no line reaches what the built-in lists name", items_type: "string" },
     ignore: { type: "array", description: "Paths the folder leaves alone, as gitignore patterns relative to its root, winning over `include`; the built-in lists, of files a machine or an editor writes for itself and of secrets, apply whatever either list says", items_type: "string" },
     first_placement: { type: "object", description: "Where a new item of a type made elsewhere first appears: a map from type identifier to a directory relative to the folder's root. Placement only; it never decides membership." },
@@ -1933,14 +1933,14 @@ export const SHIPPED_TYPE_SHAPES = {
         "items_type": "string",
         "type": "array"
       },
+      "query": {
+        "type": "object"
+      },
       "removal_threshold": {
         "type": "object"
       },
       "revoked_at": {
         "type": "datetime"
-      },
-      "search": {
-        "type": "object"
       },
       "title": {
         "required": true,

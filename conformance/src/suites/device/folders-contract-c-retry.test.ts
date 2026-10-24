@@ -41,7 +41,7 @@ afterEach(async () => {
 async function setup(items: WireItemOptions[]) {
   server = await ScriptedServer.start();
   const settings = scriptFolderRow(server, {
-    search: { types: ["core.note"] },
+    query: { types: ["core.note"] },
   });
   const edges: WireEdgeOptions[] = items.map((row, index) => ({
     id: `01a00000-0000-7000-8000-${String(100 + index).padStart(12, "0")}`,
@@ -210,7 +210,7 @@ describe("completed effects of a restarted folder pull", () => {
       const row = item(1);
       const { folder, frames, settings } = await setup([row]);
       const otherSettings = scriptFolderRow(server!, {
-        search: { types: ["core.note"] },
+        query: { types: ["core.note"] },
       });
       const other = await folderHarness("contract-c-transfer", {
         sharing: { server: server!, key: KEY },
@@ -220,7 +220,7 @@ describe("completed effects of a restarted folder pull", () => {
       folders.push(other);
       if (direction === "out")
         expect((await other.folder.pull()).ok).toBe(true);
-      settings.settings.search = {
+      settings.settings.query = {
         types: ["core.note"],
         filter: 'tags contains "a"',
       };
