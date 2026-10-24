@@ -1729,7 +1729,7 @@ fn file_cache_text(cache: &marfa_core::FileCache) -> String {
     text.push('\n');
     match &cache.attachments {
         Some(attachments) => text.push_str(&attachments_text(attachments)),
-        None => text.push_str("attached files unknown until the copy is whole"),
+        None => text.push_str("attached files unknown"),
     }
     text
 }

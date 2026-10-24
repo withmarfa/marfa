@@ -146,7 +146,8 @@ export interface FileCache {
   /**
    * The files attached to items the copy holds, which stay on the device
    * outside the budget; null while a hydration fills the copy
-   * (`device/attachment-hydrating`).
+   * (`device/attachment-hydrating`), for a folder's copy, and where the
+   * cache cannot be read.
    */
   attachments: Attachments | null;
 }

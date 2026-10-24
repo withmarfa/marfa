@@ -82,8 +82,8 @@ pub struct FileCache {
     pub backup_mark_failure: Option<String>,
     /// The files attached to items the copy holds, which stay on the device
     /// outside the budget; `None` while a hydration fills the copy, since
-    /// its rows have not all arrived, and where the cache could not be
-    /// read.
+    /// its rows have not all arrived, for a folder's copy, which holds its
+    /// files in the folder, and where the cache could not be read.
     pub attachments: Option<Attachments>,
 }
 
