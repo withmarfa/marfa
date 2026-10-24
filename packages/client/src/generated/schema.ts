@@ -1195,7 +1195,7 @@ export interface paths {
         head?: never;
         /**
          * Update a view
-         * @description Updates a view's title, query, sort or group. Each one you send replaces the current value whole, and those you leave out stay as they are. Send the `version` you read.
+         * @description Updates a view's title, query, sort or group. Each one you send replaces the current value whole, and those you leave out stay as they are. Send `group: null` to remove the grouping. Send the `version` you read.
          */
         patch: operations["updateView"];
         trace?: never;
@@ -19572,7 +19572,8 @@ export interface operations {
                     query?: components["schemas"]["ViewQuery"] & unknown;
                     /** @description A new sort, which replaces the current one whole. */
                     sort?: components["schemas"]["ViewSort"][];
-                    group?: components["schemas"]["ViewGroup"] & unknown;
+                    /** @description A new grouping, which replaces the current one whole. `null` removes the grouping. */
+                    group?: components["schemas"]["ViewGroup"] | null;
                 };
             };
         };

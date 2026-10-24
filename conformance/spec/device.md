@@ -4360,7 +4360,7 @@ When a caller reads a view whose `query.filter` holds an `edge` term or a `sourc
 
 Where the copy holds the named edge type whole, when a caller reads a view whose `query.filter` holds a `backref[<type>]` term, a device MUST list the items the term selects, counting the incoming edges the copy holds without checking that the key may read their sources.
 
-**Reason:** the copy holds every edge of the type, so it answers the term as the server does for a key that reads every source.
+**Reason:** the copy holds every edge of the type, so it answers the term as the server does for a key that reads every source. No per-source check is needed because a copy never receives an edge from a source its key cannot read (`edges/read-id-source`, `edges/read-source-filter`), so each edge it counts is one the key may read.
 
 **Tests:** `device/views.test.ts › answers a backref condition where the copy holds the edge type whole and refuses it where it does not`.
 
@@ -4425,6 +4425,14 @@ When a caller retries a view create with the same settings and idempotency key, 
 When a caller changes a view through a working copy, a device MUST send the version the caller names with the changed settings.
 
 **Tests:** `device/view-writes-live.test.ts › refuses a stale conflicting change without changing the copy or the server`, `› holds the server's merge of a stale change to a setting nobody changed`.
+
+### `device/view-group-clear`
+
+When a caller changes a view through a working copy with `group` as `null`, a device MUST send it to the server as it was given and hold the view the server answers, so that the copy reads the view ungrouped (`views/group-clear`).
+
+**Reason:** a change replaces the settings it names and cannot remove one, so a copy that left `group` out would never clear it.
+
+**Tests:** `device/view-writes-live.test.ts › clears a view's group with null, holding the ungrouped view the server holds`.
 
 ### `device/view-change-conflict`
 
@@ -4504,7 +4512,7 @@ When a caller reads a folder the copy holds, a device MUST answer its state and 
 
 When a caller reads a folder the copy holds whose query carries a `backref` condition, a device MUST answer its settings.
 
-**Reason:** the server takes such a folder (`items/folder-create`), and an app shows it by its title though a copy that does not hold the edge type whole cannot answer its query.
+**Reason:** the server takes such a folder (`items/folder-create`), and an app shows it by its title though no copy answers its query, whatever edge types the copy holds whole, since a folder on disk cannot follow a `backref` condition.
 
 **Tests:** `device/folder-settings-live.test.ts › refuses settings no folder follows before anything is sent, and fails offline with nothing kept`.
 
@@ -4540,9 +4548,9 @@ If a device refuses a list in a folder because its slice cannot answer the folde
 
 ### `device/folder-list-backref`
 
-If a folder's query carries a `backref` condition on an edge type the copy does not hold whole, then a device MUST refuse a list in that folder `invalid`, naming the condition.
+If a folder's query carries a `backref` condition, then a device MUST refuse a list in that folder `invalid`, naming the condition, whatever edge types the copy holds whole.
 
-**Reason:** a copy that does not hold the edge type whole holds the edges its items draw but not every edge drawn to them, so it would otherwise ignore the condition.
+**Reason:** a folder's pass on disk cannot follow a `backref` condition, and a device checks a folder's settings before it reads the copy, so a copy that holds the edge type whole is refused as one that does not. A list that answered it would show a set the folder on disk does not hold.
 
 **Tests:** `device/folder-settings-live.test.ts › refuses settings no folder follows before anything is sent, and fails offline with nothing kept`.
 
@@ -4594,7 +4602,7 @@ If a folder write through a working copy cannot reach the server, then a device 
 
 If folder settings sent through a working copy carry a `backref` condition, then a device MUST refuse them `invalid` before anything is sent.
 
-**Reason:** the server takes a `backref` condition, which a folder on disk cannot follow and a copy answers only where it holds the edge type whole, so a folder made with one could be followed by no folder on disk.
+**Reason:** the server takes a `backref` condition, which a folder on disk cannot follow, so a folder made with one could be followed by no folder on disk.
 
 **Tests:** `device/folder-settings-live.test.ts › refuses settings no folder follows before anything is sent, and fails offline with nothing kept`.
 

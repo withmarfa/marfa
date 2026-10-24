@@ -54,7 +54,8 @@ pub struct SettingsArgs {
     #[arg(long, value_name = "JSON")]
     pub sort: Option<String>,
     /// How the view groups its items, as a JSON object: `by`, and optionally
-    /// `bucket`, `order` and `hidden`.
+    /// `bucket`, `order` and `hidden`. `null` removes the grouping, on a
+    /// change.
     #[arg(long, value_name = "JSON")]
     pub group: Option<String>,
 }
@@ -77,7 +78,12 @@ impl SettingsArgs {
             flags.insert("sort".into(), array(sort, "--sort")?);
         }
         if let Some(group) = &self.group {
-            flags.insert("group".into(), Value::Object(object(group, "--group")?));
+            let value = if group.trim() == "null" {
+                Value::Null
+            } else {
+                Value::Object(object(group, "--group")?)
+            };
+            flags.insert("group".into(), value);
         }
         for (key, value) in flags {
             if settings.contains_key(&key) {

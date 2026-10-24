@@ -178,9 +178,12 @@ const UpdateViewSchema = z.strictObject({
   sort: SortsSchema.optional().describe(
     "A new sort, which replaces the current one whole.",
   ),
-  group: GroupSchema.optional().describe(
-    "A new grouping, which replaces the current one whole.",
-  ),
+  group: z
+    .union([GroupSchema, z.null()])
+    .optional()
+    .describe(
+      "A new grouping, which replaces the current one whole. `null` removes the grouping.",
+    ),
 });
 
 const IdParam = z.object({
@@ -227,14 +230,16 @@ function assertGroupBy(path: string, by: string): void {
   }
 }
 
+type UpdateSettings = Omit<z.infer<typeof UpdateViewSchema>, "version">;
+
 interface Settings {
   query?: z.infer<typeof ViewQuerySchema> | undefined;
-  group?: z.infer<typeof GroupSchema> | undefined;
+  group?: z.infer<typeof GroupSchema> | null | undefined;
 }
 
 function assertSettings({ query, group }: Settings): void {
   if (query !== undefined) assertItemQuery("query", query);
-  if (group === undefined) return;
+  if (group === undefined || group === null) return;
   assertGroupBy("group.by", group.by);
   if (group.bucket !== undefined && !isDateField(group.by)) {
     throw settingRefusal(
@@ -359,7 +364,7 @@ const updateViewRoute = createRoute({
   tags: ["Views"],
   summary: "Update a view",
   description:
-    "Updates a view's title, query, sort or group. Each one you send replaces the current value whole, and those you leave out stay as they are. Send the `version` you read.",
+    "Updates a view's title, query, sort or group. Each one you send replaces the current value whole, and those you leave out stay as they are. Send `group: null` to remove the grouping. Send the `version` you read.",
   security: [{ bearerAuth: [] }],
   middleware: writesViews,
   request: {
@@ -431,6 +436,19 @@ const deleteViewRoute = createRoute({
     ...notFound,
   },
 });
+
+/**
+ * The properties a change writes. A merge cannot remove a property, so a
+ * `group` of `null` is a clear: the store removes it, and at a stale version
+ * treats it as a change to `group` alone.
+ */
+function changedProperties({ group, ...rest }: UpdateSettings): {
+  properties: Record<string, unknown>;
+  clear_properties?: string[];
+} {
+  if (group === null) return { properties: rest, clear_properties: ["group"] };
+  return { properties: group === undefined ? rest : { ...rest, group } };
+}
 
 /** The row a view write left, which every create and change leaves. */
 function written(result: ItemWriteResult): { item: Item; metadata: Metadata } {
@@ -506,7 +524,7 @@ export function viewRoutes(storage: Storage) {
           {
             op: "update",
             id,
-            properties: settings,
+            ...changedProperties(settings),
             prune_undeclared_properties: true,
             version,
             blob_proof: requestBlobProof(c, storage),

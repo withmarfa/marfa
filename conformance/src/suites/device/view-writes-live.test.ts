@@ -120,6 +120,64 @@ it("creates, changes and deletes through the view door, holding each answer and 
   expect(value(await device.queue())).toEqual([]);
 });
 
+it("clears a view's group with null, holding the ungrouped view the server holds", async () => {
+  const tag = `clear-group-${ctx.runId}`;
+  for (const title of ["First", "Second"]) {
+    const note = await client.createItem({
+      type: "core.note",
+      tags: [tag],
+      properties: { title, body: "" },
+    });
+    expect(note.ok, JSON.stringify(note.error)).toBe(true);
+    trackItem(ctx, note.data.item.id);
+  }
+  value(await device.catchUp());
+  const made = value(
+    await device.call<View>("createView", {
+      title: "Cleared group",
+      query: { types: ["core.note"], filter: `tags contains "${tag}"` },
+      sort,
+      group: { by: "tags" },
+    }),
+  );
+  trackView(ctx, made.id);
+  // The witness: the copy reads the view grouped before the clear.
+  const grouped = value(
+    await device.call<{ groups: { key: unknown; count: number }[] }>(
+      "viewGroups",
+      made.id,
+    ),
+  );
+  expect(grouped.groups).toEqual([{ key: tag, count: 2 }]);
+
+  const cleared = value(
+    await device.call<View>(
+      "changeView",
+      made.id,
+      { group: null },
+      made.version,
+    ),
+  );
+  expect(cleared.version).toBe(2);
+  expect(cleared.settings).toEqual({
+    title: "Cleared group",
+    query: { types: ["core.note"], filter: `tags contains "${tag}"` },
+    sort,
+  });
+  expect(value(await device.call("view", made.id))).toEqual(cleared);
+  const ungrouped = value(
+    await device.call<{ groups: { key: unknown; count: number }[] }>(
+      "viewGroups",
+      made.id,
+    ),
+  );
+  expect(ungrouped.groups).toEqual([{ key: null, count: 2 }]);
+  expect((await client.getItem(made.id)).data.item.properties).toEqual(
+    cleared.settings,
+  );
+  expect(value(await device.queue())).toEqual([]);
+});
+
 it("replays a create with the same idempotency key as one view", async () => {
   const settings = { title: `Replay ${ctx.runId}`, sort };
   const key = randomUUID();

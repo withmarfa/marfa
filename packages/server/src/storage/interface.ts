@@ -732,6 +732,13 @@ export type StoredUpdateItemInput = Omit<UpdateItemInput, "version"> &
   WriterInput & {
     /** Prune stored properties outside the type after resolving the version. */
     prune_undeclared_properties?: boolean;
+    /**
+     * Properties the write removes, which a merge cannot. At a stale version
+     * each is a change the caller made, as a new value is: it collides with a
+     * change to that property since, and is a no-op where the property is
+     * already gone or the caller's version never held it.
+     */
+    clear_properties?: readonly string[];
   };
 
 /** What a purge left of a row's link or natural key under its type. `key`

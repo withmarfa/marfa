@@ -37364,7 +37364,7 @@
           "Views"
         ],
         "summary": "Update a view",
-        "description": "Updates a view's title, query, sort or group. Each one you send replaces the current value whole, and those you leave out stay as they are. Send the `version` you read.",
+        "description": "Updates a view's title, query, sort or group. Each one you send replaces the current value whole, and those you leave out stay as they are. Send `group: null` to remove the grouping. Send the `version` you read.",
         "security": [
           {
             "bearerAuth": []
@@ -37439,14 +37439,15 @@
                     "description": "A new sort, which replaces the current one whole."
                   },
                   "group": {
-                    "allOf": [
+                    "anyOf": [
                       {
                         "$ref": "#/components/schemas/ViewGroup"
                       },
                       {
-                        "description": "A new grouping, which replaces the current one whole."
+                        "type": "null"
                       }
-                    ]
+                    ],
+                    "description": "A new grouping, which replaces the current one whole. `null` removes the grouping."
                   }
                 },
                 "required": [

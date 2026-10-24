@@ -295,10 +295,19 @@ describe("a device refuses a condition its copy cannot answer as the server does
     };
     expect(await ids("backref[parent-of] exists")).toEqual(["n2"]);
     expect(await ids("backref[parent-of] not_exists")).toEqual(["n1"]);
-    const searched = await device.search("n2", {
-      filter: "backref[parent-of] exists",
-    });
-    expect(searched.ok, JSON.stringify(searched)).toBe(true);
+    // Every note reads "body of <id>", so "body" matches both: the filter,
+    // not the words, leaves one.
+    const hits = async (filter?: string) => {
+      const searched = await device.search(
+        "body",
+        filter === undefined ? {} : { filter },
+      );
+      expect(searched.ok, JSON.stringify(searched)).toBe(true);
+      return searched.ok ? searched.value.map((hit) => hit.item.id).sort() : [];
+    };
+    expect(await hits()).toEqual(["n1", "n2"]);
+    expect(await hits("backref[parent-of] exists")).toEqual(["n2"]);
+    expect(await hits("backref[parent-of] not_exists")).toEqual(["n1"]);
   });
 });
 

@@ -84,6 +84,20 @@ When `PATCH /views/{id}` names the `version` an active view holds and one or mor
 
 **Tests:** `compliance/views.test.ts › changes a view at its version, merges a stale change to another setting, and refuses one to the same`.
 
+### `views/group-clear`
+
+When `PATCH /views/{id}` names the `version` an active view holds and `group` as `null`, the server MUST remove the view's `group`, leave every other setting as held and advance the version.
+
+**Reason:** a change replaces the settings it names, and a setting left out stays, so `null` is the one way to say a view has no grouping. A clear is a change to the `group` setting alone, so `views/change-stale` and `views/change-conflict` hold for it as for any setting: a stale clear applies where nobody changed the `group` since, and collides on `group` where somebody did. A stale clear of a `group` that the named version did not hold changes nothing, and the answer shows the `group` that stands.
+
+**Tests:** `compliance/views.test.ts › clears a view's group with null, leaving every other setting as held, and takes a stale clear only where the group is unchanged`.
+
+### `views/null-refused`
+
+If a request carries `null` for a setting other than `group` on `PATCH /views/{id}`, or for any setting on `POST /views`, then the server MUST answer `400 validation_error` naming the setting in `details.errors[0].path`.
+
+**Tests:** `compliance/views.test.ts › refuses null for every setting but a change's group`.
+
 ### `views/change-stale`
 
 When `PATCH /views/{id}` names a version an active view no longer holds and changes only settings nobody changed since, the server MUST apply it.

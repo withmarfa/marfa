@@ -1136,6 +1136,17 @@ fn a_view_takes_its_settings_from_json_and_flags_and_refuses_one_given_twice() {
         body(&changed),
         &json!({ "query": { "tier": "feed" }, "version": 2 })
     );
+    let cleared = views::change_request(&views::ChangeArgs {
+        id: "v1".into(),
+        version: 3,
+        settings: views::SettingsArgs {
+            group: Some("null".into()),
+            ..Default::default()
+        },
+        ..Default::default()
+    })
+    .unwrap();
+    assert_eq!(body(&cleared), &json!({ "group": null, "version": 3 }));
     assert!(
         changed
             .headers

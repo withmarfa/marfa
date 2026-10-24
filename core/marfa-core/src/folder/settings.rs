@@ -249,7 +249,8 @@ impl Settings {
     /// What the query holds, as clauses on `items`: the one evaluation a
     /// folder's pass and a list or full-text search in a folder share, so the two
     /// cannot hold different items. `whole_edges` is the edge types the copy
-    /// holds whole. `system.*` is never held.
+    /// holds whole, which a view's `backref` term needs; a folder passes none,
+    /// as `Settings::of` has refused its `backref`. `system.*` is never held.
     pub(crate) fn narrow(
         &self,
         catalog: &Catalog,

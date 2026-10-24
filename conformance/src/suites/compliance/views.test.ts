@@ -185,6 +185,114 @@ describe("the view door", () => {
     expect(kept.data.item.properties.title).toBe("Renamed");
   });
 
+  it("clears a view's group with null, leaving every other setting as held, and takes a stale clear only where the group is unchanged", async () => {
+    const sort = [{ by: "title", direction: "asc" }];
+    const query = { tier: "feed" };
+    const { id } = await view({ query, sort, group: { by: "state" } });
+    // The witness: the view reads grouped before the clear.
+    const grouped = await client.getItem(id);
+    expect(grouped.data.item.properties.group).toEqual({ by: "state" });
+
+    const cleared = await client.updateView(id, { version: 1, group: null });
+    expect(cleared.status, JSON.stringify(cleared.error)).toBe(200);
+    await expectMatchesSchema("PATCH", "/views/{id}", 200, cleared.data);
+    expect(cleared.data.item.version).toBe(2);
+    const read = await client.getItem(id);
+    expect(read.data.item.properties).toEqual({
+      title: "A view",
+      query,
+      sort,
+    });
+    expect(Object.hasOwn(read.data.item.properties, "group")).toBe(false);
+
+    // A stale clear of a group nobody changed since applies, and a change to
+    // another setting made since stays.
+    const again = await view({ group: { by: "state" } });
+    const renamed = await client.updateView(again.id, {
+      version: 1,
+      title: "Renamed",
+    });
+    expect(renamed.status).toBe(200);
+    const merged = await client.updateView(again.id, {
+      version: 1,
+      group: null,
+    });
+    expect(merged.status, JSON.stringify(merged.error)).toBe(200);
+    expect(merged.data.item.properties).toEqual({ title: "Renamed" });
+
+    // A stale clear of a group changed since collides on the group alone.
+    const moved = await view({ group: { by: "state" } });
+    expect(
+      (
+        await client.updateView(moved.id, {
+          version: 1,
+          group: { by: "tier" },
+        })
+      ).status,
+    ).toBe(200);
+    const stale = await client.updateView(moved.id, {
+      version: 1,
+      group: null,
+      title: "Not lost",
+    });
+    expect(stale.status).toBe(409);
+    const refusal = stale.error as unknown as Refusal;
+    expect(refusal.error.code).toBe("version_conflict");
+    expect(refusal.conflicting_fields).toEqual(["group"]);
+    const kept = await client.getItem(moved.id);
+    expect(kept.data.item.properties).toEqual({
+      title: "A view",
+      group: { by: "tier" },
+    });
+
+    // A stale clear of a group the caller's version never held changes
+    // nothing, and the answer shows the group that stands.
+    const ungrouped = await view();
+    expect(
+      (
+        await client.updateView(ungrouped.id, {
+          version: 1,
+          group: { by: "tier" },
+        })
+      ).status,
+    ).toBe(200);
+    const nothing = await client.updateView(ungrouped.id, {
+      version: 1,
+      group: null,
+    });
+    expect(nothing.status, JSON.stringify(nothing.error)).toBe(200);
+    expect(nothing.data.item.properties.group).toEqual({ by: "tier" });
+
+    // A change to the group made since does not collide with a stale change
+    // to another setting.
+    const other = await client.updateView(moved.id, {
+      version: 1,
+      title: "Other",
+    });
+    expect(other.status, JSON.stringify(other.error)).toBe(200);
+    expect(other.data.item.properties).toEqual({
+      title: "Other",
+      group: { by: "tier" },
+    });
+  });
+
+  it("refuses null for every setting but a change's group", async () => {
+    const { id } = await view();
+    const create = await client.createView({ title: "refused", group: null });
+    expect(create.status).toBe(400);
+    expect((create.error as unknown as Refusal).error.code).toBe(
+      "validation_error",
+    );
+    for (const setting of ["title", "query", "sort"]) {
+      const r = await client.updateView(id, { version: 1, [setting]: null });
+      expect(r.status, setting).toBe(400);
+      const refusal = r.error as unknown as Refusal;
+      expect(refusal.error.code, setting).toBe("validation_error");
+      expect(refusal.error.details?.errors?.[0]?.path, setting).toBe(setting);
+    }
+    expect((await client.getItem(id)).data.item.version).toBe(1);
+  });
+
   it("refuses a change naming no version or no setting, and a change or delete of an id that is not a view", async () => {
     const { id } = await view();
     const noVersion = await client.rawRequest(`/views/${id}`, {
