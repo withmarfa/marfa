@@ -210,9 +210,7 @@ mod tests {
             settings
         );
         assert!(core.view("absent".into()).unwrap().is_none());
-        let listed = core
-            .list_in_view("view".into(), Some(1), Some(1))
-            .unwrap();
+        let listed = core.list_in_view("view".into(), Some(1), Some(1)).unwrap();
         assert_eq!(listed.items[0].id, "a");
         let groups = core
             .view_groups("view".into(), Some("Europe/London".into()))
@@ -227,7 +225,14 @@ mod tests {
                 .len(),
             2
         );
-        db.execute("UPDATE items SET properties=?1 WHERE id='view'",[json!({"title":"Refused","query":{"types":["core.file"]},"sort":settings["sort"]}).to_string()]).unwrap();
+        db.execute(
+            "UPDATE items SET properties=?1 WHERE id='view'",
+            [
+                json!({"title":"Refused","query":{"types":["core.file"]},"sort":settings["sort"]})
+                    .to_string(),
+            ],
+        )
+        .unwrap();
         assert!(matches!(
             core.list_in_view("view".into(), None, None),
             Err(MarfaError::Invalid { .. })
