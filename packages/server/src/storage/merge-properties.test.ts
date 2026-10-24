@@ -30,7 +30,7 @@ afterAll(() => {
 
 describe("an ordinary update", () => {
   it("treats a null on an optional field as leaving it unset", () => {
-    // `body` is what `core.note` requires; `title` is optional.
+    // `body` and `title` are both optional on `core.note`.
     const incoming = resolveIncomingProperties("core.note", {
       body: "kept",
       title: null,

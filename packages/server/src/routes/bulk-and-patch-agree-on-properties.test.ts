@@ -8,7 +8,7 @@ import { registerTypeSchema, unregisterTypeSchema } from "@withmarfa/shared";
  *
  * `POST /items/bulk` used to validate only on a re-type, so a same-type
  * update went to the store unjudged: it stored the number 12345 into
- * `core.note.body`, a required string, and reported the entry as `updated`,
+ * `core.note.body`, a string, and reported the entry as `updated`,
  * while `PATCH /items/{id}` refuses the identical payload. The row was then
  * invalid against its own type for every reader that trusts the declared
  * shape because the server enforced it, and the door that skipped the check

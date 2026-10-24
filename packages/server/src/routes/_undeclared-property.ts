@@ -30,7 +30,7 @@ import type { EnforcementSettings } from "@withmarfa/shared";
  * once: it refuses a key the type does not declare, and it refuses a
  * property set missing a field the type requires. The second is the
  * store's to ask, and asking it here refused an ordinary partial update —
- * a `PATCH` setting a title on a `core.note` names no `body`, so a strict
+ * a `PATCH` setting a body on a `core.message` names no `from`, so a strict
  * parse of the patch reports the required field as an error and this
  * function would refuse the write under a message naming a cause that is
  * not the cause. The doors that hand over a complete property set never

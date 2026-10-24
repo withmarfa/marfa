@@ -564,9 +564,7 @@ describe("type identifier validation", () => {
   });
 
   it("accepts type identifier with exactly 2 segments", async () => {
-    // Asserts the grammar accepts a well-formed 2-segment identifier. Supply
-    // the required body so the create exercises the grammar path and isn't
-    // rejected on a missing required field.
+    // Asserts the grammar accepts a well-formed 2-segment identifier.
     const r = await client.createItem(createNote({ source: ctx.source }));
     expect(r.ok).toBe(true);
     trackItem(ctx, r.data.item.id);
