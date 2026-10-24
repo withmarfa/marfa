@@ -8,7 +8,7 @@ mod door;
 
 use std::io::{BufRead, BufReader, Write};
 use std::net::TcpListener;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -148,18 +148,29 @@ struct Ran {
     took: Duration,
 }
 
-fn scratch(name: &str) -> PathBuf {
-    static RUNS: AtomicUsize = AtomicUsize::new(0);
-    let dir = std::env::temp_dir().join(format!(
-        "marfa-telemetry-{}-{name}-{}",
-        std::process::id(),
-        RUNS.fetch_add(1, Ordering::Relaxed)
-    ));
-    // A process ID comes round again, and a copy left by another build would
-    // then be refused as the wrong shape.
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
-    dir
+/// A path in an empty folder of its own, which goes when this does.
+struct Scratch {
+    path: PathBuf,
+    _dir: tempfile::TempDir,
+}
+
+impl std::ops::Deref for Scratch {
+    type Target = Path;
+
+    fn deref(&self) -> &Path {
+        &self.path
+    }
+}
+
+fn scratch(name: &str, file: &str) -> Scratch {
+    let dir = tempfile::Builder::new()
+        .prefix(&format!("marfa-telemetry-{name}-"))
+        .tempdir()
+        .unwrap();
+    Scratch {
+        path: dir.path().join(file),
+        _dir: dir,
+    }
 }
 
 fn closed_port() -> String {
@@ -174,7 +185,13 @@ fn command(env: &[(&str, &str)], args: &[&str]) -> Command {
     command
         .env_clear()
         .env("PATH", std::env::var_os("PATH").unwrap_or_default())
-        .env("MARFA_KEYCHAIN", scratch("keychain").join("none"))
+        .env(
+            "MARFA_KEYCHAIN",
+            std::env::temp_dir().join(format!(
+                "marfa-telemetry-no-keychain-{}",
+                std::process::id()
+            )),
+        )
         .env("MARFA_API_URL", closed_port())
         .env("MARFA_API_KEY", "marfa_k1_not_a_key")
         .args(args);
@@ -196,8 +213,8 @@ fn run(env: &[(&str, &str)], args: &[&str]) -> Ran {
 }
 
 /// A working copy that exists and was never hydrated.
-fn store() -> PathBuf {
-    let path = scratch("store").join("copy.sqlite");
+fn store() -> Scratch {
+    let path = scratch("store", "copy.sqlite");
     let made = run(&[], &["device", "--db", path.to_str().unwrap(), "status"]);
     assert_eq!(made.code, 0, "{}", made.stderr);
     path
@@ -918,7 +935,7 @@ fn a_first_interrupt_ends_a_stream_still_being_asked_for_as_the_signal_does() {
 #[test]
 fn a_first_interrupt_ends_a_hydration_waiting_on_the_server_and_it_is_not_a_failed_run() {
     let collector = Collector::open(Reply::Answer(200));
-    let store = scratch("hydrate").join("copy.sqlite");
+    let store = scratch("hydrate", "copy.sqlite");
     let (status, took, stderr) = interrupted_while_the_server_is_silent(
         &[
             "--json",
@@ -1117,8 +1134,8 @@ fn nothing_planted_in_the_command_line_the_environment_or_the_data_reaches_posth
     let address = format!("http://user:{SECRET}@127.0.0.1:9/path?token={SECRET}");
     let key = format!("marfa_k1_{SECRET}");
     let held = format!("item-{SECRET}");
-    let folder = scratch("folder").join(SECRET);
-    let registry = scratch("registry").join("folders.json");
+    let folder = scratch("folder", SECRET);
+    let registry = scratch("registry", "folders.json");
     let mut env = exceptions_to(&collector, &posthog);
     env.push(("MARFA_API_KEY", key.as_str()));
     env.push(("MARFA_API_URL", address.as_str()));
@@ -1472,7 +1489,7 @@ fn a_run_that_did_not_fail_sends_nothing() {
     assert_eq!(stopped.code(), Some(130));
 
     // Stopped by Ctrl-C while it waited on the server: a canceled hydration.
-    let copy = scratch("hydrate").join("copy.sqlite");
+    let copy = scratch("hydrate", "copy.sqlite");
     let (status, _, stderr) = interrupted_while_the_server_is_silent(
         &[
             "--json",

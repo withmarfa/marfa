@@ -34,3 +34,6 @@ toml = { version = "1.1.8", default-features = false, features = ["std", "parse"
 # keyring reaches only the login keychain; a keychain file by path needs this.
 [target.'cfg(target_os = "macos")'.dependencies]
 security-framework = "3"
+
+[dev-dependencies]
+tempfile = "3"
