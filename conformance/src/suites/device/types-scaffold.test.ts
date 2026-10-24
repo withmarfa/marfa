@@ -302,7 +302,7 @@ describe("a starting definition for a type", () => {
   it("refuses a field a shipped parent holds to another shape, or to be required", async () => {
     expect(
       await refused(
-        ["user.recipe", "--parent", "core.note", "--field", "body:string"],
+        ["user.recipe", "--parent", "core.message", "--field", "from:string"],
         "invalid",
         1,
       ),
@@ -333,6 +333,15 @@ describe("a starting definition for a type", () => {
     // parent that is not shipped is not judged.
     for (const args of [
       ["--parent", "core.note", "--field", "body:string", "--required", "body"],
+      ["--parent", "core.note", "--field", "body:string"],
+      [
+        "--parent",
+        "core.message",
+        "--field",
+        "from:string",
+        "--required",
+        "from",
+      ],
       ["--parent", "core.note", "--field", "title:string"],
       ["--parent", "user.base", "--field", "body:integer"],
     ]) {
