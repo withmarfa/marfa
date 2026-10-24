@@ -2461,7 +2461,7 @@ marfa device hydrate [OPTIONS] --types <TYPE> --tier <TIER>
 
 | Option | Description |
 | --- | --- |
-| `--types <TYPE>` | Comma-separated type identifiers, such as core.note,core.file. |
+| `--types <TYPE>` | Comma-separated type identifiers, such as core.note,core.file, or `*` alone for every type but `system.*`, hydrated in one pass without reading the catalog first. |
 | `--tier <TIER>` | The tier to hold the slice at, or `all` for both. One of `library`, `feed`, `all`. |
 | `--edge-type <TYPE>` | An edge type to hold whole: every edge of it the key reads, whichever ends the copy holds. Repeatable. |
 

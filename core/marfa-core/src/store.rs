@@ -559,6 +559,18 @@ pub fn slice_holds(
 
 pub const EVERY_TYPE: &str = "*";
 
+/// Whether a declaration names the type, tier aside: `EVERY_TYPE` names every
+/// type but `system.*`.
+pub fn declares_type(catalog: &crate::catalog::Catalog, types: &[String], row_type: &str) -> bool {
+    types.iter().any(|declared| {
+        if declared == EVERY_TYPE {
+            !is_system(row_type)
+        } else {
+            catalog.matches(declared, row_type)
+        }
+    })
+}
+
 /// `EVERY_TYPE` takes what a bare server listing answers, which leaves out
 /// `system.*`. A `system.*` row named by type is taken at either tier: the
 /// server stamps one a tier that says nothing about it, and a copy of the

@@ -110,12 +110,7 @@ fn unexplained(
         let named = (item.r#type.clone(), None);
         return (!refreshed.contains(&named)).then_some(named);
     }
-    if !pinned
-        && !slice
-            .types
-            .iter()
-            .any(|declared| catalog.matches(declared, &item.r#type))
-    {
+    if !pinned && !store::declares_type(catalog, &slice.types, &item.r#type) {
         return None;
     }
     let thumbnail = catalog.thumbnail_field(&item.r#type);
@@ -2792,6 +2787,15 @@ mod tests {
 
     #[test]
     fn an_image_already_read_again_for_does_not_hide_the_next() {
+        images_read_again_for("user.photo");
+    }
+
+    #[test]
+    fn an_image_in_a_slice_of_every_type_is_read_again_for_as_in_a_named_one() {
+        images_read_again_for(store::EVERY_TYPE);
+    }
+
+    fn images_read_again_for(declared: &str) {
         let dir = tempfile::tempdir().unwrap();
         let conn = store::open(&dir.path().join("core.sqlite")).unwrap();
         let mut photo = store::testing::wire_type("user.photo", None, Some("title"));
@@ -2802,7 +2806,7 @@ mod tests {
         store::replace_types(&conn, &[photo]).unwrap();
         let catalog = Catalog::load(&conn).unwrap();
         let slice = Slice {
-            types: vec!["user.photo".into()],
+            types: vec![declared.into()],
             tier: SliceTier::Library,
             whole: Vec::new(),
         };
@@ -3280,6 +3284,60 @@ mod tests {
             core.catch_up().unwrap().catalog_changed,
             "a catch-up that changed the catalog did not say so"
         );
+    }
+
+    fn system_events() -> Answer {
+        stream(
+            vec![
+                connected(),
+                event(
+                    "11",
+                    "item.created",
+                    &item_payload("item.created", "feed", "system.connection", 1),
+                ),
+                event(
+                    "12",
+                    "item.created",
+                    &item_payload("item.created", "pinned", "system.connection", 1),
+                ),
+                event(
+                    "13",
+                    "item.created",
+                    &item_payload("item.created", "note", NOTE, 1),
+                ),
+                stream_live(Some("13")),
+            ],
+            Then::End,
+        )
+    }
+
+    /// A copy of every type takes no `system.*` row by event, unless the row
+    /// is pinned, which keeps taking its updates whatever the slice.
+    #[test]
+    fn a_copy_of_every_type_takes_no_system_row_that_is_not_pinned() {
+        let server = Scripted::start();
+        server.on(
+            "/types",
+            vec![types(&[(NOTE, None), ("system.connection", None)])],
+        );
+        server.on("/events", vec![system_events(), system_events()]);
+        let (_dir, core) = hydrated(&server);
+        store::meta_set(&core.conn().unwrap(), store::META_SLICE_TYPES, "[\"*\"]").unwrap();
+        store::pin(&core.conn().unwrap(), "pinned").unwrap();
+
+        core.catch_up().unwrap();
+
+        assert!(core.get("note").unwrap().is_some());
+        assert_eq!(
+            core.get("feed").unwrap(),
+            None,
+            "a slice of every type took a system row"
+        );
+        assert!(
+            core.get("pinned").unwrap().is_some(),
+            "a pinned system row stopped taking its updates"
+        );
+        assert_eq!(stored_cursor(&core).as_deref(), Some("13"));
     }
 
     #[test]

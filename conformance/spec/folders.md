@@ -400,9 +400,9 @@ When a folder search names `beneath`, a device MUST include the named item and i
 
 ### `folders/search-default-types`
 
-When a folder search names no types, a device MUST admit every readable type except `system.*`.
+When a folder search names no types or names `*`, a device MUST admit every readable type except `system.*`.
 
-**Tests:** `device/folders.test.ts › takes every type, and any default type, where its search names no type`.
+**Tests:** `device/folders.test.ts › takes every type, and any default type, where its search names no type or the star`.
 
 ### `folders/search-default-tier`
 
@@ -432,7 +432,7 @@ When a settings-file edit names a search the device cannot answer, a device MUST
 
 When a new document has no `type` line, or one holding no type identifier (`folders/foreign-type-property`), a device MUST choose its type from the defaults, then the search's first non-file type, then `core.note`.
 
-**Tests:** `device/folders.test.ts › makes a new document the search's first type that is not a file type`, `device/folders-frontmatter.test.ts › makes the note the folder's default type and keeps the line's value as a property`, `device/folders.test.ts › takes every type, and any default type, where its search names no type`, `device/folders-contract-a.test.ts › uses core.note without a type default and preserves explicit empty tags and titles`.
+**Tests:** `device/folders.test.ts › makes a new document the search's first type that is not a file type`, `device/folders-frontmatter.test.ts › makes the note the folder's default type and keeps the line's value as a property`, `device/folders.test.ts › takes every type, and any default type, where its search names no type or the star`, `device/folders-contract-a.test.ts › uses core.note without a type default and preserves explicit empty tags and titles`.
 
 ### `folders/default-document-tier`
 

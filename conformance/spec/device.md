@@ -522,13 +522,15 @@ A hydration reads the server's copy stream and listings under one certified reac
 
 If a hydration declares no type, then a device MUST refuse it `invalid` before it reads anything.
 
-**Tests:** `device/hydration.test.ts › refuses an empty type list and a bare wildcard before reading anything`.
+**Tests:** `device/hydration.test.ts › refuses an empty type list before reading anything`.
 
-### `device/hydrate-bare-wildcard`
+### `device/hydrate-every-type-not-beside-types`
 
-If a hydration declares `*` alone, then a device MUST refuse it `invalid` before it reads anything.
+If a hydration declares `*` beside a type that is not a `system.*` type, then a device MUST refuse it `invalid` before it reads anything.
 
-**Tests:** `device/hydration.test.ts › refuses an empty type list and a bare wildcard before reading anything`.
+**Reason:** `*` is every type but `system.*`, so a type beside it that is not a `system.*` type is one the caller either meant to name instead of `*` or already holds, and the slice a caller means is not clear. A `system.*` type beside it adds the rows `*` leaves out (`device/hydrate-every-type-beside-system`).
+
+**Tests:** `device/hydrate-every-type.test.ts › refuses the star beside a type that is not a system type before any request, and takes it said twice`.
 
 ### `device/hydrate-grammar`
 
@@ -668,9 +670,39 @@ When a hydration completes, a device MUST report the types, tier and edge types 
 
 ### `device/hydrate-every-type`
 
-When a folder whose search names no type hydrates its copy, a device MUST read the item listing naming no type, which leaves `system.*` out (`folders/search-default-types`), and report the slice's types as `*`.
+When a hydration declares `*` alone, or a folder whose search names no type or names `*` hydrates its copy, a device MUST read the item listing naming no type, which leaves `system.*` out (`folders/search-default-types`), and report the slice's types as `*`.
 
-**Tests:** `device/folders.test.ts › holds exactly what its search matches`, `› takes every type, and any default type, where its search names no type`.
+**Tests:** `device/hydrate-every-type.test.ts › hydrates every type but system.* from the listing naming no type`, `device/hydrate-every-type-live.test.ts › holds every type registered before the hydration in one pass, and takes a later item of each by its event`, `device/folders.test.ts › holds exactly what its search matches`, `› takes every type, and any default type, where its search names no type or the star`.
+
+### `device/hydrate-every-type-beside-system`
+
+When a hydration declares `*` beside `system.*` types, a device MUST hold every type but `system.*` and the declared `system.*` types.
+
+**Tests:** `device/hydrate-every-type.test.ts › takes the star beside a system type, and holds that type as well`, `device/hydrate-every-type-live.test.ts › holds every type registered before the hydration in one pass, and takes a later item of each by its event`.
+
+### `device/hydrate-every-type-no-system`
+
+While a device's slice is `*` alone, a device MUST NOT apply an event for a `system.*` item that is not pinned.
+
+**Reason:** the listing the slice reads leaves `system.*` out (`folders/search-default-types`), so a copy that took one by event would hold what no hydration of the same slice holds. A pinned row keeps taking its updates, whatever the slice.
+
+**Tests:** `device/hydrate-every-type.test.ts › takes no system row by event, but one that is pinned`.
+
+### `device/hydrate-every-type-expected`
+
+While a hydration of a slice of every type has started and not completed, and the server counted the slice, a device MUST report as `items_expected` the count of every type but `system.*`.
+
+**Reason:** `device/report-items-expected` holds for this slice too, and a count that took `system.*` would pass the whole.
+
+**Tests:** `device/hydrate-every-type.test.ts › counts every type but system.* as the items expected, and leaves the count out where the server gave none`, `› leaves the expected count out, not zero, where the server did not count`.
+
+### `device/hydrate-every-type-interrupted`
+
+When a device hydrates a slice of every type after an interrupted hydration, a device MUST read every page of the slice again.
+
+**Reason:** `device/hydrate-not-resumed` holds for this slice too.
+
+**Tests:** `device/hydrate-every-type.test.ts › reads the whole slice again when a hydration stopped part way is run again`.
 
 ### `device/hydrate-surrogate-pair`
 

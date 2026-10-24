@@ -562,6 +562,11 @@ impl Core {
     /// left running across a hydration would apply events read against the
     /// old slice to the new copy. A caller stops its follow first. A watch is
     /// not stopped: the hydration takes its stream, and gives it back.
+    ///
+    /// `types` is the slice's types. `store::EVERY_TYPE` alone is every type
+    /// but `system.*`, hydrated in one pass with no need to read the catalog
+    /// and name its types first; beside `system.*` types it adds them, and
+    /// beside any other type it is `Invalid`.
     pub fn hydrate(&self, types: &[String], tier: SliceTier) -> Result<HydrateReport> {
         self.hydrate_with(types, tier, &[])
     }
@@ -579,14 +584,14 @@ impl Core {
         self.lock.refuse_unless_writer()?;
         let mut taken = self.watch.take()?;
         let _streaming = self.claim_stream(Mover::Hydration)?;
-        let report = hydrate::hydrate(self, self.http()?, types, tier, edge_types, false, stop)?;
+        let report = hydrate::hydrate(self, self.http()?, types, tier, edge_types, stop)?;
         taken.reached();
         self.settle_bodies(stop)?;
         Ok(report)
     }
 
     /// Holds every edge of `edge_types` the key reads, whichever ends the
-    /// copy holds.
+    /// copy holds. `types` reads as in [`Core::hydrate`].
     pub fn hydrate_with(
         &self,
         types: &[String],
@@ -594,23 +599,6 @@ impl Core {
         edge_types: &[String],
     ) -> Result<HydrateReport> {
         self.hydrate_until(types, tier, edge_types, &NEVER_STOPPED)
-    }
-
-    /// No types is every type the key reads, held as `store::EVERY_TYPE`.
-    pub(crate) fn hydrate_every_type_or(
-        &self,
-        types: &[String],
-        tier: SliceTier,
-        edge_types: &[String],
-        stop: &AtomicBool,
-    ) -> Result<HydrateReport> {
-        self.lock.refuse_unless_writer()?;
-        let mut taken = self.watch.take()?;
-        let _streaming = self.claim_stream(Mover::Hydration)?;
-        let report = hydrate::hydrate(self, self.http()?, types, tier, edge_types, true, stop)?;
-        taken.reached();
-        self.settle_bodies(stop)?;
-        Ok(report)
     }
 
     /// Refused where neither the server nor the copy holds `id`, and
@@ -5654,7 +5642,7 @@ mod tests {
             Err(CoreError::Invalid(_))
         ));
         assert!(matches!(
-            fresh.hydrate(&["*".into()], SliceTier::Library),
+            fresh.hydrate(&["*".into(), "core.note".into()], SliceTier::Library),
             Err(CoreError::Invalid(_))
         ));
     }
@@ -6114,12 +6102,6 @@ mod tests {
                     )
                     .unwrap_err(),
             ),
-            (
-                "hydrate_every_type_or",
-                reader
-                    .hydrate_every_type_or(&[], SliceTier::Library, &[], &NEVER_STOPPED)
-                    .unwrap_err(),
-            ),
             ("catch_up", reader.catch_up().unwrap_err()),
             (
                 "catch_up_until",
@@ -6197,7 +6179,7 @@ mod tests {
         );
         assert_eq!(
             refusals.len(),
-            46,
+            45,
             "an entry has gone from the list above, and a door dropped from \
              it is a door nothing here covers"
         );

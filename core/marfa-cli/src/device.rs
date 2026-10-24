@@ -41,7 +41,9 @@ pub struct DeviceArgs {
 pub enum DeviceCommand {
     /// Replace the local copy with the declared types at one tier, or both.
     Hydrate {
-        /// Comma-separated type identifiers, such as core.note,core.file.
+        /// Comma-separated type identifiers, such as core.note,core.file, or
+        /// `*` alone for every type but `system.*`, hydrated in one pass
+        /// without reading the catalog first.
         #[arg(long, value_delimiter = ',', required = true, value_name = "TYPE")]
         types: Vec<String>,
         /// The tier to hold the slice at, or `all` for both.

@@ -55,16 +55,16 @@ function atCursor(cursor: string | undefined, answer: Answer): Responder {
 }
 
 describe("what a hydration declares", () => {
-  it("refuses an empty type list and a bare wildcard before reading anything", async () => {
+  it("refuses an empty type list before reading anything", async () => {
     harness = await startHarness("declare");
     const { server, device } = harness;
     scriptHydration(server, { head: "10" });
 
-    for (const types of [[], ["*"]]) {
+    for (const types of [[]]) {
       const refused = await device.hydrate(types, "library");
       expect(
         refused.ok,
-        `hydrating ${JSON.stringify(types)} was accepted, so a device can ask for everything or for nothing and get a copy whose contents nobody declared`,
+        `hydrating ${JSON.stringify(types)} was accepted, so a device can ask for nothing and get a copy whose contents nobody declared`,
       ).toBe(false);
       if (!refused.ok) expect(refused.refusal.code).toBe("invalid");
     }
