@@ -837,13 +837,13 @@ The server MUST ship `system.connection`, `system.folder` and `system.view` and 
 
 ### `types/message`
 
-The server MUST ship `core.message` requiring `from`, taking `body` and `to` as optional, `to` as a list of identifiers in any format, and naming `body` its display body.
+The server MUST ship `core.message` requiring `from`, taking `to` as an optional list of identifiers in any format, and naming `body` its display body.
 
 **Tests:** `compliance/core-message.test.ts › creates a message with body, from, and to`, `› creates with only the required from`, `› accepts participant identifiers in any format`, `› rejects a message missing from with invalid_properties naming it`, `› declares body as its display body field`, `› declares from, and not body, as required in the registry`.
 
 ### `types/body-optional`
 
-The server MUST ship `core.note`, `core.media.article` and `core.message` with `body` declared and not required, so that a write to any of them without a `body` is accepted, while an article still requires `title` and a message `from`.
+The server MUST ship `core.note`, `core.media.article` and `core.message` with `body` declared and not required, so that a write to any of them without a `body` is accepted.
 
 **Reason:** a note can be only a title, an article can be saved before its text is fetched, and a message can be only a photo or a file. A type requires only what it means nothing without.
 
