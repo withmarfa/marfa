@@ -1,6 +1,7 @@
 //! The Node-facing shape of `marfa_core`.
 
 mod folders;
+mod views;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
@@ -2054,6 +2055,55 @@ impl MarfaCore {
         Ok(Listing {
             completeness: listed.completeness.into(),
             items: listed.rows.into_iter().map(item).collect(),
+        })
+    }
+
+    #[napi]
+    pub fn list_in_folder(
+        &self,
+        env: Env,
+        id: String,
+        sort: Option<Sort>,
+        limit: Option<u32>,
+        offset: Option<u32>,
+    ) -> Result<Listing> {
+        let listed = self
+            .inner
+            .list_in_folder(&id, self::sort(sort), limit, offset)
+            .map_err(|error| failure(env, error))?;
+        Ok(Listing {
+            completeness: listed.completeness.into(),
+            items: listed
+                .rows
+                .into_iter()
+                .map(|(value, _)| item(value))
+                .collect(),
+        })
+    }
+
+    #[napi]
+    pub fn search_in_folder(
+        &self,
+        env: Env,
+        query: String,
+        id: String,
+        limit: Option<u32>,
+    ) -> Result<Found> {
+        let found = self
+            .inner
+            .search_in_folder(&query, &id, limit.unwrap_or(20) as usize)
+            .map_err(|error| failure(env, error))?;
+        Ok(Found {
+            completeness: found.completeness.into(),
+            hits: found
+                .rows
+                .into_iter()
+                .map(|(hit, _)| SearchHit {
+                    item: item(hit.item),
+                    score: hit.score,
+                    snippet: hit.snippet,
+                })
+                .collect(),
         })
     }
 

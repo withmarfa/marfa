@@ -64,7 +64,7 @@ pub fn item_lines(items: &[Item], shown: &[Shown]) -> Result<(), CliError> {
 }
 
 /// On stderr, as `(no items)` is, so the lines on stdout stay one per row.
-fn note_partial(completeness: Completeness) {
+pub(crate) fn note_partial(completeness: Completeness) {
     if completeness == Completeness::Partial {
         eprintln!(
             "(partial: a hydration is filling this copy, and rows still arriving are not shown)"

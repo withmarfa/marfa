@@ -12,6 +12,7 @@ mod folders;
 mod instance;
 mod json;
 mod renewal;
+mod views;
 
 pub use instance::{InstanceDescription, instance_description};
 pub use json::{JsonMember, JsonObject, JsonValue};

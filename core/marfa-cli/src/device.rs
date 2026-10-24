@@ -132,12 +132,18 @@ pub enum DeviceCommand {
         #[command(subcommand)]
         command: DeviceFoldersCommand,
     },
+    /// Views and their layout groups, read from the local copy.
+    Views {
+        #[command(subcommand)]
+        command: DeviceViewsCommand,
+    },
     /// Full-text search over the local copy, best match first.
     ///
-    /// While a hydration fills the copy, or after one was interrupted, the
-    /// search covers the rows that have arrived and says it is partial: on
-    /// standard error, and under --json as `completeness`, `partial` or
-    /// `complete`, beside `hits`.
+    /// Without `--view`, while a hydration fills the copy or after one was
+    /// interrupted, the search covers the rows that have arrived and says
+    /// it is partial: on standard error, and under --json as `completeness`,
+    /// `partial` or `complete`, beside `hits`. With `--view`, an incomplete
+    /// copy is refused.
     Search {
         /// Words to look for, matched as the server matches them: all must
         /// match, the last as a prefix, and a query in double quotes is a
@@ -166,10 +172,10 @@ pub enum DeviceCommand {
         /// How many hits at most.
         #[arg(long, default_value_t = 20)]
         limit: usize,
-        /// Only what this `system.folder`'s query holds, as the folder holds
-        /// it; refused where the copy's slice cannot answer the query whole.
+        /// Only what this view's query selects; refused with a reason where
+        /// the copy cannot answer the query whole.
         #[arg(long, value_name = "ID", conflicts_with_all = ["state", "all_states", "type_", "tags", "filter", "beneath"])]
-        folder: Option<String>,
+        view: Option<String>,
     },
     /// Every queued write, the body it carries and what became of it.
     Queue,
@@ -329,10 +335,11 @@ pub enum BlobsCommand {
 pub enum ItemsCommand {
     /// List items, newest first unless sorted otherwise.
     ///
-    /// While a hydration fills the copy, or after one was interrupted, the
-    /// list holds the rows that have arrived and says it is partial: on
-    /// standard error, and under --json as `completeness`, `partial` or
-    /// `complete`, beside `items`.
+    /// Without `--view`, while a hydration fills the copy or after one was
+    /// interrupted, the list holds the rows that have arrived and says it
+    /// is partial: on standard error, and under --json as `completeness`,
+    /// `partial` or `complete`, beside `items`. With `--view`, an incomplete
+    /// copy is refused.
     List(ListArgs),
     /// One item by id, with its properties and tags.
     ///
@@ -735,14 +742,16 @@ pub struct ListArgs {
     /// How many items to skip first.
     #[arg(long)]
     pub offset: Option<u32>,
-    /// Only what this `system.folder`'s query holds, as the folder holds
-    /// it; refused where the copy's slice cannot answer the query whole.
-    #[arg(long, value_name = "ID", conflicts_with_all = FOLDER_SCOPED)]
-    pub folder: Option<String>,
+    /// Only what this view selects, ordered by its layout; refused with a
+    /// reason where the copy cannot answer the query whole.
+    #[arg(long, value_name = "ID", conflicts_with_all = VIEW_SCOPED)]
+    pub view: Option<String>,
+    /// The layout whose sort to use; without it, use the view's first layout.
+    #[arg(long, value_name = "ID", requires = "view")]
+    pub layout: Option<String>,
 }
 
-/// The narrowing a folder's own query sets.
-const FOLDER_SCOPED: [&str; 9] = [
+const VIEW_SCOPED: [&str; 11] = [
     "type_",
     "state",
     "all_states",
@@ -752,7 +761,31 @@ const FOLDER_SCOPED: [&str; 9] = [
     "occurred_before",
     "filter",
     "beneath",
+    "sort",
+    "direction",
 ];
+
+#[derive(Debug, Subcommand)]
+pub enum DeviceViewsCommand {
+    /// List the views held in the copy.
+    List,
+    /// Read a view's settings from the copy.
+    Get {
+        /// The view's `system.view` id.
+        id: String,
+    },
+    /// List a layout's groups, item counts, and numeric sums where requested.
+    Groups {
+        /// The view's `system.view` id.
+        id: String,
+        /// The layout to group by.
+        #[arg(long, value_name = "ID")]
+        layout: String,
+        /// An IANA time zone for date buckets; otherwise use the device's zone.
+        #[arg(long, value_name = "ZONE")]
+        time_zone: Option<String>,
+    },
+}
 
 #[derive(Debug, Subcommand)]
 pub enum DeviceFoldersCommand {
@@ -1024,9 +1057,9 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
                         field: args.sort.into(),
                         direction: args.direction.into(),
                     };
-                    if let Some(folder) = &args.folder {
+                    if let Some(view) = &args.view {
                         return output::listing(
-                            core.list_in_folder(folder, sort, args.limit, args.offset)?,
+                            core.list_in_view(view, args.layout.as_deref(), args.limit, args.offset)?,
                             json,
                         )
                         .map(|()| Exit::Done);
@@ -1220,11 +1253,11 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
             filter,
             beneath,
             limit,
-            folder,
+            view,
         } => {
-            if let Some(folder) = folder {
+            if let Some(view) = view {
                 return output::found(
-                    store.open(None)?.search_in_folder(&query, &folder, limit)?,
+                    store.open(None)?.search_in_view(&query, &view, limit)?,
                     json,
                 )
                 .map(|()| Exit::Done);
@@ -1239,6 +1272,37 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
             };
             let core = store.open(None)?;
             output::found(core.search_shown(&query, &filters, limit)?, json)
+        }
+        DeviceCommand::Views { command } => {
+            let core = store.open(None)?;
+            match command {
+                DeviceViewsCommand::List => {
+                    let rows = core.list_views()?;
+                    if !json {
+                        output::note_partial(rows.completeness);
+                    }
+                    output::report(
+                        &serde_json::json!({"completeness": rows.completeness, "views": rows.rows}),
+                        json,
+                        || rows.rows.iter().map(view_line).collect::<Vec<_>>().join("\n"),
+                    )
+                }
+                DeviceViewsCommand::Get { id } => {
+                    let row = core.view(&id)?.ok_or(CliError::NotHeld(id))?;
+                    output::report(&row, json, || view_line(&row))
+                }
+                DeviceViewsCommand::Groups { id, layout, time_zone } => {
+                    let rows = core.view_groups(&id, &layout, time_zone.as_deref())?;
+                    output::report(
+                        &serde_json::json!({"completeness": rows.completeness, "groups": rows.rows}),
+                        json,
+                        || rows.rows.iter().map(|group| {
+                            let sum = group.sum.map(|value| format!(" sum {value}")).unwrap_or_default();
+                            format!("{}: {} item(s){sum}", group.key, group.count)
+                        }).collect::<Vec<_>>().join("\n"),
+                    )
+                }
+            }
         }
         DeviceCommand::Folders { command } => {
             let row = match command {
@@ -1567,6 +1631,19 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
         }
     }
     .map(|()| Exit::Done)
+}
+
+fn view_line(row: &marfa_core::ViewRow) -> String {
+    format!(
+        "{} {} at version {}: {}",
+        row.id,
+        row.state.as_str(),
+        row.version,
+        row.settings
+            .get("title")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("untitled")
+    )
 }
 
 fn folder_row(row: &marfa_core::FolderRow, json: bool) -> Result<(), CliError> {

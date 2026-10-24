@@ -57,6 +57,7 @@ mod time;
 mod upload_credential_tests;
 mod url_host;
 mod validation;
+mod views;
 mod watch;
 #[cfg(test)]
 mod watch_tests;
@@ -98,6 +99,7 @@ pub use model::{
 };
 pub use scaffold::{ScaffoldField, scaffold_type};
 pub use store::CEILING;
+pub use views::{VIEW_TYPE, ViewGroup, ViewRow};
 pub use watch::{Listening, WatchListener};
 #[cfg(debug_assertions)]
 pub use watch::{ReentryAnswers, ReentryProbe};
