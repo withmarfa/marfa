@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { afterEach, describe, expect, it } from "vitest";
 import type { Answer, RecordedRequest } from "../../device/scripted-server.js";
 import { writeAnswers } from "../../device/marfa-answers.js";
