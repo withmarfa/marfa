@@ -344,6 +344,7 @@ describe("creates in pages", () => {
       harness.server.requests.filter(
         (request) =>
           request.method === "GET" &&
+          request.pathname !== "/items/stats" &&
           /^\/(items|edges)\/[^/]+$/.test(request.pathname),
       ),
     ).toHaveLength(0);

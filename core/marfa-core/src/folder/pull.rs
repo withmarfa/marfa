@@ -269,7 +269,7 @@ impl Folder {
         let settings = self.settings()?;
         let lists = settings.lists()?;
         let mut members = self.members(&settings)?;
-        let items = self.core.list(
+        let listed = self.core.list(
             &crate::model::ListFilters {
                 tier: Some(settings.tier()),
                 all_states: true,
@@ -277,6 +277,12 @@ impl Folder {
             },
             crate::model::Sort::default(),
         )?;
+        // A row a partial copy has not been given yet is not a row the server
+        // deleted, so the pass waits for a whole copy.
+        if listed.completeness == crate::model::Completeness::Partial {
+            return Err(CoreError::HydrationIncomplete);
+        }
+        let items = listed.rows;
         let (catalog, edge_types) = {
             let conn = self.core.conn()?;
             (Catalog::load(&conn)?, EdgeTypes::load(&conn)?)

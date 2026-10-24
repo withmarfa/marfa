@@ -135,7 +135,7 @@ if (phase === "hydrate") {
     "node",
     { type: "core.note", tags: ["favorite"] },
     10,
-  );
+  ).hits;
   const found = local.map((hit) => title(hit.item));
   console.log(`local search for favorites: ${found.join(", ")}`);
   expect(
@@ -155,7 +155,7 @@ if (phase === "hydrate") {
     outcomes.length > 0 && outcomes.every((outcome) => outcome === "accepted"),
     "a write queued offline was not accepted",
   );
-  const notes = core.list({ type: "core.note", tier: Tier.Feed });
+  const notes = core.list({ type: "core.note", tier: Tier.Feed }).items;
   console.log(
     `notes now: ${notes.map((note) => `${title(note)} v${note.version} [${note.tags.join(",")}]`).join("; ")}`,
   );
@@ -249,7 +249,7 @@ if (phase === "hydrate") {
   // thumbnail, so its value is not an image.
   const copy = MarfaCore.open(`${path}.thumbnail`, url, key);
   await copy.hydrate(["user.snapshot"], SliceTier.Library);
-  const snapshots = copy.list({ type: "user.snapshot" });
+  const snapshots = copy.list({ type: "user.snapshot" }).items;
   const image = snapshots.find((item) => title(item) === "With an image");
   const early = snapshots.find((item) => title(item) === "Held before");
   expect(image !== undefined && early !== undefined, "the snapshots were not hydrated");

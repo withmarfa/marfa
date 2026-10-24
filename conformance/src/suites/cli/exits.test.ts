@@ -197,7 +197,7 @@ describe("the exit codes", () => {
     // A never-hydrated copy answers local reads, but has no cursor to catch up.
     expect(
       await c.cli.json(["device", "--db", store, "items", "list"]),
-    ).toEqual([]);
+    ).toEqual({ items: [], completeness: "complete" });
     const unhydrated = await c.cli.refused([
       "device",
       "--db",

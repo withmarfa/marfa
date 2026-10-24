@@ -708,6 +708,22 @@ impl Http {
         self.get_json(&["items"], &params)
     }
 
+    /// `GET /items/stats?by=type`: the rows of every state at `tier`, counted
+    /// by type, with `system.*` counted only where `system` asks for it. The
+    /// count is not a conditional read, so a transport under a reach is
+    /// refused it.
+    pub fn counts_by_type(
+        &self,
+        tier: SliceTier,
+        system: bool,
+    ) -> Result<std::collections::HashMap<String, u64>, CoreError> {
+        let mut params = vec![("by", "type"), ("tier", tier.as_str())];
+        if system {
+            params.push(("include", "system"));
+        }
+        self.get_json(&["items", "stats"], &params)
+    }
+
     /// A page of the bin: `GET /items?state=trashed`, newest change first,
     /// with each row's tags. `filter` is the listing grammar's.
     pub fn bin_page(

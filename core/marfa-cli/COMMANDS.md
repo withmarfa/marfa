@@ -2490,6 +2490,8 @@ Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 
 List items, newest first unless sorted otherwise.
 
+While a hydration fills the copy, or after one was interrupted, the list holds the rows that have arrived and says it is partial: on standard error, and under --json as `completeness`, `partial` or `complete`, beside `items`.
+
 ```text
 marfa device items list [OPTIONS]
 ```
@@ -2516,6 +2518,8 @@ Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 ### marfa device items get
 
 One item by id, with its properties and tags.
+
+While a hydration fills the copy, an item that has not arrived is refused `hydration_incomplete` rather than reported as not held.
 
 ```text
 marfa device items get [OPTIONS] <ID>
@@ -2843,6 +2847,8 @@ Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 
 Full-text search over the local copy, best match first.
 
+While a hydration fills the copy, or after one was interrupted, the search covers the rows that have arrived and says it is partial: on standard error, and under --json as `completeness`, `partial` or `complete`, beside `hits`.
+
 ```text
 marfa device search [OPTIONS] <QUERY>
 ```
@@ -2959,6 +2965,8 @@ Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 ### marfa device status
 
 What the local copy holds and where it came from.
+
+While a hydration fills the copy, the report also gives the rows its listings have brought, `items_listed` under --json, and the items the server counted for the slice when the hydration started, where it counted them, `items_expected`. Set the first against the second to show how far it has come; the item count also holds pinned rows and writes still waiting.
 
 ```text
 marfa device status [OPTIONS]

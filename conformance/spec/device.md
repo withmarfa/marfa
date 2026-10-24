@@ -338,7 +338,7 @@ If an answer to a request made under a copy arrives after a hydration has begun 
 
 ### `device/proof-lost`
 
-While its copy holds a slice and no valid cursor, reach or instance, a device MUST refuse a local read `hydration_incomplete`, through a reading handle as through the writer.
+While no hydration has started and not completed, and its copy holds a slice and no valid cursor, reach or instance, a device MUST refuse a local read `hydration_incomplete`, through a reading handle as through the writer.
 
 **Tests:** `device/reach.test.ts › refuses reads of a stored copy that lost its instance, through a reader as through the writer`.
 
@@ -362,13 +362,49 @@ While a device holds a reading handle, a device MUST queue nothing.
 
 **Tests:** `device/local-refusals.test.ts › refuses a write from a reading handle`.
 
-### `device/read-refused-in-progress`
+### `device/read-partial-answers`
 
-While a hydration has started and not completed, a device MUST refuse a local read `hydration_incomplete`.
+While a hydration has started and not completed, whether it still runs or was interrupted, a device MUST answer a local listing or search from the rows its copy holds, through a reading handle as through the writer.
 
-**Reason:** what such a copy holds is a piece of a copy, and an answer from it would read as the whole.
+**Reason:** an app shows what has arrived while the rest of a large slice is read, and an interrupted hydration does not leave it with nothing to show.
 
-**Tests:** `device/working-copy.test.ts › refuses a read after an interrupted hydration`, `device/hydration.test.ts › leaves an interrupted hydration to be run again, never resumed`.
+**Tests:** `device/working-copy.test.ts › answers a listing and a search part way through a hydration from the rows it holds, saying the answer is partial`, `device/hydration.test.ts › leaves an interrupted hydration to be run again, never resumed`.
+
+### `device/read-partial-says`
+
+While a hydration has started and not completed, a device MUST mark each local listing and search it answers `partial`, through a reading handle as through the writer.
+
+**Reason:** what such a copy holds is a piece of a copy, and an answer from it that did not say so would read as the whole.
+
+**Tests:** `device/working-copy.test.ts › answers a listing and a search part way through a hydration from the rows it holds, saying the answer is partial`, `› reports an interrupted re-hydration as in progress, not as a copy that aged out`, `device/hydration.test.ts › leaves an interrupted hydration to be run again, never resumed`, `› does not complete a hydration whose replay sends no live marker`, `device/stop.test.ts › ends it between pages, leaving a copy marked partial and a queue that is as it was`.
+
+### `device/read-complete-says`
+
+While its copy is complete or has never hydrated, a device MUST mark each local listing and search it answers `complete`.
+
+**Tests:** `device/working-copy.test.ts › answers a listing and a search part way through a hydration from the rows it holds, saying the answer is partial`, `› answers a read before any hydration from what the copy holds`, `device/stop.test.ts › ends it between pages, leaving a copy marked partial and a queue that is as it was`.
+
+### `device/read-partial-held-row`
+
+While a hydration has started and not completed, a device MUST answer a local read by id of a row its copy holds.
+
+**Tests:** `device/working-copy.test.ts › answers a read by id of a row it holds part way through a hydration, and refuses one it does not hold yet`.
+
+### `device/read-partial-unheld-refused`
+
+While a hydration has started and not completed, if a local read by id names a row its copy does not hold, then a device MUST refuse the read `hydration_incomplete`.
+
+**Reason:** the row may be one still to arrive, and `not_held` would tell the caller it is outside the slice.
+
+**Tests:** `device/working-copy.test.ts › answers a read by id of a row it holds part way through a hydration, and refuses one it does not hold yet`.
+
+### `device/read-partial-edges-refused`
+
+While a hydration has started and not completed, a device MUST refuse a local read of edges, conflicted copies or body links `hydration_incomplete`.
+
+**Reason:** each of these reads joins rows that may arrive on different pages, and none of their answers can say which part is missing.
+
+**Tests:** `device/working-copy.test.ts › refuses a read of edges part way through a hydration, and answers it once the copy is whole`.
 
 ### `device/read-refused-expired`
 
@@ -381,6 +417,8 @@ While its copy is expired, a device MUST refuse a local read `hydration_incomple
 ### `device/write-refused-incomplete`
 
 While a hydration has started and not completed, or its copy is expired, a device MUST refuse a local write `hydration_incomplete`.
+
+**Reason:** a write takes its base version from the row the copy holds, and while a hydration fills the copy a page still to arrive can replace that row, or bring one the write would have been made against.
 
 **Tests:** `device/working-copy.test.ts › refuses a local write after an interrupted hydration`, `› reports complete for a copy whose cursor aged out until a catch-up learns it, asking nothing to report`.
 
@@ -398,7 +436,7 @@ While its copy has never hydrated, a device MUST answer a local read from what t
 
 ### `device/report-fields`
 
-A device MUST report its state as the origin it is bound to, the instance it was hydrated from, its slice's types and tier, the edge types it holds whole, the rows it holds pinned, its cursor, how many items and edges it holds, the version of the catalog it holds and its hydration.
+A device MUST report its state as the origin it is bound to, the instance it was hydrated from, its slice's types and tier, the edge types it holds whole, the rows it holds pinned, its cursor, how many items and edges it holds, the version of the catalog it holds and its hydration, with the items expected under `device/report-items-expected` and the items listed under `device/report-items-listed`.
 
 **Tests:** `device/working-copy.test.ts › reports its slice, cursor and hydration state before it has hydrated`, `› holds a named edge type whole, whichever end it holds`, `device/catch-up.test.ts › keeps a pinned row outside the slice current`, `› refuses reads after the cursor ages out, until a hydration`, `device/queue.test.ts › sends nothing to another instance at the same address, keeping the queue`, `device/catalog.test.ts › moves the catalog version when a catch-up reads a changed catalog, and only then`.
 
@@ -429,6 +467,38 @@ While no hydration has started and none has declared a slice, a device MUST repo
 While a hydration has started and not completed, whether it still runs or was interrupted, a device MUST report its hydration as `in_progress`.
 
 **Tests:** `device/working-copy.test.ts › reports an interrupted re-hydration as in progress, not as a copy that aged out`.
+
+### `device/report-items-expected`
+
+Where the server counted the items of its slice when a hydration started, while that hydration has not completed, a device MUST report the count as `items_expected`.
+
+**Reason:** a caller shows how far a long hydration has come by setting `items_listed` against it. `items` is not that figure: it also counts the rows the copy holds pinned outside the slice and the creates still waiting, so set against the count it can pass the whole.
+
+**Tests:** `device/working-copy.test.ts › reports the items it holds and the items the server counted while a hydration fills the copy`.
+
+### `device/report-items-listed`
+
+While a hydration has started and not completed, a device MUST report as `items_listed` how many rows the listings of that hydration have brought to the copy.
+
+**Reason:** it counts what `items_expected` counts, the rows the slice's listings answer, so the two set against each other say how far the hydration has come.
+
+**Tests:** `device/working-copy.test.ts › reports the items it holds and the items the server counted while a hydration fills the copy`, `› reports the rows its listings brought apart from a write still waiting while a hydration fills the copy`.
+
+### `device/report-items-listed-absent`
+
+If no hydration has started and not completed, then a device MUST leave `items_listed` out of its state report.
+
+**Reason:** a count from a finished hydration says nothing about the copy now.
+
+**Tests:** `device/working-copy.test.ts › reports the items it holds and the items the server counted while a hydration fills the copy`.
+
+### `device/report-items-expected-absent`
+
+If no hydration has started and not completed, or the server did not count the items of its slice when the one under way started, then a device MUST leave `items_expected` out of its state report.
+
+**Reason:** a count the server did not give is not zero, and one from a finished hydration says nothing about the copy now.
+
+**Tests:** `device/working-copy.test.ts › leaves the expected count out of its report where the server did not count the slice`, `› reports the items it holds and the items the server counted while a hydration fills the copy`.
 
 ### `device/report-complete`
 
@@ -3186,7 +3256,7 @@ If a read a device makes under its copy's reach answers a body the device cannot
 
 If a hydration, a catch-up or a follow ends `decoding` on an answer the device cannot parse as JSON, then a device MUST NOT expire the copy.
 
-**Reason:** the answer says nothing against the copy's reach, and an expired copy refuses local reads and writes until a hydration the caller asks for completes. A hydration that ends `decoding` has not completed, so its copy still refuses them (`device/read-refused-in-progress`).
+**Reason:** the answer says nothing against the copy's reach, and an expired copy refuses local reads and writes until a hydration the caller asks for completes. A hydration that ends `decoding` has not completed, so its copy refuses writes (`device/write-refused-incomplete`) and marks its listings and searches partial (`device/read-partial-says`).
 
 **Tests:** `device/hydration.test.ts › ends a hydration decoding, and does not expire the copy, where the reader cannot decode an answer`, `device/catch-up.test.ts › ends a catch-up decoding, keeping the copy and the cursor it had, where the reader cannot decode an event`, `› ends a follow decoding, keeping the copy and the cursor it had, where the reader cannot decode an event`.
 
@@ -3408,25 +3478,25 @@ Where a declared type is left unregistered, a device MUST keep a write to it que
 
 When a stop is raised during a hydration, a catch-up or a drain, a device MUST end the call `canceled` soon after.
 
-**Tests:** `device/stop.test.ts › ends it between pages, leaving a copy that refuses reads and a queue that is as it was`, `› ends it while it waits on a stream, keeping the cursor it had`, `› ends it without waiting on the write in flight, which the next drain sends again under its key`.
+**Tests:** `device/stop.test.ts › ends it between pages, leaving a copy marked partial and a queue that is as it was`, `› ends it while it waits on a stream, keeping the cursor it had`, `› ends it without waiting on the write in flight, which the next drain sends again under its key`.
 
 ### `device/command-stopped-exit`
 
 When a hydration, a catch-up or a drain that the CLI stopped on Ctrl-C ends `canceled`, the CLI MUST exit with status 3.
 
-**Tests:** `device/stop.test.ts › ends it between pages, leaving a copy that refuses reads and a queue that is as it was`, `› ends it while it waits on a stream, keeping the cursor it had`, `› ends it without waiting on the write in flight, which the next drain sends again under its key`.
+**Tests:** `device/stop.test.ts › ends it between pages, leaving a copy marked partial and a queue that is as it was`, `› ends it while it waits on a stream, keeping the cursor it had`, `› ends it without waiting on the write in flight, which the next drain sends again under its key`.
 
 ### `device/stop-hydration-replacing`
 
-When a hydration that has begun replacing the copy is stopped, a device MUST leave a copy that refuses reads until a hydration completes.
+When a hydration that has begun replacing the copy is stopped, a device MUST leave a copy that reports its hydration `in_progress` until a hydration completes.
 
-**Tests:** `device/stop.test.ts › ends it between pages, leaving a copy that refuses reads and a queue that is as it was`.
+**Tests:** `device/stop.test.ts › ends it between pages, leaving a copy marked partial and a queue that is as it was`.
 
 ### `device/stop-hydration-queue`
 
 When a hydration is stopped, a device MUST leave its queue as it was.
 
-**Tests:** `device/stop.test.ts › ends it between pages, leaving a copy that refuses reads and a queue that is as it was`, `› reports canceled after a stopped head read ends or is refused, without retrying or changing the queue`.
+**Tests:** `device/stop.test.ts › ends it between pages, leaving a copy marked partial and a queue that is as it was`, `› reports canceled after a stopped head read ends or is refused, without retrying or changing the queue`.
 
 ### `device/stop-catch-up-cursor`
 

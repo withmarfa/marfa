@@ -124,6 +124,11 @@ pub enum DeviceCommand {
         command: DeviceFoldersCommand,
     },
     /// Full-text search over the local copy, best match first.
+    ///
+    /// While a hydration fills the copy, or after one was interrupted, the
+    /// search covers the rows that have arrived and says it is partial: on
+    /// standard error, and under --json as `completeness`, `partial` or
+    /// `complete`, beside `hits`.
     Search {
         /// Words to look for, matched as the server matches them: all must
         /// match, the last as a prefix, and a query in double quotes is a
@@ -231,6 +236,13 @@ pub enum DeviceCommand {
         id: String,
     },
     /// What the local copy holds and where it came from.
+    ///
+    /// While a hydration fills the copy, the report also gives the rows its
+    /// listings have brought, `items_listed` under --json, and the items the
+    /// server counted for the slice when the hydration started, where it
+    /// counted them, `items_expected`. Set the first against the second to
+    /// show how far it has come; the item count also holds pinned rows and
+    /// writes still waiting.
     Status,
     /// The item types the copy holds, read from it alone, the ones an app
     /// declares for it, and the server's.
@@ -307,8 +319,16 @@ pub enum BlobsCommand {
 #[derive(Debug, Subcommand)]
 pub enum ItemsCommand {
     /// List items, newest first unless sorted otherwise.
+    ///
+    /// While a hydration fills the copy, or after one was interrupted, the
+    /// list holds the rows that have arrived and says it is partial: on
+    /// standard error, and under --json as `completeness`, `partial` or
+    /// `complete`, beside `items`.
     List(ListArgs),
     /// One item by id, with its properties and tags.
+    ///
+    /// While a hydration fills the copy, an item that has not arrived is
+    /// refused `hydration_incomplete` rather than reported as not held.
     Get {
         /// The item id.
         id: String,
@@ -960,7 +980,7 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
                     String::new,
                 )
             } else {
-                output::items(&items, &shown, false)
+                output::item_lines(&items, &shown)
             }
         }
         DeviceCommand::Items {
@@ -982,11 +1002,11 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
                         direction: args.direction.into(),
                     };
                     if let Some(folder) = &args.folder {
-                        let (items, shown): (Vec<_>, Vec<_>) = core
-                            .list_in_folder(folder, sort, args.limit, args.offset)?
-                            .into_iter()
-                            .unzip();
-                        return output::items(&items, &shown, json).map(|()| Exit::Done);
+                        return output::listing(
+                            core.list_in_folder(folder, sort, args.limit, args.offset)?,
+                            json,
+                        )
+                        .map(|()| Exit::Done);
                     }
                     let filters = ListFilters {
                         r#type: args.type_,
@@ -1001,9 +1021,7 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
                         limit: args.limit,
                         offset: args.offset,
                     };
-                    let (items, shown): (Vec<_>, Vec<_>) =
-                        core.list_shown(&filters, sort)?.into_iter().unzip();
-                    output::items(&items, &shown, json)
+                    output::listing(core.list_shown(&filters, sort)?, json)
                 }
                 ItemsCommand::Get { id } => match core.get_shown(&id)? {
                     Some((item, shown)) => output::item(&item, &shown, json),
@@ -1182,12 +1200,11 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
             folder,
         } => {
             if let Some(folder) = folder {
-                let (hits, shown): (Vec<_>, Vec<_>) = store
-                    .open(None)?
-                    .search_in_folder(&query, &folder, limit)?
-                    .into_iter()
-                    .unzip();
-                return output::hits(&hits, &shown, json).map(|()| Exit::Done);
+                return output::found(
+                    store.open(None)?.search_in_folder(&query, &folder, limit)?,
+                    json,
+                )
+                .map(|()| Exit::Done);
             }
             let filters = SearchFilters {
                 state: state.map(Into::into),
@@ -1198,9 +1215,7 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
                 beneath,
             };
             let core = store.open(None)?;
-            let (hits, shown): (Vec<_>, Vec<_>) =
-                core.search_shown(&query, &filters, limit)?.into_iter().unzip();
-            output::hits(&hits, &shown, json)
+            output::found(core.search_shown(&query, &filters, limit)?, json)
         }
         DeviceCommand::Folders { command } => {
             let row = match command {
@@ -1376,7 +1391,7 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
                     }
                 };
                 format!(
-                    "server {}\ninstance {}\nslice {} at {}\nedge types held whole {}\npinned {}\ncursor {}\nhydration {}\ncatalog version {}\n{} item(s), {} edge(s)",
+                    "server {}\ninstance {}\nslice {} at {}\nedge types held whole {}\npinned {}\ncursor {}\nhydration {}\ncatalog version {}\n{} item(s), {} edge(s){}",
                     status.server_origin.as_deref().unwrap_or("(none)"),
                     status.instance_id.as_deref().unwrap_or("(none)"),
                     listed(&status.slice_types),
@@ -1392,7 +1407,14 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
                         .catalog_version
                         .map_or_else(|| "(none)".into(), |version| version.to_string()),
                     status.items,
-                    status.edges
+                    status.edges,
+                    match (status.items_listed, status.items_expected) {
+                        (Some(listed), Some(expected)) => {
+                            format!("\nlisted {listed} of {expected}")
+                        }
+                        (Some(listed), None) => format!("\nlisted {listed}"),
+                        _ => String::new(),
+                    }
                 ) + &format!("\n{}", file_cache_text(&status.file_cache))
             })
         }

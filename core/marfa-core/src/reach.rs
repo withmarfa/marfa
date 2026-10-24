@@ -212,6 +212,8 @@ pub(crate) fn expire(conn: &Connection) -> Result<()> {
     advance_generation(conn)?;
     store::meta_delete(conn, store::META_EVENT_CURSOR)?;
     store::meta_delete(conn, store::META_HYDRATE_STATE)?;
+    store::meta_delete(conn, store::META_ITEMS_EXPECTED)?;
+    store::meta_delete(conn, store::META_ITEMS_LISTED)?;
     store::meta_delete(conn, FENCE)
 }
 
@@ -227,6 +229,12 @@ pub(crate) fn expired(conn: &Connection) -> Result<bool> {
 
 pub(crate) fn listed(conn: &Connection, id: &str) -> Result<bool> {
     Ok(store::meta_get(conn, &format!("item_listed/{id}"))?.as_deref() == Some("true"))
+}
+
+/// Whether the server answered the row since the slice was last cleared: a
+/// row the queue alone holds carries no mark.
+pub(crate) fn answered(conn: &Connection, id: &str) -> Result<bool> {
+    Ok(store::meta_get(conn, &format!("item_listed/{id}"))?.is_some())
 }
 
 pub(crate) fn set_listed(conn: &Connection, id: &str, listed: bool) -> Result<()> {

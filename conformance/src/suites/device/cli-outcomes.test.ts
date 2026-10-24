@@ -25,6 +25,7 @@ import {
   requireBinary,
   scriptHydration,
   scriptKey,
+  scriptStats,
   scriptWrites,
   startHarness,
   type Harness,
@@ -144,6 +145,7 @@ describe("CLI outcomes preserve the result", () => {
         server.copyAnswer("GET", "/types", typeCatalog());
         server.copyAnswer("GET", "/edge-types", edgeTypeCatalog());
         scriptKey(server);
+        scriptStats(server);
         server.copyAnswer(
           "GET",
           "/items",

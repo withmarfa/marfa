@@ -309,6 +309,12 @@ export function scriptHydration(
     /** What `GET /keys/current` answers, a key reading and writing every
      *  type unless named. */
     key?: Responder[];
+    /** Rows to a page of the item listing, each page naming the next by its
+     *  offset; one page holds them all unless named. */
+    pageSize?: number;
+    /** Whether the page at an offset dies unanswered, as the page of an
+     *  interrupted hydration does. Asked of every page but the first. */
+    drop?: (offset: number) => boolean;
   },
 ): void {
   server.answer(
@@ -395,6 +401,7 @@ export function scriptHydration(
     },
   );
   server.copyAnswer("GET", "/types", options.catalog ?? typeCatalog());
+  scriptStats(server, rows);
   server.copyAnswer("GET", "/items", (request) => {
     const type = request.query.get("type");
     // No type is every type the key reads, which leaves `system.*` out.
@@ -425,8 +432,16 @@ export function scriptHydration(
     );
     const filter = request.query.get("filter");
     if (filter === null) {
+      const size = options.pageSize ?? Math.max(inState.length, 1);
+      const offset = Number(request.query.get("cursor") ?? "0");
+      if (offset > 0 && options.drop?.(offset) === true)
+        return { kind: "drop" };
+      const next = offset + size;
       return itemsPage(
-        inState.map((row) => ({ item: wireItem(row.item), tags: row.tags })),
+        inState
+          .slice(offset, next)
+          .map((row) => ({ item: wireItem(row.item), tags: row.tags })),
+        next < inState.length ? { nextCursor: String(next) } : {},
       );
     }
     // A pin that a read by id answers 404 asks the bin for the row this way.
@@ -453,6 +468,46 @@ export function scriptHydration(
     return itemsPage(
       visible.map((row) => ({ item: wireItem(row.item), tags: row.tags })),
     );
+  });
+}
+
+/**
+ * What `GET /items/stats` answers for the rows a fixture scripts, which a
+ * hydration reads once for the count it reports while it fills
+ * (`device/report-items-expected`). It counts as the server does: by type
+ * under `by=type`, at the tier named, every state where none is named, and
+ * `system.*` only under `include=system`. A request that carries the reach
+ * is refused, as the server refuses one on a read that is not conditional.
+ */
+export function scriptStats(
+  server: ScriptedServer,
+  rows: Record<string, Array<{ item: WireItemOptions }>> = {},
+): void {
+  server.answer("GET", "/items/stats", (request) => {
+    if (request.headers["x-marfa-reach"] !== undefined)
+      return refusal(400, "validation_error", "not a conditional read");
+    const tier = request.query.get("tier");
+    const state = request.query.get("state");
+    const system = request.query.get("include") === "system";
+    const byType = request.query.get("by") === "type";
+    const counts: Record<string, number> = {};
+    for (const held of Object.values(rows)) {
+      for (const row of held) {
+        const type = String(wireItem(row.item).type);
+        if (type.startsWith("system.") && !system) continue;
+        if (
+          tier !== null &&
+          tier !== "all" &&
+          (row.item.tier ?? "library") !== tier
+        )
+          continue;
+        const rowState = row.item.state ?? "active";
+        if (state !== null && state !== "any" && rowState !== state) continue;
+        const key = byType ? type : rowState;
+        counts[key] = (counts[key] ?? 0) + 1;
+      }
+    }
+    return { kind: "json", status: 200, body: counts };
   });
 }
 
@@ -716,6 +771,11 @@ export async function folderHarness(
      * like the device ignoring the events.
      */
     events?: Responder[];
+    /** Rows to a page of the item listing, as `scriptHydration` takes it. */
+    pageSize?: number;
+    /** Whether a page of the item listing dies unanswered, as
+     *  `scriptHydration` takes it. */
+    drop?: (offset: number) => boolean;
   } = {},
 ): Promise<FolderHarness> {
   const server = options.sharing?.server ?? (await ScriptedServer.start());
@@ -761,6 +821,8 @@ export async function folderHarness(
       edgeTypes: options.edgeTypes,
       lookup: options.lookup,
       key: options.key,
+      pageSize: options.pageSize,
+      drop: options.drop,
     });
   }
   for (const [name, text] of Object.entries(options.files ?? {})) {

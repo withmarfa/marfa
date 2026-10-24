@@ -1,6 +1,6 @@
 use std::io::{self, Write};
 
-use marfa_core::{DrainReport, Item, QueuedWrite, SearchHit, Shown};
+use marfa_core::{Completeness, DrainReport, Item, QueuedWrite, Rows, SearchHit, Shown};
 use serde::Serialize;
 use serde_json::Value;
 
@@ -35,13 +35,25 @@ pub fn line_of<T: Serialize>(
     Ok(())
 }
 
-/// `shown` holds what each item shows, in the same order.
-pub fn items(items: &[Item], shown: &[Shown], json: bool) -> Result<(), CliError> {
-    let mut out = io::stdout().lock();
+/// A local list, `{"items": [...], "completeness": ...}` in JSON. As text, a
+/// partial answer says so after its lines.
+pub fn listing(listed: Rows<(Item, Shown)>, json: bool) -> Result<(), CliError> {
+    let (items, shown): (Vec<_>, Vec<_>) = listed.rows.into_iter().unzip();
     if json {
-        writeln!(out, "{}", serde_json::to_string_pretty(items)?)?;
-        return Ok(());
+        return report(
+            &serde_json::json!({ "items": items, "completeness": listed.completeness }),
+            true,
+            String::new,
+        );
     }
+    item_lines(&items, &shown)?;
+    note_partial(listed.completeness);
+    Ok(())
+}
+
+/// `shown` holds what each item shows, in the same order.
+pub fn item_lines(items: &[Item], shown: &[Shown]) -> Result<(), CliError> {
+    let mut out = io::stdout().lock();
     for (item, shown) in items.iter().zip(shown) {
         writeln!(out, "{}", line(item, shown))?;
     }
@@ -49,6 +61,15 @@ pub fn items(items: &[Item], shown: &[Shown], json: bool) -> Result<(), CliError
         eprintln!("(no items)");
     }
     Ok(())
+}
+
+/// On stderr, as `(no items)` is, so the lines on stdout stay one per row.
+fn note_partial(completeness: Completeness) {
+    if completeness == Completeness::Partial {
+        eprintln!(
+            "(partial: a hydration is filling this copy, and rows still arriving are not shown)"
+        );
+    }
 }
 
 pub fn item(item: &Item, shown: &Shown, json: bool) -> Result<(), CliError> {
@@ -203,13 +224,25 @@ pub fn queued(
     Ok(())
 }
 
-/// `shown` holds what each hit's item shows, in the same order.
-pub fn hits(hits: &[SearchHit], shown: &[Shown], json: bool) -> Result<(), CliError> {
-    let mut out = io::stdout().lock();
+/// A local search, `{"hits": [...], "completeness": ...}` in JSON. As text, a
+/// partial answer says so after its lines.
+pub fn found(found: Rows<(SearchHit, Shown)>, json: bool) -> Result<(), CliError> {
+    let (hits, shown): (Vec<_>, Vec<_>) = found.rows.into_iter().unzip();
     if json {
-        writeln!(out, "{}", serde_json::to_string_pretty(hits)?)?;
-        return Ok(());
+        return report(
+            &serde_json::json!({ "hits": hits, "completeness": found.completeness }),
+            true,
+            String::new,
+        );
     }
+    hit_lines(&hits, &shown)?;
+    note_partial(found.completeness);
+    Ok(())
+}
+
+/// `shown` holds what each hit's item shows, in the same order.
+fn hit_lines(hits: &[SearchHit], shown: &[Shown]) -> Result<(), CliError> {
+    let mut out = io::stdout().lock();
     for (hit, shown) in hits.iter().zip(shown) {
         writeln!(out, "{:>7.3}  {}", hit.score, line(&hit.item, shown))?;
         if !hit.snippet.is_empty() {

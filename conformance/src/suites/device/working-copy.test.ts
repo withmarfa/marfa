@@ -10,7 +10,6 @@ import {
   scriptBlob,
   startHarness,
   scriptHydration,
-  scriptKey,
   scriptWrites,
   type Harness,
 } from "./harness.js";
@@ -2268,13 +2267,16 @@ describe("the working copy says what it is", () => {
     // Every read door answers, because a refusal on one and an empty page on
     // another would be two answers to one question. Nothing has been saved,
     // so each answers that it holds nothing.
-    const listed = await device.list();
+    const listed = await device.listAnswer();
     expect(
       listed.ok && listed.value,
-      `a store that has never hydrated refused a listing, so a copy no server was named for cannot show what its app saved: ${JSON.stringify(listed)}`,
-    ).toEqual([]);
-    const found = await device.search("anything");
-    expect(found.ok && found.value).toEqual([]);
+      `a store that has never hydrated refused a listing, or called what it holds part of a copy, so a copy no server was named for cannot show what its app saved: ${JSON.stringify(listed)}`,
+    ).toEqual({ items: [], completeness: "complete" });
+    const found = await device.searchAnswer("anything");
+    expect(found.ok && found.value).toEqual({
+      hits: [],
+      completeness: "complete",
+    });
     for (const edges of [
       await device.edgesFrom("whatever"),
       await device.edgesTo("whatever"),
@@ -2365,52 +2367,223 @@ describe("the working copy says what it is", () => {
     ).toBe(true);
   });
 
-  it("refuses a read after an interrupted hydration", async () => {
-    harness = await startHarness("interrupted");
-    const { server, device } = harness;
-    server.copyAnswer("GET", "/edge-types", edgeTypeCatalog());
-    server.copyAnswer("GET", "/events", {
-      kind: "sse",
-      frames: [connected, copyStreamCursor("10")],
-    });
-    server.copyAnswer("GET", "/types", {
-      kind: "json",
-      status: 200,
-      body: {
-        data: [
-          {
-            id: "core.note",
-            parent: null,
-            label: "note",
-            display_hints: {},
-            fields: {},
+  /**
+   * Three notes, one to a page, whose second page dies while `cut` holds, so
+   * a hydration lands the first and stops there, as an interrupted one does.
+   */
+  function scriptPartial(server: Harness["server"], cut: () => boolean): void {
+    scriptHydration(server, {
+      head: "10",
+      pageSize: 1,
+      drop: cut,
+      rows: {
+        "core.note": ["one", "two", "three"].map((word) => ({
+          item: {
+            id: `partial-${word}`,
+            properties: { title: `zqpartial ${word}`, body: word },
           },
-        ],
-        next_cursor: null,
+        })),
       },
     });
-    scriptKey(server);
-    // The snapshot dies partway: the first page lands, the second never
-    // answers, which is what a device meets when a hydration is interrupted.
-    server.copyAnswer("GET", "/items", { kind: "drop" });
+  }
 
-    const hydrated = await device.hydrate(["core.note"], "library");
+  it("answers a listing and a search part way through a hydration from the rows it holds, saying the answer is partial", async () => {
+    harness = await startHarness("partial-reads");
+    const { server, device } = harness;
+    let cut = true;
+    scriptPartial(server, () => cut);
     expect(
-      hydrated.ok,
-      "the interrupted hydration reported success, so a caller is told it holds a slice that was never finished",
+      (await device.hydrate(["core.note"], "library")).ok,
+      "the interrupted hydration reported success, so nothing below is about a copy part way through one",
     ).toBe(false);
+    const status = await device.status();
+    expect(status.ok && status.value.hydration).toBe("in_progress");
 
-    const listed = await device.list();
-    expect(
-      listed.ok,
-      "a store left half-hydrated answered a listing, so a caller reads a partial copy as though it were the slice",
-    ).toBe(false);
-    if (!listed.ok) {
+    for (const [handle, reading] of [
+      ["the writer", device],
+      ["a reading handle", device.reopen({ reader: true })],
+    ] as const) {
+      const listed = await reading.listAnswer();
       expect(
-        listed.refusal.code,
-        `the refusal did not say the hydration is incomplete: ${listed.refusal.raw}`,
+        listed.ok,
+        `${handle} refused a listing of a copy part way through a hydration, so an app shows nothing until the whole slice arrives: ${JSON.stringify(listed)}`,
+      ).toBe(true);
+      if (!listed.ok) return;
+      expect(listed.value.items.map((row) => row.id)).toEqual(["partial-one"]);
+      expect(
+        listed.value.completeness,
+        `${handle} answered a listing of part of a copy without saying so, so a caller reads a piece as the whole slice`,
+      ).toBe("partial");
+      const found = await reading.searchAnswer("zqpartial");
+      expect(found.ok, JSON.stringify(found)).toBe(true);
+      if (!found.ok) return;
+      expect(found.value.hits.map((hit) => hit.item.id)).toEqual([
+        "partial-one",
+      ]);
+      expect(
+        found.value.completeness,
+        `${handle} answered a search of part of a copy without saying so`,
+      ).toBe("partial");
+    }
+
+    // The witness: the same reads of the whole copy answer every row and say
+    // so, so the answers above were short because the copy was.
+    cut = false;
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    const whole = await device.listAnswer();
+    expect(
+      whole.ok && {
+        ids: whole.value.items.map((row) => row.id).sort(),
+        completeness: whole.value.completeness,
+      },
+    ).toEqual({
+      ids: ["partial-one", "partial-three", "partial-two"],
+      completeness: "complete",
+    });
+    const found = await device.searchAnswer("zqpartial");
+    expect(
+      found.ok && {
+        hits: found.value.hits.length,
+        completeness: found.value.completeness,
+      },
+    ).toEqual({ hits: 3, completeness: "complete" });
+  });
+
+  it("answers a read by id of a row it holds part way through a hydration, and refuses one it does not hold yet", async () => {
+    harness = await startHarness("partial-get");
+    const { server, device } = harness;
+    let cut = true;
+    scriptPartial(server, () => cut);
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(false);
+
+    const held = await device.get("partial-one");
+    expect(
+      held.ok ? held.value.id : held.refusal.code,
+      "a row the copy holds was refused part way through a hydration",
+    ).toBe("partial-one");
+    const arriving = await device.get("partial-two");
+    expect(
+      arriving.ok ? "answered" : arriving.refusal.code,
+      "a row still to arrive was answered or refused as though the copy were whole, so a caller reads it as gone",
+    ).toBe("hydration_incomplete");
+
+    // The witness: the whole copy answers the row, and says a row it does not
+    // hold is not held, so the refusal above was the copy's state speaking.
+    cut = false;
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    const arrived = await device.get("partial-two");
+    expect(arrived.ok && arrived.value.id).toBe("partial-two");
+    const absent = await device.get("never-listed");
+    expect(absent.ok ? "answered" : absent.refusal.code).toBe("not_held");
+  });
+
+  it("refuses a read of edges part way through a hydration, and answers it once the copy is whole", async () => {
+    harness = await startHarness("partial-edges");
+    const { server, device } = harness;
+    let cut = true;
+    scriptPartial(server, () => cut);
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(false);
+    for (const [name, edges] of [
+      ["from", await device.edgesFrom("partial-one")],
+      ["to", await device.edgesTo("partial-one")],
+    ] as const) {
+      expect(
+        edges.ok ? "answered" : edges.refusal.code,
+        `the edges ${name} a row were answered part way through a hydration, though an edge may still be arriving`,
       ).toBe("hydration_incomplete");
     }
+
+    // The witness: the whole copy answers the same reads.
+    cut = false;
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    expect((await device.edgesFrom("partial-one")).ok).toBe(true);
+    expect((await device.edgesTo("partial-one")).ok).toBe(true);
+  });
+
+  it("reports the items it holds and the items the server counted while a hydration fills the copy", async () => {
+    harness = await startHarness("partial-counts");
+    const { server, device } = harness;
+    let cut = true;
+    scriptPartial(server, () => cut);
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(false);
+    const filling = await device.status();
+    expect(filling.ok, JSON.stringify(filling)).toBe(true);
+    if (!filling.ok) return;
+    expect(filling.value.hydration).toBe("in_progress");
+    expect(
+      [
+        filling.value.items,
+        filling.value.items_listed,
+        filling.value.items_expected,
+      ],
+      "a copy part way through a hydration did not report what it holds and what its listings brought against what the server counted",
+    ).toEqual([1, 1, 3]);
+    const counted = server.requests.filter(
+      (request) => request.pathname === "/items/stats",
+    );
+    expect(
+      counted.map((request) => request.query.toString()),
+      "the hydration asked for its count more than once, or not by type at the slice's tier",
+    ).toEqual(["by=type&tier=library"]);
+
+    cut = false;
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    const complete = await device.status();
+    expect(complete.ok && complete.value.items).toBe(3);
+    expect(
+      complete.ok &&
+        ("items_expected" in complete.value ||
+          "items_listed" in complete.value),
+      "a complete copy still reported a count from the hydration that filled it",
+    ).toBe(false);
+  });
+
+  it("reports the rows its listings brought apart from a write still waiting while a hydration fills the copy", async () => {
+    harness = await startHarness("partial-listed");
+    const { server, device } = harness;
+    // The report makes the copy a create needs.
+    expect((await device.status()).ok).toBe(true);
+    const queued = await device.create({
+      type: "core.note",
+      properties: { title: "zqwaiting", body: "not sent" },
+    });
+    expect(queued.ok, JSON.stringify(queued)).toBe(true);
+    scriptPartial(server, () => true);
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(false);
+    const filling = await device.status();
+    expect(filling.ok, JSON.stringify(filling)).toBe(true);
+    if (!filling.ok) return;
+    expect(filling.value.hydration).toBe("in_progress");
+    // The witness: the waiting write is a row the copy holds, so `items`
+    // counts it, and a caller setting `items` against the count misreads.
+    expect(filling.value.items).toBe(2);
+    expect(
+      [filling.value.items_listed, filling.value.items_expected],
+      "the rows the listings brought counted the waiting write, so the progress against the server's count can pass the whole",
+    ).toEqual([1, 3]);
+  });
+
+  it("leaves the expected count out of its report where the server did not count the slice", async () => {
+    harness = await startHarness("partial-uncounted");
+    const { server, device } = harness;
+    // Ahead of the counting answer the script adds, so this hydration's count
+    // is the one refused.
+    server.answer(
+      "GET",
+      "/items/stats",
+      refusal(500, "internal_error", "the count failed"),
+    );
+    scriptPartial(server, () => true);
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(false);
+    const filling = await device.status();
+    expect(filling.ok, JSON.stringify(filling)).toBe(true);
+    if (!filling.ok) return;
+    expect(filling.value.hydration).toBe("in_progress");
+    expect(filling.value.items).toBe(1);
+    expect(
+      "items_expected" in filling.value,
+      "a copy whose count the server refused reported one, so a caller reads a guess as the size of the slice",
+    ).toBe(false);
   });
 
   it("refuses a local write after an interrupted hydration", async () => {
@@ -2533,7 +2706,8 @@ describe("the working copy says what it is", () => {
     ).toBe("in_progress");
     expect(after.value.slice_types).toContain("core.note");
     expect(after.value.event_cursor).toBe("10");
-    expect((await device.list()).ok).toBe(false);
+    const listed = await device.listAnswer();
+    expect(listed.ok && listed.value.completeness).toBe("partial");
   });
 });
 

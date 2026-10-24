@@ -4,6 +4,7 @@ import {
   startHarness,
   scriptHydration,
   scriptKey,
+  scriptStats,
   scriptWrites,
   readsOf,
   type Harness,
@@ -3910,6 +3911,7 @@ describe("catch-up keeps the copy to its slice", () => {
       },
     );
     scriptKey(server);
+    scriptStats(server);
     server.copyAnswer("GET", "/items", itemsPage([]));
     server.copyAnswer(
       "GET",
@@ -3975,6 +3977,7 @@ describe("catch-up keeps the copy to its slice", () => {
       },
     );
     scriptKey(server);
+    scriptStats(server);
     server.copyAnswer("GET", "/items", itemsPage([]));
     server.copyAnswer(
       "GET",

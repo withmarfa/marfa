@@ -1281,7 +1281,7 @@ describe("a folder round trip", () => {
     // in it. This is the success the exit-code scenario's unhydrated
     // refusal is held against.
     const store = join(dir, ".marfa", "core.sqlite");
-    const local = await c.cli.json<Array<{ id: string }>>([
+    const local = await c.cli.json<{ items: Array<{ id: string }> }>([
       "device",
       "--db",
       store,
@@ -1290,7 +1290,7 @@ describe("a folder round trip", () => {
       "--type",
       "core.note",
     ]);
-    expect(local.map((row) => row.id)).toContain(seed.item.id);
+    expect(local.items.map((row) => row.id)).toContain(seed.item.id);
 
     const title = unique("cli-folder-note");
     writeFileSync(

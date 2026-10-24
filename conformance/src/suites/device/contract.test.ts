@@ -43,6 +43,7 @@ import {
   scriptBlob,
   scriptHydration,
   scriptKey,
+  scriptStats,
   scriptWrites,
   startHarness,
   type Harness,
@@ -3198,6 +3199,7 @@ describe("the contract the working copy was built for", () => {
     scripted.copyAnswer("GET", "/types", typeCatalog());
     scripted.copyAnswer("GET", "/edge-types", edgeTypeCatalog());
     scriptKey(scripted);
+    scriptStats(scripted);
     scripted.copyAnswer("GET", "/items", () =>
       naming(itemsPage([{ item: wireItem({ id: "n1" }) }]), pageOn),
     );
@@ -3211,6 +3213,7 @@ describe("the contract the working copy was built for", () => {
       "GET /types",
       "GET /edge-types",
       "GET /keys/current",
+      "GET /items/stats",
       "GET /items",
     ]);
     const status = await device.status();
@@ -3243,6 +3246,7 @@ describe("the contract the working copy was built for", () => {
     );
     scripted.copyAnswer("GET", "/edge-types", edgeTypeCatalog());
     scriptKey(scripted);
+    scriptStats(scripted);
     scripted.copyAnswer("GET", "/items", itemsPage([]));
     expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
 
@@ -3300,6 +3304,7 @@ describe("the contract the working copy was built for", () => {
     scripted.copyAnswer("GET", "/types", typeCatalog(), typeCatalog(), endless);
     scripted.copyAnswer("GET", "/edge-types", edgeTypeCatalog());
     scriptKey(scripted);
+    scriptStats(scripted);
     scripted.copyAnswer("GET", "/items", itemsPage([]));
     expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
     await waitsOnTheBody(device.hold(["catch-up"]));
@@ -3473,6 +3478,7 @@ describe("the contract the working copy was built for", () => {
     );
     scripted.copyAnswer("GET", "/edge-types", edgeTypeCatalog());
     scriptKey(scripted);
+    scriptStats(scripted);
     scripted.copyAnswer("GET", "/items", itemsPage([]));
     for (const order of orders.slice(0, 2)) {
       catalogOn = order;

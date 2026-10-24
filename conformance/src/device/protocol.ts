@@ -137,6 +137,12 @@ export interface Status {
   instance_id?: string | null;
   hydration: "never" | "in_progress" | "complete" | "expired";
   items: number;
+  /** While a hydration fills the copy, the items its slice held on the
+   *  server when it started, where the server counted them. */
+  items_expected?: number;
+  /** While a hydration fills the copy, the rows its listings have brought,
+   *  the figure a caller sets against `items_expected`. */
+  items_listed?: number;
   edges: number;
   /** Moves each time a refresh changes the catalog the copy holds, and is
    *  null where the copy has never held one. */
@@ -199,6 +205,22 @@ export interface SearchHit {
   item: Item;
   score: number;
   snippet: string;
+}
+
+/** Whether a local list or search was read from a whole copy, or from one a
+ *  hydration has started and not completed. */
+export type Completeness = "complete" | "partial";
+
+/** A local listing, and whether the copy it was read from is whole. */
+export interface Listing {
+  items: Item[];
+  completeness: Completeness;
+}
+
+/** A local search, and whether the copy it was read from is whole. */
+export interface Found {
+  hits: SearchHit[];
+  completeness: Completeness;
 }
 
 /** The three writes a file attached to an item is, and the text that embeds

@@ -85,11 +85,11 @@ pub use folder_settings::FolderRow;
 pub use integers::refuse_inexact_integers;
 pub use lock::Handle;
 pub use model::{
-    Added, Attached, Attachment, BinPage, BlockedReason, CatchUpFailed, CatchUpReport, Draft, Edge,
-    EdgeDraft, EdgeEdit, Edit, FieldRefusal, GrantKind, GrantLevel, HydrateReport, Hydration, Item,
-    ItemState, LastFailure, ListFilters, MetadataWrite, MissingGrant, Outcome, QueuedWrite,
-    Refusal, SearchFilters, SearchHit, Shown, SliceTier, Sort, SortDirection, SortField, Status,
-    Thumbnail, Tier, UnregisteredType, Verdict, WriteKind,
+    Added, Attached, Attachment, BinPage, BlockedReason, CatchUpFailed, CatchUpReport,
+    Completeness, Draft, Edge, EdgeDraft, EdgeEdit, Edit, FieldRefusal, GrantKind, GrantLevel,
+    HydrateReport, Hydration, Item, ItemState, LastFailure, ListFilters, MetadataWrite,
+    MissingGrant, Outcome, QueuedWrite, Refusal, Rows, SearchFilters, SearchHit, Shown, SliceTier,
+    Sort, SortDirection, SortField, Status, Thumbnail, Tier, UnregisteredType, Verdict, WriteKind,
 };
 pub use scaffold::{ScaffoldField, scaffold_type};
 pub use store::CEILING;
@@ -565,8 +565,8 @@ impl Core {
     }
 
     /// `hydrate_with`, ended with `Canceled` soon after `stop` is raised. The
-    /// copy is then unfinished and refuses reads, as after any hydration that
-    /// failed part way; the queue is untouched.
+    /// copy is then unfinished, as after a hydration that failed part way: it
+    /// answers lists and searches marked partial and refuses writes; the queue is untouched.
     pub fn hydrate_until(
         &self,
         types: &[String],
@@ -914,22 +914,27 @@ impl Core {
         store::data_version(&*self.conn()?)
     }
 
-    pub fn list(&self, filters: &ListFilters, sort: Sort) -> Result<Vec<Item>> {
-        let conn = self.conn()?;
-        store::refuse_unless_usable(&conn)?;
-        let catalog = catalog::Catalog::load(&conn)?;
-        query::list(&conn, &catalog, filters, sort)
+    /// Answered part way through a hydration from the rows that have arrived,
+    /// marked `Partial`.
+    pub fn list(&self, filters: &ListFilters, sort: Sort) -> Result<Rows<Item>> {
+        store::read_marked(&mut *self.conn()?, |conn, completeness| {
+            let catalog = catalog::Catalog::load(conn)?;
+            Ok(Rows {
+                rows: query::list(conn, &catalog, filters, sort)?,
+                completeness,
+            })
+        })
     }
 
     /// `list`, each item with the title and body it shows (`Catalog::shown`),
     /// all read under one snapshot of the catalog.
-    pub fn list_shown(&self, filters: &ListFilters, sort: Sort) -> Result<Vec<(Item, Shown)>> {
+    pub fn list_shown(&self, filters: &ListFilters, sort: Sort) -> Result<Rows<(Item, Shown)>> {
         self.list_shown_with(filters, sort, &mut store::Unreadable::Refuse)
     }
 
     /// `list_shown`, but a row whose stored properties cannot be read stays
     /// in the answer with no properties, and its `Shown` says why.
-    pub fn list_kept(&self, filters: &ListFilters, sort: Sort) -> Result<Vec<(Item, Shown)>> {
+    pub fn list_kept(&self, filters: &ListFilters, sort: Sort) -> Result<Rows<(Item, Shown)>> {
         self.list_shown_with(filters, sort, &mut store::Unreadable::Keep(HashMap::new()))
     }
 
@@ -938,24 +943,27 @@ impl Core {
         filters: &ListFilters,
         sort: Sort,
         unreadable: &mut store::Unreadable,
-    ) -> Result<Vec<(Item, Shown)>> {
-        let conn = self.conn()?;
-        store::refuse_unless_usable(&conn)?;
-        let catalog = catalog::Catalog::load(&conn)?;
-        let items = query::list_with(&conn, &catalog, filters, sort, unreadable)?;
-        Ok(items
-            .into_iter()
+    ) -> Result<Rows<(Item, Shown)>> {
+        store::read_marked(&mut *self.conn()?, |conn, completeness| {
+            let catalog = catalog::Catalog::load(conn)?;
+            let items = query::list_with(conn, &catalog, filters, sort, unreadable)?;
+            Ok(Rows {
+                rows: items,
+                completeness,
+            }
             .map(|item| {
                 let shown = catalog.shown_unreadable(&item, unreadable);
                 (item, shown)
-            })
-            .collect())
+            }))
+        })
     }
 
+    /// `None` only where the copy is whole: part way through a hydration, a
+    /// row that has not arrived is refused `HydrationIncomplete`.
     pub fn get(&self, id: &str) -> Result<Option<Item>> {
-        let conn = self.conn()?;
-        store::refuse_unless_usable(&conn)?;
-        store::item_by_id(&conn, id)
+        store::read_marked(&mut *self.conn()?, |conn, completeness| {
+            store::held_or_refused(store::item_by_id(conn, id)?, completeness)
+        })
     }
 
     /// `get`, with the title and body the item shows.
@@ -974,29 +982,32 @@ impl Core {
         id: &str,
         unreadable: &mut store::Unreadable,
     ) -> Result<Option<(Item, Shown)>> {
-        let conn = self.conn()?;
-        store::refuse_unless_usable(&conn)?;
-        let Some(item) = store::item_by_id_with(&conn, id, unreadable)? else {
-            return Ok(None);
-        };
-        let catalog = catalog::Catalog::load(&conn)?;
-        let shown = catalog.shown_unreadable(&item, unreadable);
-        Ok(Some((item, shown)))
+        store::read_marked(&mut *self.conn()?, |conn, completeness| {
+            let found = store::item_by_id_with(conn, id, unreadable)?;
+            let Some(item) = store::held_or_refused(found, completeness)? else {
+                return Ok(None);
+            };
+            let catalog = catalog::Catalog::load(conn)?;
+            let shown = catalog.shown_unreadable(&item, unreadable);
+            Ok(Some((item, shown)))
+        })
     }
 
     /// An item the copy does not hold is refused `NotFound`, never answered
-    /// `None`. A held value that is not a data URI (one written before its
+    /// `None`, and refused `HydrationIncomplete` part way through a
+    /// hydration. A held value that is not a data URI (one written before its
     /// type declared the property) is refused `Decoding`, naming the item.
     pub fn thumbnail(&self, id: &str) -> Result<Option<Thumbnail>> {
-        let conn = self.conn()?;
-        store::refuse_unless_usable(&conn)?;
-        let Some(item) = store::item_by_id(&conn, id)? else {
-            return Err(CoreError::NotFound {
-                code: "not_held".into(),
-                message: format!("{id} is not held in this working copy"),
-            });
-        };
-        let catalog = catalog::Catalog::load(&conn)?;
+        let (item, catalog) = store::read_marked(&mut *self.conn()?, |conn, completeness| {
+            let found = store::item_by_id(conn, id)?;
+            let Some(item) = store::held_or_refused(found, completeness)? else {
+                return Err(CoreError::NotFound {
+                    code: "not_held".into(),
+                    message: format!("{id} is not held in this working copy"),
+                });
+            };
+            Ok((item, catalog::Catalog::load(conn)?))
+        })?;
         let Some(field) = catalog.thumbnail_field(&item.r#type) else {
             return Ok(None);
         };
@@ -1123,13 +1134,13 @@ impl Core {
             .collect())
     }
 
-    /// Best match first.
+    /// Best match first. Answered part way through a hydration as `list` is.
     pub fn search(
         &self,
         query: &str,
         filters: &SearchFilters,
         limit: usize,
-    ) -> Result<Vec<SearchHit>> {
+    ) -> Result<Rows<SearchHit>> {
         self.find(query, filters, limit, &mut store::Unreadable::Refuse)
             .map(|(_, hits)| hits)
     }
@@ -1141,12 +1152,12 @@ impl Core {
         filters: &SearchFilters,
         limit: usize,
         unreadable: &mut store::Unreadable,
-    ) -> Result<(catalog::Catalog, Vec<SearchHit>)> {
+    ) -> Result<(catalog::Catalog, Rows<SearchHit>)> {
         let op = telemetry::operation!("search", hits);
         let result = self.find_in_copy(query, filters, limit, unreadable);
         telemetry::ended!(op, result.as_ref(), |found| {
             outcome = "ok",
-            hits = found.1.len(),
+            hits = found.1.rows.len(),
         });
         result
     }
@@ -1157,12 +1168,12 @@ impl Core {
         filters: &SearchFilters,
         limit: usize,
         unreadable: &mut store::Unreadable,
-    ) -> Result<(catalog::Catalog, Vec<SearchHit>)> {
-        let conn = self.conn()?;
-        store::refuse_unless_usable(&conn)?;
-        let catalog = catalog::Catalog::load(&conn)?;
-        let hits = search::search(&conn, &catalog, query, filters, limit, unreadable)?;
-        Ok((catalog, hits))
+    ) -> Result<(catalog::Catalog, Rows<SearchHit>)> {
+        store::read_marked(&mut *self.conn()?, |conn, completeness| {
+            let catalog = catalog::Catalog::load(conn)?;
+            let rows = search::search(conn, &catalog, query, filters, limit, unreadable)?;
+            Ok((catalog, Rows { rows, completeness }))
+        })
     }
 
     /// `search`, each hit's item with the title and body it shows, under one
@@ -1172,7 +1183,7 @@ impl Core {
         query: &str,
         filters: &SearchFilters,
         limit: usize,
-    ) -> Result<Vec<(SearchHit, Shown)>> {
+    ) -> Result<Rows<(SearchHit, Shown)>> {
         self.search_shown_with(query, filters, limit, &mut store::Unreadable::Refuse)
     }
 
@@ -1183,7 +1194,7 @@ impl Core {
         query: &str,
         filters: &SearchFilters,
         limit: usize,
-    ) -> Result<Vec<(SearchHit, Shown)>> {
+    ) -> Result<Rows<(SearchHit, Shown)>> {
         self.search_shown_with(
             query,
             filters,
@@ -1198,15 +1209,12 @@ impl Core {
         filters: &SearchFilters,
         limit: usize,
         unreadable: &mut store::Unreadable,
-    ) -> Result<Vec<(SearchHit, Shown)>> {
+    ) -> Result<Rows<(SearchHit, Shown)>> {
         let (catalog, hits) = self.find(query, filters, limit, unreadable)?;
-        Ok(hits
-            .into_iter()
-            .map(|hit| {
-                let shown = catalog.shown_unreadable(&hit.item, unreadable);
-                (hit, shown)
-            })
-            .collect())
+        Ok(hits.map(|hit| {
+            let shown = catalog.shown_unreadable(&hit.item, unreadable);
+            (hit, shown)
+        }))
     }
 
     /// Answerable without a hydration, unlike the reads: a caller must be
@@ -2435,40 +2443,55 @@ impl Core {
     }
 
     pub fn status(&self) -> Result<Status> {
-        let conn = self.conn()?;
-        let slice_types = match store::meta_get(&conn, store::META_SLICE_TYPES)? {
+        // One snapshot: a hydration another handle completes between two
+        // reads would pair `in_progress` with counts it has already cleared.
+        let mut conn = self.conn()?;
+        let tx = conn.transaction()?;
+        let slice_types = match store::meta_get(&tx, store::META_SLICE_TYPES)? {
             Some(json) => serde_json::from_str(&json)?,
             None => Vec::new(),
         };
-        let slice_tier = match store::meta_get(&conn, store::META_SLICE_TIER)? {
+        let slice_tier = match store::meta_get(&tx, store::META_SLICE_TIER)? {
             Some(text) => Some(store::slice_tier(&text)?),
             None => None,
         };
-        let event_cursor = store::meta_get(&conn, store::META_EVENT_CURSOR)?;
-        let hydration = if !store::hydration_complete(&conn)? {
+        let event_cursor = store::meta_get(&tx, store::META_EVENT_CURSOR)?;
+        let hydration = if !store::hydration_complete(&tx)? {
             Hydration::InProgress
-        } else if store::hydrated(&conn)? {
+        } else if store::hydrated(&tx)? {
             Hydration::Complete
-        } else if store::holds_slice(&conn)? {
+        } else if store::holds_slice(&tx)? {
             // A slice and no cursor: the log aged past the cursor.
             Hydration::Expired
         } else {
             Hydration::Never
         };
-        Ok(Status {
-            server_origin: store::meta_get(&conn, store::META_SERVER_ORIGIN)?,
-            instance_id: store::meta_get(&conn, store::META_INSTANCE_ID)?,
+        let filling = |key| -> Result<Option<u64>> {
+            Ok(match hydration {
+                Hydration::InProgress => {
+                    store::meta_get(&tx, key)?.and_then(|count| count.parse().ok())
+                }
+                _ => None,
+            })
+        };
+        let status = Status {
+            server_origin: store::meta_get(&tx, store::META_SERVER_ORIGIN)?,
+            instance_id: store::meta_get(&tx, store::META_INSTANCE_ID)?,
             slice_types,
             slice_tier,
-            slice_edge_types: store::whole_edge_types(&conn)?,
-            pinned: store::pins(&conn)?,
+            slice_edge_types: store::whole_edge_types(&tx)?,
+            pinned: store::pins(&tx)?,
             event_cursor,
             hydration,
-            items: store::count(&conn, "items")?,
-            edges: store::count(&conn, "edges")?,
-            catalog_version: store::catalog_version(&conn)?,
-            file_cache: self.file_cache_with(&conn)?,
-        })
+            items: store::count(&tx, "items")?,
+            items_expected: filling(store::META_ITEMS_EXPECTED)?,
+            items_listed: filling(store::META_ITEMS_LISTED)?,
+            edges: store::count(&tx, "edges")?,
+            catalog_version: store::catalog_version(&tx)?,
+            file_cache: self.file_cache_with(&tx)?,
+        };
+        tx.commit()?;
+        Ok(status)
     }
 
     /// How the file cache's budget is chosen. A reading handle sees the
@@ -3464,7 +3487,10 @@ mod tests {
             })))
             .unwrap();
         let before = core.queue().unwrap();
-        let rows = core.list(&ListFilters::default(), Sort::default()).unwrap();
+        let rows = core
+            .list(&ListFilters::default(), Sort::default())
+            .unwrap()
+            .rows;
         for (field, value) in [
             ("title", Value::Null),
             ("title", serde_json::json!("😀abcd")),
@@ -3492,7 +3518,9 @@ mod tests {
             );
             assert_eq!(core.queue().unwrap(), before);
             assert_eq!(
-                core.list(&ListFilters::default(), Sort::default()).unwrap(),
+                core.list(&ListFilters::default(), Sort::default())
+                    .unwrap()
+                    .rows,
                 rows
             );
         }
@@ -4270,7 +4298,7 @@ mod tests {
         assert!(core.get_shown("torn").is_err());
         assert!(core.edges_from("row").is_err());
 
-        let kept = core.list_kept(&filters, Sort::default()).unwrap();
+        let kept = core.list_kept(&filters, Sort::default()).unwrap().rows;
         let ids: Vec<&str> = kept.iter().map(|(item, _)| item.id.as_str()).collect();
         assert_eq!(ids.len(), 5, "{ids:?}");
         for (item, shown) in &kept {
@@ -4309,7 +4337,8 @@ mod tests {
                 },
                 Sort::default(),
             )
-            .unwrap();
+            .unwrap()
+            .rows;
         assert_eq!(
             only_calm
                 .iter()
@@ -4326,7 +4355,8 @@ mod tests {
                 },
                 10,
             )
-            .unwrap();
+            .unwrap()
+            .rows;
         assert_eq!(
             found
                 .iter()
@@ -4335,7 +4365,7 @@ mod tests {
             ["calm"]
         );
 
-        let hits = core.search_kept("zebra", &search, 10).unwrap();
+        let hits = core.search_kept("zebra", &search, 10).unwrap().rows;
         assert_eq!(hits.len(), 3);
         assert_eq!(
             hits.iter()
@@ -4616,12 +4646,14 @@ mod tests {
         assert_eq!(
             core.list(&ListFilters::default(), Sort::default())
                 .unwrap()
+                .rows
                 .len(),
             1
         );
         assert_eq!(
             core.search("offline", &SearchFilters::default(), 10)
                 .unwrap()
+                .rows
                 .len(),
             1
         );
@@ -5679,6 +5711,7 @@ mod tests {
         let found = |query: &str| {
             core.search(query, &SearchFilters::default(), 10)
                 .unwrap()
+                .rows
                 .into_iter()
                 .map(|hit| hit.item.id)
                 .collect::<Vec<_>>()
@@ -5742,6 +5775,7 @@ mod tests {
         let found = |query: &str| {
             core.search(query, &SearchFilters::default(), 10)
                 .unwrap()
+                .rows
                 .into_iter()
                 .map(|hit| hit.item.id)
                 .collect::<Vec<_>>()

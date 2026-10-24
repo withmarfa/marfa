@@ -217,8 +217,8 @@ pub struct UnregisteredType {
 
 /// Raised to end a `hydrate`, `catchUp` or `drain` it was given to, soon
 /// after, with `MarfaError.Canceled`. What the call had taken is consistent:
-/// a hydration left unfinished refuses reads, a catch-up keeps the cursor it
-/// reached, and a drain leaves what it had not sent queued, and an upload or
+/// a hydration left unfinished answers lists and searches marked partial and
+/// refuses writes, a catch-up keeps the cursor it reached, and a drain leaves what it had not sent queued, and an upload or
 /// item or edge write it had in flight queued as sent, for the next drain to
 /// send again under the same key. A raised `Stop` stays raised, so a call given one afterwards
 /// ends at once.
@@ -291,6 +291,38 @@ impl From<marfa_core::CatchUpFailed> for CatchUpError {
             catalog_changed: failed.catalog_changed,
         }
     }
+}
+
+/// Whether a local list or search was read from a whole copy, or from one a
+/// hydration is still filling, which holds only the rows that have arrived.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum Completeness {
+    Complete,
+    Partial,
+}
+
+impl From<marfa_core::Completeness> for Completeness {
+    fn from(completeness: marfa_core::Completeness) -> Self {
+        match completeness {
+            marfa_core::Completeness::Complete => Completeness::Complete,
+            marfa_core::Completeness::Partial => Completeness::Partial,
+        }
+    }
+}
+
+/// The items a local list answers, and whether the copy was whole.
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct Listing {
+    pub items: Vec<Item>,
+    pub completeness: Completeness,
+}
+
+/// The hits a local search answers, best match first, and whether the copy
+/// was whole.
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct Found {
+    pub hits: Vec<SearchHit>,
+    pub completeness: Completeness,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
@@ -377,6 +409,12 @@ pub struct Status {
     pub event_cursor: Option<String>,
     pub hydration: Hydration,
     pub items: u64,
+    /// While a hydration fills the copy, how many items its slice held on the
+    /// server when it started; none where the server did not count them.
+    pub items_expected: Option<u64>,
+    /// While a hydration fills the copy, how many rows its listings have
+    /// brought, the figure to set against `items_expected`.
+    pub items_listed: Option<u64>,
     pub edges: u64,
     /// Moves each time a refresh changes the catalog; none where the copy has
     /// never held one.
@@ -1312,6 +1350,32 @@ impl From<marfa_core::ItemState> for ItemState {
     }
 }
 
+pub(crate) fn listing(listed: marfa_core::Rows<(marfa_core::Item, marfa_core::Shown)>) -> Listing {
+    Listing {
+        completeness: listed.completeness.into(),
+        items: listed
+            .rows
+            .into_iter()
+            .map(|(held, shown)| item(held, shown))
+            .collect(),
+    }
+}
+
+pub(crate) fn found(found: marfa_core::Rows<(marfa_core::SearchHit, marfa_core::Shown)>) -> Found {
+    Found {
+        completeness: found.completeness.into(),
+        hits: found
+            .rows
+            .into_iter()
+            .map(|(hit, shown)| SearchHit {
+                item: item(hit.item, shown),
+                score: hit.score,
+                snippet: hit.snippet,
+            })
+            .collect(),
+    }
+}
+
 /// `shown` is what the core's catalog says the item shows.
 fn item(item: marfa_core::Item, shown: marfa_core::Shown) -> Item {
     Item {
@@ -1954,13 +2018,8 @@ impl Core {
         })
     }
 
-    pub fn list(&self, filters: ListFilters, sort: Sort) -> Result<Vec<Item>, MarfaError> {
-        Ok(self
-            .inner
-            .list_kept(&filters.into(), sort.into())?
-            .into_iter()
-            .map(|(held, shown)| item(held, shown))
-            .collect())
+    pub fn list(&self, filters: ListFilters, sort: Sort) -> Result<Listing, MarfaError> {
+        Ok(listing(self.inner.list_kept(&filters.into(), sort.into())?))
     }
 
     pub fn get(&self, id: String) -> Result<Option<Item>, MarfaError> {
@@ -2019,17 +2078,12 @@ impl Core {
         query: String,
         filters: SearchFilters,
         limit: u32,
-    ) -> Result<Vec<SearchHit>, MarfaError> {
-        Ok(self
-            .inner
-            .search_kept(&query, &filters.into(), limit as usize)?
-            .into_iter()
-            .map(|(hit, shown)| SearchHit {
-                item: item(hit.item, shown),
-                score: hit.score,
-                snippet: hit.snippet,
-            })
-            .collect())
+    ) -> Result<Found, MarfaError> {
+        Ok(found(self.inner.search_kept(
+            &query,
+            &filters.into(),
+            limit as usize,
+        )?))
     }
 
     pub fn status(&self) -> Result<Status, MarfaError> {
@@ -2049,6 +2103,8 @@ impl Core {
                 marfa_core::Hydration::Expired => Hydration::Expired,
             },
             items: status.items,
+            items_expected: status.items_expected,
+            items_listed: status.items_listed,
             edges: status.edges,
             catalog_version: status.catalog_version,
             file_cache: status.file_cache.into(),
@@ -3962,7 +4018,8 @@ mod tests {
                     direction: SortDirection::Descending,
                 },
             )
-            .unwrap();
+            .unwrap()
+            .items;
         assert_eq!(listed[0].body.as_deref(), Some("Daily"));
     }
 
@@ -4087,7 +4144,8 @@ mod tests {
                     direction: SortDirection::Ascending,
                 },
             )
-            .unwrap();
+            .unwrap()
+            .items;
         assert_eq!(listed[0].properties, wanted);
         // An integer the server would serve back with other digits is refused.
         for value in ["9007199254740993", "-9223372036854775808"] {
@@ -4257,7 +4315,10 @@ mod tests {
             field: SortField::CreatedAt,
             direction: SortDirection::Ascending,
         };
-        let listed = core.list(ListFilters::default(), by_creation).unwrap();
+        let listed = core
+            .list(ListFilters::default(), by_creation)
+            .unwrap()
+            .items;
         assert_eq!(listed.len(), 3);
         assert_eq!(listed[0].unreadable_properties, None);
         assert_eq!(text(&listed[0].properties), r#"{"title":"kept zebra"}"#);
@@ -4273,7 +4334,8 @@ mod tests {
         }
         let hits = core
             .search("zebra".into(), SearchFilters::default(), 10)
-            .unwrap();
+            .unwrap()
+            .hits;
         assert_eq!(hits.len(), 3);
         assert_eq!(
             hits.iter()
@@ -4295,7 +4357,8 @@ mod tests {
                     direction: SortDirection::Ascending,
                 },
             )
-            .unwrap();
+            .unwrap()
+            .items;
         assert_eq!(
             filtered.iter().map(|i| i.id.clone()).collect::<Vec<_>>(),
             [ids[0].clone()]
@@ -4309,7 +4372,8 @@ mod tests {
                 },
                 10,
             )
-            .unwrap();
+            .unwrap()
+            .hits;
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].item.id, ids[0]);
 
