@@ -47,11 +47,22 @@ fn hydrate_inner(
     let types = declared_types(types)?;
     let edge_types = declared_edge_types(edge_types)?;
     let mut restart = None;
+    let mut pages = 0;
     loop {
-        match attempt(core, http, &types, tier, &edge_types, restart, stop)? {
+        match attempt(
+            core,
+            http,
+            &types,
+            tier,
+            &edge_types,
+            restart,
+            &mut pages,
+            stop,
+        )? {
             Attempt::Done(report) => return Ok(report),
-            // Only a resumed attempt asks to start again, and one that starts
-            // again never resumes, so this goes round at most twice.
+            // Only an attempt that would resume asks to start again, and one
+            // that starts again never resumes, so this goes round at most
+            // twice.
             Attempt::Again(reason) => restart = Some(reason),
         }
     }
@@ -156,8 +167,14 @@ impl Reached {
 enum Start {
     Fresh(Option<HydrateRestart>),
     Resume(Reached),
+    /// Start again from the first page, under a head and catalog read again:
+    /// the ones read for this attempt are of a reach that has gone.
+    Reread(HydrateRestart),
 }
 
+/// One walk of the slice, adding each listing page it reads to `pages`,
+/// which counts every page of the call.
+#[allow(clippy::too_many_arguments)]
 fn attempt(
     core: &Core,
     http: &Http,
@@ -165,6 +182,7 @@ fn attempt(
     tier: SliceTier,
     edge_types: &[String],
     restart: Option<HydrateRestart>,
+    pages: &mut u64,
     stop: &AtomicBool,
 ) -> Result<Attempt> {
     // Nothing is cleared until the copy is about to be replaced, so a stop
@@ -195,40 +213,40 @@ fn attempt(
             tx.commit()?;
         }
     }
+    refuse_unheld(&catalog_rows, types, edge_types)?;
+    let start = match restart {
+        Some(reason) => Start::Fresh(Some(reason)),
+        None => resume_point(core, http, &instance, &fence, types, tier, edge_types, stop)?,
+    };
+    let (reached, restarted) = match start {
+        Start::Reread(reason) => return Ok(Attempt::Again(reason)),
+        // Rows already taken were indexed by the catalog the copy holds, and
+        // a resumed walk would index the rest by another.
+        Start::Resume(_) if catalog_differs(core, &catalog_rows)? => {
+            (None, Some(HydrateRestart::CatalogChanged))
+        }
+        Start::Resume(reached) => (Some(reached), None),
+        Start::Fresh(reason) => (None, reason),
+    };
     // The key it reads names the source a write naming none is stamped with
     // (`items/source-own`), so a copy's first such create finds the row it
-    // holds under it.
-    if let Some(source) = refuse_unreadable(http, types, tier, &catalog_rows)? {
+    // holds under it. A resume carries on under the reach its walk was
+    // allowed under, so it asks no first page again.
+    if let Some(source) = refuse_unreadable(http, types, tier, &catalog_rows, reached.is_none())? {
         store::learn_source(
             &*core.conn()?,
             &store::credential_digest(&http.authorization()),
             source.as_deref(),
         )?;
     }
-    refuse_unheld(&catalog_rows, types, edge_types)?;
-    let start = match restart {
-        Some(reason) => Start::Fresh(Some(reason)),
-        None => resume_point(core, http, &instance, &fence, types, tier, edge_types, stop)?,
-    };
     crate::catch_up::refuse_if_stopped(stop)?;
-    let (reached, restarted) = match start {
-        Start::Resume(reached) => {
-            let mut conn = core.conn()?;
-            let tx = conn.transaction()?;
-            // Rows already taken were indexed by the catalog the copy holds,
-            // and a resumed walk would index the rest by another.
-            if store::replace_catalog(&tx, &catalog_rows)? {
-                drop(tx);
-                (None, Some(HydrateRestart::CatalogChanged))
-            } else {
-                crate::reach::advance_generation(&tx)?;
-                store::meta_set(&tx, store::META_SERVER_ORIGIN, &http.origin())?;
-                tx.commit()?;
-                (Some(reached), None)
-            }
-        }
-        Start::Fresh(reason) => (None, reason),
-    };
+    if reached.is_some() {
+        let mut conn = core.conn()?;
+        let tx = conn.transaction()?;
+        crate::reach::advance_generation(&tx)?;
+        store::meta_set(&tx, store::META_SERVER_ORIGIN, &http.origin())?;
+        tx.commit()?;
+    }
     let resumed = reached.is_some();
     let reached = match reached {
         Some(reached) => reached,
@@ -287,7 +305,6 @@ fn attempt(
         let Some((item_from, edge_from)) = reached.indices(types, edge_types) else {
             return Ok(Attempt::Again(HydrateRestart::SliceChanged));
         };
-        let mut pages = 0u64;
         let mut pages_total = reached.pages;
 
         for (index, declared) in types.iter().enumerate().skip(item_from) {
@@ -314,7 +331,7 @@ fn attempt(
                     page => page?,
                 };
                 kept = false;
-                pages += 1;
+                *pages += 1;
                 pages_total += 1;
                 let mut overflow: Vec<WireEdge> = Vec::new();
                 for row in &page.data {
@@ -395,7 +412,7 @@ fn attempt(
                     page => page?,
                 };
                 kept = false;
-                pages += 1;
+                *pages += 1;
                 pages_total += 1;
                 let mut conn = core.conn()?;
                 let tx = conn.transaction()?;
@@ -524,7 +541,7 @@ fn attempt(
             edge_types: edge_types.to_vec(),
             items,
             edges,
-            pages,
+            pages: *pages,
             pages_total,
             resumed,
             restarted,
@@ -581,10 +598,18 @@ fn resume_point(
         }
         (reached, head)
     };
-    if let Some(gap) = head_held(http, &head, stop)? {
-        return Ok(Start::Fresh(Some(gap)));
-    }
-    Ok(Start::Resume(reached))
+    Ok(match head_held(http, &head, stop)? {
+        Some(HydrateRestart::ReachChanged) => Start::Reread(HydrateRestart::ReachChanged),
+        Some(gap) => Start::Fresh(Some(gap)),
+        None => Start::Resume(reached),
+    })
+}
+
+/// Whether `catalog` differs from the one the copy holds, leaving the copy's.
+fn catalog_differs(core: &Core, catalog: &WireCatalog) -> Result<bool> {
+    let mut conn = core.conn()?;
+    let tx = conn.transaction()?;
+    store::replace_catalog(&tx, catalog)
 }
 
 /// Asks the log for the events after `head` and reads only as far as the
@@ -898,11 +923,15 @@ fn declared_types(types: &[String]) -> Result<Vec<String>> {
 /// refuses it only when nothing it selects is readable.
 /// Answers the key's own source where it read the key: `Some(None)` for a
 /// credential that is not a key.
+/// A key that may not read itself, as an app's sign-in may not, is asked
+/// for the first page of each named type where `probe` holds; where it does
+/// not, the types are taken as readable.
 fn refuse_unreadable(
     http: &Http,
     types: &[String],
     tier: SliceTier,
     catalog: &WireCatalog,
+    probe: bool,
 ) -> Result<Option<Option<String>>> {
     let named: Vec<&str> = types
         .iter()
@@ -923,6 +952,7 @@ fn refuse_unreadable(
             .into_iter()
             .filter(|name| !reads_under(key, name, catalog))
             .collect(),
+        None if !probe => Vec::new(),
         None => {
             let mut refused = Vec::new();
             for name in named {

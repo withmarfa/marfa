@@ -488,10 +488,15 @@ pub fn root(instance: &str) -> Answer {
 
 pub const FENCE: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
-pub fn certified(mut answer: Answer) -> Answer {
+pub fn certified(answer: Answer) -> Answer {
+    certified_under(answer, FENCE)
+}
+
+/// `answer` certified under the reach `fence` names.
+pub fn certified_under(mut answer: Answer, fence: &str) -> Answer {
     match &mut answer {
         Answer::Json { headers, .. } => {
-            headers.push(("X-Marfa-Reach".into(), FENCE.into()));
+            headers.push(("X-Marfa-Reach".into(), fence.into()));
             headers.push(("Cache-Control".into(), "no-store".into()));
         }
         _ => panic!("only a JSON read can carry an HTTP proof"),
@@ -500,8 +505,13 @@ pub fn certified(mut answer: Answer) -> Answer {
 }
 
 pub fn copy_marker(kind: &str, cursor: &str) -> String {
+    copy_marker_under(kind, cursor, FENCE)
+}
+
+/// A copy marker naming the reach `fence` names.
+pub fn copy_marker_under(kind: &str, cursor: &str, fence: &str) -> String {
     format!(
-        "event: {kind}\ndata: {{\"event_type\":\"{kind}\",\"cursor\":\"{cursor}\",\"instance_id\":\"{INSTANCE}\",\"reach\":\"{FENCE}\"}}\n\n"
+        "event: {kind}\ndata: {{\"event_type\":\"{kind}\",\"cursor\":\"{cursor}\",\"instance_id\":\"{INSTANCE}\",\"reach\":\"{fence}\"}}\n\n"
     )
 }
 
