@@ -670,7 +670,7 @@ When a resumed hydration has read its last listing page, a device MUST apply the
 
 **Reason:** a row a page took before the interruption can have changed or been deleted since.
 
-**Tests:** `device/hydration.test.ts › replays a row changed and a row deleted on the server while it was stopped`.
+**Tests:** `device/hydration.test.ts › replays a row changed and a row deleted on the server while it was stopped`, `› resumes a replay the process running it was killed in from the last event it applied`.
 
 ### `device/hydrate-resume-reported`
 
@@ -698,7 +698,7 @@ If another instance answers at the server address than the one an interrupted hy
 
 ### `device/hydrate-restart-reach`
 
-If the key's reach is not the one an interrupted hydration read its pages under, then a device MUST read the slice again from its first page and report the hydration `restarted` with `reach_changed`.
+If the key's reach is not the one an interrupted hydration read its pages under, then a device MUST read the slice again from its first page, under the head and catalog of the key's present reach, and report the hydration `restarted` with `reach_changed`.
 
 **Tests:** `device/hydration.test.ts › starts again from the first page when the key's reach changed`.
 

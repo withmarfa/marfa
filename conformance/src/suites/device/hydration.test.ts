@@ -1,6 +1,7 @@
 import { describe, it, expect, afterEach, vi } from "vitest";
 import {
   startHarness,
+  readsOf,
   scriptHydration,
   scriptKey,
   scriptStats,
@@ -10,6 +11,7 @@ import {
   answers,
   catchupTooOld,
   connected,
+  copyFrame,
   copyStreamCursor,
   cursorAhead,
   edgesPage,
@@ -1114,6 +1116,162 @@ describe("an interrupted hydration", () => {
     ).toEqual(NOTES);
   });
 
+  it("resumes a replay the process running it was killed in from the last event it applied", async () => {
+    const changed = wireItem({
+      id: "a",
+      version: 2,
+      properties: { title: "changed during the replay", body: "changed" },
+    });
+    // A row of a type the catalog does not name sends the replay to read
+    // the catalog again, which tells the fixture the event before it landed.
+    const unnamed = wireItem({ id: "late", type: "user.late" });
+    const log = [
+      copyItemEvent("11", "item.updated", changed),
+      copyItemEvent("12", "item.created", unnamed),
+    ];
+
+    /** A device with a whole copy and a pin, and a fixture to replay `log`. */
+    async function pinned(label: string, gate: () => boolean) {
+      const started = await startHarness(label);
+      const { server, device } = started;
+      // The pinned row is gone from the server once pinned, so a hydration
+      // holds no row for it and reads it again each time it walks its pins
+      // (`device/pin-gone-kept`).
+      const replay = { log: false, held: false };
+      server.copyAnswer("GET", "/items/pinned", () =>
+        replay.log
+          ? refusal(404, "item_not_found", "none")
+          : {
+              kind: "json",
+              status: 200,
+              body: withMetadata(
+                wireItem({ id: "pinned", type: "core.bookmark" }),
+              ),
+            },
+      );
+      server.copyAnswer("GET", /^\/items\/[^/]+\/edges$/, edgesPage([]));
+      scriptHydration(server, {
+        head: "10",
+        rows: rows(),
+        pageSize: 1,
+        catalog: () =>
+          replay.held && gate()
+            ? {
+                kind: "gated",
+                until: new Promise<void>(() => {}),
+                then: typeCatalog(),
+              }
+            : typeCatalog(),
+        replay: (cursor) => {
+          if (!replay.log) return copyReplay(cursor, []);
+          if (cursor === "11") return copyReplay("12", log.slice(1));
+          if (!gate()) return copyReplay("12", log);
+          replay.held = true;
+          return {
+            kind: "sse",
+            hold: true,
+            frames: [connected, copyStreamCursor("12"), ...log.map(copyFrame)],
+          };
+        },
+      });
+      expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+      const pin = await device.pin("pinned");
+      expect(pin.ok, JSON.stringify(pin)).toBe(true);
+      replay.log = true;
+      return started;
+    }
+
+    let gated = true;
+    harness = await pinned("resume-killed-replay", () => gated);
+    const { server, device } = harness;
+    const pinReads = (): number => readsOf(server, "pinned");
+    const pinsBefore = pinReads();
+    const hydrating = device.hold([
+      "hydrate",
+      "--types",
+      "core.note",
+      "--tier",
+      "library",
+    ]);
+    try {
+      await vi.waitFor(
+        () => {
+          const replayed = server.requests.findIndex(
+            (request) =>
+              request.pathname === "/events" &&
+              request.headers["last-event-id"] === "10",
+          );
+          expect(replayed, hydrating.stderr).toBeGreaterThan(-1);
+          expect(
+            server.requests
+              .slice(replayed)
+              .some((request) => request.pathname === "/types"),
+            hydrating.stderr,
+          ).toBe(true);
+        },
+        { timeout: 10_000, interval: 25 },
+      );
+    } finally {
+      await hydrating.stop();
+    }
+    gated = false;
+    const killed = await device.status();
+    expect(killed.ok && killed.value.hydration).toBe("in_progress");
+    expect(
+      killed.ok && killed.value.event_cursor,
+      "the killed replay kept no event it applied",
+    ).toBe("11");
+    // The witness: the walk the process was killed in read the pin.
+    const pinsKilled = pinReads();
+    expect(pinsKilled).toBeGreaterThan(pinsBefore);
+    const sent = server.requests.length;
+
+    const resumed = await device.hydrate(["core.note"], "library");
+    expect(resumed.ok, JSON.stringify(resumed)).toBe(true);
+    if (!resumed.ok) return;
+    expect(resumed.value.resumed).toBe(true);
+    expect([resumed.value.pages, resumed.value.pages_total]).toEqual([0, 3]);
+    expect(resumed.value.cursor).toBe("12");
+    const after = server.requests.slice(sent);
+    expect(
+      after.filter((request) => request.pathname === "/items"),
+      "a resume in the replay read a listing page again",
+    ).toEqual([]);
+    expect(
+      pinReads(),
+      "a resume in the replay read the pinned rows again",
+    ).toBe(pinsKilled);
+    expect(
+      after
+        .filter((request) => request.pathname === "/events")
+        .map((request) => request.headers["last-event-id"]),
+      "the replay did not carry on from the last event the killed one applied",
+    ).toContain("11");
+    expect(
+      after.some(
+        (request) =>
+          request.pathname === "/events" &&
+          request.headers["last-event-id"] === "10",
+      ),
+      "the replay started again from the head the hydration started from",
+    ).toBe(false);
+    const resumedCopy = await copyOf(device);
+
+    // The witness: the same steps, with nothing killed, hold the same copy.
+    const whole = await pinned("resume-killed-replay-whole", () => false);
+    try {
+      expect((await whole.device.hydrate(["core.note"], "library")).ok).toBe(
+        true,
+      );
+      expect(
+        resumedCopy,
+        "the copy resumed in its replay differs from one hydrated in a single run",
+      ).toEqual(await copyOf(whole.device));
+    } finally {
+      await whole.stop();
+    }
+  });
+
   it("resumes with no page to read when it was stopped as its last page arrived", async () => {
     harness = await startHarness("resume-last-page");
     const { server, device } = harness;
@@ -1260,6 +1418,29 @@ describe("an interrupted hydration", () => {
       "reach_changed",
     ]);
     expect(listed(server)).toEqual([null, "1", "2", null, "1", "2"]);
+    // The head and the catalog read before the refusal are of the reach
+    // that went, so the walk from the first page waits for both again.
+    const requests = server.requests;
+    const refusedAt = requests.findIndex(
+      (request) =>
+        request.pathname === "/events" &&
+        request.headers["last-event-id"] === "10",
+    );
+    const walkAt = requests.findIndex(
+      (request, index) => index > refusedAt && request.pathname === "/items",
+    );
+    const between = requests.slice(refusedAt + 1, walkAt);
+    expect(
+      [
+        between.some(
+          (request) =>
+            request.pathname === "/events" &&
+            request.headers["last-event-id"] === undefined,
+        ),
+        between.some((request) => request.pathname === "/types"),
+      ],
+      "the walk from the first page used the head and the catalog of the reach the server had refused",
+    ).toEqual([true, true]);
   });
 
   async function startsAgainOnGap(
