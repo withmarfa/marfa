@@ -187,7 +187,7 @@ fn attempt(
     // raised before then leaves it as it was.
     crate::catch_up::refuse_if_stopped(stop)?;
     let (mut instance, mut cursor, mut fence) = read_head(http, stop)?;
-    expire_if_built_elsewhere(core, &instance, &fence)?;
+    let mut ended = expire_if_built_elsewhere(core, &instance, &fence)?;
     let mut under_reach = http.for_reach(&fence);
     crate::catch_up::refuse_if_stopped(stop)?;
     let (mut catalog_rows, registered_types, unregistered_types, registered_any) =
@@ -196,14 +196,14 @@ fn attempt(
         // A registration changes what the instance's reach certifies, so
         // the head and the catalog read before it are of a reach that has gone.
         (instance, cursor, fence) = read_head(http, stop)?;
-        expire_if_built_elsewhere(core, &instance, &fence)?;
+        ended = ended.or(expire_if_built_elsewhere(core, &instance, &fence)?);
         under_reach = http.for_reach(&fence);
         catalog_rows = under_reach.catalog()?;
     }
     let plain = http;
     let http = &under_reach;
     refuse_unheld(&catalog_rows, types, edge_types)?;
-    let start = match restart {
+    let start = match restart.or(ended) {
         Some(reason) => Start::Fresh(Some(reason)),
         None => resume_point(core, http, &instance, &fence, types, tier, edge_types, stop)?,
     };
@@ -591,22 +591,42 @@ fn not_behind(head: &str, held: &str) -> bool {
 
 /// A whole or stale copy built under another instance or reach than the head
 /// names may hold rows the key no longer reads, so it stops answering at once,
-/// before a later step of the hydration can fail and leave it answering.
-fn expire_if_built_elsewhere(core: &Core, instance: &str, fence: &str) -> Result<()> {
+/// before a later step of the hydration can fail and leave it answering. The
+/// expiry takes the resume point too, so it answers why an interrupted refill
+/// it ended starts again.
+fn expire_if_built_elsewhere(
+    core: &Core,
+    instance: &str,
+    fence: &str,
+) -> Result<Option<HydrateRestart>> {
     let mut conn = core.conn()?;
     let elsewhere = if store::hydrated(&conn)? {
-        store::meta_get(&conn, crate::reach::FENCE)?.as_deref() != Some(fence)
-            || store::meta_get(&conn, store::META_INSTANCE_ID)?.as_deref() != Some(instance)
+        if store::meta_get(&conn, store::META_INSTANCE_ID)?.as_deref() != Some(instance) {
+            Some(HydrateRestart::InstanceChanged)
+        } else if store::meta_get(&conn, crate::reach::FENCE)?.as_deref() != Some(fence) {
+            Some(HydrateRestart::ReachChanged)
+        } else {
+            None
+        }
     } else {
-        store::refill(&conn)?
-            .is_some_and(|built| built.instance != instance || built.reach != fence)
+        store::refill(&conn)?.and_then(|built| {
+            if built.instance != instance {
+                Some(HydrateRestart::InstanceChanged)
+            } else if built.reach != fence {
+                Some(HydrateRestart::ReachChanged)
+            } else {
+                None
+            }
+        })
     };
-    if elsewhere {
-        let tx = conn.transaction()?;
-        crate::reach::expire(&tx)?;
-        tx.commit()?;
-    }
-    Ok(())
+    let Some(reason) = elsewhere else {
+        return Ok(None);
+    };
+    let interrupted = store::meta_get(&conn, store::META_HYDRATE_RESUME)?.is_some();
+    let tx = conn.transaction()?;
+    crate::reach::expire(&tx)?;
+    tx.commit()?;
+    Ok(interrupted.then_some(reason))
 }
 
 /// Where an interrupted hydration of this slice reached, if it can carry on

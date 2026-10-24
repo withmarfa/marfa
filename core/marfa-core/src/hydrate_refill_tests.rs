@@ -1376,3 +1376,152 @@ fn a_body_edit_of_a_held_note_with_links_is_queued_while_the_copy_is_stale() {
         json!("see [[changed]] and not the other")
     );
 }
+
+#[test]
+fn a_keyed_create_queued_while_stale_reads_its_body_on_the_row_it_lands_on() {
+    let server = Scripted::start();
+    let core = aged_out(&server);
+    let mut draft = crate::stop_tests::note(None);
+    draft.source = Some("importer".into());
+    draft.source_id = Some("held-key".into());
+    draft
+        .properties
+        .insert("body".into(), json!("see [[kept]]"));
+    let created = core.create_item(&draft).unwrap();
+    let minted = created.item_id.clone().unwrap();
+    let host_of = |core: &Core| -> Option<String> {
+        core.conn()
+            .unwrap()
+            .query_row(
+                "SELECT item_id FROM body_checks WHERE write_id = ?1",
+                [&created.id],
+                |row| row.get(0),
+            )
+            .ok()
+    };
+    assert_eq!(host_of(&core).as_deref(), Some(minted.as_str()));
+
+    let mut held = row("held", 1, &[]);
+    held["item"]["properties"]["body"] = json!("see [[kept]]");
+    server.on(
+        "/items",
+        vec![page(
+            vec![
+                row("kept", 1, &[("stays", "changed")]),
+                row("changed", 1, &[]),
+                held,
+            ],
+            None,
+        )],
+    );
+    server.on("/items/bulk-get", vec![pinned_row()]);
+    server.on("/events", vec![head("60"), replay(vec![], "60")]);
+    hydrate(&core).unwrap();
+
+    // The server answers the create with `held`, the row its key names.
+    {
+        let mut conn = core.conn().unwrap();
+        let tx = conn.transaction().unwrap();
+        store::adopt_answered_id(&tx, &minted, "held").unwrap();
+        store::record_verdict(
+            &tx,
+            &created.id,
+            &store::Answered {
+                verdict: crate::Verdict::Accepted,
+                reason: None,
+                answer: None,
+                conflicted_copy_id: None,
+            },
+        )
+        .unwrap();
+        tx.commit().unwrap();
+    }
+    assert_eq!(
+        host_of(&core).as_deref(),
+        Some("held"),
+        "the deferred body check stayed on the minted id"
+    );
+    crate::body::rule::after_answers_of(&mut core.conn().unwrap(), None).unwrap();
+
+    assert_eq!(host_of(&core), None);
+    let read: Vec<(String, String)> = {
+        let conn = core.conn().unwrap();
+        let mut statement = conn
+            .prepare("SELECT item_id, text FROM body_names WHERE write_id = ?1")
+            .unwrap();
+        statement
+            .query_map([&created.id], |row| Ok((row.get(0)?, row.get(1)?)))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap()
+    };
+    assert_eq!(
+        read,
+        [("held".to_string(), "kept".to_string())],
+        "the create's link was not read on the row it landed on"
+    );
+}
+
+#[test]
+fn a_refill_interrupted_and_resumed_under_another_instance_or_reach_says_why_it_restarted() {
+    for (key, reason) in [
+        (
+            store::META_INSTANCE_ID,
+            crate::model::HydrateRestart::InstanceChanged,
+        ),
+        (
+            crate::reach::FENCE,
+            crate::model::HydrateRestart::ReachChanged,
+        ),
+    ] {
+        let server = Scripted::start();
+        let core = aged_out(&server);
+        server.on(
+            "/items",
+            vec![
+                page(vec![row("kept", 1, &[("stays", "changed")])], Some("2")),
+                scripted::refusal(503, "unavailable"),
+            ],
+        );
+        server.on("/events", vec![head("60")]);
+        assert!(matches!(hydrate(&core), Err(CoreError::Server { .. })));
+        {
+            // As kept by a refill under another server or key: the server's
+            // answers now name `scripted::INSTANCE` and its reach.
+            let conn = core.conn().unwrap();
+            assert!(
+                store::meta_get(&conn, store::META_HYDRATE_RESUME)
+                    .unwrap()
+                    .is_some(),
+                "the witness: the refill was interrupted part way"
+            );
+            let elsewhere = "b".repeat(64);
+            let mut refill = store::refill(&conn).unwrap().unwrap();
+            if key == store::META_INSTANCE_ID {
+                refill.instance = elsewhere.clone();
+            } else {
+                refill.reach = elsewhere.clone();
+            }
+            store::meta_set(&conn, key, &elsewhere).unwrap();
+            store::meta_set(
+                &conn,
+                store::META_REFILL,
+                &serde_json::to_string(&refill).unwrap(),
+            )
+            .unwrap();
+        }
+
+        server.on("/items", vec![page(vec![row("kept", 1, &[])], None)]);
+        server.on("/items/bulk-get", vec![no_pins()]);
+        server.on("/events", vec![head("60"), replay(vec![], "60")]);
+        let report = hydrate(&core).unwrap();
+
+        assert_eq!(report.restarted, Some(reason), "{report:?}");
+        assert!(!report.resumed && !report.in_place, "{report:?}");
+        assert_eq!(
+            ids(&listed(&core).unwrap().1),
+            ["kept"],
+            "{reason:?}: a row of the copy built elsewhere stayed"
+        );
+    }
+}

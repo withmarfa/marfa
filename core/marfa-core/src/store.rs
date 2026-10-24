@@ -2962,8 +2962,27 @@ pub fn adopt_answered_id(conn: &Connection, local: &str, answered: &str) -> Resu
         "UPDATE queue SET item_id = ?2 WHERE item_id = ?1 AND
          (sent = 0 OR (kind = 'create_item' AND verdict IN ('accepted', 'merged', 'conflicted', 'refused')))",
         "UPDATE queue SET target_id = ?2 WHERE target_id = ?1 AND sent = 0",
+        "UPDATE body_checks SET item_id = ?2 WHERE item_id = ?1",
+        "UPDATE body_edges SET item_id = ?2 WHERE item_id = ?1",
+        "UPDATE body_edges SET other_id = ?2 WHERE other_id = ?1",
+        "UPDATE body_names SET other_id = ?2 WHERE other_id = ?1",
+        "UPDATE folder_files SET item_id = ?2 WHERE item_id = ?1",
+        "UPDATE folder_journal SET item_id = ?2 WHERE item_id = ?1",
     ] {
         conn.execute(statement, params![local, answered])?;
+    }
+    // The names the create's body carries are the row's now; the landing
+    // drops any its answered body does not carry.
+    if conn.query_row(
+        "SELECT EXISTS (SELECT 1 FROM body_names WHERE item_id = ?1)",
+        [local],
+        |row| row.get(0),
+    )? {
+        conn.execute("DELETE FROM body_names WHERE item_id = ?1", [answered])?;
+        conn.execute(
+            "UPDATE body_names SET item_id = ?2 WHERE item_id = ?1",
+            params![local, answered],
+        )?;
     }
     let carried = pinned(conn, local)?;
     if conn.execute(
@@ -5739,6 +5758,46 @@ mod tests {
         assert_eq!(pins(&conn).unwrap(), ["answered"]);
         assert!(unpin(&conn, "answered").unwrap());
         assert!(!pinned(&conn, "answered").unwrap());
+    }
+
+    #[test]
+    fn what_the_body_rule_and_the_folder_hold_of_a_minted_id_moves_to_the_answered_id() {
+        let conn = conn();
+        for statement in [
+            "INSERT INTO body_checks (write_id, item_id, body) VALUES ('check', 'minted', '')",
+            "INSERT INTO body_edges (write_id, item_id, kind, other_id) VALUES ('from', 'minted', 'link', 'other')",
+            "INSERT INTO body_edges (write_id, item_id, kind, other_id) VALUES ('to', 'other', 'link', 'minted')",
+            "INSERT INTO body_names (item_id, kind, text, state, other_id) VALUES ('minted', 'link', 'other', 'resolved', 'other')",
+            "INSERT INTO body_names (item_id, kind, text, state, other_id) VALUES ('answered', 'link', 'before', 'resolved', 'before')",
+            "INSERT INTO body_names (item_id, kind, text, state, other_id) VALUES ('other', 'link', 'new', 'resolved', 'minted')",
+            "INSERT INTO folder_files (path, item_id, content_hash, links, edge_lines, seen_at) VALUES ('New.md', 'minted', 'h', '[]', '[]', '2026-01-01T00:00:00Z')",
+            "INSERT INTO folder_journal (path, item_id, missing_since) VALUES ('Gone.md', 'minted', '2026-01-01T00:00:00Z')",
+        ] {
+            conn.execute(statement, []).unwrap();
+        }
+        adopt_answered_id(&conn, "minted", "answered").unwrap();
+        let rows = |sql: &str| -> Vec<String> {
+            let mut statement = conn.prepare(sql).unwrap();
+            statement
+                .query_map([], |row| row.get(0))
+                .unwrap()
+                .collect::<Result<_, _>>()
+                .unwrap()
+        };
+        assert_eq!(rows("SELECT item_id FROM body_checks"), ["answered"]);
+        assert_eq!(
+            rows("SELECT item_id || '>' || other_id FROM body_edges ORDER BY write_id"),
+            ["answered>other", "other>answered"]
+        );
+        assert_eq!(
+            rows(
+                "SELECT item_id || ':' || text || '>' || other_id FROM body_names ORDER BY item_id"
+            ),
+            ["answered:other>other", "other:new>answered"],
+            "the names the create's body carries are not the row's"
+        );
+        assert_eq!(rows("SELECT item_id FROM folder_files"), ["answered"]);
+        assert_eq!(rows("SELECT item_id FROM folder_journal"), ["answered"]);
     }
 
     #[test]
