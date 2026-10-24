@@ -34,15 +34,19 @@ pub(crate) const PARENT_OF: &str = "parent-of";
 
 /// An expression the copy cannot answer as the server would is refused,
 /// never dropped, but for an edge type the key may not read, which the copy
-/// cannot know.
+/// cannot know. `whole` is the edge types the copy holds whole
+/// (`store::whole_edge_types`): a `backref` term is answered only on one of
+/// them, since a copy holds the other edge types only as its own items draw
+/// them.
 pub(crate) fn narrow(
     filter: Option<&str>,
     beneath: Option<&str>,
+    whole: &[String],
     clauses: &mut Vec<String>,
     values: &mut Vec<Value>,
 ) -> Result<()> {
     if let Some(filter) = filter {
-        clauses.push(parse(filter)?.clause(values)?);
+        clauses.push(parse(filter)?.clause(values, whole)?);
     }
     if let Some(root) = beneath {
         // `UNION`, not `UNION ALL`: a copy can hold a cycle the server would
@@ -60,9 +64,10 @@ pub(crate) fn narrow(
     Ok(())
 }
 
-/// Refuses, before any read, what `narrow` would refuse for this expression.
+/// Refuses, before any read, what `narrow` would refuse for this expression
+/// on a copy that holds no edge type whole.
 pub(crate) fn check(filter: &str) -> Result<()> {
-    parse(filter)?.clause(&mut Vec::new()).map(|_| ())
+    parse(filter)?.clause(&mut Vec::new(), &[]).map(|_| ())
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -192,19 +197,19 @@ struct Expression {
 }
 
 impl Expression {
-    fn clause(&self, values: &mut Vec<Value>) -> Result<String> {
+    fn clause(&self, values: &mut Vec<Value>, whole: &[String]) -> Result<String> {
         let joiner = if self.any { " OR " } else { " AND " };
         let parts = self
             .conditions
             .iter()
-            .map(|condition| condition.clause(values))
+            .map(|condition| condition.clause(values, whole))
             .collect::<Result<Vec<String>>>()?;
         Ok(format!("({})", parts.join(joiner)))
     }
 }
 
 impl Condition {
-    fn clause(&self, values: &mut Vec<Value>) -> Result<String> {
+    fn clause(&self, values: &mut Vec<Value>, whole: &[String]) -> Result<String> {
         Ok(match &self.term {
             Term::System { column, compare } => {
                 let literal = if matches!(*column, "created_at" | "updated_at" | "occurred_at")
@@ -265,28 +270,33 @@ impl Condition {
                 "{}EXISTS (SELECT 1 FROM tags WHERE tags.item_id = items.id)",
                 if *present { "" } else { "NOT " }
             ),
-            // The copy holds only the edges its items draw, not those drawn
-            // to them from outside the slice.
-            Term::Edge { backref: true, .. } => {
-                return Err(CoreError::Invalid(
-                    "a backref condition is not answered from a working copy, which holds the edges its items draw but not every edge drawn to them: ask the server".into(),
-                ));
-            }
             Term::Edge {
                 edge_type,
-                backref: false,
+                backref,
                 negated,
                 to_item,
             } => {
+                // The copy holds the edges its items draw, not every edge
+                // drawn to them, unless it holds the type whole.
+                if *backref && !whole.contains(edge_type) {
+                    return Err(CoreError::Invalid(format!(
+                        "a backref condition on {edge_type:?} is not answered from a working copy that does not hold that edge type whole: hydrate with it as an edge type held whole, or ask the server"
+                    )));
+                }
+                let (own, far) = if *backref {
+                    ("target_id", "source_id")
+                } else {
+                    ("source_id", "target_id")
+                };
                 values.push(Value::String(edge_type.clone()));
                 let other = if *to_item {
                     values.push(self.value.bound());
-                    " AND e.target_id = ?"
+                    format!(" AND e.{far} = ?")
                 } else {
-                    ""
+                    String::new()
                 };
                 format!(
-                    "{}EXISTS (SELECT 1 FROM edges e WHERE e.source_id = items.id AND e.edge_type = ?{other})",
+                    "{}EXISTS (SELECT 1 FROM edges e WHERE e.{own} = items.id AND e.edge_type = ?{other})",
                     if *negated { "NOT " } else { "" }
                 )
             }
@@ -759,7 +769,7 @@ mod tests {
                 let mut values = Vec::new();
                 parse(&format!("{field} {op} \"2026-01-01T01:00:00.500+01:00\""))
                     .unwrap()
-                    .clause(&mut values)
+                    .clause(&mut values, &[])
                     .unwrap();
                 assert_eq!(values, [Value::String("2026-01-01T00:00:00.500Z".into())]);
                 for invalid in ["42", "true", "null", "\"bad\""] {
@@ -951,9 +961,19 @@ mod tests {
     }
 
     fn ids(conn: &Connection, filter: Option<&str>, beneath: Option<&str>) -> Vec<String> {
+        ids_whole(conn, filter, beneath, &[])
+    }
+
+    fn ids_whole(
+        conn: &Connection,
+        filter: Option<&str>,
+        beneath: Option<&str>,
+        whole: &[&str],
+    ) -> Vec<String> {
+        let whole: Vec<String> = whole.iter().map(|held| held.to_string()).collect();
         let mut clauses = Vec::new();
         let mut values = Vec::new();
-        narrow(filter, beneath, &mut clauses, &mut values).unwrap();
+        narrow(filter, beneath, &whole, &mut clauses, &mut values).unwrap();
         let mut ids: Vec<String> = store::items_where(
             conn,
             &clauses.join(" AND "),
@@ -1113,23 +1133,63 @@ mod tests {
     }
 
     #[test]
+    fn answers_a_backref_on_an_edge_type_the_copy_holds_whole() {
+        let conn = family();
+        let held = |filter: &str| ids_whole(&conn, Some(filter), None, &["parent-of"]);
+        assert_eq!(
+            held("backref[parent-of] exists"),
+            ["child", "grandchild", "root"]
+        );
+        assert_eq!(held("backref[parent-of] not_exists"), ["stranger"]);
+        assert_eq!(held("backref[parent-of] eq \"root\""), ["child"]);
+        assert_eq!(
+            held("backref[parent-of] neq \"root\""),
+            ["grandchild", "root", "stranger"]
+        );
+        assert_eq!(
+            held("backref[parent-of] exists AND backref[parent-of] neq \"root\""),
+            ["grandchild", "root"]
+        );
+        // The outbound side of the same type reads the other end of each edge.
+        assert_eq!(held("edge[parent-of] eq \"child\""), ["root"]);
+    }
+
+    #[test]
     fn refuses_a_backref_the_copy_cannot_answer_whole() {
-        for filter in [
-            "backref[parent-of] exists",
-            "tags exists OR backref[x] neq \"a\"",
+        let conn = family();
+        // The witness: the same expression is answered once the type is held.
+        assert_eq!(
+            ids_whole(
+                &conn,
+                Some("backref[references] exists"),
+                None,
+                &["references"]
+            ),
+            ["stranger"]
+        );
+        for (filter, whole) in [
+            ("backref[references] exists", vec![]),
+            ("backref[references] exists", vec!["parent-of".to_string()]),
+            (
+                "tags exists OR backref[x] neq \"a\"",
+                vec!["references".to_string()],
+            ),
         ] {
             let mut clauses = Vec::new();
             let mut values = Vec::new();
-            assert!(matches!(
-                narrow(Some(filter), None, &mut clauses, &mut values),
-                Err(CoreError::Invalid(_))
-            ));
+            let Err(CoreError::Invalid(message)) =
+                narrow(Some(filter), None, &whole, &mut clauses, &mut values)
+            else {
+                panic!("{filter} was answered");
+            };
+            assert!(message.contains("backref"), "{message}");
         }
         // The grammar's own refusal comes first, as the server's does.
         assert!(matches!(
             narrow(
                 Some("backref[x] exists AND title eq 1"),
                 None,
+                &["x".to_string()],
                 &mut Vec::new(),
                 &mut Vec::new()
             ),

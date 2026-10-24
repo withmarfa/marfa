@@ -8,7 +8,7 @@ import { AT, CONTRACT, storeFor } from "./copy-fixture.mjs";
 const settings = {
   title: "Notes",
   query: { types: ["core.note"] },
-  layouts: [{ id: "list", kind: "list" }],
+  sort: [{ by: "title", direction: "asc" }],
 };
 
 test("view writes preserve settings, versions, keys, and structured refusals across Node", async (t) => {

@@ -148,7 +148,7 @@ mod tests {
     }
 
     fn settings() -> Value {
-        json!({"title": "Notes", "query": {"types": ["core.note"]}, "layouts": [{"id": "list", "kind": "list"}]})
+        json!({"title": "Notes", "query": {"types": ["core.note"]}, "sort": [{"by": "title", "direction": "asc"}]})
     }
 
     fn answer(version: i64, settings: Value) -> Value {

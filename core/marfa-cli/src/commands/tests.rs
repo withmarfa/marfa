@@ -1099,7 +1099,8 @@ fn a_view_takes_its_settings_from_json_and_flags_and_refuses_one_given_twice() {
         settings: views::SettingsArgs {
             body: Some(r#"{"query":{"types":["core.task"]}}"#.into()),
             title: Some("Open tasks".into()),
-            layouts: Some(r#"[{"id":"main","kind":"list"}]"#.into()),
+            sort: Some(r#"[{"by":"title","direction":"asc"}]"#.into()),
+            group: Some(r#"{"by":"tags"}"#.into()),
             ..Default::default()
         },
         ..Default::default()
@@ -1112,7 +1113,8 @@ fn a_view_takes_its_settings_from_json_and_flags_and_refuses_one_given_twice() {
         &json!({
             "query": { "types": ["core.task"] },
             "title": "Open tasks",
-            "layouts": [{ "id": "main", "kind": "list" }],
+            "sort": [{ "by": "title", "direction": "asc" }],
+            "group": { "by": "tags" },
         })
     );
 
@@ -1173,7 +1175,7 @@ fn a_view_takes_its_settings_from_json_and_flags_and_refuses_one_given_twice() {
 
     let not_a_list = views::create_request(&views::CreateArgs {
         settings: views::SettingsArgs {
-            layouts: Some(r#"{"id":"main"}"#.into()),
+            sort: Some(r#"{"by":"title"}"#.into()),
             ..Default::default()
         },
         ..Default::default()
@@ -1181,6 +1183,17 @@ fn a_view_takes_its_settings_from_json_and_flags_and_refuses_one_given_twice() {
     assert!(
         matches!(&not_a_list, Err(CliError::Invalid(message)) if message.contains("JSON array")),
         "{not_a_list:?}"
+    );
+    let not_an_object = views::create_request(&views::CreateArgs {
+        settings: views::SettingsArgs {
+            group: Some(r#"["tags"]"#.into()),
+            ..Default::default()
+        },
+        ..Default::default()
+    });
+    assert!(
+        matches!(&not_an_object, Err(CliError::Invalid(message)) if message.contains("--group")),
+        "{not_an_object:?}"
     );
 }
 

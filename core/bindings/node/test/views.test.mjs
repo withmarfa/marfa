@@ -14,18 +14,19 @@ test("numeric group order and visibility compare values across SQLite number rep
   const settings = {
     title: "Numbers",
     query: { types: ["core.note"], tier: "library" },
-    layouts: [{ id: "ordered", kind: "board", group: { by: "properties.rank", order: [1e19] } },
-      { id: "hidden", kind: "board", group: { by: "properties.rank", hidden: [1e19] } }],
+    group: { by: "properties.rank", order: [1e19] },
   };
   put.run("view", "system.view", AT, AT, AT, JSON.stringify(settings));
   put.run("a", "core.note", AT, AT, AT, JSON.stringify({ rank: 1 }));
   put.run("b", "core.note", AT, AT, AT, JSON.stringify({ rank: 1e19 }));
-  assert.deepEqual(core.viewGroups("view", "ordered").groups.map((group) => group.key), [1e19, 1]);
-  assert.deepEqual(core.viewGroups("view", "hidden").groups.map((group) => group.key), [1]);
+  assert.deepEqual(core.viewGroups("view").groups.map((group) => group.key), [1e19, 1]);
+  const hidden = { ...settings, group: { by: "properties.rank", hidden: [1e19] } };
+  db.prepare("UPDATE items SET properties=? WHERE id='view'").run(JSON.stringify(hidden));
+  assert.deepEqual(core.viewGroups("view").groups.map((group) => group.key), [1]);
   db.close();
 });
 
-test("offline views preserve settings, layout order, groups, search, and refusal reasons", async (t) => {
+test("offline views preserve settings, sort, groups, search, and refusal reasons", async (t) => {
   const { core, path, server } = await hydrated(t, []);
   const db = new DatabaseSync(path);
   const put = db.prepare(`INSERT INTO items
@@ -34,12 +35,8 @@ test("offline views preserve settings, layout order, groups, search, and refusal
   const settings = {
     title: "Notes",
     query: { types: ["core.note"], tier: "library" },
-    layouts: [{
-      id: "chart", kind: "chart",
-      sort: [{ by: "properties.amount", direction: "asc" }],
-      group: { by: "tags", order: ["second"] },
-      y: { sum: "properties.amount" },
-    }],
+    sort: [{ by: "properties.amount", direction: "asc" }],
+    group: { by: "tags", order: ["second"] },
   };
   put.run("view", "system.view", AT, AT, AT, JSON.stringify(settings));
   put.run("a", "core.note", AT, AT, AT, JSON.stringify({ title: "Note a", amount: 4 }));
@@ -53,14 +50,14 @@ test("offline views preserve settings, layout order, groups, search, and refusal
   });
   assert.deepEqual(core.view("view")?.settings, settings);
   assert.equal(core.view("absent"), null);
-  assert.deepEqual(core.listInView("view", "chart").items.map((row) => row.id), ["b", "a"]);
-  assert.deepEqual(core.listInView("view", "chart", 1, 1).items.map((row) => row.id), ["a"]);
-  assert.deepEqual(core.viewGroups("view", "chart", "Europe/London"), {
+  assert.deepEqual(core.listInView("view").items.map((row) => row.id), ["b", "a"]);
+  assert.deepEqual(core.listInView("view", 1, 1).items.map((row) => row.id), ["a"]);
+  assert.deepEqual(core.viewGroups("view", "Europe/London"), {
     completeness: Completeness.Complete,
     groups: [
-      { key: "second", count: 1, sum: 4 },
-      { key: "first", count: 1, sum: 4 },
-      { key: null, count: 1, sum: 2 },
+      { key: "second", count: 1 },
+      { key: "first", count: 1 },
+      { key: null, count: 1 },
     ],
   });
   assert.equal(core.searchInView("Note", "view", 5).hits.length, 2);
@@ -70,7 +67,7 @@ test("offline views preserve settings, layout order, groups, search, and refusal
   for (const read of [
     () => core.listInView("view"),
     () => core.searchInView("Note", "view"),
-    () => core.viewGroups("view", "chart"),
+    () => core.viewGroups("view"),
   ]) {
     assert.throws(read, (error) => {
       assert.equal(/** @type {{code:string}} */ (error).code, "invalid");

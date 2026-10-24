@@ -152,7 +152,12 @@ impl Core {
         store::refuse_unless_usable(&conn)?;
         let catalog = catalog::Catalog::load(&conn)?;
         let (mut clauses, mut values) = (Vec::new(), Vec::new());
-        settings.narrow(&catalog, &mut clauses, &mut values)?;
+        settings.narrow(
+            &catalog,
+            &store::whole_edge_types(&conn)?,
+            &mut clauses,
+            &mut values,
+        )?;
         query::list_where(&conn, &clauses, &values, Sort::default(), None, None)
     }
 
@@ -332,7 +337,12 @@ fn folder_scope(
     let catalog = catalog::Catalog::load(conn)?;
     settings.refuse_unless_answerable(conn, &catalog)?;
     let (mut clauses, mut values) = (Vec::new(), Vec::new());
-    settings.narrow(&catalog, &mut clauses, &mut values)?;
+    settings.narrow(
+        &catalog,
+        &store::whole_edge_types(conn)?,
+        &mut clauses,
+        &mut values,
+    )?;
     Ok((catalog, clauses, values))
 }
 

@@ -20,7 +20,6 @@ pub struct Views {
 pub struct ViewGroup {
     pub key: JsonValue,
     pub count: u64,
-    pub sum: Option<f64>,
 }
 
 #[derive(Debug, Clone, uniffi::Record)]
@@ -89,16 +88,12 @@ impl Core {
     pub fn list_in_view(
         &self,
         id: String,
-        layout: Option<String>,
         limit: Option<u32>,
         offset: Option<u32>,
     ) -> Result<Listing, MarfaError> {
-        Ok(crate::listing(self.inner.list_in_view_kept(
-            &id,
-            layout.as_deref(),
-            limit,
-            offset,
-        )?))
+        Ok(crate::listing(
+            self.inner.list_in_view_kept(&id, limit, offset)?,
+        ))
     }
 
     pub fn search_in_view(
@@ -117,10 +112,9 @@ impl Core {
     pub fn view_groups(
         &self,
         id: String,
-        layout: String,
         time_zone: Option<String>,
     ) -> Result<ViewGroups, MarfaError> {
-        let rows = self.inner.view_groups(&id, &layout, time_zone.as_deref())?;
+        let rows = self.inner.view_groups(&id, time_zone.as_deref())?;
         Ok(ViewGroups {
             groups: rows
                 .rows
@@ -128,7 +122,6 @@ impl Core {
                 .map(|group| ViewGroup {
                     key: group.key.into(),
                     count: group.count,
-                    sum: group.sum,
                 })
                 .collect(),
             completeness: rows.completeness.into(),
@@ -152,7 +145,7 @@ mod tests {
         )
         .unwrap();
         let settings: JsonObject =
-            json!({"title":"Notes","query":{},"layouts":[{"id":"list","kind":"list"}]})
+            json!({"title":"Notes","query":{},"sort":[{"by":"title","direction":"asc"}]})
                 .as_object()
                 .unwrap()
                 .clone()
@@ -192,10 +185,8 @@ mod tests {
             db.execute("INSERT OR REPLACE INTO meta VALUES (?1,?2)", [key, value])
                 .unwrap();
         }
-        let settings = json!({"title":"Notes","query":{"types":["core.note"]},"layouts":[{
-            "id":"chart","kind":"chart","sort":[{"by":"properties.amount","direction":"asc"}],
-            "group":{"by":"tags"},"y":{"sum":"properties.amount"}
-        }]});
+        let settings = json!({"title":"Notes","query":{"types":["core.note"]},"sort":[{"by":"properties.amount","direction":"asc"}],
+            "group":{"by":"tags"}});
         for (id, kind, properties) in [
             ("view", "system.view", settings.clone()),
             ("a", "core.note", json!({"title":"Note a","amount":4})),
@@ -220,17 +211,14 @@ mod tests {
         );
         assert!(core.view("absent".into()).unwrap().is_none());
         let listed = core
-            .list_in_view("view".into(), Some("chart".into()), Some(1), Some(1))
+            .list_in_view("view".into(), Some(1), Some(1))
             .unwrap();
         assert_eq!(listed.items[0].id, "a");
         let groups = core
-            .view_groups("view".into(), "chart".into(), Some("Europe/London".into()))
+            .view_groups("view".into(), Some("Europe/London".into()))
             .unwrap();
         assert_eq!(groups.groups[0].key, JsonValue::String("work".into()));
-        assert_eq!(
-            (groups.groups[0].count, groups.groups[0].sum),
-            (1, Some(4.0))
-        );
+        assert_eq!(groups.groups[0].count, 1);
         assert_eq!(groups.groups[1].key, JsonValue::Null);
         assert_eq!(
             core.search_in_view("Note".into(), "view".into(), 5)
@@ -239,9 +227,9 @@ mod tests {
                 .len(),
             2
         );
-        db.execute("UPDATE items SET properties=?1 WHERE id='view'",[json!({"title":"Refused","query":{"types":["core.file"]},"layouts":settings["layouts"]}).to_string()]).unwrap();
+        db.execute("UPDATE items SET properties=?1 WHERE id='view'",[json!({"title":"Refused","query":{"types":["core.file"]},"sort":settings["sort"]}).to_string()]).unwrap();
         assert!(matches!(
-            core.list_in_view("view".into(), None, None, None),
+            core.list_in_view("view".into(), None, None),
             Err(MarfaError::Invalid { .. })
         ));
     }

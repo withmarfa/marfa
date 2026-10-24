@@ -142,7 +142,7 @@ pub enum DeviceCommand {
         #[command(subcommand)]
         command: DeviceFoldersCommand,
     },
-    /// Views and their layout groups, read from the local copy.
+    /// Views and their groups, read from the local copy.
     Views {
         #[command(subcommand)]
         command: DeviceViewsCommand,
@@ -777,13 +777,10 @@ pub struct ListArgs {
     /// How many items to skip first.
     #[arg(long)]
     pub offset: Option<u32>,
-    /// Only what this view selects, ordered by its layout; refused with a
+    /// Only what this view selects, in the view's own sort; refused with a
     /// reason where the copy cannot answer the query whole.
     #[arg(long, value_name = "ID", conflicts_with_all = VIEW_SCOPED)]
     pub view: Option<String>,
-    /// The layout whose sort to use; without it, use the view's first layout.
-    #[arg(long, value_name = "ID", requires = "view")]
-    pub layout: Option<String>,
 }
 
 const VIEW_SCOPED: [&str; 11] = [
@@ -809,13 +806,10 @@ pub enum DeviceViewsCommand {
         /// The view's `system.view` id.
         id: String,
     },
-    /// List a layout's groups, item counts, and numeric sums where requested.
+    /// List a view's groups and the item count of each.
     Groups {
         /// The view's `system.view` id.
         id: String,
-        /// The layout to group by.
-        #[arg(long, value_name = "ID")]
-        layout: String,
         /// An IANA time zone for date buckets; otherwise use the device's zone.
         #[arg(long, value_name = "ZONE")]
         time_zone: Option<String>,
@@ -1101,7 +1095,7 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
                     };
                     if let Some(view) = &args.view {
                         return output::listing(
-                            core.list_in_view(view, args.layout.as_deref(), args.limit, args.offset)?,
+                            core.list_in_view(view, args.limit, args.offset)?,
                             json,
                         )
                         .map(|()| Exit::Done);
@@ -1349,14 +1343,13 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
                     let row = core.view(&id)?.ok_or(CliError::NotHeld(id))?;
                     output::report(&row, json, || view_line(&row))
                 }
-                DeviceViewsCommand::Groups { id, layout, time_zone } => {
-                    let rows = core.view_groups(&id, &layout, time_zone.as_deref())?;
+                DeviceViewsCommand::Groups { id, time_zone } => {
+                    let rows = core.view_groups(&id, time_zone.as_deref())?;
                     output::report(
                         &serde_json::json!({"completeness": rows.completeness, "groups": rows.rows}),
                         json,
                         || rows.rows.iter().map(|group| {
-                            let sum = group.sum.map(|value| format!(" sum {value}")).unwrap_or_default();
-                            format!("{}: {} item(s){sum}", group.key, group.count)
+                            format!("{}: {} item(s)", group.key, group.count)
                         }).collect::<Vec<_>>().join("\n"),
                     )
                 }

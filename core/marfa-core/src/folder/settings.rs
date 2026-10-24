@@ -248,10 +248,12 @@ impl Settings {
 
     /// What the query holds, as clauses on `items`: the one evaluation a
     /// folder's pass and a list or full-text search in a folder share, so the two
-    /// cannot hold different items. `system.*` is never held.
+    /// cannot hold different items. `whole_edges` is the edge types the copy
+    /// holds whole. `system.*` is never held.
     pub(crate) fn narrow(
         &self,
         catalog: &Catalog,
+        whole_edges: &[String],
         clauses: &mut Vec<String>,
         values: &mut Vec<Value>,
     ) -> Result<()> {
@@ -284,6 +286,7 @@ impl Settings {
         crate::filter::narrow(
             self.query.filter.as_deref(),
             self.query.beneath.as_deref(),
+            whole_edges,
             clauses,
             values,
         )
@@ -599,7 +602,7 @@ mod tests {
         let clauses = |settings: &Settings| {
             let (mut clauses, mut values) = (Vec::new(), Vec::new());
             settings
-                .narrow(&catalog, &mut clauses, &mut values)
+                .narrow(&catalog, &[], &mut clauses, &mut values)
                 .unwrap();
             (clauses, values)
         };

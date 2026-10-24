@@ -58,11 +58,11 @@ A move of an edge's source changes the server's reach, so a drain that sends one
 
 ## Read views offline
 
-Hydrate the view's `system.view` row and every type and tier its query needs. `marfa device --db copy.sqlite views list` lists the views in the working copy; `views get VIEW_ID` reads a view's settings. `device items list --view VIEW_ID --layout LAYOUT_ID` selects the view's rows and orders them by that layout. Without `--layout`, it uses the first layout. `device search WORDS --view VIEW_ID` searches the view's rows, best match first.
+Hydrate the view's `system.view` row and every type and tier its query needs. `marfa device --db copy.sqlite views list` lists the views in the working copy; `views get VIEW_ID` reads a view's settings. `device items list --view VIEW_ID` selects the view's rows and orders them by the view's own `sort`. `device search WORDS --view VIEW_ID` searches the view's rows, best match first.
 
-`device views groups VIEW_ID --layout LAYOUT_ID` answers each group's key, item count, and sum when the layout requests one. Date buckets use the device's time zone; `--time-zone Europe/London` selects an explicit IANA zone. A view the copy cannot answer whole is refused with the reason. These reads contact no server.
+`device views groups VIEW_ID` answers each group's key and item count from the view's own `group`. Date buckets use the device's time zone; `--time-zone Europe/London` selects an explicit IANA zone. A view the copy cannot answer whole is refused with the reason: a type or tier outside the slice, `beneath` without `parent-of` held whole, or a `backref` condition on an edge type the copy does not hold whole. A view's `filter` may name `edge[TYPE]`, `backref[TYPE]` and `source`; the copy answers `edge` and `source` from what it holds and `backref` for an edge type it holds whole. These reads contact no server.
 
-Rust apps call `list_views`, `view`, `list_in_view`, `search_in_view`, and `view_groups` on `Core`. The Node and Swift bindings expose the same reads. View settings remain JSON values; groups carry a JSON scalar or null key, a count, and an optional sum.
+Rust apps call `list_views`, `view`, `list_in_view`, `search_in_view`, and `view_groups` on `Core`. The Node and Swift bindings expose the same reads. View settings remain JSON values; groups carry a JSON scalar or null key and a count.
 
 ## Folder directories
 

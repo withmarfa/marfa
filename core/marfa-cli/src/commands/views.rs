@@ -49,10 +49,14 @@ pub struct SettingsArgs {
     /// `state`, `filter` and `beneath`.
     #[arg(long, value_name = "JSON")]
     pub query: Option<String>,
-    /// How the view shows its items, as a JSON array of layouts, each with an
-    /// `id` and a `kind`.
+    /// The keys the view sorts by, as a JSON array of `{"by", "direction"}`
+    /// objects, first key first.
     #[arg(long, value_name = "JSON")]
-    pub layouts: Option<String>,
+    pub sort: Option<String>,
+    /// How the view groups its items, as a JSON object: `by`, and optionally
+    /// `bucket`, `order` and `hidden`.
+    #[arg(long, value_name = "JSON")]
+    pub group: Option<String>,
 }
 
 impl SettingsArgs {
@@ -69,8 +73,11 @@ impl SettingsArgs {
         if let Some(query) = &self.query {
             flags.insert("query".into(), Value::Object(object(query, "--query")?));
         }
-        if let Some(layouts) = &self.layouts {
-            flags.insert("layouts".into(), array(layouts, "--layouts")?);
+        if let Some(sort) = &self.sort {
+            flags.insert("sort".into(), array(sort, "--sort")?);
+        }
+        if let Some(group) = &self.group {
+            flags.insert("group".into(), Value::Object(object(group, "--group")?));
         }
         for (key, value) in flags {
             if settings.contains_key(&key) {
