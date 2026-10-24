@@ -93,7 +93,7 @@ pub(super) fn on_disk(host: &str, embed: &Embed, files: &Files) -> Option<Target
 pub(super) fn reason(raw: &str, target: &Target) -> String {
     match target {
         Target::Outside => format!(
-            "{raw} leads out of the folder, so the folder neither sends nor writes the file it shows"
+            "{raw} leads out of the folder, so the folder neither sends nor writes a file at that path"
         ),
         Target::Spaced => format!(
             "{raw} has a raw space in its path, which ends a Markdown path, so it names no file and no attachment of this file is removed until it does; write the space as %20, or the path inside < >"
@@ -124,7 +124,8 @@ struct Attachment {
     names: Vec<String>,
 }
 
-/// Where an item a file here embeds is written, and the embeds reported.
+/// Where each file a document here embeds or has attached is written, and
+/// what was reported.
 #[derive(Default)]
 pub(super) struct Embedded {
     pub at: BTreeMap<String, String>,

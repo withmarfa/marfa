@@ -355,7 +355,8 @@ impl Folder {
             lists: &lists,
         };
         // After the pins, so an embed names an attachment the copy now holds;
-        // an item a file here embeds is that file's, never unmatched.
+        // an item a file here embeds or has attached is that file's, never
+        // unmatched.
         let embedded = {
             let mut hosts = Vec::new();
             for (item, _) in &work {
@@ -398,7 +399,8 @@ impl Folder {
             }
         }
         work.retain(|(item, _)| !gone_with.contains(&item.id));
-        // Held by the file embedding it whatever state the query narrows to;
+        // Held by the file embedding it or attached to it whatever state the
+        // query narrows to;
         // a trashed one's file goes as any trashed item's does.
         work.extend(
             found
@@ -478,8 +480,8 @@ impl Folder {
                 _ => None,
             };
             let placed = self.placement(&item.id)?;
-            // An embedded file goes where its link says, and its placement
-            // follows.
+            // An embedded file goes where its link says, any other attachment
+            // beside its document, and its placement follows.
             let Some(want) = embedded
                 .at
                 .get(&item.id)
