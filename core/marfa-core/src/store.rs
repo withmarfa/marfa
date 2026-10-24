@@ -3014,6 +3014,8 @@ pub fn block_creates_naming(conn: &Connection, source: &str) -> Result<Vec<Strin
 /// row, so whatever pinned it can tell a purge from a row it can no longer
 /// read; `forget_purged` lets it go.
 pub fn purge_item(conn: &Connection, id: &str) -> Result<bool, CoreError> {
+    // Even an unheld row may be on its way in an outstanding door readback.
+    crate::reach::purged(conn)?;
     let unpinned = unpin(conn, id)?;
     if unpinned {
         meta_set(conn, &purged_key(id), "true")?;

@@ -266,13 +266,16 @@ impl Core {
     /// The write is done whatever this finds: a row it cannot read again now
     /// reaches the copy at its next catch-up, so a failure here is not the
     /// write's.
-    fn hold_answered(&self, id: &str) {
+    pub(crate) fn hold_answered(&self, id: &str) {
         let Ok(http) = self.http() else { return };
-        let context = match self.conn().and_then(|conn| {
+        let (context, purges) = match self.conn().and_then(|conn| {
             if !store::hydrated(&conn)? {
                 return Ok(None);
             }
-            reach::Context::capture(&conn).map(Some)
+            Ok(Some((
+                reach::Context::capture(&conn)?,
+                reach::purge_revision(&conn)?,
+            )))
         }) {
             Ok(Some(context)) => context,
             _ => return,
@@ -282,6 +285,9 @@ impl Core {
             let mut conn = self.conn()?;
             let tx = conn.transaction()?;
             context.check(&tx)?;
+            if reach::purge_revision(&tx)? != purges {
+                return Ok(());
+            }
             let catalog = catalog::Catalog::load(&tx)?;
             // `slice_holds` asks whether the row was listed when last held,
             // and this one may be new.
