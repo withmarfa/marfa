@@ -79,7 +79,11 @@ describe("unreadKeys", () => {
     fields: { title: { type: "string" }, serves: { type: "integer" } },
     required: ["title"],
   };
-  const edge = { id: "cites", cardinality: "many-to-many" };
+  const edge = {
+    id: "cites",
+    label: "Test label",
+    cardinality: "many-to-many",
+  };
 
   it("passes a type schema carrying only keys the validator reads", () => {
     expect(unreadKeys(type, "type")).toEqual([]);
@@ -229,6 +233,7 @@ describe("unreadKeys", () => {
     const full = {
       id: "cites",
       label: "Cites",
+      reverse_label: "Cited by",
       description: "One item cites another.",
       cardinality: "many-to-many",
       source_type_constraints: ["*"],

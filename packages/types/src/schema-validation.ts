@@ -1846,7 +1846,7 @@ export function validateEdgeTypeSchema(
           field: "(root)",
           expected: "an edge type schema object",
           actual: describe(input),
-          hint: 'Submit an object like { "id": "in-thread", "cardinality": "many-to-one" }.',
+          hint: 'Submit an object like { "id": "in-thread", "label": "In thread", "reverse_label": "Messages", "cardinality": "many-to-one" }.',
         }),
       ],
     };
@@ -1874,17 +1874,40 @@ export function validateEdgeTypeSchema(
     );
   }
 
-  for (const key of ["label", "description"] as const) {
-    if (obj[key] !== undefined && typeof obj[key] !== "string") {
-      errors.push(
-        issue({
-          field: key,
-          expected: "a string",
-          actual: describe(obj[key]),
-          hint: `Write ${key} as prose, or omit it.`,
-        }),
-      );
-    }
+  if (typeof obj.label !== "string" || obj.label.length === 0) {
+    errors.push(
+      issue({
+        field: "label",
+        expected: "a non-empty string",
+        actual: describe(obj.label),
+        hint: 'Name the source end for people, such as "Children".',
+      }),
+    );
+  }
+
+  if (
+    obj.reverse_label !== undefined &&
+    (typeof obj.reverse_label !== "string" || obj.reverse_label.length === 0)
+  ) {
+    errors.push(
+      issue({
+        field: "reverse_label",
+        expected: "a non-empty string",
+        actual: describe(obj.reverse_label),
+        hint: 'Name the target end for people, such as "Parent", or omit it to name both ends with the label.',
+      }),
+    );
+  }
+
+  if (obj.description !== undefined && typeof obj.description !== "string") {
+    errors.push(
+      issue({
+        field: "description",
+        expected: "a string",
+        actual: describe(obj.description),
+        hint: "Write description as prose, or omit it.",
+      }),
+    );
   }
 
   if (
@@ -2049,6 +2072,7 @@ export function validateEdgeTypeSchema(
 
   const data: EdgeTypeSchema = {
     id: obj.id as string,
+    label: obj.label as string,
     cardinality: obj.cardinality as EdgeCardinality,
     source_type_constraints: (obj.source_type_constraints as
       string[] | undefined) ?? ["*"],
@@ -2059,7 +2083,9 @@ export function validateEdgeTypeSchema(
     property_schema: propertySchema,
     written_at: (obj.written_at as EdgeWrittenAt | undefined) ?? "source",
   };
-  if (typeof obj.label === "string") data.label = obj.label;
+  if (typeof obj.reverse_label === "string") {
+    data.reverse_label = obj.reverse_label;
+  }
   if (typeof obj.description === "string") data.description = obj.description;
   if (typeof obj.reverse_name === "string") {
     data.reverse_name = obj.reverse_name;
@@ -2188,6 +2214,7 @@ export const EDGE_TYPE_SCHEMA_KEYS: ReadonlySet<string> = new Set(
   Object.keys({
     id: true,
     label: true,
+    reverse_label: true,
     description: true,
     cardinality: true,
     source_type_constraints: true,

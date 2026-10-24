@@ -1,6 +1,7 @@
 {
   "id": "authored-by",
   "label": "Authored by",
+  "reverse_label": "Author of",
   "description": "Source was authored by the target (usually a core.entity.person).",
   "cardinality": "many-to-many",
   "source_type_constraints": ["*"],

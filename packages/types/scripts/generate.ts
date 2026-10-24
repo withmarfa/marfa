@@ -340,7 +340,7 @@ lines.push("");
 
 /**
  * A shipped definition as literal types: every key sorted by code unit, the
- * prose (`label`, `description`) and the id left out. The consts above are
+ * prose (`label`, `reverse_label`, `description`) and the id left out. The consts above are
  * annotated with the schema interfaces, which widen every value to `string`
  * and every list to `string[]`, so the shapes of fields, enum values,
  * parents, roles, constraints and cardinalities reach a built declaration
@@ -361,7 +361,7 @@ function shapeLiteral(value: unknown): unknown {
 }
 
 /** Keys a definition carries only for a person reading it. */
-const PROSE_KEYS = new Set(["label", "description", "id"]);
+const PROSE_KEYS = new Set(["label", "reverse_label", "description", "id"]);
 
 /**
  * Keys whose value maps a name the definition chose to what it names. A field
@@ -450,7 +450,10 @@ edgeLines.push("");
 for (const edge of edgeSchemas) {
   edgeLines.push(`const ${edgeVarName(edge.id)}: EdgeTypeSchema = {`);
   edgeLines.push(`  id: ${quote(edge.id)},`);
-  if (edge.label) edgeLines.push(`  label: ${quote(edge.label)},`);
+  edgeLines.push(`  label: ${quote(edge.label)},`);
+  if (edge.reverse_label) {
+    edgeLines.push(`  reverse_label: ${quote(edge.reverse_label)},`);
+  }
   if (edge.description) {
     edgeLines.push(`  description: ${quote(edge.description)},`);
   }

@@ -129,6 +129,7 @@ describe("a thumbnail field", () => {
     ).toBe(true);
     const edge = validateEdgeTypeSchema({
       id: "depicts",
+      label: "Test label",
       cardinality: "many-to-many",
       property_schema: { preview: { type: "thumbnail" } },
     });
@@ -136,6 +137,7 @@ describe("a thumbnail field", () => {
     expect(
       validateEdgeTypeSchema({
         id: "depicts",
+        label: "Test label",
         cardinality: "many-to-many",
         property_schema: { note: { type: "string" } },
       }).success,
@@ -177,6 +179,7 @@ describe("a thumbnail field", () => {
     expect(
       validateEdgeTypeSchema({
         id: "depicts",
+        label: "Test label",
         cardinality: "many-to-many",
         property_schema: { labels: { type: "array", items_type: "string" } },
       }).success,
@@ -194,6 +197,7 @@ describe("a thumbnail field", () => {
     expect(
       validateEdgeTypeSchema({
         id: "depicts",
+        label: "Test label",
         cardinality: "many-to-many",
         property_schema: {
           previews: { type: "array", items_type: "thumbnail" },

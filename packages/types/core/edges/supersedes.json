@@ -1,6 +1,7 @@
 {
   "id": "supersedes",
   "label": "Supersedes",
+  "reverse_label": "Superseded by",
   "description": "Source replaces the target as the current version. Linear chain; no cycles. Deleting the head does not promote the predecessor (orphan).",
   "cardinality": "one-to-one",
   "source_type_constraints": ["*"],

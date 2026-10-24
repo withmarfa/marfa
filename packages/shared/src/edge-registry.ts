@@ -71,6 +71,18 @@ export function registerEdgeTypeSchema(schema: EdgeTypeSchema): void {
   stageRegistryEdge(schema);
 }
 
+/**
+ * Reads a registered edge type from the JSON a database stores. A row written
+ * before `label` was required may have none, and is read with the id as its
+ * label, so the listing always holds one. Nothing rewrites the row until the
+ * type is replaced.
+ */
+export function edgeTypeFromStored(json: string): EdgeTypeSchema {
+  const stored = JSON.parse(json) as Omit<EdgeTypeSchema, "label"> &
+    Partial<Pick<EdgeTypeSchema, "label">>;
+  return { ...stored, label: stored.label ?? stored.id };
+}
+
 /** Removes a custom edge-type schema from the runtime overlay. */
 export function unregisterEdgeTypeSchema(id: string): void {
   removeRegistryEdge(id);

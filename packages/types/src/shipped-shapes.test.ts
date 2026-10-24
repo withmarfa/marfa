@@ -17,7 +17,11 @@ function withoutProse(value: unknown, named = false): unknown {
   if (value === null || typeof value !== "object") return value;
   return Object.fromEntries(
     Object.entries(value)
-      .filter(([key]) => named || !["label", "description", "id"].includes(key))
+      .filter(
+        ([key]) =>
+          named ||
+          !["label", "reverse_label", "description", "id"].includes(key),
+      )
       .map(([key, v]) => [
         key,
         withoutProse(v, !named && ["fields", "property_schema"].includes(key)),
@@ -62,6 +66,15 @@ describe("the shipped shapes", () => {
         edge.id,
       ).toEqual(withoutProse(edge));
     }
+  });
+
+  it("leave out a reverse label as prose, so renaming one moves no digest", () => {
+    // The witness: the shipped parent-of declares one, and its shape lacks it.
+    const parentOf = ALL_EDGE_TYPES.find((e) => e.id === "parent-of");
+    expect(parentOf?.reverse_label).toBe("Parent");
+    expect(SHIPPED_EDGE_TYPE_SHAPES["parent-of"]).not.toHaveProperty(
+      "reverse_label",
+    );
   });
 
   it("keep their values as literal types, which is what the shapes digest hashes", () => {

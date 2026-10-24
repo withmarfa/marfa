@@ -213,7 +213,14 @@ export type EdgeCascade = "cascade" | "orphan" | "block";
 
 export interface EdgeTypeSchema {
   id: string;
-  label?: string;
+  /** The name an app shows on the source end of an edge of this type. */
+  label: string;
+  /**
+   * The name an app shows on the target end. Where it is absent, `label`
+   * names both ends, the relation is two-way, and an app shows both ends as
+   * one list. Not the `reverse_name`, which is the code name a file writes.
+   */
+  reverse_label?: string;
   description?: string;
   cardinality: EdgeCardinality;
   /**
