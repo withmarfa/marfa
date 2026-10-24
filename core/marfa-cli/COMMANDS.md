@@ -2455,6 +2455,8 @@ Every `marfa device` command accepts these.
 
 Replace the local copy with the declared types at one tier, or both.
 
+A hydration that stopped before it finished carries on from the page it had reached when run again for the same slice. It starts again from the first page when the server, the key's reach, the slice or the catalog has changed since, or the server's event log no longer holds the point it started from, and says why.
+
 ```text
 marfa device hydrate [OPTIONS] --types <TYPE> --tier <TIER>
 ```

@@ -200,7 +200,17 @@ pub struct HydrateReport {
     pub edge_types: Vec<String>,
     pub items: u64,
     pub edges: u64,
+    /// The listing pages this call read.
     pub pages: u64,
+    /// The listing pages the hydration read in all, those of the interrupted
+    /// calls it resumed included.
+    pub pages_total: u64,
+    /// Whether this call carried on from the page an interrupted hydration
+    /// of the same slice had reached.
+    pub resumed: bool,
+    /// Why an interrupted hydration was filled again from the first page
+    /// rather than resumed, such as `slice_changed` or `head_aged_out`.
+    pub restarted: Option<String>,
     pub cursor: String,
     /// Types the app declared that the instance did not hold and now does.
     pub registered_types: Vec<String>,
@@ -1293,6 +1303,9 @@ impl From<marfa_core::HydrateReport> for HydrateReport {
             items: report.items,
             edges: report.edges,
             pages: report.pages,
+            pages_total: report.pages_total,
+            resumed: report.resumed,
+            restarted: report.restarted.map(|reason| reason.as_str().to_string()),
             cursor: report.cursor,
             registered_types: report.registered_types,
             unregistered_types: report

@@ -589,33 +589,47 @@ pub(crate) fn replay_build(
     Ok(report)
 }
 
+const AGED_OUT: &str = "the event log no longer holds the cursor";
+const RESTORED: &str = "as a server restored from an earlier point does";
+
 /// Why a frame says the server's log does not continue from `held`: the log
 /// has aged past it, or ends behind it, as a server restored from an earlier
 /// point does. A position the server names that is behind `held` is the
 /// second, whichever frame names it.
-fn diverged(kind: &str, payload: &EventPayload, held: &str) -> Option<String> {
+pub(crate) fn diverged(kind: &str, payload: &EventPayload, held: &str) -> Option<String> {
     let behind = |head: Option<&str>| {
         let (Ok(head), Ok(have)) = (head?.parse::<u64>(), held.parse::<u64>()) else {
             return None;
         };
         (head < have).then(|| {
             format!(
-                "the server's event log ends at {head}, behind the cursor {held} this copy holds, as a server restored from an earlier point does"
+                "the server's event log ends at {head}, behind the cursor {held} this copy holds, {RESTORED}"
             )
         })
     };
     match kind {
         "catchup_too_old" => Some(format!(
-            "the event log no longer holds the cursor {held} (oldest retained id {})",
+            "{AGED_OUT} {held} (oldest retained id {})",
             payload.min_retained_id.as_deref().unwrap_or("unknown")
         )),
         "cursor_ahead" => Some(behind(payload.head.as_deref()).unwrap_or_else(|| {
             format!(
-                "the server says the cursor {held} this copy holds is past its event log, as a server restored from an earlier point does"
+                "the server says the cursor {held} this copy holds is past its event log, {RESTORED}"
             )
         })),
         "stream_cursor" | "stream_live" => behind(payload.cursor.as_deref()),
         _ => None,
+    }
+}
+
+/// Which of the two `diverged` named, from the reason it gave.
+pub(crate) fn divergence(reason: &str) -> Option<crate::model::HydrateRestart> {
+    if reason.starts_with(AGED_OUT) {
+        Some(crate::model::HydrateRestart::HeadAgedOut)
+    } else if reason.ends_with(RESTORED) {
+        Some(crate::model::HydrateRestart::HeadPastLog)
+    } else {
+        None
     }
 }
 
