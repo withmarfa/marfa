@@ -2242,8 +2242,8 @@ impl Core {
     /// thread, takes the bytes from when this is called until the answer is
     /// dropped, so a binding that hands the path on later holds the answer
     /// until it has. After that, or for a trim in another process, the bytes
-    /// are the ones read most recently, so they are the last a trim takes,
-    /// but a trim may take them. A caller opens the path at once and reads
+    /// are the ones read most recently, so they are the last a trim takes
+    /// unless they are larger than the file budget, when they are the first. A caller opens the path at once and reads
     /// through the handle.
     pub fn blob(&self, hash: &str) -> Result<BlobPath> {
         let hash = blob::named(hash)?;
@@ -2349,7 +2349,8 @@ impl Core {
         };
     }
 
-    /// Takes the bytes read longest ago until the cache fits its budget, and
+    /// Takes bytes larger than the budget, then the bytes read longest ago,
+    /// until the cache fits its budget, and
     /// answers how many it took. Bytes an upload still names are never
     /// taken, nor bytes a caller is reading. A trim that cannot read the
     /// queue or the setting takes nothing.

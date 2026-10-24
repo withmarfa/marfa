@@ -368,7 +368,8 @@ impl Cache {
         read_volume(Place::Named(&self.dir))
     }
 
-    /// Takes the bytes read longest ago until what is left fits the budget
+    /// Takes bytes larger than the budget, then the bytes read longest ago,
+    /// until what is left fits the budget
     /// `budget` gives for the bytes held, and answers how many it took.
     /// Bytes named in `kept`, and bytes a caller is reading, stay whatever
     /// the budget, and `None` takes nothing. A cache that cannot be read
@@ -1647,7 +1648,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn a_range_that_does_not_continue_the_bytes_held_drops_them() {
+    fn a_resume_asks_from_the_bytes_the_partial_file_holds_now() {
         let bytes = payload(5000);
         let hash = name_of(&bytes);
         let dir = tempfile::tempdir().unwrap();
@@ -1668,11 +1669,8 @@ pub(crate) mod tests {
         let partial = cache
             .dir
             .join(format!(".partial-{}", hex_of(&hash).unwrap()));
-        // Held bytes that run past where the link's range begins.
         fs::write(&partial, &bytes[..2000]).unwrap();
         let other = ranged(bytes.clone(), true, None);
-        let skewed = fs::OpenOptions::new().append(true).open(&partial).unwrap();
-        drop(skewed);
         assert!(
             pull(
                 &cache,

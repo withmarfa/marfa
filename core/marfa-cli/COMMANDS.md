@@ -3348,7 +3348,7 @@ marfa device blobs budget [OPTIONS] [VALUE]
 
 | Option | Description |
 | --- | --- |
-| `--trim` | Remove the files read longest ago until the budget holds, and report the bytes removed. |
+| `--trim` | Remove files larger than the budget, then the files read longest ago, until the budget holds, and report the bytes removed. |
 
 Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 
