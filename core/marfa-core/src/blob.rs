@@ -453,15 +453,22 @@ impl Cache {
     /// Locks a partial file as a fetch does, if no fetch holds it. Nothing
     /// is locked where the platform has no partial files.
     fn lock_partial(&self, label: &Path) -> Option<File> {
+        let file = self.open_label(label, false, false).ok()?;
+        self.lock_opened(file, label)
+    }
+
+    /// Locks `file`, opened from `label`, if no fetch holds it and `label`
+    /// still names it: a fetch that dropped it unlinked it before letting go,
+    /// and another may since have made a file at the same path.
+    fn lock_opened(&self, file: File, label: &Path) -> Option<File> {
         #[cfg(unix)]
         {
-            let file = self.open_label(label, false, false).ok()?;
             rustix::fs::flock(&file, rustix::fs::FlockOperation::NonBlockingLockExclusive).ok()?;
-            Some(file)
+            self.names(&file, label).then_some(file)
         }
         #[cfg(not(unix))]
         {
-            let _ = label;
+            let _ = (file, label);
             None
         }
     }
@@ -533,16 +540,27 @@ impl Cache {
         };
         for entry in entries {
             let name = entry.file_name().unwrap_or_default().to_string_lossy();
+            let partial = name.starts_with(".partial-");
             let older_than = if name.starts_with(".incoming-") {
                 older_than
-            } else if name.starts_with(".partial-") {
+            } else if partial {
                 older_than.max(PARTIAL_KEPT)
             } else {
                 continue;
             };
-            let stale = self
-                .open_label(&entry, false, false)
-                .and_then(|file| file.metadata()?.modified())
+            // A fetch resuming a partial holds its lock, and a partial is
+            // only ever unlinked under it.
+            let opened = if partial {
+                self.lock_partial(&entry)
+            } else {
+                self.open_label(&entry, false, false).ok()
+            };
+            let Some(file) = opened else {
+                continue;
+            };
+            let stale = file
+                .metadata()
+                .and_then(|meta| meta.modified())
                 .is_ok_and(|modified| modified.elapsed().is_ok_and(|age| age > older_than));
             if stale {
                 let _ = self.unlink_label(&entry);
@@ -1284,7 +1302,10 @@ fn open(link: &str, from: u64) -> std::result::Result<Opened, Refusal> {
         .timeout_recv_body(Some(LINK_BODY_MOST))
         .build()
         .into();
-    let mut request = agent.get(link);
+    // The agent offers gzip unless told otherwise, and drops the length of
+    // what it decompresses, so the stated size and the offsets of a range
+    // would describe a different representation from the stored bytes.
+    let mut request = agent.get(link).header("Accept-Encoding", "identity");
     if from > 0 {
         request = request.header("Range", format!("bytes={from}-"));
     }
@@ -2053,6 +2074,40 @@ pub(crate) mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn a_partial_replaced_between_opening_and_locking_is_not_held() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = Cache::beside(&dir.path().join("store.sqlite"));
+        let label = partial_of(&cache, b"old", 10);
+        // The witness: a partial that is still the one at its path locks.
+        assert!(cache.lock_partial(&label).is_some());
+        let opened = cache.open_label(&label, false, false).unwrap();
+        fs::remove_file(&label).unwrap();
+        fs::write(&label, b"replacement").unwrap();
+        assert!(cache.lock_opened(opened, &label).is_none());
+        assert_eq!(fs::read(&label).unwrap(), b"replacement");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_startup_sweep_leaves_a_partial_another_handle_holds() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = Cache::beside(&dir.path().join("store.sqlite"));
+        let mut staging = cache.stage(&name_of(&payload(8))).unwrap();
+        staging.file.write_all(b"some bytes").unwrap();
+        let week = PARTIAL_KEPT + Duration::from_secs(60);
+        staging.file.set_modified(SystemTime::now() - week).unwrap();
+        let label = staging.label.clone();
+        let other = Cache::beside(&dir.path().join("store.sqlite"));
+        other.sweep_incoming(Duration::ZERO);
+        assert!(label.exists(), "the sweep took a partial a fetch holds");
+        // The witness: once let go, the same old partial is swept.
+        cache.leave_staging(staging);
+        other.sweep_incoming(Duration::ZERO);
+        assert!(!label.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn a_fetch_short_of_room_takes_the_partials_of_other_bytes_and_asks_again() {
         let bytes = payload(5000);
         let hash = name_of(&bytes);
@@ -2089,6 +2144,63 @@ pub(crate) mod tests {
             "{refused:?}"
         );
         assert!(!again.exists());
+    }
+
+    /// A link that gzips its answer, with no length, to any ask that offers
+    /// gzip, and answers the rest as stored. The `Accept-Encoding` of each
+    /// ask is recorded.
+    fn gzipping(body: Vec<u8>) -> (String, Arc<Mutex<Vec<String>>>) {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/bytes", listener.local_addr().unwrap());
+        let offered = Arc::new(Mutex::new(Vec::new()));
+        let record = Arc::clone(&offered);
+        std::thread::spawn(move || {
+            while let Ok((mut socket, _)) = listener.accept() {
+                let mut request = [0u8; 4096];
+                let read = Read::read(&mut socket, &mut request).unwrap_or(0);
+                let text = String::from_utf8_lossy(&request[..read]).to_lowercase();
+                let encoding = text
+                    .lines()
+                    .find_map(|line| line.strip_prefix("accept-encoding:"))
+                    .unwrap_or("")
+                    .trim()
+                    .to_string();
+                let zipped = encoding.contains("gzip");
+                record.lock().unwrap().push(encoding);
+                if zipped {
+                    let mut packed =
+                        flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+                    packed.write_all(&body).unwrap();
+                    let packed = packed.finish().unwrap();
+                    let _ = socket.write_all(
+                        b"HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nConnection: close\r\n\r\n",
+                    );
+                    let _ = socket.write_all(&packed);
+                } else {
+                    let head = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                        body.len()
+                    );
+                    let _ = socket.write_all(head.as_bytes());
+                    let _ = socket.write_all(&body);
+                }
+            }
+        });
+        (url, offered)
+    }
+
+    #[test]
+    fn every_ask_to_a_link_wants_the_stored_bytes_and_not_a_compressed_copy() {
+        let bytes = payload(5000);
+        let hash = name_of(&bytes);
+        let dir = tempfile::tempdir().unwrap();
+        let cache = Cache::beside(&dir.path().join("store.sqlite"));
+        let (url, offered) = gzipping(bytes.clone());
+        let fetched = pull(&cache, &hash, &url, None, WITHIN, || None, no_uploads);
+        assert!(fetched.is_ok(), "{fetched:?}");
+        let _ = open(&url, 100);
+        let offered = offered.lock().unwrap();
+        assert_eq!(*offered, ["identity", "identity"]);
     }
 
     /// A link that answers every ask `206` with the `Content-Range` given.
