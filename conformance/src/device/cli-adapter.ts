@@ -262,27 +262,6 @@ export class CliDevice implements DeviceUnderTest {
     return this.invokeText([...this.prefix(), "items", "get", id]);
   }
 
-  /** What a folder's query holds, answered from the copy (`device/folder-list`). */
-  async listInFolder(
-    folder: string,
-    page: { limit?: number; offset?: number } = {},
-  ): Promise<Outcome<Item[]>> {
-    const args = ["items", "list", "--folder", folder];
-    if (page.limit !== undefined) args.push("--limit", String(page.limit));
-    if (page.offset !== undefined) args.push("--offset", String(page.offset));
-    return rows(await this.json<Listing>(args), (answer) => answer.items);
-  }
-
-  async searchInFolder(
-    query: string,
-    folder: string,
-  ): Promise<Outcome<SearchHit[]>> {
-    return rows(
-      await this.json<Found>(["search", query, "--folder", folder]),
-      (answer) => answer.hits,
-    );
-  }
-
   /** A folder's settings as the copy holds them. */
   async folder(id: string): Promise<Outcome<FolderRow>> {
     return this.json<FolderRow>(["folders", "get", id]);

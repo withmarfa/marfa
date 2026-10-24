@@ -658,6 +658,63 @@ mod tests {
     use clap::CommandFactory;
 
     #[test]
+    fn device_views_parse_and_replace_folder_selection() {
+        for words in [
+            vec!["device", "views", "list"],
+            vec!["device", "views", "get", "view-id"],
+            vec![
+                "device",
+                "views",
+                "groups",
+                "view-id",
+                "--layout",
+                "board",
+                "--time-zone",
+                "Europe/London",
+            ],
+            vec![
+                "device", "items", "list", "--view", "view-id", "--layout", "board", "--limit",
+                "2", "--offset", "1",
+            ],
+            vec!["device", "search", "words", "--view", "view-id"],
+        ] {
+            let mut argv = vec!["marfa"];
+            argv.extend(words);
+            assert!(Cli::try_parse_from(&argv).is_ok(), "{argv:?}");
+        }
+        for words in [
+            vec!["device", "items", "list", "--folder", "view-id"],
+            vec!["device", "search", "words", "--folder", "view-id"],
+            vec!["device", "items", "list", "--layout", "board"],
+            vec![
+                "device",
+                "items",
+                "list",
+                "--view",
+                "view-id",
+                "--sort",
+                "updated-at",
+            ],
+            vec![
+                "device",
+                "items",
+                "list",
+                "--view",
+                "view-id",
+                "--direction",
+                "asc",
+            ],
+            vec![
+                "device", "search", "words", "--view", "view-id", "--tag", "work",
+            ],
+        ] {
+            let mut argv = vec!["marfa"];
+            argv.extend(words);
+            assert!(Cli::try_parse_from(&argv).is_err(), "{argv:?}");
+        }
+    }
+
+    #[test]
     fn socket_authority_cannot_be_combined_with_network_credentials() {
         for flags in [["--url", "https://example.com"], ["--key", "secret"]] {
             assert!(

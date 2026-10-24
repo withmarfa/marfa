@@ -4,14 +4,15 @@ import { dirname } from "node:path";
 import type { TestContext } from "../../client/types.js";
 import { MarfaClient } from "../../client/api.js";
 import { CliDevice, newStore } from "../../device/cli-adapter.js";
-import type { Outcome } from "../../device/protocol.js";
+import { BindingDevice } from "../../device/binding-adapter.js";
+import type { Item, Outcome, SearchHit } from "../../device/protocol.js";
 import {
   createTestContext,
   cleanup,
   trackFolder,
   trackItem,
 } from "../../utils/setup.js";
-import { requireBinary } from "./harness.js";
+import { requireBinary, requireModule } from "./harness.js";
 
 /**
  * A working copy reads a folder's settings, answers its query, and writes its
@@ -53,6 +54,55 @@ function copy(name: string, url = apiUrl): CliDevice {
   const store = newStore(`folder-settings-${name}`);
   stores.push(store);
   return new CliDevice({ binary: requireBinary(), store, url, key: apiKey });
+}
+
+// Folder reads are an app API; the CLI selects saved lists through views.
+async function folderRead<T>(
+  device: CliDevice,
+  method: string,
+  ...args: unknown[]
+): Promise<Outcome<T>> {
+  const binding = await BindingDevice.start({
+    module: requireModule(),
+    store: device.store,
+    reader: true,
+  });
+  try {
+    return await binding.call<T>(method, ...args);
+  } finally {
+    await binding.close();
+  }
+}
+
+async function listInFolder(
+  device: CliDevice,
+  id: string,
+  page: { limit?: number; offset?: number } = {},
+): Promise<Outcome<Item[]>> {
+  const answer = await folderRead<{ items: Item[] }>(
+    device,
+    "listInFolder",
+    id,
+    null,
+    page.limit ?? null,
+    page.offset ?? null,
+  );
+  return answer.ok ? { ok: true, value: answer.value.items } : answer;
+}
+
+async function searchInFolder(
+  device: CliDevice,
+  query: string,
+  id: string,
+): Promise<Outcome<SearchHit[]>> {
+  const answer = await folderRead<{ hits: SearchHit[] }>(
+    device,
+    "searchInFolder",
+    query,
+    id,
+    20,
+  );
+  return answer.ok ? { ok: true, value: answer.value.hits } : answer;
 }
 
 async function serverFolder(settings: Record<string, unknown>) {
@@ -130,7 +180,7 @@ describe("a copy reads a folder's settings and answers its query", () => {
   });
 
   it("lists and searches in a folder what the folder's query holds", async () => {
-    const listed = value(await device.listInFolder(id("shelf")));
+    const listed = value(await listInFolder(device, id("shelf")));
     expect(listed.map((row) => row.id).sort()).toEqual(
       [id("active"), id("archived")].sort(),
     );
@@ -147,11 +197,11 @@ describe("a copy reads a folder's settings and answers its query", () => {
         .map((row) => row.id)
         .sort(),
     ).toEqual(listed.map((row) => row.id).sort());
-    const hits = value(await device.searchInFolder("marmalade", id("shelf")));
+    const hits = value(await searchInFolder(device, "marmalade", id("shelf")));
     expect(hits.map((hit) => hit.item.id).sort()).toEqual(
       [id("active"), id("archived")].sort(),
     );
-    const page = value(await device.listInFolder(id("shelf"), { limit: 1 }));
+    const page = value(await listInFolder(device, id("shelf"), { limit: 1 }));
     expect(page).toHaveLength(1);
   });
 
@@ -174,25 +224,25 @@ describe("a copy reads a folder's settings and answers its query", () => {
       [feedTier, "feed"],
       [beneath, "parent-of"],
     ] as const) {
-      const listed = refused(await device.listInFolder(folder));
+      const listed = refused(await listInFolder(device, folder));
       expect(listed.code, listed.raw).toBe("invalid");
       expect(listed.raw).toContain(names);
       const searched = refused(
-        await device.searchInFolder("marmalade", folder),
+        await searchInFolder(device, "marmalade", folder),
       );
       expect(searched.code, searched.raw).toBe("invalid");
     }
-    const absent = refused(await device.listInFolder(id("active")));
+    const absent = refused(await listInFolder(device, id("active")));
     expect(absent.code, absent.raw).toBe("invalid");
     expect(absent.raw).toContain(FOLDER_TYPE);
 
     const unheld = copy("unheld");
     value(await unheld.hydrate([typeId], "library"));
-    const notHeld = refused(await unheld.listInFolder(id("shelf")));
+    const notHeld = refused(await listInFolder(unheld, id("shelf")));
     expect(notHeld.code, notHeld.raw).toBe("not_found");
     expect(notHeld.raw).toContain("not_held");
     const notHeldSearch = refused(
-      await unheld.searchInFolder("marmalade", id("shelf")),
+      await searchInFolder(unheld, "marmalade", id("shelf")),
     );
     expect(notHeldSearch.code, notHeldSearch.raw).toBe("not_found");
     expect(notHeldSearch.raw).toContain("not_held");
@@ -204,7 +254,7 @@ describe("a copy reads a folder's settings and answers its query", () => {
       }),
     );
     expect(
-      value(await parents.listInFolder(beneath)).map((row) => row.id),
+      value(await listInFolder(parents, beneath)).map((row) => row.id),
     ).toEqual([id("active")]);
   });
 });
@@ -220,7 +270,7 @@ describe("a copy writes a folder's settings through the folder door", () => {
     trackFolder(ctx, created.id);
     expect([created.version, created.state]).toEqual([1, "active"]);
     expect(value(await device.folder(created.id)).version).toBe(1);
-    expect(value(await device.listInFolder(created.id))).toHaveLength(2);
+    expect(value(await listInFolder(device, created.id))).toHaveLength(2);
 
     const changed = value(
       await device.changeFolder(
@@ -242,11 +292,11 @@ describe("a copy writes a folder's settings through the folder door", () => {
     );
     expect(after.code, after.raw).toBe("validation");
     expect(after.raw).toContain("invalid_transition");
-    const gone = refused(await device.listInFolder(created.id));
+    const gone = refused(await listInFolder(device, created.id));
     expect(gone.code, gone.raw).toBe("invalid");
     expect(gone.raw).toContain("revoked");
     const goneSearch = refused(
-      await device.searchInFolder("marmalade", created.id),
+      await searchInFolder(device, "marmalade", created.id),
     );
     expect(goneSearch.code, goneSearch.raw).toBe("invalid");
 
@@ -279,7 +329,7 @@ describe("a copy writes a folder's settings through the folder door", () => {
     });
     value(await device.catchUp());
     expect(value(await device.folder(served)).settings.title).toBe(title);
-    const unanswered = refused(await device.listInFolder(served));
+    const unanswered = refused(await listInFolder(device, served));
     expect(unanswered.code, unanswered.raw).toBe("invalid");
     expect(unanswered.raw).toContain("backref");
     expect(value(await device.revokeFolder(served)).state).toBe("revoked");

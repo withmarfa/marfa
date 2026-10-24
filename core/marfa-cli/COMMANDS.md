@@ -2567,7 +2567,7 @@ Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 
 List items, newest first unless sorted otherwise.
 
-While a hydration fills the copy, or after one was interrupted, the list holds the rows that have arrived and says it is partial: on standard error, and under --json as `completeness`, `partial` or `complete`, beside `items`.
+Without `--view`, while a hydration fills the copy or after one was interrupted, the list holds the rows that have arrived and says it is partial: on standard error, and under --json as `completeness`, `partial` or `complete`, beside `items`. With `--view`, an incomplete copy is refused.
 
 ```text
 marfa device items list [OPTIONS]
@@ -2588,7 +2588,8 @@ marfa device items list [OPTIONS]
 | `--direction <DIRECTION>` | Newest first, or oldest. One of `asc`, `desc`. Default: `desc`. |
 | `--limit <LIMIT>` | How many items at most. |
 | `--offset <OFFSET>` | How many items to skip first. |
-| `--folder <ID>` | Only what this `system.folder`'s query holds, as the folder holds it; refused where the copy's slice cannot answer the query whole. |
+| `--view <ID>` | Only what this view selects, ordered by its layout; refused with a reason where the copy cannot answer the query whole. |
+| `--layout <ID>` | The layout whose sort to use; without it, use the view's first layout. |
 
 Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 
@@ -2920,11 +2921,64 @@ marfa device folders get [OPTIONS] <ID>
 
 Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 
+### marfa device views
+
+Views and their layout groups, read from the local copy.
+
+```text
+marfa device views [OPTIONS] <COMMAND>
+```
+
+Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
+
+### marfa device views list
+
+List the views held in the copy.
+
+```text
+marfa device views list [OPTIONS]
+```
+
+Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
+
+### marfa device views get
+
+Read a view's settings from the copy.
+
+```text
+marfa device views get [OPTIONS] <ID>
+```
+
+| Argument | Description |
+| --- | --- |
+| `<ID>` | The view's `system.view` id. |
+
+Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
+
+### marfa device views groups
+
+List a layout's groups, item counts, and numeric sums where requested.
+
+```text
+marfa device views groups [OPTIONS] --layout <ID> <ID>
+```
+
+| Argument | Description |
+| --- | --- |
+| `<ID>` | The view's `system.view` id. |
+
+| Option | Description |
+| --- | --- |
+| `--layout <ID>` | The layout to group by. |
+| `--time-zone <ZONE>` | An IANA time zone for date buckets; otherwise use the device's zone. |
+
+Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
+
 ### marfa device search
 
 Full-text search over the local copy, best match first.
 
-While a hydration fills the copy, or after one was interrupted, the search covers the rows that have arrived and says it is partial: on standard error, and under --json as `completeness`, `partial` or `complete`, beside `hits`.
+Without `--view`, while a hydration fills the copy or after one was interrupted, the search covers the rows that have arrived and says it is partial: on standard error, and under --json as `completeness`, `partial` or `complete`, beside `hits`. With `--view`, an incomplete copy is refused.
 
 ```text
 marfa device search [OPTIONS] <QUERY>
@@ -2943,7 +2997,7 @@ marfa device search [OPTIONS] <QUERY>
 | `--filter <EXPR>` | An expression in the server's listing grammar, answered as the server answers `filter`; a `backref` condition is refused. |
 | `--beneath <ID>` | Only this item and what it reaches along `parent-of` edges. |
 | `--limit <LIMIT>` | How many hits at most. Default: `20`. |
-| `--folder <ID>` | Only what this `system.folder`'s query holds, as the folder holds it; refused where the copy's slice cannot answer the query whole. |
+| `--view <ID>` | Only what this view's query selects; refused with a reason where the copy cannot answer the query whole. |
 
 Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 
