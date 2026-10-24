@@ -14,9 +14,10 @@ use crate::http::{Call, CallBody, Http, Method};
 
 const PREFIX: &str = "sha256:";
 
-/// The most bytes one fetch pulls. The cache as a whole is bounded by the
-/// file budget, not by this.
-pub(crate) const CACHE_MOST: u64 = 512 * 1024 * 1024;
+/// How long the bytes of a fetch that stopped are kept for a resume. A link
+/// is good for seven days at most, and bytes beyond that are not worth the
+/// space they take, which no budget counts.
+const PARTIAL_KEPT: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 
 pub(crate) struct Cache {
     dir: PathBuf,
@@ -119,6 +120,18 @@ pub(crate) enum Mark {
 enum Copy {
     Source(io::Error),
     Cache(io::Error),
+}
+
+/// A file the bytes of one fetch are written to.
+pub(crate) struct Staging {
+    label: PathBuf,
+    file: File,
+    /// The bytes in the file now, which a resume continues from.
+    held: u64,
+    /// Whether the file is the one a fetch of the same bytes resumes from,
+    /// which this fetch has locked. Otherwise another fetch of them holds
+    /// that file, and this one writes a file of its own and keeps nothing.
+    shared: bool,
 }
 
 impl Cache {
@@ -303,7 +316,7 @@ impl Cache {
         let mut found = Vec::new();
         for entry in entries {
             let name = entry.file_name().unwrap_or_default().to_string_lossy();
-            if name.starts_with(".incoming-") {
+            if name.starts_with(".incoming-") || name.starts_with(".partial-") {
                 continue;
             }
             match self.stat_label(&entry) {
@@ -381,7 +394,10 @@ impl Cache {
                 !kept.contains(name.as_ref()) && !reading.contains_key(name.as_ref())
             })
             .collect();
-        held.sort();
+        // Bytes larger than the budget go first: they can never fit, so a
+        // trim that kept them for being read lately would take every smaller
+        // file before them.
+        held.sort_by(|a, b| ((a.1 <= most), a.0, a.1, &a.2).cmp(&((b.1 <= most), b.0, b.1, &b.2)));
         let mut taken = 0;
         for (_, size, path) in held {
             if total <= most {
@@ -439,15 +455,18 @@ impl Cache {
             return;
         };
         for entry in entries {
-            let stale = entry
-                .file_name()
-                .unwrap_or_default()
-                .to_string_lossy()
-                .starts_with(".incoming-")
-                && self
-                    .open_label(&entry, false, false)
-                    .and_then(|file| file.metadata()?.modified())
-                    .is_ok_and(|modified| modified.elapsed().is_ok_and(|age| age > older_than));
+            let name = entry.file_name().unwrap_or_default().to_string_lossy();
+            let older_than = if name.starts_with(".incoming-") {
+                older_than
+            } else if name.starts_with(".partial-") {
+                older_than.max(PARTIAL_KEPT)
+            } else {
+                continue;
+            };
+            let stale = self
+                .open_label(&entry, false, false)
+                .and_then(|file| file.metadata()?.modified())
+                .is_ok_and(|modified| modified.elapsed().is_ok_and(|age| age > older_than));
             if stale {
                 let _ = self.unlink_label(&entry);
             }
@@ -456,13 +475,14 @@ impl Cache {
 
     /// `kept` reads the hashes queued uploads name, and is called under
     /// `hold`.
+    #[cfg(test)]
     pub(crate) fn keep(
         &self,
         hash: &str,
         bytes: impl Read,
         kept: impl FnOnce() -> Option<HashSet<String>>,
     ) -> Result<Fetched> {
-        let hex = hex_of(hash)?;
+        hex_of(hash)?;
         let (found, _, incoming) = self.copy_in(bytes).map_err(|error| match error {
             Copy::Source(error) => CoreError::BytesAbsent {
                 hash: hash.to_string(),
@@ -470,8 +490,20 @@ impl Cache {
             },
             Copy::Cache(error) => self.unwritable(error),
         })?;
+        self.finish(hash, &found, &incoming, kept)
+    }
+
+    /// Gives bytes that hashed to `found` the name `hash`, if it is theirs.
+    fn finish(
+        &self,
+        hash: &str,
+        found: &str,
+        incoming: &Path,
+        kept: impl FnOnce() -> Option<HashSet<String>>,
+    ) -> Result<Fetched> {
+        let hex = hex_of(hash)?;
         if found != hash {
-            let _ = self.unlink_label(&incoming);
+            let _ = self.unlink_label(incoming);
             return Err(CoreError::Decoding(format!(
                 "the bytes fetched for {hash} hash to {found}, so they are not the blob asked for"
             )));
@@ -488,7 +520,7 @@ impl Cache {
             Mark::Kept
         } else {
             match self
-                .open_label(&incoming, false, false)
+                .open_label(incoming, false, false)
                 .and_then(|file| crate::file_cache::exclude_from_backup(&file))
             {
                 Ok(()) => Mark::Excluded,
@@ -496,15 +528,16 @@ impl Cache {
             }
         };
         Ok(Fetched {
-            path: self.settle(&incoming, hash)?,
+            path: self.settle(incoming, hash)?,
             mark,
         })
     }
 
-    fn copy_in(&self, mut from: impl Read) -> std::result::Result<(String, u64, PathBuf), Copy> {
+    /// Makes the folder the bytes are written to, if it is not made yet.
+    fn ensure_folder(&self) -> io::Result<()> {
         #[cfg(unix)]
         if self.parent.is_some() {
-            self.capability(true).map_err(Copy::Cache)?;
+            self.capability(true)?;
         }
         #[cfg(unix)]
         let make = self.parent.is_none();
@@ -515,27 +548,21 @@ impl Cache {
             made.recursive(true);
             #[cfg(unix)]
             std::os::unix::fs::DirBuilderExt::mode(&mut made, 0o700);
-            made.create(&self.dir).map_err(Copy::Cache)?;
+            made.create(&self.dir)?;
         }
+        Ok(())
+    }
+
+    fn copy_in(&self, mut from: impl Read) -> std::result::Result<(String, u64, PathBuf), Copy> {
+        self.ensure_folder().map_err(Copy::Cache)?;
         let incoming = self.dir.join(format!(".incoming-{}", uuid::Uuid::now_v7()));
         let copied = (|| {
             let mut to = self
                 .open_label(&incoming, true, true)
                 .map_err(Copy::Cache)?;
             let mut hasher = Sha256::new();
-            let mut buffer = vec![0u8; 64 * 1024];
             let mut size = 0u64;
-            loop {
-                let read = match from.read(&mut buffer) {
-                    Ok(0) => break,
-                    Ok(read) => read,
-                    Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
-                    Err(error) => return Err(Copy::Source(error)),
-                };
-                hasher.update(&buffer[..read]);
-                to.write_all(&buffer[..read]).map_err(Copy::Cache)?;
-                size += read as u64;
-            }
+            pour(&mut from, &mut to, &mut hasher, &mut size, None)?;
             to.sync_all().map_err(Copy::Cache)?;
             Ok((format!("{PREFIX}{}", hex::encode(hasher.finalize())), size))
         })();
@@ -546,6 +573,198 @@ impl Cache {
                 Err(error)
             }
         }
+    }
+
+    fn open_read_write(&self, label: &Path, create: bool) -> io::Result<File> {
+        #[cfg(unix)]
+        if let Some(directory) = self.capability(true)? {
+            use rustix::fs::{Mode, OFlags};
+            let relative = label.strip_prefix(&self.dir).map_err(|_| {
+                io::Error::new(io::ErrorKind::InvalidInput, "not a cache entry label")
+            })?;
+            let flags = if create {
+                OFlags::RDWR | OFlags::CREATE
+            } else {
+                OFlags::RDWR
+            };
+            return directory.open_file(relative, flags, Mode::from_raw_mode(0o600));
+        }
+        let mut options = File::options();
+        options.read(true).write(true).create(create);
+        #[cfg(unix)]
+        std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+        options.open(label)
+    }
+
+    /// Whether `label` still names the file `file` is open on.
+    #[cfg(unix)]
+    fn names(&self, file: &File, label: &Path) -> bool {
+        use std::os::unix::fs::MetadataExt;
+        let Ok(held) = file.metadata() else {
+            return false;
+        };
+        if let Ok(Some(directory)) = self.capability(false) {
+            return label
+                .strip_prefix(&self.dir)
+                .ok()
+                .and_then(|relative| directory.entry_identity(relative).ok())
+                == Some((held.dev(), held.ino()));
+        }
+        fs::symlink_metadata(label)
+            .is_ok_and(|named| (named.dev(), named.ino()) == (held.dev(), held.ino()))
+    }
+
+    /// The file the bytes of `hash` are written to: the one an earlier fetch
+    /// of them left, locked so no other fetch writes it at once, or where
+    /// another holds it, a file of this fetch's own.
+    pub(crate) fn stage(&self, hash: &str) -> Result<Staging> {
+        let hex = hex_of(hash)?;
+        self.ensure_folder()
+            .map_err(|error| self.unwritable(error))?;
+        #[cfg(unix)]
+        {
+            let label = self.dir.join(format!(".partial-{hex}"));
+            // A fetch that drops the file it holds unlinks it before it lets
+            // go, so one that locks a file the name no longer leads to tries
+            // again.
+            for _ in 0..4 {
+                let file = self
+                    .open_read_write(&label, true)
+                    .map_err(|error| self.unwritable(error))?;
+                match rustix::fs::flock(&file, rustix::fs::FlockOperation::NonBlockingLockExclusive)
+                {
+                    Ok(()) => {}
+                    Err(rustix::io::Errno::WOULDBLOCK) => break,
+                    Err(error) => return Err(self.unwritable(error.into())),
+                }
+                if self.names(&file, &label) {
+                    let held = file
+                        .metadata()
+                        .map_err(|error| self.unwritable(error))?
+                        .len();
+                    return Ok(Staging {
+                        label,
+                        file,
+                        held,
+                        shared: true,
+                    });
+                }
+            }
+        }
+        let label = self.dir.join(format!(".incoming-{}", uuid::Uuid::now_v7()));
+        let file = self
+            .open_read_write(&label, true)
+            .map_err(|error| self.unwritable(error))?;
+        Ok(Staging {
+            label,
+            file,
+            held: 0,
+            shared: false,
+        })
+    }
+
+    /// Empties the staging file, for bytes that start again.
+    pub(crate) fn restart(&self, staging: &mut Staging) -> Result<()> {
+        use std::io::{Seek, SeekFrom};
+        staging
+            .file
+            .set_len(0)
+            .and_then(|()| staging.file.seek(SeekFrom::Start(0)).map(|_| ()))
+            .map_err(|error| self.unwritable(error))?;
+        staging.held = 0;
+        Ok(())
+    }
+
+    /// Removes the staging file: its bytes are no use to a resume, or the
+    /// space they take is the person's to have back.
+    pub(crate) fn drop_staging(&self, staging: Staging) {
+        let _ = self.unlink_label(&staging.label);
+    }
+
+    /// Lets go of the staging file, keeping what it holds for a resume where
+    /// it holds any.
+    pub(crate) fn leave_staging(&self, staging: Staging) {
+        if !staging.shared || staging.file.metadata().is_ok_and(|held| held.len() == 0) {
+            self.drop_staging(staging);
+        }
+    }
+
+    /// Writes what `from` sends after the bytes the staging file holds, and
+    /// keeps the whole under `hash` if it hashes to it. `end` is how many
+    /// bytes the whole has, which a link that ends before is a link that
+    /// stopped.
+    pub(crate) fn receive(
+        &self,
+        hash: &str,
+        staging: Staging,
+        from: impl Read,
+        end: u64,
+        kept: impl FnOnce() -> Option<HashSet<String>>,
+    ) -> Result<Fetched> {
+        use std::io::{Seek, SeekFrom};
+        hex_of(hash)?;
+        let absent = |reason: String| CoreError::BytesAbsent {
+            hash: hash.to_string(),
+            reason,
+        };
+        let mut hasher = Sha256::new();
+        let mut size = staging.held;
+        if size > 0 {
+            let mut prefix = (&staging.file).take(size);
+            let hashed = pour(&mut prefix, &mut io::sink(), &mut hasher, &mut 0, None)
+                .map_err(|(Copy::Source(error) | Copy::Cache(error))| error);
+            let at_end = (&staging.file).seek(SeekFrom::End(0));
+            if let Err(error) = hashed.and(at_end.map(|_| ())) {
+                self.drop_staging(staging);
+                return Err(self.unwritable(error));
+            }
+        }
+        #[cfg(debug_assertions)]
+        let full_at = crate::fault::named("fetch-disk-full").and_then(|bytes| bytes.parse().ok());
+        #[cfg(not(debug_assertions))]
+        let full_at = None;
+        let mut from = from;
+        let mut to = &staging.file;
+        match pour(&mut from, &mut to, &mut hasher, &mut size, full_at) {
+            Ok(()) => {}
+            Err(Copy::Cache(error)) => {
+                self.drop_staging(staging);
+                return Err(self.unwritable(error));
+            }
+            Err(Copy::Source(error))
+                if error.get_ref().is_some_and(|inner| inner.is::<TooLong>()) =>
+            {
+                self.drop_staging(staging);
+                return Err(absent(
+                    "the link sent more than the size the file is stated to hold".into(),
+                ));
+            }
+            Err(Copy::Source(error)) => {
+                let _ = staging.file.sync_data();
+                self.leave_staging(staging);
+                return Err(absent(format!(
+                    "the bytes stopped arriving after {size} of {end}: {error}"
+                )));
+            }
+        }
+        if size < end {
+            let _ = staging.file.sync_data();
+            self.leave_staging(staging);
+            return Err(absent(format!(
+                "the link ended after {size} of {end} bytes"
+            )));
+        }
+        if let Err(error) = staging.file.sync_all() {
+            self.drop_staging(staging);
+            return Err(self.unwritable(error));
+        }
+        let found = format!("{PREFIX}{}", hex::encode(hasher.finalize()));
+        let label = staging.label.clone();
+        // The file is renamed to its name while this fetch still holds its
+        // lock, so no other fetch locks a file that is no longer a partial.
+        let fetched = self.finish(hash, &found, &label, kept);
+        drop(staging);
+        fetched
     }
 
     /// A rename, so a second reader sees the whole file or none of it.
@@ -579,10 +798,15 @@ impl Cache {
     }
 
     fn unwritable(&self, error: io::Error) -> CoreError {
-        CoreError::Store(format!(
+        let message = format!(
             "the bytes cannot be held in {}: {error}",
             self.dir.display()
-        ))
+        );
+        if error.kind() == io::ErrorKind::StorageFull {
+            CoreError::StorageFull(message)
+        } else {
+            CoreError::Store(message)
+        }
     }
 }
 
@@ -611,11 +835,13 @@ pub(crate) fn hex_of(hash: &str) -> Result<&str> {
         })
 }
 
+/// `stated` is the size the working copy states for the bytes, if it does;
 /// `kept` is as for `Cache::keep`.
 pub(crate) fn fetch(
     cache: &Cache,
     http: &Http,
     hash: &str,
+    stated: Option<u64>,
     kept: impl FnOnce() -> Option<HashSet<String>>,
 ) -> Result<Fetched> {
     let absent = |reason: String| CoreError::BytesAbsent {
@@ -662,7 +888,15 @@ pub(crate) fn fetch(
             "the link door answered a link that is not an absolute URL ({error}): {link}"
         ))
     })?;
-    pull(cache, hash, link, CACHE_MOST, LINK_IDLE, kept)
+    pull(
+        cache,
+        hash,
+        link,
+        stated,
+        LINK_IDLE,
+        || cache.volume().map(|volume| volume.free),
+        kept,
+    )
 }
 
 /// How long a link may send nothing before the fetch is given up on. A blob
@@ -676,27 +910,103 @@ const LINK_IDLE: Duration = Duration::from_secs(60);
 /// ends it.
 const LINK_BODY_MOST: Duration = Duration::from_secs(6 * 60 * 60);
 
-/// What a link sends is bounded by `most`, the most one fetch pulls.
+/// Fetches the bytes from `link`, continuing the bytes an earlier fetch of
+/// them left where the link serves a range. What a link sends is bounded by
+/// `stated`, or by the length the link states where nothing else does, so no
+/// fetch is unbounded. `room` answers the free space of the volume holding
+/// the cache, `None` where it cannot be read.
 fn pull(
     cache: &Cache,
     hash: &str,
     link: &str,
-    most: u64,
+    stated: Option<u64>,
     idle: Duration,
+    room: impl FnOnce() -> Option<u64>,
     kept: impl FnOnce() -> Option<HashSet<String>>,
 ) -> Result<Fetched> {
-    let bytes = open(link).map_err(|reason| CoreError::BytesAbsent {
+    let absent = |reason: String| CoreError::BytesAbsent {
         hash: hash.to_string(),
         reason,
-    })?;
-    cache.keep(
-        hash,
-        Bounded {
-            inner: Idle::watching(bytes, idle),
-            left: most,
+    };
+    let mut staging = cache.stage(hash)?;
+    // Bytes held that the file is not longer than can be a start of it.
+    if stated.is_some_and(|stated| staging.held >= stated) {
+        cache.restart(&mut staging)?;
+    }
+    let opened = match open(link, staging.held) {
+        Ok(opened) => opened,
+        Err(Refusal::Unsatisfiable) => {
+            cache.drop_staging(staging);
+            return Err(absent(
+                "the link cannot serve the range asked for, so the bytes held were dropped".into(),
+            ));
+        }
+        Err(Refusal::Other(reason)) => {
+            cache.leave_staging(staging);
+            return Err(absent(reason));
+        }
+    };
+    let held = staging.held;
+    let (resume, observed) = match (held > 0, opened.status) {
+        (_, 206) => match opened.range {
+            Some(ContentRange {
+                first,
+                last,
+                total: Some(total),
+            }) if held > 0 && first == held && last + 1 == total => (true, Some(total)),
+            _ => {
+                cache.drop_staging(staging);
+                return Err(absent(
+                    "the link answered a range that does not continue the bytes held, so they were dropped"
+                        .into(),
+                ));
+            }
         },
-        kept,
-    )
+        (_, 200) | (false, _) => (false, opened.length),
+        (true, status) => {
+            cache.leave_staging(staging);
+            return Err(absent(format!(
+                "the link answered {status} to a request for a range"
+            )));
+        }
+    };
+    let (bound, end) = match (stated, observed) {
+        (Some(stated), Some(observed)) if observed > stated => {
+            cache.drop_staging(staging);
+            return Err(absent(format!(
+                "the link sends {observed} bytes, more than the {stated} the file is stated to hold"
+            )));
+        }
+        (Some(stated), Some(observed)) => (stated, observed),
+        (Some(stated), None) => (stated, stated),
+        (None, Some(observed)) => (observed, observed),
+        (None, None) => {
+            cache.leave_staging(staging);
+            return Err(absent(
+                "the link states no length and the working copy states no size, so there is no bound on what it sends"
+                    .into(),
+            ));
+        }
+    };
+    if !resume && held > 0 {
+        cache.restart(&mut staging)?;
+    }
+    let start = staging.held;
+    if let Some(free) = room()
+        && free < end.saturating_sub(start)
+    {
+        cache.drop_staging(staging);
+        return Err(CoreError::NoRoom {
+            hash: hash.to_string(),
+            size: end,
+            free,
+        });
+    }
+    let body = Bounded {
+        inner: Idle::watching(opened.body, idle),
+        left: bound.saturating_sub(start),
+    };
+    cache.receive(hash, staging, body, end, kept)
 }
 
 /// A reader whose reads fail once the source has sent nothing for `idle`. The
@@ -759,6 +1069,18 @@ impl Read for Idle {
     }
 }
 
+/// What a link that sends more than the bound fails a read with.
+#[derive(Debug)]
+struct TooLong;
+
+impl std::fmt::Display for TooLong {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("the link sent more than the size the file is stated to hold")
+    }
+}
+
+impl std::error::Error for TooLong {}
+
 struct Bounded<R> {
     inner: R,
     left: u64,
@@ -771,20 +1093,79 @@ impl<R: Read> Read for Bounded<R> {
         let allowed = (self.left + 1).min(into.len() as u64) as usize;
         let read = self.inner.read(&mut into[..allowed])?;
         if read as u64 > self.left {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "the link sent more than the cache holds",
-            ));
+            return Err(io::Error::new(io::ErrorKind::InvalidData, TooLong));
         }
         self.left -= read as u64;
         Ok(read)
     }
 }
 
+/// Copies `from` to `to`, hashing it and counting it in `size`. `full_at` is
+/// a size past which writing fails as a full disk does, which no fixture can
+/// make a disk do.
+fn pour(
+    from: &mut impl Read,
+    to: &mut impl Write,
+    hasher: &mut Sha256,
+    size: &mut u64,
+    full_at: Option<u64>,
+) -> std::result::Result<(), Copy> {
+    let mut buffer = vec![0u8; 64 * 1024];
+    loop {
+        let read = match from.read(&mut buffer) {
+            Ok(0) => return Ok(()),
+            Ok(read) => read,
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+            Err(error) => return Err(Copy::Source(error)),
+        };
+        hasher.update(&buffer[..read]);
+        if full_at.is_some_and(|full| *size + read as u64 > full) {
+            return Err(Copy::Cache(io::ErrorKind::StorageFull.into()));
+        }
+        to.write_all(&buffer[..read]).map_err(Copy::Cache)?;
+        *size += read as u64;
+    }
+}
+
+/// What a link answered.
+struct Opened {
+    status: u16,
+    length: Option<u64>,
+    range: Option<ContentRange>,
+    body: Box<dyn Read + Send>,
+}
+
+/// The bytes a `206` answers: `first` through `last` of `total`, if the link
+/// knows the whole.
+struct ContentRange {
+    first: u64,
+    last: u64,
+    total: Option<u64>,
+}
+
+impl ContentRange {
+    fn parse(text: &str) -> Option<ContentRange> {
+        let (span, total) = text.trim().strip_prefix("bytes ")?.split_once('/')?;
+        let (first, last) = span.split_once('-')?;
+        Some(ContentRange {
+            first: first.parse().ok()?,
+            last: last.parse().ok()?,
+            total: total.parse().ok(),
+        })
+    }
+}
+
+enum Refusal {
+    /// The link answered `416` to a range.
+    Unsatisfiable,
+    Other(String),
+}
+
 /// Not through `Http`: it rebuilds a URL from segments and re-encodes them,
 /// which breaks an object store's signature, and it carries the bearer,
-/// which an object store's host must never see.
-fn open(link: &str) -> std::result::Result<impl Read + Send + 'static, String> {
+/// which an object store's host must never see. Asks from byte `from` on
+/// where `from` is above zero.
+fn open(link: &str, from: u64) -> std::result::Result<Opened, Refusal> {
     let agent: Agent = Agent::config_builder()
         .http_status_as_error(false)
         .timeout_connect(Some(Duration::from_secs(10)))
@@ -792,15 +1173,33 @@ fn open(link: &str) -> std::result::Result<impl Read + Send + 'static, String> {
         .timeout_recv_body(Some(LINK_BODY_MOST))
         .build()
         .into();
-    let response = agent
-        .get(link)
-        .call()
-        .map_err(|error| format!("the link cannot be reached: {error}"))?;
-    let status = response.status().as_u16();
-    if !(200..300).contains(&status) {
-        return Err(format!("the link answered {status}"));
+    let mut request = agent.get(link);
+    if from > 0 {
+        request = request.header("Range", format!("bytes={from}-"));
     }
-    Ok(response.into_body().into_reader())
+    let response = request
+        .call()
+        .map_err(|error| Refusal::Other(format!("the link cannot be reached: {error}")))?;
+    let status = response.status().as_u16();
+    if status == 416 {
+        return Err(Refusal::Unsatisfiable);
+    }
+    if !(200..300).contains(&status) {
+        return Err(Refusal::Other(format!("the link answered {status}")));
+    }
+    let header = |name: &str| {
+        response
+            .headers()
+            .get(name)
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_string)
+    };
+    Ok(Opened {
+        status,
+        length: header("content-length").and_then(|length| length.parse().ok()),
+        range: header("content-range").and_then(|range| ContentRange::parse(&range)),
+        body: Box::new(response.into_body().into_reader()),
+    })
 }
 
 pub fn mime_type_for(path: &Path, given: Option<&str>) -> String {
@@ -1044,13 +1443,410 @@ pub(crate) mod tests {
         let within = Duration::from_secs(10);
         // The witness: a limit of exactly the body keeps it.
         let url = linking(bytes.clone(), false);
-        assert!(pull(&cache, &hash, &url, 1000, within, no_uploads).is_ok());
+        assert!(pull(&cache, &hash, &url, Some(1000), within, || None, no_uploads).is_ok());
         let url = linking(bytes, false);
-        let refused = pull(&cache, &hash, &url, 999, within, no_uploads).unwrap_err();
+        let refused =
+            pull(&cache, &hash, &url, Some(999), within, || None, no_uploads).unwrap_err();
         assert!(
             matches!(&refused, CoreError::BytesAbsent { reason, .. } if reason.contains("more than")),
             "{refused:?}"
         );
+    }
+
+    /// A link on a port of its own that serves `body` to every request, and
+    /// answers a `Range` with `206` when `ranges` is set. The first
+    /// connection ends after `cut` bytes if it is given. The `Range` header
+    /// of each request is recorded.
+    struct Ranged {
+        url: String,
+        asked: Arc<Mutex<Vec<Option<String>>>>,
+    }
+
+    fn ranged(body: Vec<u8>, ranges: bool, cut: Option<usize>) -> Ranged {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/bytes", listener.local_addr().unwrap());
+        let asked = Arc::new(Mutex::new(Vec::new()));
+        let record = Arc::clone(&asked);
+        std::thread::spawn(move || {
+            let mut first = true;
+            while let Ok((mut socket, _)) = listener.accept() {
+                let mut request = [0u8; 4096];
+                let read = Read::read(&mut socket, &mut request).unwrap_or(0);
+                let text = String::from_utf8_lossy(&request[..read]).to_lowercase();
+                let from = text
+                    .lines()
+                    .find_map(|line| line.strip_prefix("range: bytes="))
+                    .map(|range| range.trim_end_matches('-').to_string());
+                record.lock().unwrap().push(from.clone());
+                let start = from
+                    .as_deref()
+                    .and_then(|from| from.parse::<usize>().ok())
+                    .filter(|_| ranges)
+                    .unwrap_or(0);
+                let rest = &body[start..];
+                let head = if start > 0 {
+                    format!(
+                        "HTTP/1.1 206 Partial Content\r\nContent-Range: bytes {start}-{}/{}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                        body.len() - 1,
+                        body.len(),
+                        rest.len()
+                    )
+                } else {
+                    format!(
+                        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                        rest.len()
+                    )
+                };
+                let _ = socket.write_all(head.as_bytes());
+                let sent = match cut.filter(|_| first) {
+                    Some(cut) => &rest[..cut.min(rest.len())],
+                    None => rest,
+                };
+                let _ = socket.write_all(sent);
+                first = false;
+            }
+        });
+        Ranged { url, asked }
+    }
+
+    const WITHIN: Duration = Duration::from_secs(10);
+
+    fn payload(length: usize) -> Vec<u8> {
+        (0..length).map(|at| (at * 7 % 251) as u8).collect()
+    }
+
+    fn held_partial(dir: &Path, hash: &str) -> Option<Vec<u8>> {
+        let path = Cache::beside(&dir.join("store.sqlite"))
+            .dir
+            .join(format!(".partial-{}", hex_of(hash).unwrap()));
+        fs::read(path).ok()
+    }
+
+    fn left_behind(cache: &Cache) -> Vec<String> {
+        fs::read_dir(&cache.dir)
+            .map(|entries| {
+                entries
+                    .flatten()
+                    .map(|entry| entry.file_name().to_string_lossy().into_owned())
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    #[test]
+    fn a_fetch_that_stopped_part_way_resumes_where_the_link_serves_a_range() {
+        let bytes = payload(5000);
+        let hash = name_of(&bytes);
+        let dir = tempfile::tempdir().unwrap();
+        let cache = Cache::beside(&dir.path().join("store.sqlite"));
+        let link = ranged(bytes.clone(), true, Some(3000));
+        let first = pull(
+            &cache,
+            &hash,
+            &link.url,
+            Some(5000),
+            WITHIN,
+            || None,
+            no_uploads,
+        );
+        assert!(
+            matches!(first, Err(CoreError::BytesAbsent { .. })),
+            "{first:?}"
+        );
+        assert_eq!(
+            held_partial(dir.path(), &hash),
+            Some(bytes[..3000].to_vec())
+        );
+        let fetched = pull(
+            &cache,
+            &hash,
+            &link.url,
+            Some(5000),
+            WITHIN,
+            || None,
+            no_uploads,
+        )
+        .unwrap();
+        assert_eq!(fs::read(fetched.path).unwrap(), bytes);
+        assert_eq!(
+            *link.asked.lock().unwrap(),
+            [None, Some("3000".to_string())]
+        );
+        assert_eq!(held_partial(dir.path(), &hash), None);
+    }
+
+    #[test]
+    fn a_fetch_that_stopped_part_way_starts_again_where_the_link_serves_no_range() {
+        let bytes = payload(5000);
+        let hash = name_of(&bytes);
+        let dir = tempfile::tempdir().unwrap();
+        let cache = Cache::beside(&dir.path().join("store.sqlite"));
+        let link = ranged(bytes.clone(), false, Some(3000));
+        assert!(
+            pull(
+                &cache,
+                &hash,
+                &link.url,
+                Some(5000),
+                WITHIN,
+                || None,
+                no_uploads
+            )
+            .is_err()
+        );
+        let fetched = pull(
+            &cache,
+            &hash,
+            &link.url,
+            Some(5000),
+            WITHIN,
+            || None,
+            no_uploads,
+        )
+        .unwrap();
+        assert_eq!(fs::read(fetched.path).unwrap(), bytes);
+        assert_eq!(link.asked.lock().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn a_resumed_fetch_that_hashes_wrong_keeps_nothing() {
+        let bytes = payload(5000);
+        let hash = name_of(&bytes);
+        let dir = tempfile::tempdir().unwrap();
+        let cache = Cache::beside(&dir.path().join("store.sqlite"));
+        let link = ranged(bytes.clone(), true, Some(3000));
+        assert!(
+            pull(
+                &cache,
+                &hash,
+                &link.url,
+                Some(5000),
+                WITHIN,
+                || None,
+                no_uploads
+            )
+            .is_err()
+        );
+        // The bytes held are not the start of the file any longer.
+        let partial = cache
+            .dir
+            .join(format!(".partial-{}", hex_of(&hash).unwrap()));
+        fs::write(&partial, vec![0u8; 3000]).unwrap();
+        let refused = pull(
+            &cache,
+            &hash,
+            &link.url,
+            Some(5000),
+            WITHIN,
+            || None,
+            no_uploads,
+        )
+        .unwrap_err();
+        assert!(matches!(refused, CoreError::Decoding(_)), "{refused:?}");
+        assert!(left_behind(&cache).is_empty(), "{:?}", left_behind(&cache));
+    }
+
+    #[test]
+    fn a_range_that_does_not_continue_the_bytes_held_drops_them() {
+        let bytes = payload(5000);
+        let hash = name_of(&bytes);
+        let dir = tempfile::tempdir().unwrap();
+        let cache = Cache::beside(&dir.path().join("store.sqlite"));
+        let link = ranged(bytes.clone(), true, Some(3000));
+        assert!(
+            pull(
+                &cache,
+                &hash,
+                &link.url,
+                Some(5000),
+                WITHIN,
+                || None,
+                no_uploads
+            )
+            .is_err()
+        );
+        let partial = cache
+            .dir
+            .join(format!(".partial-{}", hex_of(&hash).unwrap()));
+        // Held bytes that run past where the link's range begins.
+        fs::write(&partial, &bytes[..2000]).unwrap();
+        let other = ranged(bytes.clone(), true, None);
+        let skewed = fs::OpenOptions::new().append(true).open(&partial).unwrap();
+        drop(skewed);
+        assert!(
+            pull(
+                &cache,
+                &hash,
+                &other.url,
+                Some(5000),
+                WITHIN,
+                || None,
+                no_uploads
+            )
+            .is_ok()
+        );
+        assert_eq!(*other.asked.lock().unwrap(), [Some("2000".to_string())]);
+    }
+
+    #[test]
+    fn a_fetch_the_volume_has_no_room_for_is_refused_and_leaves_nothing() {
+        let bytes = payload(5000);
+        let hash = name_of(&bytes);
+        let dir = tempfile::tempdir().unwrap();
+        let cache = Cache::beside(&dir.path().join("store.sqlite"));
+        let link = ranged(bytes.clone(), true, None);
+        let refused = pull(
+            &cache,
+            &hash,
+            &link.url,
+            Some(5000),
+            WITHIN,
+            || Some(4999),
+            no_uploads,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(
+                refused,
+                CoreError::NoRoom {
+                    size: 5000,
+                    free: 4999,
+                    ..
+                }
+            ),
+            "{refused:?}"
+        );
+        assert!(left_behind(&cache).is_empty(), "{:?}", left_behind(&cache));
+        // The witness: with room for exactly the bytes the fetch is kept.
+        let kept = pull(
+            &cache,
+            &hash,
+            &link.url,
+            Some(5000),
+            WITHIN,
+            || Some(5000),
+            no_uploads,
+        );
+        assert!(kept.is_ok(), "{kept:?}");
+    }
+
+    #[test]
+    fn a_resumed_fetch_needs_room_only_for_the_bytes_still_to_come() {
+        let bytes = payload(5000);
+        let hash = name_of(&bytes);
+        let dir = tempfile::tempdir().unwrap();
+        let cache = Cache::beside(&dir.path().join("store.sqlite"));
+        let link = ranged(bytes.clone(), true, Some(3000));
+        assert!(
+            pull(
+                &cache,
+                &hash,
+                &link.url,
+                Some(5000),
+                WITHIN,
+                || None,
+                no_uploads
+            )
+            .is_err()
+        );
+        let fetched = pull(
+            &cache,
+            &hash,
+            &link.url,
+            Some(5000),
+            WITHIN,
+            || Some(2000),
+            no_uploads,
+        );
+        assert!(fetched.is_ok(), "{fetched:?}");
+    }
+
+    #[test]
+    fn a_link_that_states_no_length_for_a_file_that_states_no_size_is_refused() {
+        let bytes = payload(100);
+        let hash = name_of(&bytes);
+        let dir = tempfile::tempdir().unwrap();
+        let cache = Cache::beside(&dir.path().join("store.sqlite"));
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/bytes", listener.local_addr().unwrap());
+        std::thread::spawn(move || {
+            if let Ok((mut socket, _)) = listener.accept() {
+                let mut request = [0u8; 4096];
+                let _ = Read::read(&mut socket, &mut request);
+                let _ = socket.write_all(b"HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n");
+                let _ = socket.write_all(&bytes);
+            }
+        });
+        let refused = pull(&cache, &hash, &url, None, WITHIN, || None, no_uploads).unwrap_err();
+        assert!(
+            matches!(&refused, CoreError::BytesAbsent { reason, .. } if reason.contains("no bound")),
+            "{refused:?}"
+        );
+    }
+
+    #[test]
+    fn a_full_disk_is_storage_full_and_not_a_store_failure() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = Cache::beside(&dir.path().join("store.sqlite"));
+        let (mut hasher, mut size, mut sink) = (Sha256::new(), 0, Vec::new());
+        let bytes = payload(5000);
+        let full = pour(
+            &mut &bytes[..],
+            &mut sink,
+            &mut hasher,
+            &mut size,
+            Some(2000),
+        );
+        let Err(Copy::Cache(error)) = full else {
+            panic!("a full disk was not seen");
+        };
+        assert!(matches!(cache.unwritable(error), CoreError::StorageFull(_)));
+        // The witness: with room the same bytes are poured whole.
+        let (mut hasher, mut size, mut sink) = (Sha256::new(), 0, Vec::new());
+        assert!(pour(&mut &bytes[..], &mut sink, &mut hasher, &mut size, None).is_ok());
+        assert_eq!(size, 5000);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn two_fetches_of_the_same_bytes_never_write_one_partial_file() {
+        let bytes = payload(5000);
+        let hash = name_of(&bytes);
+        let dir = tempfile::tempdir().unwrap();
+        let cache = Cache::beside(&dir.path().join("store.sqlite"));
+        let one = cache.stage(&hash).unwrap();
+        let two = cache.stage(&hash).unwrap();
+        assert_ne!(one.label, two.label, "both fetches would write one file");
+        cache.drop_staging(one);
+        cache.drop_staging(two);
+        assert!(left_behind(&cache).is_empty(), "{:?}", left_behind(&cache));
+    }
+
+    #[test]
+    fn a_trim_takes_a_file_larger_than_the_budget_before_any_other() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = Cache::beside(&dir.path().join("store.sqlite"));
+        let (_, small) = kept(&cache, b"aaaaaaaaaa", 0);
+        let (_, large) = kept(&cache, &[b'z'; 100], 0);
+        let (_, older) = kept(&cache, b"cccccccccc", 300);
+        cache.trim(&HashSet::new(), |_| Some(20));
+        assert!(!large.exists(), "the file past the budget was kept");
+        assert!(
+            small.exists() && older.exists(),
+            "the trim took more than it had to"
+        );
+    }
+
+    #[test]
+    fn a_trim_leaves_a_file_being_read_and_one_an_upload_names_however_large() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = Cache::beside(&dir.path().join("store.sqlite"));
+        let (reading, read) = kept(&cache, &[b'r'; 100], 0);
+        let (named, queued) = kept(&cache, &[b'q'; 100], 0);
+        let _guard = cache.reading(&format!("sha256:{reading}")).unwrap();
+        cache.trim(&HashSet::from([named]), |_| Some(10));
+        assert!(read.exists(), "bytes being read were taken");
+        assert!(queued.exists(), "bytes an upload names were taken");
     }
 
     #[test]
@@ -1065,8 +1861,9 @@ pub(crate) mod tests {
             &cache,
             &hash,
             &url,
-            CACHE_MOST,
+            Some(1100),
             Duration::from_millis(500),
+            || None,
             no_uploads,
         )
         .unwrap_err();
@@ -1086,14 +1883,14 @@ pub(crate) mod tests {
         let cache = Cache::beside(&dir.path().join("core.sqlite"));
         let door = format!("/blobs/{hash}/url");
         server.on(&door, vec![crate::scripted::unnamed(401, "access_denied")]);
-        let refused = fetch(&cache, &http, &hash, no_uploads).unwrap_err();
+        let refused = fetch(&cache, &http, &hash, None, no_uploads).unwrap_err();
         assert!(
             matches!(refused, CoreError::Unnamed { status: 401, .. }),
             "a gateway's 401 on a blob's link was read as the credential refused: {refused:?}"
         );
         server.on(&door, vec![crate::scripted::refusal(401, "unauthorized")]);
         assert!(matches!(
-            fetch(&cache, &http, &hash, no_uploads).unwrap_err(),
+            fetch(&cache, &http, &hash, None, no_uploads).unwrap_err(),
             CoreError::Unauthorized { .. }
         ));
     }

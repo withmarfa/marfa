@@ -99,6 +99,10 @@ pub enum CoreError {
     WrongServer { expected: String, got: String },
     #[error("the bytes of {hash} are not held here and cannot be fetched: {reason}")]
     BytesAbsent { hash: String, reason: String },
+    #[error(
+        "the {size} bytes of {hash} would not fit: {free} bytes are free on the volume that holds the file cache"
+    )]
+    NoRoom { hash: String, size: u64, free: u64 },
     #[error("{}", contract_mismatch(origin, served.as_deref(), *expected, *status, *write_sent))]
     ContractMismatch {
         origin: String,
@@ -193,6 +197,7 @@ codes! {
     StreamIncomplete: CoreError::StreamIncomplete { .. } => "stream_incomplete",
     WrongServer: CoreError::WrongServer { .. } => "wrong_server",
     BytesAbsent: CoreError::BytesAbsent { .. } => "bytes_absent",
+    NoRoom: CoreError::NoRoom { .. } => "no_room",
     ContractMismatch: CoreError::ContractMismatch { .. } => "contract_mismatch",
     Canceled: CoreError::Canceled => "canceled",
     FirstSyncWaiting: CoreError::FirstSyncWaiting => "first_sync_waiting",

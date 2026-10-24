@@ -210,15 +210,12 @@ describe("the file budget", () => {
     harness = await started("budget-keep-all");
     const { device } = harness;
     expect((await device.fileBudget("keep-all")).ok).toBe(true);
-    // A volume with no room, which the default would empty the cache for.
-    const tight = unbounded(TB, 1);
-
     const hashes: string[] = [];
-    await withFault(tight, async () => {
-      for (const name of ["a", "b", "c"]) {
-        hashes.push(await fetched(harness as Harness, ten(name)));
-      }
-    });
+    for (const name of ["a", "b", "c"]) {
+      hashes.push(await fetched(harness, ten(name)));
+    }
+    // A volume that has filled since, which the default would empty the cache for.
+    const tight = unbounded(TB, 1);
     for (const hash of hashes) {
       expect(existsSync(heldAt(device, hash))).toBe(true);
     }

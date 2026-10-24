@@ -1798,6 +1798,25 @@ pub fn items_awaiting_their_write(conn: &Connection) -> Result<HashSet<String>, 
     Ok(items)
 }
 
+/// The largest size any item the copy holds states for the bytes `hash`
+/// names, or `None` where none states one. A row whose stored properties are
+/// not JSON, or whose size is not a whole number above zero, states none.
+pub fn stated_size(conn: &Connection, hash: &str) -> Result<Option<u64>, CoreError> {
+    let size: Option<i64> = conn.query_row(
+        "SELECT MAX(size) FROM (
+           SELECT CASE WHEN json_valid(properties) THEN
+                    CASE WHEN json_extract(properties, '$.blob_ref') = ?1
+                          AND json_type(properties, '$.size_bytes') = 'integer'
+                         THEN json_extract(properties, '$.size_bytes') END
+                  END AS size
+             FROM items)
+         WHERE size > 0",
+        [hash],
+        |row| row.get(0),
+    )?;
+    Ok(size.and_then(|size| u64::try_from(size).ok()))
+}
+
 /// The bytes the cache keeps for the queue: those of every upload not yet
 /// taken, and those of every taken upload a write that may still be sent
 /// waits on, which a drain under another credential sends again
@@ -4621,6 +4640,32 @@ pub(crate) mod testing {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_stated_size_is_the_largest_whole_number_an_item_states_for_the_bytes() {
+        let temp = tempfile::tempdir().unwrap();
+        let conn = super::open(&temp.path().join("core.sqlite")).unwrap();
+        let put = |id: &str, properties: &str| {
+            conn.execute(
+                "INSERT INTO items (id, type, state, version, schema_version, source,
+                   occurred_at, created_at, updated_at, properties)
+                 VALUES (?1, 'core.file', 'active', 1, 1, 'test', 't', 't', 't', ?2)",
+                [id, properties],
+            )
+            .unwrap();
+        };
+        let stated = |hash: &str| super::stated_size(&conn, hash).unwrap();
+        assert_eq!(stated("sha256:aa"), None);
+        put("one", r#"{"blob_ref":"sha256:aa","size_bytes":300}"#);
+        assert_eq!(stated("sha256:aa"), Some(300));
+        put("two", r#"{"blob_ref":"sha256:aa","size_bytes":900}"#);
+        put("other", r#"{"blob_ref":"sha256:bb","size_bytes":5000}"#);
+        put("text", r#"{"blob_ref":"sha256:aa","size_bytes":"99999"}"#);
+        put("zero", r#"{"blob_ref":"sha256:aa","size_bytes":0}"#);
+        put("broken", "not json");
+        assert_eq!(stated("sha256:aa"), Some(900));
+        assert_eq!(stated("sha256:cc"), None);
+    }
+
     #[test]
     fn admitted_store_does_not_reopen_replacement_sidecars() {
         let temp = tempfile::tempdir().unwrap();

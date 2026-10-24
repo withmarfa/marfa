@@ -2273,7 +2273,11 @@ impl Core {
                 reason: reason.into(),
             });
         };
-        let fetched = blob::fetch(cache, http, &hash, || self.kept_blobs())?;
+        let stated = self
+            .conn()
+            .ok()
+            .and_then(|conn| store::stated_size(&conn, &hash).ok().flatten());
+        let fetched = blob::fetch(cache, http, &hash, stated, || self.kept_blobs())?;
         self.write_down_backup_mark(&fetched.mark);
         self.trim_blobs();
         #[cfg(debug_assertions)]
@@ -2307,7 +2311,11 @@ impl Core {
                 reason: "this handle cannot fetch bytes".into(),
             });
         };
-        let fetched = blob::fetch(cache, http, &hash, || self.kept_blobs())?;
+        let stated = self
+            .conn()
+            .ok()
+            .and_then(|conn| store::stated_size(&conn, &hash).ok().flatten());
+        let fetched = blob::fetch(cache, http, &hash, stated, || self.kept_blobs())?;
         self.write_down_backup_mark(&fetched.mark);
         let file = cache
             .open_held(&hash)

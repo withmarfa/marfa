@@ -46,7 +46,7 @@ With --json a refusal is the last line of stderr, one JSON object, after any pla
 {"error":{"code":...,"message":...,"server":{"status":...,"code":...,"details":...}|null,"retry_after_seconds":...},"exit":N}
 ```
 
-where error.code is one of: `not_found`, `unauthorized`, `forbidden`, `validation`, `unknown_type`, `rate_limited`, `server`, `io`, `network`, `unnamed_answer`, `decoding`, `store`, `storage_full`, `signed_out`, `no_keychain`, `redirect`, `no_server`, `no_cursor`, `hydration_incomplete`, `no_catalog`, `reading_handle`, `wrong_schema`, `copy_expired`, `stream_incomplete`, `wrong_server`, `bytes_absent`, `contract_mismatch`, `canceled`, `first_sync_waiting`, `invalid`, `not_held`, `watch`, `usage`, `install`, `no_store`, `no_credential`, `key_command`, `blobs_missing`, `docs_page_not_found`, `docs_section_not_found`, `docs_unreachable`, `conflict`, `too_large`.
+where error.code is one of: `not_found`, `unauthorized`, `forbidden`, `validation`, `unknown_type`, `rate_limited`, `server`, `io`, `network`, `unnamed_answer`, `decoding`, `store`, `storage_full`, `signed_out`, `no_keychain`, `redirect`, `no_server`, `no_cursor`, `hydration_incomplete`, `no_catalog`, `reading_handle`, `wrong_schema`, `copy_expired`, `stream_incomplete`, `wrong_server`, `bytes_absent`, `no_room`, `contract_mismatch`, `canceled`, `first_sync_waiting`, `invalid`, `not_held`, `watch`, `usage`, `install`, `no_store`, `no_credential`, `key_command`, `blobs_missing`, `docs_page_not_found`, `docs_section_not_found`, `docs_unreachable`, `conflict`, `too_large`.
 
 ## Telemetry
 

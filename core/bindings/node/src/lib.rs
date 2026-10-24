@@ -1180,6 +1180,7 @@ fn describe(error: &marfa_core::CoreError) -> (String, Vec<(&'static str, serde_
         | E::StreamIncomplete { .. }
         | E::WrongServer { .. }
         | E::BytesAbsent { .. }
+        | E::NoRoom { .. }
         | E::ContractMismatch { .. }
         | E::FirstSyncWaiting
         | E::Canceled => error.to_string(),
@@ -1238,6 +1239,13 @@ fn describe(error: &marfa_core::CoreError) -> (String, Vec<(&'static str, serde_
         }
         E::BytesAbsent { hash, reason } => {
             vec![("hash", json!(hash)), ("reason", json!(reason))]
+        }
+        E::NoRoom { hash, size, free } => {
+            vec![
+                ("hash", json!(hash)),
+                ("size", json!(size)),
+                ("free", json!(free)),
+            ]
         }
         E::ContractMismatch {
             origin,
