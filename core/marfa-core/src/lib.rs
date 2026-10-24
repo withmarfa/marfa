@@ -2491,16 +2491,9 @@ impl Core {
             return;
         }
         let _held = cache.hold();
-        let Some(mut kept) = self.kept_blobs() else {
-            return;
-        };
-        // An attachment's bytes stay for the device to open offline, even
-        // where a folder file holds them too.
-        let Some((_conn, attachments)) = self.attachments_held() else {
-            return;
-        };
-        kept.extend(attachments);
-        cache.let_go(hash, &kept);
+        if let Some(kept) = self.kept_blobs() {
+            cache.let_go(hash, &kept);
+        }
     }
 
     pub(crate) fn write_down_renewals(&self, conn: &Connection) -> Result<()> {

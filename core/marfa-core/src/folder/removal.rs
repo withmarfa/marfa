@@ -97,6 +97,7 @@ impl Folder {
             )
         };
         let members = self.members(&settings)?;
+        let attachments = self.written_with_documents(&settings, &members)?;
         let mut marked = Vec::new();
         for path in &disk {
             let (bound, held) = {
@@ -120,8 +121,9 @@ impl Folder {
                 continue;
             }
             // A missing unmatched file remains the person's deletion: the pull
-            // never writes a new file for an item outside the query.
-            if !members.contains(&bound.item_id) {
+            // never writes a new file for an item outside the query unless a
+            // document here embeds it or has it attached.
+            if !members.contains(&bound.item_id) && !attachments.contains(&bound.item_id) {
                 continue;
             }
             let conn = self.core.conn()?;

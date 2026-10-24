@@ -3810,11 +3810,9 @@ When the server refuses the credential while a folder pull fetches file bytes, a
 
 ### `folders/blob-cache-released`
 
-When a folder file holds its item’s bytes, no pending upload needs them, and they are not the bytes of an attachment (`device/attachment-kept`), a device MUST release any duplicate copy of those bytes kept beside the working copy.
+When a folder file holds its item’s bytes and no pending upload needs them, a device MUST release any duplicate copy of those bytes kept beside the working copy.
 
-**Reason:** an attachment's bytes stay beside the working copy so the device can open the file offline from the item it is attached to, wherever a folder writes it.
-
-**Tests:** `device/folders-placement.test.ts › keeps no copy beside the store of bytes its file holds, and fetches them again when asked`, `device/folders-frontmatter.test.ts › keeps the device's own copy of its bytes once its file is written`.
+**Tests:** `device/folders-placement.test.ts › keeps no copy beside the store of bytes its file holds, and fetches them again when asked`.
 
 ### `folders/nonfile-blob-document`
 
@@ -5106,6 +5104,14 @@ When an item left another folder by state, a device MUST NOT take in that folder
 
 **Tests:** `device/folders-one-mac.test.ts › does not take in the file of an item that left its folder by state`.
 
+### `folders/take-in-attachment-excluded`
+
+When a document in another registered folder embeds an item or has it attached, and that folder has a file of the document, a device MUST NOT take in that folder's file of the item.
+
+**Reason:** the file is the document's attachment there, whatever folder holds the item on its own, so taking it in would take it from beside its document.
+
+**Tests:** `device/folders-one-mac.test.ts › keeps a file %s a note while another folder on the Mac holds the file, and writes nothing again`.
+
 ### `folders/take-in-destination-kept`
 
 When a file appears at the destination before a move-in lands, a device MUST preserve the destination file.
@@ -5237,6 +5243,14 @@ When another registered folder already holds its own file for an item this folde
 When another registered folder already holds its own file for an item this folder no longer holds, a device MUST count this folder’s file as `let_go`.
 
 **Tests:** `device/folders-one-mac.test.ts › takes in a file another folder let go`.
+
+### `folders/let-go-attachment-kept`
+
+While a document in a folder embeds an item or has it attached, a device MUST NOT let go of that folder's file of the item because another registered folder holds its own file for the item.
+
+**Reason:** the pull that lets the file go writes it again beside its document, so every pull would remove and write the same file.
+
+**Tests:** `device/folders-one-mac.test.ts › keeps a file %s a note while another folder on the Mac holds the file, and writes nothing again`.
 
 ### `folders/unmatched-missing-not-rewritten`
 
@@ -5786,6 +5800,14 @@ When a paused disk removal is restored and the missing files’ items still matc
 
 **Tests:** `device/folders.test.ts › lets a paused removal go once confirmed, or puts it back`.
 
+### `folders/restore-disk-attachments`
+
+When a paused disk removal is restored and a missing file's item is outside the folder's query but a document the folder holds embeds it or has it attached, a device MUST write the missing file back from the held copy and count it as `put_back`.
+
+**Reason:** a pull writes such a file with its document, so restoring the document alone would leave the file for the next scan to trash.
+
+**Tests:** `device/folders-frontmatter.test.ts › is put back with its document when a paused removal is restored, %s`.
+
 ### `folders/restore-disk-files-put-back-count`
 
 When a paused disk removal is restored and the missing files’ items still match the folder’s query, a device MUST count as `put_back` each missing file the restore wrote back.
@@ -5846,13 +5868,13 @@ When a paused disk removal is restored and a missing file’s item is absent or 
 
 ### `folders/restore-unmatched-count`
 
-When a paused disk removal is restored and a missing file’s item left the query for a non-state reason, a device MUST leave the missing file for normal deletion handling.
+When a paused disk removal is restored and a missing file’s item left the query for a non-state reason and no document the folder holds embeds it or has it attached, a device MUST leave the missing file for normal deletion handling.
 
 **Tests:** `device/folders-contract-b.test.ts › does not count a missing unmatched file as put back when restoring a removal`.
 
 ### `folders/restore-unmatched-count-not-put-back`
 
-When a paused disk removal is restored and a missing file’s item left the query for a non-state reason, a device MUST NOT count the missing file as put back.
+When a paused disk removal is restored and a missing file’s item left the query for a non-state reason and no document the folder holds embeds it or has it attached, a device MUST NOT count the missing file as put back.
 
 **Tests:** `device/folders-contract-b.test.ts › does not count a missing unmatched file as put back when restoring a removal`.
 

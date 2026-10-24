@@ -166,6 +166,21 @@ impl Peer {
         }
     }
 
+    /// Whether the item is attached to a document it has a file of, embedded
+    /// or not, so its own file is that document's attachment; where its copy
+    /// cannot say, it is taken to be.
+    fn attached_here(&self, item_id: &str) -> bool {
+        let Some(folder) = &self.folder else {
+            return false;
+        };
+        folder.core.edges_from(item_id).map_or(true, |edges| {
+            edges.iter().any(|edge| {
+                edge.edge_type == super::embeds::ATTACHMENT_EDGE
+                    && self.bound_to(&edge.target_id).is_some()
+            })
+        })
+    }
+
     /// Whether its copy holds the item as bytes rather than as a document.
     fn file_item(&self, item_id: &str) -> bool {
         let Some(folder) = &self.folder else {
@@ -698,6 +713,7 @@ impl<'a> Peers<'a> {
                 || !peer.present(&bound.path)
                 || peer.holds(item_id) != Some(false)
                 || peer.left_by_state(item_id)
+                || peer.attached_here(item_id)
             {
                 continue;
             }

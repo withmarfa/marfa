@@ -3852,36 +3852,56 @@ describe("embedded files", () => {
       expect(images(harness)).toEqual(["scan 0.png", "scan 1.png"]);
     });
 
-    it("keeps the device's own copy of its bytes once its file is written", async () => {
-      const loose = "01a00000-0000-7000-8000-00000000e3d1";
-      const made = await edgeHarness(
-        "folder-attached-offline",
-        [
-          { id: host, properties: { title: "Host", body: "no picture\n" } },
-          fileRow(scan, "scan.png", png(2)),
-          fileRow(loose, "loose.png", png(3)),
-        ],
-        [attached(edgeId(15), scan, host)],
-        { settings: { query: { types: ["core.note", "core.file"] } } },
-      );
-      harness = made.harness;
-      scriptBlob(harness.server, png(2));
-      scriptBlob(harness.server, png(3));
-      const pulled = await harness.folder.pull();
-      expect(pulled.ok, JSON.stringify(pulled)).toBe(true);
-      expect(images(harness)).toEqual(["loose.png", "scan.png"]);
-      const store = `${harness.folder.device().store}.blobs`;
-      const copy = (bytes: Buffer): string =>
-        join(store, hashOf(bytes).slice("sha256:".length));
-      expect(
-        existsSync(copy(png(3))),
-        "the pull kept a copy of a file attached to nothing, so the copy kept below says nothing",
-      ).toBe(false);
-      expect(
-        existsSync(copy(png(2))),
-        "the pull let go of an attachment's bytes, so the device cannot open it offline",
-      ).toBe(true);
-    });
+    it.each(["while the body does not show it", "where the body embeds it"])(
+      "is put back with its document when a paused removal is restored, %s",
+      async (what) => {
+        const body = what.startsWith("where")
+          ? "![](scan.png)\n"
+          : "no picture\n";
+        const made = await edgeHarness(
+          `folder-attached-restored-${body.length}`,
+          [
+            { id: host, properties: { title: "Host", body } },
+            fileRow(scan, "scan.png", png(2)),
+          ],
+          [attached(edgeId(30), scan, host)],
+          {
+            settings: {
+              query: { types: ["core.note"] },
+              removal_threshold: { files: 1, fraction: 0.25 },
+            },
+          },
+        );
+        harness = made.harness;
+        scriptBlob(harness.server, png(2));
+        expect((await harness.folder.pull()).ok).toBe(true);
+        expect(images(harness)).toEqual(["scan.png"]);
+        rmSync(join(harness.dir, "Host.md"));
+        rmSync(join(harness.dir, "scan.png"));
+        const paused = await harness.folder.push();
+        expect(paused.ok && paused.value.scan.paused).toBe(2);
+
+        const restored = await harness.folder.restore();
+        expect(restored.ok, JSON.stringify(restored)).toBe(true);
+        if (!restored.ok) return;
+        expect(existsSync(join(harness.dir, "Host.md"))).toBe(true);
+        expect(
+          images(harness),
+          `the restore put back the note and not its file, ${what}`,
+        ).toEqual(["scan.png"]);
+        expect(restored.value.put_back).toBe(2);
+        await new Promise((resolve) => setTimeout(resolve, 6_000));
+        expect((await harness.folder.push()).ok).toBe(true);
+        expect(
+          harness.server.requests.filter(
+            (request) =>
+              request.method === "DELETE" &&
+              /^\/items\/[^/]+$/.test(request.pathname),
+          ),
+          `a file put back by the restore, ${what}, was trashed`,
+        ).toEqual([]);
+      },
+    );
   });
 });
 
