@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::catalog::Catalog;
 use crate::error::CoreError;
-use crate::http::{Http, ItemsQuery, Registration};
+use crate::http::{Http, ItemsQuery, Registration, Replacement};
 use crate::model::{
     Draft, EdgeDraft, HydrateReport, HydrateRestart, SliceTier, Tier, UnregisteredType, WriteKind,
 };
@@ -57,7 +57,7 @@ fn hydrate_inner(
         )
         .map_err(|error| before.failed(core, error).unwrap_or_else(|error| error))?
         {
-            Attempt::Done(report) => return Ok(report),
+            Attempt::Done(report) => return Ok(*report),
             // Only an attempt that would resume asks to start again, and one
             // that starts again never resumes, so this goes round at most
             // twice.
@@ -67,7 +67,7 @@ fn hydrate_inner(
 }
 
 enum Attempt {
-    Done(HydrateReport),
+    Done(Box<HydrateReport>),
     Again(HydrateRestart),
 }
 
@@ -190,10 +190,10 @@ fn attempt(
     let mut ended = expire_if_built_elsewhere(core, &instance, &fence)?;
     let mut under_reach = http.for_reach(&fence);
     crate::catch_up::refuse_if_stopped(stop)?;
-    let (mut catalog_rows, registered_types, unregistered_types, registered_any) =
-        register_declared(core, &under_reach, under_reach.catalog()?, stop)?;
-    if registered_any {
-        // A registration changes what the instance's reach certifies, so
+    let mut catalog_rows = under_reach.catalog()?;
+    let declared = declare_on_instance(core, &under_reach, &catalog_rows, stop)?;
+    if declared.changed {
+        // A registration or a replacement changes what the instance's reach certifies, so
         // the head and the catalog read before it are of a reach that has gone.
         (instance, cursor, fence) = read_head(http, stop)?;
         ended = ended.or(expire_if_built_elsewhere(core, &instance, &fence)?);
@@ -561,7 +561,7 @@ fn attempt(
             counts
         };
 
-        Ok(Attempt::Done(HydrateReport {
+        Ok(Attempt::Done(Box::new(HydrateReport {
             types: types.to_vec(),
             tier,
             edge_types: edge_types.to_vec(),
@@ -573,9 +573,11 @@ fn attempt(
             restarted,
             in_place,
             cursor,
-            registered_types: registered_types.clone(),
-            unregistered_types: unregistered_types.clone(),
-        }))
+            registered_types: declared.registered.clone(),
+            unregistered_types: declared.unregistered.clone(),
+            replaced_types: declared.replaced.clone(),
+            unreplaced_types: declared.unreplaced.clone(),
+        })))
     })();
     result.map_err(|error| context.failed(core, error).unwrap_or_else(|error| error))
 }
@@ -828,52 +830,108 @@ pub(crate) fn lay_queue_over(
     Ok(())
 }
 
-/// Registers on the instance the types the app declared that it does not
-/// hold, parents before their children, and says whether any registration
-/// changed what the instance holds, which leaves the catalog and the head the
-/// caller read stale. A key that may not register is no reason to refuse the
-/// hydration: what it queued waits for the server's verdict like any write.
-fn register_declared(
-    core: &Core,
-    http: &Http,
-    catalog: WireCatalog,
-    stop: &AtomicBool,
-) -> Result<(WireCatalog, Vec<String>, Vec<UnregisteredType>, bool)> {
-    let mut missing: Vec<(String, String)> = {
-        let conn = core.conn()?;
-        store::declared_type_rows(&conn)?
-    };
-    missing.retain(|(id, _)| !catalog.types.iter().any(|held| &held.id == id));
-    let mut registered = Vec::new();
-    let mut refused: Vec<UnregisteredType> = Vec::new();
-    let mut taken = false;
-    while !missing.is_empty() {
-        crate::catch_up::refuse_if_stopped(stop)?;
-        // A type whose parent is still to come waits for it. Only parents
-        // that name each other leave none to go, and then the first goes and
-        // the server answers it.
-        let next = missing
+/// What a hydration did to the instance's types for the ones the app declared.
+#[derive(Default)]
+struct Declared {
+    registered: Vec<String>,
+    unregistered: Vec<UnregisteredType>,
+    replaced: Vec<String>,
+    unreplaced: Vec<UnregisteredType>,
+    /// Whether any call changed what the instance holds, which leaves the
+    /// catalog and the head the caller read stale.
+    changed: bool,
+}
+
+/// The rows ordered so that a type whose parent is also in them waits for it.
+/// Only parents that name each other leave none to go, and then the first goes
+/// and the server answers it.
+fn parents_first(mut rows: Vec<(String, String)>) -> Vec<(String, String)> {
+    let mut ordered = Vec::with_capacity(rows.len());
+    while !rows.is_empty() {
+        let next = rows
             .iter()
             .position(|(_, json)| {
                 let parent = serde_json::from_str::<serde_json::Value>(json)
                     .ok()
                     .and_then(|row| row.get("parent")?.as_str().map(str::to_string));
-                parent.is_none_or(|parent| !missing.iter().any(|(id, _)| *id == parent))
+                parent.is_none_or(|parent| !rows.iter().any(|(id, _)| *id == parent))
             })
             .unwrap_or(0);
-        let (id, json) = missing.remove(next);
+        ordered.push(rows.remove(next));
+    }
+    ordered
+}
+
+/// Brings the instance's types up to what the app declared, parents before
+/// their children: registers the ones it does not hold, then replaces each
+/// `app.*` type it holds in another definition. A key that may not register or
+/// replace is no reason to refuse the hydration: what it queued waits for the
+/// server's verdict like any write, and the type stays as the server holds it.
+///
+/// "Another definition" is the server's judgement: it normalizes the
+/// declaration and the registered type alike (`POST /types/normalize`), so key
+/// order, a default written out or left out, and a label the server derives
+/// never make a declaration differ. Only an `app.*` type is replaced: the
+/// namespace an app owns, where a type under `user.*` or a publisher's is
+/// shared with whoever else writes there.
+fn declare_on_instance(
+    core: &Core,
+    http: &Http,
+    catalog: &WireCatalog,
+    stop: &AtomicBool,
+) -> Result<Declared> {
+    let declared: Vec<(String, String)> = {
+        let conn = core.conn()?;
+        store::declared_type_rows(&conn)?
+    };
+    let held = |id: &str| catalog.types.iter().any(|held| held.id == id);
+    let (present, missing): (Vec<_>, Vec<_>) = declared.into_iter().partition(|(id, _)| held(id));
+    let mut done = Declared::default();
+    for (id, json) in parents_first(missing) {
+        crate::catch_up::refuse_if_stopped(stop)?;
         match http.register_type(&json)? {
             Registration::Registered => {
-                registered.push(id);
-                taken = true;
+                done.registered.push(id);
+                done.changed = true;
             }
-            Registration::Held => taken = true,
+            Registration::Held => done.changed = true,
             Registration::Refused { code, message } => {
-                refused.push(UnregisteredType { id, code, message })
+                done.unregistered
+                    .push(UnregisteredType { id, code, message })
             }
         }
     }
-    Ok((catalog, registered, refused, taken))
+    let own = present.into_iter().filter(|(id, _)| id.starts_with("app."));
+    for (id, json) in parents_first(own.collect()) {
+        crate::catch_up::refuse_if_stopped(stop)?;
+        // A normalization the server refuses is no verdict that the type
+        // matches: the replacement is asked for, and its refusal is the one
+        // reported.
+        let differs = match http.normalized_type(&json) {
+            Ok(normalized) => !normalized.is_held(),
+            Err(error) if error.is_environmental() => return Err(error),
+            Err(
+                CoreError::Validation { .. }
+                | CoreError::Forbidden { .. }
+                | CoreError::NotFound { .. }
+                | CoreError::Server { .. },
+            ) => true,
+            Err(error) => return Err(error),
+        };
+        if !differs {
+            continue;
+        }
+        match http.replace_type(&id, &json)? {
+            Replacement::Replaced => {
+                done.replaced.push(id);
+                done.changed = true;
+            }
+            Replacement::Refused { code, message } => {
+                done.unreplaced.push(UnregisteredType { id, code, message })
+            }
+        }
+    }
+    Ok(done)
 }
 
 /// What a type is, said where a name is refused for breaking the grammar.

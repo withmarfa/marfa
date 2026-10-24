@@ -84,6 +84,12 @@ export interface HydrateReport {
   registered_types: string[];
   /** Declared types the instance did not hold and would not take. */
   unregistered_types: Array<{ id: string; code: string; message: string }>;
+  /** Declared `app.*` types the instance held in another definition and now
+   *  holds as declared (`device/declared-type-replaced`). */
+  replaced_types: string[];
+  /** Declared `app.*` types the instance holds in another definition and
+   *  would not replace (`device/hydrate-replace-refused`). */
+  unreplaced_types: Array<{ id: string; code: string; message: string }>;
 }
 
 export interface CatchUpReport {
