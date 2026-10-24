@@ -837,9 +837,17 @@ The server MUST ship `system.connection`, `system.folder` and `system.view` and 
 
 ### `types/message`
 
-The server MUST ship `core.message` requiring `body` and `from`, taking `to` as a list of identifiers in any format, and naming `body` its display body.
+The server MUST ship `core.message` requiring `from`, taking `to` as an optional list of identifiers in any format, and naming `body` its display body.
 
-**Tests:** `compliance/core-message.test.ts › creates a message with body, from, and to`, `› creates with only the required body and from`, `› accepts participant identifiers in any format`, `› rejects a message missing from with invalid_properties naming it`, `› rejects a message missing body with invalid_properties naming it`, `› declares body as its display body field`, `› declares body and from as required in the registry`.
+**Tests:** `compliance/core-message.test.ts › creates a message with body, from, and to`, `› creates with only the required from`, `› accepts participant identifiers in any format`, `› rejects a message missing from with invalid_properties naming it`, `› declares body as its display body field`, `› declares from, and not body, as required in the registry`.
+
+### `types/body-optional`
+
+The server MUST ship `core.note`, `core.media.article` and `core.message` with `body` declared and not required, so that a write to any of them without a `body` is accepted.
+
+**Reason:** a note can be only a title, an article can be saved before its text is fetched, and a message can be only a photo or a file. A type requires only what it means nothing without.
+
+**Tests:** `compliance/optional-body.test.ts › declares body as optional on core.note, core.media.article and core.message`, `› keeps the title of an article and the sender of a message required`, `› requires no field of a note`, `› creates with no properties at all`, `› creates with only a title, and takes a body later`, `› updates a note that has no body, leaving it without one`, `› creates through the bulk door`, `› still refuses a body of the wrong kind, naming it`, `› creates with only a title`, `› still refuses an article with no title, naming it`, `› creates with only a sender`, `› still refuses a message with no sender, naming it`.
 
 ### `types/highlight`
 
