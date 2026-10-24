@@ -888,3 +888,37 @@ fn a_resume_that_starts_again_reports_every_page_the_call_read() {
     assert_eq!(report.cursor, "60");
     assert_eq!(held(&core), ["a", "b", "c", "pinned"]);
 }
+
+/// A drain that reads the copy while a hydration replaces it must find the
+/// store free, so it can see the copy has changed and end.
+#[test]
+fn a_hydration_about_to_replace_the_copy_leaves_the_store_to_other_callers() {
+    let server = Scripted::start();
+    let core = copy(&server);
+    from_the_start(&server);
+    let point = "hydration-replacing";
+    crate::fault::arm(point);
+    std::thread::scope(|scope| {
+        let hydration = scope.spawn(|| hydrate(&core, SliceTier::Library));
+        let waited = std::time::Instant::now();
+        while crate::fault::waiting(point) == 0 {
+            assert!(
+                waited.elapsed() < WAIT,
+                "the hydration never reached {point}"
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let (read, answer) = std::sync::mpsc::channel();
+        let reader = &core;
+        scope.spawn(move || {
+            let _ = read.send(crate::reach::generation(&reader.conn().unwrap()).unwrap());
+        });
+        let generation = answer.recv_timeout(WAIT);
+        crate::fault::release(point);
+        assert!(
+            generation.is_ok(),
+            "the hydration held the store while it waited to replace the copy"
+        );
+        assert!(hydration.join().unwrap().is_ok());
+    });
+}

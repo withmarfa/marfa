@@ -291,6 +291,9 @@ fn attempt(
             let first = Reached::first(types, edge_types);
             first.keep(&tx)?;
             tx.commit()?;
+            // A drain waiting on the store would otherwise wait out the hold
+            // too, and never see that the copy it read has been replaced.
+            drop(conn);
             #[cfg(debug_assertions)]
             crate::fault::hold(|| "hydration-replacing");
             first
