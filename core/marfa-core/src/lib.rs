@@ -23,6 +23,7 @@ mod folder_settings;
 /// Public for the call shapes it shares with the binary's own transport.
 pub mod http;
 mod hydrate;
+mod instance;
 mod integers;
 mod js;
 mod lock;
@@ -82,6 +83,7 @@ pub use folder::{
     WatchEvent, WatchPass,
 };
 pub use folder_settings::FolderRow;
+pub use instance::{InstanceDescription, instance_description};
 pub use integers::refuse_inexact_integers;
 pub use lock::Handle;
 pub use model::{

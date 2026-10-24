@@ -9,9 +9,11 @@ uniffi::setup_scaffolding!();
 
 mod folder_settings;
 mod folders;
+mod instance;
 mod json;
 mod renewal;
 
+pub use instance::{InstanceDescription, instance_description};
 pub use json::{JsonMember, JsonObject, JsonValue};
 pub use renewal::{CredentialRenewer, RenewalError};
 
