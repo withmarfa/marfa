@@ -1832,6 +1832,20 @@ When `PATCH /folders/{id}` names the `version` the folder holds and one or more 
 
 **Tests:** `compliance/folders.test.ts › changes a folder at its version, merges a stale change to another setting, and refuses one to the same, and refuses a conflict parameter as undeclared`.
 
+### `items/folder-change-declared`
+
+When `PATCH /folders/{id}` accepts a settings change, the server MUST remove stored properties the current `system.folder` type does not declare.
+
+**Reason:** a removed setting can prevent a device from opening the folder, and the item write doors cannot repair a system item. Pruning on every accepted change preserves partial changes and their version rules without guessing whether the caller sent a complete settings document.
+
+**Tests:** `cli/folder-settings-upgrade.test.ts › repairs stored undeclared settings through %s and opens the folder`.
+
+### `items/folder-change-omitted`
+
+When `PATCH /folders/{id}` accepts a settings change, the server MUST preserve each omitted setting the current `system.folder` type declares.
+
+**Tests:** `cli/folder-settings-upgrade.test.ts › repairs stored undeclared settings through %s and opens the folder`.
+
 ### `items/folder-change-stale`
 
 When `PATCH /folders/{id}` names a version the folder no longer holds and changes only settings nobody changed since, the server MUST apply it.

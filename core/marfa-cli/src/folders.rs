@@ -146,6 +146,8 @@ pub enum FoldersCommand {
     /// Needs write on `system.folder`.
     Create(folder_settings::CreateArgs),
     /// Change a folder's settings on the server, each named one replaced whole.
+    /// Omitted settings stay. Every accepted change removes stored properties
+    /// the current folder type does not declare, including with --file or --body.
     Change(folder_settings::ChangeArgs),
     /// Retire a folder's settings on the server. A revoked folder does not change.
     Revoke {

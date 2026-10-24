@@ -715,7 +715,7 @@ export type StoredCreateEdgeInput = CreateEdgeInput &
   ArchivedEdgeInput &
   BlobProofInput;
 /**
- * The store's update input, which differs from the door's in one field.
+ * The store's update input, including controls only internal writers use.
  *
  * `version` is required on `PATCH /items/{id}`: a client that read the row
  * names what it is based on or it is not an update. It stays optional here
@@ -729,7 +729,10 @@ export type StoredUpdateItemInput = Omit<UpdateItemInput, "version"> &
   ConflictResolutionInput &
   BlobProofInput &
   BaseVersionInput &
-  WriterInput;
+  WriterInput & {
+    /** Prune stored properties outside the type after resolving the version. */
+    prune_undeclared_properties?: boolean;
+  };
 
 /** What a purge left of a row's link or natural key under its type. `key`
  *  is the link value or the natural key's `source_id`. */

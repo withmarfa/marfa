@@ -829,6 +829,8 @@ pub enum DeviceFoldersCommand {
     Create(crate::commands::folders::CreateArgs),
     /// Change a folder's settings through the folder operations, at once, each
     /// named one replaced whole.
+    /// Omitted settings stay. Every accepted change removes stored properties
+    /// the current folder type does not declare.
     Change(crate::commands::folders::ChangeArgs),
     /// Retire a folder's settings through the folder operations, at once. A
     /// revoked folder does not change.

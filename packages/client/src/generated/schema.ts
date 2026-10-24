@@ -1107,7 +1107,7 @@ export interface paths {
         head?: never;
         /**
          * Update a folder
-         * @description Updates a folder's title and settings. Each one you send replaces the current value whole, and those you leave out stay as they are. Send the `version` you read.
+         * @description Updates a folder's title and settings at the version you read. Each setting you send replaces its value whole; omitted settings stay. Removes stored properties the folder type does not declare.
          */
         patch: operations["updateFolder"];
         trace?: never;
