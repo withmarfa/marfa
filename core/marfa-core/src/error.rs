@@ -115,7 +115,7 @@ pub enum CoreError {
     },
     /// The caller's stop was raised. What had been taken is consistent: a
     /// hydration left unfinished answers lists and searches marked partial
-    /// and refuses writes, a catch-up keeps the cursor it reached, and a drain leaves what it had not sent queued, and an
+    /// and refuses writes until the next hydration resumes it, a catch-up keeps the cursor it reached, and a drain leaves what it had not sent queued, and an
     /// upload or keyed write it had in flight queued as sent, under its key,
     /// for the next drain to send again.
     #[error("the operation was stopped before it finished")]
