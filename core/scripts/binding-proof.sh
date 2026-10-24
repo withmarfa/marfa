@@ -2,6 +2,9 @@
 #   scripts/binding-proof.sh            # after the Node build and cargo build -p marfa-cli
 set -euo pipefail
 
+# shellcheck source=no-telemetry.sh
+source "$(dirname "$0")/no-telemetry.sh"
+
 core="$(cd "$(dirname "$0")/.." && pwd)"
 work="$(mktemp -d "${TMPDIR:-/tmp}/marfa-binding-proof.XXXXXX")"
 export MARFA_SERVER_KEEP="${work}/server"

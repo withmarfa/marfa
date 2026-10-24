@@ -4,7 +4,7 @@
 # that a test run starts.
 while IFS='=' read -r name _; do
   case "${name}" in
-    OTEL_* | MARFA_POSTHOG_*) unset "${name}" ;;
+    OTEL_* | MARFA_OTEL_* | MARFA_POSTHOG_*) unset "${name}" ;;
   esac
 done < <(env)
 export OTEL_SDK_DISABLED=true
