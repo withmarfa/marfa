@@ -1,7 +1,10 @@
+use std::time::Duration;
+
 use clap::{Args, Subcommand};
 use marfa_core::ScaffoldField;
+use serde_json::{Map, Value};
 
-use super::BodySource;
+use super::{BodySource, object};
 use crate::error::CliError;
 use crate::output::Printer;
 use crate::remote::Remote;
@@ -35,14 +38,18 @@ pub enum TypesCommand {
         #[command(flatten)]
         body: BodySource,
     },
-    /// Remove a registered type. Needs `schema.write` and write on the type in the key's type map.
+    /// Remove a registered type. Needs `schema.write` and write on the type in the key's type map. Refused while items of the type exist or a folder, view or webhook names it. `marfa types move` moves the items and changes those settings.
     Delete {
         /// The type id.
         id: String,
-        /// Remove it even where items of the type exist.
+        /// Remove it even where items of the type exist or a setting names it, leaving both as they are.
         #[arg(long)]
         force: bool,
     },
+    /// Move every item of a type, in any state, to another type. Needs write on both types in the key's type map.
+    ///
+    /// Once every item has moved, the folders, views and webhooks that name the type are changed to name the new one. An item the new type refuses stays where it is, and the command names it; run the command again once it is fixed. The command waits for the move to finish.
+    Move(MoveArgs),
     /// The retired platform types: shipped types this instance carries that the build no longer does. Requires `instance.read`.
     Retired,
     /// Delete one retired platform type. Requires `instance.maintain`.
@@ -50,6 +57,20 @@ pub enum TypesCommand {
         /// The type id.
         id: String,
     },
+}
+
+#[derive(Debug, Args)]
+pub struct MoveArgs {
+    /// The type the items are in now.
+    pub from: String,
+    /// The type to move them to.
+    pub to: String,
+    /// Show what would move and change, and change nothing.
+    #[arg(long)]
+    pub dry_run: bool,
+    /// Properties to merge into every item as it moves, as a JSON object, such as a field the new type requires.
+    #[arg(long, value_name = "JSON")]
+    pub properties: Option<String>,
 }
 
 #[derive(Debug, Args)]
@@ -141,6 +162,28 @@ pub fn delete_request(id: &str, force: bool) -> Request {
     Request::delete(&["types", id]).query_flag("force", force)
 }
 
+pub fn move_request(args: &MoveArgs) -> Result<Request, CliError> {
+    let mut body = Map::new();
+    body.insert("to".into(), Value::String(args.to.clone()));
+    if let Some(properties) = &args.properties {
+        body.insert(
+            "properties".into(),
+            Value::Object(object(properties, "--properties")?),
+        );
+    }
+    let request = Request::post(&["types", &args.from, "move"]);
+    Ok(if args.dry_run {
+        body.insert("dry_run".into(), Value::Bool(true));
+        request.json(Value::Object(body)).reading()
+    } else {
+        request.json(Value::Object(body))
+    })
+}
+
+pub fn job_request(id: &str) -> Request {
+    Request::get(&["items", "bulk-actions", "jobs", id])
+}
+
 pub fn retired_request() -> Request {
     Request::get(&["platform-types", "retired"])
 }
@@ -158,6 +201,7 @@ pub fn run(
 ) -> Result<(), CliError> {
     let request = match &command {
         TypesCommand::Scaffold(args) => return scaffold(args, out),
+        TypesCommand::Move(args) => return move_type(args, &remote()?, out),
         TypesCommand::List => list_request(),
         TypesCommand::Get { id } => get_request(id),
         TypesCommand::Register(body) => register_request(body.read()?),
@@ -172,6 +216,138 @@ pub fn run(
         TypesCommand::Delete { id, .. } => out.report(&answer, || format!("removed type {id}")),
         _ => out.value(&answer),
     }
+}
+
+/// How often a move's job is asked how it stands.
+const JOB_POLL: Duration = Duration::from_millis(500);
+
+fn move_type(args: &MoveArgs, remote: &Remote, out: &Printer) -> Result<(), CliError> {
+    let mut answer = remote.json(&move_request(args)?)?;
+    if args.dry_run {
+        return out.report(&answer, || dry_run_words(&answer));
+    }
+    while matches!(
+        answer.get("status").and_then(Value::as_str),
+        Some("queued" | "in_progress")
+    ) {
+        std::thread::sleep(JOB_POLL);
+        answer = remote.json(&job_request(field(&answer, "id")))?;
+    }
+    out.report(&answer, || moved_words(args, &answer))?;
+    let stayed = list(answer.get("result").unwrap_or(&Value::Null), "errors").len();
+    if field(&answer, "status") != "completed" || stayed > 0 {
+        return Err(CliError::Invalid(format!(
+            "the move didn't finish, and {} still holds items. Run it again to move them.",
+            args.from
+        )));
+    }
+    Ok(())
+}
+
+fn field<'a>(value: &'a Value, name: &str) -> &'a str {
+    value.get(name).and_then(Value::as_str).unwrap_or_default()
+}
+
+fn count(value: &Value, name: &str) -> u64 {
+    value.get(name).and_then(Value::as_u64).unwrap_or_default()
+}
+
+fn list<'a>(value: &'a Value, name: &str) -> &'a [Value] {
+    value
+        .get(name)
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or_default()
+}
+
+fn setting_line(setting: &Value) -> String {
+    format!(
+        "{} {} {}",
+        field(setting, "kind"),
+        field(setting, "id"),
+        field(setting, "field")
+    )
+}
+
+fn dry_run_words(answer: &Value) -> String {
+    let mut lines = vec![format!(
+        "would move {} items from {} to {}",
+        count(answer, "matched"),
+        field(answer, "from"),
+        field(answer, "to")
+    )];
+    let settings = list(answer, "settings");
+    if !settings.is_empty() {
+        lines.push("would change these settings once every item has moved:".into());
+        lines.extend(
+            settings
+                .iter()
+                .map(|setting| format!("  {}", setting_line(setting))),
+        );
+    }
+    let grants = list(answer, "grants");
+    if !grants.is_empty() {
+        lines.push("these keys and apps name the type and are left as they are:".into());
+        lines.extend(grants.iter().map(|grant| {
+            format!(
+                "  {} {} {}",
+                field(grant, "kind"),
+                field(grant, "id"),
+                field(grant, "label")
+            )
+            .trim_end()
+            .to_string()
+        }));
+    }
+    lines.join("\n")
+}
+
+fn moved_words(args: &MoveArgs, job: &Value) -> String {
+    let status = field(job, "status");
+    let mut lines = vec![format!(
+        "moved {} of {} items from {} to {}",
+        count(job, "succeeded"),
+        count(job, "matched"),
+        args.from,
+        args.to
+    )];
+    if status != "completed" {
+        lines.push(format!("the move {status}: {}", field(job, "error")));
+    }
+    let result = job.get("result").unwrap_or(&Value::Null);
+    let refused = list(result, "errors");
+    if !refused.is_empty() {
+        lines.push(format!("{} items stayed in {}:", refused.len(), args.from));
+        lines.extend(refused.iter().map(|error| {
+            format!(
+                "  {} {}: {}",
+                field(error, "id"),
+                field(error, "code"),
+                field(error, "message")
+            )
+        }));
+    }
+    let settings = list(result, "settings");
+    if result.get("settings_rewritten") == Some(&Value::Bool(true)) {
+        if !settings.is_empty() {
+            lines.push(format!(
+                "changed {} settings to name {}",
+                settings.len(),
+                args.to
+            ));
+        }
+    } else if !settings.is_empty() {
+        lines.push(format!(
+            "these settings still name {}, and change once every item has moved:",
+            args.from
+        ));
+        lines.extend(
+            settings
+                .iter()
+                .map(|setting| format!("  {}", setting_line(setting))),
+        );
+    }
+    lines.join("\n")
 }
 
 fn scaffold(args: &ScaffoldArgs, out: &Printer) -> Result<(), CliError> {

@@ -519,6 +519,30 @@ fn types_are_reached_at_their_doors_and_a_forced_delete_says_so() {
 }
 
 #[test]
+fn a_type_move_posts_its_target_and_a_dry_run_reads() {
+    let args = |dry_run, properties: Option<&str>| types::MoveArgs {
+        from: "acme.deal".into(),
+        to: "acme.contract".into(),
+        dry_run,
+        properties: properties.map(String::from),
+    };
+    let moved = types::move_request(&args(false, Some(r#"{"stage":"won"}"#))).unwrap();
+    assert_eq!(moved.path(), "/types/acme.deal/move");
+    assert!(moved.writes);
+    assert_eq!(
+        moved.body,
+        Body::Json(json!({ "to": "acme.contract", "properties": { "stage": "won" } }))
+    );
+    let dry = types::move_request(&args(true, None)).unwrap();
+    assert!(!dry.writes);
+    assert_eq!(
+        dry.body,
+        Body::Json(json!({ "to": "acme.contract", "dry_run": true }))
+    );
+    assert!(types::move_request(&args(false, Some("[1]"))).is_err());
+}
+
+#[test]
 fn a_key_is_minted_with_exactly_the_reach_named() {
     let inherited = keys::create_request(&keys::KeyCreateArgs {
         label: "laptop".into(),
