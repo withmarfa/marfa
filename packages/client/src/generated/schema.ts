@@ -744,7 +744,7 @@ export interface paths {
         post?: never;
         /**
          * Delete a type
-         * @description Deletes an unused type. A key can use `force=true` to keep existing items without their type; new writes then fail until it is registered again. A recent owner session or local command can remove only unused types.
+         * @description Deletes a type no item holds and no folder, view or webhook names. With `force=true`, a key keeps the items without their type and leaves the settings as they are; new writes then fail until it's registered again.
          */
         delete: operations["deleteType"];
         options?: never;

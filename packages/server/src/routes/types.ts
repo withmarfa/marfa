@@ -893,7 +893,7 @@ const deleteTypeRoute = createRoute({
   tags: ["Types"],
   summary: "Delete a type",
   description:
-    "Deletes an unused type. A key can use `force=true` to keep existing items without their type; new writes then fail until it is registered again. A recent owner session or local command can remove only unused types.",
+    "Deletes a type no item holds and no folder, view or webhook names. With `force=true`, a key keeps the items without their type and leaves the settings as they are; new writes then fail until it's registered again.",
   security: [{ bearerAuth: [] }, { ownerSession: [] }] as Record<
     string,
     string[]
@@ -1236,7 +1236,7 @@ export function typeRoutes(storage: Storage) {
           if (force === "true")
             throw new MarfaError(
               ErrorCode.FORBIDDEN,
-              "The owner console removes only unused types. Move or remove their items first.",
+              "The owner console removes only unused types. Move their items to another type, and change the folders, views and webhooks that name them, first.",
             );
         } else requireTypeSchemaWrite(c, "change", id);
 
