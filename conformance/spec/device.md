@@ -4298,9 +4298,9 @@ If a view's query asks for a type or tier outside the slice, `beneath` without `
 
 ### `device/view-incomplete`
 
-If hydration is incomplete, then a device MUST refuse to evaluate a view's items or groups with `hydration_incomplete`.
+If hydration is incomplete, or its copy is stale, then a device MUST refuse to evaluate a view's items or groups with `hydration_incomplete`.
 
-**Reason:** partial rows or totals would misrepresent the saved view.
+**Reason:** partial or out-of-date rows or totals would misrepresent the saved view.
 
 **Tests:** `device/views.test.ts › refuses a partially hydrated view instead of reporting partial totals`.
 
