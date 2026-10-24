@@ -1039,6 +1039,8 @@ mod tests {
             occurred_at: occurred_at.into(),
             created_at: "2026-09-01T10:00:00.000Z".into(),
             updated_at: "2026-09-01T10:00:00.000Z".into(),
+            capture_latitude: None,
+            capture_longitude: None,
             tags: Vec::new(),
         }
     }

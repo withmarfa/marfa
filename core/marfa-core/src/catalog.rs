@@ -1109,6 +1109,8 @@ mod tests {
             occurred_at: String::new(),
             created_at: String::new(),
             updated_at: String::new(),
+            capture_latitude: None,
+            capture_longitude: None,
             tags: Vec::new(),
         };
         let shown = |r#type: &str, properties: serde_json::Value| {

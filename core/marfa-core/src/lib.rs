@@ -944,11 +944,15 @@ impl Core {
 
     /// Answered part way through a hydration from the rows that have arrived,
     /// marked `Partial`.
-    pub fn list(&self, filters: &ListFilters, sort: Sort) -> Result<Rows<Item>> {
+    ///
+    /// Left unnamed, the order is newest created first, or oldest changed
+    /// first where `updated_after` is named, as the server's.
+    pub fn list(&self, filters: &ListFilters, sort: impl Into<Option<Sort>>) -> Result<Rows<Item>> {
+        let sort = sort.into();
         store::read_marked(&mut *self.conn()?, |conn, completeness| {
             let catalog = catalog::Catalog::load(conn)?;
             Ok(Rows {
-                rows: query::list(conn, &catalog, filters, sort)?,
+                rows: query::list(conn, &catalog, filters, sort.clone())?,
                 completeness,
             })
         })
@@ -956,25 +960,37 @@ impl Core {
 
     /// `list`, each item with the title and body it shows (`Catalog::shown`),
     /// all read under one snapshot of the catalog.
-    pub fn list_shown(&self, filters: &ListFilters, sort: Sort) -> Result<Rows<(Item, Shown)>> {
-        self.list_shown_with(filters, sort, &mut store::Unreadable::Refuse)
+    pub fn list_shown(
+        &self,
+        filters: &ListFilters,
+        sort: impl Into<Option<Sort>>,
+    ) -> Result<Rows<(Item, Shown)>> {
+        self.list_shown_with(filters, sort.into(), &mut store::Unreadable::Refuse)
     }
 
     /// `list_shown`, but a row whose stored properties cannot be read stays
     /// in the answer with no properties, and its `Shown` says why.
-    pub fn list_kept(&self, filters: &ListFilters, sort: Sort) -> Result<Rows<(Item, Shown)>> {
-        self.list_shown_with(filters, sort, &mut store::Unreadable::Keep(HashMap::new()))
+    pub fn list_kept(
+        &self,
+        filters: &ListFilters,
+        sort: impl Into<Option<Sort>>,
+    ) -> Result<Rows<(Item, Shown)>> {
+        self.list_shown_with(
+            filters,
+            sort.into(),
+            &mut store::Unreadable::Keep(HashMap::new()),
+        )
     }
 
     fn list_shown_with(
         &self,
         filters: &ListFilters,
-        sort: Sort,
+        sort: Option<Sort>,
         unreadable: &mut store::Unreadable,
     ) -> Result<Rows<(Item, Shown)>> {
         store::read_marked(&mut *self.conn()?, |conn, completeness| {
             let catalog = catalog::Catalog::load(conn)?;
-            let items = query::list_with(conn, &catalog, filters, sort, unreadable)?;
+            let items = query::list_with(conn, &catalog, filters, sort.clone(), unreadable)?;
             Ok(Rows {
                 rows: items,
                 completeness,
@@ -3103,6 +3119,43 @@ fn refuse_unmakeable_create(catalog: &catalog::Catalog, draft: &Draft) -> Result
             message: format!("{} is not a type this copy holds", draft.r#type),
         });
     }
+    // The states a type's lifecycle reaches from `active`: a `system.*` type
+    // is refused above, and the rest reach every state but `revoked`
+    // (`items/initial-state-refused`).
+    if draft.state == Some(ItemState::Revoked) {
+        return Err(CoreError::Validation {
+            code: "validation_error".into(),
+            message: format!(
+                "{} cannot start in the revoked state; use active, archived or trashed",
+                draft.r#type
+            ),
+        });
+    }
+    for (name, value) in [
+        ("capture_latitude", draft.capture_latitude),
+        ("capture_longitude", draft.capture_longitude),
+    ] {
+        if value.is_some_and(|value| !value.is_finite()) {
+            return Err(CoreError::Validation {
+                code: "validation_error".into(),
+                message: format!("{name} must be a number"),
+            });
+        }
+    }
+    for (edge_type, targets) in &draft.edges {
+        if edge_type.is_empty() {
+            return Err(CoreError::Validation {
+                code: "validation_error".into(),
+                message: "an edge type in edges is empty".into(),
+            });
+        }
+        for target in targets {
+            validation::id("edges", target)?;
+            if draft.id.as_deref() == Some(target.as_str()) {
+                refuse_self_loop(target, target)?;
+            }
+        }
+    }
     Ok(())
 }
 
@@ -3204,6 +3257,23 @@ fn queue_create(
         Some(&draft.tags),
         &catalog.indexing(&draft.r#type),
     )?;
+    // Shown at once, as the edges of a write that waits, until the answer
+    // brings the server's. The server makes the item and every edge or
+    // none, so a refusal takes them out with the item.
+    for edge in draft.projected_edges(&id, &row.updated_at) {
+        store::upsert_edge(tx, &edge)?;
+    }
+    // The server needs each target before it can draw an edge to it.
+    let mut depends_on = after.to_vec();
+    for targets in draft.edges.values() {
+        for target in targets {
+            for waited in store::untaken_creates_for_item(tx, target)? {
+                if !depends_on.contains(&waited) {
+                    depends_on.push(waited);
+                }
+            }
+        }
+    }
     // The answer's echo would otherwise let go of a row the slice does not
     // hold, and a create shown as saved would vanish with nothing said.
     let declared = store::slice(tx)?.is_some_and(|(types, tier)| {
@@ -3224,7 +3294,7 @@ fn queue_create(
             blob: None,
             base_version: draft.base_version,
             payload: &payload,
-            depends_on: after,
+            depends_on: &depends_on,
         },
     )?;
     if let Some(tier) = chosen {
@@ -3294,6 +3364,11 @@ fn queue_update(
             "an update to {id} carries no version; name the version the edit was based on"
         )));
     };
+    if edit.clear_occurred_at && edit.occurred_at.is_some() {
+        return Err(CoreError::Invalid(
+            "an edit sets the item's time or clears it, not both".into(),
+        ));
+    }
     // An unchanged type or tier is not sent: the drain reads one in a sent
     // edit as a move, and lets the row go where its answer is outside the
     // slice.
@@ -3304,6 +3379,14 @@ fn queue_update(
             edit.r#type.as_deref().unwrap_or(&held.r#type),
             &edit.properties,
         ),
+        // The server holds no empty time: an item with none of its own
+        // takes its creation time, which no write changes.
+        occurred_at: if edit.clear_occurred_at {
+            Some(held.created_at.clone())
+        } else {
+            edit.occurred_at.clone()
+        },
+        clear_occurred_at: false,
         ..edit.clone()
     };
     if let Some(r#type) = edit.r#type.as_ref().filter(|r#type| !catalog.known(r#type)) {
@@ -4428,6 +4511,119 @@ mod tests {
         assert_eq!(queued(&core), 6);
         // What was queued reads back, so no later read of the queue fails.
         assert_eq!(core.queue().unwrap().len(), 6);
+    }
+
+    #[test]
+    fn a_create_with_state_location_and_edges_is_one_write_the_copy_already_shows() {
+        let core = held_copy();
+        let target = server_held_item(&core, "core.note", serde_json::json!({}));
+        let draft = Draft {
+            r#type: "core.note".into(),
+            properties: serde_json::json!({ "title": "Pinned" })
+                .as_object()
+                .unwrap()
+                .clone(),
+            state: Some(ItemState::Archived),
+            capture_latitude: Some(51.5),
+            capture_longitude: Some(-0.25),
+            edges: [("references".to_string(), vec![target.clone()])].into(),
+            ..Default::default()
+        };
+        let queued = core.create_item(&draft).unwrap();
+        let id = queued.item_id.clone().unwrap();
+        // One write carries all three, as the server takes them.
+        let writes = core.queue().unwrap();
+        assert_eq!(writes.len(), 1);
+        let body: Value =
+            serde_json::from_str(&store::payload_of(&core.conn().unwrap(), &queued.id).unwrap())
+                .unwrap();
+        assert_eq!(body["state"], "archived");
+        assert_eq!(body["capture_latitude"], 51.5);
+        assert_eq!(body["edges"], serde_json::json!({ "references": [target] }));
+        let shown = core.get(&id).unwrap().unwrap();
+        assert_eq!(shown.state, ItemState::Archived);
+        assert_eq!(
+            (shown.capture_latitude, shown.capture_longitude),
+            (Some(51.5), Some(-0.25))
+        );
+        let edges = core.edges_from(&id).unwrap();
+        assert_eq!(edges.len(), 1);
+        assert_eq!(
+            (edges[0].target_id.as_str(), edges[0].edge_type.as_str()),
+            (target.as_str(), "references")
+        );
+    }
+
+    #[test]
+    fn a_create_the_server_would_refuse_for_its_state_location_or_edges_is_refused_before_it_is_queued()
+     {
+        let core = held_copy();
+        let base = || Draft {
+            r#type: "core.note".into(),
+            ..Default::default()
+        };
+        let bad = [
+            Draft {
+                state: Some(ItemState::Revoked),
+                ..base()
+            },
+            Draft {
+                capture_latitude: Some(f64::NAN),
+                ..base()
+            },
+            Draft {
+                edges: [(String::new(), vec![uuid::Uuid::now_v7().to_string()])].into(),
+                ..base()
+            },
+            Draft {
+                edges: [("references".to_string(), vec![String::new()])].into(),
+                ..base()
+            },
+        ];
+        for draft in &bad {
+            assert!(
+                matches!(core.create_item(draft), Err(CoreError::Validation { .. })),
+                "{draft:?}"
+            );
+        }
+        assert!(core.queue().unwrap().is_empty());
+    }
+
+    #[test]
+    fn an_edit_sets_the_items_own_time_and_clearing_it_returns_the_creation_time() {
+        let core = held_copy();
+        let edit = |change: Edit| {
+            let version = core.get("row").unwrap().unwrap().version;
+            core.update_item(
+                "row",
+                &Edit {
+                    base_version: Some(version),
+                    ..change
+                },
+            )
+        };
+        edit(Edit {
+            occurred_at: Some("2025-06-01T12:00:00Z".into()),
+            ..Default::default()
+        })
+        .unwrap();
+        let held = core.get("row").unwrap().unwrap();
+        assert_eq!(held.occurred_at, "2025-06-01T12:00:00.000Z");
+        edit(Edit {
+            clear_occurred_at: true,
+            ..Default::default()
+        })
+        .unwrap();
+        let cleared = core.get("row").unwrap().unwrap();
+        assert_eq!(cleared.occurred_at, "2026-01-01T00:00:00.000Z");
+        assert!(matches!(
+            edit(Edit {
+                occurred_at: Some("2025-06-01T12:00:00Z".into()),
+                clear_occurred_at: true,
+                ..Default::default()
+            }),
+            Err(CoreError::Invalid(_))
+        ));
     }
 
     #[test]

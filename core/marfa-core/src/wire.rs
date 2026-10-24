@@ -37,6 +37,10 @@ pub struct WireItem {
     pub created_at: String,
     pub updated_at: String,
     #[serde(default)]
+    pub capture_latitude: Option<f64>,
+    #[serde(default)]
+    pub capture_longitude: Option<f64>,
+    #[serde(default)]
     pub edges: Option<HashMap<String, WireEdgeBlock>>,
 }
 

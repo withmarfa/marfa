@@ -797,6 +797,9 @@ pub(crate) fn lay_queue_over(
                         wire.updated_at.clone_from(&row.queued_at);
                     }
                     store::upsert_item(conn, &wire, Some(&[]), &catalog.indexing(&draft.r#type))?;
+                    for edge in draft.projected_edges(&id, &row.queued_at) {
+                        store::upsert_edge(conn, &edge)?;
+                    }
                 }
             }
             WriteKind::CreateEdge => {

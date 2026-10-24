@@ -31,7 +31,9 @@ CREATE TABLE IF NOT EXISTS items (
   occurred_at TEXT NOT NULL,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
-  properties TEXT NOT NULL
+  properties TEXT NOT NULL,
+  capture_latitude REAL,
+  capture_longitude REAL
 );
 CREATE INDEX IF NOT EXISTS items_type_created ON items (type, created_at);
 CREATE INDEX IF NOT EXISTS items_type_updated ON items (type, updated_at);

@@ -32,16 +32,6 @@ pub enum ItemState {
     Revoked,
 }
 
-// Every sortable column is a verb plus `_at`, so the shared `At` suffix the
-// lint reports is the naming rule rather than noise the variants could drop.
-#[allow(clippy::enum_variant_names)]
-#[napi(string_enum = "snake_case")]
-pub enum SortField {
-    CreatedAt,
-    UpdatedAt,
-    OccurredAt,
-}
-
 #[napi(string_enum = "snake_case")]
 pub enum SortDirection {
     Asc,
@@ -86,6 +76,9 @@ pub struct Item {
     pub created_at: String,
     pub updated_at: String,
     pub tags: Vec<String>,
+    /// Where it was captured, in degrees, as sent.
+    pub capture_latitude: Option<f64>,
+    pub capture_longitude: Option<f64>,
 }
 
 #[napi(object)]
@@ -111,7 +104,13 @@ pub struct SearchFilters {
     pub all_states: Option<bool>,
     #[napi(js_name = "type")]
     pub type_: Option<String>,
+    /// One tier; unset answers both.
+    pub tier: Option<Tier>,
     pub tags: Option<Vec<String>>,
+    /// Exclusive lower bound on the item's own time. Either end alone works.
+    pub occurred_after: Option<String>,
+    /// Exclusive upper bound on the item's own time.
+    pub occurred_before: Option<String>,
     /// An expression in the server's listing grammar, answered as the server
     /// answers `filter` and refused `validation_error` where it refuses it.
     /// A `backref` condition is refused `invalid`.
@@ -134,6 +133,14 @@ pub struct ListFilters {
     pub tags: Option<Vec<String>>,
     pub occurred_after: Option<String>,
     pub occurred_before: Option<String>,
+    /// Only the items stamped with this source.
+    pub source: Option<String>,
+    /// Inclusive lower bound on the time the item was last changed. The list
+    /// is then ordered by that time and id, oldest first, and a `sort` is
+    /// refused `validation_error`.
+    pub updated_after: Option<String>,
+    /// Exclusive upper bound on the time the item was last changed.
+    pub updated_before: Option<String>,
     /// An expression in the server's listing grammar, answered as the server
     /// answers `filter` and refused `validation_error` where it refuses it.
     /// A `backref` condition is refused `invalid`.
@@ -147,7 +154,13 @@ pub struct ListFilters {
 
 #[napi(object)]
 pub struct Sort {
-    pub field: SortField,
+    /// The server's own names: `created_at`, `updated_at`, `occurred_at` or
+    /// `properties.<name>`, the name `a` to `z`, `0` to `9` and `_`. A
+    /// property orders numbers and booleans (`false` before `true`) first,
+    /// then text, with items lacking it last in either direction; ties go by
+    /// id, oldest first.
+    #[napi(ts_type = "\"created_at\" | \"updated_at\" | \"occurred_at\" | `properties.${string}`")]
+    pub field: String,
     pub direction: SortDirection,
 }
 
@@ -622,9 +635,19 @@ pub struct Draft {
     /// Each queued as a write of its own, waiting on the create.
     pub tags: Option<Vec<String>>,
     pub tier: Option<Tier>,
+    /// The state to create it in; unset, active. `revoked` is refused.
+    pub state: Option<ItemState>,
     pub source: Option<String>,
     pub source_id: Option<String>,
     pub occurred_at: Option<String>,
+    /// Where it was captured, in degrees. Both or neither.
+    pub capture_latitude: Option<f64>,
+    pub capture_longitude: Option<f64>,
+    /// Edge type to the ids of the items it points at. They are queued and
+    /// sent with the create as one write: if the server refuses any, it makes
+    /// none, and the create stays in the queue as refused.
+    #[napi(ts_type = "Record<string, string[]>")]
+    pub edges: Option<std::collections::HashMap<String, Vec<String>>>,
     /// The version this create is conditional on, where its natural key
     /// resolves a row the server holds.
     pub base_version: Option<i64>,
@@ -640,6 +663,11 @@ pub struct Edit {
     pub base_version: Option<i64>,
     /// The natural key to move the row to.
     pub source_id: Option<String>,
+    /// When the item's content happened.
+    pub occurred_at: Option<String>,
+    /// Gives the item no time of its own again, so it is its creation time.
+    /// Refused beside `occurredAt`.
+    pub clear_occurred_at: Option<bool>,
 }
 
 /// An edge, before it is queued.
@@ -1017,7 +1045,10 @@ impl From<SearchFilters> for marfa_core::SearchFilters {
             state: filters.state.map(Into::into),
             all_states: filters.all_states.unwrap_or(false),
             r#type: filters.type_,
+            tier: filters.tier.map(Into::into),
             tags: filters.tags.unwrap_or_default(),
+            occurred_after: filters.occurred_after,
+            occurred_before: filters.occurred_before,
             filter: filters.filter,
             beneath: filters.beneath,
         }
@@ -1169,6 +1200,8 @@ fn item(item: marfa_core::Item) -> Item {
         created_at: item.created_at,
         updated_at: item.updated_at,
         tags: item.tags,
+        capture_latitude: item.capture_latitude,
+        capture_longitude: item.capture_longitude,
     }
 }
 
@@ -1185,6 +1218,17 @@ fn edge(edge: marfa_core::Edge) -> Edge {
     }
 }
 
+fn edit_of(edit: Edit) -> Result<marfa_core::Edit> {
+    Ok(marfa_core::Edit {
+        properties: object(Some(edit.properties))?,
+        base_version: edit.base_version,
+        source_id: edit.source_id,
+        occurred_at: edit.occurred_at,
+        clear_occurred_at: edit.clear_occurred_at.unwrap_or(false),
+        ..Default::default()
+    })
+}
+
 fn filters(filters: Option<ListFilters>) -> marfa_core::ListFilters {
     let filters = filters.unwrap_or_default();
     marfa_core::ListFilters {
@@ -1195,6 +1239,9 @@ fn filters(filters: Option<ListFilters>) -> marfa_core::ListFilters {
         tags: filters.tags.unwrap_or_default(),
         occurred_after: filters.occurred_after,
         occurred_before: filters.occurred_before,
+        source: filters.source,
+        updated_after: filters.updated_after,
+        updated_before: filters.updated_before,
         filter: filters.filter,
         beneath: filters.beneath,
         limit: filters.limit,
@@ -1202,21 +1249,18 @@ fn filters(filters: Option<ListFilters>) -> marfa_core::ListFilters {
     }
 }
 
-fn sort(sort: Option<Sort>) -> marfa_core::Sort {
-    match sort {
-        None => marfa_core::Sort::default(),
-        Some(sort) => marfa_core::Sort {
-            field: match sort.field {
-                SortField::CreatedAt => marfa_core::SortField::CreatedAt,
-                SortField::UpdatedAt => marfa_core::SortField::UpdatedAt,
-                SortField::OccurredAt => marfa_core::SortField::OccurredAt,
-            },
+/// Unset, the core's own order, which `updatedAfter` changes.
+fn sort(env: Env, sort: Option<Sort>) -> Result<Option<marfa_core::Sort>> {
+    sort.map(|sort| {
+        Ok(marfa_core::Sort {
+            field: sort.field.parse().map_err(|error| failure(env, error))?,
             direction: match sort.direction {
                 SortDirection::Asc => marfa_core::SortDirection::Ascending,
                 SortDirection::Desc => marfa_core::SortDirection::Descending,
             },
-        },
-    }
+        })
+    })
+    .transpose()
 }
 
 fn server_of(url: Option<String>, key: Option<String>) -> Result<Option<marfa_core::Server>> {
@@ -2215,7 +2259,7 @@ impl MarfaCore {
     ) -> Result<Listing> {
         let listed = self
             .inner
-            .list(&self::filters(filters), self::sort(sort))
+            .list(&self::filters(filters), self::sort(env, sort)?)
             .map_err(|error| failure(env, error))?;
         Ok(Listing {
             completeness: listed.completeness.into(),
@@ -2234,7 +2278,12 @@ impl MarfaCore {
     ) -> Result<Listing> {
         let listed = self
             .inner
-            .list_in_folder(&id, self::sort(sort), limit, offset)
+            .list_in_folder(
+                &id,
+                self::sort(env, sort)?.unwrap_or_default(),
+                limit,
+                offset,
+            )
             .map_err(|error| failure(env, error))?;
         Ok(Listing {
             completeness: listed.completeness.into(),
@@ -2485,9 +2534,13 @@ impl MarfaCore {
             properties: object(draft.properties)?,
             tags: draft.tags.unwrap_or_default(),
             tier: draft.tier.map(Into::into),
+            state: draft.state.map(Into::into),
             source: draft.source,
             source_id: draft.source_id,
             occurred_at: draft.occurred_at,
+            capture_latitude: draft.capture_latitude,
+            capture_longitude: draft.capture_longitude,
+            edges: draft.edges.unwrap_or_default().into_iter().collect(),
             base_version: draft.base_version,
         };
         queued(
@@ -2501,12 +2554,7 @@ impl MarfaCore {
     /// Changes an item in the local copy and queues the change.
     #[napi]
     pub fn update_item(&self, env: Env, id: String, edit: Edit) -> Result<QueuedWrite> {
-        let edit = marfa_core::Edit {
-            properties: object(Some(edit.properties))?,
-            base_version: edit.base_version,
-            source_id: edit.source_id,
-            ..Default::default()
-        };
+        let edit = edit_of(edit)?;
         queued(
             env,
             self.inner
@@ -2520,12 +2568,7 @@ impl MarfaCore {
     /// merges the change against.
     #[napi]
     pub fn update_item_as_read(&self, env: Env, id: String, edit: Edit) -> Result<QueuedWrite> {
-        let edit = marfa_core::Edit {
-            properties: object(Some(edit.properties))?,
-            base_version: edit.base_version,
-            source_id: edit.source_id,
-            ..Default::default()
-        };
+        let edit = edit_of(edit)?;
         queued(
             env,
             self.inner
@@ -3341,6 +3384,9 @@ mod tests {
             tags: Some(vec!["a".into()]),
             occurred_after: Some("after".into()),
             occurred_before: Some("before".into()),
+            source: Some("notes".into()),
+            updated_after: Some("changed after".into()),
+            updated_before: Some("changed before".into()),
             filter: Some("tags exists".into()),
             beneath: Some("root".into()),
             limit: Some(3),
@@ -3356,6 +3402,9 @@ mod tests {
                 tags: vec!["a".into()],
                 occurred_after: Some("after".into()),
                 occurred_before: Some("before".into()),
+                source: Some("notes".into()),
+                updated_after: Some("changed after".into()),
+                updated_before: Some("changed before".into()),
                 filter: Some("tags exists".into()),
                 beneath: Some("root".into()),
                 limit: Some(3),
@@ -3370,7 +3419,10 @@ mod tests {
             state: Some(ItemState::Archived),
             all_states: Some(true),
             type_: Some("core.note".into()),
+            tier: Some(Tier::Feed),
             tags: Some(vec!["a".into(), "b".into()]),
+            occurred_after: Some("after".into()),
+            occurred_before: Some("before".into()),
             filter: Some("tags exists".into()),
             beneath: Some("root".into()),
         }
@@ -3381,7 +3433,10 @@ mod tests {
                 state: Some(marfa_core::ItemState::Archived),
                 all_states: true,
                 r#type: Some("core.note".into()),
+                tier: Some(marfa_core::Tier::Feed),
                 tags: vec!["a".into(), "b".into()],
+                occurred_after: Some("after".into()),
+                occurred_before: Some("before".into()),
                 filter: Some("tags exists".into()),
                 beneath: Some("root".into()),
             }

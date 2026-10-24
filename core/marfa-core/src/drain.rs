@@ -2533,8 +2533,10 @@ fn settle_success(
         if row.kind == WriteKind::CreateItem
             && let Some(local) = row.item_id.as_deref()
         {
+            drop_projected_edges(&tx, row, local)?;
             store::adopt_answered_id(&tx, local, &parsed.item.id)?;
             store::refollow(&tx, &parsed.item.id, &row.id)?;
+            take_answered_edges(&tx, &parsed.item)?;
         }
         move_edits_behind(
             &tx,
@@ -2583,6 +2585,28 @@ fn settle_success(
     store::meta_delete(&tx, &receipt_key(&row.id))?;
     tx.commit()?;
     Ok(settled)
+}
+
+/// The edges a created item was drawn with while its write waited carry
+/// device-own ids; the answer brings the server's, so the drawn ones leave.
+fn drop_projected_edges(conn: &rusqlite::Connection, row: &QueuedWrite, local: &str) -> Result<()> {
+    let draft = crate::model::Draft::from_payload(&store::payload_of(conn, &row.id)?)?;
+    for (edge_type, target) in draft.edge_pairs() {
+        let id = crate::model::projected_edge_id(local, &edge_type, &target);
+        store::forget_edge(conn, &id)?;
+    }
+    Ok(())
+}
+
+/// The edges the server answered a create with, first page of each type. A
+/// type with more edges than one page is completed by the next hydration.
+fn take_answered_edges(conn: &rusqlite::Connection, item: &WireItem) -> Result<()> {
+    for block in item.edges.iter().flat_map(|edges| edges.values()) {
+        for edge in &block.data {
+            store::take_server_edge(conn, edge)?;
+        }
+    }
+    Ok(())
 }
 
 fn settle(

@@ -559,6 +559,8 @@ mod tests {
             occurred_at: occurred_at.into(),
             created_at: created_at.into(),
             updated_at: created_at.into(),
+            capture_latitude: None,
+            capture_longitude: None,
             tags: Vec::new(),
         }
     }

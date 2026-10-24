@@ -57,7 +57,7 @@ pub const SCHEMA_VERSION: &str = "0";
 const META_TABLE: &str =
     "CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);";
 
-const ITEM_COLUMNS: &str = "id, type, state, tier, version, schema_version, source, source_id, occurred_at, created_at, updated_at, properties";
+const ITEM_COLUMNS: &str = "id, type, state, tier, version, schema_version, source, source_id, occurred_at, created_at, updated_at, properties, capture_latitude, capture_longitude";
 const EDGE_COLUMNS: &str =
     "id, source_id, target_id, edge_type, properties, version, created_at, updated_at";
 
@@ -2915,14 +2915,16 @@ pub fn upsert_item(
     crate::body::rule::item_changing(conn, &item.id, Some(item))?;
     let before = attachments_before(conn, &[&item.id])?;
     conn.execute(
-        "INSERT INTO items (id, type, state, tier, version, schema_version, source, source_id, occurred_at, created_at, updated_at, properties)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+        "INSERT INTO items (id, type, state, tier, version, schema_version, source, source_id, occurred_at, created_at, updated_at, properties, capture_latitude, capture_longitude)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
          ON CONFLICT (id) DO UPDATE SET
            type = excluded.type, state = excluded.state, tier = excluded.tier,
            version = excluded.version, schema_version = excluded.schema_version,
            source = excluded.source, source_id = excluded.source_id,
            occurred_at = excluded.occurred_at, created_at = excluded.created_at,
-           updated_at = excluded.updated_at, properties = excluded.properties",
+           updated_at = excluded.updated_at, properties = excluded.properties,
+           capture_latitude = excluded.capture_latitude,
+           capture_longitude = excluded.capture_longitude",
         params![
             item.id,
             item.r#type,
@@ -2936,6 +2938,8 @@ pub fn upsert_item(
             item.created_at,
             item.updated_at,
             js::json(&Value::Object(js::object_order(&item.properties))),
+            item.capture_latitude,
+            item.capture_longitude,
         ],
     )?;
     if let Some(tags) = tags {
@@ -3579,6 +3583,8 @@ fn read_item(row: &rusqlite::Row<'_>) -> rusqlite::Result<(Item, Option<String>)
         created_at: row.get(9)?,
         updated_at: row.get(10)?,
         properties,
+        capture_latitude: row.get(12)?,
+        capture_longitude: row.get(13)?,
         tags: Vec::new(),
     };
     Ok((item, why))
@@ -4531,6 +4537,15 @@ fn lay_write(
             if let Some(occurred_at) = draft.occurred_at {
                 item.occurred_at = crate::time::projected(&occurred_at);
             }
+            if let Some(state) = draft.state {
+                item.state = state;
+            }
+            if draft.capture_latitude.is_some() {
+                item.capture_latitude = draft.capture_latitude;
+            }
+            if draft.capture_longitude.is_some() {
+                item.capture_longitude = draft.capture_longitude;
+            }
         }
         WriteKind::UpdateItem => {
             if let Some(Value::Object(properties)) = payload.get("properties") {
@@ -5055,6 +5070,8 @@ pub(crate) mod testing {
             occurred_at: occurred_at.into(),
             created_at: occurred_at.into(),
             updated_at: occurred_at.into(),
+            capture_latitude: None,
+            capture_longitude: None,
             edges: None,
         }
     }
@@ -5544,6 +5561,8 @@ mod tests {
             occurred_at: "1999-12-31T23:59:58Z".into(),
             created_at: "2020-02-02T02:02:02Z".into(),
             updated_at: "2031-03-03T03:03:03Z".into(),
+            capture_latitude: Some(51.5),
+            capture_longitude: Some(-0.25),
             edges: None,
         };
         upsert_item(&conn, &row, None, &Indexing::default()).unwrap();
@@ -5560,6 +5579,8 @@ mod tests {
         assert_eq!(item.occurred_at, "1999-12-31T23:59:58Z");
         assert_eq!(item.created_at, "2020-02-02T02:02:02Z");
         assert_eq!(item.updated_at, "2031-03-03T03:03:03Z");
+        assert_eq!(item.capture_latitude, Some(51.5));
+        assert_eq!(item.capture_longitude, Some(-0.25));
         assert_eq!(
             item.properties.get("title").and_then(Value::as_str),
             Some("T")
@@ -7584,7 +7605,7 @@ mod tests {
             .collect();
         assert_eq!(
             crate::folder::state::hash(named.as_bytes()),
-            "4b7cee0d33e0f40a",
+            "813b6fdceb4f69f3",
             "the shape of a table changed, which refuses every store made before it"
         );
         // The comment strip reads `--` alone, so a block comment would ride
