@@ -43,9 +43,10 @@ pub enum DeviceCommand {
     ///
     /// A hydration that stopped before it finished carries on from the page
     /// it had reached when run again for the same slice. It starts again
-    /// from the first page when the server, the key's reach, the slice or
-    /// the catalog has changed since, or the server's event log no longer
-    /// holds the point it started from, and says why.
+    /// from the first page, and says why, when another instance answers, the
+    /// key's reach, the slice or the catalog has changed since, the server's
+    /// event log no longer holds the point it started from or ends before
+    /// it, or the server refuses the page cursor it kept.
     Hydrate {
         /// Comma-separated type identifiers, such as core.note,core.file, or
         /// `*` alone for every type but `system.*`, hydrated in one pass
