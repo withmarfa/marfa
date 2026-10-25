@@ -188,7 +188,8 @@ pub(crate) fn refusal(path: &Path) -> Result<Option<CoreError>, CoreError> {
 }
 
 /// The store at `path` opened to read, whatever its shape, for the caller
-/// that holds its writer lock.
+/// that holds its writer lock. SQLite may make a `-shm` index beside a log to
+/// read it.
 fn open_refused(path: &Path) -> Result<Connection, CoreError> {
     let flags =
         rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX;
@@ -227,6 +228,52 @@ pub(crate) fn refused_file_budget(path: &Path) -> Option<crate::FileBudget> {
         )
         .ok()?;
     Some(crate::FileBudget::stored(Some(&text))).filter(|setting| setting.to_stored().is_some())
+}
+
+/// The writes the store at `path` holds that the server has not taken, as
+/// `wrong_schema` counts them, read whatever the store's shape for the caller
+/// that holds its writer lock. A store with no table holds none. `None` where
+/// they cannot be counted, as in a file that is not a store. Refuses a
+/// folder's store, which only its folder's removal may take.
+pub(crate) fn removal_count(path: &Path) -> Result<Option<u64>, CoreError> {
+    let Ok(conn) = open_refused(path) else {
+        return Ok(None);
+    };
+    let Ok(tables) = conn.query_row("SELECT COUNT(*) FROM sqlite_schema", [], |row| {
+        row.get::<_, i64>(0)
+    }) else {
+        return Ok(None);
+    };
+    if tables == 0 {
+        return Ok(Some(0));
+    }
+    // A folder's store is bound to the folder, and is also known by where
+    // the folder keeps it, so one a crash left before it was bound is still
+    // the folder's.
+    let kept_by_folder = path.file_name() == Some(FOLDER_STORE.as_ref())
+        && path.parent().and_then(Path::file_name) == Some(crate::folder::STATE_DIR.as_ref());
+    if kept_by_folder
+        || meta_get(&conn, crate::folder::settings_file::META_FOLDER)
+            .ok()
+            .flatten()
+            .is_some()
+    {
+        return Err(CoreError::Invalid(format!(
+            "{} is a folder's store: remove the folder instead (`marfa folders remove`), which keeps its registry and its files in step",
+            path.display()
+        )));
+    }
+    Ok(untaken_count(&conn))
+}
+
+/// Removes the store at `path` and the logs beside it, logs first, so a log
+/// is never left beside a name a new store can take. A symbolic link at one
+/// of these names is removed, never what it leads to.
+pub(crate) fn remove(path: &Path) -> Result<(), CoreError> {
+    for suffix in STORE_FILES.iter().rev() {
+        crate::remove_name(&suffixed(path, suffix))?;
+    }
+    Ok(())
 }
 
 /// The store file, then the logs SQLite keeps beside it. A log is read into

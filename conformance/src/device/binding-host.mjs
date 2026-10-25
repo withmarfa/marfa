@@ -32,6 +32,9 @@
 //   { op: "replace-refused", handle, path, url?, key? }  replaces the store
 //                                         the writer refuses with an empty one
 //                                         and holds it as `handle`
+//   { op: "remove-store", path, unsent }  removes the store, agreeing to lose
+//                                         `unsent` writes the server has not
+//                                         taken
 //   { op: "hook", name, point, arg? }      the debug build's testHooks
 //   { op: "clock", name, arg? }           the debug build's testClock
 //   { op: "exit" }
@@ -211,6 +214,9 @@ async function handle(message) {
           message.key,
         ),
       );
+      return null;
+    case "remove-store":
+      binding.MarfaCore.removeStore(message.path, message.unsent);
       return null;
     case "reentry":
       if (message.action === "start") {

@@ -96,6 +96,18 @@ pub enum CoreError {
         /// can do with it.
         folder: Option<FolderStore>,
     },
+    /// A removal of a store was refused, leaving it as it was, because the
+    /// writes it holds that the server has not taken are not the number the
+    /// caller agreed to lose.
+    #[error("{}", unsent_differs(path, *unsent, *agreed))]
+    UnsentDiffers {
+        path: String,
+        /// The writes the store holds that the server has not taken, as
+        /// `WrongSchema` counts them; `None` where they cannot be counted.
+        unsent: Option<u64>,
+        /// The count the caller agreed to lose.
+        agreed: u64,
+    },
     /// The cursor is dropped, so the copy reports itself expired until a
     /// hydration, which keeps the queue.
     #[error("{}", copy_expired(reason))]
@@ -200,6 +212,7 @@ codes! {
     NoCatalog: CoreError::NoCatalog => "no_catalog",
     ReadingHandle: CoreError::ReadingHandle => "reading_handle",
     WrongSchema: CoreError::WrongSchema { .. } => "wrong_schema",
+    UnsentDiffers: CoreError::UnsentDiffers { .. } => "unsent_differs",
     CopyExpired: CoreError::CopyExpired { .. } => "copy_expired",
     StreamIncomplete: CoreError::StreamIncomplete { .. } => "stream_incomplete",
     WrongServer: CoreError::WrongServer { .. } => "wrong_server",
@@ -338,6 +351,19 @@ fn wrong_schema(
         (None, Some(_)) => "Whether it holds writes still to be sent cannot be read, so this build leaves the store and the folder's files as they are: with the build that made the store, push the folder (`marfa folders push`) and remove it (`marfa folders remove`, which leaves its files), then add it again with this build".to_string(),
     };
     format!("{path} was made by another build of the core: {reason}. {holds}")
+}
+
+fn unsent_differs(path: &str, unsent: Option<u64>, agreed: u64) -> String {
+    let writes = |count: u64| if count == 1 { "write" } else { "writes" };
+    match unsent {
+        Some(count) => format!(
+            "{path} was not removed: it holds {count} {} the server has not taken, not the {agreed} agreed to; show the person the {count} and remove it with that count once they agree",
+            writes(count)
+        ),
+        None => format!(
+            "{path} was not removed: whether it holds writes the server has not taken cannot be read, so it cannot be known what removing it would lose"
+        ),
+    }
 }
 
 /// What an expired copy says, with the advice that fits why it expired. The

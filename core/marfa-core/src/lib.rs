@@ -42,6 +42,8 @@ mod refusal_tests;
 #[cfg(test)]
 mod relocation_tests;
 #[cfg(test)]
+mod remove_tests;
+#[cfg(test)]
 mod replace_tests;
 mod scaffold;
 #[cfg(test)]
@@ -140,6 +142,27 @@ pub(crate) fn owner_only(path: &Path) -> Result<()> {
     #[cfg(not(unix))]
     let _ = path;
     Ok(())
+}
+
+/// Removes the file, folder or symbolic link at `name`, following no link,
+/// so nothing outside `name` goes. A name already absent is removed.
+pub(crate) fn remove_name(name: &Path) -> Result<()> {
+    let removed = match name.symlink_metadata() {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => Err(error),
+        // `remove_dir_all` removes a link inside the folder, never what it
+        // leads to.
+        Ok(held) if held.is_dir() => std::fs::remove_dir_all(name),
+        Ok(_) => std::fs::remove_file(name),
+    };
+    match removed {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(CoreError::Store(format!(
+            "{} cannot be removed: {error}",
+            name.display()
+        ))),
+    }
 }
 
 /// For the calls that cannot be stopped.
@@ -420,6 +443,59 @@ impl Core {
         }
         let cache = blob::Cache::beside(path);
         Self::from_connection(conn, server, Arc::new(lock), Some(cache)).map(Core::swept)
+    }
+
+    /// Removes the store at `path`, of any build's shape: the store file,
+    /// its logs, the folder of fetched bytes beside it and its writer lock,
+    /// and nothing else. A symbolic link at one of those names is removed,
+    /// never what it leads to. `unsent` is the count of writes the server has
+    /// not taken that the person agreed to lose, as `WrongSchema` counts
+    /// them. Refuses, leaving everything as it is, with `ReadingHandle` while
+    /// another process, or another `Core` in this one, holds the writer role,
+    /// with `UnsentDiffers` and the store's own count where it holds another
+    /// number of such writes or one that cannot be counted, and with
+    /// `Invalid` where the store is a folder's, bound or not. A process that
+    /// only reads the store does not hold the writer role, so it does not
+    /// stop the removal. A path with no store holds
+    /// none, so it answers as removed, taking any lock or bytes left there.
+    pub fn remove_store(path: impl AsRef<Path>, unsent: u64) -> Result<()> {
+        let path = path.as_ref();
+        let differs = |held: Option<u64>| {
+            if held == Some(unsent) {
+                Ok(())
+            } else {
+                Err(CoreError::UnsentDiffers {
+                    path: path.display().to_string(),
+                    unsent: held,
+                    agreed: unsent,
+                })
+            }
+        };
+        let holder = path
+            .parent()
+            .filter(|holder| !holder.as_os_str().is_empty())
+            .unwrap_or(Path::new("."));
+        if !holder.is_dir() {
+            return differs(Some(0));
+        }
+        // Held from the count until the lock's own name is gone, so no
+        // process can queue a write the count missed, or make a store at the
+        // path that the removal would then take.
+        let lock = lock::WriterLock::claim(Some(path))?;
+        lock.refuse_unless_writer()?;
+        let held = match path.metadata() {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Some(0),
+            _ => store::removal_count(path)?,
+        };
+        differs(held)?;
+        // The store goes after the fetched bytes, so a removal that stops
+        // between the two leaves the store, and asking again finishes it. The
+        // other order would leave bytes that a new store at the path adopts.
+        remove_name(&blob::Cache::dir_beside(path))?;
+        store::remove(path)?;
+        remove_name(&lock::lock_path(path))?;
+        drop(lock);
+        Ok(())
     }
 
     /// Never claims the writer role, so a helper started before the app
@@ -6774,6 +6850,9 @@ mod tests {
                     // handle can reach it; `replace_tests` claims the role
                     // first and is refused.
                     "replace_refused",
+                    // Takes no core either; `remove_tests` holds the role
+                    // from another core and is refused.
+                    "remove_store",
                 ][..],
             ),
             (include_str!("drain.rs"), &["drain_checked"][..]),

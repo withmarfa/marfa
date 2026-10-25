@@ -95,6 +95,9 @@ fn core_error(error: &CoreError) -> &'static str {
         CoreError::NoCatalog => "the working copy has never held the server's type catalog",
         CoreError::ReadingHandle => "another process holds the working copy's writer handle",
         CoreError::WrongSchema { .. } => "the working copy was made by another build",
+        CoreError::UnsentDiffers { .. } => {
+            "the working copy holds other writes than the ones agreed to lose"
+        }
         CoreError::CopyExpired { .. } => "the working copy can no longer be kept current",
         CoreError::StreamIncomplete { .. } => "the event stream ended early",
         CoreError::WrongServer { .. } => "the working copy belongs to a different server",

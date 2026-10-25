@@ -589,6 +589,21 @@ export class BindingDevice {
       : { ok: false, refusal: refusalOf(reply.error) };
   }
 
+  /**
+   * Removes the store, agreeing to lose `unsent` writes the server has not
+   * taken. Call `forget` first, or the binding's own core holds the store.
+   */
+  async removeStore(unsent: number): Promise<Outcome<null>> {
+    const reply = await this.request({
+      op: "remove-store",
+      path: this.store,
+      unsent,
+    });
+    return reply.ok
+      ? { ok: true, value: null }
+      : { ok: false, refusal: refusalOf(reply.error) };
+  }
+
   /** Opens the store as a writer would, and says the role it was given. */
   async tryOpen(url?: string, key?: string): Promise<OpenAttempt> {
     const reply = await this.request({

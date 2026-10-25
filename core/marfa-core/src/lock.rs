@@ -164,7 +164,7 @@ impl WriterLock {
 
 /// Appended, not put in place of the extension: `notes.sqlite` and `notes.db`
 /// in one folder are two stores, and one lock would make the second a reader.
-fn lock_path(store: &Path) -> std::path::PathBuf {
+pub(crate) fn lock_path(store: &Path) -> std::path::PathBuf {
     let mut name = store.as_os_str().to_owned();
     name.push(".writer-lock");
     std::path::PathBuf::from(name)
