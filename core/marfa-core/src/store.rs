@@ -116,6 +116,17 @@ pub fn open_to_read(path: &Path) -> Result<Connection, CoreError> {
 /// Why a writer would refuse the store at `path`, read without changing it:
 /// `None` where a writer would open it.
 pub(crate) fn refusal(path: &Path) -> Result<Option<CoreError>, CoreError> {
+    let conn = open_refused(path)?;
+    match refuse_misshapen(&conn, &held_shape(&conn)?, false) {
+        Ok(()) => Ok(None),
+        Err(error @ CoreError::WrongSchema { .. }) => Ok(Some(at_path(error, path))),
+        Err(other) => Err(other),
+    }
+}
+
+/// The store at `path` opened to read, whatever its shape, for the caller
+/// that holds its writer lock.
+fn open_refused(path: &Path) -> Result<Connection, CoreError> {
     let flags =
         rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX;
     let logged = ["-wal", "-journal"]
@@ -136,11 +147,23 @@ pub(crate) fn refusal(path: &Path) -> Result<Option<CoreError>, CoreError> {
         _ => Connection::open_with_flags(path, flags)?,
     };
     conn.busy_timeout(std::time::Duration::from_secs(5))?;
-    match refuse_misshapen(&conn, &held_shape(&conn)?, false) {
-        Ok(()) => Ok(None),
-        Err(error @ CoreError::WrongSchema { .. }) => Ok(Some(at_path(error, path))),
-        Err(other) => Err(other),
-    }
+    Ok(conn)
+}
+
+/// The file budget the store at `path` records, which this build refuses
+/// `wrong_schema`, read with raw SQL so the store's shape does not matter.
+/// `None` where the store holds none this build reads as a setting, or
+/// cannot be read: the new store then has the default.
+pub(crate) fn refused_file_budget(path: &Path) -> Option<crate::FileBudget> {
+    let conn = open_refused(path).ok()?;
+    let text: String = conn
+        .query_row(
+            "SELECT value FROM meta WHERE key = ?1",
+            [crate::file_cache::META_BUDGET],
+            |row| row.get(0),
+        )
+        .ok()?;
+    Some(crate::FileBudget::stored(Some(&text))).filter(|setting| setting.to_stored().is_some())
 }
 
 /// The store file, then the logs SQLite keeps beside it. A log is read into
