@@ -876,7 +876,7 @@ pub struct Draft {
     /// Edge type to the ids of the items it points at. They are queued and
     /// sent with the create as one write: if the server refuses any, it makes
     /// none and the create stays in the queue as refused.
-    #[uniffi(default = [])]
+    #[uniffi(default)]
     pub edges: HashMap<String, Vec<String>>,
     /// The version this create is conditional on, where its natural key
     /// resolves a row the server holds.
