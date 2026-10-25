@@ -2965,6 +2965,7 @@ pub fn adopt_answered_id(conn: &Connection, local: &str, answered: &str) -> Resu
         return Ok(());
     }
     let before = attachments_before(conn, &[local, answered])?;
+    rename_shown_edges(conn, local, answered)?;
     conn.execute(
         "DELETE FROM items_fts WHERE rowid IN (SELECT seq FROM items WHERE id = ?1)",
         [local],
@@ -3049,13 +3050,69 @@ pub fn adopt_answered_id(conn: &Connection, local: &str, answered: &str) -> Resu
             )?;
         }
     }
+    // A create drawn to the minted row is drawn to `answered`.
+    let creates = read_writes(
+        conn,
+        "WHERE kind = ?1 AND sent = 0 AND (verdict IS NULL OR verdict IN ('blocked', 'dead', 'refused'))",
+        [WriteKind::CreateItem.as_str()],
+    )?;
+    for row in creates {
+        let mut body: Value = serde_json::from_str(&payload_of(conn, &row.id)?)?;
+        let mut moved = false;
+        if let Some(edges) = body.get_mut("edges").and_then(Value::as_object_mut) {
+            for target in edges.values_mut().filter_map(Value::as_array_mut).flatten() {
+                if target.as_str() == Some(local) {
+                    *target = Value::String(answered.to_string());
+                    moved = true;
+                }
+            }
+        }
+        if moved {
+            conn.execute(
+                "UPDATE queue SET payload = ?2 WHERE id = ?1",
+                params![row.id, body.to_string()],
+            )?;
+        }
+    }
     attachments_changed(conn, &[local, answered], before)
+}
+
+/// An edge a waiting create is shown with is named by its ends
+/// ([`crate::model::projected_edge_id`]), so where one end moves from `local`
+/// to `answered` the edge takes the name of its new ends.
+fn rename_shown_edges(conn: &Connection, local: &str, answered: &str) -> Result<(), CoreError> {
+    let mut shown = conn.prepare(
+        "SELECT id, source_id, target_id, edge_type FROM edges
+          WHERE version = 0 AND (source_id = ?1 OR target_id = ?1)",
+    )?;
+    let ends: Vec<(String, String, String, String)> = shown
+        .query_map([local], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+        })?
+        .collect::<Result<_, _>>()?;
+    let moved = |end: &str| if end == local { answered } else { end }.to_string();
+    for (id, source, target, edge_type) in ends {
+        if id != crate::model::projected_edge_id(&source, &edge_type, &target) {
+            continue;
+        }
+        let Some(edge) = edge_ends(conn, &id)? else {
+            continue;
+        };
+        let mut wire = edge.as_wire();
+        wire.source_id = moved(&source);
+        wire.target_id = moved(&target);
+        wire.id = crate::model::projected_edge_id(&wire.source_id, &edge_type, &wire.target_id);
+        forget_edge(conn, &id)?;
+        upsert_edge(conn, &wire)?;
+    }
+    Ok(())
 }
 
 /// Moves the copy onto `answered`, the held row a refused create's natural
 /// key resolved, and returns the dependent writes it refused. Only writes
-/// that add (a tag, an edge, an edge's end moved to it) carry over: any other
-/// was made against this device's row and would act on another device's.
+/// that add (a tag, an edge, an edge's end moved to it, an item drawn to it)
+/// carry over: any other was made against this device's row and would act on
+/// another device's.
 pub fn land_on_held_row(
     conn: &Connection,
     create: &QueuedWrite,
@@ -3070,7 +3127,10 @@ pub fn land_on_held_row(
             continue;
         }
         let replaces = match row.kind {
-            WriteKind::AddTag | WriteKind::CreateEdge | WriteKind::UpdateEdge => false,
+            WriteKind::AddTag
+            | WriteKind::CreateEdge
+            | WriteKind::UpdateEdge
+            | WriteKind::CreateItem => false,
             WriteKind::UpdateItem
             | WriteKind::DeleteItem
             | WriteKind::RestoreItem
@@ -3081,7 +3141,7 @@ pub fn land_on_held_row(
             | WriteKind::DeleteExtension => true,
             // Not written against an item's create, so never one of its
             // dependants; refused all the same should one ever be.
-            WriteKind::CreateItem | WriteKind::DeleteEdge | WriteKind::UploadBlob => true,
+            WriteKind::DeleteEdge | WriteKind::UploadBlob => true,
         };
         if replaces {
             let reason = format!(
@@ -4420,6 +4480,11 @@ pub fn take_server_item(
 pub fn take_server_edge(conn: &Connection, edge: &WireEdge) -> Result<bool, CoreError> {
     if !put_server_edge(conn, edge)? {
         return Ok(false);
+    }
+    // The edge a create was shown with until the server's came.
+    let shown = crate::model::projected_edge_id(&edge.source_id, &edge.edge_type, &edge.target_id);
+    if shown != edge.id {
+        forget_edge(conn, &shown)?;
     }
     lay_waiting_edge_writes_over(conn, &edge.id)?;
     Ok(true)
