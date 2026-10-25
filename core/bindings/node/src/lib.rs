@@ -2208,8 +2208,9 @@ impl MarfaCore {
     /// person agreed to lose. Refuses with `unsent_differs` and the store's
     /// own count as `unsent`, leaving it as it was, unless that count equals
     /// `unsent`; the count is `null` where it cannot be read, and such a store
-    /// is never removed. Refuses with `reading_handle` while another process
-    /// writes the store, and with `invalid` for a folder's store. With nothing
+    /// is never removed. Refuses with `reading_handle` while another process,
+    /// or another `MarfaCore` in this one, writes the store, and with
+    /// `invalid` for a folder's store. With nothing
     /// at `path`, removes what a removal stopped part way left there when
     /// `unsent` is 0.
     #[napi]
