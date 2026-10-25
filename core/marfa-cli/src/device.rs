@@ -822,7 +822,7 @@ pub struct ListArgs {
     /// booleans first, then text, and items without it last; ties go by id.
     #[arg(long, value_parser = parse_sort_field)]
     pub sort: Option<marfa_core::SortField>,
-    /// Newest first (the default), or oldest.
+    /// Descending (the default) or ascending.
     #[arg(long)]
     pub direction: Option<SortDirection>,
     /// How many items at most.

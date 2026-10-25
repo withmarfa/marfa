@@ -386,7 +386,7 @@ it("keeps a draft whose edges name a missing item, refused whole, and shows none
   expect(write?.verdict).toBe("refused");
   expect(JSON.stringify(write?.body)).toContain(missing);
   expect((await device.get(id)).ok).toBe(false);
-  expect(value(await device.edgesFrom(present))).toEqual([]);
+  expect(value(await device.edgesTo(present))).toEqual([]);
 });
 
 it("sets and clears an item's own time through an edit", async () => {

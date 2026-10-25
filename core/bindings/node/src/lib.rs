@@ -136,8 +136,8 @@ pub struct ListFilters {
     /// Only the items stamped with this source.
     pub source: Option<String>,
     /// Inclusive lower bound on the time the item was last changed. The list
-    /// is then ordered by that time and id, oldest first, and a `sort` is
-    /// refused `validation_error`.
+    /// is then ordered by that time and id, oldest first, and a `sort` other
+    /// than `updated_at` ascending is refused `validation_error`.
     pub updated_after: Option<String>,
     /// Exclusive upper bound on the time the item was last changed.
     pub updated_before: Option<String>,

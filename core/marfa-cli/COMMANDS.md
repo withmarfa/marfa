@@ -2614,7 +2614,7 @@ marfa device items list [OPTIONS]
 | `--updated-after <TIME>` | Inclusive lower bound on the time the item was last changed, RFC 3339. Orders the list by that time, then id, oldest first; another `--sort` or `--direction` is refused with it. |
 | `--updated-before <TIME>` | Exclusive upper bound on the time the item was last changed, RFC 3339. |
 | `--sort <SORT>` | The field to order by: `created-at` (the default), `updated-at`, `occurred-at` or `properties.<name>`. A property orders numbers and booleans first, then text, and items without it last; ties go by id. |
-| `--direction <DIRECTION>` | Newest first (the default), or oldest. One of `asc`, `desc`. |
+| `--direction <DIRECTION>` | Descending (the default) or ascending. One of `asc`, `desc`. |
 | `--limit <LIMIT>` | How many items at most. |
 | `--offset <OFFSET>` | How many items to skip first. |
 | `--view <ID>` | Only what this view selects, in the view's own sort; refused with a reason where the copy cannot answer the query whole. |
