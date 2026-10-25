@@ -386,7 +386,7 @@ When machines follow the same `system.folder`, a device MUST keep each machineâ€
 
 ## A store another build made
 
-A folder's store holds a copy of the server's rows, the writes the server has not taken, and which file is which item. Where it holds no such write, a hydration brings the copy back and the next scan matches each file to its item again by the file's own identity (`folders/identity-placement-bytes`), so this build can replace a store that another build of the core made (`device/wrong-schema`) without losing anything.
+A folder's store holds a copy of the server's rows, the writes the server has not taken, and which file is which item. Where it holds no such write, a hydration brings the copy back and the next scan matches each file to its item again by the ID line it carries (`folders/refused-store-matched`), so this build can replace a store that another build of the core made (`device/wrong-schema`) without losing anything.
 
 ### `folders/refused-store-replaced`
 
