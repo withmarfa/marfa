@@ -416,6 +416,38 @@ impl Default for Sort {
     }
 }
 
+impl Sort {
+    /// The order a list naming `updated_after` answers in, and the only one
+    /// it takes.
+    pub(crate) const RESUMED: Sort = Sort {
+        field: SortField::UpdatedAt,
+        direction: SortDirection::Ascending,
+    };
+
+    /// A list's order from the halves a caller named, as the server reads
+    /// `sort` and `direction`: a half left out is the resumed order's beside
+    /// `updated_after` (`resumed`), so only a half naming another is refused,
+    /// and otherwise the default's. Nothing named is `None`, the list's own.
+    pub fn named(
+        field: Option<SortField>,
+        direction: Option<SortDirection>,
+        resumed: bool,
+    ) -> Option<Sort> {
+        if field.is_none() && direction.is_none() {
+            return None;
+        }
+        let fallback = if resumed {
+            Sort::RESUMED
+        } else {
+            Sort::default()
+        };
+        Some(Sort {
+            field: field.unwrap_or(fallback.field),
+            direction: direction.unwrap_or(fallback.direction),
+        })
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct SearchHit {
     pub item: Item,
@@ -641,7 +673,9 @@ pub struct Edit {
     pub occurred_at: Option<String>,
     /// Gives the item no time of its own again, so its own time is its
     /// creation time as at first. The server holds no empty `occurred_at`,
-    /// so this sends the row's `created_at`. Refused beside `occurred_at`.
+    /// so this sends the row's `created_at`; while the row's create is
+    /// unsent, it sends no time in that create or any edit behind it, and the
+    /// server takes its own creation time. Refused beside `occurred_at`.
     pub clear_occurred_at: bool,
     /// A property left out is cleared; otherwise they merge over the row's.
     pub replace_properties: bool,

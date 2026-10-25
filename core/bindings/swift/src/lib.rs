@@ -189,8 +189,8 @@ pub struct ListFilters {
     #[uniffi(default = None)]
     pub source: Option<String>,
     /// Inclusive lower bound on the time the item was last changed. The list
-    /// is then ordered by that time and id, oldest first; pass no `sort`, or
-    /// that one, else the list is refused `validation_error`.
+    /// is then ordered by that time and id, oldest first; a `sort` whose
+    /// field or direction names another order is refused `validation_error`.
     #[uniffi(default = None)]
     pub updated_after: Option<String>,
     /// Exclusive upper bound on the time the item was last changed.
@@ -211,10 +211,14 @@ pub struct ListFilters {
     pub offset: Option<u32>,
 }
 
+/// Either half left out is the list's own: `created_at` descending, or
+/// `updated_at` ascending beside `updated_after`, which refuses another.
 #[derive(Debug, Clone, uniffi::Record)]
 pub struct Sort {
-    pub field: SortField,
-    pub direction: SortDirection,
+    #[uniffi(default = None)]
+    pub field: Option<SortField>,
+    #[uniffi(default = None)]
+    pub direction: Option<SortDirection>,
 }
 
 /// One hit of a search, with the item it found.
@@ -1658,20 +1662,21 @@ impl From<ListFilters> for marfa_core::ListFilters {
     }
 }
 
-impl From<Sort> for marfa_core::Sort {
-    fn from(sort: Sort) -> Self {
-        marfa_core::Sort {
-            field: match sort.field {
+impl Sort {
+    fn named(self, resumed: bool) -> Option<marfa_core::Sort> {
+        marfa_core::Sort::named(
+            self.field.map(|field| match field {
                 SortField::CreatedAt => marfa_core::SortField::CreatedAt,
                 SortField::UpdatedAt => marfa_core::SortField::UpdatedAt,
                 SortField::OccurredAt => marfa_core::SortField::OccurredAt,
                 SortField::Property { name } => marfa_core::SortField::Property(name),
-            },
-            direction: match sort.direction {
+            }),
+            self.direction.map(|direction| match direction {
                 SortDirection::Ascending => marfa_core::SortDirection::Ascending,
                 SortDirection::Descending => marfa_core::SortDirection::Descending,
-            },
-        }
+            }),
+            resumed,
+        )
     }
 }
 
@@ -2257,9 +2262,10 @@ impl Core {
     /// Without a `sort` the list is newest created first, or oldest changed
     /// first where `updated_after` is set.
     pub fn list(&self, filters: ListFilters, sort: Option<Sort>) -> Result<Listing, MarfaError> {
+        let resumed = filters.updated_after.is_some();
         Ok(listing(self.inner.list_kept(
             &filters.into(),
-            sort.map(marfa_core::Sort::from),
+            sort.and_then(|sort| sort.named(resumed)),
         )?))
     }
 
@@ -4390,13 +4396,36 @@ mod tests {
             .list(
                 ListFilters::default(),
                 Some(Sort {
-                    field: SortField::CreatedAt,
-                    direction: SortDirection::Descending,
+                    field: Some(SortField::CreatedAt),
+                    direction: Some(SortDirection::Descending),
                 }),
             )
             .unwrap()
             .items;
         assert_eq!(listed[0].body.as_deref(), Some("Daily"));
+    }
+
+    #[test]
+    fn beside_updated_after_either_half_of_its_order_is_taken_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("core.sqlite").display().to_string();
+        let core = Core::open(path, None, None, None).unwrap();
+        core.create_item(draft("core.note", r#"{"body":"x"}"#))
+            .unwrap();
+        let after = || ListFilters {
+            updated_after: Some("2000-01-01T00:00:00Z".into()),
+            ..ListFilters::default()
+        };
+        for (field, direction, taken) in [
+            (Some(SortField::UpdatedAt), None, true),
+            (None, Some(SortDirection::Ascending), true),
+            (Some(SortField::CreatedAt), None, false),
+            (None, Some(SortDirection::Descending), false),
+        ] {
+            let name = format!("{field:?} {direction:?}");
+            let listed = core.list(after(), Some(Sort { field, direction }));
+            assert_eq!(listed.is_ok(), taken, "{name}: {listed:?}");
+        }
     }
 
     /// A copy with an app type that declares one field, so a property it
@@ -4526,8 +4555,8 @@ mod tests {
             .list(
                 ListFilters::default(),
                 Some(Sort {
-                    field: SortField::CreatedAt,
-                    direction: SortDirection::Ascending,
+                    field: Some(SortField::CreatedAt),
+                    direction: Some(SortDirection::Ascending),
                 }),
             )
             .unwrap()
@@ -4712,8 +4741,8 @@ mod tests {
             }
         }
         let by_creation = Sort {
-            field: SortField::CreatedAt,
-            direction: SortDirection::Ascending,
+            field: Some(SortField::CreatedAt),
+            direction: Some(SortDirection::Ascending),
         };
         let listed = core
             .list(ListFilters::default(), Some(by_creation))
@@ -4753,8 +4782,8 @@ mod tests {
                     ..ListFilters::default()
                 },
                 Some(Sort {
-                    field: SortField::CreatedAt,
-                    direction: SortDirection::Ascending,
+                    field: Some(SortField::CreatedAt),
+                    direction: Some(SortDirection::Ascending),
                 }),
             )
             .unwrap()

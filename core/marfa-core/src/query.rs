@@ -5,7 +5,7 @@ use crate::Result;
 use crate::catalog::Catalog;
 use crate::error::CoreError;
 use crate::filter;
-use crate::model::{Item, ListFilters, Sort, SortDirection, SortField};
+use crate::model::{Item, ListFilters, Sort, SortField};
 use crate::store::{self, Unreadable};
 
 pub(crate) fn list(
@@ -95,14 +95,10 @@ pub(crate) fn list_with(
 /// `updated_at` and then id, ascending, the only order a caller can resume
 /// from, so a list naming another is refused, as the server refuses it.
 fn ordered(filters: &ListFilters, sort: Option<Sort>) -> Result<Sort> {
-    let resumed = Sort {
-        field: SortField::UpdatedAt,
-        direction: SortDirection::Ascending,
-    };
     match (sort, filters.updated_after.is_some()) {
-        (None, true) => Ok(resumed),
+        (None, true) => Ok(Sort::RESUMED),
         (None, false) => Ok(Sort::default()),
-        (Some(sort), true) if sort != resumed => Err(CoreError::Validation {
+        (Some(sort), true) if sort != Sort::RESUMED => Err(CoreError::Validation {
             code: "validation_error".into(),
             message: "updated_after orders by updated_at, ascending; leave out sort and direction"
                 .into(),
@@ -549,6 +545,29 @@ mod tests {
         assert_eq!(
             listed(&conn, filters(), Some(own)).unwrap(),
             ["a", "c", "d", "f"]
+        );
+        // Either half of its own order is taken alone, and either half of
+        // another refused, as the server takes and refuses them.
+        for (field, direction, taken) in [
+            (Some(SortField::UpdatedAt), None, true),
+            (None, Some(SortDirection::Ascending), true),
+            (Some(SortField::CreatedAt), None, false),
+            (None, Some(SortDirection::Descending), false),
+        ] {
+            let sort = Sort::named(field.clone(), direction, true);
+            assert_eq!(
+                listed(&conn, filters(), sort).is_ok(),
+                taken,
+                "{field:?} {direction:?}"
+            );
+        }
+        assert_eq!(Sort::named(None, None, true), None);
+        assert_eq!(
+            Sort::named(Some(SortField::UpdatedAt), None, false),
+            Some(Sort {
+                field: SortField::UpdatedAt,
+                direction: SortDirection::Descending,
+            })
         );
     }
 

@@ -136,8 +136,8 @@ pub struct ListFilters {
     /// Only the items stamped with this source.
     pub source: Option<String>,
     /// Inclusive lower bound on the time the item was last changed. The list
-    /// is then ordered by that time and id, oldest first, and a `sort` other
-    /// than `updated_at` ascending is refused `validation_error`.
+    /// is then ordered by that time and id, oldest first, and a `sort` whose
+    /// field or direction names another order is refused `validation_error`.
     pub updated_after: Option<String>,
     /// Exclusive upper bound on the time the item was last changed.
     pub updated_before: Option<String>,
@@ -158,10 +158,12 @@ pub struct Sort {
     /// `properties.<name>`, the name `a` to `z`, `0` to `9` and `_`. A
     /// property orders numbers and booleans (`false` before `true`) first,
     /// then text, with items lacking it last in either direction; ties go by
-    /// id, oldest first.
+    /// id, oldest first. Left out, `created_at`, or `updated_at` beside
+    /// `updatedAfter`.
     #[napi(ts_type = "\"created_at\" | \"updated_at\" | \"occurred_at\" | `properties.${string}`")]
-    pub field: String,
-    pub direction: SortDirection,
+    pub field: Option<String>,
+    /// Left out, descending, or ascending beside `updatedAfter`.
+    pub direction: Option<SortDirection>,
 }
 
 #[napi(object)]
@@ -1249,18 +1251,20 @@ fn filters(filters: Option<ListFilters>) -> marfa_core::ListFilters {
     }
 }
 
-/// Unset, the core's own order, which `updatedAfter` changes.
-fn sort(env: Env, sort: Option<Sort>) -> Result<Option<marfa_core::Sort>> {
-    sort.map(|sort| {
-        Ok(marfa_core::Sort {
-            field: sort.field.parse().map_err(|error| failure(env, error))?,
-            direction: match sort.direction {
-                SortDirection::Asc => marfa_core::SortDirection::Ascending,
-                SortDirection::Desc => marfa_core::SortDirection::Descending,
-            },
-        })
-    })
-    .transpose()
+/// Unset, the core's own order, which `updatedAfter` (`resumed`) changes.
+fn sort(env: Env, sort: Option<Sort>, resumed: bool) -> Result<Option<marfa_core::Sort>> {
+    let Some(sort) = sort else {
+        return Ok(None);
+    };
+    let field = sort
+        .field
+        .map(|field| field.parse().map_err(|error| failure(env, error)))
+        .transpose()?;
+    let direction = sort.direction.map(|direction| match direction {
+        SortDirection::Asc => marfa_core::SortDirection::Ascending,
+        SortDirection::Desc => marfa_core::SortDirection::Descending,
+    });
+    Ok(marfa_core::Sort::named(field, direction, resumed))
 }
 
 fn server_of(url: Option<String>, key: Option<String>) -> Result<Option<marfa_core::Server>> {
@@ -2257,9 +2261,11 @@ impl MarfaCore {
         filters: Option<ListFilters>,
         sort: Option<Sort>,
     ) -> Result<Listing> {
+        let filters = self::filters(filters);
+        let sort = self::sort(env, sort, filters.updated_after.is_some())?;
         let listed = self
             .inner
-            .list(&self::filters(filters), self::sort(env, sort)?)
+            .list(&filters, sort)
             .map_err(|error| failure(env, error))?;
         Ok(Listing {
             completeness: listed.completeness.into(),
@@ -2280,7 +2286,7 @@ impl MarfaCore {
             .inner
             .list_in_folder(
                 &id,
-                self::sort(env, sort)?.unwrap_or_default(),
+                self::sort(env, sort, false)?.unwrap_or_default(),
                 limit,
                 offset,
             )

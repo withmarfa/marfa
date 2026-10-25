@@ -1158,16 +1158,11 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
             let core = store.open(None)?;
             match command {
                 ItemsCommand::List(args) => {
-                    let sort = match (args.sort, args.direction) {
-                        (None, None) => None,
-                        (field, direction) => Some(Sort {
-                            field: field.unwrap_or(marfa_core::SortField::CreatedAt),
-                            direction: direction.map_or(
-                                marfa_core::SortDirection::Descending,
-                                Into::into,
-                            ),
-                        }),
-                    };
+                    let sort = Sort::named(
+                        args.sort,
+                        args.direction.map(Into::into),
+                        args.updated_after.is_some(),
+                    );
                     if let Some(view) = &args.view {
                         return output::listing(
                             core.list_in_view(view, args.limit, args.offset)?,

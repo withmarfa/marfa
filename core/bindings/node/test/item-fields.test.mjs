@@ -81,6 +81,18 @@ test("lists by source and change time, and sorts by a property", (t) => {
   assert.throws(() =>
     core.list({}, { field: /** @type {any} */ ("properties.a;b"), direction: /** @type {any} */ ("asc") }),
   );
+  // Beside updatedAfter, either half of its own order is taken alone and a
+  // half naming another is refused, as the server answers.
+  const after = { updatedAfter: "2000-01-01T00:00:00.000Z" };
+  assert.equal(core.list(after, { field: "updated_at" }).items.length, 3);
+  assert.equal(
+    core.list(after, { direction: /** @type {any} */ ("asc") }).items.length,
+    3,
+  );
+  assert.throws(() => core.list(after, { field: "created_at" }));
+  assert.throws(() =>
+    core.list(after, { direction: /** @type {any} */ ("desc") }),
+  );
 });
 
 test("sets and clears an item's own time through an edit", (t) => {

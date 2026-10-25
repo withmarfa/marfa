@@ -131,7 +131,7 @@ impl Core {
     ) -> Result<Listing, MarfaError> {
         Ok(crate::listing(self.inner.list_in_folder_kept(
             &id,
-            sort.into(),
+            sort.named(false).unwrap_or_default(),
             limit,
             offset,
         )?))
