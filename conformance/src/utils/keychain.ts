@@ -16,6 +16,9 @@ import { join } from "node:path";
  * name to the person's search list when it is made.
  */
 export default function makeKeychain(): () => void {
+  // A switch set in the person's shell would turn the run's own keychain off
+  // under every test that names it; a test that wants it off sets it itself.
+  delete process.env.MARFA_NO_KEYCHAIN;
   const folder = mkdtempSync(join(tmpdir(), "marfa-conformance-keychain-"));
   const remove = () => {
     rmSync(folder, { recursive: true, force: true });
