@@ -377,10 +377,17 @@ fn copy_expired(reason: &str) -> String {
         }
         "reach_changed" => "what the credential may read, or how the server arranges items and types, has changed; rebuild the copy from the server (changes not yet sent are kept)".to_string(),
         crate::http::INSTANCE_CHANGED => {
-            "another Marfa now answers at this address; rebuild the copy from it".to_string()
+            "another Marfa now answers at this address; rebuild the copy from it (changes not yet sent are kept, held until released or withdrawn)".to_string()
         }
         crate::catch_up::CATCHUP_TOO_OLD => "the server's event log no longer holds the point this copy had reached; refill the copy from the server, which keeps what it holds and the changes not yet sent".to_string(),
         "reach_invalid" => "this copy holds no proof it can accept of what the credential may read; rebuild the copy from the server".to_string(),
+        "slice_changed" => "the types, tier or edge types asked for are not the ones it holds, so it cannot be filled again in place; rebuild the copy from the server (changes not yet sent are kept)".to_string(),
+        "head_past_log" => "the server's event log ends before the point this copy had reached, as after a restore from a backup, so it cannot be filled again in place; rebuild the copy from the server (changes not yet sent are kept)".to_string(),
+        crate::hydrate::NOT_STALE => {
+            return format!(
+                "this working copy is not waiting to be filled again in place ({reason}), so nothing was filled; hydrate it without asking for a fill in place"
+            );
+        }
         sentence => {
             return format!(
                 "this working copy can no longer be kept current: {sentence}; rebuild the copy from the server"

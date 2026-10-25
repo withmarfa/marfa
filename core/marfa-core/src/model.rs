@@ -1264,6 +1264,9 @@ pub enum BlockedReason {
     AncestorUnavailable,
     ConflictUnresolved,
     FailingAlone,
+    /// Queued against an instance other than the one the copy was built from
+    /// since: sent only once a caller releases it.
+    InstanceChanged,
 }
 
 /// The reason the queue stores under `blocked` for a write held behind
@@ -1274,12 +1277,13 @@ pub enum BlockedReason {
 pub(crate) const AWAITING_DEPENDENCY: &str = "awaiting_dependency";
 
 impl BlockedReason {
-    pub const ALL: [BlockedReason; 5] = [
+    pub const ALL: [BlockedReason; 6] = [
         BlockedReason::CredentialRefused,
         BlockedReason::KeySpent,
         BlockedReason::AncestorUnavailable,
         BlockedReason::ConflictUnresolved,
         BlockedReason::FailingAlone,
+        BlockedReason::InstanceChanged,
     ];
 
     pub const fn as_str(self) -> &'static str {
@@ -1289,6 +1293,7 @@ impl BlockedReason {
             BlockedReason::AncestorUnavailable => "ancestor_unavailable",
             BlockedReason::ConflictUnresolved => "conflict_unresolved",
             BlockedReason::FailingAlone => "failing_alone",
+            BlockedReason::InstanceChanged => "instance_changed",
         }
     }
 }
@@ -1302,7 +1307,7 @@ impl FromStr for BlockedReason {
             .find(|reason| reason.as_str() == text)
             .ok_or_else(|| {
                 CoreError::Invalid(format!(
-                    "{text:?} is not one of the five blocked reasons a caller can release by: {}",
+                    "{text:?} is not one of the six blocked reasons a caller can release by: {}",
                     BlockedReason::ALL.map(BlockedReason::as_str).join(", ")
                 ))
             })
@@ -1443,6 +1448,7 @@ impl QueuedWrite {
                 BlockedReason::AncestorUnavailable
                     | BlockedReason::ConflictUnresolved
                     | BlockedReason::FailingAlone
+                    | BlockedReason::InstanceChanged
             )
         )
     }

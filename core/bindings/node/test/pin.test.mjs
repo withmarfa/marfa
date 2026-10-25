@@ -6,7 +6,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { MarfaCore, SliceTier } from "../index.js";
-import { CONTRACT, INSTANCE, marker, readProof, streamHead } from "./copy-fixture.mjs";
+import {
+  CONTRACT,
+  INSTANCE,
+  marker,
+  readProof,
+  streamHead,
+} from "./copy-fixture.mjs";
 
 const AT = "2026-01-01T00:00:00Z";
 
@@ -84,13 +90,26 @@ async function scripted() {
       json({ type_permissions: { "*": "write" } });
     } else if (path === "/items") {
       json({
-        data: [{ listed: true, item: item("note", "core.note"), metadata: { tags: [] } }],
+        data: [
+          {
+            listed: true,
+            item: item("note", "core.note"),
+            metadata: { tags: [] },
+          },
+        ],
         next_cursor: null,
       });
     } else if (path === "/items/settings") {
-      json({ listed: true, item: item("settings", "core.bookmark"), metadata: { tags: [] } });
+      json({
+        listed: true,
+        item: item("settings", "core.bookmark"),
+        metadata: { tags: [] },
+      });
     } else if (path === "/edges") {
-      json({ data: [parentOf("beneath", "outer", "inner")], next_cursor: null });
+      json({
+        data: [parentOf("beneath", "outer", "inner")],
+        next_cursor: null,
+      });
     } else if (path === "/events") {
       const cursor = streamHead(req, res);
       if (cursor !== null) res.write(marker("stream_live", cursor));
@@ -138,6 +157,41 @@ test("holds an edge type whole and reports it", async (t) => {
   await core.hydrate(["core.note"], SliceTier.Library);
   assert.deepEqual(core.status().sliceEdgeTypes, []);
   assert.deepEqual(core.edgesFrom("outer"), []);
+});
+
+test("refuses a fill asked to happen only in place for a copy that is not stale", async (t) => {
+  const core = await opened(t);
+  await core.hydrateWith(["core.note"], SliceTier.Library, ["parent-of"]);
+  await assert.rejects(
+    core.hydrateWith(
+      ["core.note"],
+      SliceTier.Library,
+      ["parent-of"],
+      undefined,
+      true,
+    ),
+    (error) => {
+      assert.equal(
+        /** @type {{ code?: string }} */ (error).code,
+        "copy_expired",
+      );
+      assert.match(String(error), /not_stale/);
+      return true;
+    },
+  );
+  assert.deepEqual(
+    core.edgesFrom("outer").map((edge) => edge.id),
+    ["beneath"],
+  );
+  // The witness: asked for any fill, the same hydration goes ahead.
+  const report = await core.hydrateWith(
+    ["core.note"],
+    SliceTier.Library,
+    ["parent-of"],
+    undefined,
+    false,
+  );
+  assert.deepEqual(report.edgeTypes, ["parent-of"]);
 });
 
 test("reads every edge of one type the copy holds in one call", async (t) => {

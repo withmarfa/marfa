@@ -2554,6 +2554,7 @@ marfa device hydrate [OPTIONS] --types <TYPE> --tier <TIER>
 | `--types <TYPE>` | Comma-separated type identifiers, such as core.note,core.file, or `*` alone for every type but `system.*`, hydrated in one pass without reading the catalog first. |
 | `--tier <TIER>` | The tier to hold the slice at, or `all` for both. One of `library`, `feed`, `all`. |
 | `--edge-type <TYPE>` | An edge type to hold whole: every edge of it the key reads, whichever ends the copy holds. Repeatable. |
+| `--in-place-only` | Fill only a copy whose cursor aged out, and only in place. Where the instance, the key's reach or the slice has changed, the server was restored to an earlier point, or the copy is not waiting to be filled again, the hydration is refused copy_expired with the reason, and the copy, its queue and its files stay as they were. |
 
 Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 
@@ -3224,13 +3225,13 @@ marfa device release [OPTIONS] [ID]
 
 | Option | Description |
 | --- | --- |
-| `--reason <REASON>` | Release every write blocked for this reason instead of one by id. One of `credential_refused`, `key_spent`, `ancestor_unavailable`, `conflict_unresolved`, `failing_alone`. |
+| `--reason <REASON>` | Release every write blocked for this reason instead of one by id. One of `credential_refused`, `key_spent`, `ancestor_unavailable`, `conflict_unresolved`, `failing_alone`, `instance_changed`. |
 
 Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 
 ### marfa device withdraw
 
-Take a write blocked `ancestor_unavailable`, `conflict_unresolved` or `failing_alone` out of the queue, and put the copy back to what the server holds.
+Take a write blocked `ancestor_unavailable`, `conflict_unresolved`, `failing_alone` or `instance_changed` out of the queue, and put the copy back to what the server holds.
 
 A release sends a write again under a fresh idempotency key but on the version it already names. A write blocked `conflict_unresolved` is refused the same way each time, and one blocked `ancestor_unavailable` too, unless the credential it is sent with has come to read the snapshot it names. The writes held for the withdrawn write are refused unsent.
 

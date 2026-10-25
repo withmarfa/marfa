@@ -769,6 +769,9 @@ pub enum BlockedReason {
     /// The write keeps meeting an environmental failure while the server
     /// answers other writes.
     FailingAlone,
+    /// The write was queued against another instance than the one the copy
+    /// was built from since, and is sent only once released.
+    InstanceChanged,
 }
 
 /// Which handle this process holds on the store.
@@ -1756,6 +1759,7 @@ impl From<marfa_core::BlockedReason> for BlockedReason {
             R::AncestorUnavailable => BlockedReason::AncestorUnavailable,
             R::ConflictUnresolved => BlockedReason::ConflictUnresolved,
             R::FailingAlone => BlockedReason::FailingAlone,
+            R::InstanceChanged => BlockedReason::InstanceChanged,
         }
     }
 }
@@ -1769,6 +1773,7 @@ impl From<BlockedReason> for marfa_core::BlockedReason {
             BlockedReason::AncestorUnavailable => R::AncestorUnavailable,
             BlockedReason::ConflictUnresolved => R::ConflictUnresolved,
             BlockedReason::FailingAlone => R::FailingAlone,
+            BlockedReason::InstanceChanged => R::InstanceChanged,
         }
     }
 }
@@ -2228,23 +2233,38 @@ impl Core {
         tier: SliceTier,
         stop: Option<Arc<Stop>>,
     ) -> Result<HydrateReport, MarfaError> {
-        self.hydrate_with(types, tier, Vec::new(), stop)
+        self.hydrate_with(types, tier, Vec::new(), false, stop)
     }
 
     /// A hydration that also holds every edge of `edge_types` the key reads,
     /// whichever ends the copy holds. `types` reads as in `hydrate`, so
     /// `["*"]` alone is every type but `system.*`.
+    ///
+    /// With `in_place_only`, it fills only a copy whose cursor aged out, and
+    /// only in place: where the instance, the key's reach or the slice has
+    /// changed, the server was restored to an earlier point, or the copy is
+    /// not stale, it is refused `copy_expired` with the reason
+    /// (`instance_changed`, `reach_changed`, `slice_changed`,
+    /// `head_past_log` or `not_stale`), and the copy, its queue and its files
+    /// stay as they were.
+    #[uniffi::method(default(in_place_only = false))]
     pub fn hydrate_with(
         &self,
         types: Vec<String>,
         tier: SliceTier,
         edge_types: Vec<String>,
+        in_place_only: bool,
         stop: Option<Arc<Stop>>,
     ) -> Result<HydrateReport, MarfaError> {
-        Ok(self
-            .inner
-            .hydrate_until(&types, tier.into(), &edge_types, &flag_of(stop))?
-            .into())
+        let stop = flag_of(stop);
+        Ok(if in_place_only {
+            self.inner
+                .hydrate_in_place_only(&types, tier.into(), &edge_types, &stop)?
+        } else {
+            self.inner
+                .hydrate_until(&types, tier.into(), &edge_types, &stop)?
+        }
+        .into())
     }
 
     /// Declares the types this app saves, each an object with its `id`, its
@@ -2786,8 +2806,8 @@ impl Core {
         Ok(self.inner.release_reason(reason.into())? as u64)
     }
 
-    /// Takes a write blocked `ancestor_unavailable`, `conflict_unresolved` or
-    /// `failing_alone` out of the queue, and puts the copy back to what the server holds;
+    /// Takes a write blocked `ancestor_unavailable`, `conflict_unresolved`,
+    /// `failing_alone` or `instance_changed` out of the queue, and puts the copy back to what the server holds;
     /// each write held for it is refused unsent. Answers whether the row was
     /// one a withdraw takes.
     pub fn withdraw(&self, id: String) -> Result<bool, MarfaError> {

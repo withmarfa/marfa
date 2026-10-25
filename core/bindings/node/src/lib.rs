@@ -540,6 +540,9 @@ pub enum BlockedReason {
     /// The write keeps meeting an environmental failure while the server
     /// answers other writes.
     FailingAlone,
+    /// The write was queued against another instance than the one the copy
+    /// was built from since, and is sent only once released.
+    InstanceChanged,
 }
 
 /// Which handle this process holds on the store.
@@ -1027,6 +1030,7 @@ impl From<marfa_core::BlockedReason> for BlockedReason {
             R::AncestorUnavailable => BlockedReason::AncestorUnavailable,
             R::ConflictUnresolved => BlockedReason::ConflictUnresolved,
             R::FailingAlone => BlockedReason::FailingAlone,
+            R::InstanceChanged => BlockedReason::InstanceChanged,
         }
     }
 }
@@ -1040,6 +1044,7 @@ impl From<BlockedReason> for marfa_core::BlockedReason {
             BlockedReason::AncestorUnavailable => R::AncestorUnavailable,
             BlockedReason::ConflictUnresolved => R::ConflictUnresolved,
             BlockedReason::FailingAlone => R::FailingAlone,
+            BlockedReason::InstanceChanged => R::InstanceChanged,
         }
     }
 }
@@ -1745,6 +1750,7 @@ pub struct Hydrate {
     types: Vec<String>,
     tier: marfa_core::SliceTier,
     edge_types: Vec<String>,
+    in_place_only: bool,
     stop: Arc<AtomicBool>,
     failed: Option<marfa_core::CoreError>,
 }
@@ -1759,9 +1765,14 @@ impl Task for Hydrate {
     }
 
     fn compute(&mut self) -> Result<Self::Output> {
-        self.core
-            .hydrate_until(&self.types, self.tier, &self.edge_types, &self.stop)
-            .map_err(|error| record(&mut self.failed, error))
+        if self.in_place_only {
+            self.core
+                .hydrate_in_place_only(&self.types, self.tier, &self.edge_types, &self.stop)
+        } else {
+            self.core
+                .hydrate_until(&self.types, self.tier, &self.edge_types, &self.stop)
+        }
+        .map_err(|error| record(&mut self.failed, error))
     }
 
     fn resolve(&mut self, _: Env, report: Self::Output) -> Result<Self::JsValue> {
@@ -2244,12 +2255,20 @@ impl MarfaCore {
         tier: SliceTier,
         stop: Option<&Stop>,
     ) -> AsyncTask<Hydrate> {
-        self.hydrate_with(types, tier, Vec::new(), stop)
+        self.hydrate_with(types, tier, Vec::new(), stop, None)
     }
 
     /// A hydration that also holds every edge of `edgeTypes` the key reads,
     /// whichever ends the copy holds. `types` reads as in `hydrate`, so
     /// `["*"]` alone is every type but `system.*`.
+    ///
+    /// With `inPlaceOnly`, it fills only a copy whose cursor aged out, and
+    /// only in place: where the instance, the key's reach or the slice has
+    /// changed, the server was restored to an earlier point, or the copy is
+    /// not stale, it is refused `copy_expired` with the reason
+    /// (`instance_changed`, `reach_changed`, `slice_changed`,
+    /// `head_past_log` or `not_stale`), and the copy, its queue and its files
+    /// stay as they were.
     #[napi]
     pub fn hydrate_with(
         &self,
@@ -2257,6 +2276,7 @@ impl MarfaCore {
         tier: SliceTier,
         edge_types: Vec<String>,
         stop: Option<&Stop>,
+        in_place_only: Option<bool>,
     ) -> AsyncTask<Hydrate> {
         AsyncTask::new(Hydrate {
             core: Arc::clone(&self.inner),
@@ -2264,6 +2284,7 @@ impl MarfaCore {
             types,
             tier: tier.into(),
             edge_types,
+            in_place_only: in_place_only.unwrap_or(false),
             stop: flag_of(stop),
         })
     }
@@ -2942,8 +2963,8 @@ impl MarfaCore {
         Ok(count(released as u64))
     }
 
-    /// Takes a write blocked `ancestor_unavailable`, `conflict_unresolved` or
-    /// `failing_alone` out of the queue, and puts the copy back to what the server holds;
+    /// Takes a write blocked `ancestor_unavailable`, `conflict_unresolved`,
+    /// `failing_alone` or `instance_changed` out of the queue, and puts the copy back to what the server holds;
     /// each write held for it is refused unsent. Answers whether the row was
     /// one a withdraw takes. Off the JavaScript thread, because it reads each
     /// row it puts back from the server.

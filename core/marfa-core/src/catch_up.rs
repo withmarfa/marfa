@@ -1990,6 +1990,7 @@ mod tests {
             (crate::model::Verdict::Blocked, Some("key_spent")),
             (crate::model::Verdict::Blocked, Some("ancestor_unavailable")),
             (crate::model::Verdict::Blocked, Some("failing_alone")),
+            (crate::model::Verdict::Blocked, Some("instance_changed")),
         ] {
             let server = Scripted::start();
             server.on("/types", vec![types(&[(NOTE, None)])]);

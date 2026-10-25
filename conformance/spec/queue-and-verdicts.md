@@ -820,11 +820,11 @@ When a drain refuses a write without sending it, a device MUST report the refusa
 
 ### `queue-and-verdicts/blocked-reasons-five`
 
-A device MUST give a `blocked` write exactly one of the reasons `credential_refused`, `key_spent`, `ancestor_unavailable`, `conflict_unresolved`, `awaiting_dependency` and `failing_alone`, and no other.
+A device MUST give a `blocked` write exactly one of the reasons `credential_refused`, `key_spent`, `ancestor_unavailable`, `conflict_unresolved`, `awaiting_dependency`, `failing_alone` and `instance_changed`, and no other.
 
-**Reason:** `failing_alone` names a write that keeps meeting an environmental failure while others are taken (`queue-and-verdicts/stuck-write-set-aside`). `awaiting_dependency` is kept so the queue says why a drain held a write (`queue-and-verdicts/held-reason`), though nothing outside the queue stops such a write: a binding shows it as waiting (`queue-and-verdicts/binding-shows-waiting`), and no caller releases it (`queue-and-verdicts/release-reason-held`, `queue-and-verdicts/release-held-by-id`).
+**Reason:** `failing_alone` names a write that keeps meeting an environmental failure while others are taken (`queue-and-verdicts/stuck-write-set-aside`). `instance_changed` names a write made against an instance other than the one the copy is now built from (`device/queue-other-instance-held`). `awaiting_dependency` is kept so the queue says why a drain held a write (`queue-and-verdicts/held-reason`), though nothing outside the queue stops such a write: a binding shows it as waiting (`queue-and-verdicts/binding-shows-waiting`), and no caller releases it (`queue-and-verdicts/release-reason-held`, `queue-and-verdicts/release-held-by-id`).
 
-**Tests:** `device/classification.test.ts › reports one of the six blocked reasons and no other`.
+**Tests:** `device/classification.test.ts › reports one of the seven blocked reasons and no other`.
 
 ### `queue-and-verdicts/blocked-not-counted`
 
@@ -836,11 +836,11 @@ When a write is blocked, a device MUST count no refusal against it.
 
 ### `queue-and-verdicts/blocked-passed-over`
 
-While a write is blocked `key_spent`, `ancestor_unavailable`, `conflict_unresolved` or `failing_alone`, a device MUST NOT send it in a drain.
+While a write is blocked `key_spent`, `ancestor_unavailable`, `conflict_unresolved`, `failing_alone` or `instance_changed`, a device MUST NOT send it in a drain.
 
-**Reason:** each clears only when a caller releases or withdraws the write. The first three are refused the same way however often they are sent. A write blocked `failing_alone` is sent again only when a person has looked at it: taken back by the drain, it would cost every later drain its test and its second send again (`queue-and-verdicts/stuck-write-suspect`).
+**Reason:** each clears only when a caller releases or withdraws the write. The first three are refused the same way however often they are sent. A write blocked `instance_changed` goes to the instance now at the address only when a person sends it there. A write blocked `failing_alone` is sent again only when a person has looked at it: taken back by the drain, it would cost every later drain its test and its second send again (`queue-and-verdicts/stuck-write-suspect`).
 
-**Tests:** `device/verdicts.test.ts › blocked: is passed over by a drain and reported with its reason`, `device/classification.test.ts › sends nothing in a later drain for a write blocked conflict_unresolved or key_spent`, `device/stuck-write.test.ts › does not take a write set aside back at the start of a drain`.
+**Tests:** `device/verdicts.test.ts › blocked: is passed over by a drain and reported with its reason`, `device/classification.test.ts › sends nothing in a later drain for a write blocked conflict_unresolved or key_spent`, `device/stuck-write.test.ts › does not take a write set aside back at the start of a drain`, `device/queue.test.ts › holds the writes queued against another instance once hydrated from the one now there, sending none until released`.
 
 ### `queue-and-verdicts/blocked-retried-itself`
 
@@ -1382,7 +1382,7 @@ When a caller releases writes, a device MUST lay each of them back over the copy
 
 ### `queue-and-verdicts/withdraw-two-reasons`
 
-When a caller withdraws a write that is not `blocked` `ancestor_unavailable`, `conflict_unresolved` or `failing_alone`, a device MUST answer that nothing was withdrawn, changing nothing.
+When a caller withdraws a write that is not `blocked` `ancestor_unavailable`, `conflict_unresolved`, `failing_alone` or `instance_changed`, a device MUST answer that nothing was withdrawn, changing nothing.
 
 **Reason:** an unanswered write may yet land, a write blocked for another reason clears on its own or is released, a `dead` write is released, and an answered write has been written.
 
@@ -1396,11 +1396,11 @@ If a caller withdraws an id the queue does not hold, then a device MUST refuse i
 
 ### `queue-and-verdicts/withdraw-takes-out`
 
-When a caller withdraws a write blocked `ancestor_unavailable`, `conflict_unresolved` or `failing_alone`, a device MUST take it out of the queue.
+When a caller withdraws a write blocked `ancestor_unavailable`, `conflict_unresolved`, `failing_alone` or `instance_changed`, a device MUST take it out of the queue.
 
-**Reason:** a release sends a write again under a fresh idempotency key but on the version it already names. The server refuses a `conflict_unresolved` write the same way every time, because versions only advance, and an `ancestor_unavailable` write the same way unless the credential it is sent with has come to read the snapshot it names. Meanwhile the write stays laid over its row and the copy goes on showing what the server will never take. A write that fails alone is one a person has judged will never go.
+**Reason:** a release sends a write again under a fresh idempotency key but on the version it already names. The server refuses a `conflict_unresolved` write the same way every time, because versions only advance, and an `ancestor_unavailable` write the same way unless the credential it is sent with has come to read the snapshot it names. Meanwhile the write stays laid over its row and the copy goes on showing what the server will never take. A write that fails alone is one a person has judged will never go, and a write made against another instance is one a person has judged does not belong on this one.
 
-**Tests:** `device/classification.test.ts › withdraws a write blocked ancestor_unavailable or conflict_unresolved, and puts the row back as the server holds it`, `device/stuck-write.test.ts › withdraws a write set aside, and sends nothing for it after`.
+**Tests:** `device/classification.test.ts › withdraws a write blocked ancestor_unavailable or conflict_unresolved, and puts the row back as the server holds it`, `device/stuck-write.test.ts › withdraws a write set aside, and sends nothing for it after`, `device/queue.test.ts › holds the writes queued against another instance once hydrated from the one now there, sending none until released`.
 
 ### `queue-and-verdicts/withdraw-puts-back`
 
@@ -1576,7 +1576,7 @@ When a copy is hydrated again, a device MUST keep every queued write, with its i
 
 ### `queue-and-verdicts/other-instance-sends-nothing`
 
-When a drain finds another instance at the copy's origin, a device MUST send no queued write and keep the queue for a hydration from that instance.
+When a drain finds another instance at the copy's origin, a device MUST send no queued write and keep the queue.
 
 **Tests:** `device/queue.test.ts › sends nothing to another instance at the same address, keeping the queue`.
 
@@ -1614,7 +1614,7 @@ When the server answers a write a drain sends, or the lookup it asks for a creat
 
 When the server answers a write a drain sends `409 instance_changed`, a device MUST keep the write in the queue under its idempotency key, with no verdict and no refusal counted.
 
-**Reason:** the instance that refused it never held the rows it was made against and did not apply it, so it goes to the instance the copy is next hydrated from (`queue-and-verdicts/rehydration-keeps-queue`).
+**Reason:** the instance that refused it never held the rows it was made against and did not apply it. The write is held for the person once the copy is hydrated from that instance (`device/queue-other-instance-held`).
 
 **Tests:** `device/queue.test.ts › ends the drain copy_expired where another instance refuses a write, sending nothing more and keeping the queue`, `› expires the copy where another instance refuses the lookup a keyed create asks, sending the create nowhere`, `device/edge-move.test.ts › ends at once where another instance refuses a write behind a source move the server took`.
 

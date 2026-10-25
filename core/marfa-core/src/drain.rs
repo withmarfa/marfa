@@ -1459,8 +1459,8 @@ fn send_queue(
         let answer = match answer {
             // Ahead of the classification, which would refuse the write for
             // good. The copy is built again from the instance now at the
-            // origin, which has seen no attempt of this write, so it is judged
-            // there afresh.
+            // origin, which holds the write until a person releases it, and
+            // has seen no attempt of it, so it is judged there afresh.
             Err(CoreError::CopyExpired { reason }) if reason == INSTANCE_CHANGED => {
                 let mut conn = core.conn()?;
                 let tx = conn.transaction()?;

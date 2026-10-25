@@ -4904,6 +4904,23 @@ pub fn block_unanswered(conn: &Connection, reason: BlockedReason) -> Result<usiz
     )?)
 }
 
+/// For a copy about to be built from another instance than the one its
+/// writes were queued against: every write a drain or a release could still
+/// send is held until a caller releases it, so none reaches rows the copy
+/// never held. A refused write stays refused. Answers how many it held.
+pub fn block_for_another_instance(conn: &Connection) -> Result<usize, CoreError> {
+    Ok(conn.execute(
+        &format!(
+            "UPDATE queue SET verdict = ?1, reason = ?2, answered_at = ?3 WHERE {WAITING}"
+        ),
+        params![
+            Verdict::Blocked.as_str(),
+            BlockedReason::InstanceChanged.as_str(),
+            now_iso()
+        ],
+    )?)
+}
+
 /// A drain returns these rows to unanswered before it starts, so the block
 /// is the last drain's finding rather than a state that sticks.
 pub fn unblock_self_clearing(conn: &Connection) -> Result<usize, CoreError> {

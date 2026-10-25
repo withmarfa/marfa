@@ -70,6 +70,14 @@ pub enum DeviceCommand {
         /// whichever ends the copy holds. Repeatable.
         #[arg(long = "edge-type", value_name = "TYPE")]
         edge_types: Vec<String>,
+        /// Fill only a copy whose cursor aged out, and only in place. Where
+        /// the instance, the key's reach or the slice has changed, the
+        /// server was restored to an earlier point, or the copy is not
+        /// waiting to be filled again, the hydration is refused
+        /// copy_expired with the reason, and the copy, its queue and its
+        /// files stay as they were.
+        #[arg(long)]
+        in_place_only: bool,
     },
     /// Hold one row by id whatever the slice says of it, read now and kept
     /// current, even after it leaves the slice.
@@ -279,9 +287,9 @@ pub enum DeviceCommand {
         #[arg(long, value_name = "REASON", value_parser = blocked_reason())]
         reason: Option<marfa_core::BlockedReason>,
     },
-    /// Take a write blocked `ancestor_unavailable`, `conflict_unresolved` or
-    /// `failing_alone` out of the queue, and put the copy back to what the
-    /// server holds.
+    /// Take a write blocked `ancestor_unavailable`, `conflict_unresolved`,
+    /// `failing_alone` or `instance_changed` out of the queue, and put the
+    /// copy back to what the server holds.
     ///
     /// A release sends a write again under a fresh idempotency key but on the
     /// version it already names. A write blocked `conflict_unresolved` is
@@ -974,10 +982,15 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
             types,
             tier,
             edge_types,
+            in_place_only,
         } => {
             stop_on_interrupt();
             let core = store.open_with_server(named)?;
-            let report = core.hydrate_until(&types, tier.into(), &edge_types, stop_after(None))?;
+            let report = if in_place_only {
+                core.hydrate_in_place_only(&types, tier.into(), &edge_types, stop_after(None))?
+            } else {
+                core.hydrate_until(&types, tier.into(), &edge_types, stop_after(None))?
+            };
             output::report(&report, json, || {
                 let whole = if report.edge_types.is_empty() {
                     String::new()
@@ -1687,7 +1700,7 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
                     format!("withdrew {id}; the copy holds what the server holds")
                 } else {
                     format!(
-                        "nothing to withdraw: {id} is not blocked ancestor_unavailable, conflict_unresolved or failing_alone"
+                        "nothing to withdraw: {id} is not blocked ancestor_unavailable, conflict_unresolved, failing_alone or instance_changed"
                     )
                 }
             })
