@@ -75,21 +75,46 @@ pub(crate) fn open_directory(
     label: &Path,
 ) -> Result<Connection, CoreError> {
     let conn = vfs.open(
-        "core.sqlite",
+        FOLDER_STORE,
         rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE
             | rusqlite::OpenFlags::SQLITE_OPEN_CREATE
             | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
     )?;
-    prepare(&conn).map_err(|error| at_path(error, label))?;
+    prepare(&conn).map_err(|error| in_folder(error, label))?;
     Ok(conn)
 }
 
 fn at_path(error: CoreError, path: &Path) -> CoreError {
     match error {
-        CoreError::WrongSchema { reason, unsent, .. } => CoreError::WrongSchema {
+        CoreError::WrongSchema {
+            reason,
+            unsent,
+            folder,
+            ..
+        } => CoreError::WrongSchema {
             path: path.display().to_string(),
             reason,
             unsent,
+            folder,
+        },
+        other => other,
+    }
+}
+
+/// A refusal of the store a folder keeps in its state directory.
+#[cfg(unix)]
+fn in_folder(error: CoreError, label: &Path) -> CoreError {
+    match at_path(error, label) {
+        CoreError::WrongSchema {
+            path,
+            reason,
+            unsent,
+            ..
+        } => CoreError::WrongSchema {
+            path,
+            reason,
+            unsent,
+            folder: true,
         },
         other => other,
     }
@@ -265,16 +290,161 @@ fn restore_set_aside(path: &Path, aside: &Path, moved: &[&str]) -> String {
     }
 }
 
+/// A folder's store, in the folder's state directory.
+#[cfg(unix)]
+pub(crate) const FOLDER_STORE: &str = "core.sqlite";
+
+/// Where a replacement makes a folder's new store before it takes the old
+/// one's name.
+#[cfg(unix)]
+pub(crate) const FOLDER_STORE_MADE: &str = "core.sqlite.replacing";
+
+/// The values `keys` hold in the meta of the folder store in `vfs`'s
+/// directory, read without its shape checked, as from a store this build
+/// refuses `wrong_schema`. A key the store does not hold is absent.
+#[cfg(unix)]
+pub(crate) fn refused_folder_meta(
+    vfs: &crate::directory_vfs::DirectoryVfs,
+    keys: &[&str],
+) -> Result<HashMap<String, String>, CoreError> {
+    let conn = vfs.open(
+        FOLDER_STORE,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )?;
+    conn.busy_timeout(std::time::Duration::from_secs(5))?;
+    meta_of(&conn, keys)
+}
+
+#[cfg(unix)]
+fn meta_of(conn: &Connection, keys: &[&str]) -> Result<HashMap<String, String>, CoreError> {
+    let mut held = HashMap::new();
+    for key in keys {
+        if let Some(value) = meta_get(conn, key)? {
+            held.insert((*key).to_string(), value);
+        }
+    }
+    Ok(held)
+}
+
+/// Leaves the store `conn` opened as one file, with no log beside it that a
+/// store later at its name would read as its own.
+#[cfg(unix)]
+fn without_log(conn: &Connection) -> Result<(), CoreError> {
+    let mode: String = conn.query_row("PRAGMA journal_mode = DELETE", [], |row| row.get(0))?;
+    if !mode.eq_ignore_ascii_case("delete") {
+        return Err(CoreError::Store(
+            "another process has it open, so its log cannot be let go; try again once that process ends".into(),
+        ));
+    }
+    Ok(())
+}
+
+/// Replaces the folder store in `state`, which this build refuses
+/// `wrong_schema`, with an empty one of this build's shape that holds the
+/// old store's values of `carried` in its meta, and answers them. The caller
+/// holds the writer lock and has found nothing unsent. The new store is made
+/// whole under another name, then takes the old one's in one rename, so a
+/// failure or a crash at any step leaves one whole store at the name.
+#[cfg(unix)]
+pub(crate) fn replace_folder_store(
+    state: &crate::directory::Directory,
+    label: &Path,
+    carried: &[&str],
+) -> Result<HashMap<String, String>, CoreError> {
+    let unreplaced = |reason: String| {
+        CoreError::Store(format!("{} cannot be replaced: {reason}", label.display()))
+    };
+    let vfs = crate::directory_vfs::DirectoryVfs::new(state.file())?;
+    let named = |store: &str, suffix: &str| std::path::PathBuf::from(format!("{store}{suffix}"));
+    let log_beside = |store: &str| {
+        ["-wal", "-journal"]
+            .into_iter()
+            .map(|suffix| named(store, suffix))
+            .find(|log| state.entry_kind(log).is_ok())
+    };
+    // A store a replacement left part made is that replacement's, never the
+    // person's.
+    let clear_made = || {
+        for suffix in STORE_FILES {
+            let _ = state.unlink(&named(FOLDER_STORE_MADE, suffix));
+        }
+    };
+    let kept = {
+        let old = vfs.open(
+            FOLDER_STORE,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        )?;
+        old.busy_timeout(std::time::Duration::from_secs(5))?;
+        let kept = meta_of(&old, carried).map_err(|error| {
+            unreplaced(format!(
+                "what it records of the folder cannot be read: {error}"
+            ))
+        })?;
+        without_log(&old).map_err(|error| unreplaced(error.to_string()))?;
+        kept
+    };
+    if let Some(log) = log_beside(FOLDER_STORE) {
+        return Err(unreplaced(format!(
+            "its log {} is still beside it",
+            log.display()
+        )));
+    }
+    let _ = state.unlink(&named(FOLDER_STORE, "-shm"));
+    clear_made();
+    let made = (|| -> Result<(), CoreError> {
+        let conn = vfs.open(
+            FOLDER_STORE_MADE,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE
+                | rusqlite::OpenFlags::SQLITE_OPEN_CREATE
+                | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        )?;
+        prepare(&conn)?;
+        let tx = conn.unchecked_transaction()?;
+        for (key, value) in &kept {
+            meta_set(&tx, key, value)?;
+        }
+        tx.commit()?;
+        without_log(&conn)?;
+        drop(conn);
+        // After the new store's file exists, so a failure leaves one to clear.
+        #[cfg(debug_assertions)]
+        if crate::fault::fails(|| "replace-refused-make") {
+            return Err(CoreError::Store("replace-refused-make".into()));
+        }
+        if let Some(log) = log_beside(FOLDER_STORE_MADE) {
+            return Err(CoreError::Store(format!(
+                "the new store's log {} is still beside it",
+                log.display()
+            )));
+        }
+        let _ = state.unlink(&named(FOLDER_STORE_MADE, "-shm"));
+        state
+            .rename(
+                Path::new(FOLDER_STORE_MADE),
+                state,
+                Path::new(FOLDER_STORE),
+                false,
+            )
+            .map_err(|error| CoreError::Store(error.to_string()))
+    })();
+    if let Err(error) = made {
+        clear_made();
+        return Err(unreplaced(error.to_string()));
+    }
+    let _ = state.sync();
+    Ok(kept)
+}
+
 #[cfg(unix)]
 pub(crate) fn read_directory(
     vfs: &crate::directory_vfs::DirectoryVfs,
     label: &Path,
 ) -> Result<Connection, CoreError> {
     let conn = vfs.open(
-        "core.sqlite",
+        FOLDER_STORE,
         rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
     )?;
-    read_connection(conn, label)
+    read_connection(conn, label).map_err(|error| in_folder(error, label))
 }
 
 fn read_connection(conn: Connection, path: &Path) -> Result<Connection, CoreError> {
@@ -388,6 +558,7 @@ fn refuse_misshapen(conn: &Connection, held: &Shape, reading: bool) -> Result<()
             path: String::new(),
             reason: format!("{reason}{}", unsendable(conn)),
             unsent: untaken_count(conn),
+            folder: false,
         })
     };
     if differs("meta") {

@@ -81,13 +81,16 @@ pub enum CoreError {
         "this is a reading handle: another process holds the writer handle for this store, and one store has one writer"
     )]
     ReadingHandle,
-    #[error("{}", wrong_schema(path, reason, *unsent))]
+    #[error("{}", wrong_schema(path, reason, *unsent, *folder))]
     WrongSchema {
         path: String,
         reason: String,
         /// Writes in the store the server has not taken, waiting, blocked,
         /// refused or dead; `None` where its queue cannot be read.
         unsent: Option<u64>,
+        /// Whether the store is a folder's, which a folder's own commands
+        /// replace and whose writes a folder's push sends.
+        folder: bool,
     },
     /// The cursor is dropped, so the copy reports itself expired until a
     /// hydration, which keeps the queue.
@@ -286,14 +289,21 @@ fn contract_mismatch(
 
 /// Never advises deleting the store: only the build that made it can send
 /// what it holds.
-fn wrong_schema(path: &str, reason: &str, unsent: Option<u64>) -> String {
-    let holds = match unsent {
-        Some(0) => "Every write it holds the server has taken, so a store hydrated in its place loses nothing".to_string(),
-        Some(count) => format!(
+fn wrong_schema(path: &str, reason: &str, unsent: Option<u64>, folder: bool) -> String {
+    let writes = |count: u64| if count == 1 { "write" } else { "writes" };
+    let holds = match (unsent, folder) {
+        (Some(0), false) => "Every write it holds the server has taken, so a store hydrated in its place loses nothing".to_string(),
+        (Some(0), true) => "Every write it holds the server has taken, so the folder's next push, pull, scan or watch replaces it with an empty store of this build's shape, fills that from the server and loses nothing; the replacement changes none of the folder's files".to_string(),
+        (Some(count), false) => format!(
             "It holds {count} {} the server has not taken, waiting, blocked, refused or dead, which only the build that made it can send or show: open it with that build and drain or discard them before hydrating a new store",
-            if count == 1 { "write" } else { "writes" }
+            writes(count)
         ),
-        None => "Whether it holds writes the server has not taken cannot be read: open it with the build that made it and drain or discard them before hydrating a new store".to_string(),
+        (Some(count), true) => format!(
+            "It holds {count} {} the server has not taken, waiting, blocked, refused or dead, which only the build that made it can send or show, so this build leaves the store and the folder's files as they are: push the folder with the build that made the store (`marfa folders push`), and once the store holds none, this build replaces it",
+            writes(count)
+        ),
+        (None, false) => "Whether it holds writes the server has not taken cannot be read: open it with the build that made it and drain or discard them before hydrating a new store".to_string(),
+        (None, true) => "Whether it holds writes the server has not taken cannot be read, so this build leaves the store and the folder's files as they are: with the build that made the store, push the folder (`marfa folders push`) and remove it (`marfa folders remove`, which leaves its files), then add it again with this build".to_string(),
     };
     format!("{path} was made by another build of the core: {reason}. {holds}")
 }

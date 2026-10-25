@@ -6,7 +6,7 @@ use crate::model::{Verdict, WriteKind};
 use crate::{Result, store};
 
 /// Present from the add until the person confirms, holding the last plan.
-const META_FIRST_SYNC: &str = "folder_first_sync";
+pub(super) const META_FIRST_SYNC: &str = "folder_first_sync";
 
 /// What a folder's first sync will do, read from the folder as it stands.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]

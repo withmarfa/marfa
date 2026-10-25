@@ -573,6 +573,7 @@ mod tests {
             unread_give_ways: std::sync::Mutex::new(Default::default()),
             permissions: std::sync::OnceLock::new(),
             refused_renames: std::sync::Mutex::new(Default::default()),
+            replaced: None,
             root_dir: crate::directory::Directory::open(&dir.path().canonicalize().unwrap())
                 .unwrap(),
             store_mark: crate::directory::Directory::open(&state_dir.canonicalize().unwrap())

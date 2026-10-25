@@ -17,6 +17,7 @@ pub(crate) mod placement;
 mod preserve;
 mod pull;
 mod push;
+mod refused;
 mod removal;
 mod scan;
 mod unmatched;
@@ -186,6 +187,8 @@ pub struct Folder {
     /// path the file kept and the one refused, not tried again while both
     /// stand, so a volume that refuses them is not asked at every pass.
     refused_renames: std::sync::Mutex<HashMap<String, (String, String)>>,
+    /// Why the store this open found was refused, where the open replaced it.
+    replaced: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
@@ -343,13 +346,15 @@ impl Folder {
         )?);
         made.lock = Some(Arc::clone(&lock));
         made.holding(&state_dir, lock_there);
-        let core = working(Core::open_claimed(
+        let (core, replaced) = refused::opened(
             &state_dir,
             &root.join(STATE_DIR).join("core.sqlite"),
             Some(server),
             lock,
-        )?)?;
-        Folder::bind(root, root_dir, state_dir, folder, core, renew)
+        )?;
+        let mut added = Folder::bind(root, root_dir, state_dir, folder, working(core)?, renew)?;
+        added.replaced = replaced;
+        Ok(added)
     }
 
     fn bind(
@@ -385,6 +390,7 @@ impl Folder {
             unread_give_ways: std::sync::Mutex::new(Default::default()),
             permissions: std::sync::OnceLock::new(),
             refused_renames: std::sync::Mutex::new(HashMap::new()),
+            replaced: None,
         };
         let row = added.row_on_server()?;
         // The catalog the hydration would read, so a default type the
@@ -472,12 +478,8 @@ impl Folder {
         let store = state_dir
             .entry_identity(Path::new("core.sqlite"))
             .map_err(|_| not_a_folder(&root))?;
-        let core = match wait {
-            None => working(Core::open_directory(
-                &state_dir,
-                &state.join("core.sqlite"),
-                server,
-            )?)?,
+        let lock = match wait {
+            None => Core::claim_directory(&state_dir)?,
             Some(wait) => {
                 let lock = handover::claim_asking(&state_dir, &root, wait, false)?;
                 // The holder may have removed the folder, or put another
@@ -485,14 +487,16 @@ impl Folder {
                 if state_dir.entry_identity(Path::new("core.sqlite")).ok() != Some(store) {
                     return Err(not_a_folder(&root));
                 }
-                working(Core::open_claimed(
-                    &state_dir,
-                    &state.join("core.sqlite"),
-                    server,
-                    Arc::new(lock),
-                )?)?
+                lock
             }
         };
+        let (core, replaced) = refused::opened(
+            &state_dir,
+            &state.join("core.sqlite"),
+            server,
+            Arc::new(lock),
+        )?;
+        let core = working(core)?;
         let folder = settings_file::bound(&core)?.ok_or_else(|| not_a_folder(&root))?;
         Ok(Folder {
             root,
@@ -507,7 +511,15 @@ impl Folder {
             unread_give_ways: std::sync::Mutex::new(Default::default()),
             permissions: std::sync::OnceLock::new(),
             refused_renames: std::sync::Mutex::new(HashMap::new()),
+            replaced,
         })
+    }
+
+    /// Why the store this open found was refused, where the open replaced
+    /// it: another build of the core made it, and it held no write the
+    /// server had not taken (`folders/refused-store-replaced`).
+    pub fn replaced_store(&self) -> Option<&str> {
+        self.replaced.as_deref()
     }
 
     /// Reads the store without claiming it, so it answers beside a running
@@ -540,6 +552,7 @@ impl Folder {
             unread_give_ways: std::sync::Mutex::new(Default::default()),
             permissions: std::sync::OnceLock::new(),
             refused_renames: std::sync::Mutex::new(HashMap::new()),
+            replaced: None,
         })
     }
 

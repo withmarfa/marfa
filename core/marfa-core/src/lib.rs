@@ -262,6 +262,7 @@ pub const CONFLICTED_COPY_TAG: &str = "conflicted-copy";
 pub const CONFLICTED_COPY_EDGE: &str = "derived-from";
 
 impl Core {
+    #[cfg(test)]
     pub(crate) fn open_directory(
         state: &directory::Directory,
         store_label: &Path,
@@ -7412,7 +7413,9 @@ mod tests {
                     path: named,
                     reason,
                     unsent,
+                    folder,
                 } => {
+                    assert!(!folder, "a device store was refused as a folder's");
                     assert_eq!(named, path.display().to_string());
                     assert!(reason.contains(found), "{reason}");
                     assert_eq!(unsent, None, "a store with no queue was counted");
