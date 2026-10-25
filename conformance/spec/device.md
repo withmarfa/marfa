@@ -3802,7 +3802,9 @@ If a device is asked to remove the store of a folder it syncs, then a device MUS
 
 ### `device/remove-store-kept`
 
-When a device refuses to remove a store, a device MUST leave every file of the store unchanged.
+When a device refuses to remove a store, a device MUST leave the store file, its write-ahead log, its rollback journal, the fetched bytes it keeps beside it and its writer lock unchanged.
+
+**Reason:** the shared-memory index (`-shm`) is not covered, because SQLite may create it to read a write-ahead log.
 
 **Tests:** `device/binding-remove-store.test.ts › refuses to remove a store holding another number of unsent writes, with its own count`, `› refuses to remove a store whose unsent writes it cannot count`, `› refuses to remove a store while another process holds its writer role`, `› removes what a removal left at a path with no store only when nothing is agreed to be lost`, `› refuses to remove a folder's store`.
 

@@ -56,6 +56,15 @@ function held(store: string): Record<string, string> {
   return found;
 }
 
+/**
+ * What `held` finds but the shared-memory index, which SQLite may make to
+ * read a write-ahead log (`device/remove-store-kept`).
+ */
+function kept(store: string): Record<string, string> {
+  const { "-shm": _index, ...rest } = held(store);
+  return rest;
+}
+
 function isLink(name: string): boolean {
   try {
     return lstatSync(name).isSymbolicLink();
@@ -142,7 +151,7 @@ describe("removing a store", () => {
 
   it("refuses to remove a store while another process holds its writer role", async () => {
     const { device } = await storeWithOneUnsent("remove-held");
-    const before = held(device.store);
+    const before = kept(device.store);
 
     // Another app's writer, as the core takes the role.
     const holder = new DatabaseSync(`${device.store}.writer-lock`);
@@ -151,7 +160,7 @@ describe("removing a store", () => {
       expect(refusalOf(await device.removeStore(1)).code).toBe(
         "reading_handle",
       );
-      expect(held(device.store)).toEqual(before);
+      expect(kept(device.store)).toEqual(before);
     } finally {
       holder.close();
     }
@@ -164,7 +173,7 @@ describe("removing a store", () => {
 
   it("refuses to remove a store holding another number of unsent writes, with its own count", async () => {
     const { device } = await storeWithOneUnsent("remove-unsent");
-    const before = held(device.store);
+    const before = kept(device.store);
 
     for (const agreed of [0, 2]) {
       const refused = refusalOf(await device.removeStore(agreed));
@@ -174,7 +183,7 @@ describe("removing a store", () => {
       );
       expect(refused.agreed).toBe(agreed);
       expect(
-        held(device.store),
+        kept(device.store),
         "the refused removal changed the store",
       ).toEqual(before);
     }
@@ -187,7 +196,7 @@ describe("removing a store", () => {
       device.store,
       "ALTER TABLE queue RENAME COLUMN verdict TO answer_kind",
     );
-    const before = held(device.store);
+    const before = kept(device.store);
 
     for (const agreed of [0, 1]) {
       const refused = refusalOf(await device.removeStore(agreed));
@@ -196,7 +205,7 @@ describe("removing a store", () => {
         refused.unsent,
         "the refusal gave a count it cannot read",
       ).toBeNull();
-      expect(held(device.store)).toEqual(before);
+      expect(kept(device.store)).toEqual(before);
     }
   });
 
@@ -235,7 +244,7 @@ describe("removing a store", () => {
     mkdirSync(blobs);
     writeFileSync(join(blobs, "fetched"), "bytes");
     writeFileSync(`${device.store}.writer-lock`, "");
-    const before = held(device.store);
+    const before = kept(device.store);
     expect(Object.keys(before)).toEqual([
       ".blobs/fetched",
       ".blobs",
@@ -245,7 +254,7 @@ describe("removing a store", () => {
     const refused = refusalOf(await device.removeStore(1));
     expect(refused.code).toBe("unsent_differs");
     expect(refused.unsent).toBe(0);
-    expect(held(device.store)).toEqual(before);
+    expect(kept(device.store)).toEqual(before);
 
     const removed = await device.removeStore(0);
     expect(removed.ok, JSON.stringify(removed)).toBe(true);
@@ -291,9 +300,9 @@ describe("removing a store", () => {
       device.store,
       "INSERT INTO meta (key, value) VALUES ('folder_id', 'a-folder')",
     );
-    const before = held(device.store);
+    const before = kept(device.store);
 
     expect(refusalOf(await device.removeStore(1)).code).toBe("invalid");
-    expect(held(device.store)).toEqual(before);
+    expect(kept(device.store)).toEqual(before);
   });
 });

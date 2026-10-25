@@ -33,7 +33,6 @@ yaml-rust2.workspace = true
 tree-sitter = "0.27"
 tree-sitter-yaml = "0.7"
 tracing = { version = "0.1", default-features = false, features = ["std"], optional = true }
-tempfile = "3"
 
 [build-dependencies]
 cc = "1"
@@ -42,6 +41,7 @@ hex.workspace = true
 
 [dev-dependencies]
 rusqlite = { workspace = true, features = ["hooks"] }
+tempfile = "3"
 flate2 = "1"
 
 [target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]

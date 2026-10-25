@@ -187,68 +187,31 @@ pub(crate) fn refusal(path: &Path) -> Result<Option<CoreError>, CoreError> {
     }
 }
 
-/// A connection to read a store whatever its shape, with the scratch copy it
-/// reads, if any, kept until it is dropped.
-pub(crate) struct Refused {
-    conn: Connection,
-    _scratch: Option<tempfile::TempDir>,
-}
-
-impl std::ops::Deref for Refused {
-    type Target = Connection;
-
-    fn deref(&self) -> &Connection {
-        &self.conn
-    }
-}
-
 /// The store at `path` opened to read, whatever its shape, for the caller
-/// that holds its writer lock, and changing no file beside it.
-fn open_refused(path: &Path) -> Result<Refused, CoreError> {
+/// that holds its writer lock. SQLite may make a `-shm` index beside a log to
+/// read it.
+fn open_refused(path: &Path) -> Result<Connection, CoreError> {
     let flags =
         rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX;
-    let logs: Vec<&str> = ["-wal", "-journal"]
-        .into_iter()
-        .filter(|suffix| suffixed(path, suffix).symlink_metadata().is_ok())
-        .collect();
-    let (conn, scratch) = match path.to_str() {
-        // Without a log the file alone is the store, and the caller's writer
-        // lock keeps it so: read as immutable, SQLite makes no log beside it.
-        Some(name) if logs.is_empty() => (
-            Connection::open_with_flags(
-                format!(
-                    "file:{}?immutable=1",
-                    name.replace('%', "%25")
-                        .replace('?', "%3f")
-                        .replace('#', "%23")
-                ),
-                flags | rusqlite::OpenFlags::SQLITE_OPEN_URI,
-            )?,
-            None,
-        ),
-        // A log is read through a shared-memory index that a reading
-        // connection makes beside it where there is none, so the store and
-        // its logs are read from a copy, which the caller's writer lock keeps
-        // true.
-        _ if !suffixed(path, "-shm").exists() => {
-            let scratch = tempfile::tempdir().map_err(|error| {
-                CoreError::Store(format!("{} cannot be read: {error}", path.display()))
-            })?;
-            let copy = scratch.path().join("store");
-            for suffix in std::iter::once("").chain(logs.iter().copied()) {
-                std::fs::copy(suffixed(path, suffix), suffixed(&copy, suffix)).map_err(
-                    |error| CoreError::Store(format!("{} cannot be read: {error}", path.display())),
-                )?;
-            }
-            (Connection::open_with_flags(&copy, flags)?, Some(scratch))
-        }
-        _ => (Connection::open_with_flags(path, flags)?, None),
+    let logged = ["-wal", "-journal"]
+        .iter()
+        .any(|suffix| suffixed(path, suffix).symlink_metadata().is_ok());
+    // Without a log the file alone is the store, and the caller's writer
+    // lock keeps it so: read as immutable, SQLite makes no log beside it.
+    let conn = match path.to_str() {
+        Some(name) if !logged => Connection::open_with_flags(
+            format!(
+                "file:{}?immutable=1",
+                name.replace('%', "%25")
+                    .replace('?', "%3f")
+                    .replace('#', "%23")
+            ),
+            flags | rusqlite::OpenFlags::SQLITE_OPEN_URI,
+        )?,
+        _ => Connection::open_with_flags(path, flags)?,
     };
     conn.busy_timeout(std::time::Duration::from_secs(5))?;
-    Ok(Refused {
-        conn,
-        _scratch: scratch,
-    })
+    Ok(conn)
 }
 
 /// The file budget the store at `path` records, which this build refuses
