@@ -755,10 +755,10 @@ fn untaken_count(conn: &Connection) -> Option<u64> {
 }
 
 /// The writes a replacement of a folder's store would lose: each not yet
-/// sent, as a folder's removal counts them, and each answered one a file's
-/// state still waits on. A refused or dead write the folder has recorded is
-/// kept in its file and its record of the file, which the replacement
-/// carries, so it is not counted.
+/// sent, as a folder's removal counts them; each refused or dead one but a
+/// refusal the folder has recorded; and each answered one a file's state
+/// still waits on. A recorded refusal is kept in the folder's record of its
+/// files or of its placements, which the replacement carries.
 #[cfg(unix)]
 fn folder_unsent(conn: &Connection) -> Option<u64> {
     let counted = (|| -> Result<usize, CoreError> {
@@ -767,10 +767,196 @@ fn folder_unsent(conn: &Connection) -> Option<u64> {
         let mut held: HashSet<String> = unsent
             .query_map([Verdict::Blocked.as_str()], |row| row.get(0))?
             .collect::<rusqlite::Result<_>>()?;
+        held.extend(unrecorded_answers(conn)?);
         held.extend(awaited_by_files(conn)?);
         Ok(held.len())
     })();
     counted.ok().and_then(|count| u64::try_from(count).ok())
+}
+
+/// A refused or dead write in a folder's store, as its queue row holds it.
+#[cfg(unix)]
+struct HeldAnswer {
+    id: String,
+    kind: String,
+    item_id: Option<String>,
+    target_id: Option<String>,
+    tag: Option<String>,
+    payload: Value,
+    refused: bool,
+    reason: Option<String>,
+}
+
+/// The refused and dead writes in the queue that the folder has not
+/// recorded, by id. Only a refusal is ever recorded: a dead write may yet
+/// have landed, and only its own build can release it.
+#[cfg(unix)]
+fn unrecorded_answers(conn: &Connection) -> Result<HashSet<String>, CoreError> {
+    let mut statement = conn.prepare(
+        "SELECT id, kind, item_id, target_id, tag, payload, verdict, reason
+           FROM main.queue WHERE verdict IN (?1, ?2)",
+    )?;
+    let answered = statement
+        .query_map([Verdict::Refused.as_str(), Verdict::Dead.as_str()], |row| {
+            Ok(HeldAnswer {
+                id: row.get(0)?,
+                kind: row.get(1)?,
+                item_id: row.get(2)?,
+                target_id: row.get(3)?,
+                tag: row.get(4)?,
+                payload: serde_json::from_str(&row.get::<_, String>(5)?).unwrap_or(Value::Null),
+                refused: row.get::<_, String>(6)? == Verdict::Refused.as_str(),
+                reason: row.get(7)?,
+            })
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    if answered.is_empty() {
+        return Ok(HashSet::new());
+    }
+    let files = refusals_by_item(conn)?;
+    let placements = refused_placements(conn)?;
+    let folder = meta_get(conn, crate::folder::settings_file::META_FOLDER)?;
+    Ok(answered
+        .into_iter()
+        .filter(|row| {
+            !(row.refused && recorded_refusal(row, &files, &placements, folder.as_deref()))
+        })
+        .map(|row| row.id)
+        .collect())
+}
+
+/// What each bound file of a folder records as refused, by the item it is.
+/// An entry this build cannot read records nothing it can match.
+#[cfg(unix)]
+fn refusals_by_item(
+    conn: &Connection,
+) -> Result<HashMap<String, Vec<crate::folder::state::Change>>, CoreError> {
+    let mut recorded: HashMap<String, Vec<_>> = HashMap::new();
+    if !held_shape(conn)?.contains_key("folder_files") {
+        return Ok(recorded);
+    }
+    let mut statement = conn.prepare("SELECT item_id, writes FROM main.folder_files")?;
+    let mut rows = statement.query([])?;
+    while let Some(row) = rows.next()? {
+        let writes: Value = serde_json::from_str(&row.get::<_, String>(1)?).unwrap_or(Value::Null);
+        let changes = writes["refused"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|refused| serde_json::from_value(refused["change"].clone()).ok());
+        recorded.entry(row.get(0)?).or_default().extend(changes);
+    }
+    Ok(recorded)
+}
+
+/// The items whose placement the folder recorded as refused.
+#[cfg(unix)]
+fn refused_placements(conn: &Connection) -> Result<HashSet<String>, CoreError> {
+    let Some(record) = meta_get(conn, crate::folder::placement::META_REFUSED)? else {
+        return Ok(HashSet::new());
+    };
+    let record: Value = serde_json::from_str(&record).unwrap_or(Value::Null);
+    Ok(record["placements"]
+        .as_object()
+        .map(|placements| placements.keys().cloned().collect())
+        .unwrap_or_default())
+}
+
+/// Whether the folder has recorded the refusal of `row`: against the file of
+/// the item it changes, as a file's refusal is recorded, or as a refused
+/// placement of this folder. A delete of an edge refused as already gone
+/// did what it asked, so it is recorded wherever it is.
+#[cfg(unix)]
+fn recorded_refusal(
+    row: &HeldAnswer,
+    files: &HashMap<String, Vec<crate::folder::state::Change>>,
+    placements: &HashSet<String>,
+    folder: Option<&str>,
+) -> bool {
+    use crate::catalog::End;
+    use crate::folder::state::{Change, Line};
+    let item = row.item_id.as_deref();
+    let target = row.target_id.as_deref();
+    let kind = row.kind.as_str();
+    let edge_write = [
+        WriteKind::CreateEdge.as_str(),
+        WriteKind::UpdateEdge.as_str(),
+        WriteKind::DeleteEdge.as_str(),
+    ]
+    .contains(&kind);
+    if kind == WriteKind::DeleteEdge.as_str() && row.reason.as_deref() == Some("edge_not_found") {
+        return true;
+    }
+    if edge_write
+        && target.is_some()
+        && target == folder
+        && item.is_some_and(|item| placements.contains(item))
+    {
+        return true;
+    }
+    let records = |at: Option<&str>, change: &dyn Fn(&Change) -> bool| {
+        at.and_then(|item| files.get(item))
+            .is_some_and(|changes| changes.iter().any(change))
+    };
+    let tag = || row.tag.clone().unwrap_or_default();
+    if kind == WriteKind::UpdateItem.as_str() {
+        return records(item, &|change| *change == Change::Edit);
+    }
+    if kind == WriteKind::AddTag.as_str() {
+        return records(item, &|change| *change == Change::AddTag(tag()));
+    }
+    if kind == WriteKind::RemoveTag.as_str() {
+        return records(item, &|change| *change == Change::RemoveTag(tag()));
+    }
+    if kind == WriteKind::TransitionItem.as_str() {
+        let Ok(state) = serde_json::from_value(row.payload["state"].clone()) else {
+            return false;
+        };
+        return records(item, &|change| *change == Change::State(state));
+    }
+    let (Some(source), Some(target)) = (item, target) else {
+        return false;
+    };
+    if kind == WriteKind::UpdateEdge.as_str() {
+        // A move names only the end it moves; the edge's type is in the copy
+        // the replacement does not keep, so any line to the same place matches.
+        let moved = match (
+            row.payload["source_id"].as_str(),
+            row.payload["target_id"].as_str(),
+        ) {
+            (None, Some(to)) => Some((source, End::Source, to)),
+            (Some(to), None) => Some((target, End::Target, to)),
+            _ => None,
+        };
+        return moved.is_some_and(|(at, end, to)| {
+            records(Some(at), &|change| {
+                matches!(change, Change::Edge { line, shown: true } if line.end == end && line.other == to)
+            })
+        });
+    }
+    if !edge_write {
+        return false;
+    }
+    let Some(edge_type) = row.payload["edge_type"].as_str() else {
+        return false;
+    };
+    let shown = kind == WriteKind::CreateEdge.as_str();
+    [(source, End::Source, target), (target, End::Target, source)]
+        .into_iter()
+        .any(|(at, end, other)| {
+            let line = Line {
+                edge_type: edge_type.to_string(),
+                end,
+                other: other.to_string(),
+            };
+            records(Some(at), &|change| {
+                *change
+                    == Change::Edge {
+                        line: line.clone(),
+                        shown,
+                    }
+            })
+        })
 }
 
 /// The writes in the queue that a folder's file state names as waiting on
@@ -3699,8 +3885,11 @@ pub fn let_go_of_untaken_edge(conn: &Connection, id: &str) -> Result<bool, CoreE
     forget_edge(conn, id)
 }
 
+/// The start of the meta key that remembers a pinned row's purge.
+pub(crate) const PURGED_PIN: &str = "purged_pin/";
+
 fn purged_key(id: &str) -> String {
-    format!("purged_pin/{id}")
+    format!("{PURGED_PIN}{id}")
 }
 
 pub fn purged(conn: &Connection, id: &str) -> Result<bool, CoreError> {

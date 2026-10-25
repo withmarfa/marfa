@@ -386,7 +386,7 @@ When machines follow the same `system.folder`, a device MUST keep each machine�
 
 ## A store another build made
 
-A folder's store holds a copy of the server's rows, the writes still to be sent, and the folder's record of its files: which file is which item, what the folder last read and wrote there, which files went missing, and which writes the server refused. Where the store holds no write still to be sent and no answer the folder has yet to record, a hydration brings the copy back and the record carried into the new store keeps each file where it was (`folders/refused-store-record-kept`), so this build can replace a store that another build of the core made (`device/wrong-schema`) without losing anything.
+A folder's store holds a copy of the server's rows, the writes still to be sent, and the folder's record of its files: which file is which item, what the folder last read and wrote there, which files went missing, which writes and placements the server refused, and which items were purged. An answer the folder has yet to record is an answer a file's state still waits on, or a write the server refused or gave up on that the folder has not recorded against a file or a placement. Where the store holds no write still to be sent and no answer the folder has yet to record, a hydration brings the copy back and the record carried into the new store keeps each file where it was (`folders/refused-store-record-kept`), so this build can replace a store that another build of the core made (`device/wrong-schema`) without losing anything.
 
 ### `folders/refused-store-replaced`
 
@@ -458,6 +458,14 @@ When a device syncs a folder whose store it replaced, a device MUST keep holding
 
 **Tests:** `device/folders-refused-store-live.test.ts › keeps holding a file the server refused because its note is in the bin, and sends no new note`.
 
+### `folders/refused-store-purge-kept`
+
+When a device syncs a folder whose store it replaced, a device MUST report as waiting for removal the unchanged file of each item purged before the replacement, rather than as a file bound to an item the copy no longer holds.
+
+**Reason:** a purged item is gone for good, so a hydration cannot bring back the record that it was purged.
+
+**Tests:** `device/folders-identity.test.ts › takes away at confirm the file of an item purged before another build's store was replaced`.
+
 ### `folders/refused-store-replaced-told`
 
 When the CLI replaces a folder's store, the CLI MUST say on standard error which folder's store it replaced and why it refused the store.
@@ -490,7 +498,7 @@ If a device refuses a folder's store `wrong_schema` and the store holds a write 
 
 **Reason:** only the build that made the store can send those writes or record those answers (`device/wrong-schema-no-delete`).
 
-**Tests:** `device/folders-refused-store-live.test.ts › leaves a folder's store another build made, and the folder's files, while it holds writes the server has not taken`, `› leaves a folder's store another build made whose unsent writes cannot be counted`.
+**Tests:** `device/folders-refused-store-live.test.ts › leaves a folder's store another build made, and the folder's files, while it holds writes the server has not taken`, `› leaves a folder's store another build made while it holds a delete the server gave up on that no file records, and the folder's files`, `› leaves a folder's store another build made whose unsent writes cannot be counted`.
 
 ### `folders/refused-store-uncarried`
 
@@ -504,13 +512,21 @@ If a device refuses a folder's store `wrong_schema` and the store holds the fold
 
 When a device refuses a folder's store `wrong_schema` without replacing it, a device MUST leave the store's file and every file in the folder unchanged.
 
-**Tests:** `device/folders-refused-store-live.test.ts › leaves a folder's store another build made, and the folder's files, while it holds writes the server has not taken`, `› leaves a folder's store another build made whose unsent writes cannot be counted`, `› watches every folder: replaces a refused store that holds nothing unsent, and leaves one that does`, `› leaves a refused store that names no folder until the folder is added again, which replaces it`, `› leaves a refused store whose record of its files is of another shape, and says to remove the folder with the build that made it`.
+**Tests:** `device/folders-refused-store-live.test.ts › leaves a folder's store another build made, and the folder's files, while it holds writes the server has not taken`, `› leaves a folder's store another build made while it holds a delete the server gave up on that no file records, and the folder's files`, `› leaves a folder's store another build made whose unsent writes cannot be counted`, `› watches every folder: replaces a refused store that holds nothing unsent, and leaves one that does`, `› leaves a refused store that names no folder until the folder is added again, which replaces it`, `› leaves a refused store whose record of its files is of another shape, and says to remove the folder with the build that made it`.
 
 ### `folders/refused-store-unsent-advice`
 
 When a device refuses a folder's store `wrong_schema` because it holds a write still to be sent or an answer the folder has yet to record, a device MUST say to push the folder with the build that made the store.
 
-**Tests:** `device/folders-refused-store-live.test.ts › leaves a folder's store another build made, and the folder's files, while it holds writes the server has not taken`.
+**Tests:** `device/folders-refused-store-live.test.ts › leaves a folder's store another build made, and the folder's files, while it holds writes the server has not taken`, `› leaves a folder's store another build made while it holds a delete the server gave up on that no file records, and the folder's files`.
+
+### `folders/refused-store-unrecorded-advice`
+
+When a device refuses a folder's store `wrong_schema` because it holds a write still to be sent or an answer the folder has yet to record, a device MUST say that a write the server refused or gave up on that a push leaves goes only when the folder is removed with the build that made the store and added again.
+
+**Reason:** a push sends no write the server refused or gave up on again, so the store goes on holding it, and this build cannot open the store to remove the folder.
+
+**Tests:** `device/folders-refused-store-live.test.ts › leaves a folder's store another build made while it holds a delete the server gave up on that no file records, and the folder's files`.
 
 ### `folders/refused-store-uncounted-advice`
 

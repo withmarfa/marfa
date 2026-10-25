@@ -352,6 +352,76 @@ it("leaves a folder's store another build made, and the folder's files, while it
   );
 });
 
+it("leaves a folder's store another build made while it holds a delete the server gave up on that no file records, and the folder's files", async () => {
+  const at = machine("refused-store-dead");
+  const own = ownTag("dead");
+  const title = `Dead ${ctx.runId}`;
+  const folder = await added(
+    at,
+    "notes",
+    own.query,
+    {
+      "Dead.md": note(title, "body"),
+      "Stays.md": note(`Stays dead ${ctx.runId}`, "body"),
+    },
+    own.defaults,
+  );
+  value(await folder.push());
+  rmSync(join(folder.dir, "Dead.md"));
+  expect(value(await folder.scan()).missing).toBe(1);
+  await pastRenameGrace();
+  value(await folder.scan());
+  // A delete the server gave up on, as the build that made the store leaves
+  // one: its file is gone, so no file records it. The end of the note's
+  // placement, queued with it, was taken.
+  const db = new DatabaseSync(folder.store);
+  try {
+    const ended = db
+      .prepare(
+        "UPDATE queue SET verdict = 'accepted', answered_at = '2026-01-01T00:00:00.000Z' WHERE kind = 'delete_edge' AND verdict IS NULL",
+      )
+      .run();
+    expect(Number(ended.changes)).toBe(1);
+    const marked = db
+      .prepare(
+        "UPDATE queue SET verdict = 'dead', reason = 'key_spent', answered_at = '2026-01-01T00:00:00.000Z' WHERE kind = 'delete_item' AND verdict IS NULL",
+      )
+      .run();
+    expect(Number(marked.changes)).toBe(1);
+  } finally {
+    db.close();
+  }
+  misshape(folder);
+  const files = filesOf(folder.dir);
+  const state = storeBytes(folder);
+
+  const refused = await exited(folder.hold(["folders", "push", folder.dir]));
+  expect(refused.exitCode(), refused.stderr).toBe(4);
+  expect(refused.stderr).toContain("wrong_schema");
+  expect(refused.stderr).toContain("It holds 1 write still to be sent");
+  expect(refused.stderr).toContain(
+    "gave up on that the push leaves goes only with the folder: with the build that made the store, remove the folder",
+  );
+  expect(refused.stderr).toContain("marfa folders remove");
+  expect(refused.stderr).not.toContain(REPLACED);
+  expect(filesOf(folder.dir)).toEqual(files);
+  expect(storeBytes(folder)).toBe(state);
+  expect(await serverNote(title)).toBeDefined();
+
+  // The witness: the same store, its delete marked taken, is replaced.
+  const taken = new DatabaseSync(folder.store);
+  try {
+    taken.exec(
+      "UPDATE queue SET verdict = 'accepted' WHERE kind = 'delete_item'",
+    );
+  } finally {
+    taken.close();
+  }
+  const push = await exited(folder.hold(["folders", "push", folder.dir]));
+  expect(push.exitCode(), push.stderr).toBe(0);
+  expect(push.stderr).toContain(REPLACED);
+});
+
 it("replaces a folder's refused store for a watch of the folder, and sends an edit", async () => {
   const at = machine("refused-store-watch");
   const title = `Watched ${ctx.runId}`;

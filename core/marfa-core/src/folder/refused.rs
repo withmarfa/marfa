@@ -15,12 +15,21 @@ use crate::lock::WriterLock;
 use crate::{Core, CoreError, FolderStore, Handle, Result, Server, store};
 
 /// Whether the meta key `key` is one the folder records of itself and no
-/// hydration brings back: every key a folder sets starts `folder_`, and the
+/// hydration brings back: every key a folder sets starts `folder_`; the
 /// server the store was filled from goes with them, so the new store is
 /// filled from the same instance (`folders/refused-store-kept`,
-/// `folders/refused-store-origin-kept`).
+/// `folders/refused-store-origin-kept`); and so does each purge remembered
+/// of a pinned row, since no hydration brings a purged row back and only
+/// that record tells the folder its file goes (`folders/refused-store-purge-kept`).
+/// What else a hydration keeps no folder needs: the source a credential was
+/// learned to stamp, which is asked again; the file cache's budget, which
+/// only a device's own store is given; and what each write in the queue,
+/// which the replacement does not carry, needed.
 fn carried(key: &str) -> bool {
-    key.starts_with("folder_") || key == store::META_SERVER_ORIGIN || key == store::META_INSTANCE_ID
+    key.starts_with("folder_")
+        || key.starts_with(store::PURGED_PIN)
+        || key == store::META_SERVER_ORIGIN
+        || key == store::META_INSTANCE_ID
 }
 
 /// Opens the folder's store in `state` under `lock`. A store this build
@@ -72,7 +81,7 @@ pub(super) fn recorded(state: &Directory) -> Result<(Option<String>, bool)> {
 mod tests {
     use std::path::{Path, PathBuf};
 
-    use super::super::{Folder, STATE_DIR, settings_file};
+    use super::super::{Folder, STATE_DIR, settings_file, state};
     use crate::{Core, CoreError, FolderStore, store};
 
     const FOLDER: &str = "01a00000-0000-7000-8000-000000000001";
@@ -333,6 +342,233 @@ mod tests {
              INSERT INTO queue (id, kind, item_id, idempotency_key, payload, depends_on, verdict, queued_at, answered_at)
                VALUES ('edit', 'update_item', 'note', 'edit', '{{}}', '[]', '{verdict}', '2026-01-01T00:00:00Z', '2026-01-01T00:00:01Z');"
         )
+    }
+
+    /// A write in the queue answered `verdict`, of `kind` to the item
+    /// `item`, with the columns and payload `extra` names.
+    fn answered(id: &str, kind: &str, verdict: &str, extra: &[(&str, &str)]) -> String {
+        let mut columns = vec!["id", "kind", "item_id", "idempotency_key", "depends_on"];
+        let mut values = vec![
+            format!("'{id}'"),
+            format!("'{kind}'"),
+            "'note'".to_string(),
+            format!("'{id}'"),
+            "'[]'".to_string(),
+        ];
+        let mut payload = "{}".to_string();
+        for (column, value) in extra {
+            if *column == "payload" {
+                payload = (*value).to_string();
+            } else {
+                columns.push(column);
+                values.push(format!("'{value}'"));
+            }
+        }
+        format!(
+            "INSERT INTO queue ({}, payload, verdict, queued_at, answered_at)
+               VALUES ({}, '{payload}', '{verdict}', '2026-01-01T00:00:00Z', '2026-01-01T00:00:01Z');",
+            columns.join(", "),
+            values.join(", ")
+        )
+    }
+
+    /// The file `Note.md`, bound to the item `note`, recording `refused`.
+    fn bound_recording(refused: &[state::Refused]) -> String {
+        let writes = state::Writes {
+            save: 2,
+            refused: refused.to_vec(),
+            ..Default::default()
+        };
+        format!(
+            "INSERT INTO folder_files (path, item_id, content_hash, links, edge_lines, writes, seen_at)
+               VALUES ('Note.md', 'note', 'h', '[]', '[]', '{}', '2026-01-01T00:00:00Z');",
+            serde_json::to_string(&writes).unwrap()
+        )
+    }
+
+    fn refused_with(dir: &Path) -> CoreError {
+        Folder::open(dir, None)
+            .err()
+            .expect("the store was replaced")
+    }
+
+    fn unsent_of(error: &CoreError) -> Option<u64> {
+        match error {
+            CoreError::WrongSchema { unsent, .. } => *unsent,
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_refused_or_dead_write_the_folder_has_not_recorded_keeps_its_store_refused() {
+        // A delete clears the file's binding when it is queued, and a tag or
+        // metadata write names no file: nothing but the queue holds them.
+        for (kind, verdict, extra) in [
+            ("delete_item", "dead", vec![]),
+            ("delete_item", "refused", vec![]),
+            ("add_tag", "dead", vec![("tag", "kept")]),
+            ("add_tag", "refused", vec![("tag", "kept")]),
+            ("replace_metadata", "refused", vec![]),
+        ] {
+            let row = answered("unrecorded", kind, verdict, &extra);
+            let (dir, path) = refused_folder(true, &format!("{RECORD} {row}"));
+            let before = std::fs::read(&path).unwrap();
+            let refused = refused_with(dir.path());
+            assert_eq!(
+                unsent_of(&refused),
+                Some(1),
+                "{kind} {verdict}: {refused:?}"
+            );
+            assert!(
+                refused.to_string().contains("marfa folders remove"),
+                "{refused}"
+            );
+            assert_eq!(std::fs::read(&path).unwrap(), before, "{kind} {verdict}");
+
+            // The witness: the same write taken by the server is replaced.
+            let row = answered("taken", kind, "accepted", &extra);
+            let (dir, _) = refused_folder(true, &format!("{RECORD} {row}"));
+            assert!(
+                Folder::open(dir.path(), None)
+                    .unwrap()
+                    .replaced_store()
+                    .is_some(),
+                "{kind}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_refused_write_the_folder_recorded_against_its_file_does_not_keep_its_store_refused() {
+        let line = state::Line {
+            edge_type: "references".into(),
+            end: crate::catalog::End::Source,
+            other: "other".into(),
+        };
+        let edge = "{\"edge_type\":\"references\",\"source_id\":\"note\",\"target_id\":\"other\"}"
+            .to_string();
+        let moved = "{\"target_id\":\"other\"}".to_string();
+        for (kind, extra, change) in [
+            (
+                "add_tag",
+                vec![("tag", "kept")],
+                state::Change::AddTag("kept".into()),
+            ),
+            (
+                "remove_tag",
+                vec![("tag", "kept")],
+                state::Change::RemoveTag("kept".into()),
+            ),
+            (
+                "transition_item",
+                vec![("payload", "{\"state\":\"archived\"}")],
+                state::Change::State(crate::model::ItemState::Archived),
+            ),
+            (
+                "create_edge",
+                vec![("target_id", "other"), ("payload", edge.as_str())],
+                state::Change::Edge {
+                    line: line.clone(),
+                    shown: true,
+                },
+            ),
+            (
+                "delete_edge",
+                vec![("target_id", "other"), ("payload", edge.as_str())],
+                state::Change::Edge {
+                    line: line.clone(),
+                    shown: false,
+                },
+            ),
+            (
+                "update_edge",
+                vec![
+                    ("target_id", "was"),
+                    ("edge_id", "e"),
+                    ("payload", moved.as_str()),
+                ],
+                state::Change::Edge {
+                    line: line.clone(),
+                    shown: true,
+                },
+            ),
+        ] {
+            let recorded = state::Refused {
+                change: change.clone(),
+                save: 2,
+                reason: "validation_error".into(),
+            };
+            let row = answered("refused", kind, "refused", &extra);
+            let (dir, _) = refused_folder(true, &format!("{} {row}", bound_recording(&[recorded])));
+            assert!(
+                Folder::open(dir.path(), None)
+                    .map(|folder| folder.replaced_store().is_some())
+                    .unwrap_or_else(|error| panic!("{kind}: {error:?}")),
+                "{kind}"
+            );
+
+            // The witness: the file records another refusal, so this one is
+            // the queue's alone.
+            let other = state::Refused {
+                change: state::Change::AddTag("another".into()),
+                save: 2,
+                reason: "validation_error".into(),
+            };
+            let (dir, _) = refused_folder(true, &format!("{} {row}", bound_recording(&[other])));
+            assert_eq!(unsent_of(&refused_with(dir.path())), Some(1), "{kind}");
+        }
+    }
+
+    #[test]
+    fn a_placement_refusal_the_folder_has_recorded_does_not_keep_its_store_refused() {
+        let placement = answered(
+            "placed",
+            "create_edge",
+            "refused",
+            &[
+                ("target_id", FOLDER),
+                (
+                    "payload",
+                    "{\"edge_type\":\"in-folder\",\"properties\":{\"path\":\"Note.md\"}}",
+                ),
+            ],
+        );
+        let record = "INSERT INTO meta (key, value) VALUES ('folder_placements_refused',
+            '{\"key\":null,\"settings\":1,\"placements\":{\"note\":{\"path\":\"Note.md\",\"at\":null}}}');";
+        let (dir, path) = refused_folder(true, &format!("{RECORD} {placement} {record}"));
+        assert!(
+            Folder::open(dir.path(), None)
+                .unwrap()
+                .replaced_store()
+                .is_some()
+        );
+        assert_eq!(
+            read(
+                &path,
+                "SELECT value FROM meta WHERE key = 'folder_placements_refused'"
+            )
+            .len(),
+            1
+        );
+
+        // The witness: a placement refused as made over another machine's
+        // stays in the queue until the folder gives way, recorded nowhere else.
+        let (dir, _) = refused_folder(true, &format!("{RECORD} {placement}"));
+        assert_eq!(unsent_of(&refused_with(dir.path())), Some(1));
+    }
+
+    #[test]
+    fn a_replaced_store_keeps_the_purge_of_a_bound_item() {
+        let purged = "INSERT INTO meta (key, value) VALUES ('purged_pin/note', 'true');";
+        let (dir, path) = refused_folder(true, &format!("{RECORD} {purged}"));
+        let folder = Folder::open(dir.path(), None).unwrap();
+        assert!(folder.replaced_store().is_some());
+        assert!(store::purged(&folder.core().conn().unwrap(), "note").unwrap());
+        drop(folder);
+        assert_eq!(
+            read(&path, "SELECT key FROM meta WHERE key LIKE 'purged_pin/%'"),
+            ["purged_pin/note"]
+        );
     }
 
     #[test]
