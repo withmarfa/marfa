@@ -1276,6 +1276,84 @@ When a create names tags, a device MUST queue each tag as a write of its own tha
 
 **Tests:** `device/local-refusals.test.ts › refuses a local create whose tags and edges it cannot queue`, `device/queue.test.ts › queues an edge, a tag and an extension as writes of their own`.
 
+### `device/create-fields-one-write`
+
+When a create names a `state`, a capture location or `edges`, a device MUST queue them in the body of the one write that creates the item.
+
+**Reason:** the server takes all three in one create (`items/initial-state`, `items/capture-coordinates` and `edges/inline-create`), and a write of their own for the edges would let one verdict answer for the item and another for its edges.
+
+**Tests:** `device/item-fields-live.test.ts › drains a draft carrying a state, a capture location and edges as one write`.
+
+### `device/create-fields-shown`
+
+While a create that names a `state`, a capture location or `edges` waits in the queue, a device MUST answer the item with that state and location, and answer an edge from it to each target listed.
+
+**Tests:** `device/item-fields-live.test.ts › drains a draft carrying a state, a capture location and edges as one write`, `device/item-fields-live.test.ts › refuses a create the server would refuse for its state, location or edges before it is queued`.
+
+### `device/create-edges-replaced`
+
+When the server accepts a create that names `edges`, a device MUST hold each edge the server answered with in place of the edge it showed for the same type and target while the create waited.
+
+**Reason:** the server gives the edges it makes ids of its own, so a device that kept both would hold each edge twice.
+
+**Tests:** `device/item-fields-live.test.ts › drains a draft carrying a state, a capture location and edges as one write`, `device/item-fields-live.test.ts › keeps a drawn edge the server's answer cuts off until a read brings the server's own`.
+
+### `device/create-edges-kept-short`
+
+When the server accepts a create that names `edges` and its answer carries no block for an edge type, or a block with a `next_cursor` that leaves out a target the create named, a device MUST keep answering the edge it showed to that target until a read brings the server's edge to it.
+
+**Reason:** a block of an item's edges carries at most 50 edges and a cursor for the rest (`edges/hydrate-cap` and `edges/hydrate-cursor`), so an edge left out of a cut block was made; dropping the one shown would answer the item with fewer edges than it has.
+
+**Tests:** `device/item-fields-live.test.ts › keeps a drawn edge the server's answer cuts off until a read brings the server's own`.
+
+### `device/create-edges-refused-whole`
+
+If the server refuses a create that names `edges`, then a device MUST keep the write in the queue as refused with its body and answer neither the item nor any edge shown for it.
+
+**Reason:** the server makes neither the item nor any of its edges (`edges/inline-refused-no-item`), and what the person made stays where they can read it back.
+
+**Tests:** `device/item-fields-live.test.ts › keeps a draft whose edges name a missing item, refused whole, and shows none of it`.
+
+### `device/create-fields-refused-local`
+
+If a create names the `revoked` state, a capture coordinate that is not a finite number, or an edge type or a target that the server would refuse as malformed, then a device MUST refuse it before it queues anything, carrying the code the server refuses it with.
+
+**Tests:** `device/item-fields-live.test.ts › refuses a create the server would refuse for its state, location or edges before it is queued`.
+
+### `device/edit-occurred-at`
+
+When an edit names an `occurred_at`, a device MUST queue it and answer the item with it at once.
+
+**Tests:** `device/item-fields-live.test.ts › sets and clears an item's own time through an edit`.
+
+### `device/edit-occurred-at-clear`
+
+When an edit asks to clear the `occurred_at` of an item the server holds, a device MUST queue the item's `created_at` as its `occurred_at` and answer the item with it at once.
+
+**Reason:** the server holds no empty `occurred_at`, and an item with none of its own is placed at its creation time (`items/occurred-at-default`).
+
+**Tests:** `device/item-fields-live.test.ts › sets and clears an item's own time through an edit`.
+
+### `device/edit-occurred-at-clear-unsent`
+
+When an edit asks to clear the `occurred_at` of an item whose create waits unsent, a device MUST leave `occurred_at` out of the create and of every edit of the item waiting unsent, and answer the item with the time the create was queued as its `occurred_at`.
+
+**Reason:** the server places a create with no `occurred_at` at its own creation time (`items/occurred-at-default`), which the device does not know until the create is answered; sending any earlier time in its place would set a time the person asked to clear.
+
+**Tests:** `device/item-fields-live.test.ts › clears the own time of an item whose create still waits to the server's creation time`.
+
+### `device/edit-occurred-at-exclusive`
+
+If an edit both names an `occurred_at` and asks to clear it, then a device MUST refuse it before it is queued.
+
+**Tests:** `device/item-fields-live.test.ts › refuses an edit that names an occurred_at and clears it`.
+
+### `device/item-capture-location`
+
+A device MUST answer an item with the capture location the server holds for it.
+
+**Tests:** `device/item-fields-live.test.ts › reads a capture location from the copy as the server holds it`.
+
 ### `device/edit-undeclared-sent`
 
 When an edit names a property its type does not declare, a device MUST send that property.
@@ -1453,6 +1531,70 @@ When a local list names `occurred_after` or `occurred_before`, a device MUST lea
 When a local list names one time bound, a device MUST narrow by that bound alone.
 
 **Tests:** `device/working-copy.test.ts › takes each bound on its own`.
+
+### `device/list-source`
+
+When a local list names a `source`, a device MUST answer only the rows stamped with that source.
+
+**Reason:** the server's listing narrows the same way (`search-and-filters/source-narrows`).
+
+**Tests:** `device/item-fields-live.test.ts › lists by source as the server does`.
+
+### `device/list-updated-range`
+
+When a local list names `updated_after` or `updated_before`, a device MUST answer only the rows whose `updated_at` is at or after the `updated_after` bound and before the `updated_before` bound, narrowing by one bound alone when only one is named.
+
+**Tests:** `device/item-fields-live.test.ts › lists by a change-time range as the server does, from either end`.
+
+### `device/list-updated-after-order`
+
+When a local list names `updated_after` and no sort, a device MUST order it by `updated_at` and then id, ascending.
+
+**Reason:** the server answers the same (`search-and-filters/updated-after-order`).
+
+**Tests:** `device/item-fields-live.test.ts › lists by a change-time range as the server does, from either end`.
+
+### `device/list-updated-after-sort`
+
+If a local list names `updated_after` with a sort field other than `updated_at` or a direction other than ascending, then a device MUST refuse it `validation`, carrying `validation_error`.
+
+**Reason:** the server answers the same (`search-and-filters/updated-after-order`).
+
+**Tests:** `device/item-fields-live.test.ts › lists by a change-time range as the server does, from either end`.
+
+### `device/list-updated-after-half`
+
+When a local list names `updated_after` with only a sort field of `updated_at` or only an ascending direction, a device MUST answer it in the order `device/list-updated-after-order` names.
+
+**Reason:** the server takes either half alone (`search-and-filters/updated-after-order`), and a device that needed both would refuse a list the server answers.
+
+**Tests:** `device/item-fields-live.test.ts › lists by a change-time range as the server does, from either end`.
+
+### `device/search-tier`
+
+When a local search names a `tier`, a device MUST answer only the rows at that tier.
+
+**Reason:** the server's search narrows the same way (`search-and-filters/tier-narrows`).
+
+**Tests:** `device/item-fields-live.test.ts › searches by tier as the server does`.
+
+### `device/search-own-time`
+
+When a local search names `occurred_after` or `occurred_before`, a device MUST answer only the rows whose own time is after the `occurred_after` bound and before the `occurred_before` bound, narrowing by one bound alone when only one is named.
+
+**Tests:** `device/item-fields-live.test.ts › narrows a list and a search by a range of own time from either end, leaving both bounds out`.
+
+### `device/sort-property`
+
+When a local list names the sort `properties.<field>`, a device MUST order the rows as the server does for the same sort (`search-and-filters/sort-property`): numbers and booleans first, strings after, rows whose property is missing, null, an object or an array last in either direction, and equal values by id ascending in both directions.
+
+**Tests:** `device/item-fields-live.test.ts › sorts by a property in the server's order, missing, numeric, text, boolean and tied`.
+
+### `device/sort-property-invalid`
+
+If a local list names the sort `properties.<field>` with a field outside `^[a-z0-9_]+$`, then a device MUST refuse it `validation`, carrying `validation_error`.
+
+**Tests:** `device/item-fields-live.test.ts › refuses a property sort the server's grammar refuses`.
 
 ### `device/time-bound-server`
 

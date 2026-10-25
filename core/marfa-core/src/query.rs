@@ -3,15 +3,16 @@ use serde_json::Value;
 
 use crate::Result;
 use crate::catalog::Catalog;
+use crate::error::CoreError;
 use crate::filter;
-use crate::model::{Item, ListFilters, Sort};
+use crate::model::{Item, ListFilters, Sort, SortField};
 use crate::store::{self, Unreadable};
 
 pub(crate) fn list(
     conn: &Connection,
     catalog: &Catalog,
     filters: &ListFilters,
-    sort: Sort,
+    sort: Option<Sort>,
 ) -> Result<Vec<Item>> {
     list_with(conn, catalog, filters, sort, &mut Unreadable::Refuse)
 }
@@ -20,11 +21,12 @@ pub(crate) fn list_with(
     conn: &Connection,
     catalog: &Catalog,
     filters: &ListFilters,
-    sort: Sort,
+    sort: Option<Sort>,
     unreadable: &mut Unreadable,
 ) -> Result<Vec<Item>> {
     let mut clauses: Vec<String> = Vec::new();
     let mut values: Vec<Value> = Vec::new();
+    let sort = ordered(filters, sort)?;
 
     narrow_by_type(
         catalog,
@@ -44,20 +46,31 @@ pub(crate) fn list_with(
         clauses.push("tier = ?".into());
         values.push(Value::String(tier.as_str().into()));
     }
+    if let Some(source) = &filters.source {
+        clauses.push("source = ?".into());
+        values.push(Value::String(source.clone()));
+    }
     narrow_by_tags(&filters.tags, &mut clauses, &mut values);
-    // Both ends exclusive, as on the server.
-    if let Some(after) = &filters.occurred_after {
-        clauses.push("occurred_at > ?".into());
+    narrow_by_own_time(
+        filters.occurred_after.as_deref(),
+        filters.occurred_before.as_deref(),
+        &mut clauses,
+        &mut values,
+    )?;
+    // The lower end is inclusive, so a caller resuming from the latest
+    // `updated_at` it holds misses no row that shares the instant.
+    if let Some(after) = &filters.updated_after {
+        clauses.push("updated_at >= ?".into());
         values.push(Value::String(crate::time::normalize(
             after,
-            "occurred_after",
+            "updated_after",
         )?));
     }
-    if let Some(before) = &filters.occurred_before {
-        clauses.push("occurred_at < ?".into());
+    if let Some(before) = &filters.updated_before {
+        clauses.push("updated_at < ?".into());
         values.push(Value::String(crate::time::normalize(
             before,
-            "occurred_before",
+            "updated_before",
         )?));
     }
     filter::narrow(
@@ -76,6 +89,47 @@ pub(crate) fn list_with(
         filters.offset,
         unreadable,
     )
+}
+
+/// The order a list is answered in. A named `updated_after` orders by
+/// `updated_at` and then id, ascending, the only order a caller can resume
+/// from, so a list naming another is refused, as the server refuses it.
+fn ordered(filters: &ListFilters, sort: Option<Sort>) -> Result<Sort> {
+    match (sort, filters.updated_after.is_some()) {
+        (None, true) => Ok(Sort::RESUMED),
+        (None, false) => Ok(Sort::default()),
+        (Some(sort), true) if sort != Sort::RESUMED => Err(CoreError::Validation {
+            code: "validation_error".into(),
+            message: "updated_after orders by updated_at, ascending; leave out sort and direction"
+                .into(),
+        }),
+        (Some(sort), _) => Ok(sort),
+    }
+}
+
+/// Both ends exclusive, as on the server: the row sitting on a bound is left
+/// out. One end alone narrows by that end.
+pub(crate) fn narrow_by_own_time(
+    after: Option<&str>,
+    before: Option<&str>,
+    clauses: &mut Vec<String>,
+    values: &mut Vec<Value>,
+) -> Result<()> {
+    if let Some(after) = after {
+        clauses.push("items.occurred_at > ?".into());
+        values.push(Value::String(crate::time::normalize(
+            after,
+            "occurred_after",
+        )?));
+    }
+    if let Some(before) = before {
+        clauses.push("items.occurred_at < ?".into());
+        values.push(Value::String(crate::time::normalize(
+            before,
+            "occurred_before",
+        )?));
+    }
+    Ok(())
 }
 
 pub(crate) fn list_where(
@@ -111,12 +165,28 @@ pub(crate) fn list_where_with(
     } else {
         clauses.join(" AND ")
     };
-    let order_sql = format!(
-        "ORDER BY {} {}, id {}",
-        sort.field.as_str(),
-        sort.direction.as_sql(),
-        sort.direction.as_sql()
-    );
+    // The name is spliced into the SQL path, so it is held to the grammar
+    // here whoever built the sort.
+    if let SortField::Property(name) = &sort.field {
+        SortField::property(name)?;
+    }
+    let order_sql = match &sort.field {
+        // Rows with no scalar there go last in either direction, and ties
+        // fall to the id ascending in both, as on the server
+        // (`search-and-filters/sort-property-*`). A number is compared as a
+        // real, as the server compares it, and SQLite puts numbers before
+        // text, a boolean being 0 or 1.
+        SortField::Property(name) => format!(
+            "ORDER BY {expression} IS NULL, {expression} {}, id ASC",
+            sort.direction.as_sql(),
+            expression = property_sort_expression(name),
+        ),
+        field => format!(
+            "ORDER BY {field} {}, id {}",
+            sort.direction.as_sql(),
+            sort.direction.as_sql()
+        ),
+    };
     let limit_sql = match (limit, offset) {
         (None, None) => String::new(),
         (limit, offset) => format!(
@@ -126,6 +196,14 @@ pub(crate) fn list_where_with(
         ),
     };
     store::items_where(conn, &where_sql, &order_sql, &limit_sql, values, unreadable)
+}
+
+/// `name` is a property name `SortField::property` has checked, so it is
+/// safe inside the path.
+fn property_sort_expression(name: &str) -> String {
+    format!(
+        "CASE WHEN json_type(items.properties, '$.{name}') IN ('integer', 'real') THEN CAST(json_extract(items.properties, '$.{name}') AS REAL) WHEN json_type(items.properties, '$.{name}') IN ('text', 'true', 'false') THEN json_extract(items.properties, '$.{name}') ELSE NULL END"
+    )
 }
 
 /// A declared type and its subtree, by name and by declared parent, the
@@ -256,7 +334,7 @@ mod tests {
 
     fn ids(conn: &Connection, filters: ListFilters, sort: Sort) -> Vec<String> {
         let catalog = Catalog::load(conn).unwrap();
-        list(conn, &catalog, &filters, sort)
+        list(conn, &catalog, &filters, Some(sort))
             .unwrap()
             .into_iter()
             .map(|item| item.id)
@@ -323,7 +401,7 @@ mod tests {
             r#type: Some(String::new()),
             ..Default::default()
         };
-        let refused = list(&conn, &catalog, &filters, Sort::default()).unwrap_err();
+        let refused = list(&conn, &catalog, &filters, None).unwrap_err();
         assert!(matches!(
             refused,
             crate::error::CoreError::Validation { ref code, .. } if code == "validation_error"
@@ -387,11 +465,195 @@ mod tests {
             offset: Some(1),
             ..Default::default()
         };
-        assert_eq!(ids(&conn, filters, ascending), vec!["c", "d"]);
+        assert_eq!(ids(&conn, filters, ascending.clone()), vec!["c", "d"]);
         let filters = ListFilters {
             offset: Some(3),
             ..Default::default()
         };
         assert_eq!(ids(&conn, filters, ascending), vec!["f"]);
+    }
+
+    fn listed(conn: &Connection, filters: ListFilters, sort: Option<Sort>) -> Result<Vec<String>> {
+        let catalog = Catalog::load(conn).unwrap();
+        Ok(list(conn, &catalog, &filters, sort)?
+            .into_iter()
+            .map(|item| item.id)
+            .collect())
+    }
+
+    #[test]
+    fn a_source_selects_only_the_items_stamped_with_it() {
+        let conn = seeded();
+        let mut other = wire_item(
+            "g",
+            "core.note",
+            "active",
+            "2026-01-07T00:00:00.000Z",
+            json!({}),
+        );
+        other.source = "notes".into();
+        store::upsert_item(&conn, &other, None, &Indexing::default()).unwrap();
+        let only = |source: &str| {
+            let filters = ListFilters {
+                source: Some(source.into()),
+                ..Default::default()
+            };
+            listed(&conn, filters, None).unwrap()
+        };
+        assert_eq!(only("notes"), ["g"]);
+        assert_eq!(only("test"), ["f", "d", "c", "a"]);
+    }
+
+    #[test]
+    fn updated_after_keeps_its_bound_and_updated_before_leaves_its_own_out() {
+        let conn = seeded();
+        let range = |after: Option<&str>, before: Option<&str>| {
+            let filters = ListFilters {
+                all_states: true,
+                updated_after: after.map(Into::into),
+                updated_before: before.map(Into::into),
+                ..Default::default()
+            };
+            listed(&conn, filters, None).unwrap()
+        };
+        // Oldest change first, ties by id: the order a resumed sync reads in.
+        assert_eq!(range(Some("2026-01-04T00:00:00Z"), None), ["d", "e", "f"]);
+        // Alone, the upper bound leaves the default order, newest first.
+        assert_eq!(range(None, Some("2026-01-03T00:00:00Z")), ["b", "a"]);
+        assert_eq!(
+            range(Some("2026-01-02T00:00:00Z"), Some("2026-01-04T00:00:00Z")),
+            ["b", "c"]
+        );
+    }
+
+    #[test]
+    fn updated_after_refuses_another_order_but_takes_its_own() {
+        let conn = seeded();
+        let filters = || ListFilters {
+            updated_after: Some("2026-01-01T00:00:00Z".into()),
+            ..Default::default()
+        };
+        let refused = listed(&conn, filters(), Some(Sort::default())).unwrap_err();
+        assert!(matches!(
+            refused,
+            CoreError::Validation { ref code, .. } if code == "validation_error"
+        ));
+        let own = Sort {
+            field: SortField::UpdatedAt,
+            direction: SortDirection::Ascending,
+        };
+        assert_eq!(
+            listed(&conn, filters(), Some(own)).unwrap(),
+            ["a", "c", "d", "f"]
+        );
+        // Either half of its own order is taken alone, and either half of
+        // another refused, as the server takes and refuses them.
+        for (field, direction, taken) in [
+            (Some(SortField::UpdatedAt), None, true),
+            (None, Some(SortDirection::Ascending), true),
+            (Some(SortField::CreatedAt), None, false),
+            (None, Some(SortDirection::Descending), false),
+        ] {
+            let sort = Sort::named(field.clone(), direction, true);
+            assert_eq!(
+                listed(&conn, filters(), sort).is_ok(),
+                taken,
+                "{field:?} {direction:?}"
+            );
+        }
+        assert_eq!(Sort::named(None, None, true), None);
+        assert_eq!(
+            Sort::named(Some(SortField::UpdatedAt), None, false),
+            Some(Sort {
+                field: SortField::UpdatedAt,
+                direction: SortDirection::Descending,
+            })
+        );
+    }
+
+    #[test]
+    fn a_range_of_own_time_works_from_one_end_and_leaves_both_bounds_out() {
+        let conn = seeded();
+        let range = |after: Option<&str>, before: Option<&str>| {
+            let filters = ListFilters {
+                occurred_after: after.map(Into::into),
+                occurred_before: before.map(Into::into),
+                ..Default::default()
+            };
+            listed(&conn, filters, None).unwrap()
+        };
+        assert_eq!(range(Some("2026-01-03T00:00:00Z"), None), ["f", "d"]);
+        assert_eq!(range(None, Some("2026-01-03T00:00:00Z")), ["a"]);
+    }
+
+    fn with_property(conn: &Connection, id: &str, properties: serde_json::Value) {
+        let item = wire_item(
+            id,
+            "core.note",
+            "active",
+            "2026-02-01T00:00:00.000Z",
+            properties,
+        );
+        store::upsert_item(conn, &item, None, &Indexing::default()).unwrap();
+    }
+
+    fn by_property(conn: &Connection, direction: SortDirection) -> Vec<String> {
+        let filters = ListFilters {
+            tier: Some(Tier::Library),
+            occurred_after: Some("2026-01-31T00:00:00Z".into()),
+            ..Default::default()
+        };
+        let sort = Sort {
+            field: SortField::property("n").unwrap(),
+            direction,
+        };
+        listed(conn, filters, Some(sort)).unwrap()
+    }
+
+    #[test]
+    fn a_property_sort_puts_numbers_then_text_then_the_rest_with_ties_by_id() {
+        let conn = seeded();
+        for (id, properties) in [
+            ("n10", json!({ "n": 10 })),
+            ("n2b", json!({ "n": 2 })),
+            ("n2a", json!({ "n": 2.0 })),
+            ("yes", json!({ "n": true })),
+            ("no", json!({ "n": false })),
+            ("tb", json!({ "n": "b" })),
+            ("ta", json!({ "n": "a" })),
+            ("none", json!({})),
+            ("null", json!({ "n": null })),
+            ("list", json!({ "n": [1] })),
+        ] {
+            with_property(&conn, id, properties);
+        }
+        // Missing, null and non-scalar values go last in either direction,
+        // and equal values fall to the id ascending in both.
+        assert_eq!(
+            by_property(&conn, SortDirection::Ascending),
+            [
+                "no", "yes", "n2a", "n2b", "n10", "ta", "tb", "list", "none", "null"
+            ]
+        );
+        assert_eq!(
+            by_property(&conn, SortDirection::Descending),
+            [
+                "tb", "ta", "n10", "n2a", "n2b", "yes", "no", "list", "none", "null"
+            ]
+        );
+    }
+
+    #[test]
+    fn a_property_name_outside_the_servers_grammar_is_refused_before_it_reaches_the_sql() {
+        let conn = seeded();
+        assert!(SortField::property("a-b").is_err());
+        let sort = Sort {
+            field: SortField::Property("n') OR 1=1 --".into()),
+            direction: SortDirection::Ascending,
+        };
+        assert!(matches!(
+            listed(&conn, ListFilters::default(), Some(sort)).unwrap_err(),
+            CoreError::Validation { .. }
+        ));
     }
 }

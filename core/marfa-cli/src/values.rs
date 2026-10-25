@@ -108,14 +108,26 @@ impl From<ItemState> for marfa_core::ItemState {
     }
 }
 
-impl From<SortField> for marfa_core::SortField {
-    fn from(field: SortField) -> Self {
-        match field {
-            SortField::CreatedAt => marfa_core::SortField::CreatedAt,
-            SortField::UpdatedAt => marfa_core::SortField::UpdatedAt,
-            SortField::OccurredAt => marfa_core::SortField::OccurredAt,
-        }
+/// A sort field as typed on a device listing: the three times by their
+/// kebab names, or `properties.<name>`.
+pub fn parse_sort_field(text: &str) -> Result<marfa_core::SortField, String> {
+    match text {
+        "created-at" => Ok(marfa_core::SortField::CreatedAt),
+        "updated-at" => Ok(marfa_core::SortField::UpdatedAt),
+        "occurred-at" => Ok(marfa_core::SortField::OccurredAt),
+        other => other
+            .parse()
+            .map_err(|error: marfa_core::CoreError| error.to_string()),
     }
+}
+
+/// The edges of a create: edge type to target ids.
+pub fn edges(text: &str) -> Result<std::collections::BTreeMap<String, Vec<String>>, CliError> {
+    serde_json::from_str(text).map_err(|error| {
+        CliError::Invalid(format!(
+            "--edges takes a JSON object of edge type to a list of target ids: {error}"
+        ))
+    })
 }
 
 impl From<SortDirection> for marfa_core::SortDirection {

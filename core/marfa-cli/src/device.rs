@@ -13,7 +13,7 @@ use crate::interrupt::{stop_after, stop_on_interrupt};
 use crate::output;
 use crate::remote::{Named, Session, renewing};
 use crate::values::{
-    ItemState, SliceTier, SortDirection, SortField, Tier, item_properties, properties,
+    ItemState, SliceTier, SortDirection, Tier, edges, item_properties, parse_sort_field, properties,
 };
 
 #[derive(Debug, Args)]
@@ -172,9 +172,18 @@ pub enum DeviceCommand {
         /// A type identifier; its subtypes are included.
         #[arg(long = "type", value_name = "TYPE")]
         type_: Option<String>,
+        /// Only hits at this tier.
+        #[arg(long)]
+        tier: Option<Tier>,
         /// Hits must carry every tag given.
         #[arg(long = "tag", value_name = "TAG")]
         tags: Vec<String>,
+        /// Exclusive lower bound on the item's own time, RFC 3339.
+        #[arg(long = "occurred-after", value_name = "TIME")]
+        occurred_after: Option<String>,
+        /// Exclusive upper bound on the item's own time, RFC 3339.
+        #[arg(long = "occurred-before", value_name = "TIME")]
+        occurred_before: Option<String>,
         /// An expression in the server's listing grammar, answered as the
         /// server answers `filter`; a `backref` condition is refused unless the copy holds its edge type whole.
         #[arg(long, value_name = "EXPR")]
@@ -187,7 +196,7 @@ pub enum DeviceCommand {
         limit: usize,
         /// Only what this view's query selects; refused with a reason where
         /// the copy cannot answer the query whole.
-        #[arg(long, value_name = "ID", conflicts_with_all = ["state", "all_states", "type_", "tags", "filter", "beneath"])]
+        #[arg(long, value_name = "ID", conflicts_with_all = ["state", "all_states", "type_", "tier", "tags", "occurred_after", "occurred_before", "filter", "beneath"])]
         view: Option<String>,
     },
     /// Every queued write, the body it carries and what became of it.
@@ -684,6 +693,31 @@ pub struct CreateArgs {
     /// row's tier as it stands.
     #[arg(long)]
     pub tier: Option<Tier>,
+    /// The state to create it in; the default is active.
+    #[arg(long)]
+    pub state: Option<ItemState>,
+    /// Where it was captured: the latitude, in degrees. Needs `--capture-longitude`.
+    #[arg(
+        long,
+        value_name = "DEGREES",
+        requires = "capture_longitude",
+        allow_hyphen_values = true
+    )]
+    pub capture_latitude: Option<f64>,
+    /// Where it was captured: the longitude, in degrees. Needs `--capture-latitude`.
+    #[arg(
+        long,
+        value_name = "DEGREES",
+        requires = "capture_latitude",
+        allow_hyphen_values = true
+    )]
+    pub capture_longitude: Option<f64>,
+    /// Edges to make with it, as a JSON object of edge type to a list of
+    /// target ids. Queued and sent as one write with the item: if the server
+    /// refuses any, it makes none of them and the item stays in the queue as
+    /// refused.
+    #[arg(long, value_name = "JSON")]
+    pub edges: Option<String>,
     /// The source to stamp it with.
     #[arg(long)]
     pub source: Option<String>,
@@ -733,6 +767,13 @@ pub struct UpdateArgs {
     /// cleared rather than kept.
     #[arg(long)]
     pub replace: bool,
+    /// The item's own time, RFC 3339.
+    #[arg(long, value_name = "TIME", conflicts_with = "clear_occurred_at")]
+    pub occurred_at: Option<String>,
+    /// Give the item no time of its own again, so its own time is its
+    /// creation time.
+    #[arg(long)]
+    pub clear_occurred_at: bool,
 }
 
 #[derive(Debug, Args)]
@@ -765,12 +806,25 @@ pub struct ListArgs {
     /// Only this item and what it reaches along `parent-of` edges.
     #[arg(long, value_name = "ID")]
     pub beneath: Option<String>,
-    /// The time to order by.
-    #[arg(long, default_value = "created-at")]
-    pub sort: SortField,
-    /// Newest first, or oldest.
-    #[arg(long, default_value = "desc")]
-    pub direction: SortDirection,
+    /// Only the items stamped with this source.
+    #[arg(long)]
+    pub source: Option<String>,
+    /// Inclusive lower bound on the time the item was last changed, RFC 3339.
+    /// Orders the list by that time, then id, oldest first; another `--sort`
+    /// or `--direction` is refused with it.
+    #[arg(long = "updated-after", value_name = "TIME")]
+    pub updated_after: Option<String>,
+    /// Exclusive upper bound on the time the item was last changed, RFC 3339.
+    #[arg(long = "updated-before", value_name = "TIME")]
+    pub updated_before: Option<String>,
+    /// The field to order by: `created-at` (the default), `updated-at`,
+    /// `occurred-at` or `properties.<name>`. A property orders numbers and
+    /// booleans first, then text, and items without it last; ties go by id.
+    #[arg(long, value_parser = parse_sort_field)]
+    pub sort: Option<marfa_core::SortField>,
+    /// Descending (the default) or ascending.
+    #[arg(long)]
+    pub direction: Option<SortDirection>,
     /// How many items at most.
     #[arg(long)]
     pub limit: Option<u32>,
@@ -783,7 +837,7 @@ pub struct ListArgs {
     pub view: Option<String>,
 }
 
-const VIEW_SCOPED: [&str; 11] = [
+const VIEW_SCOPED: [&str; 14] = [
     "type_",
     "state",
     "all_states",
@@ -791,6 +845,9 @@ const VIEW_SCOPED: [&str; 11] = [
     "tags",
     "occurred_after",
     "occurred_before",
+    "source",
+    "updated_after",
+    "updated_before",
     "filter",
     "beneath",
     "sort",
@@ -1101,10 +1158,11 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
             let core = store.open(None)?;
             match command {
                 ItemsCommand::List(args) => {
-                    let sort = Sort {
-                        field: args.sort.into(),
-                        direction: args.direction.into(),
-                    };
+                    let sort = Sort::named(
+                        args.sort,
+                        args.direction.map(Into::into),
+                        args.updated_after.is_some(),
+                    );
                     if let Some(view) = &args.view {
                         return output::listing(
                             core.list_in_view(view, args.limit, args.offset)?,
@@ -1120,6 +1178,9 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
                         tags: args.tags,
                         occurred_after: args.occurred_after,
                         occurred_before: args.occurred_before,
+                        source: args.source,
+                        updated_after: args.updated_after,
+                        updated_before: args.updated_before,
                         filter: args.filter,
                         beneath: args.beneath,
                         limit: args.limit,
@@ -1138,9 +1199,16 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
                         properties: item_properties(&args.properties)?,
                         tags: args.tags,
                         tier: args.tier.map(Into::into),
+                        state: args.state.map(Into::into),
                         source: args.source,
                         source_id: args.source_id,
                         occurred_at: args.occurred_at,
+                        capture_latitude: args.capture_latitude,
+                        capture_longitude: args.capture_longitude,
+                        edges: match &args.edges {
+                            Some(text) => edges(text)?,
+                            None => Default::default(),
+                        },
                         base_version: args.version,
                     };
                     output::queued_one(&core.create_item(&draft)?, json)
@@ -1152,7 +1220,8 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
                         source_id: args.source_id,
                         r#type: args.type_,
                         tier: args.tier.map(Into::into),
-                        occurred_at: None,
+                        occurred_at: args.occurred_at,
+                        clear_occurred_at: args.clear_occurred_at,
                         replace_properties: args.replace,
                     };
                     let queued = if args.as_read {
@@ -1313,7 +1382,10 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
             state,
             all_states,
             type_,
+            tier,
             tags,
+            occurred_after,
+            occurred_before,
             filter,
             beneath,
             limit,
@@ -1330,7 +1402,10 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
                 state: state.map(Into::into),
                 all_states,
                 r#type: type_,
+                tier: tier.map(Into::into),
                 tags,
+                occurred_after,
+                occurred_before,
                 filter,
                 beneath,
             };

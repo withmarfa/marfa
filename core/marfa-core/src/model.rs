@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::fmt;
 use std::str::FromStr;
 
@@ -168,6 +169,10 @@ pub struct Item {
     pub occurred_at: String,
     pub created_at: String,
     pub updated_at: String,
+    /// Where the item was captured, as its writer set it. Each is absent
+    /// where the writer set none.
+    pub capture_latitude: Option<f64>,
+    pub capture_longitude: Option<f64>,
     pub tags: Vec<String>,
 }
 
@@ -187,6 +192,8 @@ impl Item {
             occurred_at: item.occurred_at,
             created_at: item.created_at,
             updated_at: item.updated_at,
+            capture_latitude: item.capture_latitude,
+            capture_longitude: item.capture_longitude,
             tags,
         })
     }
@@ -205,6 +212,8 @@ impl Item {
             created_at: self.created_at.clone(),
             updated_at: self.updated_at.clone(),
             properties: self.properties.clone(),
+            capture_latitude: self.capture_latitude,
+            capture_longitude: self.capture_longitude,
             edges: None,
         }
     }
@@ -259,9 +268,20 @@ pub struct ListFilters {
     pub state: Option<ItemState>,
     pub all_states: bool,
     pub tier: Option<Tier>,
+    /// Only the rows stamped with this source.
+    pub source: Option<String>,
     pub tags: Vec<String>,
+    /// Both ends of the own-time range are exclusive.
     pub occurred_after: Option<String>,
     pub occurred_before: Option<String>,
+    /// Only the rows changed at or after this time, inclusive, so a caller
+    /// resuming from the latest `updated_at` it holds misses none that share
+    /// the instant. It orders the list by `updated_at`, then id, ascending,
+    /// and a list that names another sort or direction is refused.
+    pub updated_after: Option<String>,
+    /// Only the rows changed before this time, exclusive. It leaves the order
+    /// as it is.
+    pub updated_before: Option<String>,
     /// A `backref` condition is refused `Invalid` unless the copy holds its
     /// edge type whole: otherwise it lacks the edges drawn to its items from
     /// outside the slice.
@@ -278,28 +298,55 @@ pub struct SearchFilters {
     pub state: Option<ItemState>,
     pub all_states: bool,
     pub r#type: Option<String>,
+    pub tier: Option<Tier>,
     pub tags: Vec<String>,
+    /// Both ends of the own-time range are exclusive.
+    pub occurred_after: Option<String>,
+    pub occurred_before: Option<String>,
     pub filter: Option<String>,
     pub beneath: Option<String>,
 }
 
+/// What a local list orders by, in the server's `sort` grammar: a time of the
+/// item, or `properties.<field>` for the scalar a property stores.
 // The shared `At` suffix is the column naming rule, not noise.
 #[allow(clippy::enum_variant_names)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SortField {
     CreatedAt,
     UpdatedAt,
     OccurredAt,
+    /// The name after `properties.`, one or more of `a` to `z`, `0` to `9`
+    /// and `_`.
+    Property(String),
+}
+
+impl fmt::Display for SortField {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            SortField::CreatedAt => f.write_str("created_at"),
+            SortField::UpdatedAt => f.write_str("updated_at"),
+            SortField::OccurredAt => f.write_str("occurred_at"),
+            SortField::Property(name) => write!(f, "properties.{name}"),
+        }
+    }
 }
 
 impl SortField {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            SortField::CreatedAt => "created_at",
-            SortField::UpdatedAt => "updated_at",
-            SortField::OccurredAt => "occurred_at",
+    /// A property sort names its property as the server's grammar allows.
+    pub fn property(name: &str) -> Result<SortField, CoreError> {
+        if name.is_empty()
+            || !name
+                .bytes()
+                .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
+        {
+            return Err(CoreError::Validation {
+                code: "validation_error".into(),
+                message: format!("Invalid sort property field \"{name}\"; expected ^[a-z0-9_]+$"),
+            });
         }
+        Ok(SortField::Property(name.to_string()))
     }
 }
 
@@ -311,9 +358,15 @@ impl FromStr for SortField {
             "created_at" => Ok(SortField::CreatedAt),
             "updated_at" => Ok(SortField::UpdatedAt),
             "occurred_at" => Ok(SortField::OccurredAt),
-            other => Err(CoreError::Invalid(format!(
-                "sort must be created_at, updated_at or occurred_at, not {other:?}"
-            ))),
+            other => match other.strip_prefix("properties.") {
+                Some(name) => SortField::property(name),
+                None => Err(CoreError::Validation {
+                    code: "validation_error".into(),
+                    message: format!(
+                        "Invalid sort field \"{other}\"; expected one of created_at, updated_at, occurred_at or properties.<field>"
+                    ),
+                }),
+            },
         }
     }
 }
@@ -348,7 +401,7 @@ impl FromStr for SortDirection {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Sort {
     pub field: SortField,
     pub direction: SortDirection,
@@ -360,6 +413,38 @@ impl Default for Sort {
             field: SortField::CreatedAt,
             direction: SortDirection::Descending,
         }
+    }
+}
+
+impl Sort {
+    /// The order a list naming `updated_after` answers in, and the only one
+    /// it takes.
+    pub(crate) const RESUMED: Sort = Sort {
+        field: SortField::UpdatedAt,
+        direction: SortDirection::Ascending,
+    };
+
+    /// A list's order from the halves a caller named, as the server reads
+    /// `sort` and `direction`: a half left out is the resumed order's beside
+    /// `updated_after` (`resumed`), so only a half naming another is refused,
+    /// and otherwise the default's. Nothing named is `None`, the list's own.
+    pub fn named(
+        field: Option<SortField>,
+        direction: Option<SortDirection>,
+        resumed: bool,
+    ) -> Option<Sort> {
+        if field.is_none() && direction.is_none() {
+            return None;
+        }
+        let fallback = if resumed {
+            Sort::RESUMED
+        } else {
+            Sort::default()
+        };
+        Some(Sort {
+            field: field.unwrap_or(fallback.field),
+            direction: direction.unwrap_or(fallback.direction),
+        })
     }
 }
 
@@ -586,6 +671,12 @@ pub struct Edit {
     /// When the item's content happened, in any form the server reads as a
     /// time.
     pub occurred_at: Option<String>,
+    /// Gives the item no time of its own again, so its own time is its
+    /// creation time as at first. The server holds no empty `occurred_at`,
+    /// so this sends the row's `created_at`; while the row's create is
+    /// unsent, it sends no time in that create or any edit behind it, and the
+    /// server takes its own creation time. Refused beside `occurred_at`.
+    pub clear_occurred_at: bool,
     /// A property left out is cleared; otherwise they merge over the row's.
     pub replace_properties: bool,
 }
@@ -626,9 +717,19 @@ pub struct Draft {
     pub properties: Map<String, Value>,
     pub tags: Vec<String>,
     pub tier: Option<Tier>,
+    /// The state the item starts in, one its type's lifecycle can reach.
+    /// Unset, the server gives `active`.
+    pub state: Option<ItemState>,
     pub source: Option<String>,
     pub source_id: Option<String>,
     pub occurred_at: Option<String>,
+    /// Where the item was captured. The server stores each number as sent.
+    pub capture_latitude: Option<f64>,
+    pub capture_longitude: Option<f64>,
+    /// Edge type to the ids of the items the new item points to. They go in
+    /// the create's own request, so the server makes the item and every edge
+    /// or none.
+    pub edges: BTreeMap<String, Vec<String>>,
     pub base_version: Option<i64>,
 }
 
@@ -647,6 +748,21 @@ impl Draft {
         // verdict on the tags.
         if let Some(tier) = self.tier {
             body.insert("tier".into(), Value::String(tier.as_str().into()));
+        }
+        if let Some(state) = self.state {
+            body.insert("state".into(), Value::String(state.as_str().into()));
+        }
+        for (key, value) in [
+            ("capture_latitude", self.capture_latitude),
+            ("capture_longitude", self.capture_longitude),
+        ] {
+            if let Some(value) = value {
+                body.insert(key.into(), serde_json::to_value(value)?);
+            }
+        }
+        let edges = self.named_edges();
+        if !edges.is_empty() {
+            body.insert("edges".into(), serde_json::to_value(edges)?);
         }
         for (key, value) in [
             ("source", &self.source),
@@ -677,12 +793,60 @@ impl Draft {
                 .cloned()
                 .unwrap_or_default(),
             tier: text("tier").map(|tier| tier.parse()).transpose()?,
+            state: text("state").map(|state| state.parse()).transpose()?,
             source: text("source"),
             source_id: text("source_id"),
             occurred_at: text("occurred_at"),
+            capture_latitude: body.get("capture_latitude").and_then(Value::as_f64),
+            capture_longitude: body.get("capture_longitude").and_then(Value::as_f64),
+            edges: body
+                .get("edges")
+                .map(|edges| serde_json::from_value(edges.clone()))
+                .transpose()?
+                .unwrap_or_default(),
             ..Default::default()
         };
         Ok(draft)
+    }
+
+    fn named_edges(&self) -> BTreeMap<&String, &Vec<String>> {
+        self.edges
+            .iter()
+            .filter(|(_, targets)| !targets.is_empty())
+            .collect()
+    }
+
+    /// Each (edge type, target) pair the create names; a type with an empty
+    /// list makes no edge.
+    pub(crate) fn edge_pairs(&self) -> Vec<(String, String)> {
+        self.edges
+            .iter()
+            .flat_map(|(edge_type, targets)| {
+                targets
+                    .iter()
+                    .map(move |target| (edge_type.clone(), target.clone()))
+            })
+            .collect()
+    }
+
+    /// The edges the copy shows from a create that waits, under ids of the
+    /// device's own, since the server gives the ones it makes ids of its own.
+    /// The same create always shows the same ids, so a copy laid over its
+    /// queue again finds them.
+    pub(crate) fn projected_edges(&self, id: &str, at: &str) -> Vec<crate::wire::WireEdge> {
+        self.edge_pairs()
+            .into_iter()
+            .map(|(edge_type, target)| crate::wire::WireEdge {
+                id: projected_edge_id(id, &edge_type, &target),
+                source_id: id.to_string(),
+                target_id: target,
+                edge_type,
+                properties: Map::new(),
+                version: 0,
+                created_at: at.to_string(),
+                updated_at: at.to_string(),
+            })
+            .collect()
     }
 
     /// Version 0: the server's versions start at 1, so a local row is never
@@ -697,7 +861,7 @@ impl Draft {
         WireItem {
             id: id.to_string(),
             r#type: self.r#type.clone(),
-            state: "active".into(),
+            state: self.state.unwrap_or(ItemState::Active).as_str().into(),
             tier: Some(self.tier.unwrap_or(Tier::Library).as_str().into()),
             version: 0,
             schema_version: 1,
@@ -707,9 +871,27 @@ impl Draft {
             created_at: at.clone(),
             updated_at: at,
             properties: self.properties.clone(),
+            capture_latitude: self.capture_latitude,
+            capture_longitude: self.capture_longitude,
             edges: None,
         }
     }
+}
+
+/// A UUID made from the three names alone.
+pub(crate) fn projected_edge_id(source: &str, edge_type: &str, target: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hash = Sha256::new();
+    for part in [source, edge_type, target] {
+        hash.update((part.len() as u64).to_be_bytes());
+        hash.update(part.as_bytes());
+    }
+    let digest = hash.finalize();
+    let mut bytes = [0u8; 16];
+    bytes.copy_from_slice(&digest[..16]);
+    uuid::Builder::from_random_bytes(bytes)
+        .into_uuid()
+        .to_string()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

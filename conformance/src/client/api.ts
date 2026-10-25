@@ -440,6 +440,9 @@ export class MarfaClient {
     filters: {
       type?: string;
       state?: string;
+      tier?: "library" | "feed" | "all";
+      occurred_after?: string;
+      occurred_before?: string;
       limit?: number;
       /** Structured filter expression, the same grammar `GET /items`
        *  takes — edge terms included. */

@@ -44,6 +44,9 @@ export interface Item {
   occurred_at: string;
   created_at: string;
   updated_at: string;
+  /** Where the item was captured; null where its writer set none. */
+  capture_latitude?: number | null;
+  capture_longitude?: number | null;
   tags: string[];
 }
 
@@ -474,6 +477,14 @@ export interface Draft {
   propertiesText?: string;
   tags?: string[];
   tier?: Tier;
+  /** The state to create it in; the default is active. */
+  state?: "active" | "archived" | "trashed";
+  /** Both or neither. */
+  captureLatitude?: number;
+  captureLongitude?: number;
+  /** Edge type to the ids of the items it points at, queued and sent with
+   *  the create as one write (`device/create-fields-one-write`). */
+  edges?: Record<string, string[]>;
   source?: string;
   sourceId?: string;
   occurredAt?: string;
@@ -495,6 +506,11 @@ export interface Edit {
   type?: string;
   /** The tier to move the row to. */
   tier?: "library" | "feed";
+  /** The row's own time. */
+  occurredAt?: string;
+  /** Gives the row no time of its own again, so it is its creation time
+   *  (`device/edit-occurred-at`). */
+  clearOccurredAt?: boolean;
   /** The properties are the row's whole properties, so one left out is
    *  cleared (`queue-and-verdicts/whole-sent-replace`). */
   replace?: boolean;
@@ -519,7 +535,12 @@ export interface SearchFilters {
   state?: string;
   allStates?: boolean;
   type?: string;
+  tier?: Tier;
   tags?: string[];
+  /** Exclusive lower bound on the item's own time. */
+  occurredAfter?: string;
+  /** Exclusive upper bound on the same. */
+  occurredBefore?: string;
   /** An expression in the server's listing grammar, the `filter` of `GET /items`; a `backref` condition is refused. */
   filter?: string;
   /** An item and everything it reaches along `parent-of` edges. */
@@ -537,6 +558,16 @@ export interface ListFilters {
   tier?: Tier;
   tags?: string[];
   limit?: number;
+  /** Only the items stamped with this source. */
+  source?: string;
+  /** Inclusive lower bound on the time the item was last changed. */
+  updatedAfter?: string;
+  /** Exclusive upper bound on the same. */
+  updatedBefore?: string;
+  /** The server's own names: a time, or `properties.<name>`. Unset, the
+   *  server's own order. */
+  sort?: "created_at" | "updated_at" | "occurred_at" | `properties.${string}`;
+  direction?: "asc" | "desc";
   /** An expression in the server's listing grammar, the `filter` of `GET /items`; a `backref` condition is refused. */
   filter?: string;
   /** An item and everything it reaches along `parent-of` edges. */

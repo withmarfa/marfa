@@ -2610,8 +2610,11 @@ marfa device items list [OPTIONS]
 | `--occurred-before <TIME>` | Exclusive upper bound on the item's own time, RFC 3339. |
 | `--filter <EXPR>` | An expression in the server's listing grammar, answered as the server answers `filter`; a `backref` condition is refused unless the copy holds its edge type whole. |
 | `--beneath <ID>` | Only this item and what it reaches along `parent-of` edges. |
-| `--sort <SORT>` | The time to order by. One of `created-at`, `updated-at`, `occurred-at`. Default: `created-at`. |
-| `--direction <DIRECTION>` | Newest first, or oldest. One of `asc`, `desc`. Default: `desc`. |
+| `--source <SOURCE>` | Only the items stamped with this source. |
+| `--updated-after <TIME>` | Inclusive lower bound on the time the item was last changed, RFC 3339. Orders the list by that time, then id, oldest first; another `--sort` or `--direction` is refused with it. |
+| `--updated-before <TIME>` | Exclusive upper bound on the time the item was last changed, RFC 3339. |
+| `--sort <SORT>` | The field to order by: `created-at` (the default), `updated-at`, `occurred-at` or `properties.<name>`. A property orders numbers and booleans first, then text, and items without it last; ties go by id. |
+| `--direction <DIRECTION>` | Descending (the default) or ascending. One of `asc`, `desc`. |
 | `--limit <LIMIT>` | How many items at most. |
 | `--offset <OFFSET>` | How many items to skip first. |
 | `--view <ID>` | Only what this view selects, in the view's own sort; refused with a reason where the copy cannot answer the query whole. |
@@ -2648,6 +2651,10 @@ marfa device items create [OPTIONS] --type <TYPE> --properties <JSON>
 | `--properties <JSON>` | The properties, as a JSON object. |
 | `--tag <TAG>` | A tag, repeatable. Each is queued as a write of its own. |
 | `--tier <TIER>` | The tier to write it at; the default is the tier of the held row its natural key names, else the slice's tier, or the library from a slice of both or before a first hydration. A create carrying `--source-id` goes with that tier only where a lookup answers that no row on the server holds its natural key, and otherwise with none, which keeps a row's tier as it stands. One of `library`, `feed`. |
+| `--state <STATE>` | The state to create it in; the default is active. One of `active`, `archived`, `trashed`, `revoked`. |
+| `--capture-latitude <DEGREES>` | Where it was captured: the latitude, in degrees. Needs `--capture-longitude`. |
+| `--capture-longitude <DEGREES>` | Where it was captured: the longitude, in degrees. Needs `--capture-latitude`. |
+| `--edges <JSON>` | Edges to make with it, as a JSON object of edge type to a list of target ids. Queued and sent as one write with the item: if the server refuses any, it makes none of them and the item stays in the queue as refused. |
 | `--source <SOURCE>` | The source to stamp it with. |
 | `--source-id <SOURCE_ID>` | The id this row has in the system it came from. |
 | `--occurred-at <OCCURRED_AT>` | The item's own time, RFC 3339. Defaults to now. |
@@ -2677,6 +2684,8 @@ marfa device items update [OPTIONS] --properties <JSON> <ID>
 | `--type <TYPE>` | The type to move the item to. The server holds its properties to the type it enters. |
 | `--tier <TIER>` | The tier to move the item to. One of `library`, `feed`. |
 | `--replace` | The properties are the item's whole properties: one they leave out is cleared rather than kept. |
+| `--occurred-at <TIME>` | The item's own time, RFC 3339. |
+| `--clear-occurred-at` | Give the item no time of its own again, so its own time is its creation time. |
 
 Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 
@@ -3017,7 +3026,10 @@ marfa device search [OPTIONS] <QUERY>
 | `--state <STATE>` | Exactly one state. Unset answers the active state. One of `active`, `archived`, `trashed`, `revoked`. |
 | `--all-states` | Every state, not just the active one. |
 | `--type <TYPE>` | A type identifier; its subtypes are included. |
+| `--tier <TIER>` | Only hits at this tier. One of `library`, `feed`. |
 | `--tag <TAG>` | Hits must carry every tag given. |
+| `--occurred-after <TIME>` | Exclusive lower bound on the item's own time, RFC 3339. |
+| `--occurred-before <TIME>` | Exclusive upper bound on the item's own time, RFC 3339. |
 | `--filter <EXPR>` | An expression in the server's listing grammar, answered as the server answers `filter`; a `backref` condition is refused unless the copy holds its edge type whole. |
 | `--beneath <ID>` | Only this item and what it reaches along `parent-of` edges. |
 | `--limit <LIMIT>` | How many hits at most. Default: `20`. |

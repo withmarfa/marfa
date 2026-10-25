@@ -2533,8 +2533,10 @@ fn settle_success(
         if row.kind == WriteKind::CreateItem
             && let Some(local) = row.item_id.as_deref()
         {
+            drop_projected_edges(&tx, row, local, Some(&parsed.item))?;
             store::adopt_answered_id(&tx, local, &parsed.item.id)?;
             store::refollow(&tx, &parsed.item.id, &row.id)?;
+            take_answered_edges(&tx, &parsed.item)?;
         }
         move_edits_behind(
             &tx,
@@ -2583,6 +2585,51 @@ fn settle_success(
     store::meta_delete(&tx, &receipt_key(&row.id))?;
     tx.commit()?;
     Ok(settled)
+}
+
+/// The edges a created item was drawn with while its write waited carry
+/// device-own ids. Each leaves where `answered`, the item the server answered
+/// with, shows what the server holds in its place: the answer's edges of its
+/// type are whole, or name the same pair. The answer can carry fewer, as one
+/// page of each type, none under a source filter, or none at all for an
+/// acknowledged repeat, so any other stays until a read brings the server's
+/// edge, which takes its place. With no answer, as for a refused create, the
+/// server drew none of them.
+fn drop_projected_edges(
+    conn: &rusqlite::Connection,
+    row: &QueuedWrite,
+    local: &str,
+    answered: Option<&WireItem>,
+) -> Result<()> {
+    let draft = crate::model::Draft::from_payload(&store::payload_of(conn, &row.id)?)?;
+    for (edge_type, target) in draft.edge_pairs() {
+        let kept = answered.is_some_and(|item| {
+            !item
+                .edges
+                .as_ref()
+                .and_then(|edges| edges.get(&edge_type))
+                .is_some_and(|block| {
+                    block.next_cursor.is_none()
+                        || block.data.iter().any(|edge| edge.target_id == target)
+                })
+        });
+        if !kept {
+            let id = crate::model::projected_edge_id(local, &edge_type, &target);
+            store::forget_edge(conn, &id)?;
+        }
+    }
+    Ok(())
+}
+
+/// The edges the server answered a create with, first page of each type. A
+/// type with more edges than one page is completed by the next hydration.
+fn take_answered_edges(conn: &rusqlite::Connection, item: &WireItem) -> Result<()> {
+    for block in item.edges.iter().flat_map(|edges| edges.values()) {
+        for edge in &block.data {
+            store::take_server_edge(conn, edge)?;
+        }
+    }
+    Ok(())
 }
 
 fn settle(
@@ -2850,6 +2897,9 @@ fn land(
     check_read_back(&tx, &read)?;
     // The checked response must be admitted under the pin and waiting work
     // that move from the local identity in this same transaction.
+    if let Some(local) = row.item_id.as_deref() {
+        drop_projected_edges(&tx, row, local, None)?;
+    }
     let refused = store::land_on_held_row(&tx, row, id)?;
     apply_read_back_unchecked(&tx, &read)?;
     let catalog = Catalog::load(&tx)?;
@@ -4995,6 +5045,249 @@ mod tests {
             store::owed_read_backs(&core.conn().unwrap())
                 .unwrap()
                 .is_empty()
+        );
+    }
+
+    #[test]
+    fn a_shown_edge_leaves_only_where_the_answer_shows_the_servers_in_its_place() {
+        let server = crate::scripted::Scripted::start();
+        let (_dir, core) = deleting(&server, &[]);
+        let conn = core.conn().unwrap();
+        for id in ["one", "two", "made"] {
+            let row = store::testing::note(id, id, "", "2026-01-01T00:00:00Z");
+            store::upsert_item(&conn, &row, None, &Default::default()).unwrap();
+        }
+        let draft = crate::model::Draft {
+            r#type: "core.note".into(),
+            edges: [(
+                "references".to_string(),
+                vec!["one".to_string(), "two".to_string()],
+            )]
+            .into(),
+            ..Default::default()
+        };
+        let payload = draft.payload("made").unwrap();
+        let mut new = write(WriteKind::CreateItem, "made", None, None, &[]);
+        new.payload = &payload;
+        let create = store::enqueue(&conn, &new).unwrap();
+        let shown = |conn: &rusqlite::Connection| -> Vec<String> {
+            let mut ids: Vec<String> = store::edges_from(conn, "made")
+                .unwrap()
+                .into_iter()
+                .map(|edge| edge.target_id)
+                .collect();
+            ids.sort();
+            ids
+        };
+        let server_edge = |target: &str| crate::wire::WireEdge {
+            id: format!("0190a000-0000-7000-8000-00000000000{}", target.len()),
+            source_id: "made".into(),
+            target_id: target.into(),
+            edge_type: "references".into(),
+            properties: Default::default(),
+            version: 1,
+            created_at: "2026-01-02T00:00:00Z".into(),
+            updated_at: "2026-01-02T00:00:00Z".into(),
+        };
+        let answered = |edges: Option<serde_json::Value>| {
+            let mut item = store::testing::note("made", "made", "", "2026-01-01T00:00:00Z");
+            item.edges = edges.map(|edges| serde_json::from_value(edges).unwrap());
+            item
+        };
+        let page = |targets: &[&str], more: bool| {
+            serde_json::json!({"references": {
+                "data": targets.iter().map(|target| server_edge(target)).collect::<Vec<_>>(),
+                "next_cursor": more.then_some("next"),
+            }})
+        };
+        let draw = || {
+            for edge in draft.projected_edges("made", "2026-01-01T00:00:00Z") {
+                store::upsert_edge(&conn, &edge).unwrap();
+            }
+        };
+        // An acknowledged repeat, a source filter's empty answer and a page
+        // naming another pair leave both shown.
+        for edges in [
+            None,
+            Some(serde_json::json!({})),
+            Some(page(&["other"], true)),
+        ] {
+            draw();
+            assert_eq!(shown(&conn), ["one", "two"]);
+            drop_projected_edges(&conn, &create, "made", Some(&answered(edges.clone()))).unwrap();
+            assert_eq!(shown(&conn), ["one", "two"], "{edges:?}");
+        }
+        // A page naming one pair takes that one only, and the read that
+        // brings the other's server edge takes the other.
+        drop_projected_edges(
+            &conn,
+            &create,
+            "made",
+            Some(&answered(Some(page(&["one"], true)))),
+        )
+        .unwrap();
+        assert_eq!(shown(&conn), ["two"]);
+        assert!(store::take_server_edge(&conn, &server_edge("two")).unwrap());
+        assert_eq!(
+            store::edges_from(&conn, "made")
+                .unwrap()
+                .into_iter()
+                .map(|edge| edge.version)
+                .collect::<Vec<_>>(),
+            [1]
+        );
+        // A whole page takes every pair it does not name.
+        draw();
+        drop_projected_edges(
+            &conn,
+            &create,
+            "made",
+            Some(&answered(Some(page(&[], false)))),
+        )
+        .unwrap();
+        assert_eq!(shown(&conn), ["two"]);
+    }
+
+    #[test]
+    fn a_create_drawn_to_a_create_that_lands_on_a_held_row_carries_over_and_draws_to_it() {
+        let server = crate::scripted::Scripted::start();
+        let (_dir, core) = deleting(&server, &[]);
+        let other = store::testing::note("other", "other", "", "2026-01-01T00:00:00Z");
+        store::upsert_item(&core.conn().unwrap(), &other, None, &Default::default()).unwrap();
+        let edges_of = |conn: &rusqlite::Connection, id: &str| -> Vec<(String, String)> {
+            store::edges_from(conn, id)
+                .unwrap()
+                .into_iter()
+                .map(|edge| (edge.id, edge.target_id))
+                .collect()
+        };
+        let projected = crate::model::projected_edge_id;
+        let (create, drawn) = {
+            let conn = core.conn().unwrap();
+            let queue = |id: &str, target: &str, after: &[String]| {
+                let draft = crate::model::Draft {
+                    r#type: "core.note".into(),
+                    edges: [("references".to_string(), vec![target.to_string()])].into(),
+                    ..Default::default()
+                };
+                let row = store::testing::note(id, id, "", "2026-01-01T00:00:00Z");
+                store::upsert_item(&conn, &row, None, &Default::default()).unwrap();
+                for edge in draft.projected_edges(id, "2026-01-01T00:00:00Z") {
+                    store::upsert_edge(&conn, &edge).unwrap();
+                }
+                let payload = draft.payload(id).unwrap();
+                let mut new = write(WriteKind::CreateItem, id, None, None, after);
+                new.payload = &payload;
+                store::enqueue(&conn, &new).unwrap()
+            };
+            let create = queue("local", "other", &[]);
+            let drawn = queue("drawn", "local", std::slice::from_ref(&create.id));
+            // The witness: both creates show their edges before the landing.
+            assert_eq!(
+                edges_of(&conn, "local"),
+                [(projected("local", "references", "other"), "other".into())]
+            );
+            (create, drawn)
+        };
+        let mut body: serde_json::Value = serde_json::from_str(&crate::scripted::item_payload(
+            "item.updated",
+            "server",
+            "core.note",
+            1,
+        ))
+        .unwrap();
+        body["listed"] = true.into();
+        server.on(
+            "/items/server",
+            vec![crate::scripted::certified(crate::scripted::json(
+                200,
+                &body.to_string(),
+            ))],
+        );
+        let answer = Ok(Answer {
+            status: 409,
+            code: "version_conflict".into(),
+            body: "{}".into(),
+            retry_after_seconds: None,
+            replayed: false,
+            contract_named: true,
+        });
+        let settled = land(
+            &core,
+            &create,
+            &answer,
+            Shape::Item,
+            "server",
+            "version_conflict".into(),
+            &mut ReachChange::default(),
+        )
+        .unwrap();
+        assert!(settled.also.is_empty(), "{:?}", settled.also);
+        {
+            let conn = core.conn().unwrap();
+            let moved = store::queued_write(&conn, &drawn.id).unwrap().unwrap();
+            assert_eq!(moved.verdict, None);
+            assert!(moved.depends_on.is_empty());
+            let payload: serde_json::Value =
+                serde_json::from_str(&store::payload_of(&conn, &drawn.id).unwrap()).unwrap();
+            assert_eq!(
+                payload["edges"]["references"],
+                serde_json::json!(["server"])
+            );
+            assert_eq!(
+                edges_of(&conn, "drawn"),
+                [(projected("drawn", "references", "server"), "server".into())]
+            );
+            // The refused create's own edge was never drawn by the server.
+            assert!(edges_of(&conn, "server").is_empty());
+        }
+        let mut item = serde_json::from_str::<serde_json::Value>(&crate::scripted::item_payload(
+            "item.created",
+            "drawn",
+            "core.note",
+            1,
+        ))
+        .unwrap()["item"]
+            .clone();
+        item["edges"] = serde_json::json!({"references": {"data": [{
+            "id": "0190a000-0000-7000-8000-000000000001", "source_id": "drawn",
+            "target_id": "server", "edge_type": "references", "properties": {},
+            "version": 1, "created_at": "2026-01-02T00:00:00Z",
+            "updated_at": "2026-01-02T00:00:00Z"
+        }], "next_cursor": null}});
+        server.on(
+            "/items",
+            vec![crate::scripted::json(
+                201,
+                &serde_json::json!({ "item": item }).to_string(),
+            )],
+        );
+        server.on(
+            "/items/drawn",
+            vec![crate::scripted::certified(crate::scripted::json(
+                200,
+                &serde_json::json!({"item": item, "metadata": {"tags": []}, "listed": true})
+                    .to_string(),
+            ))],
+        );
+        core.drain().unwrap();
+        let sent: serde_json::Value =
+            serde_json::from_slice(&server.seen("/items")[0].body).unwrap();
+        assert_eq!(sent["edges"]["references"], serde_json::json!(["server"]));
+        let conn = core.conn().unwrap();
+        assert_eq!(
+            store::queued_write(&conn, &drawn.id)
+                .unwrap()
+                .unwrap()
+                .verdict,
+            Some(Verdict::Accepted)
+        );
+        assert_eq!(
+            edges_of(&conn, "drawn"),
+            [(
+                "0190a000-0000-7000-8000-000000000001".to_string(),
+                "server".to_string()
+            )]
         );
     }
 

@@ -2,6 +2,7 @@
 //! cross as `JsonValue` and `JsonObject`, values the generated Swift holds as
 //! its own, not as text to parse.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -46,11 +47,18 @@ pub enum ItemState {
 // Every sortable column is a verb plus `_at`, so the shared `At` suffix the
 // lint reports is the naming rule rather than noise the variants could drop.
 #[allow(clippy::enum_variant_names)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
 pub enum SortField {
     CreatedAt,
     UpdatedAt,
     OccurredAt,
+    /// An item property, by name: `a` to `z`, `0` to `9` and `_`, else the
+    /// list is refused `validation_error`. Numbers and booleans (`false`
+    /// before `true`) order first, then text, and items lacking the property
+    /// last in either direction; ties go by id, oldest first.
+    Property {
+        name: String,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
@@ -77,6 +85,11 @@ pub struct Item {
     pub created_at: String,
     pub updated_at: String,
     pub tags: Vec<String>,
+    /// Where the item was captured, in degrees, as sent.
+    #[uniffi(default = None)]
+    pub capture_latitude: Option<f64>,
+    #[uniffi(default = None)]
+    pub capture_longitude: Option<f64>,
     /// The text under the property the type's display hints name as its
     /// title, or `title` where they name none; none where that holds no
     /// string.
@@ -132,8 +145,17 @@ pub struct SearchFilters {
     pub state: Option<ItemState>,
     #[uniffi(default = false)]
     pub all_states: bool,
+    /// One tier; none answers both.
+    #[uniffi(default = None)]
+    pub tier: Option<Tier>,
     #[uniffi(default = [])]
     pub tags: Vec<String>,
+    /// Exclusive lower bound on the item's own time. Either end alone works.
+    #[uniffi(default = None)]
+    pub occurred_after: Option<String>,
+    /// Exclusive upper bound on the item's own time.
+    #[uniffi(default = None)]
+    pub occurred_before: Option<String>,
     /// An expression in the server's listing grammar, answered as the server
     /// answers `filter` and refused `validation_error` where it refuses it.
     /// A `backref` condition is refused `invalid`.
@@ -163,6 +185,17 @@ pub struct ListFilters {
     pub occurred_after: Option<String>,
     #[uniffi(default = None)]
     pub occurred_before: Option<String>,
+    /// Only the items stamped with this source.
+    #[uniffi(default = None)]
+    pub source: Option<String>,
+    /// Inclusive lower bound on the time the item was last changed. The list
+    /// is then ordered by that time and id, oldest first; a `sort` whose
+    /// field or direction names another order is refused `validation_error`.
+    #[uniffi(default = None)]
+    pub updated_after: Option<String>,
+    /// Exclusive upper bound on the time the item was last changed.
+    #[uniffi(default = None)]
+    pub updated_before: Option<String>,
     /// An expression in the server's listing grammar, answered as the server
     /// answers `filter` and refused `validation_error` where it refuses it.
     /// A `backref` condition is refused `invalid`.
@@ -178,10 +211,14 @@ pub struct ListFilters {
     pub offset: Option<u32>,
 }
 
+/// Either half left out is the list's own: `created_at` descending, or
+/// `updated_at` ascending beside `updated_after`, which refuses another.
 #[derive(Debug, Clone, uniffi::Record)]
 pub struct Sort {
-    pub field: SortField,
-    pub direction: SortDirection,
+    #[uniffi(default = None)]
+    pub field: Option<SortField>,
+    #[uniffi(default = None)]
+    pub direction: Option<SortDirection>,
 }
 
 /// One hit of a search, with the item it found.
@@ -820,6 +857,9 @@ pub struct Draft {
     pub tags: Vec<String>,
     #[uniffi(default = None)]
     pub tier: Option<Tier>,
+    /// The state to create it in; none is active. `revoked` is refused.
+    #[uniffi(default = None)]
+    pub state: Option<ItemState>,
     #[uniffi(default = None)]
     pub id: Option<String>,
     #[uniffi(default = None)]
@@ -828,6 +868,16 @@ pub struct Draft {
     pub source_id: Option<String>,
     #[uniffi(default = None)]
     pub occurred_at: Option<String>,
+    /// Where it was captured, in degrees. Both or neither.
+    #[uniffi(default = None)]
+    pub capture_latitude: Option<f64>,
+    #[uniffi(default = None)]
+    pub capture_longitude: Option<f64>,
+    /// Edge type to the ids of the items it points at. They are queued and
+    /// sent with the create as one write: if the server refuses any, it makes
+    /// none and the create stays in the queue as refused.
+    #[uniffi(default)]
+    pub edges: HashMap<String, Vec<String>>,
     /// The version this create is conditional on, where its natural key
     /// resolves a row the server holds.
     #[uniffi(default = None)]
@@ -864,6 +914,13 @@ pub struct Edit {
     /// The tier to move the row to.
     #[uniffi(default = None)]
     pub tier: Option<Tier>,
+    /// When the item's content happened.
+    #[uniffi(default = None)]
+    pub occurred_at: Option<String>,
+    /// Gives the item no time of its own again, so it is its creation time.
+    /// Refused beside `occurred_at`.
+    #[uniffi(default = false)]
+    pub clear_occurred_at: bool,
 }
 
 impl Edit {
@@ -874,7 +931,8 @@ impl Edit {
             source_id: self.source_id,
             r#type: self.r#type,
             tier: self.tier.map(Into::into),
-            occurred_at: None,
+            occurred_at: self.occurred_at,
+            clear_occurred_at: self.clear_occurred_at,
             replace_properties: self.replace_properties,
         })
     }
@@ -1559,6 +1617,8 @@ fn item(item: marfa_core::Item, shown: marfa_core::Shown) -> Item {
         created_at: item.created_at,
         updated_at: item.updated_at,
         tags: item.tags,
+        capture_latitude: item.capture_latitude,
+        capture_longitude: item.capture_longitude,
         title: shown.title,
         body: shown.body,
         unreadable_properties: shown.unreadable_properties,
@@ -1591,6 +1651,9 @@ impl From<ListFilters> for marfa_core::ListFilters {
             tags: filters.tags,
             occurred_after: filters.occurred_after,
             occurred_before: filters.occurred_before,
+            source: filters.source,
+            updated_after: filters.updated_after,
+            updated_before: filters.updated_before,
             filter: filters.filter,
             beneath: filters.beneath,
             limit: filters.limit,
@@ -1599,19 +1662,21 @@ impl From<ListFilters> for marfa_core::ListFilters {
     }
 }
 
-impl From<Sort> for marfa_core::Sort {
-    fn from(sort: Sort) -> Self {
-        marfa_core::Sort {
-            field: match sort.field {
+impl Sort {
+    fn named(self, resumed: bool) -> Option<marfa_core::Sort> {
+        marfa_core::Sort::named(
+            self.field.map(|field| match field {
                 SortField::CreatedAt => marfa_core::SortField::CreatedAt,
                 SortField::UpdatedAt => marfa_core::SortField::UpdatedAt,
                 SortField::OccurredAt => marfa_core::SortField::OccurredAt,
-            },
-            direction: match sort.direction {
+                SortField::Property { name } => marfa_core::SortField::Property(name),
+            }),
+            self.direction.map(|direction| match direction {
                 SortDirection::Ascending => marfa_core::SortDirection::Ascending,
                 SortDirection::Descending => marfa_core::SortDirection::Descending,
-            },
-        }
+            }),
+            resumed,
+        )
     }
 }
 
@@ -1669,7 +1734,10 @@ impl From<SearchFilters> for marfa_core::SearchFilters {
             state: filters.state.map(Into::into),
             all_states: filters.all_states,
             r#type: filters.r#type,
+            tier: filters.tier.map(Into::into),
             tags: filters.tags,
+            occurred_after: filters.occurred_after,
+            occurred_before: filters.occurred_before,
             filter: filters.filter,
             beneath: filters.beneath,
         }
@@ -2191,8 +2259,14 @@ impl Core {
         })
     }
 
-    pub fn list(&self, filters: ListFilters, sort: Sort) -> Result<Listing, MarfaError> {
-        Ok(listing(self.inner.list_kept(&filters.into(), sort.into())?))
+    /// Without a `sort` the list is newest created first, or oldest changed
+    /// first where `updated_after` is set.
+    pub fn list(&self, filters: ListFilters, sort: Option<Sort>) -> Result<Listing, MarfaError> {
+        let resumed = filters.updated_after.is_some();
+        Ok(listing(self.inner.list_kept(
+            &filters.into(),
+            sort.and_then(|sort| sort.named(resumed)),
+        )?))
     }
 
     pub fn get(&self, id: String) -> Result<Option<Item>, MarfaError> {
@@ -2344,9 +2418,13 @@ impl Core {
             id: draft.id,
             tags: draft.tags,
             tier: draft.tier.map(Into::into),
+            state: draft.state.map(Into::into),
             source: draft.source,
             source_id: draft.source_id,
             occurred_at: draft.occurred_at,
+            capture_latitude: draft.capture_latitude,
+            capture_longitude: draft.capture_longitude,
+            edges: draft.edges.into_iter().collect(),
             base_version: draft.base_version,
         };
         queued(self.inner.create_item(&draft)?)
@@ -3260,6 +3338,10 @@ mod tests {
         let core = Core::open(path, None, None, None).unwrap();
         let host = core
             .create_item(Draft {
+                state: None,
+                capture_latitude: None,
+                capture_longitude: None,
+                edges: HashMap::new(),
                 r#type: "core.note".into(),
                 properties: object(serde_json::json!({ "title": "Host", "body": "" })),
                 id: None,
@@ -3290,6 +3372,8 @@ mod tests {
         core.update_item(
             host.clone(),
             Edit {
+                occurred_at: None,
+                clear_occurred_at: false,
                 properties: object(
                     serde_json::json!({ "body": format!("{embed} and [[Elsewhere]]") }),
                 ),
@@ -3340,6 +3424,10 @@ mod tests {
         assert_eq!(core.file_cache().unwrap().attachments, Some(none));
         let host = core
             .create_item(Draft {
+                state: None,
+                capture_latitude: None,
+                capture_longitude: None,
+                edges: HashMap::new(),
                 r#type: "core.note".into(),
                 properties: object(serde_json::json!({ "title": "Host", "body": "" })),
                 id: None,
@@ -3441,6 +3529,9 @@ mod tests {
             tags: vec!["a".into()],
             occurred_after: Some("after".into()),
             occurred_before: Some("before".into()),
+            source: Some("notes".into()),
+            updated_after: Some("changed after".into()),
+            updated_before: Some("changed before".into()),
             filter: Some("tags exists".into()),
             beneath: Some("root".into()),
             limit: Some(3),
@@ -3457,6 +3548,9 @@ mod tests {
                 tags: vec!["a".into()],
                 occurred_after: Some("after".into()),
                 occurred_before: Some("before".into()),
+                source: Some("notes".into()),
+                updated_after: Some("changed after".into()),
+                updated_before: Some("changed before".into()),
                 filter: Some("tags exists".into()),
                 beneath: Some("root".into()),
                 limit: Some(3),
@@ -3471,7 +3565,10 @@ mod tests {
             state: Some(ItemState::Archived),
             all_states: true,
             r#type: Some("core.note".into()),
+            tier: Some(Tier::Feed),
             tags: vec!["a".into(), "b".into()],
+            occurred_after: Some("after".into()),
+            occurred_before: Some("before".into()),
             filter: Some("tags exists".into()),
             beneath: Some("root".into()),
         }
@@ -3482,7 +3579,10 @@ mod tests {
                 state: Some(marfa_core::ItemState::Archived),
                 all_states: true,
                 r#type: Some("core.note".into()),
+                tier: Some(marfa_core::Tier::Feed),
                 tags: vec!["a".into(), "b".into()],
+                occurred_after: Some("after".into()),
+                occurred_before: Some("before".into()),
                 filter: Some("tags exists".into()),
                 beneath: Some("root".into()),
             }
@@ -4041,6 +4141,10 @@ mod tests {
         let before = reader.data_version().unwrap();
         writer
             .create_item(Draft {
+                state: None,
+                capture_latitude: None,
+                capture_longitude: None,
+                edges: HashMap::new(),
                 r#type: "core.note".into(),
                 id: None,
                 properties: parsed(r#"{"title":"saved","body":"b"}"#),
@@ -4077,6 +4181,10 @@ mod tests {
 
     fn draft(r#type: &str, properties_json: &str) -> Draft {
         Draft {
+            state: None,
+            capture_latitude: None,
+            capture_longitude: None,
+            edges: HashMap::new(),
             r#type: r#type.into(),
             id: None,
             properties: parsed(properties_json),
@@ -4091,6 +4199,8 @@ mod tests {
 
     fn edit(properties_json: &str, base_version: i64) -> Edit {
         Edit {
+            occurred_at: None,
+            clear_occurred_at: false,
             properties: parsed(properties_json),
             replace_properties: false,
             base_version,
@@ -4130,6 +4240,8 @@ mod tests {
             .update_item(
                 note.clone(),
                 Edit {
+                    occurred_at: None,
+                    clear_occurred_at: false,
                     replace_properties: true,
                     ..edit(r#"{"body":"b2"}"#, 0)
                 },
@@ -4146,6 +4258,8 @@ mod tests {
             .update_item(
                 note.clone(),
                 Edit {
+                    occurred_at: None,
+                    clear_occurred_at: false,
                     r#type: Some("core.task".into()),
                     tier: Some(Tier::Feed),
                     ..edit(r#"{"title":"a task"}"#, 0)
@@ -4175,6 +4289,8 @@ mod tests {
             core.update_item(
                 note.clone(),
                 Edit {
+                    occurred_at: None,
+                    clear_occurred_at: false,
                     r#type: Some("acme.nothing".into()),
                     ..edit("{}", 0)
                 },
@@ -4279,14 +4395,37 @@ mod tests {
         let listed = core
             .list(
                 ListFilters::default(),
-                Sort {
-                    field: SortField::CreatedAt,
-                    direction: SortDirection::Descending,
-                },
+                Some(Sort {
+                    field: Some(SortField::CreatedAt),
+                    direction: Some(SortDirection::Descending),
+                }),
             )
             .unwrap()
             .items;
         assert_eq!(listed[0].body.as_deref(), Some("Daily"));
+    }
+
+    #[test]
+    fn beside_updated_after_either_half_of_its_order_is_taken_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("core.sqlite").display().to_string();
+        let core = Core::open(path, None, None, None).unwrap();
+        core.create_item(draft("core.note", r#"{"body":"x"}"#))
+            .unwrap();
+        let after = || ListFilters {
+            updated_after: Some("2000-01-01T00:00:00Z".into()),
+            ..ListFilters::default()
+        };
+        for (field, direction, taken) in [
+            (Some(SortField::UpdatedAt), None, true),
+            (None, Some(SortDirection::Ascending), true),
+            (Some(SortField::CreatedAt), None, false),
+            (None, Some(SortDirection::Descending), false),
+        ] {
+            let name = format!("{field:?} {direction:?}");
+            let listed = core.list(after(), Some(Sort { field, direction }));
+            assert_eq!(listed.is_ok(), taken, "{name}: {listed:?}");
+        }
     }
 
     /// A copy with an app type that declares one field, so a property it
@@ -4325,12 +4464,18 @@ mod tests {
         // and the body that holds them is one level too deep for the core.
         for arrays in [62 + 1, 62 + 2, 200] {
             let created = core.create_item(Draft {
+                state: None,
+                capture_latitude: None,
+                capture_longitude: None,
+                edges: HashMap::new(),
                 properties: nested(arrays),
                 ..draft("app.test.entry", "{}")
             });
             let updated = core.update_item(
                 id.clone(),
                 Edit {
+                    occurred_at: None,
+                    clear_occurred_at: false,
                     properties: nested(arrays),
                     ..edit("{}", version)
                 },
@@ -4344,6 +4489,10 @@ mod tests {
         }
         assert_eq!(core.queue().unwrap().len(), queued);
         core.create_item(Draft {
+            state: None,
+            capture_latitude: None,
+            capture_longitude: None,
+            edges: HashMap::new(),
             properties: nested(62),
             ..draft("app.test.entry", "{}")
         })
@@ -4405,10 +4554,10 @@ mod tests {
         let listed = core
             .list(
                 ListFilters::default(),
-                Sort {
-                    field: SortField::CreatedAt,
-                    direction: SortDirection::Ascending,
-                },
+                Some(Sort {
+                    field: Some(SortField::CreatedAt),
+                    direction: Some(SortDirection::Ascending),
+                }),
             )
             .unwrap()
             .items;
@@ -4431,6 +4580,10 @@ mod tests {
         let (_dir, _path, core) = copy_with_entries();
         let id = core
             .create_item(Draft {
+                state: None,
+                capture_latitude: None,
+                capture_longitude: None,
+                edges: HashMap::new(),
                 properties: JsonObject::default(),
                 ..draft("app.test.entry", "{}")
             })
@@ -4444,6 +4597,8 @@ mod tests {
             .update_item(
                 id,
                 Edit {
+                    occurred_at: None,
+                    clear_occurred_at: false,
                     tier: Some(Tier::Feed),
                     ..edit("{}", held.version)
                 },
@@ -4478,6 +4633,8 @@ mod tests {
         core.update_item(
             id.clone(),
             Edit {
+                occurred_at: None,
+                clear_occurred_at: false,
                 replace_properties: true,
                 ..edit(r#"{"title":"U"}"#, version)
             },
@@ -4526,12 +4683,18 @@ mod tests {
             twice,
         ] {
             let created = core.create_item(Draft {
+                state: None,
+                capture_latitude: None,
+                capture_longitude: None,
+                edges: HashMap::new(),
                 properties: bad.clone(),
                 ..draft("app.test.entry", "{}")
             });
             let updated = core.update_item(
                 id.clone(),
                 Edit {
+                    occurred_at: None,
+                    clear_occurred_at: false,
                     properties: bad.clone(),
                     ..edit("{}", version)
                 },
@@ -4578,11 +4741,11 @@ mod tests {
             }
         }
         let by_creation = Sort {
-            field: SortField::CreatedAt,
-            direction: SortDirection::Ascending,
+            field: Some(SortField::CreatedAt),
+            direction: Some(SortDirection::Ascending),
         };
         let listed = core
-            .list(ListFilters::default(), by_creation)
+            .list(ListFilters::default(), Some(by_creation))
             .unwrap()
             .items;
         assert_eq!(listed.len(), 3);
@@ -4618,10 +4781,10 @@ mod tests {
                     filter: filter.clone(),
                     ..ListFilters::default()
                 },
-                Sort {
-                    field: SortField::CreatedAt,
-                    direction: SortDirection::Ascending,
-                },
+                Some(Sort {
+                    field: Some(SortField::CreatedAt),
+                    direction: Some(SortDirection::Ascending),
+                }),
             )
             .unwrap()
             .items;
@@ -4924,6 +5087,10 @@ mod tests {
         let before = reader.data_version().unwrap();
         writer
             .create_item(Draft {
+                state: None,
+                capture_latitude: None,
+                capture_longitude: None,
+                edges: HashMap::new(),
                 r#type: "core.note".into(),
                 id: None,
                 properties: parsed(r#"{"title":"saved"}"#),

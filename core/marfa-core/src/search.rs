@@ -35,7 +35,17 @@ pub(crate) fn search(
         &mut clauses,
         &mut values,
     )?;
+    if let Some(tier) = filters.tier {
+        clauses.push("items.tier = ?".into());
+        values.push(Value::String(tier.as_str().into()));
+    }
     query::narrow_by_tags(&filters.tags, &mut clauses, &mut values);
+    query::narrow_by_own_time(
+        filters.occurred_after.as_deref(),
+        filters.occurred_before.as_deref(),
+        &mut clauses,
+        &mut values,
+    )?;
     // Before the query is looked at, so an expression the grammar refuses
     // is refused on a search with no words as on any other.
     filter::narrow(
@@ -180,7 +190,7 @@ fn is_query_whitespace(character: char) -> bool {
 mod tests {
     use super::*;
     use crate::catalog::Indexing;
-    use crate::model::ItemState;
+    use crate::model::{ItemState, Tier};
     use crate::store;
     use crate::store::testing::*;
 
@@ -371,5 +381,54 @@ mod tests {
             Some("\"\"\"exact\"\"\" \"phrase\"*".into())
         );
         assert_eq!(fts_expression("\"\""), Some("\"\"\"\"\"\"*".into()));
+    }
+
+    #[test]
+    fn a_tier_and_a_range_of_own_time_narrow_a_search_from_either_end() {
+        let conn = conn();
+        for (id, when, tier) in [
+            ("one", "2026-01-01T00:00:00.000Z", "library"),
+            ("two", "2026-01-02T00:00:00.000Z", "library"),
+            ("three", "2026-01-03T00:00:00.000Z", "feed"),
+        ] {
+            let mut item = note(id, "Zebra", "zebra", when);
+            item.tier = Some(tier.into());
+            store::upsert_item(&conn, &item, None, &Indexing::default()).unwrap();
+        }
+        let catalog = Catalog::load(&conn).unwrap();
+        let found = |filters: SearchFilters| -> Vec<String> {
+            let mut ids: Vec<String> = search(&conn, &catalog, "zebra", &filters, 10)
+                .unwrap()
+                .into_iter()
+                .map(|hit| hit.item.id)
+                .collect();
+            ids.sort();
+            ids
+        };
+        let at = |tier: Option<Tier>, after: Option<&str>, before: Option<&str>| SearchFilters {
+            tier,
+            occurred_after: after.map(Into::into),
+            occurred_before: before.map(Into::into),
+            ..Default::default()
+        };
+        assert_eq!(found(at(None, None, None)), ["one", "three", "two"]);
+        assert_eq!(found(at(Some(Tier::Feed), None, None)), ["three"]);
+        // Both ends are left out of the range, and one end works alone.
+        assert_eq!(
+            found(at(None, Some("2026-01-01T00:00:00Z"), None)),
+            ["three", "two"]
+        );
+        assert_eq!(
+            found(at(None, None, Some("2026-01-03T00:00:00Z"))),
+            ["one", "two"]
+        );
+        assert_eq!(
+            found(at(
+                Some(Tier::Library),
+                Some("2026-01-01T00:00:00Z"),
+                Some("2026-01-03T00:00:00Z")
+            )),
+            ["two"]
+        );
     }
 }

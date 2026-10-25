@@ -246,6 +246,16 @@ export class CliDevice implements DeviceUnderTest {
     if (filters.occurredBefore !== undefined)
       args.push("--occurred-before", filters.occurredBefore);
     if (filters.tier !== undefined) args.push("--tier", filters.tier);
+    if (filters.source !== undefined) args.push("--source", filters.source);
+    if (filters.updatedAfter !== undefined)
+      args.push("--updated-after", filters.updatedAfter);
+    if (filters.updatedBefore !== undefined)
+      args.push("--updated-before", filters.updatedBefore);
+    // The three times are spelled with a hyphen on the command line.
+    if (filters.sort !== undefined)
+      args.push("--sort", filters.sort.replace(/^(\w+)_at$/, "$1-at"));
+    if (filters.direction !== undefined)
+      args.push("--direction", filters.direction);
     for (const tag of filters.tags ?? []) args.push("--tag", tag);
     if (filters.limit !== undefined)
       args.push("--limit", String(filters.limit));
@@ -343,6 +353,11 @@ export class CliDevice implements DeviceUnderTest {
     if (filters.state !== undefined) args.push("--state", filters.state);
     if (filters.allStates === true) args.push("--all-states");
     if (filters.type !== undefined) args.push("--type", filters.type);
+    if (filters.tier !== undefined) args.push("--tier", filters.tier);
+    if (filters.occurredAfter !== undefined)
+      args.push("--occurred-after", filters.occurredAfter);
+    if (filters.occurredBefore !== undefined)
+      args.push("--occurred-before", filters.occurredBefore);
     for (const tag of filters.tags ?? []) args.push("--tag", tag);
     if (filters.filter !== undefined) args.push("--filter", filters.filter);
     if (filters.beneath !== undefined) args.push("--beneath", filters.beneath);
@@ -365,6 +380,13 @@ export class CliDevice implements DeviceUnderTest {
     ];
     for (const tag of draft.tags ?? []) args.push("--tag", tag);
     if (draft.tier !== undefined) args.push("--tier", draft.tier);
+    if (draft.state !== undefined) args.push("--state", draft.state);
+    if (draft.captureLatitude !== undefined)
+      args.push("--capture-latitude", String(draft.captureLatitude));
+    if (draft.captureLongitude !== undefined)
+      args.push("--capture-longitude", String(draft.captureLongitude));
+    if (draft.edges !== undefined)
+      args.push("--edges", JSON.stringify(draft.edges));
     if (draft.source !== undefined) args.push("--source", draft.source);
     if (draft.sourceId !== undefined) args.push("--source-id", draft.sourceId);
     if (draft.occurredAt !== undefined)
@@ -391,6 +413,9 @@ export class CliDevice implements DeviceUnderTest {
     if (edit.type !== undefined) args.push("--type", edit.type);
     if (edit.tier !== undefined) args.push("--tier", edit.tier);
     if (edit.replace === true) args.push("--replace");
+    if (edit.occurredAt !== undefined)
+      args.push("--occurred-at", edit.occurredAt);
+    if (edit.clearOccurredAt === true) args.push("--clear-occurred-at");
     return this.json<QueuedWrite>(args);
   }
 
