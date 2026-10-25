@@ -3786,9 +3786,9 @@ When a device is asked to remove a store at a path that holds no store file, a d
 
 ### `device/remove-store-no-link`
 
-When a device removes a store and finds a symbolic link at one of the store's names or inside the folder of fetched bytes, a device MUST remove the link and MUST NOT remove what it leads to.
+When a device removes a store and finds a symbolic link at one of the store's names or inside the folder of fetched bytes, a device MUST NOT remove what the link leads to.
 
-**Reason:** a link can lead to a person's files outside the store, and a removal reaches only the names the store is made of.
+**Reason:** a link can lead to a person's files outside the store, and a removal reaches only the names the store is made of, so it removes the link itself (`device/remove-store`).
 
 **Tests:** `device/binding-remove-store.test.ts › removes a symbolic link at a store's name and keeps what it leads to`.
 
