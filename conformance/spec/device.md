@@ -3678,6 +3678,22 @@ When a device replaces a store it refuses `wrong_schema`, a device MUST open the
 
 **Tests:** `device/binding-replace-refused.test.ts › replaces a refused store that holds nothing unsent with an empty one, and opens it`.
 
+### `device/replace-refused-budget-kept`
+
+When a device replaces a store it refuses `wrong_schema`, and the old store records a file budget setting that is a byte count or to keep every file, a device MUST give the new store that setting.
+
+**Reason:** the setting is the person's choice and is not rebuilt by a hydration, so an app that had to store it elsewhere to restore it would carry a second copy that can disagree with the first.
+
+**Tests:** `device/binding-replace-refused.test.ts › keeps the file budget the refused store recorded`.
+
+### `device/replace-refused-budget-default`
+
+If a store a device replaces records no file budget setting, or none that the device can read as one, then a device MUST still replace the store, with the default file budget.
+
+**Reason:** the old store has another shape, so what it holds cannot be relied on, and a setting that cannot be read is no reason to leave a person without their copy.
+
+**Tests:** `device/binding-replace-refused.test.ts › gives the default file budget where the refused store records none that it can read`.
+
 ### `device/replace-refused-unsent`
 
 If a device is asked to replace a store it refuses `wrong_schema` that holds a write the server has not taken, or whose writes it cannot count, then a device MUST refuse to replace it `wrong_schema`.

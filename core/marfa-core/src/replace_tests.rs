@@ -459,3 +459,89 @@ fn a_store_with_every_set_aside_name_taken_is_refused_and_left_alone() {
     assert_eq!(files(&path), before);
     assert_eq!(listing(&path), names);
 }
+
+/// The refused store, with `sql` run on it before its queue is reshaped.
+fn refused_store_with(sql: &str) -> (tempfile::TempDir, PathBuf) {
+    let (dir, path) = refused_store(false);
+    Connection::open(&path).unwrap().execute_batch(sql).unwrap();
+    (dir, path)
+}
+
+/// The file budget the replaced store gives.
+fn budget_after_replacing(path: &Path) -> crate::FileBudget {
+    let core = Core::replace_refused(path, None).unwrap();
+    core.file_budget().unwrap()
+}
+
+#[test]
+fn a_replaced_store_keeps_the_file_budget_the_refused_one_held() {
+    for (stored, expected) in [
+        ("1048576", crate::FileBudget::Bytes(1_048_576)),
+        ("0", crate::FileBudget::Bytes(0)),
+        ("keep_all", crate::FileBudget::KeepAll),
+    ] {
+        let (_dir, path) = refused_store_with(&format!(
+            "INSERT INTO meta (key, value) VALUES ('file_budget', '{stored}')"
+        ));
+        assert_eq!(budget_after_replacing(&path), expected, "{stored}");
+        let reopened = Core::open(&path, None).unwrap();
+        assert_eq!(
+            reopened.file_budget().unwrap(),
+            expected,
+            "{stored} was not kept in the store"
+        );
+    }
+}
+
+#[test]
+fn a_refused_store_with_no_file_budget_set_gives_the_default() {
+    let (_dir, path) = refused_store(false);
+    assert_eq!(budget_after_replacing(&path), crate::FileBudget::Default);
+}
+
+#[test]
+fn a_file_budget_in_the_log_of_the_refused_store_is_kept() {
+    let (_dir, path) = refused_store(false);
+    in_log(
+        &path,
+        "INSERT INTO meta (key, value) VALUES ('file_budget', '4096')",
+    );
+    assert_eq!(
+        budget_after_replacing(&path),
+        crate::FileBudget::Bytes(4096)
+    );
+}
+
+#[test]
+fn a_file_budget_the_refused_store_cannot_give_is_the_default_and_no_error() {
+    for (label, sql) in [
+        ("no meta table", "DROP TABLE meta"),
+        (
+            "a value that is no setting",
+            "INSERT INTO meta (key, value) VALUES ('file_budget', 'plenty')",
+        ),
+        (
+            "a negative count",
+            "INSERT INTO meta (key, value) VALUES ('file_budget', '-5')",
+        ),
+    ] {
+        let (_dir, path) = refused_store_with(sql);
+        assert!(
+            matches!(
+                refusal(&path),
+                CoreError::WrongSchema {
+                    unsent: Some(0),
+                    ..
+                }
+            ),
+            "{label}: the store is not refused with nothing unsent: {:?}",
+            refusal(&path)
+        );
+        assert_eq!(
+            budget_after_replacing(&path),
+            crate::FileBudget::Default,
+            "{label}"
+        );
+        no_set_aside_copy(&path);
+    }
+}

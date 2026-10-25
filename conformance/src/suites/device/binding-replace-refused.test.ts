@@ -37,6 +37,19 @@ function edit(store: string, sql: string): void {
   }
 }
 
+/** The file budget setting the store records, or null for the default. */
+function recordedBudget(store: string): string | null {
+  const db = new DatabaseSync(store, { readOnly: true });
+  try {
+    const row = db
+      .prepare("SELECT value FROM meta WHERE key = 'file_budget'")
+      .get() as { value: string } | undefined;
+    return row?.value ?? null;
+  } finally {
+    db.close();
+  }
+}
+
 /**
  * A store holding one note, its create answered by the server where
  * `answered`, as a build with another queue would have left it: one column
@@ -98,6 +111,45 @@ describe("replacing a store the writer refuses", () => {
       properties: { title: "new", body: "new" },
     });
     expect(created.ok, JSON.stringify(created)).toBe(true);
+  });
+
+  it("keeps the file budget the refused store recorded", async () => {
+    for (const [recorded, label] of [
+      ["4096", "a byte count"],
+      ["keep_all", "keep every file"],
+    ] as const) {
+      const { harness: started } = await refusedStore(
+        `replace-budget-${recorded}`,
+        true,
+      );
+      edit(
+        started.device.store,
+        `INSERT INTO meta (key, value) VALUES ('file_budget', '${recorded}')`,
+      );
+      const replaced = await started.device.replaceRefused();
+      expect(replaced.ok, JSON.stringify(replaced)).toBe(true);
+      expect(recordedBudget(started.device.store), label).toBe(recorded);
+      await started.stop();
+      harness = undefined;
+    }
+  });
+
+  it("gives the default file budget where the refused store records none that it can read", async () => {
+    for (const [sql, label] of [
+      ["", "none recorded"],
+      [
+        "INSERT INTO meta (key, value) VALUES ('file_budget', 'plenty')",
+        "a value that is no setting",
+      ],
+    ] as const) {
+      const { harness: started } = await refusedStore("replace-default", true);
+      if (sql) edit(started.device.store, sql);
+      const replaced = await started.device.replaceRefused();
+      expect(replaced.ok, `${label}: ${JSON.stringify(replaced)}`).toBe(true);
+      expect(recordedBudget(started.device.store), label).toBeNull();
+      await started.stop();
+      harness = undefined;
+    }
   });
 
   it("refuses to replace a refused store that holds a write the server has not taken", async () => {

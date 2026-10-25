@@ -375,9 +375,10 @@ impl Core {
     /// the store holds a write the server has not taken or one it cannot
     /// count, and where `open` would not refuse it. The new store is empty,
     /// so what only the old store held, such as pins, is lost: read it
-    /// first. The file budget's setting is in the store, so it goes too, and
-    /// the new store has the default. The blob cache is kept: it is
-    /// addressed by content, not by the store.
+    /// first. The file budget's setting is kept, as far as the old store
+    /// gives it: where it holds none, or none that can be read, the new store
+    /// has the default. The blob cache is kept: it is addressed by content,
+    /// not by the store.
     pub fn replace_refused(path: impl AsRef<Path>, server: Option<Server>) -> Result<Core> {
         let path = path.as_ref();
         // Held from the count to the returned core, so no write can be
@@ -406,7 +407,16 @@ impl Core {
                 )));
             }
         }
+        let budget = store::refused_file_budget(path);
         let conn = store::replace(path)?;
+        // The budget is a setting the new store can do without, so a write
+        // that fails leaves the default and does not undo a replacement
+        // that is done.
+        if let Some(setting) = budget
+            && let Some(text) = setting.to_stored()
+        {
+            let _ = store::meta_set(&conn, file_cache::META_BUDGET, &text);
+        }
         let cache = blob::Cache::beside(path);
         Self::from_connection(conn, server, Arc::new(lock), Some(cache)).map(Core::swept)
     }
