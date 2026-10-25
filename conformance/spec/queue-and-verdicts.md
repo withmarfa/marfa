@@ -1954,11 +1954,11 @@ When a drain sends a create carrying no natural key, a device MUST send it with 
 
 ### `queue-and-verdicts/landed-accepted-moves`
 
-When a create is answered with a row under another id than the one it was queued under, a device MUST move the copy onto that row once a fresh read of it succeeds: the row under the minted id goes, and every unsent write that named it names the answered row instead.
+When a create is answered with a row under another id than the one it was queued under, a device MUST move the copy onto that row once a fresh read of it succeeds: the row under the minted id goes, and every unsent write that named it names the answered row instead, including a target in the `edges` of a create waiting unsent.
 
 **Reason:** left alone, each would address an id the server never held, and the copy would hold one item twice.
 
-**Tests:** `device/queue.test.ts › sends a create carrying a natural key without the id it minted, and holds the row the answer names`, `› moves the copy onto the row a create lands on, with every write waiting on it`, `device/verdicts.test.ts › accepted: takes an upsert and a replayed repeat as accepted`.
+**Tests:** `device/queue.test.ts › sends a create carrying a natural key without the id it minted, and holds the row the answer names`, `› moves the copy onto the row a create lands on, with every write waiting on it`, `› sends a create drawn to a create accepted onto another row onto that row, with its edge`, `device/verdicts.test.ts › accepted: takes an upsert and a replayed repeat as accepted`.
 
 ### `queue-and-verdicts/landed-not-on-catch-up`
 
@@ -1990,9 +1990,9 @@ When a create carrying a natural key is refused naming another row, a device MUS
 
 ### `queue-and-verdicts/landed-adds-follow`
 
-When a create carrying a natural key is refused naming another row and a fresh read of that row succeeds, a device MUST send onto that row each write waiting on the create that only adds to it: a tag added, an edge made to or from it, and an edge's end moved to it.
+When a create carrying a natural key is refused naming another row and a fresh read of that row succeeds, a device MUST send onto that row each write waiting on the create that only adds to it: a tag added, an edge made to or from it, an edge's end moved to it, and an item created with an edge to it.
 
-**Tests:** `device/queue.test.ts › refuses the writes behind a landed create that would take from the row, and sends those that add`, `› refuses a create whose natural key names a row, and moves the copy onto that row`, `› holds a write made to a refused create's row until a read finds the row its natural key names`, `device/edge-move.test.ts › holds a move onto its own create refused onto a row no read has found yet, and sends it naming that row once found`.
+**Tests:** `device/queue.test.ts › refuses the writes behind a landed create that would take from the row, and sends those that add`, `› sends a create drawn to a create refused naming another row onto that row, with its edge`, `› refuses a create whose natural key names a row, and moves the copy onto that row`, `› holds a write made to a refused create's row until a read finds the row its natural key names`, `device/edge-move.test.ts › holds a move onto its own create refused onto a row no read has found yet, and sends it naming that row once found`.
 
 ### `queue-and-verdicts/landed-takes-refused`
 

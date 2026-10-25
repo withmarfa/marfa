@@ -4029,6 +4029,117 @@ describe("an answer the device applies keeps what it has not had answered", () =
     expect(holding.ok && holding.value.state).toBe("active");
   });
 
+  // The second create's edge only adds to the row another device made, so it
+  // follows the first create there, naming that row in its edges.
+  async function drawnToLanded(
+    name: string,
+    landing: (theirs: {
+      id: string;
+      version: number;
+      properties: Record<string, unknown>;
+      source: string;
+      source_id: string;
+    }) => Answer,
+  ) {
+    const THEIRS = "01a00000-0000-7000-8000-0000000000c8";
+    harness = await hydratedHarness(name, {
+      rows: held(),
+    });
+    const { device, server } = harness;
+    const created = await device.create({
+      type: "core.note",
+      properties: { title: "mine", body: "mine" },
+      source: "notes",
+      sourceId: "raced.md",
+      version: 0,
+    });
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+    const local = created.value.item_id ?? "";
+    const drawn = await device.create({
+      type: "core.note",
+      properties: { title: "drawn", body: "drawn" },
+      edges: { references: [local] },
+    });
+    expect(drawn.ok, JSON.stringify(drawn)).toBe(true);
+    if (!drawn.ok) return;
+    const DRAWN = drawn.value.item_id ?? "";
+    const theirs = {
+      id: THEIRS,
+      version: 1,
+      properties: { title: "theirs", body: "theirs" },
+      source: "notes",
+      source_id: "raced.md",
+    };
+    scriptWrites(server, {
+      create: [
+        landing(theirs),
+        answers.created(
+          wireItem({
+            id: DRAWN,
+            properties: { title: "drawn", body: "drawn" },
+            edges: {
+              references: {
+                data: [
+                  wireEdge({
+                    id: "01a00000-0000-7000-8000-0000000000e8",
+                    source_id: DRAWN,
+                    target_id: THEIRS,
+                    edge_type: "references",
+                  }),
+                ],
+                next_cursor: null,
+              },
+            },
+          }),
+        ),
+      ],
+      read: [answers.updated(wireItem(theirs))],
+    });
+    const drained = await device.drain();
+    expect(drained.ok, JSON.stringify(drained)).toBe(true);
+    if (!drained.ok) return;
+    expect(
+      drained.value.verdicts.find((entry) => entry.id === drawn.value.id)
+        ?.verdict,
+      "a create drawn to the landed create did not follow it onto the row",
+    ).toBe("accepted");
+    const sent = server.requests
+      .filter(isWrite)
+      .map((request) => JSON.parse(request.body) as { edges?: unknown });
+    expect(sent.map((body) => body.edges)).toEqual([
+      undefined,
+      { references: [THEIRS] },
+    ]);
+    // The copy holds the server's edge to the row, and none to the minted id.
+    const edges = await device.edgesTo(THEIRS);
+    expect(edges.ok && edges.value.map((edge) => edge.source_id)).toEqual([
+      DRAWN,
+    ]);
+    const stale = await device.edgesTo(local);
+    expect(stale.ok ? stale.value : stale).toEqual([]);
+  }
+
+  it("sends a create drawn to a create accepted onto another row onto that row, with its edge", async () => {
+    await drawnToLanded("queue-landed-accepted-create-edge", (theirs) =>
+      answers.upserted(wireItem(theirs)),
+    );
+  });
+
+  it("sends a create drawn to a create refused naming another row onto that row, with its edge", async () => {
+    await drawnToLanded("queue-landed-refused-create-edge", (theirs) =>
+      answers.ancestorUnavailable(
+        {
+          ...theirs,
+          tier: "library",
+          occurred_at: "2026-01-01T00:00:00.000Z",
+          type: "core.note",
+        },
+        0,
+      ),
+    );
+  });
+
   it("holds a write still waiting behind a landed create on the row it landed on", async () => {
     // The tag waited on the create and follows it onto the row another
     // device made; its own answer has not come, so a read of that row shows

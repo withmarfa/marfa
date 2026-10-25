@@ -1292,11 +1292,19 @@ While a create that names a `state`, a capture location or `edges` waits in the 
 
 ### `device/create-edges-replaced`
 
-When the server accepts a create that names `edges`, a device MUST hold the edges the server answered with in place of the edges it showed for the create while it waited.
+When the server accepts a create that names `edges`, a device MUST hold each edge the server answered with in place of the edge it showed for the same type and target while the create waited.
 
 **Reason:** the server gives the edges it makes ids of its own, so a device that kept both would hold each edge twice.
 
-**Tests:** `device/item-fields-live.test.ts › drains a draft carrying a state, a capture location and edges as one write`.
+**Tests:** `device/item-fields-live.test.ts › drains a draft carrying a state, a capture location and edges as one write`, `device/item-fields-live.test.ts › keeps a drawn edge the server's answer cuts off until a read brings the server's own`.
+
+### `device/create-edges-kept-short`
+
+When the server accepts a create that names `edges` and its answer's block for an edge type carries a `next_cursor` and leaves out a target the create named, a device MUST keep answering the edge it showed to that target until a read brings the server's edge to it.
+
+**Reason:** a block of an item's edges carries at most 50 edges and a cursor for the rest (`edges/hydrate-cap` and `edges/hydrate-cursor`), so an edge left out of a cut block was made; dropping the one shown would answer the item with fewer edges than it has.
+
+**Tests:** `device/item-fields-live.test.ts › keeps a drawn edge the server's answer cuts off until a read brings the server's own`.
 
 ### `device/create-edges-refused-whole`
 
@@ -1308,7 +1316,7 @@ If the server refuses a create that names `edges`, then a device MUST keep the w
 
 ### `device/create-fields-refused-local`
 
-If a create names the `revoked` state, a capture coordinate that is not a finite number, or an edge type or a target that the server would refuse as malformed, then a device MUST refuse it before it queues anything.
+If a create names the `revoked` state, a capture coordinate that is not a finite number, or an edge type or a target that the server would refuse as malformed, then a device MUST refuse it before it queues anything, carrying the code the server refuses it with.
 
 **Tests:** `device/item-fields-live.test.ts › refuses a create the server would refuse for its state, location or edges before it is queued`.
 
@@ -1320,11 +1328,19 @@ When an edit names an `occurred_at`, a device MUST queue it and answer the item 
 
 ### `device/edit-occurred-at-clear`
 
-When an edit asks to clear the `occurred_at`, a device MUST queue the item's `created_at` as its `occurred_at` and answer the item with it at once.
+When an edit asks to clear the `occurred_at` of an item the server holds, a device MUST queue the item's `created_at` as its `occurred_at` and answer the item with it at once.
 
 **Reason:** the server holds no empty `occurred_at`, and an item with none of its own is placed at its creation time (`items/occurred-at-utc`).
 
 **Tests:** `device/item-fields-live.test.ts › sets and clears an item's own time through an edit`.
+
+### `device/edit-occurred-at-clear-unsent`
+
+When an edit asks to clear the `occurred_at` of an item whose create waits unsent, a device MUST leave `occurred_at` out of the create and of every edit of the item waiting unsent, and answer the item with the time the create was queued as its `occurred_at`.
+
+**Reason:** the server places a create with no `occurred_at` at its own creation time (`items/occurred-at-utc`), which the device does not know until the create is answered; sending any earlier time in its place would set a time the person asked to clear.
+
+**Tests:** `device/item-fields-live.test.ts › clears the own time of an item whose create still waits to the server's creation time`.
 
 ### `device/edit-occurred-at-exclusive`
 
@@ -1540,9 +1556,17 @@ When a local list names `updated_after` and no sort, a device MUST order it by `
 
 ### `device/list-updated-after-sort`
 
-If a local list names `updated_after` and a sort other than `updated_at` ascending, then a device MUST refuse it `validation`, carrying `validation_error`.
+If a local list names `updated_after` with a sort field other than `updated_at` or a direction other than ascending, then a device MUST refuse it `validation`, carrying `validation_error`.
 
 **Reason:** the server answers the same (`search-and-filters/updated-after-order`).
+
+**Tests:** `device/item-fields-live.test.ts › lists by a change-time range as the server does, from either end`.
+
+### `device/list-updated-after-half`
+
+When a local list names `updated_after` with only a sort field of `updated_at` or only an ascending direction, a device MUST answer it in the order `device/list-updated-after-order` names.
+
+**Reason:** the server takes either half alone (`search-and-filters/updated-after-order`), and a device that needed both would refuse a list the server answers.
 
 **Tests:** `device/item-fields-live.test.ts › lists by a change-time range as the server does, from either end`.
 

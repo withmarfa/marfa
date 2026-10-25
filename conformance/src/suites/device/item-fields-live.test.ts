@@ -17,9 +17,10 @@ import { requireBinary } from "./harness.js";
  * The fields a working copy writes and queries, against a real server and the
  * real binary: each answer the device gives is compared with the server's own
  * for the same question (`device/list-source`, `device/list-updated-range`,
- * `device/search-tier-and-own-time`, `device/sort-property`), and a draft
- * carrying a state, a capture location and edges is drained to the server
- * (`device/create-fields-one-write` and `device/create-edges-refused-whole`).
+ * `device/search-tier`, `device/search-own-time`, `device/sort-property`), and
+ * a draft carrying a state, a capture location and edges is drained to the
+ * server (`device/create-fields-one-write`, `device/create-edges-replaced`,
+ * `device/create-edges-kept-short` and `device/create-edges-refused-whole`).
  */
 
 let client: MarfaClient;
@@ -162,18 +163,41 @@ it("lists by a change-time range as the server does, from either end", async () 
     expect(answers.served, name).toEqual(expected);
     expect(answers.local, name).toEqual(expected);
   }
-  // Another order beside the lower bound is refused by both.
-  const served = await client.listItems({
-    filter: ours(),
-    updated_after: first.updated,
-    sort: "created_at",
-  });
-  expect(served.ok).toBe(false);
-  const local = await device.list({
-    updatedAfter: first.updated,
-    sort: "created_at",
-  });
-  expect(local.ok).toBe(false);
+  // Its own order, named whole or by either half, is taken by both; another
+  // order, named by either half, is refused by both.
+  const orders: [ListFilters, boolean][] = [
+    [{ sort: "updated_at", direction: "asc" }, true],
+    [{ sort: "updated_at" }, true],
+    [{ direction: "asc" }, true],
+    [{ sort: "created_at" }, false],
+    [{ direction: "desc" }, false],
+  ];
+  for (const [order, taken] of orders) {
+    const name = JSON.stringify(order);
+    const served = await client.listItems({
+      filter: ours(),
+      updated_after: third.updated,
+      ...(order.sort ? { sort: order.sort } : {}),
+      ...(order.direction ? { direction: order.direction } : {}),
+    });
+    expect(served.ok, name).toBe(taken);
+    const local = await device.list({
+      filter: ours(),
+      updatedAfter: third.updated,
+      ...order,
+    });
+    expect(local.ok, name).toBe(taken);
+    if (local.ok && served.ok) {
+      expect(
+        local.value.map((row) => row.id),
+        name,
+      ).toEqual(served.data.data.map((row) => row.id));
+    } else if (!local.ok) {
+      expect(local.refusal.raw, name).toContain(
+        `(${served.error?.error.code})`,
+      );
+    }
+  }
 });
 
 it("narrows a list and a search by a range of own time from either end, leaving both bounds out", async () => {
@@ -358,6 +382,52 @@ it("drains a draft carrying a state, a capture location and edges as one write",
   ]);
 });
 
+it("keeps a drawn edge the server's answer cuts off until a read brings the server's own", async () => {
+  // One more target than an item's answer carries inline for one edge type,
+  // so the answer's block is cut and names a cursor for the rest.
+  const targets: string[] = [];
+  for (let n = 0; n < 51; n++) targets.push((await make({})).id);
+  value(await device.catchUp());
+  const queued = value(
+    await device.create({
+      type: "core.note",
+      properties: { run: ctx.runId, body: "many edges" },
+      edges: { references: targets },
+    }),
+  );
+  const id = queued.item_id ?? "";
+  trackItem(ctx, id);
+  expect(
+    value(await device.drain()).verdicts.map((verdict) => verdict.verdict),
+  ).toEqual(["accepted"]);
+  const all: string[] = [];
+  let cursor: string | undefined;
+  do {
+    const page = await client.listItemEdges(id, {
+      edge_type: "references",
+      limit: 100,
+      ...(cursor ? { cursor } : {}),
+    });
+    expect(page.ok, JSON.stringify(page.error)).toBe(true);
+    all.push(...page.data.data.map((edge) => edge.id));
+    cursor = page.data.next_cursor ?? undefined;
+  } while (cursor);
+  expect(all).toHaveLength(51);
+
+  // Right after the answer, every target still shows one edge: fifty the
+  // server's, and the one it did not carry still the drawn one.
+  const after = value(await device.edgesFrom(id));
+  expect(after.map((edge) => edge.target_id).sort()).toEqual(
+    [...targets].sort(),
+  );
+  expect(after.filter((edge) => all.includes(edge.id))).toHaveLength(50);
+
+  // A read brings the last server edge, which takes the drawn one's place.
+  value(await device.catchUp());
+  const read = value(await device.edgesFrom(id));
+  expect(read.map((edge) => edge.id).sort()).toEqual([...all].sort());
+});
+
 it("keeps a draft whose edges name a missing item, refused whole, and shows none of it", async () => {
   const [present] = [await make({})].map((row) => row.id);
   value(await device.catchUp());
@@ -425,6 +495,41 @@ it("sets and clears an item's own time through an edit", async () => {
   expect(value(await device.get(row.id)).occurred_at).toBe(cleared.occurred_at);
 });
 
+it("clears the own time of an item whose create still waits to the server's creation time", async () => {
+  const queued = value(
+    await device.create({
+      type: "core.note",
+      properties: { run: ctx.runId, body: "cleared while waiting" },
+      occurredAt: "2025-06-01T12:00:00.000Z",
+    }),
+  );
+  const id = queued.item_id ?? "";
+  trackItem(ctx, id);
+  // An edit queued behind the create names a time too, and the clear takes
+  // both out.
+  value(
+    await device.update(id, {
+      properties: {},
+      version: value(await device.get(id)).version,
+      occurredAt: "2024-01-01T00:00:00.000Z",
+    }),
+  );
+  value(
+    await device.update(id, {
+      properties: { body: "edited while waiting" },
+      version: value(await device.get(id)).version,
+      clearOccurredAt: true,
+    }),
+  );
+  // Sent later than queued, so the server's creation time is its own.
+  await new Promise((resolve) => setTimeout(resolve, 1100));
+  value(await device.drain());
+  const served = (await client.getItem(id)).data.item;
+  expect(served.properties.body).toBe("edited while waiting");
+  expect(served.occurred_at).toBe(served.created_at);
+  expect(value(await device.get(id)).occurred_at).toBe(served.created_at);
+});
+
 it("reads a capture location from the copy as the server holds it", async () => {
   const row = await make({ capture_latitude: -33.9, capture_longitude: 151.2 });
   value(await device.catchUp());
@@ -438,15 +543,45 @@ it("refuses a create the server would refuse for its state, location or edges be
   const before = value(await device.queue()).length;
   const valid = "01900000-0000-7000-8000-000000000002";
   const base = { type: "core.note", properties: { body: "refused" } };
-  const refused: Parameters<typeof device.create>[0][] = [
-    { ...base, state: "revoked" as never },
-    { ...base, captureLatitude: Number.NaN },
-    { ...base, edges: { references: ["not-an-id"] } },
-    { ...base, edges: { "": [valid] } },
+  // The device names each refusal by its class and carries the code the
+  // server answers the same body with. A command line carries no NaN, so the
+  // binary refuses that one as usage, and no server body matches it.
+  const refused: [
+    Parameters<typeof device.create>[0],
+    string,
+    Record<string, unknown>?,
+  ][] = [
+    [
+      { ...base, state: "revoked" as never },
+      "validation",
+      { ...base, state: "revoked" },
+    ],
+    [{ ...base, captureLatitude: Number.NaN }, "usage"],
+    [
+      { ...base, edges: { references: ["not-an-id"] } },
+      "validation",
+      { ...base, edges: { references: ["not-an-id"] } },
+    ],
+    [
+      { ...base, edges: { "": [valid] } },
+      "not_found",
+      { ...base, edges: { "": [valid] } },
+    ],
   ];
-  for (const draft of refused) {
+  for (const [draft, kind, body] of refused) {
+    const name = JSON.stringify(draft);
     const answer = await device.create(draft);
-    expect(answer.ok, JSON.stringify(draft)).toBe(false);
+    expect(answer.ok, name).toBe(false);
+    if (answer.ok || !body) {
+      if (!answer.ok) expect(answer.refusal.code, name).toBe(kind);
+      continue;
+    }
+    expect(answer.refusal.code, name).toBe(kind);
+    const served = await client.createItem(
+      body as unknown as Parameters<MarfaClient["createItem"]>[0],
+    );
+    expect(served.ok, name).toBe(false);
+    expect(answer.refusal.raw, name).toContain(`(${served.error?.error.code})`);
   }
   // The witness: the same draft with none of those is queued.
   value(await device.create(base));
