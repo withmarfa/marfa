@@ -3197,7 +3197,7 @@ mod tests {
                 path: "/store".into(),
                 reason: "its table queue".into(),
                 unsent: Some(2),
-                folder: false,
+                folder: None,
             }),
             vec![
                 ("path", json!("/store")),

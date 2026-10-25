@@ -9,10 +9,10 @@ use super::{Catalog, Folder, STATE_DIR, carries_frontmatter, identity, plainly_i
 use crate::directory::Directory;
 use crate::{Core, Result, store};
 
-pub(super) const META_STORE: &str = "folder_store";
-pub(super) const META_LISTED_IN: &str = "folder_listed_in";
+const META_STORE: &str = "folder_store";
+const META_LISTED_IN: &str = "folder_listed_in";
 /// The other folders it last found, kept for a registry that loses them.
-pub(super) const META_OTHERS: &str = "folder_others";
+const META_OTHERS: &str = "folder_others";
 
 /// This folder's store id, made the first time it is asked for.
 pub(super) fn store_id(core: &Core) -> Result<String> {

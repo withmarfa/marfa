@@ -6,13 +6,13 @@ use super::{Folder, SETTINGS_FILE, STATE_DIR, document, landing, state};
 use crate::http::{Method, Outgoing};
 use crate::{Core, CoreError, Result, store};
 
-pub(super) const META_FOLDER: &str = "folder_id";
-pub(super) const META_WRITTEN: &str = "folder_file";
-pub(super) const META_WRITTEN_VERSION: &str = "folder_file_version";
+pub(crate) const META_FOLDER: &str = "folder_id";
+const META_WRITTEN: &str = "folder_file";
+const META_WRITTEN_VERSION: &str = "folder_file_version";
 /// Kept so the same refused text is flagged rather than sent again.
-pub(super) const META_REFUSED: &str = "folder_file_refused";
+const META_REFUSED: &str = "folder_file_refused";
 /// The text and version written before, kept while a write has not landed.
-pub(super) const META_LANDING: &str = "folder_file_landing";
+const META_LANDING: &str = "folder_file_landing";
 
 /// Keys the file carries beside the settings; never sent.
 const FOLDER_KEY: &str = "folder";

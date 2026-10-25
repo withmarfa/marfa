@@ -20,7 +20,7 @@ pub const PLACEMENT_EDGE: &str = "in-folder";
 
 const PATH_PROPERTY: &str = "path";
 
-pub(super) const META_REFUSED: &str = "folder_placements_refused";
+const META_REFUSED: &str = "folder_placements_refused";
 
 /// Placements the server refused, by item: not sent again until the key or
 /// the settings change, or the item's placement moves on.

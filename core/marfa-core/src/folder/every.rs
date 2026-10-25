@@ -254,7 +254,9 @@ fn recorded(dir: &Path) -> crate::Result<Recorded> {
             }
             // The open replaces it (`folders/refused-store-replaced`).
             Err(CoreError::WrongSchema {
-                unsent: Some(0), ..
+                unsent: Some(0),
+                folder: Some(crate::FolderStore::Replaceable),
+                ..
             }) => super::refused::recorded(&state_dir)?,
             Err(error) => return Err(error),
         };

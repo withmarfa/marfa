@@ -1,84 +1,63 @@
 //! A folder's store that another build of the core made. Where it holds no
-//! write the server has not taken, the store is only a copy of the server's
-//! rows and a record of which file is which item, and both come back: a
-//! hydration fills the copy and the next scan matches each file to its item
-//! again by the file's own identity. So a folder's writer replaces it with an
-//! empty store of this build's shape, keeping what no hydration brings back
-//! (`folders/refused-store-replaced`).
+//! write still to be sent and no answer the folder has yet to record, the
+//! store holds three things: a copy of the server's rows, which a hydration fills
+//! again; the folder's record of its files, in tables whose shape seldom
+//! changes; and what the folder records of itself in the store's meta. So a
+//! folder's writer replaces it with a store of this build's shape that keeps
+//! the record and the meta, as a hydration does (`folders/refused-store-replaced`).
 
 use std::path::Path;
 use std::sync::Arc;
 
-use super::{elsewhere, first, placement, settings_file};
+use super::first;
 use crate::directory::Directory;
 use crate::lock::WriterLock;
-use crate::{Core, CoreError, Handle, Result, Server, store};
+use crate::{Core, CoreError, FolderStore, Handle, Result, Server, store};
 
-/// What the folder records of itself in its store's meta that no hydration
-/// brings back: the `system.folder` it follows, whether its first sync
-/// waits, the settings file it last wrote, the placements the server
-/// refused, and how the folder registry knows its store. The server it
-/// was hydrated from too, so the new store is filled from the same instance
-/// (`folders/refused-store-kept`).
-const CARRIED: &[&str] = &[
-    settings_file::META_FOLDER,
-    settings_file::META_WRITTEN,
-    settings_file::META_WRITTEN_VERSION,
-    settings_file::META_REFUSED,
-    settings_file::META_LANDING,
-    first::META_FIRST_SYNC,
-    placement::META_REFUSED,
-    elsewhere::META_STORE,
-    elsewhere::META_LISTED_IN,
-    elsewhere::META_OTHERS,
-    store::META_SERVER_ORIGIN,
-    store::META_INSTANCE_ID,
-];
+/// Whether the meta key `key` is one the folder records of itself and no
+/// hydration brings back: every key a folder sets starts `folder_`, and the
+/// server the store was filled from goes with them, so the new store is
+/// filled from the same instance (`folders/refused-store-kept`,
+/// `folders/refused-store-origin-kept`).
+fn carried(key: &str) -> bool {
+    key.starts_with("folder_") || key == store::META_SERVER_ORIGIN || key == store::META_INSTANCE_ID
+}
 
 /// Opens the folder's store in `state` under `lock`. A store this build
-/// refuses `wrong_schema` that holds no write the server has not taken is
-/// replaced first, where `lock` is the writer's, and the reason it was
-/// refused is answered with the store.
+/// refuses `wrong_schema` that holds nothing unsent and that this build can
+/// carry is replaced first, where `lock` is the writer's, and the reason it
+/// was refused is answered with the store. `adding` replaces one that names
+/// no folder too, since the add names it.
 pub(super) fn opened(
     state: &Directory,
     label: &Path,
     server: Option<Server>,
     lock: Arc<WriterLock>,
+    adding: bool,
 ) -> Result<(Core, Option<String>)> {
-    let (path, reason) = match Core::open_claimed(state, label, server.clone(), Arc::clone(&lock)) {
+    let reason = match Core::open_claimed(state, label, server.clone(), Arc::clone(&lock)) {
         Ok(core) => return Ok((core, None)),
         Err(CoreError::WrongSchema {
-            path,
             reason,
             unsent: Some(0),
+            folder: Some(folder),
             ..
-        }) if lock.handle() == Handle::Writer => (path, reason),
+        }) if lock.handle() == Handle::Writer
+            && (folder == FolderStore::Replaceable
+                || (adding && folder == FolderStore::Unnamed)) =>
+        {
+            reason
+        }
         Err(error) => return Err(error),
     };
-    // Only a folder's own store is replaced: one that names no folder stays
-    // refused.
-    let names_folder = {
-        let vfs = crate::directory_vfs::DirectoryVfs::new(state.file())?;
-        store::refused_folder_meta(&vfs, &[settings_file::META_FOLDER])?
-            .contains_key(settings_file::META_FOLDER)
-    };
-    if !names_folder {
-        return Err(CoreError::WrongSchema {
-            path,
-            reason,
-            unsent: Some(0),
-            folder: true,
-        });
-    }
-    store::replace_folder_store(state, label, CARRIED)?;
+    store::replace_folder_store(state, label, carried)?;
     let core = Core::open_claimed(state, label, server, lock)?;
     Ok((core, Some(reason)))
 }
 
 /// The origin the folder's store was hydrated from and whether its first
 /// sync waits, read from a store this build refuses `wrong_schema` while it
-/// holds no write the server has not taken, which the folder's writer
-/// replaces on open.
+/// holds nothing unsent, which the folder's writer replaces on open.
 pub(super) fn recorded(state: &Directory) -> Result<(Option<String>, bool)> {
     let vfs = crate::directory_vfs::DirectoryVfs::new(state.file())?;
     let mut held =
@@ -94,14 +73,27 @@ mod tests {
     use std::path::{Path, PathBuf};
 
     use super::super::{Folder, STATE_DIR, settings_file};
-    use crate::{Core, CoreError, store};
+    use crate::{Core, CoreError, FolderStore, store};
 
     const FOLDER: &str = "01a00000-0000-7000-8000-000000000001";
     const ORIGIN: &str = "https://marfa.example";
 
+    /// What the folder records of its files, in each table a replacement
+    /// carries, and a list it keeps in its meta.
+    const RECORD: &str = "
+        INSERT INTO folder_files (path, item_id, content_hash, links, edge_lines, writes, seen_at)
+          VALUES ('Note.md', 'note', 'h', '[]', '[]', '{\"save\":2,\"queued\":[],\"refused\":[]}', '2026-01-01T00:00:00Z');
+        INSERT INTO folder_journal (path, item_id, missing_since, kept)
+          VALUES ('Gone.md', 'gone', '2026-01-01T00:00:00Z', 'arriving');
+        INSERT INTO folder_stats (path, stat) VALUES ('Note.md', '12:34');
+        INSERT INTO pins (item_id) VALUES ('note'), ('gone');
+        INSERT INTO meta (key, value) VALUES ('folder_paused_disk', '[\"Gone.md\"]');
+    ";
+
     /// A folder whose store another build of the core made: a column this
-    /// build does not make. `bound` names the folder in it.
-    fn refused_folder(bound: bool) -> (tempfile::TempDir, PathBuf) {
+    /// build does not make. `bound` names the folder in it, and `sql` runs
+    /// on it before it is given the column.
+    fn refused_folder(bound: bool, sql: &str) -> (tempfile::TempDir, PathBuf) {
         let dir = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
         let state = dir.path().join(STATE_DIR);
         std::fs::create_dir_all(&state).unwrap();
@@ -118,11 +110,37 @@ mod tests {
                 .wait_for_confirmation()
                 .unwrap();
         }
-        rusqlite::Connection::open(&path)
-            .unwrap()
-            .execute_batch("ALTER TABLE items ADD COLUMN stray TEXT")
+        let conn = rusqlite::Connection::open(&path).unwrap();
+        conn.execute_batch(sql).unwrap();
+        conn.execute_batch("ALTER TABLE items ADD COLUMN stray TEXT")
             .unwrap();
         (dir, path)
+    }
+
+    fn read(path: &Path, sql: &str) -> Vec<String> {
+        let conn =
+            rusqlite::Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+                .unwrap();
+        let mut statement = conn.prepare(sql).unwrap();
+        statement
+            .query_map([], |row| row.get::<_, String>(0))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap()
+    }
+
+    /// Every row the folder records of its files, as text.
+    fn recorded(path: &Path) -> Vec<String> {
+        [
+            "SELECT path || ' ' || item_id || ' ' || writes FROM folder_files",
+            "SELECT path || ' ' || item_id || ' ' || kept FROM folder_journal",
+            "SELECT path || ' ' || stat FROM folder_stats",
+            "SELECT item_id FROM pins ORDER BY item_id",
+            "SELECT value FROM meta WHERE key = 'folder_paused_disk'",
+        ]
+        .into_iter()
+        .flat_map(|sql| read(path, sql))
+        .collect()
     }
 
     fn stray(path: &Path) -> bool {
@@ -142,7 +160,9 @@ mod tests {
 
     #[test]
     fn a_folder_store_holding_nothing_unsent_is_replaced_keeping_what_the_folder_records() {
-        let (dir, path) = refused_folder(true);
+        let (dir, path) = refused_folder(true, RECORD);
+        let record = recorded(&path);
+        assert_eq!(record.len(), 6, "{record:?}");
         // The witness: this build refuses the store as it is.
         assert!(matches!(
             Core::open(&path, None),
@@ -171,6 +191,7 @@ mod tests {
         );
         drop(folder);
         assert!(!stray(&path), "the store another build made was kept");
+        assert_eq!(recorded(&path), record, "the folder's record was not kept");
         assert!(made_left(dir.path()).is_empty());
         assert!(
             Folder::open(dir.path(), None)
@@ -183,7 +204,7 @@ mod tests {
 
     #[test]
     fn a_folder_store_that_cannot_be_made_leaves_the_refused_one_where_it_was() {
-        let (dir, path) = refused_folder(true);
+        let (dir, path) = refused_folder(true, RECORD);
         let failed = {
             let _fault = crate::fault::fail_on_this_thread("replace-refused-make");
             Folder::open(dir.path(), None)
@@ -208,18 +229,133 @@ mod tests {
     }
 
     #[test]
-    fn a_refused_store_that_names_no_folder_is_refused_as_a_folders_and_left_alone() {
-        let (dir, path) = refused_folder(false);
+    fn a_refused_store_that_names_no_folder_is_left_alone_and_promises_no_replacement() {
+        let (dir, path) = refused_folder(false, "");
         let before = std::fs::read(&path).unwrap();
-        assert!(matches!(
-            Folder::open(dir.path(), None),
-            Err(CoreError::WrongSchema {
-                unsent: Some(0),
-                folder: true,
-                ..
-            })
-        ));
+        let refused = Folder::open(dir.path(), None).err().unwrap();
+        assert!(
+            matches!(
+                &refused,
+                CoreError::WrongSchema {
+                    unsent: Some(0),
+                    folder: Some(FolderStore::Unnamed),
+                    ..
+                }
+            ),
+            "{refused:?}"
+        );
+        let said = refused.to_string();
+        assert!(!said.contains("next push"), "{said}");
+        assert!(said.contains("marfa folders add"), "{said}");
         assert_eq!(std::fs::read(&path).unwrap(), before);
         assert!(stray(&path));
+    }
+
+    #[test]
+    fn a_refused_store_whose_record_of_its_files_is_of_another_shape_is_left_alone() {
+        let (dir, path) = refused_folder(
+            true,
+            &format!("{RECORD} ALTER TABLE folder_journal ADD COLUMN since_build TEXT;"),
+        );
+        let before = std::fs::read(&path).unwrap();
+        let refused = Folder::open(dir.path(), None).err().unwrap();
+        assert!(
+            matches!(
+                &refused,
+                CoreError::WrongSchema {
+                    unsent: Some(0),
+                    folder: Some(FolderStore::Uncarried(table)),
+                    ..
+                } if table == "folder_journal"
+            ),
+            "{refused:?}"
+        );
+        let said = refused.to_string();
+        assert!(!said.contains("next push"), "{said}");
+        assert!(said.contains("marfa folders remove"), "{said}");
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+    }
+
+    /// A file's state waiting on the answer of the write `id`, which the
+    /// server took, and the write in the queue.
+    fn answered_waited_on(id: &str, queued: bool) -> String {
+        let mut sql = format!(
+            "INSERT INTO folder_files (path, item_id, content_hash, links, edge_lines, writes, seen_at)
+               VALUES ('Note.md', 'note', 'h', '[]', '[]', '{{\"save\":1,\"queued\":[{{\"id\":\"{id}\",\"save\":1}}],\"refused\":[]}}', '2026-01-01T00:00:00Z');"
+        );
+        if queued {
+            sql.push_str(&format!(
+                "INSERT INTO queue (id, kind, item_id, idempotency_key, payload, depends_on, verdict, queued_at, answered_at)
+                   VALUES ('{id}', 'update_item', 'note', '{id}', '{{}}', '[]', 'accepted', '2026-01-01T00:00:00Z', '2026-01-01T00:00:01Z');"
+            ));
+        }
+        sql
+    }
+
+    #[test]
+    fn a_refused_store_with_an_answer_a_file_still_waits_on_is_left_alone() {
+        let (dir, path) = refused_folder(true, &answered_waited_on("waited", true));
+        let before = std::fs::read(&path).unwrap();
+        let refused = Folder::open(dir.path(), None).err().unwrap();
+        assert!(
+            matches!(
+                &refused,
+                CoreError::WrongSchema {
+                    unsent: Some(1),
+                    folder: Some(FolderStore::Replaceable),
+                    ..
+                }
+            ),
+            "{refused:?}"
+        );
+        assert!(refused.to_string().contains("marfa folders push"));
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+
+        // The witness: the same store whose queue no longer holds the write
+        // is replaced, the file's state carried as it was.
+        let (dir, path) = refused_folder(true, &answered_waited_on("waited", false));
+        let folder = Folder::open(dir.path(), None).unwrap();
+        assert!(folder.replaced_store().is_some());
+        drop(folder);
+        assert_eq!(
+            read(&path, "SELECT writes FROM folder_files"),
+            ["{\"save\":1,\"queued\":[{\"id\":\"waited\",\"save\":1}],\"refused\":[]}"]
+        );
+    }
+
+    /// A write the server refused that the folder has recorded against its
+    /// file, as a file held after its item went to the bin is, stays in the
+    /// queue until a person discards it, which no folder asks for.
+    fn recorded_refusal(verdict: &str) -> String {
+        format!(
+            "INSERT INTO folder_files (path, item_id, content_hash, links, edge_lines, writes, seen_at)
+               VALUES ('Note.md', 'note', 'h', '[]', '[]', '{{\"save\":2,\"queued\":[],\"refused\":[{{\"change\":\"edit\",\"save\":2,\"reason\":\"item_not_found\"}}]}}', '2026-01-01T00:00:00Z');
+             INSERT INTO queue (id, kind, item_id, idempotency_key, payload, depends_on, verdict, queued_at, answered_at)
+               VALUES ('edit', 'update_item', 'note', 'edit', '{{}}', '[]', '{verdict}', '2026-01-01T00:00:00Z', '2026-01-01T00:00:01Z');"
+        )
+    }
+
+    #[test]
+    fn a_refusal_the_folder_has_recorded_does_not_keep_its_store_refused() {
+        let (dir, path) = refused_folder(true, &recorded_refusal("refused"));
+        let record = read(&path, "SELECT writes FROM folder_files");
+        let folder = Folder::open(dir.path(), None).unwrap();
+        assert!(folder.replaced_store().is_some());
+        drop(folder);
+        assert_eq!(read(&path, "SELECT writes FROM folder_files"), record);
+
+        // The witness: a write still to be sent keeps it refused.
+        let (dir, _) = refused_folder(true, &recorded_refusal("blocked"));
+        let refused = Folder::open(dir.path(), None).err().unwrap();
+        assert!(
+            matches!(
+                &refused,
+                CoreError::WrongSchema {
+                    unsent: Some(1),
+                    ..
+                }
+            ),
+            "{refused:?}"
+        );
     }
 }

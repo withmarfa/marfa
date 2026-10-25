@@ -2843,7 +2843,7 @@ mod tests {
                 path: text(),
                 reason: text(),
                 unsent: None,
-                folder: false,
+                folder: None,
             },
             E::CopyExpired { reason: text() },
             E::StreamIncomplete { reason: text() },
@@ -3197,7 +3197,7 @@ mod tests {
                     path: text(),
                     reason: text(),
                     unsent: Some(1),
-                    folder: false,
+                    folder: None,
                 }
                 .into(),
                 "WrongSchema",

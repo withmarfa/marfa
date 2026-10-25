@@ -81,16 +81,19 @@ pub enum CoreError {
         "this is a reading handle: another process holds the writer handle for this store, and one store has one writer"
     )]
     ReadingHandle,
-    #[error("{}", wrong_schema(path, reason, *unsent, *folder))]
+    #[error("{}", wrong_schema(path, reason, *unsent, folder.as_ref()))]
     WrongSchema {
         path: String,
         reason: String,
         /// Writes in the store the server has not taken, waiting, blocked,
-        /// refused or dead; `None` where its queue cannot be read.
+        /// refused or dead. In a folder's store, the writes still to be sent
+        /// and each answered write a file's state still waits on, since the
+        /// folder records every other answer in its own tables. `None` where
+        /// they cannot be read.
         unsent: Option<u64>,
-        /// Whether the store is a folder's, which a folder's own commands
-        /// replace and whose writes a folder's push sends.
-        folder: bool,
+        /// Where the store is a folder's, what this build's folder commands
+        /// can do with it.
+        folder: Option<FolderStore>,
     },
     /// The cursor is dropped, so the copy reports itself expired until a
     /// hydration, which keeps the queue.
@@ -287,23 +290,51 @@ fn contract_mismatch(
     }
 }
 
+/// What this build's folder commands can do with a folder's store that
+/// another build of the core made, once it holds nothing unsent.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FolderStore {
+    /// It names the folder and every table of the folder's own is of this
+    /// build's shape, so the folder's next push, pull, scan or watch replaces
+    /// it, carrying them.
+    Replaceable,
+    /// It names no folder, so only `folders add` replaces it.
+    Unnamed,
+    /// The named table of the folder's own is of another shape, so this
+    /// build cannot carry it.
+    Uncarried(String),
+}
+
 /// Never advises deleting the store: only the build that made it can send
 /// what it holds.
-fn wrong_schema(path: &str, reason: &str, unsent: Option<u64>, folder: bool) -> String {
+fn wrong_schema(
+    path: &str,
+    reason: &str,
+    unsent: Option<u64>,
+    folder: Option<&FolderStore>,
+) -> String {
     let writes = |count: u64| if count == 1 { "write" } else { "writes" };
     let holds = match (unsent, folder) {
-        (Some(0), false) => "Every write it holds the server has taken, so a store hydrated in its place loses nothing".to_string(),
-        (Some(0), true) => "Every write it holds the server has taken, so the folder's next push, pull, scan or watch replaces it with an empty store of this build's shape, fills that from the server and loses nothing; the replacement changes none of the folder's files".to_string(),
-        (Some(count), false) => format!(
+        (Some(0), None) => "Every write it holds the server has taken, so a store hydrated in its place loses nothing".to_string(),
+        (Some(0), Some(FolderStore::Replaceable)) => "It holds no write still to be sent and no answer the folder has yet to record, so the folder's next push, pull, scan or watch replaces it with a store of this build's shape that keeps what the folder records of each file, and fills that from the server; the replacement changes none of the folder's files".to_string(),
+        (Some(0), Some(FolderStore::Unnamed)) => "It holds no write still to be sent, but it names no folder, so no push, pull, scan or watch replaces it: add the folder again (`marfa folders add`), which replaces it".to_string(),
+        (Some(0), Some(FolderStore::Uncarried(table))) => format!(
+            "It holds no write still to be sent and no answer the folder has yet to record, but its table {table}, part of what the folder records of its files, is not of a shape this build can keep, so this build leaves the store and the folder's files as they are: with the build that made the store, remove the folder (`marfa folders remove`, which leaves its files), then add it again with this build"
+        ),
+        (Some(count), None) => format!(
             "It holds {count} {} the server has not taken, waiting, blocked, refused or dead, which only the build that made it can send or show: open it with that build and drain or discard them before hydrating a new store",
             writes(count)
         ),
-        (Some(count), true) => format!(
-            "It holds {count} {} the server has not taken, waiting, blocked, refused or dead, which only the build that made it can send or show, so this build leaves the store and the folder's files as they are: push the folder with the build that made the store (`marfa folders push`), and once the store holds none, this build replaces it",
+        (Some(count), Some(FolderStore::Replaceable)) => format!(
+            "It holds {count} {} still to be sent or whose answer the folder has yet to record, which only the build that made it can send or record, so this build leaves the store and the folder's files as they are: with the build that made the store, push the folder (`marfa folders push`, after `marfa folders confirm` where its first sync waits), and once the store holds none, this build replaces it",
             writes(count)
         ),
-        (None, false) => "Whether it holds writes the server has not taken cannot be read: open it with the build that made it and drain or discard them before hydrating a new store".to_string(),
-        (None, true) => "Whether it holds writes the server has not taken cannot be read, so this build leaves the store and the folder's files as they are: with the build that made the store, push the folder (`marfa folders push`) and remove it (`marfa folders remove`, which leaves its files), then add it again with this build".to_string(),
+        (Some(count), Some(_)) => format!(
+            "It holds {count} {} still to be sent or whose answer the folder has yet to record, which only the build that made it can send or record, so this build leaves the store and the folder's files as they are: with the build that made the store, push the folder (`marfa folders push`) and remove it (`marfa folders remove`, which leaves its files), then add it again with this build",
+            writes(count)
+        ),
+        (None, None) => "Whether it holds writes the server has not taken cannot be read: open it with the build that made it and drain or discard them before hydrating a new store".to_string(),
+        (None, Some(_)) => "Whether it holds writes still to be sent cannot be read, so this build leaves the store and the folder's files as they are: with the build that made the store, push the folder (`marfa folders push`) and remove it (`marfa folders remove`, which leaves its files), then add it again with this build".to_string(),
     };
     format!("{path} was made by another build of the core: {reason}. {holds}")
 }

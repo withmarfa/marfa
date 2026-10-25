@@ -835,11 +835,11 @@ fn asked(dir: &Path) -> impl FnOnce(CoreError) -> CliError + '_ {
 }
 
 /// Says on standard error that opening `folder` replaced a store another
-/// build of the core made (`folders/refused-store-said`).
+/// build of the core made (`folders/refused-store-replaced-told`).
 fn say_replaced(folder: &Folder) {
     if let Some(reason) = folder.replaced_store() {
         eprintln!(
-            "marfa: replaced the store of {}, which another build of Marfa made ({reason}); it held no change the server had not taken, so nothing is lost: the store is filled again from the server and each file is matched to its item; the replacement changes no file",
+            "marfa: replaced the store of {}, which another build of the core made ({reason}); it held no write still to be sent and no answer the folder had yet to record, so the new store keeps the folder's record of each file and is filled again from the server; the replacement changes no file",
             folder.root().display()
         );
     }

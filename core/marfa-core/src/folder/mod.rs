@@ -28,7 +28,7 @@ pub use removal::{Confirmed, Restored};
 mod health;
 pub mod registry;
 pub mod settings;
-mod settings_file;
+pub(crate) mod settings_file;
 mod status;
 mod storage;
 mod sync;
@@ -351,6 +351,7 @@ impl Folder {
             &root.join(STATE_DIR).join("core.sqlite"),
             Some(server),
             lock,
+            true,
         )?;
         let mut added = Folder::bind(root, root_dir, state_dir, folder, working(core)?, renew)?;
         added.replaced = replaced;
@@ -495,6 +496,7 @@ impl Folder {
             &state.join("core.sqlite"),
             server,
             Arc::new(lock),
+            false,
         )?;
         let core = working(core)?;
         let folder = settings_file::bound(&core)?.ok_or_else(|| not_a_folder(&root))?;
@@ -516,8 +518,9 @@ impl Folder {
     }
 
     /// Why the store this open found was refused, where the open replaced
-    /// it: another build of the core made it, and it held no write the
-    /// server had not taken (`folders/refused-store-replaced`).
+    /// it: another build of the core made it, and it held no write still to
+    /// be sent and no answer the folder had yet to record
+    /// (`folders/refused-store-replaced`).
     pub fn replaced_store(&self) -> Option<&str> {
         self.replaced.as_deref()
     }
