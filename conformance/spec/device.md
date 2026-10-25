@@ -1330,7 +1330,7 @@ When an edit names an `occurred_at`, a device MUST queue it and answer the item 
 
 When an edit asks to clear the `occurred_at` of an item the server holds, a device MUST queue the item's `created_at` as its `occurred_at` and answer the item with it at once.
 
-**Reason:** the server holds no empty `occurred_at`, and an item with none of its own is placed at its creation time (`items/occurred-at-utc`).
+**Reason:** the server holds no empty `occurred_at`, and an item with none of its own is placed at its creation time (`items/occurred-at-default`).
 
 **Tests:** `device/item-fields-live.test.ts › sets and clears an item's own time through an edit`.
 
@@ -1338,7 +1338,7 @@ When an edit asks to clear the `occurred_at` of an item the server holds, a devi
 
 When an edit asks to clear the `occurred_at` of an item whose create waits unsent, a device MUST leave `occurred_at` out of the create and of every edit of the item waiting unsent, and answer the item with the time the create was queued as its `occurred_at`.
 
-**Reason:** the server places a create with no `occurred_at` at its own creation time (`items/occurred-at-utc`), which the device does not know until the create is answered; sending any earlier time in its place would set a time the person asked to clear.
+**Reason:** the server places a create with no `occurred_at` at its own creation time (`items/occurred-at-default`), which the device does not know until the create is answered; sending any earlier time in its place would set a time the person asked to clear.
 
 **Tests:** `device/item-fields-live.test.ts › clears the own time of an item whose create still waits to the server's creation time`.
 
