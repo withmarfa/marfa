@@ -344,8 +344,9 @@ mod tests {
         )
     }
 
-    /// A write in the queue answered `verdict`, of `kind` to the item
-    /// `item`, with the columns and payload `extra` names.
+    /// A write in the queue answered `verdict`, of `kind` to the item `note`
+    /// unless `extra` names another, with the columns and payload `extra`
+    /// names.
     fn answered(id: &str, kind: &str, verdict: &str, extra: &[(&str, &str)]) -> String {
         let mut columns = vec!["id", "kind", "item_id", "idempotency_key", "depends_on"];
         let mut values = vec![
@@ -359,6 +360,8 @@ mod tests {
         for (column, value) in extra {
             if *column == "payload" {
                 payload = (*value).to_string();
+            } else if *column == "item_id" {
+                values[2] = format!("'{value}'");
             } else {
                 columns.push(column);
                 values.push(format!("'{value}'"));
@@ -401,13 +404,14 @@ mod tests {
 
     #[test]
     fn a_refused_or_dead_write_the_folder_has_not_recorded_keeps_its_store_refused() {
-        // A delete clears the file's binding when it is queued, and a tag or
-        // metadata write names no file: nothing but the queue holds them.
+        // A dead write may yet have landed, and no file records a delete, a
+        // restore or a metadata write: nothing but the queue holds them.
         for (kind, verdict, extra) in [
             ("delete_item", "dead", vec![]),
             ("delete_item", "refused", vec![]),
+            ("restore_item", "refused", vec![]),
+            ("update_item", "dead", vec![]),
             ("add_tag", "dead", vec![("tag", "kept")]),
-            ("add_tag", "refused", vec![("tag", "kept")]),
             ("replace_metadata", "refused", vec![]),
         ] {
             let row = answered("unrecorded", kind, verdict, &extra);
@@ -439,121 +443,148 @@ mod tests {
     }
 
     #[test]
-    fn a_refused_write_the_folder_recorded_against_its_file_does_not_keep_its_store_refused() {
+    fn a_refused_write_to_an_item_a_file_is_bound_to_does_not_keep_its_store_refused() {
         let line = state::Line {
             edge_type: "references".into(),
             end: crate::catalog::End::Source,
             other: "other".into(),
         };
-        let edge = "{\"edge_type\":\"references\",\"source_id\":\"note\",\"target_id\":\"other\"}"
-            .to_string();
-        let moved = "{\"target_id\":\"other\"}".to_string();
-        for (kind, extra, change) in [
-            (
-                "add_tag",
-                vec![("tag", "kept")],
-                state::Change::AddTag("kept".into()),
-            ),
-            (
-                "remove_tag",
-                vec![("tag", "kept")],
-                state::Change::RemoveTag("kept".into()),
-            ),
+        let edge = "{\"edge_type\":\"references\",\"source_id\":\"note\",\"target_id\":\"other\"}";
+        let to_note =
+            "{\"edge_type\":\"references\",\"source_id\":\"other\",\"target_id\":\"note\"}";
+        for (kind, extra) in [
+            ("update_item", vec![]),
+            ("add_tag", vec![("tag", "kept")]),
+            ("remove_tag", vec![("tag", "kept")]),
             (
                 "transition_item",
                 vec![("payload", "{\"state\":\"archived\"}")],
-                state::Change::State(crate::model::ItemState::Archived),
             ),
             (
                 "create_edge",
-                vec![("target_id", "other"), ("payload", edge.as_str())],
-                state::Change::Edge {
-                    line: line.clone(),
-                    shown: true,
-                },
+                vec![("target_id", "other"), ("payload", edge)],
+            ),
+            (
+                "create_edge",
+                vec![
+                    ("item_id", "other"),
+                    ("target_id", "note"),
+                    ("payload", to_note),
+                ],
             ),
             (
                 "delete_edge",
-                vec![("target_id", "other"), ("payload", edge.as_str())],
-                state::Change::Edge {
-                    line: line.clone(),
-                    shown: false,
-                },
+                vec![("target_id", "other"), ("payload", edge)],
             ),
             (
                 "update_edge",
                 vec![
                     ("target_id", "was"),
                     ("edge_id", "e"),
-                    ("payload", moved.as_str()),
+                    ("payload", "{\"target_id\":\"other\"}"),
                 ],
-                state::Change::Edge {
+            ),
+        ] {
+            let row = answered("refused", kind, "refused", &extra);
+            // Recorded against the file, and cleared from it once a later
+            // save was taken.
+            let recorded = state::Refused {
+                change: state::Change::Edge {
                     line: line.clone(),
                     shown: true,
                 },
-            ),
-        ] {
-            let recorded = state::Refused {
-                change: change.clone(),
                 save: 2,
                 reason: "validation_error".into(),
             };
-            let row = answered("refused", kind, "refused", &extra);
-            let (dir, _) = refused_folder(true, &format!("{} {row}", bound_recording(&[recorded])));
-            assert!(
-                Folder::open(dir.path(), None)
-                    .map(|folder| folder.replaced_store().is_some())
-                    .unwrap_or_else(|error| panic!("{kind}: {error:?}")),
-                "{kind}"
-            );
+            for record in [vec![recorded], vec![]] {
+                let (dir, _) = refused_folder(true, &format!("{} {row}", bound_recording(&record)));
+                assert!(
+                    Folder::open(dir.path(), None)
+                        .map(|folder| folder.replaced_store().is_some())
+                        .unwrap_or_else(|error| panic!("{kind} {extra:?}: {error:?}")),
+                    "{kind} {extra:?}"
+                );
+            }
 
-            // The witness: the file records another refusal, so this one is
+            // The witness: no file is bound to either end, so the refusal is
             // the queue's alone.
-            let other = state::Refused {
-                change: state::Change::AddTag("another".into()),
-                save: 2,
-                reason: "validation_error".into(),
-            };
-            let (dir, _) = refused_folder(true, &format!("{} {row}", bound_recording(&[other])));
-            assert_eq!(unsent_of(&refused_with(dir.path())), Some(1), "{kind}");
+            let (dir, _) = refused_folder(true, &row);
+            assert_eq!(
+                unsent_of(&refused_with(dir.path())),
+                Some(1),
+                "{kind} {extra:?}"
+            );
         }
     }
 
     #[test]
-    fn a_placement_refusal_the_folder_has_recorded_does_not_keep_its_store_refused() {
-        let placement = answered(
-            "placed",
-            "create_edge",
+    fn a_refusal_a_later_accepted_save_cleared_does_not_keep_its_store_refused() {
+        // A save the server took after a refused one clears the file's record
+        // of the refusal, and the refused write stays in the queue.
+        let refused = answered("refused", "update_item", "refused", &[("sent", "1")]);
+        let accepted = answered("accepted", "update_item", "accepted", &[("sent", "1")]);
+        let (dir, path) = refused_folder(true, &format!("{RECORD} {refused} {accepted}"));
+        let record = recorded(&path);
+        let folder = Folder::open(dir.path(), None)
+            .unwrap_or_else(|error| panic!("the store was left: {error:?}"));
+        assert!(folder.replaced_store().is_some());
+        drop(folder);
+        assert_eq!(recorded(&path), record);
+
+        // The witness: the same refusal of an item no file is bound to is the
+        // queue's alone.
+        let refused = answered(
             "refused",
-            &[
-                ("target_id", FOLDER),
-                (
-                    "payload",
-                    "{\"edge_type\":\"in-folder\",\"properties\":{\"path\":\"Note.md\"}}",
-                ),
-            ],
+            "update_item",
+            "refused",
+            &[("sent", "1"), ("item_id", "unbound")],
         );
+        let (dir, _) = refused_folder(true, &format!("{RECORD} {refused} {accepted}"));
+        assert_eq!(unsent_of(&refused_with(dir.path())), Some(1));
+    }
+
+    #[test]
+    fn a_placement_refusal_of_a_bound_file_does_not_keep_its_store_refused() {
+        let placement = |item: &str| {
+            answered(
+                "placed",
+                "create_edge",
+                "refused",
+                &[
+                    ("item_id", item),
+                    ("target_id", FOLDER),
+                    (
+                        "payload",
+                        "{\"edge_type\":\"in-folder\",\"properties\":{\"path\":\"Note.md\"}}",
+                    ),
+                ],
+            )
+        };
         let record = "INSERT INTO meta (key, value) VALUES ('folder_placements_refused',
             '{\"key\":null,\"settings\":1,\"placements\":{\"note\":{\"path\":\"Note.md\",\"at\":null}}}');";
-        let (dir, path) = refused_folder(true, &format!("{RECORD} {placement} {record}"));
-        assert!(
-            Folder::open(dir.path(), None)
-                .unwrap()
-                .replaced_store()
-                .is_some()
-        );
-        assert_eq!(
-            read(
-                &path,
-                "SELECT value FROM meta WHERE key = 'folder_placements_refused'"
-            )
-            .len(),
-            1
-        );
+        // Recorded as a refused placement, and as one made over another
+        // machine's, which the folder records nowhere.
+        for recorded in [record, ""] {
+            let (dir, path) =
+                refused_folder(true, &format!("{RECORD} {} {recorded}", placement("note")));
+            assert!(
+                Folder::open(dir.path(), None)
+                    .unwrap()
+                    .replaced_store()
+                    .is_some()
+            );
+            assert_eq!(
+                read(
+                    &path,
+                    "SELECT value FROM meta WHERE key = 'folder_placements_refused'"
+                )
+                .len(),
+                usize::from(!recorded.is_empty())
+            );
+        }
 
-        // The witness: a placement refused as made over another machine's
-        // stays in the queue until the folder gives way, recorded nowhere else.
-        let (dir, _) = refused_folder(true, &format!("{RECORD} {placement}"));
+        // The witness: a placement of an item no file is bound to.
+        let (dir, _) = refused_folder(true, &format!("{RECORD} {}", placement("unbound")));
         assert_eq!(unsent_of(&refused_with(dir.path())), Some(1));
     }
 

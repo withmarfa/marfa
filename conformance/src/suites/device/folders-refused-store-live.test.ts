@@ -403,6 +403,9 @@ it("leaves a folder's store another build made while it holds a delete the serve
     "gave up on that the push leaves goes only with the folder: with the build that made the store, remove the folder",
   );
   expect(refused.stderr).toContain("marfa folders remove");
+  expect(refused.stderr).toContain(
+    "a file whose deletion the server never took comes back when the folder is added again, and must be deleted again",
+  );
   expect(refused.stderr).not.toContain(REPLACED);
   expect(filesOf(folder.dir)).toEqual(files);
   expect(storeBytes(folder)).toBe(state);

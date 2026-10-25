@@ -756,9 +756,8 @@ fn untaken_count(conn: &Connection) -> Option<u64> {
 
 /// The writes a replacement of a folder's store would lose: each not yet
 /// sent, as a folder's removal counts them; each refused or dead one but a
-/// refusal the folder has recorded; and each answered one a file's state
-/// still waits on. A recorded refusal is kept in the folder's record of its
-/// files or of its placements, which the replacement carries.
+/// refusal the folder has dealt with; and each answered one a file's state
+/// still waits on.
 #[cfg(unix)]
 fn folder_unsent(conn: &Connection) -> Option<u64> {
     let counted = (|| -> Result<usize, CoreError> {
@@ -774,189 +773,57 @@ fn folder_unsent(conn: &Connection) -> Option<u64> {
     counted.ok().and_then(|count| u64::try_from(count).ok())
 }
 
-/// A refused or dead write in a folder's store, as its queue row holds it.
-#[cfg(unix)]
-struct HeldAnswer {
-    id: String,
-    kind: String,
-    item_id: Option<String>,
-    target_id: Option<String>,
-    tag: Option<String>,
-    payload: Value,
-    refused: bool,
-    reason: Option<String>,
-}
-
-/// The refused and dead writes in the queue that the folder has not
-/// recorded, by id. Only a refusal is ever recorded: a dead write may yet
-/// have landed, and only its own build can release it.
+/// The refused and dead writes in the queue that the folder has not dealt
+/// with, by id. A dead write may yet have landed, and only its own build can
+/// release it. A refusal of a change the folder records against a file, to
+/// an item a file is bound to (either end, for an edge), the folder has
+/// recorded against that file, or has cleared from it once a later save was
+/// taken; one it has yet to record is still on the file's waiting list, which
+/// `awaited_by_files` counts. That also takes in a placement or a default
+/// edge of a bound item, which no file records: each asks only for what the
+/// file's path or the folder's settings say, and the replacement keeps both.
+/// A refusal of any other kind no file records.
 #[cfg(unix)]
 fn unrecorded_answers(conn: &Connection) -> Result<HashSet<String>, CoreError> {
+    let recorded_against_files = [
+        WriteKind::UpdateItem,
+        WriteKind::AddTag,
+        WriteKind::RemoveTag,
+        WriteKind::TransitionItem,
+        WriteKind::CreateEdge,
+        WriteKind::DeleteEdge,
+        WriteKind::UpdateEdge,
+    ]
+    .map(WriteKind::as_str);
+    let bound: HashSet<String> = if held_shape(conn)?.contains_key("folder_files") {
+        let mut statement = conn.prepare("SELECT item_id FROM main.folder_files")?;
+        statement
+            .query_map([], |row| row.get(0))?
+            .collect::<rusqlite::Result<_>>()?
+    } else {
+        HashSet::new()
+    };
+    let is_bound = |item: &Option<String>| item.as_ref().is_some_and(|item| bound.contains(item));
     let mut statement = conn.prepare(
-        "SELECT id, kind, item_id, target_id, tag, payload, verdict, reason
+        "SELECT id, kind, item_id, target_id, verdict, reason
            FROM main.queue WHERE verdict IN (?1, ?2)",
     )?;
-    let answered = statement
-        .query_map([Verdict::Refused.as_str(), Verdict::Dead.as_str()], |row| {
-            Ok(HeldAnswer {
-                id: row.get(0)?,
-                kind: row.get(1)?,
-                item_id: row.get(2)?,
-                target_id: row.get(3)?,
-                tag: row.get(4)?,
-                payload: serde_json::from_str(&row.get::<_, String>(5)?).unwrap_or(Value::Null),
-                refused: row.get::<_, String>(6)? == Verdict::Refused.as_str(),
-                reason: row.get(7)?,
-            })
-        })?
-        .collect::<rusqlite::Result<Vec<_>>>()?;
-    if answered.is_empty() {
-        return Ok(HashSet::new());
-    }
-    let files = refusals_by_item(conn)?;
-    let placements = refused_placements(conn)?;
-    let folder = meta_get(conn, crate::folder::settings_file::META_FOLDER)?;
-    Ok(answered
-        .into_iter()
-        .filter(|row| {
-            !(row.refused && recorded_refusal(row, &files, &placements, folder.as_deref()))
-        })
-        .map(|row| row.id)
-        .collect())
-}
-
-/// What each bound file of a folder records as refused, by the item it is.
-/// An entry this build cannot read records nothing it can match.
-#[cfg(unix)]
-fn refusals_by_item(
-    conn: &Connection,
-) -> Result<HashMap<String, Vec<crate::folder::state::Change>>, CoreError> {
-    let mut recorded: HashMap<String, Vec<_>> = HashMap::new();
-    if !held_shape(conn)?.contains_key("folder_files") {
-        return Ok(recorded);
-    }
-    let mut statement = conn.prepare("SELECT item_id, writes FROM main.folder_files")?;
-    let mut rows = statement.query([])?;
+    let mut unrecorded = HashSet::new();
+    let mut rows = statement.query([Verdict::Refused.as_str(), Verdict::Dead.as_str()])?;
     while let Some(row) = rows.next()? {
-        let writes: Value = serde_json::from_str(&row.get::<_, String>(1)?).unwrap_or(Value::Null);
-        let changes = writes["refused"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .filter_map(|refused| serde_json::from_value(refused["change"].clone()).ok());
-        recorded.entry(row.get(0)?).or_default().extend(changes);
+        let kind: String = row.get(1)?;
+        let (item, target): (Option<String>, Option<String>) = (row.get(2)?, row.get(3)?);
+        let refused = row.get::<_, String>(4)? == Verdict::Refused.as_str();
+        // A delete of an edge refused as already gone did what it asked.
+        let done = kind == WriteKind::DeleteEdge.as_str()
+            && row.get::<_, Option<String>>(5)?.as_deref() == Some("edge_not_found");
+        let handled = recorded_against_files.contains(&kind.as_str())
+            && (is_bound(&item) || is_bound(&target));
+        if !(refused && (done || handled)) {
+            unrecorded.insert(row.get(0)?);
+        }
     }
-    Ok(recorded)
-}
-
-/// The items whose placement the folder recorded as refused.
-#[cfg(unix)]
-fn refused_placements(conn: &Connection) -> Result<HashSet<String>, CoreError> {
-    let Some(record) = meta_get(conn, crate::folder::placement::META_REFUSED)? else {
-        return Ok(HashSet::new());
-    };
-    let record: Value = serde_json::from_str(&record).unwrap_or(Value::Null);
-    Ok(record["placements"]
-        .as_object()
-        .map(|placements| placements.keys().cloned().collect())
-        .unwrap_or_default())
-}
-
-/// Whether the folder has recorded the refusal of `row`: against the file of
-/// the item it changes, as a file's refusal is recorded, or as a refused
-/// placement of this folder. A delete of an edge refused as already gone
-/// did what it asked, so it is recorded wherever it is.
-#[cfg(unix)]
-fn recorded_refusal(
-    row: &HeldAnswer,
-    files: &HashMap<String, Vec<crate::folder::state::Change>>,
-    placements: &HashSet<String>,
-    folder: Option<&str>,
-) -> bool {
-    use crate::catalog::End;
-    use crate::folder::state::{Change, Line};
-    let item = row.item_id.as_deref();
-    let target = row.target_id.as_deref();
-    let kind = row.kind.as_str();
-    let edge_write = [
-        WriteKind::CreateEdge.as_str(),
-        WriteKind::UpdateEdge.as_str(),
-        WriteKind::DeleteEdge.as_str(),
-    ]
-    .contains(&kind);
-    if kind == WriteKind::DeleteEdge.as_str() && row.reason.as_deref() == Some("edge_not_found") {
-        return true;
-    }
-    if edge_write
-        && target.is_some()
-        && target == folder
-        && item.is_some_and(|item| placements.contains(item))
-    {
-        return true;
-    }
-    let records = |at: Option<&str>, change: &dyn Fn(&Change) -> bool| {
-        at.and_then(|item| files.get(item))
-            .is_some_and(|changes| changes.iter().any(change))
-    };
-    let tag = || row.tag.clone().unwrap_or_default();
-    if kind == WriteKind::UpdateItem.as_str() {
-        return records(item, &|change| *change == Change::Edit);
-    }
-    if kind == WriteKind::AddTag.as_str() {
-        return records(item, &|change| *change == Change::AddTag(tag()));
-    }
-    if kind == WriteKind::RemoveTag.as_str() {
-        return records(item, &|change| *change == Change::RemoveTag(tag()));
-    }
-    if kind == WriteKind::TransitionItem.as_str() {
-        let Ok(state) = serde_json::from_value(row.payload["state"].clone()) else {
-            return false;
-        };
-        return records(item, &|change| *change == Change::State(state));
-    }
-    let (Some(source), Some(target)) = (item, target) else {
-        return false;
-    };
-    if kind == WriteKind::UpdateEdge.as_str() {
-        // A move names only the end it moves; the edge's type is in the copy
-        // the replacement does not keep, so any line to the same place matches.
-        let moved = match (
-            row.payload["source_id"].as_str(),
-            row.payload["target_id"].as_str(),
-        ) {
-            (None, Some(to)) => Some((source, End::Source, to)),
-            (Some(to), None) => Some((target, End::Target, to)),
-            _ => None,
-        };
-        return moved.is_some_and(|(at, end, to)| {
-            records(Some(at), &|change| {
-                matches!(change, Change::Edge { line, shown: true } if line.end == end && line.other == to)
-            })
-        });
-    }
-    if !edge_write {
-        return false;
-    }
-    let Some(edge_type) = row.payload["edge_type"].as_str() else {
-        return false;
-    };
-    let shown = kind == WriteKind::CreateEdge.as_str();
-    [(source, End::Source, target), (target, End::Target, source)]
-        .into_iter()
-        .any(|(at, end, other)| {
-            let line = Line {
-                edge_type: edge_type.to_string(),
-                end,
-                other: other.to_string(),
-            };
-            records(Some(at), &|change| {
-                *change
-                    == Change::Edge {
-                        line: line.clone(),
-                        shown,
-                    }
-            })
-        })
+    Ok(unrecorded)
 }
 
 /// The writes in the queue that a folder's file state names as waiting on

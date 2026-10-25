@@ -386,7 +386,7 @@ When machines follow the same `system.folder`, a device MUST keep each machineâ€
 
 ## A store another build made
 
-A folder's store holds a copy of the server's rows, the writes still to be sent, and the folder's record of its files: which file is which item, what the folder last read and wrote there, which files went missing, which writes and placements the server refused, and which items were purged. An answer the folder has yet to record is an answer a file's state still waits on, or a write the server refused or gave up on that the folder has not recorded against a file or a placement. Where the store holds no write still to be sent and no answer the folder has yet to record, a hydration brings the copy back and the record carried into the new store keeps each file where it was (`folders/refused-store-record-kept`), so this build can replace a store that another build of the core made (`device/wrong-schema`) without losing anything.
+A folder's store holds a copy of the server's rows, the writes still to be sent, and the folder's record of its files: which file is which item, what the folder last read and wrote there, which files went missing, which writes and placements the server refused, and which items were purged. An answer the folder has yet to record is an answer a file's state still waits on, a write the server gave up on, or a write the server refused, unless it is the delete of an edge already gone, or an edit, a tag, a state change or an edge of an item a file in the folder is bound to, which the folder records against the file or its placements, or no longer needs once a later save is taken. Where the store holds no write still to be sent and no answer the folder has yet to record, a hydration brings the copy back and the record carried into the new store keeps each file where it was (`folders/refused-store-record-kept`), so this build can replace a store that another build of the core made (`device/wrong-schema`) without losing anything.
 
 ### `folders/refused-store-replaced`
 
@@ -522,7 +522,7 @@ When a device refuses a folder's store `wrong_schema` because it holds a write s
 
 ### `folders/refused-store-unrecorded-advice`
 
-When a device refuses a folder's store `wrong_schema` because it holds a write still to be sent or an answer the folder has yet to record, a device MUST say that a write the server refused or gave up on that a push leaves goes only when the folder is removed with the build that made the store and added again.
+When a device refuses a folder's store `wrong_schema` because it holds a write still to be sent or an answer the folder has yet to record, a device MUST say that a write the server refused or gave up on that a push leaves goes only when the folder is removed with the build that made the store and added again, and that a file whose deletion the server never took then comes back and must be deleted again.
 
 **Reason:** a push sends no write the server refused or gave up on again, so the store goes on holding it, and this build cannot open the store to remove the folder.
 

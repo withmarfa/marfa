@@ -87,9 +87,10 @@ pub enum CoreError {
         reason: String,
         /// Writes in the store the server has not taken, waiting, blocked,
         /// refused or dead. In a folder's store, the writes still to be sent,
-        /// each refused or dead write but a refusal the folder has recorded
-        /// against a file or a placement, and each answered write a file's
-        /// state still waits on. `None` where they cannot be read.
+        /// each dead write, each refused write but one of a change the folder
+        /// records against a file to an item a file is bound to, and each
+        /// answered write a file's state still waits on. `None` where they
+        /// cannot be read.
         unsent: Option<u64>,
         /// Where the store is a folder's, what this build's folder commands
         /// can do with it.
@@ -326,7 +327,7 @@ fn wrong_schema(
             writes(count)
         ),
         (Some(count), Some(FolderStore::Replaceable)) => format!(
-            "It holds {count} {} still to be sent or whose answer the folder has yet to record, which only the build that made it can send or record, so this build leaves the store and the folder's files as they are: with the build that made the store, push the folder (`marfa folders push`, after `marfa folders confirm` where its first sync waits), and once the store holds none, this build replaces it. A write the server refused or gave up on that the push leaves goes only with the folder: with the build that made the store, remove the folder (`marfa folders remove`, which leaves its files), then add it again with this build",
+            "It holds {count} {} still to be sent or whose answer the folder has yet to record, which only the build that made it can send or record, so this build leaves the store and the folder's files as they are: with the build that made the store, push the folder (`marfa folders push`, after `marfa folders confirm` where its first sync waits), and once the store holds none, this build replaces it. A write the server refused or gave up on that the push leaves goes only with the folder: with the build that made the store, remove the folder (`marfa folders remove`, which leaves its files), then add it again with this build. The removal drops that write, so a file whose deletion the server never took comes back when the folder is added again, and must be deleted again",
             writes(count)
         ),
         (Some(count), Some(_)) => format!(
