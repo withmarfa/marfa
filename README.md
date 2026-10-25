@@ -40,7 +40,7 @@ The instance is the source of truth. Clients never talk to each other, only to t
 
 The Railway template creates the server, a volume for its data and a private bucket for backups, and generates the server's secrets. Railway bills the service and its storage to your workspace. [Create a personal Marfa instance on Railway](./deploy/railway.md) has the steps, including claiming the instance.
 
-To run Marfa on a computer you own or in a container of your own, follow [Deploy](https://docs.marfa.so/guides/deploy).
+To run Marfa on a computer you own or in a container of your own, follow [Deploy](https://docs.marfa.so/run/deploy).
 
 ## Try it locally
 

@@ -2081,7 +2081,7 @@ describe("every command holds the server to the contract", () => {
           pages: [
             {
               title: "Restore an archive",
-              url: "https://docs.marfa.so/guides/restore",
+              url: "https://docs.marfa.so/run/export-and-restore",
               description: null,
               breadcrumbs: [],
             },
@@ -2105,7 +2105,7 @@ describe("every command holds the server to the contract", () => {
     });
     expect(miss.code, miss.stderr).toBe(0);
     expect(miss.stdout).toBe(
-      'no docs page matches "archive"\nThe closest pages by title:\n  Restore an archive  /guides/restore\n`marfa docs topics` lists every page.\n',
+      'no docs page matches "archive"\nThe closest pages by title:\n  Restore an archive  /run/export-and-restore\n`marfa docs topics` lists every page.\n',
     );
     const json = await docs(server.url, ["search", "archive"]);
     expect(json.code, json.stderr).toBe(0);

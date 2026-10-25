@@ -1051,7 +1051,7 @@ mod tests {
     fn a_miss_offers_the_titles_nearest_the_query_and_none_that_share_no_word() {
         let topics: Topics = serde_json::from_str(
             r#"{"pages":[
-            {"title":"Restore an archive","url":"https://docs.marfa.so/guides/restore","description":"Bring an export back."},
+            {"title":"Restore an archive","url":"https://docs.marfa.so/run/export-and-restore","description":"Bring an export back."},
             {"title":"Keep files","url":"https://docs.marfa.so/files","description":"Files in a folder."},
             {"title":"Webhooks","url":"https://docs.marfa.so/webhooks","description":null}]}"#,
         )
@@ -1077,7 +1077,7 @@ mod tests {
                 &closest("restore archive", &topics)
             ),
             "no docs page matches \"restore archive\"\nThe closest pages by title:\n  \
-             Restore an archive  /guides/restore\n`marfa docs topics` lists every page."
+             Restore an archive  /run/export-and-restore\n`marfa docs topics` lists every page."
         );
     }
 
