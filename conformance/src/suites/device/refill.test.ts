@@ -8,6 +8,7 @@ import {
   cursorAhead,
   edgesPage,
   answers,
+  SCRIPTED_INSTANCE,
   SCRIPTED_REACH,
   writeAnswers,
   refusal,
@@ -18,7 +19,11 @@ import {
   type WireEdgeOptions,
   type WireItemOptions,
 } from "../../device/marfa-answers.js";
-import type { Answer, ScriptedServer } from "../../device/scripted-server.js";
+import {
+  BUILT_FOR,
+  type Answer,
+  type ScriptedServer,
+} from "../../device/scripted-server.js";
 import {
   fileOf,
   scriptHydration,
@@ -1218,6 +1223,35 @@ describe("a fill asked to happen only in place", () => {
     head.now = "2";
     await refusedInPlace(h, "head_past_log");
 
+    const replaced = await h.device.hydrate(["core.note"], "library");
+    expect(replaced.ok, JSON.stringify(replaced)).toBe(true);
+    expect(replaced.ok && replaced.value.in_place).toBe(false);
+  });
+
+  it("refuses to fill a copy a drain expired for another instance, naming the instance", async () => {
+    harness = await startHarness("in-place-only-drain-instance");
+    const h = harness;
+    let instance = SCRIPTED_INSTANCE;
+    h.server.copyAnswer("GET", "/", () =>
+      answers.root(Number(BUILT_FOR), instance),
+    );
+    scriptHydration(h.server, {
+      head: "10",
+      rows: { "core.note": [{ item: { id: "a" } }] },
+      instance: () => instance,
+    });
+    expect((await h.device.hydrate(["core.note"], "library")).ok).toBe(true);
+    const created = await h.device.create({
+      type: "core.note",
+      properties: { title: "new", body: "new" },
+    });
+    expect(created.ok, JSON.stringify(created)).toBe(true);
+    instance = "00000000-0000-7000-8000-0000000000ff";
+    const drained = await h.device.drain();
+    expect(drained.ok ? "drained" : drained.refusal.code).toBe("copy_expired");
+    await refusedInPlace(h, "instance_changed");
+
+    // The witness: asked for any fill, the same hydration replaces the copy.
     const replaced = await h.device.hydrate(["core.note"], "library");
     expect(replaced.ok, JSON.stringify(replaced)).toBe(true);
     expect(replaced.ok && replaced.value.in_place).toBe(false);

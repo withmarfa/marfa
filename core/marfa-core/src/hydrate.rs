@@ -671,7 +671,16 @@ struct Built<'a> {
 /// `copy_expired` reason.
 fn not_in_place(conn: &rusqlite::Connection, built: &Built<'_>) -> Result<Option<&'static str>> {
     let Some(refill) = store::refill(conn)? else {
-        return Ok(Some(NOT_STALE));
+        // An expiry keeps the instance a copy was built from, so a copy that
+        // is whole, or was expired by a drain that met another instance, is
+        // still told apart from one that is merely not stale.
+        let elsewhere = store::meta_get(conn, store::META_INSTANCE_ID)?
+            .is_some_and(|held| !held.is_empty() && held != built.instance);
+        return Ok(Some(if elsewhere {
+            HydrateRestart::InstanceChanged.as_str()
+        } else {
+            NOT_STALE
+        }));
     };
     Ok(if refill.instance != built.instance {
         Some(HydrateRestart::InstanceChanged.as_str())
