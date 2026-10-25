@@ -406,6 +406,7 @@ impl CliError {
                 | CoreError::NoCatalog
                 | CoreError::ReadingHandle
                 | CoreError::WrongSchema { .. }
+                | CoreError::UnsentDiffers { .. }
                 | CoreError::CopyExpired { .. }
                 | CoreError::WrongServer { .. } => Exit::Local,
             },

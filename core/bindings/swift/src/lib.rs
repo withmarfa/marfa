@@ -1239,6 +1239,17 @@ pub enum MarfaError {
     ReadingHandle {
         message: String,
     },
+    /// A removal of a store was refused, leaving it as it was, because the
+    /// writes it holds that the server has not taken are not the number the
+    /// caller agreed to lose. Carried so an app can show the person the
+    /// store's own count and ask again.
+    UnsentDiffers {
+        path: String,
+        /// The store's own count; `None` where it cannot be read.
+        unsent: Option<u64>,
+        agreed: u64,
+        message: String,
+    },
     /// The copy can no longer be kept current from its cursor: a hydration
     /// is owed, and the queue survives it.
     CopyExpired {
@@ -1318,6 +1329,7 @@ impl MarfaError {
             | MarfaError::NoCatalog { message }
             | MarfaError::WrongSchema { message, .. }
             | MarfaError::ReadingHandle { message }
+            | MarfaError::UnsentDiffers { message, .. }
             | MarfaError::CopyExpired { message, .. }
             | MarfaError::StreamIncomplete { message, .. }
             | MarfaError::WrongServer { message, .. }
@@ -1361,6 +1373,7 @@ impl MarfaError {
             MarfaError::NoCatalog { .. } => marfa_core::CoreErrorKind::NoCatalog,
             MarfaError::ReadingHandle { .. } => marfa_core::CoreErrorKind::ReadingHandle,
             MarfaError::WrongSchema { .. } => marfa_core::CoreErrorKind::WrongSchema,
+            MarfaError::UnsentDiffers { .. } => marfa_core::CoreErrorKind::UnsentDiffers,
             MarfaError::CopyExpired { .. } => marfa_core::CoreErrorKind::CopyExpired,
             MarfaError::StreamIncomplete { .. } => marfa_core::CoreErrorKind::StreamIncomplete,
             MarfaError::WrongServer { .. } => marfa_core::CoreErrorKind::WrongServer,
@@ -1440,6 +1453,16 @@ impl From<marfa_core::CoreError> for MarfaError {
                 message,
             },
             E::ReadingHandle => MarfaError::ReadingHandle { message },
+            E::UnsentDiffers {
+                path,
+                unsent,
+                agreed,
+            } => MarfaError::UnsentDiffers {
+                path,
+                unsent,
+                agreed,
+                message,
+            },
             E::CopyExpired { reason } => MarfaError::CopyExpired { reason, message },
             E::StreamIncomplete { reason } => MarfaError::StreamIncomplete { reason, message },
             E::WrongServer { expected, got } => MarfaError::WrongServer {
@@ -2779,6 +2802,24 @@ impl Core {
     }
 }
 
+/// Removes the store at `path`: the store, its log, the bytes it fetched and
+/// its writer lock, and nothing else beside it, unlinking a symbolic link at
+/// any of those names rather than what it leads to. A store of any schema is
+/// removed, including one `open` refuses with `WrongSchema`. Drop every `Core`
+/// on the store first.
+///
+/// `unsent` is the number of writes the server has not taken that the person
+/// agreed to lose. Throws `UnsentDiffers` with the store's own count, leaving
+/// it as it was, unless that count equals `unsent`; the count is `nil` where
+/// it cannot be read, and such a store is never removed. Throws
+/// `ReadingHandle` while another process writes the store, and `Invalid` for a
+/// folder's store. With nothing at `path`, removes what a removal stopped part
+/// way left there when `unsent` is 0.
+#[uniffi::export]
+pub fn remove_store(path: String, unsent: u64) -> Result<(), MarfaError> {
+    Ok(marfa_core::Core::remove_store(path, unsent)?)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2844,6 +2885,11 @@ mod tests {
                 reason: text(),
                 unsent: None,
                 folder: None,
+            },
+            E::UnsentDiffers {
+                path: text(),
+                unsent: None,
+                agreed: 0,
             },
             E::CopyExpired { reason: text() },
             E::StreamIncomplete { reason: text() },
@@ -3201,6 +3247,15 @@ mod tests {
                 }
                 .into(),
                 "WrongSchema",
+            ),
+            (
+                E::UnsentDiffers {
+                    path: text(),
+                    unsent: Some(2),
+                    agreed: 1,
+                }
+                .into(),
+                "UnsentDiffers",
             ),
             (E::CopyExpired { reason: text() }.into(), "CopyExpired"),
             (

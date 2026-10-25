@@ -3730,6 +3730,82 @@ When a device refuses to replace a store, a device MUST leave the store's file a
 
 **Tests:** `device/binding-replace-refused.test.ts › refuses to replace a refused store that holds a write the server has not taken`, `› refuses to replace a refused store whose writes it cannot count`, `› refuses to replace a refused store while another process holds its writer role`, `› refuses to replace a store it opens`.
 
+### `device/remove-store`
+
+When a device is asked to remove a store, agreeing to lose a number of writes the server has not taken, and the store holds that number, a device MUST remove the store file, its write-ahead log, its rollback journal, its shared-memory file, the fetched bytes it keeps beside it and its writer lock.
+
+**Reason:** an app that lets a person discard their copy has to remove every file that copy is made of, whichever build made it, and an app that removed them itself would not know which files a build keeps or whether another process writes them.
+
+**Tests:** `device/binding-remove-store.test.ts › removes a store holding the agreed number of unsent writes, with its log, fetched bytes and lock`.
+
+### `device/remove-store-only`
+
+When a device removes a store, a device MUST NOT remove any other file beside it, including a refused store it set aside.
+
+**Tests:** `device/binding-remove-store.test.ts › removes a store holding the agreed number of unsent writes, with its log, fetched bytes and lock`.
+
+### `device/remove-store-any-schema`
+
+When a device is asked to remove a store it refuses `wrong_schema`, and the store holds the number of writes the server has not taken that was agreed to be lost, a device MUST remove the store.
+
+**Reason:** a store another build shaped is the copy a person most often needs to discard, and the count the refusal said (`device/wrong-schema-says`) is the count they agreed to lose.
+
+**Tests:** `device/binding-remove-store.test.ts › removes a store the writer refuses wrong_schema under its own count`.
+
+### `device/remove-store-held`
+
+While another process holds a store's writer role, a device MUST refuse to remove the store `reading_handle`.
+
+**Reason:** a count of the writes the server has not taken stays true only while no other process can queue one, so a device counts them and removes the store under the writer role, which also keeps a store from being removed from under an app that writes it.
+
+**Tests:** `device/binding-remove-store.test.ts › refuses to remove a store while another process holds its writer role`.
+
+### `device/remove-store-unsent`
+
+If a store a device is asked to remove holds another number of writes the server has not taken than the number agreed to be lost, or a number the device cannot count, then a device MUST refuse to remove it `unsent_differs`.
+
+**Reason:** a person agrees to lose the writes they were shown, and a write queued after they were shown it, or a count that cannot be read, is a loss they did not agree to.
+
+**Tests:** `device/binding-remove-store.test.ts › refuses to remove a store holding another number of unsent writes, with its own count`, `› refuses to remove a store whose unsent writes it cannot count`.
+
+### `device/remove-store-says`
+
+When a device refuses to remove a store `unsent_differs`, a device MUST say the number of writes the store holds that the server has not taken, or that it cannot count them, and the number agreed to be lost.
+
+**Reason:** an app shows the person the store's own count and asks again, so the next request agrees to the loss it will cause.
+
+**Tests:** `device/binding-remove-store.test.ts › refuses to remove a store holding another number of unsent writes, with its own count`, `› refuses to remove a store whose unsent writes it cannot count`.
+
+### `device/remove-store-absent`
+
+When a device is asked to remove a store at a path that holds no store file, a device MUST count no writes the server has not taken and remove what is left of the store's other files.
+
+**Reason:** a removal that stopped part way, or one asked for twice, is finished by asking again, and a path with no store holds no write to lose.
+
+**Tests:** `device/binding-remove-store.test.ts › removes what a removal left at a path with no store only when nothing is agreed to be lost`.
+
+### `device/remove-store-no-link`
+
+When a device removes a store and finds a symbolic link at one of the store's names or inside the folder of fetched bytes, a device MUST remove the link and MUST NOT remove what it leads to.
+
+**Reason:** a link can lead to a person's files outside the store, and a removal reaches only the names the store is made of.
+
+**Tests:** `device/binding-remove-store.test.ts › removes a symbolic link at a store's name and keeps what it leads to`.
+
+### `device/remove-store-folder`
+
+If a device is asked to remove the store of a folder it syncs, then a device MUST refuse `invalid`.
+
+**Reason:** removing a folder takes it off the folder registry and counts its unsent writes against the folder, which removing its store alone would not.
+
+**Tests:** `device/binding-remove-store.test.ts › refuses to remove a folder's store`.
+
+### `device/remove-store-kept`
+
+When a device refuses to remove a store, a device MUST leave every file of the store unchanged.
+
+**Tests:** `device/binding-remove-store.test.ts › refuses to remove a store holding another number of unsent writes, with its own count`, `› refuses to remove a store whose unsent writes it cannot count`, `› refuses to remove a store while another process holds its writer role`, `› removes what a removal left at a path with no store only when nothing is agreed to be lost`, `› refuses to remove a folder's store`.
+
 ### `device/writer-per-file`
 
 A device MUST give each store file its own writer role, so two stores in one directory that share a stem each have a writer.

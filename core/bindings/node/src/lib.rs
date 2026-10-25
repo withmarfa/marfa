@@ -1282,8 +1282,8 @@ fn server_of(url: Option<String>, key: Option<String>) -> Result<Option<marfa_co
 /// `not_found: …`, `wrong_server: …`, and the error carries what the Swift
 /// binding's carries as properties: `code`, the core's own name for it, and
 /// whichever of `serverCode`, `status`, `retryAfterSeconds`, `origin`,
-/// `location`, `path`, `reason`, `unsent`, `expected`, `got`, `served`,
-/// `writeSent` and `hash` it has.
+/// `location`, `path`, `reason`, `unsent`, `agreed`, `expected`, `got`,
+/// `served`, `writeSent` and `hash` it has.
 fn failure(env: Env, error: marfa_core::CoreError) -> Error {
     match error_value(&env, &error) {
         Ok(thrown) => Error::from(thrown),
@@ -1359,6 +1359,7 @@ fn describe(error: &marfa_core::CoreError) -> (String, Vec<(&'static str, serde_
         | E::HydrationIncomplete
         | E::NoCatalog
         | E::WrongSchema { .. }
+        | E::UnsentDiffers { .. }
         | E::ReadingHandle
         | E::CopyExpired { .. }
         | E::StreamIncomplete { .. }
@@ -1415,6 +1416,15 @@ fn describe(error: &marfa_core::CoreError) -> (String, Vec<(&'static str, serde_
             ("path", json!(path)),
             ("reason", json!(reason)),
             ("unsent", json!(unsent)),
+        ],
+        E::UnsentDiffers {
+            path,
+            unsent,
+            agreed,
+        } => vec![
+            ("path", json!(path)),
+            ("unsent", json!(unsent)),
+            ("agreed", json!(agreed)),
         ],
         E::CopyExpired { reason } | E::StreamIncomplete { reason } => {
             vec![("reason", json!(reason))]
@@ -2186,6 +2196,35 @@ impl MarfaCore {
         Ok(MarfaCore {
             inner: Arc::new(core),
         })
+    }
+
+    /// Removes the store at `path`: the store, its log, the bytes it fetched
+    /// and its writer lock, and nothing else beside it, unlinking a symbolic
+    /// link at any of those names rather than what it leads to. A store of
+    /// any schema is removed, including one `open` refuses with
+    /// `wrong_schema`. Close every `MarfaCore` on the store first.
+    ///
+    /// `unsent` is the number of writes the server has not taken that the
+    /// person agreed to lose. Refuses with `unsent_differs` and the store's
+    /// own count as `unsent`, leaving it as it was, unless that count equals
+    /// `unsent`; the count is `null` where it cannot be read, and such a store
+    /// is never removed. Refuses with `reading_handle` while another process
+    /// writes the store, and with `invalid` for a folder's store. With nothing
+    /// at `path`, removes what a removal stopped part way left there when
+    /// `unsent` is 0.
+    #[napi]
+    pub fn remove_store(env: Env, path: String, unsent: f64) -> Result<()> {
+        // Checked as a number first: napi's integer conversion truncates a
+        // fraction and reads NaN as zero, which would agree to lose writes.
+        if unsent.fract() != 0.0 || !(0.0..=MAX_SAFE_INTEGER).contains(&unsent) {
+            return Err(failure(
+                env,
+                marfa_core::CoreError::Invalid(
+                    "unsent is a whole count from 0 to Number.MAX_SAFE_INTEGER".to_string(),
+                ),
+            ));
+        }
+        marfa_core::Core::remove_store(path, unsent as u64).map_err(|error| failure(env, error))
     }
 
     /// Replaces the local copy with the declared types at `tier`, one tier or

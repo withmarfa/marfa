@@ -229,6 +229,46 @@ pub(crate) fn refused_file_budget(path: &Path) -> Option<crate::FileBudget> {
     Some(crate::FileBudget::stored(Some(&text))).filter(|setting| setting.to_stored().is_some())
 }
 
+/// The writes the store at `path` holds that the server has not taken, as
+/// `wrong_schema` counts them, read whatever the store's shape for the caller
+/// that holds its writer lock. A store with no table holds none. `None` where
+/// they cannot be counted, as in a file that is not a store. Refuses a
+/// folder's store, which only its folder's removal may take.
+pub(crate) fn removal_count(path: &Path) -> Result<Option<u64>, CoreError> {
+    let Ok(conn) = open_refused(path) else {
+        return Ok(None);
+    };
+    let Ok(tables) = conn.query_row("SELECT COUNT(*) FROM sqlite_schema", [], |row| {
+        row.get::<_, i64>(0)
+    }) else {
+        return Ok(None);
+    };
+    if tables == 0 {
+        return Ok(Some(0));
+    }
+    if meta_get(&conn, crate::folder::settings_file::META_FOLDER)
+        .ok()
+        .flatten()
+        .is_some()
+    {
+        return Err(CoreError::Invalid(format!(
+            "{} is a folder's store: remove the folder instead (`marfa folders remove`), which keeps its registry and its files in step",
+            path.display()
+        )));
+    }
+    Ok(untaken_count(&conn))
+}
+
+/// Removes the store at `path` and the logs beside it, logs first, so a log
+/// is never left beside a name a new store can take. A symbolic link at one
+/// of these names is removed, never what it leads to.
+pub(crate) fn remove(path: &Path) -> Result<(), CoreError> {
+    for suffix in STORE_FILES.iter().rev() {
+        crate::remove_name(&suffixed(path, suffix))?;
+    }
+    Ok(())
+}
+
 /// The store file, then the logs SQLite keeps beside it. A log is read into
 /// whatever store holds its name, so each one moves with its store.
 const STORE_FILES: [&str; 4] = ["", "-journal", "-wal", "-shm"];

@@ -165,11 +165,17 @@ impl Cache {
         Self::for_folder(store, folder)
     }
 
-    fn for_folder(store: &Path, folder: Folder) -> Cache {
+    /// The folder of fetched bytes beside the store at `store`
+    /// (`device/blob-kept-beside`).
+    pub(crate) fn dir_beside(store: &Path) -> PathBuf {
         let mut name = store.as_os_str().to_owned();
         name.push(".blobs");
+        PathBuf::from(name)
+    }
+
+    fn for_folder(store: &Path, folder: Folder) -> Cache {
         Cache {
-            dir: PathBuf::from(name),
+            dir: Self::dir_beside(store),
             #[cfg(unix)]
             parent: None,
             #[cfg(unix)]
