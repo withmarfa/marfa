@@ -1300,7 +1300,7 @@ When the server accepts a create that names `edges`, a device MUST hold each edg
 
 ### `device/create-edges-kept-short`
 
-When the server accepts a create that names `edges` and its answer's block for an edge type carries a `next_cursor` and leaves out a target the create named, a device MUST keep answering the edge it showed to that target until a read brings the server's edge to it.
+When the server accepts a create that names `edges` and its answer carries no block for an edge type, or a block with a `next_cursor` that leaves out a target the create named, a device MUST keep answering the edge it showed to that target until a read brings the server's edge to it.
 
 **Reason:** a block of an item's edges carries at most 50 edges and a cursor for the rest (`edges/hydrate-cap` and `edges/hydrate-cursor`), so an edge left out of a cut block was made; dropping the one shown would answer the item with fewer edges than it has.
 
