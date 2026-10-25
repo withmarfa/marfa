@@ -30,7 +30,7 @@ const DEFAULT_PORT: u16 = 8600;
 const IMAGE: &str = "ghcr.io/withmarfa/marfa-server";
 const CLOUDFLARE_HEADER: &str = "CF-Connecting-IP";
 const AGENT_HINT: &str =
-    "To give an AI agent access to this server, run `marfa docs guides/ai-agents`.";
+    "To give an AI agent access to this server, run `marfa docs build/ai-agents`.";
 const OPTIONS_HINT: &str = "Options, all optional: --dir <folder> to install somewhere else, --port <port> for the port on this machine, --name <name> to run more than one, --external-settings when a secrets manager writes marfa.env. `marfa server install --help` lists them all.";
 
 #[derive(Debug, Subcommand)]
@@ -1255,7 +1255,7 @@ fn upgrade(args: UpgradeArgs, out: &Printer) -> Result<(), CliError> {
     }
     if !unchanged {
         steps.say(&format!(
-            "Read the changelog for {target} first (https://docs.marfa.so/changelog). If it says the database changes shape, follow the Upgrade guide (https://docs.marfa.so/guides/upgrade) instead of this command."
+            "Read the changelog for {target} first (https://docs.marfa.so/changelog). If it says the database changes shape, follow the Upgrade guide (https://docs.marfa.so/run/upgrade) instead of this command."
         ));
         dotenv.set("MARFA_RELEASE", &target)?;
         files::write_if_changed(&folder.path(files::DOTENV), &dotenv.render(), false)?;

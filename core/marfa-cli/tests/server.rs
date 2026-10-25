@@ -504,7 +504,7 @@ fn the_summary_says_where_a_tunnel_points_and_which_machine_holds_the_folder() {
     assert!(
         stdout
             .trim_end()
-            .ends_with("run `marfa docs guides/ai-agents`."),
+            .ends_with("run `marfa docs build/ai-agents`."),
         "the summary does not end by pointing at the agent guide: {stdout}"
     );
 
