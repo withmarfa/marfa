@@ -6,7 +6,7 @@ use super::{Folder, SETTINGS_FILE, STATE_DIR, document, landing, state};
 use crate::http::{Method, Outgoing};
 use crate::{Core, CoreError, Result, store};
 
-const META_FOLDER: &str = "folder_id";
+pub(crate) const META_FOLDER: &str = "folder_id";
 const META_WRITTEN: &str = "folder_file";
 const META_WRITTEN_VERSION: &str = "folder_file_version";
 /// Kept so the same refused text is flagged rather than sent again.

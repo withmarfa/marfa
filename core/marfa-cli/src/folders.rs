@@ -224,6 +224,7 @@ pub fn run(
             let session = named.session()?;
             let folder = Folder::add(&dir, &folder, Some(session.server), session.renew)
                 .map_err(asked(&dir))?;
+            say_replaced(&folder);
             storage::warn(&folder);
             // Told what the first sync will do before it can, unless the
             // person said to go ahead.
@@ -833,11 +834,23 @@ fn asked(dir: &Path) -> impl FnOnce(CoreError) -> CliError + '_ {
     }
 }
 
+/// Says on standard error that opening `folder` replaced a store another
+/// build of the core made (`folders/refused-store-replaced-told`).
+fn say_replaced(folder: &Folder) {
+    if let Some(reason) = folder.replaced_store() {
+        eprintln!(
+            "marfa: replaced the store of {}, which another build of the core made ({reason}); it held no write still to be sent and no answer the folder had yet to record, so the new store keeps the folder's record of each file and is filled again from the server; the replacement changes no file",
+            folder.root().display()
+        );
+    }
+}
+
 /// The folder, for a watch: refused at once where another process holds it,
 /// since a watch that asked would take a folder from another watch.
 pub fn opened(dir: &Path, session: Option<Session>) -> Result<Folder, CliError> {
     let (server, renew) = Session::split(session);
     let folder = Folder::open(dir, server).map_err(held(dir))?;
+    say_replaced(&folder);
     renewing(folder.core(), renew);
     Ok(folder)
 }
@@ -869,6 +882,7 @@ pub fn reopening(
     renew: Option<&Renewal>,
 ) -> Result<Folder, CoreError> {
     let folder = Folder::open(dir, Some(server.clone()))?;
+    say_replaced(&folder);
     if let Some(renew) = renew {
         let renew = std::sync::Arc::clone(renew);
         folder
@@ -883,6 +897,7 @@ pub fn reopening(
 fn working(dir: &Path, session: Option<Session>) -> Result<Folder, CliError> {
     let (server, renew) = Session::split(session);
     let folder = Folder::open_asking(dir, server).map_err(asked(dir))?;
+    say_replaced(&folder);
     renewing(folder.core(), renew);
     Ok(folder)
 }

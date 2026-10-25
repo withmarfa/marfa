@@ -75,24 +75,87 @@ pub(crate) fn open_directory(
     label: &Path,
 ) -> Result<Connection, CoreError> {
     let conn = vfs.open(
-        "core.sqlite",
+        FOLDER_STORE,
         rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE
             | rusqlite::OpenFlags::SQLITE_OPEN_CREATE
             | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
     )?;
-    prepare(&conn).map_err(|error| at_path(error, label))?;
+    prepare(&conn).map_err(|error| in_folder(error, label, &conn))?;
     Ok(conn)
 }
 
 fn at_path(error: CoreError, path: &Path) -> CoreError {
     match error {
-        CoreError::WrongSchema { reason, unsent, .. } => CoreError::WrongSchema {
+        CoreError::WrongSchema {
+            reason,
+            unsent,
+            folder,
+            ..
+        } => CoreError::WrongSchema {
             path: path.display().to_string(),
             reason,
             unsent,
+            folder,
         },
         other => other,
     }
+}
+
+/// A refusal of the store a folder keeps in its state directory, which
+/// `conn` opened.
+#[cfg(unix)]
+fn in_folder(error: CoreError, label: &Path, conn: &Connection) -> CoreError {
+    match at_path(error, label) {
+        CoreError::WrongSchema {
+            path,
+            reason,
+            unsent,
+            ..
+        } => match folder_store(conn) {
+            Ok(folder) => CoreError::WrongSchema {
+                path,
+                reason,
+                unsent: unsent.and(folder_unsent(conn)),
+                folder: Some(folder),
+            },
+            Err(error) => error,
+        },
+        other => other,
+    }
+}
+
+/// The tables in which a folder records its files: which item each is, what
+/// the folder last read and wrote there, which files went missing, and the
+/// pins that keep each bound item in the copy whatever the query says of it.
+/// A hydration keeps them and brings none of them back, so a replacement of a
+/// folder's store carries them.
+#[cfg(unix)]
+pub(crate) const FOLDER_TABLES: [&str; 4] =
+    ["folder_files", "folder_journal", "folder_stats", "pins"];
+
+/// What this build's folder commands can do with the folder store `conn`
+/// opened, which this build refuses `wrong_schema`.
+#[cfg(unix)]
+fn folder_store(conn: &Connection) -> Result<crate::FolderStore, CoreError> {
+    if meta_get(conn, crate::folder::settings_file::META_FOLDER)?.is_none() {
+        return Ok(crate::FolderStore::Unnamed);
+    }
+    Ok(match uncarried(conn)? {
+        Some(table) => crate::FolderStore::Uncarried(table.to_string()),
+        None => crate::FolderStore::Replaceable,
+    })
+}
+
+/// The first of the folder's tables that `conn`'s store holds in a shape
+/// other than this build's, which a replacement cannot carry.
+#[cfg(unix)]
+fn uncarried(conn: &Connection) -> Result<Option<&'static str>, CoreError> {
+    let held = held_shape(conn)?;
+    let built = built_shape()?;
+    Ok(FOLDER_TABLES.into_iter().find(|table| {
+        held.get(*table)
+            .is_some_and(|statement| built.get(*table) != Some(statement))
+    }))
 }
 
 /// Opens another process's store to read: makes no store and applies no
@@ -288,19 +351,224 @@ fn restore_set_aside(path: &Path, aside: &Path, moved: &[&str]) -> String {
     }
 }
 
+/// A folder's store, in the folder's state directory.
+#[cfg(unix)]
+pub(crate) const FOLDER_STORE: &str = "core.sqlite";
+
+/// Where a replacement makes a folder's new store before it takes the old
+/// one's name.
+#[cfg(unix)]
+pub(crate) const FOLDER_STORE_MADE: &str = "core.sqlite.replacing";
+
+/// The values `keys` hold in the meta of the folder store in `vfs`'s
+/// directory, read without its shape checked, as from a store this build
+/// refuses `wrong_schema`. A key the store does not hold is absent.
+#[cfg(unix)]
+pub(crate) fn refused_folder_meta(
+    vfs: &crate::directory_vfs::DirectoryVfs,
+    keys: &[&str],
+) -> Result<HashMap<String, String>, CoreError> {
+    let conn = vfs.open(
+        FOLDER_STORE,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )?;
+    conn.busy_timeout(std::time::Duration::from_secs(5))?;
+    meta_of(&conn, keys)
+}
+
+#[cfg(unix)]
+fn meta_of(conn: &Connection, keys: &[&str]) -> Result<HashMap<String, String>, CoreError> {
+    let mut held = HashMap::new();
+    for key in keys {
+        if let Some(value) = meta_get(conn, key)? {
+            held.insert((*key).to_string(), value);
+        }
+    }
+    Ok(held)
+}
+
+/// Leaves the store `conn` opened as one file, with no log beside it that a
+/// store later at its name would read as its own.
+#[cfg(unix)]
+fn without_log(conn: &Connection) -> Result<(), CoreError> {
+    let mode: String = conn.query_row("PRAGMA journal_mode = DELETE", [], |row| row.get(0))?;
+    if !mode.eq_ignore_ascii_case("delete") {
+        return Err(CoreError::Store(
+            "another process has it open, so its log cannot be let go; try again once that process ends".into(),
+        ));
+    }
+    Ok(())
+}
+
+/// Replaces the folder store in `state`, which this build refuses
+/// `wrong_schema`, with one of this build's shape that holds the old store's
+/// rows of `FOLDER_TABLES` and the values of its meta keys `carried` keeps,
+/// and answers those values. The caller holds the writer lock and has found
+/// nothing unsent. The new store is made whole under another name, then
+/// takes the old one's in one rename, so a failure or a crash at any step
+/// leaves one whole store at the name.
+#[cfg(unix)]
+pub(crate) fn replace_folder_store(
+    state: &crate::directory::Directory,
+    label: &Path,
+    carried: impl Fn(&str) -> bool,
+) -> Result<HashMap<String, String>, CoreError> {
+    let unreplaced = |reason: String| {
+        CoreError::Store(format!("{} cannot be replaced: {reason}", label.display()))
+    };
+    let vfs = crate::directory_vfs::DirectoryVfs::new(state.file())?;
+    let named = |store: &str, suffix: &str| std::path::PathBuf::from(format!("{store}{suffix}"));
+    let log_beside = |store: &str| {
+        ["-wal", "-journal"]
+            .into_iter()
+            .map(|suffix| named(store, suffix))
+            .find(|log| state.entry_kind(log).is_ok())
+    };
+    // A store a replacement left part made is that replacement's, never the
+    // person's.
+    let clear_made = || {
+        for suffix in STORE_FILES {
+            let _ = state.unlink(&named(FOLDER_STORE_MADE, suffix));
+        }
+    };
+    let old = vfs.open(
+        FOLDER_STORE,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )?;
+    old.busy_timeout(std::time::Duration::from_secs(5))?;
+    let read = (|| -> Result<(HashMap<String, String>, Vec<&'static str>), CoreError> {
+        if let Some(table) = uncarried(&old)? {
+            return Err(CoreError::Store(format!(
+                "its table {table} is not of this build's shape"
+            )));
+        }
+        let held = held_shape(&old)?;
+        let tables = FOLDER_TABLES
+            .into_iter()
+            .filter(|table| held.contains_key(*table))
+            .collect();
+        let mut statement = old.prepare("SELECT key, value FROM meta")?;
+        let kept = statement
+            .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get(1)?)))?
+            .filter(|row| row.as_ref().map_or(true, |(key, _)| carried(key)))
+            .collect::<rusqlite::Result<_>>()?;
+        Ok((kept, tables))
+    })();
+    let (kept, tables) = read.map_err(|error| {
+        unreplaced(format!(
+            "what it records of the folder cannot be read: {error}"
+        ))
+    })?;
+    without_log(&old).map_err(|error| unreplaced(error.to_string()))?;
+    if let Some(log) = log_beside(FOLDER_STORE) {
+        return Err(unreplaced(format!(
+            "its log {} is still beside it",
+            log.display()
+        )));
+    }
+    let _ = state.unlink(&named(FOLDER_STORE, "-shm"));
+    clear_made();
+    let made = (|| -> Result<(), CoreError> {
+        let conn = vfs.open(
+            FOLDER_STORE_MADE,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE
+                | rusqlite::OpenFlags::SQLITE_OPEN_CREATE
+                | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        )?;
+        prepare(&conn)?;
+        let tx = conn.unchecked_transaction()?;
+        for (key, value) in &kept {
+            meta_set(&tx, key, value)?;
+        }
+        for table in &tables {
+            carry_rows(&old, &tx, table)?;
+        }
+        tx.commit()?;
+        without_log(&conn)?;
+        drop(conn);
+        // After the new store's file exists, so a failure leaves one to clear.
+        #[cfg(debug_assertions)]
+        if crate::fault::fails(|| "replace-refused-make") {
+            return Err(CoreError::Store("replace-refused-make".into()));
+        }
+        if let Some(log) = log_beside(FOLDER_STORE_MADE) {
+            return Err(CoreError::Store(format!(
+                "the new store's log {} is still beside it",
+                log.display()
+            )));
+        }
+        let _ = state.unlink(&named(FOLDER_STORE_MADE, "-shm"));
+        state
+            .rename(
+                Path::new(FOLDER_STORE_MADE),
+                state,
+                Path::new(FOLDER_STORE),
+                false,
+            )
+            .map_err(|error| CoreError::Store(error.to_string()))
+    })();
+    drop(old);
+    if let Err(error) = made {
+        clear_made();
+        return Err(unreplaced(error.to_string()));
+    }
+    let _ = state.sync();
+    Ok(kept)
+}
+
+/// Copies every row of `table` from `from` to `to`, whose tables are of the
+/// same shape. Two connections, since a folder's store is opened through a
+/// file system that refuses `ATTACH`.
+#[cfg(unix)]
+fn carry_rows(from: &Connection, to: &Connection, table: &str) -> Result<(), CoreError> {
+    let columns = {
+        let mut statement = to.prepare("SELECT name FROM pragma_table_info(?1)")?;
+        statement
+            .query_map([table], |row| row.get::<_, String>(0))?
+            .collect::<rusqlite::Result<Vec<_>>>()?
+    };
+    let list = columns
+        .iter()
+        .map(|column| format!("\"{column}\""))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let marks = (1..=columns.len())
+        .map(|at| format!("?{at}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let mut read = from.prepare(&format!("SELECT {list} FROM \"{table}\""))?;
+    let mut write = to.prepare(&format!(
+        "INSERT INTO \"{table}\" ({list}) VALUES ({marks})"
+    ))?;
+    let mut rows = read.query([])?;
+    while let Some(row) = rows.next()? {
+        let values = (0..columns.len())
+            .map(|at| row.get::<_, rusqlite::types::Value>(at))
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        write.execute(rusqlite::params_from_iter(values))?;
+    }
+    Ok(())
+}
+
 #[cfg(unix)]
 pub(crate) fn read_directory(
     vfs: &crate::directory_vfs::DirectoryVfs,
     label: &Path,
 ) -> Result<Connection, CoreError> {
     let conn = vfs.open(
-        "core.sqlite",
+        FOLDER_STORE,
         rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
     )?;
-    read_connection(conn, label)
+    read_checked(&conn, label).map_err(|error| in_folder(error, label, &conn))?;
+    Ok(conn)
 }
 
 fn read_connection(conn: Connection, path: &Path) -> Result<Connection, CoreError> {
+    read_checked(&conn, path)?;
+    Ok(conn)
+}
+
+fn read_checked(conn: &Connection, path: &Path) -> Result<(), CoreError> {
     conn.busy_timeout(std::time::Duration::from_secs(5))?;
     let no_schema = || {
         CoreError::Invalid(format!(
@@ -308,7 +576,7 @@ fn read_connection(conn: Connection, path: &Path) -> Result<Connection, CoreErro
             path.display()
         ))
     };
-    let held = held_shape(&conn).map_err(|error| match &error {
+    let held = held_shape(conn).map_err(|error| match &error {
         rusqlite::Error::SqliteFailure(_, Some(message))
             if message.contains("file is not a database") =>
         {
@@ -319,8 +587,7 @@ fn read_connection(conn: Connection, path: &Path) -> Result<Connection, CoreErro
     if !held.contains_key("meta") {
         return Err(no_schema());
     }
-    refuse_misshapen(&conn, &held, true).map_err(|error| at_path(error, path))?;
-    Ok(conn)
+    refuse_misshapen(conn, &held, true).map_err(|error| at_path(error, path))
 }
 
 /// A number that moves each time another connection commits to the store,
@@ -411,6 +678,7 @@ fn refuse_misshapen(conn: &Connection, held: &Shape, reading: bool) -> Result<()
             path: String::new(),
             reason: format!("{reason}{}", unsendable(conn)),
             unsent: untaken_count(conn),
+            folder: None,
         })
     };
     if differs("meta") {
@@ -486,8 +754,11 @@ fn unsendable(conn: &Connection) -> String {
 /// Every write the server has not taken that clearing answered writes would
 /// keep: waiting, blocked, refused or dead. Read by clearing a copy of the
 /// queue in the connection's own temporary space, so the count is what
-/// `forget_answered` keeps and a reading connection can take it too. `None`
-/// where a queue of another shape cannot be counted.
+/// `forget_answered` keeps and a reading connection can take it too. A
+/// folder's store also counts each answered write the queue still holds that
+/// a file's state waits on, which a store without the queue would leave
+/// waiting for ever. `None` where a queue or a folder's record of another
+/// shape cannot be counted.
 fn untaken_count(conn: &Connection) -> Option<u64> {
     let counted = (|| -> Result<i64, CoreError> {
         conn.execute_batch("CREATE TEMP TABLE queue AS SELECT * FROM main.queue")?;
@@ -504,6 +775,137 @@ fn untaken_count(conn: &Connection) -> Option<u64> {
     })();
     let _ = conn.execute_batch("DROP TABLE IF EXISTS temp.queue");
     counted.ok().and_then(|count| u64::try_from(count).ok())
+}
+
+/// The writes a replacement of a folder's store would lose: each not yet
+/// sent, as a folder's removal counts them; each refused or dead one but a
+/// refusal the folder has dealt with; and each answered one a file's state
+/// still waits on.
+#[cfg(unix)]
+fn folder_unsent(conn: &Connection) -> Option<u64> {
+    let counted = (|| -> Result<usize, CoreError> {
+        let mut unsent =
+            conn.prepare("SELECT id FROM main.queue WHERE verdict IS NULL OR verdict = ?1")?;
+        let mut held: HashSet<String> = unsent
+            .query_map([Verdict::Blocked.as_str()], |row| row.get(0))?
+            .collect::<rusqlite::Result<_>>()?;
+        held.extend(unrecorded_answers(conn)?);
+        held.extend(awaited_by_files(conn)?);
+        Ok(held.len())
+    })();
+    counted.ok().and_then(|count| u64::try_from(count).ok())
+}
+
+/// The refused and dead writes in the queue that the folder has not dealt
+/// with, by id. A dead write may yet have landed, and only its own build can
+/// release it. A refusal of a change the folder records against a file, to
+/// an item a file is bound to (either end, for an edge), the folder has
+/// recorded against that file, or has cleared from it once a later save was
+/// taken; one it has yet to record is still on the file's waiting list, which
+/// `awaited_by_files` counts. That also takes in a placement or a default
+/// edge of a bound item, which no file records: each asks only for what the
+/// file's path or the folder's settings say, and the replacement keeps both.
+/// A refusal of any other kind no file records.
+#[cfg(unix)]
+fn unrecorded_answers(conn: &Connection) -> Result<HashSet<String>, CoreError> {
+    let recorded_against_files = [
+        WriteKind::UpdateItem,
+        WriteKind::AddTag,
+        WriteKind::RemoveTag,
+        WriteKind::TransitionItem,
+        WriteKind::CreateEdge,
+        WriteKind::DeleteEdge,
+        WriteKind::UpdateEdge,
+    ]
+    .map(WriteKind::as_str);
+    let bound: HashSet<String> = if held_shape(conn)?.contains_key("folder_files") {
+        let mut statement = conn.prepare("SELECT item_id FROM main.folder_files")?;
+        statement
+            .query_map([], |row| row.get(0))?
+            .collect::<rusqlite::Result<_>>()?
+    } else {
+        HashSet::new()
+    };
+    let is_bound = |item: &Option<String>| item.as_ref().is_some_and(|item| bound.contains(item));
+    let mut statement = conn.prepare(
+        "SELECT id, kind, item_id, target_id, verdict, reason
+           FROM main.queue WHERE verdict IN (?1, ?2)",
+    )?;
+    let mut unrecorded = HashSet::new();
+    let mut rows = statement.query([Verdict::Refused.as_str(), Verdict::Dead.as_str()])?;
+    while let Some(row) = rows.next()? {
+        let kind: String = row.get(1)?;
+        let (item, target): (Option<String>, Option<String>) = (row.get(2)?, row.get(3)?);
+        let refused = row.get::<_, String>(4)? == Verdict::Refused.as_str();
+        // A delete of an edge refused as already gone did what it asked.
+        let done = kind == WriteKind::DeleteEdge.as_str()
+            && row.get::<_, Option<String>>(5)?.as_deref() == Some("edge_not_found");
+        let handled = recorded_against_files.contains(&kind.as_str())
+            && (is_bound(&item) || is_bound(&target));
+        if !(refused && (done || handled)) {
+            unrecorded.insert(row.get(0)?);
+        }
+    }
+    Ok(unrecorded)
+}
+
+/// The writes in the queue that a folder's file state names as waiting on
+/// their answer, by id.
+#[cfg(unix)]
+fn awaited_by_files(conn: &Connection) -> Result<HashSet<String>, CoreError> {
+    let mut statement = match conn.prepare("SELECT writes FROM main.folder_files") {
+        Ok(statement) => statement,
+        // A store with no folder record of this kind records no file.
+        Err(error) => {
+            let recorded = conn
+                .query_row(
+                    "SELECT EXISTS (SELECT 1 FROM main.folder_files)",
+                    [],
+                    |row| row.get::<_, bool>(0),
+                )
+                .unwrap_or(false);
+            return if recorded {
+                Err(error.into())
+            } else {
+                Ok(HashSet::new())
+            };
+        }
+    };
+    let mut named = HashSet::new();
+    let mut rows = statement.query([])?;
+    while let Some(row) = rows.next()? {
+        let writes: serde_json::Value = serde_json::from_str(&row.get::<_, String>(0)?)?;
+        let landing = &writes["landing"]["before"]["writes"]["queued"];
+        for queued in [&writes["queued"], landing] {
+            let Some(queued) = queued.as_array() else {
+                continue;
+            };
+            for entry in queued {
+                let Some(id) = entry["id"].as_str() else {
+                    return Err(CoreError::Store(format!(
+                        "a file's waiting write names no id: {entry}"
+                    )));
+                };
+                named.insert(id.to_string());
+            }
+        }
+    }
+    let mut held = HashSet::new();
+    for id in named {
+        if queued_in_main(conn, &id)? {
+            held.insert(id);
+        }
+    }
+    Ok(held)
+}
+
+#[cfg(unix)]
+fn queued_in_main(conn: &Connection, id: &str) -> Result<bool, CoreError> {
+    Ok(conn.query_row(
+        "SELECT EXISTS (SELECT 1 FROM main.queue WHERE id = ?1)",
+        [id],
+        |row| row.get(0),
+    )?)
 }
 
 pub fn meta_get(conn: &Connection, key: &str) -> Result<Option<String>, CoreError> {
@@ -3373,8 +3775,11 @@ pub fn let_go_of_untaken_edge(conn: &Connection, id: &str) -> Result<bool, CoreE
     forget_edge(conn, id)
 }
 
+/// The start of the meta key that remembers a pinned row's purge.
+pub(crate) const PURGED_PIN: &str = "purged_pin/";
+
 fn purged_key(id: &str) -> String {
-    format!("purged_pin/{id}")
+    format!("{PURGED_PIN}{id}")
 }
 
 pub fn purged(conn: &Connection, id: &str) -> Result<bool, CoreError> {

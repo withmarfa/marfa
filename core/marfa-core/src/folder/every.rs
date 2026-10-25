@@ -243,11 +243,26 @@ fn recorded(dir: &Path) -> crate::Result<Recorded> {
     state_dir
         .entry_identity(Path::new("core.sqlite"))
         .map_err(|_| super::not_a_folder(&root))?;
-    let core = Core::read_directory(&state_dir, &root.join(STATE_DIR).join("core.sqlite"))?;
-    let conn = core.conn()?;
+    let (origin, first_sync_waiting) =
+        match Core::read_directory(&state_dir, &root.join(STATE_DIR).join("core.sqlite")) {
+            Ok(core) => {
+                let conn = core.conn()?;
+                (
+                    store::meta_get(&conn, store::META_SERVER_ORIGIN)?,
+                    first::waiting(&conn)?,
+                )
+            }
+            // The open replaces it (`folders/refused-store-replaced`).
+            Err(CoreError::WrongSchema {
+                unsent: Some(0),
+                folder: Some(crate::FolderStore::Replaceable),
+                ..
+            }) => super::refused::recorded(&state_dir)?,
+            Err(error) => return Err(error),
+        };
     Ok(Recorded {
-        origin: store::meta_get(&conn, store::META_SERVER_ORIGIN)?,
-        first_sync_waiting: first::waiting(&conn)?,
+        origin,
+        first_sync_waiting,
         asked: handover::asked_at(&state_dir),
     })
 }

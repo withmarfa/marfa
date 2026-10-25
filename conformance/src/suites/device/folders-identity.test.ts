@@ -12,6 +12,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { execFileSync } from "node:child_process";
+import { DatabaseSync } from "node:sqlite";
 import { join } from "node:path";
 import { describe, it, expect, afterEach, vi } from "vitest";
 import {
@@ -2277,6 +2278,72 @@ describe("what a pull does with a file whose item is purged", () => {
       await watching.stop();
     }
     expect(watching.stdout).not.toContain("trashed or left by state");
+    expect(existsSync(join(harness.dir, "going.md"))).toBe(false);
+  });
+
+  it("takes away at confirm the file of an item purged before another build's store was replaced", async () => {
+    const edges = new EdgeDoor();
+    harness = await folderHarness("folder-purged-replaced", {
+      settings: {
+        query: { types: ["core.note"] },
+        removal_threshold: { files: 0, fraction: 0 },
+      },
+      rows: { "core.note": [{ item: purged }] },
+      events: [edges.stream()],
+    });
+    scriptFolderWrites(harness, { edges });
+    expect((await harness.folder.push()).ok).toBe(true);
+    for (const [id, edge] of [...edges.edges]) {
+      if (edge.source_id === purged.id) edges.edges.delete(id);
+    }
+    edges.events.push(
+      copyItemEvent(
+        String(edges.events.length + 2),
+        "item.purged",
+        wireItem({ ...purged, state: "trashed" }),
+      ),
+    );
+    const paused = await harness.folder.push();
+    expect(paused.ok && paused.value.pull?.paused, JSON.stringify(paused)).toBe(
+      1,
+    );
+    // The server holds the row no more, so the new store's hydration brings
+    // nothing back.
+    harness.rows["core.note"]!.splice(0);
+    // A column this build does not make, as in a store another build made.
+    const db = new DatabaseSync(harness.folder.store);
+    try {
+      console.log(
+        "QDUMP",
+        JSON.stringify(
+          db
+            .prepare(
+              "SELECT id, kind, item_id, target_id, verdict, reason, payload FROM queue",
+            )
+            .all(),
+        ),
+        JSON.stringify(
+          db.prepare("SELECT path, item_id, writes FROM folder_files").all(),
+        ),
+      );
+      db.exec("ALTER TABLE items ADD COLUMN stray TEXT");
+    } finally {
+      db.close();
+    }
+
+    const pushed = await harness.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    const status = await harness.folder.status();
+    expect(status.ok, JSON.stringify(status)).toBe(true);
+    if (!status.ok) return;
+    expect(
+      status.value.files.map((file) => [file.path, file.flag, file.reason]),
+    ).toEqual([["going.md", "removal", expect.stringContaining("purged")]]);
+    const confirmed = await harness.folder.confirm();
+    expect(
+      confirmed.ok && confirmed.value.removed,
+      JSON.stringify(confirmed),
+    ).toBe(1);
     expect(existsSync(join(harness.dir, "going.md"))).toBe(false);
   });
 

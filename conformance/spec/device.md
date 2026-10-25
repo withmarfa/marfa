@@ -3634,7 +3634,7 @@ When a device opens to write a store made before a table this build adds, a devi
 
 ### `device/wrong-schema`
 
-If a store was made by another build of the core, at another schema version or with tables of another shape than this build makes, then a device MUST refuse every open of it, as a writer or to read, `wrong_schema` before it reads anything, naming the store's path.
+If a store was made by another build of the core, at another schema version or with tables of another shape than this build makes, then a device MUST refuse every open of it, as a writer or to read, `wrong_schema` before it reads anything, naming the store's path, unless the open replaces a folder's store (`folders/refused-store-replaced`).
 
 **Reason:** the schema version does not move before the first public release, so a table's shape is what tells one build's store from another's.
 

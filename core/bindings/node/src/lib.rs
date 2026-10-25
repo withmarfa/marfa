@@ -1410,6 +1410,7 @@ fn describe(error: &marfa_core::CoreError) -> (String, Vec<(&'static str, serde_
             path,
             reason,
             unsent,
+            ..
         } => vec![
             ("path", json!(path)),
             ("reason", json!(reason)),
@@ -3196,6 +3197,7 @@ mod tests {
                 path: "/store".into(),
                 reason: "its table queue".into(),
                 unsent: Some(2),
+                folder: None,
             }),
             vec![
                 ("path", json!("/store")),

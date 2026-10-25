@@ -82,7 +82,7 @@ pub use body::{BodyLinks, BodyName, BodyTarget};
 pub use catalog::{EdgeType, End, ItemType, ServerCatalog, TypeField, WrittenAt};
 pub use catch_up::{Change, ChangeEvent, FollowReport};
 pub use drain::{DrainReport, DrainVerdict};
-pub use error::{CODES as ERROR_CODES, CoreError, CoreErrorKind};
+pub use error::{CODES as ERROR_CODES, CoreError, CoreErrorKind, FolderStore};
 pub use file_cache::{
     Attachments, DEFAULT_FLOOR as FILE_BUDGET_FLOOR, FileBudget, FileCache, KeptFetch, NotHeld,
     NotHeldReason,
@@ -262,6 +262,7 @@ pub const CONFLICTED_COPY_TAG: &str = "conflicted-copy";
 pub const CONFLICTED_COPY_EDGE: &str = "derived-from";
 
 impl Core {
+    #[cfg(test)]
     pub(crate) fn open_directory(
         state: &directory::Directory,
         store_label: &Path,
@@ -7422,7 +7423,9 @@ mod tests {
                     path: named,
                     reason,
                     unsent,
+                    folder,
                 } => {
+                    assert!(folder.is_none(), "a device store was refused as a folder's");
                     assert_eq!(named, path.display().to_string());
                     assert!(reason.contains(found), "{reason}");
                     assert_eq!(unsent, None, "a store with no queue was counted");
