@@ -3144,9 +3144,9 @@ fn refuse_unmakeable_create(catalog: &catalog::Catalog, draft: &Draft) -> Result
     }
     for (edge_type, targets) in &draft.edges {
         if edge_type.is_empty() {
-            return Err(CoreError::Validation {
-                code: "validation_error".into(),
-                message: "an edge type in edges is empty".into(),
+            return Err(CoreError::NotFound {
+                code: "edge_type_not_found".into(),
+                message: "edges names an edge type with an empty id, which no edge type has".into(),
             });
         }
         for target in targets {
@@ -3369,6 +3369,35 @@ fn queue_update(
             "an edit sets the item's time or clears it, not both".into(),
         ));
     }
+    // The server sets a row's creation time when its create lands, so while
+    // the create is unsent the time is cleared by sending none: not in the
+    // create, nor in an edit queued behind it, all in this transaction.
+    let mut unsent_create = None;
+    if edit.clear_occurred_at {
+        let waiting = store::untaken_creates_for_item(tx, id)?;
+        if let [create] = waiting.as_slice()
+            && store::unsent(tx, create)?
+        {
+            unsent_create = store::queued_write(tx, create)?;
+        }
+    }
+    if unsent_create.is_some() {
+        for row in store::waiting_writes_for_item(tx, id)? {
+            if !matches!(row.kind, WriteKind::CreateItem | WriteKind::UpdateItem)
+                || !store::unsent(tx, &row.id)?
+            {
+                continue;
+            }
+            let mut body: Value = serde_json::from_str(&store::payload_of(tx, &row.id)?)?;
+            if body
+                .as_object_mut()
+                .and_then(|body| body.remove("occurred_at"))
+                .is_some()
+            {
+                store::set_unsent_payload(tx, &row.id, &body.to_string())?;
+            }
+        }
+    }
     // An unchanged type or tier is not sent: the drain reads one in a sent
     // edit as a move, and lets the row go where its answer is outside the
     // slice.
@@ -3381,10 +3410,10 @@ fn queue_update(
         ),
         // The server holds no empty time: an item with none of its own
         // takes its creation time, which no write changes.
-        occurred_at: if edit.clear_occurred_at {
-            Some(held.created_at.clone())
-        } else {
-            edit.occurred_at.clone()
+        occurred_at: match (edit.clear_occurred_at, &unsent_create) {
+            (true, Some(_)) => None,
+            (true, None) => Some(held.created_at.clone()),
+            (false, _) => edit.occurred_at.clone(),
         },
         clear_occurred_at: false,
         ..edit.clone()
@@ -3444,6 +3473,11 @@ fn queue_update(
     }
     if let Some(occurred_at) = &edit.occurred_at {
         next.occurred_at = time::projected(occurred_at);
+    }
+    // Shown as a create naming no time is shown until its answer.
+    if let Some(create) = &unsent_create {
+        next.occurred_at.clone_from(&create.queued_at);
+        next.created_at.clone_from(&create.queued_at);
     }
     // Required nulls remain invalid even where replace projection drops
     // them. Stale edits cannot prove the server's eventual merged result.
@@ -4580,11 +4614,15 @@ mod tests {
                 ..base()
             },
         ];
-        for draft in &bad {
-            assert!(
-                matches!(core.create_item(draft), Err(CoreError::Validation { .. })),
-                "{draft:?}"
-            );
+        for (n, draft) in bad.iter().enumerate() {
+            let refused = core.create_item(draft);
+            // The server answers an empty edge type `edge_type_not_found`.
+            let as_served = if n == 2 {
+                matches!(&refused, Err(CoreError::NotFound { code, .. }) if code == "edge_type_not_found")
+            } else {
+                matches!(&refused, Err(CoreError::Validation { .. }))
+            };
+            assert!(as_served, "{draft:?}: {refused:?}");
         }
         assert!(core.queue().unwrap().is_empty());
     }
