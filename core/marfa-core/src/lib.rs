@@ -454,7 +454,9 @@ impl Core {
     /// another process, or another `Core` in this one, holds the writer role,
     /// with `UnsentDiffers` and the store's own count where it holds another
     /// number of such writes or one that cannot be counted, and with
-    /// `Invalid` where the store is a folder's. A path with no store holds
+    /// `Invalid` where the store is a folder's, bound or not. A process that
+    /// only reads the store does not hold the writer role, so it does not
+    /// stop the removal. A path with no store holds
     /// none, so it answers as removed, taking any lock or bytes left there.
     pub fn remove_store(path: impl AsRef<Path>, unsent: u64) -> Result<()> {
         let path = path.as_ref();
@@ -486,8 +488,11 @@ impl Core {
             _ => store::removal_count(path)?,
         };
         differs(held)?;
-        store::remove(path)?;
+        // The store goes after the fetched bytes, so a removal that stops
+        // between the two leaves the store, and asking again finishes it. The
+        // other order would leave bytes that a new store at the path adopts.
         remove_name(&blob::Cache::dir_beside(path))?;
+        store::remove(path)?;
         remove_name(&lock::lock_path(path))?;
         drop(lock);
         Ok(())

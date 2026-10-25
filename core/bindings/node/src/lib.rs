@@ -2210,9 +2210,10 @@ impl MarfaCore {
     /// `unsent`; the count is `null` where it cannot be read, and such a store
     /// is never removed. Refuses with `reading_handle` while another process,
     /// or another `MarfaCore` in this one, writes the store, and with
-    /// `invalid` for a folder's store. With nothing
-    /// at `path`, removes what a removal stopped part way left there when
-    /// `unsent` is 0.
+    /// `invalid` for a folder's store. With nothing at `path`, removes what a
+    /// removal stopped part way left there when `unsent` is 0. A process that
+    /// only reads the store does not stop the removal and keeps showing the
+    /// old copy until it reopens.
     #[napi]
     pub fn remove_store(env: Env, path: String, unsent: f64) -> Result<()> {
         // Checked as a number first: napi's integer conversion truncates a

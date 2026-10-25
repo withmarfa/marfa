@@ -2813,8 +2813,10 @@ impl Core {
 /// it as it was, unless that count equals `unsent`; the count is `nil` where
 /// it cannot be read, and such a store is never removed. Throws
 /// `ReadingHandle` while another process, or another `Core` in this one,
-/// writes the store, and `Invalid` for a folder's store. With nothing at `path`, removes what a removal stopped part
-/// way left there when `unsent` is 0.
+/// writes the store, and `Invalid` for a folder's store. With nothing at
+/// `path`, removes what a removal stopped part way left there when `unsent`
+/// is 0. A process that only reads the store does not stop the removal and
+/// keeps showing the old copy until it reopens.
 #[uniffi::export]
 pub fn remove_store(path: String, unsent: u64) -> Result<(), MarfaError> {
     Ok(marfa_core::Core::remove_store(path, unsent)?)

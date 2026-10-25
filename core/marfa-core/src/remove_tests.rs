@@ -195,7 +195,15 @@ fn a_write_held_only_in_the_log_is_counted() {
     std::fs::rename(&kept, &path).unwrap();
     std::fs::rename(beside(&kept, "-wal"), beside(&path, "-wal")).unwrap();
 
+    // The count reads the log but makes no shared-memory file beside it.
+    let before = held(&path);
+    assert!(!beside(&path, "-shm").exists());
     assert_eq!(differs(Core::remove_store(&path, 0)), (Some(1), 0));
+    assert!(
+        !beside(&path, "-shm").exists(),
+        "a refused removal made a shared-memory file"
+    );
+    assert_eq!(held(&path), before);
     Core::remove_store(&path, 1).unwrap();
     gone(&path);
 }
@@ -284,4 +292,67 @@ fn a_symbolic_link_is_removed_and_what_it_leads_to_is_kept() {
     gone(&path);
     assert_eq!(std::fs::read(&outside).unwrap(), b"kept");
     assert!(target_store.exists());
+}
+
+#[test]
+fn a_store_a_folder_made_before_it_was_bound_is_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let state = dir.path().join(crate::folder::STATE_DIR);
+    std::fs::create_dir(&state).unwrap();
+    let path = state.join("core.sqlite");
+    drop(Core::open(&path, None).unwrap());
+    queue_one(&path);
+    let before = held(&path);
+
+    // The witness: this store names no folder, and the same store anywhere
+    // else is removed.
+    let elsewhere = dir.path().join("copy.sqlite");
+    std::fs::copy(&path, &elsewhere).unwrap();
+    Core::remove_store(&elsewhere, 1).unwrap();
+
+    assert!(matches!(
+        Core::remove_store(&path, 1),
+        Err(CoreError::Invalid(_))
+    ));
+    assert_eq!(held(&path), before);
+}
+
+/// A removal that fails after the fetched bytes are gone, as a crash there
+/// would, leaves the store, and asking again finishes it.
+#[cfg(unix)]
+#[test]
+fn a_removal_that_stopped_after_the_fetched_bytes_is_finished_by_asking_again() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let (_dir, path) = store_with_one_unsent();
+    // A shared-memory name that cannot be removed yet.
+    let stuck = beside(&path, "-shm");
+    std::fs::create_dir_all(stuck.join("inner")).unwrap();
+    std::fs::write(stuck.join("inner").join("file"), b"").unwrap();
+    std::fs::set_permissions(stuck.join("inner"), std::fs::Permissions::from_mode(0o500)).unwrap();
+    if std::fs::remove_dir_all(&stuck).is_ok() {
+        // Permissions do not bind this user, so the stop cannot be made.
+        return;
+    }
+
+    assert!(matches!(
+        Core::remove_store(&path, 1),
+        Err(CoreError::Store(_))
+    ));
+    assert!(path.exists(), "the store went before the removal stopped");
+    assert!(
+        !beside(&path, ".blobs").exists(),
+        "the fetched bytes outlived the removal's first step"
+    );
+
+    std::fs::set_permissions(stuck.join("inner"), std::fs::Permissions::from_mode(0o700)).unwrap();
+    Core::remove_store(&path, 1).unwrap();
+    gone(&path);
+
+    // A new store at the path keeps none of the old fetched bytes.
+    drop(Core::open(&path, None).unwrap());
+    assert!(
+        !beside(&path, ".blobs").join("fetched").exists(),
+        "an old fetched file came back"
+    );
 }
