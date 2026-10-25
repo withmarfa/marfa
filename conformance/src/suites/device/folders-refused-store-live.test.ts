@@ -106,6 +106,20 @@ const ownNotes = () => ({
   filter: `source eq "${ctx.source}"`,
 });
 
+/** A query for the notes that carry a tag of their own, and defaults that
+ *  give it to each note the folder sends, so the folder holds no other
+ *  test's notes. */
+function ownTag(name: string): {
+  query: Record<string, unknown>;
+  defaults: Record<string, unknown>;
+} {
+  const tag = `${name}-${ctx.runId}`;
+  return {
+    query: { types: ["core.note"], filter: `tags contains "${tag}"` },
+    defaults: { tags: [tag] },
+  };
+}
+
 function note(title: string, body: string): string {
   return `---\ntitle: ${title}\n---\n${body}\n`;
 }
@@ -170,6 +184,37 @@ function misshape(folder: CliFolder): void {
   }
 }
 
+/** The value the folder's store holds in its meta under `key`. */
+function meta(store: string, key: string): string | undefined {
+  const db = new DatabaseSync(store, { readOnly: true });
+  try {
+    const row = db.prepare("SELECT value FROM meta WHERE key = ?").get(key) as
+      { value: string } | undefined;
+    return row?.value;
+  } finally {
+    db.close();
+  }
+}
+
+/** The item the ID line of the file at `path` names. */
+function idLine(path: string): string {
+  const found = /^marfa_id: (\S+)$/m.exec(readFileSync(path, "utf8"));
+  expect(found, readFileSync(path, "utf8")).not.toBeNull();
+  return found![1]!;
+}
+
+/** Sends the item `id` to the bin, as another device does. */
+async function binned(id: string): Promise<void> {
+  const deleted = await client.deleteItem(id);
+  expect(deleted.ok, JSON.stringify(deleted.error)).toBe(true);
+}
+
+/** Waits past the grace a missing file is given before its deletion is
+ *  sent, in which a move would have shown up. */
+async function pastRenameGrace(): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, 6_000));
+}
+
 /** Every file in the folder outside `.marfa`, with its bytes. */
 function filesOf(dir: string): Record<string, string> {
   const found: Record<string, string> = {};
@@ -211,6 +256,8 @@ it("replaces a folder's store another build made that holds nothing unsent, and 
   expect(untaken(folder.store)).toBe(0);
   const before = await serverNotes();
   const kept = readFileSync(join(folder.dir, "Kept.md"));
+  const followed = meta(folder.store, "folder_id");
+  expect(followed).toBeDefined();
 
   misshape(folder);
   // The witness: this build refuses the store, and `folders status`, which
@@ -219,7 +266,9 @@ it("replaces a folder's store another build made that holds nothing unsent, and 
   expect(refused.ok).toBe(false);
   if (refused.ok) return;
   expect(refused.refusal.code, refused.refusal.raw).toBe("wrong_schema");
-  expect(refused.refusal.raw).toContain("replaces it");
+  expect(refused.refusal.raw).toContain(
+    "next push, pull, scan or watch replaces it",
+  );
 
   rewrite(join(folder.dir, "Edited.md"), `after ${ctx.runId}`);
   writeFileSync(join(folder.dir, "Added.md"), note(titles.added, "new"));
@@ -251,8 +300,11 @@ it("replaces a folder's store another build made that holds nothing unsent, and 
     ),
   ).toEqual([]);
 
+  // The new store follows the same `system.folder`, and asks for no new
+  // first sync.
+  expect(meta(folder.store, "folder_id")).toBe(followed);
+  expect(value(await folder.status()).first_sync).toBeUndefined();
   // The new store opens, and is never replaced again.
-  value(await folder.status());
   const again = await exited(folder.hold(["folders", "push", folder.dir]));
   expect(again.exitCode(), again.stderr).toBe(0);
   expect(again.stderr).not.toContain(REPLACED);
@@ -286,7 +338,7 @@ it("leaves a folder's store another build made, and the folder's files, while it
     expect(refused.exitCode(), refused.stderr).toBe(4);
     expect(refused.stderr).toContain("wrong_schema");
     expect(refused.stderr).toContain(
-      `It holds ${unsent} ${unsent === 1 ? "write" : "writes"} the server has not taken`,
+      `It holds ${unsent} ${unsent === 1 ? "write" : "writes"} still to be sent`,
     );
     expect(refused.stderr).toContain("marfa folders push");
     expect(refused.stderr).not.toContain(REPLACED);
@@ -420,6 +472,251 @@ it("leaves a folder's store another build made whose unsent writes cannot be cou
   expect(refused.exitCode(), refused.stderr).toBe(4);
   expect(refused.stderr).toContain("wrong_schema");
   expect(refused.stderr).toContain("cannot be read");
+  expect(refused.stderr).toContain("marfa folders push");
+  expect(refused.stderr).toContain("marfa folders remove");
+  expect(refused.stderr).not.toContain(REPLACED);
+  expect(filesOf(folder.dir)).toEqual(files);
+  expect(storeBytes(folder)).toBe(state);
+});
+
+it("keeps a file deleted while its store was refused deleted, and sends the deletion", async () => {
+  const at = machine("refused-store-deleted");
+  const own = ownTag("deleted");
+  const titles = {
+    deleted: `Deleted ${ctx.runId}`,
+    stays: `Stays ${ctx.runId}`,
+  };
+  const folder = await added(
+    at,
+    "notes",
+    own.query,
+    {
+      "Deleted.md": note(titles.deleted, "body"),
+      "Stays.md": note(titles.stays, "body"),
+    },
+    own.defaults,
+  );
+  value(await folder.push());
+  expect(await serverNote(titles.deleted)).toBeDefined();
+  rmSync(join(folder.dir, "Deleted.md"));
+  // The scan finds the file missing, and the deletion waits on the grace a
+  // move is given.
+  expect(value(await folder.scan()).missing).toBe(1);
+  misshape(folder);
+  await pastRenameGrace();
+
+  const push = await exited(folder.hold(["folders", "push", folder.dir]));
+  expect(push.exitCode(), push.stderr).toBe(0);
+  expect(push.stderr).toContain(REPLACED);
+  expect(Object.keys(filesOf(folder.dir))).toEqual(["Stays.md"]);
+  expect(await serverNote(titles.deleted)).toBeUndefined();
+  expect(await serverNote(titles.stays)).toBeDefined();
+});
+
+it("takes away the file of a note put in the bin while its store was refused, and sends no new note", async () => {
+  const at = machine("refused-store-binned");
+  const own = ownTag("binned");
+  const title = `Binned ${ctx.runId}`;
+  const folder = await added(
+    at,
+    "notes",
+    own.query,
+    {
+      "Binned.md": note(title, "body"),
+    },
+    own.defaults,
+  );
+  value(await folder.push());
+  await binned(idLine(join(folder.dir, "Binned.md")));
+  misshape(folder);
+
+  const push = await exited(folder.hold(["folders", "push", folder.dir]));
+  expect(push.exitCode(), push.stderr).toBe(0);
+  expect(push.stderr).toContain(REPLACED);
+  expect(filesOf(folder.dir)).toEqual({});
+  expect(await serverNote(title)).toBeUndefined();
+});
+
+it("sends an edit of a text file made while its store was refused to the item the file is", async () => {
+  const at = machine("refused-store-text");
+  const own = ownTag("text");
+  const marker = `plain ${ctx.runId}`;
+  const folder = await added(
+    at,
+    "notes",
+    own.query,
+    {
+      "Plain.txt": `${marker}\n`,
+    },
+    own.defaults,
+  );
+  value(await folder.push());
+  const plain = () =>
+    serverNotes().then((rows) =>
+      rows.filter((row) => JSON.stringify(row.properties).includes(marker)),
+    );
+  const before = await plain();
+  expect(before).toHaveLength(1);
+  writeFileSync(join(folder.dir, "Plain.txt"), `${marker} edited\n`);
+  misshape(folder);
+
+  const push = await exited(folder.hold(["folders", "push", folder.dir]));
+  expect(push.exitCode(), push.stderr).toBe(0);
+  expect(push.stderr).toContain(REPLACED);
+  const after = await plain();
+  expect(after.map((row) => row.id)).toEqual([before[0]!.id]);
+  expect(JSON.stringify(after[0]!.properties)).toContain(`${marker} edited`);
+  expect(Object.keys(filesOf(folder.dir))).toEqual(["Plain.txt"]);
+});
+
+it("keeps holding a file the server refused because its note is in the bin, and sends no new note", async () => {
+  const at = machine("refused-store-held");
+  const own = ownTag("held");
+  const title = `Held ${ctx.runId}`;
+  const folder = await added(
+    at,
+    "notes",
+    own.query,
+    {
+      "Held.md": note(title, "body"),
+    },
+    own.defaults,
+  );
+  value(await folder.push());
+  const path = join(folder.dir, "Held.md");
+  const id = idLine(path);
+  await binned(id);
+  rewrite(path, `edited ${ctx.runId}`);
+  // The server refuses the edit of a note in the bin, so the folder holds
+  // the file and records why.
+  const held = await exited(folder.hold(["folders", "push", folder.dir]));
+  expect(held.exitCode(), held.stderr).toBe(0);
+  expect(`${held.stdout}${held.stderr}`).toContain("item_not_found");
+  const text = readFileSync(path, "utf8");
+  misshape(folder);
+
+  const push = await exited(folder.hold(["folders", "push", folder.dir]));
+  expect(push.exitCode(), push.stderr).toBe(0);
+  expect(push.stderr).toContain(REPLACED);
+  expect(`${push.stdout}${push.stderr}`).toContain("item_not_found");
+  expect(readFileSync(path, "utf8")).toBe(text);
+  expect(idLine(path)).toBe(id);
+  expect(await serverNote(title)).toBeUndefined();
+  const file = value(await folder.status()).files.find(
+    (entry) => entry.path === "Held.md",
+  );
+  expect(file?.status, JSON.stringify(file)).toBe("held");
+});
+
+it("keeps a first sync still waiting, and the server the store was filled from, when it replaces the store", async () => {
+  const at = machine("refused-store-first-sync");
+  const own = ownTag("waiting");
+  const title = `Waiting ${ctx.runId}`;
+  const made = await client.createItem({
+    type: "core.note",
+    properties: { title, body: "body" },
+    tags: own.defaults.tags as string[],
+  });
+  expect(made.ok, JSON.stringify(made.error)).toBe(true);
+  trackItem(ctx, made.data.item.id);
+  const dir = join(at.base, "notes");
+  mkdirSync(dir);
+  const folder = new CliFolder(dir, {
+    binary: requireBinary(),
+    url: apiUrl,
+    key: apiKey,
+    registry: at.registry,
+  });
+  const settings = await client.createFolder({
+    title: `Refused store waiting ${ctx.runId}`,
+    query: own.query,
+    defaults: own.defaults,
+  });
+  expect(settings.ok, JSON.stringify(settings.error)).toBe(true);
+  trackFolder(ctx, settings.data.item.id);
+  value(await folder.add(settings.data.item.id, { confirm: false }));
+  expect(value(await folder.status()).first_sync).toBeDefined();
+  const origin = value(await folder.device().status()).server_origin;
+  expect(origin).toBeTruthy();
+  misshape(folder);
+
+  const push = await exited(folder.hold(["folders", "push", folder.dir]));
+  expect(push.exitCode(), push.stderr).toBe(0);
+  expect(push.stderr).toContain(REPLACED);
+  expect(value(await folder.status()).first_sync).toBeDefined();
+  expect(value(await folder.device().status()).server_origin).toBe(origin);
+  expect(filesOf(folder.dir)).toEqual({});
+});
+
+it("leaves a refused store that names no folder until the folder is added again, which replaces it", async () => {
+  const at = machine("refused-store-unnamed");
+  const own = ownTag("unnamed");
+  const title = `Unnamed ${ctx.runId}`;
+  const folder = await added(
+    at,
+    "notes",
+    own.query,
+    {
+      "Unnamed.md": note(title, "body"),
+    },
+    own.defaults,
+  );
+  value(await folder.push());
+  const followed = meta(folder.store, "folder_id")!;
+  misshape(folder);
+  const db = new DatabaseSync(folder.store);
+  try {
+    db.exec("DELETE FROM meta WHERE key = 'folder_id'");
+  } finally {
+    db.close();
+  }
+  const files = filesOf(folder.dir);
+  const state = storeBytes(folder);
+
+  const refused = await exited(folder.hold(["folders", "push", folder.dir]));
+  expect(refused.exitCode(), refused.stderr).toBe(4);
+  expect(refused.stderr).toContain("wrong_schema");
+  expect(refused.stderr).toContain("marfa folders add");
+  expect(refused.stderr).not.toContain("next push, pull, scan or watch");
+  expect(refused.stderr).not.toContain(REPLACED);
+  expect(filesOf(folder.dir)).toEqual(files);
+  expect(storeBytes(folder)).toBe(state);
+
+  value(await folder.add(followed));
+  expect(meta(folder.store, "folder_id")).toBe(followed);
+  value(await folder.push());
+  expect(filesOf(folder.dir)).toEqual(files);
+});
+
+it("leaves a refused store whose record of its files is of another shape, and says to remove the folder with the build that made it", async () => {
+  const at = machine("refused-store-uncarried");
+  const own = ownTag("uncarried");
+  const folder = await added(
+    at,
+    "notes",
+    own.query,
+    {
+      "Uncarried.md": note(`Uncarried ${ctx.runId}`, "body"),
+    },
+    own.defaults,
+  );
+  value(await folder.push());
+  misshape(folder);
+  const db = new DatabaseSync(folder.store);
+  try {
+    db.exec("ALTER TABLE folder_journal ADD COLUMN stray TEXT");
+  } finally {
+    db.close();
+  }
+  const files = filesOf(folder.dir);
+  const state = storeBytes(folder);
+
+  const refused = await exited(folder.hold(["folders", "push", folder.dir]));
+  expect(refused.exitCode(), refused.stderr).toBe(4);
+  expect(refused.stderr).toContain("wrong_schema");
+  expect(refused.stderr).toContain("folder_journal");
+  expect(refused.stderr).toContain("marfa folders remove");
+  expect(refused.stderr).not.toContain("next push, pull, scan or watch");
   expect(refused.stderr).not.toContain(REPLACED);
   expect(filesOf(folder.dir)).toEqual(files);
   expect(storeBytes(folder)).toBe(state);
