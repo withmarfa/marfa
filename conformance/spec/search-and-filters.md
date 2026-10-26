@@ -788,11 +788,11 @@ When the enrichment sweep has written an `extracted_text` onto a file item that 
 
 **Reason:** the text of a document or the words an OCR pass read from an image are what a person looks for in a file. A type that inherits a file type cannot give `extracted_text` another `searchable` than `core.file` gives it (`types/child-shape`), so a file type always finds the text it extracts.
 
-**Tests:** `compliance/enrichment-search.test.ts › finds a file by a word only its extracted text holds, once the sweep has written it`, `› cannot be switched off for a file type, but is left unmatched by a type that declares it unsearchable`.
+**Tests:** `compliance/enrichment-search.test.ts › finds a file by a word only its extracted text holds, once the sweep has written it`.
 
 ### `search-and-filters/search-file-text-pending`
 
-While the enrichment sweep has not written an `extracted_text` onto a file item, the server MUST match the item by its other searchable properties and its tags alone.
+While a file item carries no `extracted_text`, the server MUST NOT match the item by words that only its bytes hold.
 
 **Reason:** a file is found at once by its title and tags and by its text once the sweep has read its bytes, so a search never matches words that only the bytes hold before then.
 
