@@ -5,6 +5,7 @@ import { itemName } from "./item-name.js";
 it("names every built-in type through its display hints", () => {
   const fields: Record<string, string> = {
     "core.bookmark": "title",
+    "core.collection": "title",
     "core.entity": "name",
     "core.entity.person": "name",
     "core.entity.place": "name",

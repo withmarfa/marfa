@@ -65,6 +65,33 @@
    }
   },
   {
+   "id": "core.collection",
+   "label": "Collection",
+   "description": "A collection of items you gather together, of any type. Members join it through `in-collection`.",
+   "version": 0,
+   "fields": {
+    "title": {
+     "type": "string",
+     "description": "Name of the collection",
+     "required": true
+    },
+    "description": {
+     "type": "string",
+     "description": "What the collection gathers"
+    }
+   },
+   "display_hints": {
+    "title_field": "title",
+    "body_field": "description"
+   },
+   "merge_policy": {
+    "default": "last_writer_wins"
+   },
+   "roles": [
+    "container"
+   ]
+  },
+  {
    "id": "core.entity",
    "label": "Entity",
    "description": "Any named entity: a person, a company, a band, a team, a charity, a brand, a school or a place. `core.entity.person` and `core.entity.place` narrow it.",

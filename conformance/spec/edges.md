@@ -1083,7 +1083,7 @@ If a key without read on `system.folder` sends `POST /edges` for an `in-folder` 
 
 If `POST /edges` names an `in-collection` edge to a target whose type does not declare the `container` role, then the server MUST answer `400 edge_constraint_violation`.
 
-**Reason:** `in-collection` constrains its target by role rather than by type, so a publisher's registered type that declares `container` is a target too; the shipped `core.media.album` and `core.media.series` declare it.
+**Reason:** `in-collection` constrains its target by role rather than by type, so a publisher's registered type that declares `container` is a target too; the shipped `core.collection`, `core.media.album` and `core.media.series` declare it.
 
 **Tests:** `compliance/edge-permissions.test.ts › $name answers an unreadable target as a missing one, whatever its type`.
 

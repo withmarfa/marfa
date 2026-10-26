@@ -25,6 +25,7 @@ import { ALL_EDGE_TYPES } from "./edge-registry.js";
 
 const CORE_TYPE_IDENTIFIERS = [
   "core.bookmark",
+  "core.collection",
   "core.entity",
   "core.entity.person",
   "core.entity.place",

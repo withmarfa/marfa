@@ -1365,6 +1365,7 @@ export const CONSENT_SCOPE_DESCRIPTIONS: Record<string, string> = {
   "core.highlight": "Highlights and excerpts.",
   "core.event": "Calendar events.",
   "core.message": "Messages and conversations.",
+  "core.collection": "Collections you gather items into.",
 
   // Entities
   //

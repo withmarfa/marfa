@@ -1,0 +1,25 @@
+{
+  "id": "core.collection",
+  "label": "Collection",
+  "description": "A collection of items you gather together, of any type. Members join it through `in-collection`.",
+  "version": 0,
+  "roles": ["container"],
+  "fields": {
+    "title": {
+      "type": "string",
+      "description": "Name of the collection"
+    },
+    "description": {
+      "type": "string",
+      "description": "What the collection gathers"
+    }
+  },
+  "required": ["title"],
+  "display_hints": {
+    "title_field": "title",
+    "body_field": "description"
+  },
+  "merge_policy": {
+    "default": "last_writer_wins"
+  }
+}

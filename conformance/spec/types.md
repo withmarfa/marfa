@@ -11,6 +11,7 @@ Every instance ships these types, core and `system`, each a row of the table bel
 | Type                 | Family | Parent        | Required properties            | Description                                                                                                                                                                                                                                                                                                              |
 | -------------------- | ------ | ------------- | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `core.bookmark`      | core   | None          | None                           | Content you captured from elsewhere: a saved URL, a highlight, an excerpt, a clipped paragraph.                                                                                                                                                                                                                          |
+| `core.collection`    | core   | None          | `title`                        | A collection of items you gather together, of any type. Members join it through `in-collection`.                                                                                                                                                                                                                         |
 | `core.entity`        | core   | None          | `name`                         | Any named entity: a person, a company, a band, a team, a charity, a brand, a school or a place. `core.entity.person` and `core.entity.place` narrow it.                                                                                                                                                                  |
 | `core.entity.person` | core   | `core.entity` | `name`                         | Contact information for an individual. Inherits all core.entity fields.                                                                                                                                                                                                                                                  |
 | `core.entity.place`  | core   | `core.entity` | `name`                         | A location or venue. Inherits all core.entity fields.                                                                                                                                                                                                                                                                    |
@@ -963,7 +964,7 @@ The server MUST NOT apply `enforcement.source_filter` to the item or edge a read
 
 ### `types/shipped`
 
-The server MUST ship `core.bookmark`, `core.entity`, `core.entity.person`, `core.entity.place`, `core.event`, `core.file`, `core.file.audio`, `core.file.image`, `core.file.video`, `core.highlight`, `core.media`, `core.media.album`, `core.media.article`, `core.media.book`, `core.media.episode`, `core.media.film`, `core.media.series`, `core.media.song`, `core.message`, `core.note` and `core.task`, each with fields and a label, and no other `core.*` type.
+The server MUST ship `core.bookmark`, `core.collection`, `core.entity`, `core.entity.person`, `core.entity.place`, `core.event`, `core.file`, `core.file.audio`, `core.file.image`, `core.file.video`, `core.highlight`, `core.media`, `core.media.album`, `core.media.article`, `core.media.book`, `core.media.episode`, `core.media.film`, `core.media.series`, `core.media.song`, `core.message`, `core.note` and `core.task`, each with fields and a label, and no other `core.*` type.
 
 **Tests:** `compliance/types.test.ts › ships exactly the core types, each with fields and a label`, `compliance/type-registry.test.ts › lists registered types including core types`, `› gets a single type by type identifier`, `compliance/type-inheritance.test.ts › core entity/file/media subtypes resolve`, `compliance/type-label.test.ts › built-in types have labels`, `› get single type includes label`.
 
@@ -978,6 +979,14 @@ The server MUST ship `system.connection`, `system.folder` and `system.view` and 
 The server MUST ship `core.message` requiring `from`, taking `to` as an optional list of identifiers in any format, and naming `body` its display body.
 
 **Tests:** `compliance/core-message.test.ts › creates a message with body, from, and to`, `› creates with only the required from`, `› accepts participant identifiers in any format`, `› rejects a message missing from with invalid_properties naming it`, `› declares body as its display body field`, `› declares from, and not body, as required in the registry`.
+
+### `types/collection`
+
+The server MUST ship `core.collection` with no parent, declaring the `container` role, requiring `title` and taking `description`.
+
+**Reason:** every other shipped container is a kind of media, so without it a person could gather notes, tasks or anything else into no collection.
+
+**Tests:** `compliance/core-collection.test.ts › declares the container role, title required and description optional`, `› creates with only a title`, `› refuses a collection with no title, naming it`, `› holds items of any type through in-collection`.
 
 ### `types/body-optional`
 

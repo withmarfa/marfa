@@ -162,7 +162,11 @@ describe("GET /types", () => {
       .filter((t) => t.roles?.includes("container"))
       .map((t) => t.id)
       .sort();
-    expect(containers).toEqual(["core.media.album", "core.media.series"]);
+    expect(containers).toEqual([
+      "core.collection",
+      "core.media.album",
+      "core.media.series",
+    ]);
 
     const note = types.find((t) => t.id === "core.note");
     expect(note && "roles" in note).toBe(false);

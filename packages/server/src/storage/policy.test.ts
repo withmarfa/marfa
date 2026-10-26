@@ -183,7 +183,11 @@ describe("resolveMergePolicy — agreement with codegen-time resolution", () => 
  */
 describe("resolveTypeSchema roles", () => {
   it("returns the role for a type that declares it", () => {
-    for (const id of ["core.media.series", "core.media.album"]) {
+    for (const id of [
+      "core.collection",
+      "core.media.series",
+      "core.media.album",
+    ]) {
       expect(resolveTypeSchema(id, coreResolver)?.roles).toEqual(["container"]);
     }
   });
@@ -242,6 +246,7 @@ describe("resolveTypeSchema roles", () => {
     const scoped: TypeResolver = (id) => getTypeSchema(id);
 
     for (const id of [
+      "core.collection",
       "core.media.series",
       "core.media.album",
       "core.bookmark",
