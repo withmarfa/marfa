@@ -75,6 +75,7 @@ describe("TYPE_REGISTRY", () => {
       "core.event",
       "core.highlight",
       "core.message",
+      "core.collection",
     ];
     for (const id of standalone) {
       expect(TYPE_REGISTRY.has(id), `missing ${id}`).toBe(true);

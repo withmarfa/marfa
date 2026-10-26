@@ -183,7 +183,11 @@ describe("resolveMergePolicy — agreement with codegen-time resolution", () => 
  */
 describe("resolveTypeSchema roles", () => {
   it("returns the role for a type that declares it", () => {
-    for (const id of ["core.media.series", "core.media.album"]) {
+    for (const id of [
+      "core.collection",
+      "core.media.series",
+      "core.media.album",
+    ]) {
       expect(resolveTypeSchema(id, coreResolver)?.roles).toEqual(["container"]);
     }
   });
@@ -207,8 +211,8 @@ describe("resolveTypeSchema roles", () => {
   });
 
   it("returns the role for a container outside core with no parent", () => {
-    // A chain of length one outside `core.*`. A mutation keyed on chain
-    // length or namespace passes against the two core types and breaks this.
+    // A chain of length one outside `core.*`. A mutation keyed on namespace
+    // passes against the shipped containers and breaks this.
     const resolver = makeResolver([
       { id: "acme.box", version: 1, fields: {}, roles: ["container"] },
     ]);
@@ -242,6 +246,7 @@ describe("resolveTypeSchema roles", () => {
     const scoped: TypeResolver = (id) => getTypeSchema(id);
 
     for (const id of [
+      "core.collection",
       "core.media.series",
       "core.media.album",
       "core.bookmark",

@@ -75,6 +75,7 @@ describe("type registration and listing", () => {
   it("ships exactly the core types, each with fields and a label", async () => {
     const shipped = [
       "core.bookmark",
+      "core.collection",
       "core.entity",
       "core.entity.person",
       "core.entity.place",

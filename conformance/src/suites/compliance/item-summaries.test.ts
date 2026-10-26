@@ -56,6 +56,7 @@ it("names every built-in and custom type with bounded plain text and fallback fi
   const { hash } = (await upload.json()) as { hash: string };
   const fields: Record<string, string> = {
     "core.bookmark": "title",
+    "core.collection": "title",
     "core.entity": "name",
     "core.entity.person": "name",
     "core.entity.place": "name",

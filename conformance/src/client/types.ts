@@ -148,6 +148,9 @@ export interface TypeSchema {
   // ancestors for field inheritance and for edge-constraint matching.
   parent?: string;
   fields: Record<string, FieldDefinition>;
+  /** Structural roles the type plays, its ancestors' included; absent when
+   *  it plays none. */
+  roles?: string[];
   display_hints?: {
     title_field?: string;
     body_field?: string;

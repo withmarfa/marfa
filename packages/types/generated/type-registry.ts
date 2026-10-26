@@ -25,6 +25,20 @@ const coreBookmark: TypeSchema = {
   merge_policy: { fields: { body: "keep_both_copies", notes: "keep_both_copies" }, default: "last_writer_wins" },
 };
 
+const coreCollection: TypeSchema = {
+  id: "core.collection",
+  label: "Collection",
+  description: "Items of any type that you gather together. Members join it through the in-collection edge, and it can hold any item but another container.",
+  version: 0,
+  fields: {
+    title: { type: "string", description: "Name of the collection", required: true },
+    description: { type: "string", description: "What the collection gathers" },
+  },
+  display_hints: { title_field: "title", body_field: "description" },
+  merge_policy: { default: "last_writer_wins" },
+  roles: ["container"],
+};
+
 const coreEntity: TypeSchema = {
   id: "core.entity",
   label: "Entity",
@@ -528,6 +542,7 @@ const coreMediaSong: TypeSchema = {
 
 export const ALL_TYPES: TypeSchema[] = [
   coreBookmark,
+  coreCollection,
   coreEntity,
   coreEvent,
   coreFile,
@@ -605,6 +620,7 @@ export const ALL_SYSTEM_TYPES: TypeSchema[] = [
 
 export const ALL_TYPE_IDS = [
   "core.bookmark",
+  "core.collection",
   "core.entity",
   "core.entity.person",
   "core.entity.place",
@@ -681,6 +697,28 @@ export const SHIPPED_TYPE_SHAPES = {
         "notes": "keep_both_copies"
       }
     },
+    "version": 0
+  },
+  "core.collection": {
+    "display_hints": {
+      "body_field": "description",
+      "title_field": "title"
+    },
+    "fields": {
+      "description": {
+        "type": "string"
+      },
+      "title": {
+        "required": true,
+        "type": "string"
+      }
+    },
+    "merge_policy": {
+      "default": "last_writer_wins"
+    },
+    "roles": [
+      "container"
+    ],
     "version": 0
   },
   "core.entity": {
