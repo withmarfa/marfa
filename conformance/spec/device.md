@@ -1516,7 +1516,7 @@ A device MUST NOT answer a row in the bin to a local search, whatever state the 
 
 **Reason:** the server keeps a trashed row out of its search index (`search-and-filters/search-bin`).
 
-**Tests:** `device/working-copy.test.ts › keeps a row in the bin out of the index, whatever state a search names`, `› stops finding a row once an event puts it in the bin`.
+**Tests:** `device/working-copy.test.ts › keeps a row in the bin out of the index, whatever state a search names`, `› stops finding a row once an event puts it in the bin`, `device/search-file-text-live.test.ts › leaves a file in the bin unmatched, as the server does`.
 
 ### `device/list-bounds-exclusive`
 
@@ -5979,6 +5979,20 @@ A device MUST NOT match a property that its type declares as a string with `sear
 A device MUST NOT match a property that the row's type does not declare.
 
 **Tests:** `device/search-live.test.ts › answers the server's hits, in the server's order: $name: $query`.
+
+### `device/index-file-text`
+
+When a device holds a file item that is not in the bin and whose `extracted_text` the server has written, a device MUST match a query against that text as it matches every other string property the item's type declares or inherits.
+
+**Reason:** a working copy finds a file by its text offline as the server does online (`search-and-filters/search-file-text`).
+
+**Tests:** `device/search-file-text-live.test.ts › answers the server's hits, in the server's order, once its copy holds the extracted text`.
+
+### `device/index-file-text-pending`
+
+While the copy of a file item that a device holds carries no `extracted_text`, a device MUST match the item by its other searchable properties and its tags alone.
+
+**Tests:** `device/search-file-text-live.test.ts › answers the server's hits, in the server's order, once its copy holds the extracted text`.
 
 ### `device/index-type-change`
 
