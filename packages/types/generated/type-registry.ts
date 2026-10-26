@@ -28,7 +28,7 @@ const coreBookmark: TypeSchema = {
 const coreCollection: TypeSchema = {
   id: "core.collection",
   label: "Collection",
-  description: "A collection of items you gather together, of any type. Members join it through `in-collection`.",
+  description: "Items of any type that you gather together. Members join it through the in-collection edge, and it can hold any item but another container.",
   version: 0,
   fields: {
     title: { type: "string", description: "Name of the collection", required: true },
