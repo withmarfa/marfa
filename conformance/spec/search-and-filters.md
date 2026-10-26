@@ -250,7 +250,7 @@ The server MUST NOT match a row in the bin on `GET /search`, whatever `state` th
 
 **Reason:** the index holds no row in the bin, so `state=trashed` and `state=any` alike leave it unmatched, however the row came to be there.
 
-**Tests:** `compliance/state-default.test.ts › a search reads across states under the sentinel, except the bin`, `› a search does not reach a row born in the bin either`.
+**Tests:** `compliance/state-default.test.ts › a search reads across states under the sentinel, except the bin`, `› a search does not reach a row born in the bin either`, `compliance/enrichment-search.test.ts › leaves a file in the bin unmatched, and matches it again once restored`.
 
 ### `search-and-filters/state-invalid`
 
@@ -781,6 +781,22 @@ The server MUST NOT match a property that the row's type does not declare.
 **Reason:** a thumbnail's base64 or an undeclared property is not text a person wrote to be found.
 
 **Tests:** `compliance/search-matching.test.ts › $name: $query`.
+
+### `search-and-filters/search-file-text`
+
+When the enrichment sweep has written an `extracted_text` onto a file item that is not in the bin, the server MUST match a query against that text as it matches every other string property the item's type declares or inherits.
+
+**Reason:** the text of a document or the words an OCR pass read from an image are what a person looks for in a file. A type that inherits a file type cannot give `extracted_text` another `searchable` than `core.file` gives it (`types/child-shape`), so a file type always finds the text it extracts.
+
+**Tests:** `compliance/enrichment-search.test.ts › finds a file by a word only its extracted text holds, once the sweep has written it`.
+
+### `search-and-filters/search-file-text-pending`
+
+While a file item carries no `extracted_text`, the server MUST NOT match the item by words that only its bytes hold.
+
+**Reason:** a file is found at once by its title and tags and by its text once the sweep has read its bytes, so a search never matches words that only the bytes hold before then.
+
+**Tests:** `compliance/enrichment-search.test.ts › finds a file by a word only its extracted text holds, once the sweep has written it`.
 
 ### `search-and-filters/index-not-string`
 
