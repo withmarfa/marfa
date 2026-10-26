@@ -13,7 +13,7 @@ import { requireBinary } from "./harness.js";
 
 /**
  * A device finds a file by the text the server's enrichment sweep extracted
- * from it, as the server does (`device/search-file-text`). The shared server
+ * from it, as the server does (`device/index-file-text`). The shared server
  * runs with enrichment off, so this boots its own.
  */
 
