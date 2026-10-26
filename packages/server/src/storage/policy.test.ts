@@ -211,8 +211,8 @@ describe("resolveTypeSchema roles", () => {
   });
 
   it("returns the role for a container outside core with no parent", () => {
-    // A chain of length one outside `core.*`. A mutation keyed on chain
-    // length or namespace passes against the two core types and breaks this.
+    // A chain of length one outside `core.*`. A mutation keyed on namespace
+    // passes against the shipped containers and breaks this.
     const resolver = makeResolver([
       { id: "acme.box", version: 1, fields: {}, roles: ["container"] },
     ]);
