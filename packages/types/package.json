@@ -17,7 +17,7 @@
     "build": "tsup",
     "typecheck": "tsc --noEmit",
     "validate": "tsx scripts/validate.ts",
-    "generate": "tsx scripts/generate.ts && tsx scripts/generate-icons.ts",
+    "generate": "tsx scripts/generate-icons.ts && tsx scripts/generate.ts",
     "shapes:digest": "tsx scripts/shapes-digest.ts --write"
   },
   "devDependencies": {
