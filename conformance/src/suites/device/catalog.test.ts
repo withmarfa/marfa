@@ -1,6 +1,7 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { startHarness, scriptHydration, type Harness } from "./harness.js";
 import {
+  wireType,
   edgeType,
   edgeTypeCatalog,
   copyHeldLog,
@@ -121,6 +122,7 @@ describe("The type catalog a working copy holds", () => {
       version: 0,
       title_field: "title",
       body_field: "body",
+      icon: "sticky-note",
       link_field: null,
       roles: [],
       compatible_with: [],
@@ -211,6 +213,87 @@ describe("The type catalog a working copy holds", () => {
       [parent.reverse_name, parent.written_at, parent.shipped],
       "a shipped edge type's reverse name did not reach the caller",
     ).toEqual(["child-of", "target", true]);
+  });
+
+  it("reads a type's icon from the nearest type that sets it, from the copy alone", async () => {
+    // The server lists each type's hints as declared, with the owner's icon
+    // laid over the type it was chosen for (`types/icon-read`). A parent that
+    // sets only a title and a child that sets only an icon both show.
+    const stamp = wireType("acme.stamp", {
+      parent: "core.note",
+      icon: "stamp",
+    });
+    const stampedKid = wireType("acme.stamp.kid", { parent: "acme.stamp" });
+    const loud = wireType("acme.stamp.loud", {
+      parent: "acme.stamp",
+      icon: "megaphone",
+    });
+    let ownerChose = false;
+    harness = await startHarness("catalog-icon");
+    const { server, device } = harness;
+    const catalog = () =>
+      typeCatalog([
+        ownerChose
+          ? {
+              ...stamp,
+              display_hints: {
+                ...(stamp.display_hints as object),
+                icon: "award",
+              },
+            }
+          : stamp,
+        stampedKid,
+        loud,
+      ]);
+    scriptHydration(server, {
+      head: "1",
+      catalog: catalog,
+      edgeTypes: edgeTypeCatalog([]),
+    });
+    server.copyAnswer("GET", "/types", () => catalog());
+    value(await device.hydrate(["core.note"], "library"), "the hydration");
+
+    const local = device.reopen({ url: undefined, key: undefined });
+    const icons = async () =>
+      Object.fromEntries(
+        await Promise.all(
+          [
+            "core.note",
+            "core.event",
+            "acme.stamp",
+            "acme.stamp.kid",
+            "acme.stamp.loud",
+          ].map(
+            async (id) =>
+              [id, value(await local.itemType(id), id).icon] as const,
+          ),
+        ),
+      );
+    expect(
+      await icons(),
+      "a type's icon was not the nearest one set, or a type that sets none read as having none",
+    ).toEqual({
+      "core.note": "sticky-note",
+      "core.event": null,
+      "acme.stamp": "stamp",
+      "acme.stamp.kid": "stamp",
+      "acme.stamp.loud": "megaphone",
+    });
+
+    // A device that missed the change takes it with the next catch-up.
+    ownerChose = true;
+    value(await device.hydrate(["core.note"], "library"), "the hydration");
+    const refreshed = device.reopen({ url: undefined, key: undefined });
+    expect(
+      [
+        value(await refreshed.itemType("acme.stamp"), "acme.stamp").icon,
+        value(await refreshed.itemType("acme.stamp.kid"), "acme.stamp.kid")
+          .icon,
+        value(await refreshed.itemType("acme.stamp.loud"), "acme.stamp.loud")
+          .icon,
+      ],
+      "the owner's new icon did not reach the copy at its next catch-up, or did not reach the subtype that sets none",
+    ).toEqual(["award", "award", "megaphone"]);
   });
 
   it("answers every catalog read on a copy that has never reached a server with the types Marfa ships", async () => {

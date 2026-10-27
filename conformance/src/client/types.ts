@@ -154,6 +154,8 @@ export interface TypeSchema {
   display_hints?: {
     title_field?: string;
     body_field?: string;
+    /** A Lucide kebab-case name from the release the instance pins. */
+    icon?: string;
   };
   /** The string field holding each row's own id at the vendor, which the
    *  server keeps to one row of the type. A subtype names its own. */

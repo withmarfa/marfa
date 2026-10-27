@@ -3940,9 +3940,17 @@ A device MUST answer a read of either catalog from its copy alone, with no serve
 
 ### `device/catalog-type-read`
 
-A device MUST answer an item type as `GET /types/{id}` answers it (`types/read`): its label and parent as declared, its fields with those it inherits, each naming the type that declares it and a field declared again nearer the type taking the place of the one above, and the display hints of the nearest type that declares any, taken whole.
+A device MUST answer an item type as `GET /types/{id}` answers it (`types/read`): its label and parent as declared, its fields with those it inherits, each naming the type that declares it and a field declared again nearer the type taking the place of the one above, and each display hint, the icon among them, from the nearest type that sets it (`types/read-display-hint`).
 
-**Tests:** `device/catalog.test.ts › reads a registered type with its label and inherited fields, and an edge type's reverse name, from the copy alone`, `device/fidelity.test.ts › reads a registered type and edge type from a working copy as the server answers them`, `device/folders-frontmatter.test.ts › takes the display hints of the nearest type that declares any, whole, as the server resolves them`.
+**Tests:** `device/catalog.test.ts › reads a registered type with its label and inherited fields, and an edge type's reverse name, from the copy alone`, `device/fidelity.test.ts › reads a registered type and edge type from a working copy as the server answers them`, `device/folders-frontmatter.test.ts › takes each display hint from the nearest type that sets it, as the server resolves them`.
+
+### `device/catalog-icon`
+
+When a device replaces its item type catalog, a device MUST hold each type's `display_hints.icon` as the server lists it, the owner's icon for the type included (`types/icon-read`).
+
+**Reason:** an app draws a row's icon from the catalog, and answers it from the copy alone (`device/catalog-offline`); a device that was offline when the owner changed an icon has the new one from its next catch-up or its next held stream, as it has any replaced type, because the server sends no event for a change to a type.
+
+**Tests:** `device/catalog.test.ts › reads a type's icon from the nearest type that sets it, from the copy alone`.
 
 ### `device/catalog-edge-type-read`
 

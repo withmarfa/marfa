@@ -134,6 +134,8 @@ export function wireType(
     parent?: string;
     titleField?: string;
     bodyField?: string;
+    /** The Lucide icon the type declares; absent where it declares none. */
+    icon?: string;
     fields?: Record<string, unknown>;
     /** Which fields collide how. What decides whether a resolution names a
      *  sibling (`queue-and-verdicts/success-conflicted`), so a scripted type without one
@@ -162,6 +164,7 @@ export function wireType(
       ...(options.bodyField === undefined
         ? {}
         : { body_field: options.bodyField }),
+      ...(options.icon === undefined ? {} : { icon: options.icon }),
     },
     merge_policy: options.mergePolicy ?? {
       fields: { body: "keep_both_copies" },
@@ -244,6 +247,7 @@ const FILE_FIELDS = {
 export const SCRIPTED_TYPES: ReadonlyArray<Record<string, unknown>> = [
   wireType("core.note", {
     bodyField: "body",
+    icon: "sticky-note",
     // The four the deployment seeds `core.note` with. Mirrored rather than
     // abbreviated: a device resolving a title field reads this registry, and
     // a scripted type thinner than the real one is a registry no server

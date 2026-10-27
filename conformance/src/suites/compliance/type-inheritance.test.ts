@@ -388,11 +388,12 @@ describe("type inheritance rule", () => {
     expect(item.data.item.properties.supplemental).toBe("own field");
   });
 
-  it("answers the display hints of the nearest type that declares any, whole", async () => {
+  it("answers each display hint from the nearest type that sets it", async () => {
     const parentId = `user.hints-parent-${ctx.runId}`;
     const fields = {
       heading: { type: "string" },
       text: { type: "string" },
+      summary: { type: "string" },
     } as const;
     expect(
       (
@@ -415,7 +416,30 @@ describe("type inheritance rule", () => {
           id: partial,
           parent: parentId,
           fields: {},
-          display_hints: { body_field: "heading" },
+          display_hints: { body_field: "summary" },
+        })
+      ).ok,
+    ).toBe(true);
+    // The case the old whole-block rule lost: a child that sets only an icon.
+    const iconOnly = `${parentId}.icon-only`;
+    expect(
+      (
+        await client.registerType({
+          id: iconOnly,
+          parent: parentId,
+          fields: {},
+          display_hints: { icon: "star" },
+        })
+      ).ok,
+    ).toBe(true);
+    const grandchild = `${iconOnly}.deeper`;
+    expect(
+      (
+        await client.registerType({
+          id: grandchild,
+          parent: iconOnly,
+          fields: {},
+          display_hints: { title_field: "summary" },
         })
       ).ok,
     ).toBe(true);
@@ -424,9 +448,20 @@ describe("type inheritance rule", () => {
       title_field: "heading",
       body_field: "text",
     });
-    // Whole, not merged: the parent's title does not fill the gap.
+    // Per hint, not whole: the parent's title fills the gap the child leaves.
     expect((await client.getType(partial)).data.display_hints).toEqual({
-      body_field: "heading",
+      title_field: "heading",
+      body_field: "summary",
+    });
+    expect((await client.getType(iconOnly)).data.display_hints).toEqual({
+      title_field: "heading",
+      body_field: "text",
+      icon: "star",
+    });
+    expect((await client.getType(grandchild)).data.display_hints).toEqual({
+      title_field: "summary",
+      body_field: "text",
+      icon: "star",
     });
   });
 

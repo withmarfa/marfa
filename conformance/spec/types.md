@@ -181,13 +181,37 @@ When `GET /types` lists a type, the server MUST answer the `version_policy`, `me
 
 **Tests:** `compliance/version-order.test.ts › lists the version_policy and merge_policy a type declares, and answers the resolved ones for the type itself`, `compliance/retention-policy.test.ts › lists the window a type declares and none it only inherits`.
 
-### `types/read-display-hints`
+### `types/read-display-hint`
 
-When a type declares no `display_hints`, the server MUST answer on `GET /types/{id}` those of its nearest ancestor that declares any, whole.
+When a credential sends `GET /types/{id}` for a registered type, the server MUST answer each of `display_hints.title_field`, `display_hints.body_field` and `display_hints.icon` from the nearest type, the type itself first and then its ancestors in turn, that sets that hint.
 
-**Reason:** a type that names only a body hint gets no title hint from its parent, so a reader falls back to `title` (`device/catalog-type-read`).
+**Reason:** a type that names only a body hint still shows its parent's title, and a subtype that names only an icon keeps both of its parent's other hints, so a reader never has to guess which hints a type sets for itself (`device/catalog-type-read`).
 
-**Tests:** `compliance/type-inheritance.test.ts › answers the display hints of the nearest type that declares any, whole`.
+**Tests:** `compliance/type-inheritance.test.ts › answers each display hint from the nearest type that sets it`.
+
+### `types/list-declared-hints`
+
+When `GET /types` lists a type, the server MUST answer the `display_hints` the type itself declares, with the icon the owner chose for it (`types/icon-read`), and none it only inherits.
+
+**Reason:** `GET /types/{id}` answers the hints a type is shown by (`types/read-display-hint`); the listing shows what each registration says.
+
+**Tests:** `compliance/type-icons.test.ts › lists the hints a type declares and not those it inherits`.
+
+### `types/body-markdown`
+
+The server MUST keep the field a type names in `display_hints.body_field` as Markdown text, storing its value as sent and never refusing it as malformed Markdown.
+
+**Reason:** an app renders the body as Markdown, and a device reads it as Markdown to make the edges its text names (`folders/body-reference`); the server stores what it is given, so a connector converts HTML to Markdown before it writes.
+
+**Tests:** `compliance/type-icons.test.ts › stores a body field's value as sent, whatever Markdown it holds`.
+
+### `types/icon-name`
+
+If a request to `POST /types`, `PUT /types/{id}` or `POST /types/normalize` carries a `display_hints.icon` that is not a kebab-case name from the Lucide release the instance pins (1.61.0), then the server MUST answer `400 invalid_schema` naming the member `display_hints.icon`.
+
+**Reason:** an app draws the icon from its own copy of that release, so a name outside it draws nothing; a wrong-case name, a name from a later release and a brand logo Lucide removed are all refused alike. The list is `packages/types/generated/lucide-icons.json`, regenerated from the pinned package.
+
+**Tests:** `compliance/type-icons.test.ts › refuses a display_hints.icon that is not a Lucide name on every door that takes a definition`.
 
 ### `types/read-missing`
 
@@ -1113,13 +1137,97 @@ When a caller runs `marfa types normalize` with a definition supplied by `--body
 
 **Tests:** `cli/doors.test.ts › normalizes an inline or stdin declaration with a read-only key and compares the registered definition`.
 
+## The owner's icon for a type
+
+The owner can choose the icon any type is shown by, a core or connector type among them, without replacing its definition. The choice sits beside the definition, so the author's icon stays the default and a replacement of the definition leaves the choice alone. It is made at `PUT /types/{id}/icon` and cleared at `DELETE /types/{id}/icon`.
+
+### `types/icon-set`
+
+When a caller allowed by `types/icon-who` sends `PUT /types/{id}/icon` with an `icon` that is a name `types/icon-name` accepts, for a registered type, the server MUST keep it as the owner's icon for that type and answer `200` with the `type` as `GET /types/{id}` now answers it.
+
+**Reason:** an owner tells types apart by their icons, and a core or connector type's author cannot know which icon its owner wants; changing it through the definition would take a replacement the owner has no right to make to a connector's type.
+
+**Tests:** `compliance/type-icons.test.ts › sets the owner's icon for a type and reads it back`.
+
+### `types/icon-clear`
+
+When a caller allowed by `types/icon-who` sends `DELETE /types/{id}/icon` for a registered type, the server MUST remove the owner's icon for that type, whether or not one was set, and answer `200` with the `type` as `GET /types/{id}` now answers it.
+
+**Reason:** clearing restores the author's default, and a clear that failed for a type with no choice would make the call unsafe to repeat.
+
+**Tests:** `compliance/type-icons.test.ts › clears the owner's icon, and clearing again changes nothing`.
+
+### `types/icon-read`
+
+While the owner has an icon for a type, the server MUST answer it as that type's `display_hints.icon` on `GET /types/{id}`, in the listing at `GET /types` and in the answer to `PUT /types/{id}`, in place of the icon the type's definition names.
+
+**Reason:** an app reads one icon and has no second field to consult, and a subtype that sets no icon of its own takes the owner's icon for its parent, as `types/read-display-hint` says for any hint; a device reads the same answer from its catalog (`device/catalog-icon`).
+
+**Tests:** `compliance/type-icons.test.ts › answers the owner's icon in place of the author's, on the read, the list and a subtype`.
+
+### `types/icon-kept`
+
+When a caller replaces a type with `PUT /types/{id}`, the server MUST keep the owner's icon for that type apart from the stored definition.
+
+**Reason:** the replacement never copies the owner's icon into the definition, so clearing it shows the author's own icon again. A connector writes its types again at each release; a choice it wiped would be lost at the next update.
+
+**Tests:** `compliance/type-icons.test.ts › keeps the owner's icon through a replacement of the type`.
+
+### `types/icon-refused`
+
+If `PUT /types/{id}/icon` names an `icon` that `types/icon-name` refuses, then the server MUST answer `400 invalid_schema` naming the member `icon`.
+
+**Reason:** the owner's choice is drawn from the same list as the author's, so it can hold no name an app cannot draw; a refused call leaves the icon the type had.
+
+**Tests:** `compliance/type-icons.test.ts › refuses a name outside the pinned release and a type nothing registered, and keeps the earlier choice`.
+
+### `types/icon-missing-type`
+
+If `PUT /types/{id}/icon` or `DELETE /types/{id}/icon` names a type nothing registered, then the server MUST answer `404 type_not_found`.
+
+**Reason:** an icon belongs to a registered type, so a choice for a name nothing holds would wait for an unrelated type to be registered.
+
+**Tests:** `compliance/type-icons.test.ts › refuses a name outside the pinned release and a type nothing registered, and keeps the earlier choice`.
+
+### `types/icon-who`
+
+When the owner's session, a local process, or a key holding `schema.write` and write on the type in its type map sends `PUT /types/{id}/icon` or `DELETE /types/{id}/icon`, the server MUST allow the call.
+
+**Reason:** the icon is a presentation choice made over the author's, and a key that may not change a type's definition may not change how the owner sees it.
+
+**Tests:** `compliance/type-icons.test.ts › allows a key with schema.write on the type and refuses one without`.
+
+### `types/icon-who-refused`
+
+If a caller other than those `types/icon-who` names sends `PUT /types/{id}/icon` or `DELETE /types/{id}/icon`, a connector's key among them whatever permissions it holds, then the server MUST answer `403 forbidden`.
+
+**Reason:** the connector is the author whose default the choice overrides, so its own key cannot be the one to overwrite the owner's choice.
+
+**Tests:** `compliance/type-icons.test.ts › allows a key with schema.write on the type and refuses one without`.
+
+### `types/icon-deleted`
+
+When `DELETE /types/{id}` removes a type, the server MUST discard the owner's icon for it.
+
+**Reason:** a type later registered under the same identifier starts without one, because a stale choice would give an unrelated type the icon the owner chose for a type that no longer exists.
+
+**Tests:** `compliance/type-icons.test.ts › discards the owner's icon with the type`.
+
+### `types/icon-audit`
+
+When `PUT /types/{id}/icon` or `DELETE /types/{id}/icon` succeeds, the server MUST record an audit entry with the action `type.icon.set` or `type.icon.clear` and the type's identifier as the resource.
+
+**Reason:** a presentation choice made over an author's default is a change to the registry that the owner can later account for.
+
+**Tests:** `compliance/type-icons.test.ts › records the owner's icon change in the audit log`.
+
 ## Item names
 
 ### `types/item-name-fields`
 
 When computing an item's name, the server MUST use the first nonblank string among its effective `display_hints.title_field`, `title`, `name`, effective `display_hints.body_field`, `body`, `text`, `filename`, `url` and `address`, in that order.
 
-**Reason:** Existing display hints, inherited as in `types/read-display-hints`, let a custom type choose its name without a second naming configuration; a file's existing `title` also holds its filename.
+**Reason:** Existing display hints, inherited as in `types/read-display-hint`, let a custom type choose its name without a second naming configuration; a file's existing `title` also holds its filename.
 
 **Tests:** `compliance/item-summaries.test.ts › names every built-in and custom type with bounded plain text and fallback fields`.
 
