@@ -39,8 +39,8 @@ export function isEnrichableMime(
 
 /**
  * Deterministic text extraction, dispatched on the item's declared MIME
- * type: plain text decodes, HTML pages are reduced to their visible text, document formats parse (embedded text only),
- * images OCR when an engine is supplied. Anything else is `unsupported`,
+ * type: plain text decodes, HTML pages are reduced to their visible text,
+ * document formats parse (embedded text only), images OCR when an engine is supplied. Anything else is `unsupported`,
  * which the sweeper records once and never retries.
  */
 export async function extractText(
