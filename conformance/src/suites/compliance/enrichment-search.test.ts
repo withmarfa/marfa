@@ -156,11 +156,12 @@ describe("search over extracted file text", () => {
   it("keeps the text before a limit a page passes, and reads it within a bound of time", async () => {
     const ordinary = await webPage(
       "ordinary page",
-      "<p>pelicanwick</p>",
+      "<p>pelicanwick</p><p>pastthelimitword</p>",
       "text/html",
     );
-    // The same words as the witness above, then a page that nests without
-    // end and closes what was never opened.
+    // The ordinary page is the witness: its last word is found when nothing
+    // stops the read. This page nests without end and closes what was never
+    // opened before the same word.
     const hostile = await webPage(
       "hostile page",
       `<p>fennelwick</p>${"<div>".repeat(200_000)}${"</x>".repeat(200_000)}<p>pastthelimitword</p>`,
@@ -173,7 +174,7 @@ describe("search over extracted file text", () => {
 
     expect(await found("pelicanwick")).toEqual([ordinary]);
     expect(await found("fennelwick")).toEqual([hostile]);
-    expect(await found("pastthelimitword")).toEqual([]);
+    expect(await found("pastthelimitword")).toEqual([ordinary]);
   }, 120_000);
 
   it("leaves a file in the bin unmatched, and matches it again once restored", async () => {
