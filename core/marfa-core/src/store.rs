@@ -3125,9 +3125,90 @@ pub fn catalog_version(conn: &Connection) -> Result<Option<u64>, CoreError> {
 
 /// Writes nothing where the catalog is unchanged: a follow fetches it on
 /// every stream it opens, and a reader would be told of a save each time.
-/// A change reindexes every held row. Answers whether it changed. Outside
+/// A change reindexes every held row, except one that touches only types'
+/// icons, which nothing indexed reads. Answers whether it changed. Outside
 /// tests, only `replace_catalog` calls it.
 pub fn replace_types(conn: &Connection, types: &[WireType]) -> Result<bool, CoreError> {
+    let rows = type_rows_of(types);
+    let held = held_type_rows(conn)?;
+    if held == rows {
+        return Ok(false);
+    }
+    let icons_only = without_icons(&held) == without_icons(&rows);
+    conn.execute("DELETE FROM types", [])?;
+    {
+        let mut insert = conn.prepare(
+            "INSERT INTO types (id, parent, label, title_field, thumbnail_field, json)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        )?;
+        for row in rows {
+            insert.execute(params![row.0, row.1, row.2, row.3, row.4, row.5])?;
+        }
+    }
+    if !icons_only {
+        reindex(conn)?;
+    }
+    Ok(true)
+}
+
+/// Whether `catalog` differs from the one held in nothing but types' icons:
+/// a server's catalog is held, its edge types are the same, and the types
+/// differ in no definition but their icons.
+pub fn catalog_differs_only_in_icons(
+    conn: &Connection,
+    catalog: &WireCatalog,
+) -> Result<bool, CoreError> {
+    if catalog_version(conn)?.is_none() || meta_get(conn, META_LOCAL_CATALOG)?.is_some() {
+        return Ok(false);
+    }
+    if edge_type_rows(conn)? != edge_rows_of(&catalog.edge_types)? {
+        return Ok(false);
+    }
+    let held = held_type_rows(conn)?;
+    let rows = type_rows_of(&catalog.types);
+    Ok(held != rows && without_icons(&held) == without_icons(&rows))
+}
+
+/// Each row with the icon its definition declares taken out, and an
+/// emptied `display_hints` with it, so two sets compare equal where they
+/// differ in icons alone.
+fn without_icons(rows: &[TypeRow]) -> Vec<TypeRow> {
+    rows.iter()
+        .map(|row| {
+            let mut row = row.clone();
+            if let Ok(Value::Object(mut json)) = serde_json::from_str::<Value>(&row.5) {
+                if let Some(Value::Object(hints)) = json.get_mut("display_hints") {
+                    hints.remove("icon");
+                    if hints.is_empty() {
+                        json.remove("display_hints");
+                    }
+                }
+                row.5 = Value::Object(json).to_string();
+            }
+            row
+        })
+        .collect()
+}
+
+fn held_type_rows(conn: &Connection) -> Result<Vec<TypeRow>, CoreError> {
+    Ok(conn
+        .prepare(
+            "SELECT id, parent, label, title_field, thumbnail_field, json FROM types ORDER BY id",
+        )?
+        .query_map([], |row| {
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+                row.get(5)?,
+            ))
+        })?
+        .collect::<Result<_, _>>()?)
+}
+
+fn type_rows_of(types: &[WireType]) -> Vec<TypeRow> {
     let mut rows: Vec<TypeRow> = types
         .iter()
         .map(|entry| {
@@ -3166,41 +3247,25 @@ pub fn replace_types(conn: &Connection, types: &[WireType]) -> Result<bool, Core
         })
         .collect();
     rows.sort();
-    let held: Vec<TypeRow> = conn
-        .prepare(
-            "SELECT id, parent, label, title_field, thumbnail_field, json FROM types ORDER BY id",
-        )?
-        .query_map([], |row| {
-            Ok((
-                row.get(0)?,
-                row.get(1)?,
-                row.get(2)?,
-                row.get(3)?,
-                row.get(4)?,
-                row.get(5)?,
-            ))
-        })?
-        .collect::<Result<_, _>>()?;
-    if held == rows {
-        return Ok(false);
-    }
-    conn.execute("DELETE FROM types", [])?;
-    {
-        let mut insert = conn.prepare(
-            "INSERT INTO types (id, parent, label, title_field, thumbnail_field, json)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-        )?;
-        for row in rows {
-            insert.execute(params![row.0, row.1, row.2, row.3, row.4, row.5])?;
-        }
-    }
-    reindex(conn)?;
-    Ok(true)
+    rows
 }
 
 /// Writes nothing where the catalog is unchanged, as `replace_types` does.
 /// Answers whether it changed.
 fn replace_edge_types(conn: &Connection, rows: &[Value]) -> Result<bool, CoreError> {
+    let wanted = edge_rows_of(rows)?;
+    if edge_type_rows(conn)? == wanted {
+        return Ok(false);
+    }
+    conn.execute("DELETE FROM edge_types", [])?;
+    let mut insert = conn.prepare("INSERT INTO edge_types (id, json) VALUES (?1, ?2)")?;
+    for (id, json) in wanted {
+        insert.execute(params![id, json])?;
+    }
+    Ok(true)
+}
+
+fn edge_rows_of(rows: &[Value]) -> Result<Vec<(String, String)>, CoreError> {
     let mut wanted: Vec<(String, String)> =
         rows.iter()
             .map(|row| {
@@ -3211,15 +3276,7 @@ fn replace_edge_types(conn: &Connection, rows: &[Value]) -> Result<bool, CoreErr
             })
             .collect::<Result<_, CoreError>>()?;
     wanted.sort();
-    if edge_type_rows(conn)? == wanted {
-        return Ok(false);
-    }
-    conn.execute("DELETE FROM edge_types", [])?;
-    let mut insert = conn.prepare("INSERT INTO edge_types (id, json) VALUES (?1, ?2)")?;
-    for (id, json) in wanted {
-        insert.execute(params![id, json])?;
-    }
-    Ok(true)
+    Ok(wanted)
 }
 
 /// Each type as `(id, json)`, by id.
@@ -6082,6 +6139,50 @@ mod tests {
         assert!(matches!(failure, CoreError::Store(_)), "{failure:?}");
         assert_eq!(type_rows(&conn).unwrap(), held);
         assert_eq!(catalog_version(&conn).unwrap(), version);
+    }
+
+    /// A refresh that changes only a type's icon adopts the catalog and moves
+    /// its version without reindexing a row; any other change reindexes.
+    #[test]
+    fn an_icon_only_catalog_change_reindexes_no_row() {
+        let conn = conn();
+        let original = WireCatalog {
+            types: vec![wire_type("core.note", None, Some("title"))],
+            edge_types: vec![],
+        };
+        replace_catalog(&conn, &original).unwrap();
+        upsert_item(
+            &conn,
+            &note("held", "findable", "body", "2026-01-01T00:00:00Z"),
+            Some(&[]),
+            &Indexing::default(),
+        )
+        .unwrap();
+        // Emptying the index is the witness: a reindex writes the row again.
+        let indexed = || -> i64 {
+            conn.query_row("SELECT count(*) FROM items_fts", [], |row| row.get(0))
+                .unwrap()
+        };
+        let emptied = || conn.execute("DELETE FROM items_fts", []).unwrap();
+        let version = catalog_version(&conn).unwrap();
+
+        let mut icon_only = original.clone();
+        icon_only.types[0].display_hints.as_mut().unwrap().icon = Some("sticky-note".into());
+        emptied();
+        assert!(replace_catalog(&conn, &icon_only).unwrap());
+        assert_eq!(indexed(), 0, "no row was reindexed");
+        assert_ne!(catalog_version(&conn).unwrap(), version);
+        assert!(type_rows(&conn).unwrap()[0].1.contains("sticky-note"));
+
+        let mut cleared = icon_only.clone();
+        cleared.types[0].display_hints.as_mut().unwrap().icon = None;
+        assert!(replace_catalog(&conn, &cleared).unwrap());
+        assert_eq!(indexed(), 0, "removing the icon reindexed no row");
+
+        let mut relabelled = icon_only;
+        relabelled.types[0].label = Some("Changed".into());
+        assert!(replace_catalog(&conn, &relabelled).unwrap());
+        assert_eq!(indexed(), 1, "the witness: another change reindexes");
     }
 
     /// Every value distinct: the helpers repeat a timestamp, which would hide

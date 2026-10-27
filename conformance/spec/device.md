@@ -786,6 +786,14 @@ If the server's item type or edge type catalog differs from the one an interrupt
 
 **Tests:** `device/hydration.test.ts › starts again from the first page when the catalog changed`.
 
+### `device/hydrate-icon-only-catalog`
+
+If the server's item type and edge type catalog differs from the one an interrupted hydration held only in the `display_hints.icon` of item types, then a device MUST adopt the new catalog and resume the hydration where it stopped, reporting it `resumed` and with no `restarted`.
+
+**Reason:** an icon is read by no index, naming or body rule, so the rows taken stand as they were indexed; restarting, or indexing every held row again, would cost a whole fill for a change of picture (`device/hydrate-restart-catalog` still holds for any other difference). The core's `store::tests::an_icon_only_catalog_change_reindexes_no_row` holds the no-reindex half.
+
+**Tests:** `device/hydration.test.ts › resumes under a catalog that differs only in a type's icon, and holds the new icon`.
+
 ### `device/hydrate-restart-head-aged-out`
 
 If the server's event log no longer holds the events after the head an interrupted hydration started from, then a device MUST read the slice again from its first page and report the hydration `restarted` with `head_aged_out`.
