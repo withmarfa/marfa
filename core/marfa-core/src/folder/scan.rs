@@ -1936,7 +1936,15 @@ impl Folder {
                 Look::Nowhere => {
                     let mut decided = sweep.decided.borrow_mut().remove(item_id);
                     let mut attempts = 0;
+                    // A file at a path another item's binding holds is that
+                    // item's, and answers nothing for this one.
+                    let put_back = || bound.is_some() && self.exists(self.root.join(path));
                     loop {
+                        // Neither a decision made earlier in the sweep nor the
+                        // file-item read looks at the disk.
+                        if put_back() {
+                            return Ok(Missing::Changed);
+                        }
                         let (seen, changed) = match decided.take() {
                             Some(decided) => decided,
                             None => {
@@ -1974,6 +1982,11 @@ impl Folder {
                         }
                         #[cfg(debug_assertions)]
                         crate::fault::hold(|| format!("folder-sweep-decided:{item_id}"));
+                        // Restoring a file changes neither its item nor its
+                        // edges, so the queued delete would not notice.
+                        if put_back() {
+                            return Ok(Missing::Changed);
+                        }
                         // Queued only while the item is as the decision read
                         // it, so a change heard meanwhile is decided again
                         // rather than trashed.

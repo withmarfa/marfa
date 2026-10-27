@@ -3799,6 +3799,102 @@ mod tests {
     }
 
     #[test]
+    fn a_sweep_keeps_the_item_of_a_file_put_back_before_its_turn() {
+        // The second case puts back the file the sweep is holding on; the
+        // first, the one it has yet to reach.
+        for (n, (held, restored)) in [("a.md", "b.md"), ("a.md", "a.md")].into_iter().enumerate() {
+            let (_, _registry) = registry::tests::own_registry();
+            let (dir, folder) = folder_with(
+                &format!("01a00000-0000-7000-8000-0000000000e{n}"),
+                serde_json::json!({ "query": {} }),
+                None,
+            );
+            for name in ["a.md", "b.md"] {
+                std::fs::write(dir.path().join(name), format!("{name} words\n")).unwrap();
+            }
+            assert_eq!(folder.scan().unwrap().created, 2);
+            let [a, b] = ["a.md", "b.md"].map(|name| landed(&folder, name));
+            folder.pull().unwrap();
+            for name in ["a.md", "b.md"] {
+                std::fs::remove_file(dir.path().join(name)).unwrap();
+            }
+            assert_eq!(folder.scan().unwrap().missing, 2);
+            for name in ["a.md", "b.md"] {
+                past_the_grace(&folder, name);
+            }
+            // Sweeps go by path, so a.md is decided and held on first, with
+            // both decisions already made.
+            let point = &format!(
+                "folder-sweep-decided:{}",
+                if held == "a.md" { &a } else { &b }
+            );
+            crate::fault::arm(point);
+            let swept = std::thread::scope(|scope| {
+                let putting_back = scope.spawn(|| {
+                    let waited = std::time::Instant::now();
+                    while crate::fault::waiting(point) == 0 {
+                        if waited.elapsed() > Duration::from_secs(10) {
+                            crate::fault::release(point);
+                            panic!("the sweep never decided");
+                        }
+                        std::thread::sleep(Duration::from_millis(5));
+                    }
+                    std::fs::write(dir.path().join(restored), "put back\n").unwrap();
+                    crate::fault::release(point);
+                });
+                let swept = folder.scan();
+                putting_back.join().unwrap();
+                swept
+            })
+            .unwrap();
+            let [kept_id, gone_id] = if restored == "a.md" {
+                [&a, &b]
+            } else {
+                [&b, &a]
+            };
+            let deleted: Vec<_> = folder
+                .core
+                .queue()
+                .unwrap()
+                .into_iter()
+                .filter(|write| write.kind == crate::model::WriteKind::DeleteItem)
+                .filter_map(|write| write.item_id)
+                .collect();
+            // The witness is the file still missing, whose item goes.
+            assert_eq!(
+                &deleted,
+                std::slice::from_ref(gone_id),
+                "{restored}: {swept:?}"
+            );
+            assert_eq!(swept.trashed.len(), 1, "{restored}: {swept:?}");
+            assert_ne!(
+                folder.core.get(kept_id).unwrap().unwrap().state,
+                ItemState::Trashed,
+                "{restored}: the item of a file put back was trashed"
+            );
+            let conn = folder.core.conn().unwrap();
+            let bound = |path: &str| state::bound_at(&conn, path).unwrap().is_some();
+            assert!(bound(restored), "{restored}: its binding was dropped");
+            assert!(!bound(if restored == "a.md" { "b.md" } else { "a.md" }));
+            drop(conn);
+            // The next scan takes the file as in place and clears the journal.
+            let again = folder.scan().unwrap();
+            assert!(again.trashed.is_empty(), "{restored}: {again:?}");
+            assert_eq!(
+                std::fs::read_to_string(dir.path().join(restored)).unwrap(),
+                "put back\n"
+            );
+            assert!(
+                !state::journaled(&folder.core.conn().unwrap())
+                    .unwrap()
+                    .iter()
+                    .any(|row| row.path == restored),
+                "{restored}: still journaled after a scan saw the file"
+            );
+        }
+    }
+
+    #[test]
     fn a_sweep_queues_the_delete_of_an_item_nothing_changed_while_it_decides() {
         let (_, _registry) = registry::tests::own_registry();
         // The witness: the same hold with nothing changed in it sends the delete.
