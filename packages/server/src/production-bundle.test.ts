@@ -49,6 +49,7 @@ it("starts the production bundle and serves health, instance and OpenAPI", async
          const outDir = process.env.MARFA_TEST_BUNDLE_DIR;
          await build({ ...config, outDir, onSuccess: async () => {
            copyFileSync("src/storage/sqlite/schema.sql", join(outDir, "schema.sql"));
+           copyFileSync("src/storage/sqlite/schema-1.sql", join(outDir, "schema-1.sql"));
          }});`,
       ],
       {

@@ -8,7 +8,7 @@ import { assertRegistryReady } from "./registry-context.js";
 import { projectPlatformRows } from "../platform-family.js";
 import { toLoadedTypes } from "../loaded-types.js";
 import type { RegistrySnapshot } from "@withmarfa/shared";
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import {
   createClient,
@@ -31,6 +31,22 @@ import { sql } from "drizzle-orm";
 import * as schema from "./schema.js";
 import { RefusedDatabaseError } from "./refused-database.js";
 import {
+  CREATE_FTS,
+  currentShape,
+  holdsAnyTable,
+  holdsRows,
+  schemaDifferences,
+  SCHEMA_SQL,
+} from "./schema-shape.js";
+import {
+  migrateInPlace,
+  readSchemaVersion,
+  SCHEMA_VERSION,
+  UNSTAMPED_VERSIONS,
+  versionDifferences,
+  type MigrationHooks,
+} from "./migrations.js";
+import {
   TransactionControl,
   transactionControl,
 } from "./transaction-control.js";
@@ -38,218 +54,117 @@ import * as clock from "../../clock.js";
 import { commitFailure, takeStatementFault } from "./injected-failure.js";
 
 /**
- * The database's DDL, generated from `schema.ts` by
- * `scripts/generate-schema-sql.ts` and applied in full at every open.
- * Read from beside this module so the same file serves `tsx` on the source
- * tree and the built bundle, which copies it into `dist/`.
- */
-export const SCHEMA_SQL = readFileSync(
-  new URL("./schema.sql", import.meta.url),
-  "utf8",
-);
-
-// Raw SQL for tables that Drizzle cannot express (FTS5 virtual tables).
-// `tags` carries the sidecar's tag list, space-joined, so a tag absent from
-// an item's text still finds it; the search store keeps the column current
-// on every tag write.
-const CREATE_FTS = `
-CREATE VIRTUAL TABLE IF NOT EXISTS items_fts USING fts5(
-  title,
-  body,
-  description,
-  name,
-  extra,
-  tags,
-  tokenize='porter unicode61'
-);
-`;
-
-/**
- * What an operator can do about a database this build will not open: nothing
- * is upgraded in place, so the data goes forward in an archive taken by the
- * build that wrote the file. Before the first public release an archive is
- * read only by the build that wrote it (`search-and-filters/restore-version`), so the
- * sentence says that the restore can refuse, and that the file is the
- * writing build's either way.
+ * What an operator can do about a database this build will not open and
+ * cannot update: the data goes forward in an archive taken by the build
+ * that wrote the file. Before the first public release an archive is read
+ * only by the build that wrote it (`search-and-filters/restore-version`),
+ * so the sentence says that the restore can refuse, and that the file is
+ * the writing build's either way.
  */
 const REFUSED_DATABASE_REMEDY =
-  "Nothing is upgraded in place. To carry what this file holds into this build, export it " +
+  "This build updates in place only a database whose schema it knows, so it cannot update this one. " +
+  "To carry what this file holds into this build, export it " +
   "with the build that wrote it (`GET /export?format=archive`), start this build on a fresh file, " +
   "and restore the archive there (`POST /restore`). Until the first public release " +
   "an archive is read only by the build that wrote it, so that restore can refuse it; the file " +
   "stays readable by the build that wrote it either way.";
 
-interface SchemaObject {
-  type: string;
-  table: string;
-  sql: string | null;
-}
-
-/** Every table, index and trigger in `client`'s file, by name. */
-async function schemaObjects(
-  client: Client,
-): Promise<Map<string, SchemaObject>> {
-  const rows = await client.execute(
-    "SELECT type, name, tbl_name, sql FROM sqlite_master WHERE type IN ('table', 'index', 'trigger')",
-  );
-  const out = new Map<string, SchemaObject>();
-  for (const row of rows.rows) {
-    const { type, name, tbl_name: table, sql } = row;
-    if (typeof name !== "string" || typeof type !== "string") continue;
-    if (typeof table !== "string") continue;
-    out.set(name, {
-      type,
-      table,
-      sql: typeof sql === "string" ? sql : null,
-    });
-  }
-  return out;
-}
-
-async function columnNames(
-  client: Client,
-  table: string,
-): Promise<Set<string>> {
-  const info = await client.execute(
-    `PRAGMA table_info(\`${table.replaceAll("`", "``")}\`)`,
-  );
-  return new Set(
-    info.rows
-      .map((row) => row.name)
-      .filter((name): name is string => typeof name === "string"),
+/** The schema refusal's message: what differs, the file and the way forward. */
+function schemaRefusal(
+  sqlitePath: string,
+  differences: readonly string[],
+  missingTables: readonly string[],
+  version?: number,
+): RefusedDatabaseError {
+  const against =
+    version === undefined
+      ? "is not this build's"
+      : `is not the one schema version ${String(version)} has, which the file says it holds`;
+  return new RefusedDatabaseError(
+    `The schema in ${sqlitePath} ${against}: ${[
+      ...differences,
+      ...missingTables.map((name) => `the file lacks the ${name} table`),
+    ].join("; ")}. ` + REFUSED_DATABASE_REMEDY,
   );
 }
 
 /**
- * The schema this build creates, read back from a private in-memory
- * database it was applied to, so the comparison below is against what
- * SQLite stored for this build's DDL and not against a hand-kept list.
+ * Which schema version the file holds, and whether the server has to stamp
+ * or update it, decided before anything is written. Every refusal here
+ * leaves the file as it was found.
  */
-let reference:
-  Promise<{ client: Client; objects: Map<string, SchemaObject> }> | undefined;
-
-function referenceSchema() {
-  reference ??= (async () => {
-    const client = createClient({ url: ":memory:" });
-    await client.executeMultiple(SCHEMA_SQL);
-    await client.executeMultiple(CREATE_FTS);
-    return { client, objects: await schemaObjects(client) };
-  })();
-  return reference;
-}
-
-/** The name prefix of each virtual table's shadow tables. */
-function shadowTablePrefixes(objects: Map<string, SchemaObject>): string[] {
-  return [...objects]
-    .filter(([, o]) => o.sql?.startsWith("CREATE VIRTUAL TABLE") === true)
-    .map(([name]) => `${name}_`);
-}
-
-/**
- * How the file's schema differs from this build's, one phrase per object,
- * or none when every table, index and trigger this build declares and the
- * file holds is the one this build would create. The tables a file lacks
- * are returned apart, because whether that is a difference depends on
- * what the file holds: only a file holding any of this build's tables is
- * asked, since a new file holds none.
- *
- * **Every difference, because `IF NOT EXISTS` hides every difference.** A
- * missing column fails on the first read of it, a column this build no
- * longer writes fails the first insert when it was `NOT NULL`, and a
- * changed default or CHECK fails the first write that leans on it; the
- * boot says nothing about any of them. Comparing the stored DDL catches
- * all of these without a list someone must remember to extend.
- *
- * A table this build does not declare is not compared, since a replication
- * sidecar keeps its own tables in the file. Nothing a request can send
- * creates or alters a table, an index or a trigger, so no caller can make
- * this refuse an instance.
- */
-async function schemaDifferences(
+async function openingPlan(
   client: Client,
-): Promise<{ differences: string[]; missingTables: string[] }> {
-  const ref = await referenceSchema();
-  const found = await schemaObjects(client);
-  const differences: string[] = [];
-  // A virtual table's shadow tables are SQLite's to shape and may change
-  // with the library; the virtual table's own DDL is what this build chose.
-  const shadowPrefixes = shadowTablePrefixes(ref.objects);
-  for (const [name, object] of found) {
-    if (shadowPrefixes.some((prefix) => name.startsWith(prefix))) continue;
-    const expected = ref.objects.get(name);
-    if (expected === undefined) {
-      if (ref.objects.get(object.table)?.type === "table") {
-        differences.push(
-          `there is a ${name} ${object.type} on the ${object.table} table this build does not declare`,
-        );
-      }
-      continue;
-    }
-    if (expected.type === object.type && expected.sql === object.sql) continue;
-    if (expected.type !== "table" || object.type !== "table") {
-      differences.push(`the ${name} ${object.type} differs from this build's`);
-      continue;
-    }
-    const want = await columnNames(ref.client, name);
-    const have = await columnNames(client, name);
-    const missing = [...want].filter((column) => !have.has(column));
-    const extra = [...have].filter((column) => !want.has(column));
-    if (missing.length > 0) {
-      differences.push(`the ${name} table lacks ${missing.join(", ")}`);
-    }
-    if (extra.length > 0) {
-      differences.push(
-        `the ${name} table has ${extra.join(", ")}, which this build does not declare`,
-      );
-    }
-    if (missing.length === 0 && extra.length === 0) {
-      differences.push(
-        `the ${name} table differs from this build's definition of it`,
-      );
-    }
-  }
-  // A table this build declares and the file lacks would be created empty
-  // by the DDL below, so a file written before the table existed opens with
-  // an index or a log that silently describes none of its rows.
-  const missingTables: string[] = [];
-  const holdsThisBuild = [...found.keys()].some(
-    (name) => ref.objects.get(name)?.type === "table",
-  );
-  if (holdsThisBuild) {
-    for (const [name, object] of ref.objects) {
-      if (object.type !== "table" || found.has(name)) continue;
-      if (name.startsWith("sqlite_")) continue;
-      // The full-text table is applied apart from `schema.sql`, so its
-      // absence is no sign of which build wrote the file.
-      if (object.sql?.startsWith("CREATE VIRTUAL TABLE") === true) continue;
-      if (shadowPrefixes.some((prefix) => name.startsWith(prefix))) continue;
-      missingTables.push(name);
-    }
-  }
-  return { differences, missingTables };
-}
-
-/**
- * Whether any of this build's tables in `client`'s file holds a row.
- *
- * A table this build does not declare is not read: a replication sidecar
- * keeps its own tables in the file and writes rows to them whatever state
- * this build's tables are in.
- */
-async function holdsRows(client: Client): Promise<boolean> {
-  const ref = await referenceSchema();
-  const found = await schemaObjects(client);
-  const shadow = shadowTablePrefixes(ref.objects);
-  for (const [name, object] of ref.objects) {
-    if (object.type !== "table" || !found.has(name)) continue;
-    if (name.startsWith("sqlite_")) continue;
-    if (shadow.some((prefix) => name.startsWith(prefix))) continue;
-    const rows = await client.execute(
-      `SELECT 1 FROM \`${name.replaceAll("`", "``")}\` LIMIT 1`,
+  sqlitePath: string,
+): Promise<{ version: number; stamp: boolean }> {
+  const stamped = await readSchemaVersion(client);
+  if (stamped > SCHEMA_VERSION) {
+    throw new RefusedDatabaseError(
+      `The database in ${sqlitePath} is at schema version ${String(stamped)}, which a newer build wrote, ` +
+        `and this build's is ${String(SCHEMA_VERSION)}. Nothing was changed. Start the newer build on it again; ` +
+        "to use this build, restore with it a copy taken before the newer build updated the file.",
     );
-    if (rows.rows.length > 0) return true;
   }
-  return false;
+  if (stamped < 0) {
+    throw new RefusedDatabaseError(
+      `The database in ${sqlitePath} says it is at schema version ${String(stamped)}, which no build writes. ` +
+        REFUSED_DATABASE_REMEDY,
+    );
+  }
+  const current = await currentShape();
+  if (stamped === SCHEMA_VERSION) {
+    const { differences, missingTables } = await schemaDifferences(
+      client,
+      current,
+    );
+    if (
+      differences.length > 0 ||
+      (missingTables.length > 0 && (await holdsRows(client, current)))
+    ) {
+      throw schemaRefusal(sqlitePath, differences, missingTables);
+    }
+    return { version: stamped, stamp: false };
+  }
+  if (stamped > 0) {
+    const { differences, missingTables } = await versionDifferences(
+      client,
+      stamped,
+    );
+    if (differences.length > 0 || missingTables.length > 0) {
+      throw schemaRefusal(sqlitePath, differences, missingTables, stamped);
+    }
+    return { version: stamped, stamp: false };
+  }
+  // A file that holds no version was written before builds stamped one, or
+  // is new, or is one this build began and did not finish. It is taken to
+  // be at the one version whose shape it has exactly.
+  if (!(await holdsAnyTable(client, current))) {
+    return { version: SCHEMA_VERSION, stamp: true };
+  }
+  for (const version of UNSTAMPED_VERSIONS) {
+    const { differences, missingTables } = await versionDifferences(
+      client,
+      version,
+    );
+    if (differences.length === 0 && missingTables.length === 0) {
+      return { version, stamp: version === SCHEMA_VERSION };
+    }
+  }
+  // A file that lacks some of this build's tables and holds no rows is one
+  // this build began creating and did not finish, and is completed by the
+  // DDL. The DDL is a series of statements, each applied on its own, so a
+  // start that stopped partway leaves the first of them, and it inserts
+  // nothing, so that file is empty. One that holds rows was written by
+  // another build, and completing it would open the missing tables empty
+  // beside rows they should describe.
+  const { differences, missingTables } = await schemaDifferences(
+    client,
+    current,
+  );
+  if (differences.length > 0 || (await holdsRows(client, current))) {
+    throw schemaRefusal(sqlitePath, differences, missingTables);
+  }
+  return { version: SCHEMA_VERSION, stamp: true };
 }
 
 /**
@@ -1010,11 +925,23 @@ function toLibsqlUrl(pathOrUrl: string): string {
   return `file:${pathOrUrl}`;
 }
 
+/** The file a path or a `file:` URL names. */
+function fileSystemPath(sqlitePath: string): string {
+  if (!sqlitePath.startsWith("file:")) return sqlitePath;
+  return decodeURIComponent(
+    sqlitePath.slice("file:".length).split("?")[0] ?? "",
+  );
+}
+
 /**
- * Opens a libsql connection, requests WAL mode, creates all tables
- * (idempotent), and returns both the Drizzle db and the raw libsql client.
+ * Opens a libsql connection, updates an earlier schema version in place,
+ * requests WAL mode, creates all tables (idempotent), and returns both the
+ * Drizzle db and the raw libsql client.
  */
-export async function createConnection(sqlitePath: string): Promise<{
+export async function createConnection(
+  sqlitePath: string,
+  hooks: MigrationHooks = {},
+): Promise<{
   db: DrizzleDb;
   raw: RawDb;
   inspectQueryPlan: (query: string) => Promise<ResultSet>;
@@ -1071,30 +998,17 @@ export async function createConnection(sqlitePath: string): Promise<{
     );
   }
 
-  // A schema that is not this build's is refused for the same reason, and
-  // here rather than at the DDL below: an index over a missing column fails
-  // there with a driver error naming the index, after the PRAGMAs have
-  // rewritten the header, and anything nothing indexes fails nowhere until
-  // a request meets it.
-  const { differences, missingTables } = await schemaDifferences(client);
-  // A file that lacks some of this build's tables and holds no rows is one
-  // this build began creating and did not finish, and is completed by the
-  // DDL below. The DDL is a series of statements, each applied on its own,
-  // so a start that stopped partway leaves the first of them, and it
-  // inserts nothing, so that file is empty. One that holds rows was
-  // written by another build, and completing it would open the missing
-  // tables empty beside rows they should describe.
-  if (
-    differences.length > 0 ||
-    (missingTables.length > 0 && (await holdsRows(client)))
-  ) {
+  // A schema that is not this build's, or not the one its version names, is
+  // refused for the same reason, and here rather than at the DDL below: an
+  // index over a missing column fails there with a driver error naming the
+  // index, after the PRAGMAs have rewritten the header, and anything nothing
+  // indexes fails nowhere until a request meets it.
+  let plan: { version: number; stamp: boolean };
+  try {
+    plan = await openingPlan(client, sqlitePath);
+  } catch (error) {
     client.close();
-    throw new RefusedDatabaseError(
-      `The schema in ${sqlitePath} is not this build's: ${[
-        ...differences,
-        ...missingTables.map((name) => `the file lacks the ${name} table`),
-      ].join("; ")}. ` + REFUSED_DATABASE_REMEDY,
-    );
+    throw error;
   }
 
   // A retired settings key is refused on the same terms, and it is the
@@ -1127,6 +1041,15 @@ export async function createConnection(sqlitePath: string): Promise<{
     }
   }
 
+  if (plan.version < SCHEMA_VERSION) {
+    try {
+      await migrateInPlace(fileSystemPath(sqlitePath), plan.version, hooks);
+    } catch (error) {
+      client.close();
+      throw error;
+    }
+  }
+
   // WAL: readers do not block the writer, and it is what Litestream
   // replicates.
   await requestWal();
@@ -1137,6 +1060,11 @@ export async function createConnection(sqlitePath: string): Promise<{
   // The remaining hand-written block is the FTS5 virtual table — drizzle-kit
   // cannot express FTS5, so it is applied separately.
   await client.executeMultiple(CREATE_FTS);
+  // Last, so a start stopped while making the tables leaves a file that
+  // holds no version and is completed by the next one.
+  if (plan.stamp) {
+    await client.execute(`PRAGMA user_version = ${String(SCHEMA_VERSION)}`);
+  }
 
   const db = drizzle(client, { schema });
 

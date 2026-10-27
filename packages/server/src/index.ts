@@ -72,7 +72,10 @@ async function main() {
     // every statement and a budget set afterwards would leave the boot's
     // own writes on the default.
     setBusyBudgetMs(config.sqliteBusyBudgetMs);
-    const storage: Storage = await createSqliteStorage(config.sqlitePath);
+    const storage: Storage = await createSqliteStorage(
+      config.sqlitePath,
+      config.testMigration,
+    );
     startupCleanup.push(() => storage.close());
     bindErrorReporting(storage.settings, config);
     // The root route keeps this value so it remains answerable if the

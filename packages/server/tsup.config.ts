@@ -17,7 +17,9 @@ export default defineConfig({
   clean: true,
   target: "node20",
   external: ["@withmarfa/shared"],
-  // `connection.ts` reads `schema.sql` from beside itself, and the bundles
-  // it is folded into sit at the top of `dist/`.
-  onSuccess: "cp src/storage/sqlite/schema.sql dist/schema.sql",
+  // `schema-shape.ts` and `migrations.ts` read `schema.sql` and
+  // `schema-1.sql` from beside themselves, and the bundles they are folded
+  // into sit at the top of `dist/`.
+  onSuccess:
+    "cp src/storage/sqlite/schema.sql dist/schema.sql && cp src/storage/sqlite/schema-1.sql dist/schema-1.sql",
 });

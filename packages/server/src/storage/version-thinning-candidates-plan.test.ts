@@ -7,7 +7,7 @@ import { describe, expect, it } from "vitest";
 import { createClient } from "@libsql/client";
 import { drizzle as drizzleSqlite } from "drizzle-orm/libsql";
 import { SqliteVersionStore } from "./sqlite/version-store.js";
-import { SCHEMA_SQL } from "./sqlite/connection.js";
+import { SCHEMA_SQL } from "./sqlite/schema-shape.js";
 
 describe("the thinning candidate query plan", () => {
   it.each([undefined, "01a1082b-dce6-7720-b63f-3c43272fb4de"])(

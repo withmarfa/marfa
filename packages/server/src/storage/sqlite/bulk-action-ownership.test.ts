@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createClient } from "@libsql/client";
-import { SCHEMA_SQL } from "./connection.js";
+import { SCHEMA_SQL } from "./schema-shape.js";
 import { createSqliteStorage } from "./index.js";
 import {
   BulkActionLeaseLost,

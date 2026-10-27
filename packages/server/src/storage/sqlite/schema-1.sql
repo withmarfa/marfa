@@ -1,0 +1,776 @@
+-- Schema version 1: the database as releases 0.0.29 to 0.0.40 wrote it, the
+-- builds that kept no schema version, with the full-text table they applied
+-- beside schema.sql. Never edit it: `migrations.ts` replays its migrations
+-- onto this to know the shape of each later version.
+
+CREATE TABLE IF NOT EXISTS `api_keys` (
+	`id` text PRIMARY KEY NOT NULL,
+	`key_hash` text NOT NULL,
+	`label` text NOT NULL,
+	`source` text NOT NULL,
+	`sources` text DEFAULT '[]' NOT NULL,
+	`default_tier` text DEFAULT 'library' NOT NULL,
+	`permissions` text DEFAULT '[]' NOT NULL,
+	`type_permissions` text NOT NULL,
+	`extension_permissions` text DEFAULT '{}' NOT NULL,
+	`edge_permissions` text DEFAULT '{}' NOT NULL,
+	`metadata_permissions` text DEFAULT '{}' NOT NULL,
+	`enforcement_override` text,
+	`profile_permissions` text DEFAULT '{}' NOT NULL,
+	`oauth_client_id` text,
+	`created_at` text NOT NULL,
+	`expires_at` text,
+	`revoked_at` text,
+	`last_used_at` text
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS `api_keys_key_hash_unique` ON `api_keys` (`key_hash`);
+CREATE UNIQUE INDEX IF NOT EXISTS `idx_api_keys_source_unrevoked` ON `api_keys` (`source`) WHERE revoked_at IS NULL;
+CREATE TABLE IF NOT EXISTS `audit_log` (
+	`id` text PRIMARY KEY NOT NULL,
+	`created_at` text NOT NULL,
+	`key_id` text,
+	`action` text NOT NULL,
+	`resource_type` text NOT NULL,
+	`resource_id` text,
+	`client_ip` text,
+	`details` text DEFAULT '{}' NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS `idx_audit_log_created_at` ON `audit_log` (`created_at`);
+CREATE INDEX IF NOT EXISTS `idx_audit_log_action` ON `audit_log` (`action`);
+CREATE INDEX IF NOT EXISTS `idx_audit_log_resource_type` ON `audit_log` (`resource_type`);
+CREATE TABLE IF NOT EXISTS `auth_account` (
+	`id` text PRIMARY KEY NOT NULL,
+	`account_id` text NOT NULL,
+	`provider_id` text NOT NULL,
+	`user_id` text NOT NULL,
+	`access_token` text,
+	`refresh_token` text,
+	`id_token` text,
+	`access_token_expires_at` integer,
+	`refresh_token_expires_at` integer,
+	`scope` text,
+	`password` text,
+	`created_at` integer NOT NULL,
+	`updated_at` integer NOT NULL,
+	FOREIGN KEY (`user_id`) REFERENCES `auth_user`(`id`) ON UPDATE no action ON DELETE cascade
+);
+
+CREATE INDEX IF NOT EXISTS `idx_auth_account_user_id` ON `auth_account` (`user_id`);
+CREATE UNIQUE INDEX IF NOT EXISTS `idx_auth_account_provider` ON `auth_account` (`provider_id`,`account_id`);
+CREATE TABLE IF NOT EXISTS `auth_jwks` (
+	`id` text PRIMARY KEY NOT NULL,
+	`public_key` text NOT NULL,
+	`private_key` text NOT NULL,
+	`created_at` integer NOT NULL,
+	`expires_at` integer,
+	`alg` text,
+	`crv` text
+);
+
+CREATE TABLE IF NOT EXISTS `auth_oauth_access_token` (
+	`id` text PRIMARY KEY NOT NULL,
+	`token` text NOT NULL,
+	`client_id` text NOT NULL,
+	`session_id` text,
+	`user_id` text,
+	`reference_id` text,
+	`refresh_id` text,
+	`expires_at` integer,
+	`created_at` integer,
+	`scopes` text NOT NULL,
+	`authorization_code_id` text,
+	`confirmation` text,
+	`requested_user_info_claims` text,
+	`resources` text,
+	`revoked` integer,
+	FOREIGN KEY (`session_id`) REFERENCES `auth_session`(`id`) ON UPDATE no action ON DELETE set null,
+	FOREIGN KEY (`user_id`) REFERENCES `auth_user`(`id`) ON UPDATE no action ON DELETE cascade,
+	FOREIGN KEY (`refresh_id`) REFERENCES `auth_oauth_refresh_token`(`id`) ON UPDATE no action ON DELETE cascade
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS `auth_oauth_access_token_token_unique` ON `auth_oauth_access_token` (`token`);
+CREATE UNIQUE INDEX IF NOT EXISTS `idx_auth_oauth_access_token_token` ON `auth_oauth_access_token` (`token`);
+CREATE INDEX IF NOT EXISTS `idx_auth_oauth_access_token_client_id` ON `auth_oauth_access_token` (`client_id`);
+CREATE INDEX IF NOT EXISTS `idx_auth_oauth_access_token_user_id` ON `auth_oauth_access_token` (`user_id`);
+CREATE INDEX IF NOT EXISTS `idx_auth_oauth_access_token_authorization_code_id` ON `auth_oauth_access_token` (`authorization_code_id`);
+CREATE INDEX IF NOT EXISTS `idx_auth_oauth_access_token_session_id` ON `auth_oauth_access_token` (`session_id`);
+CREATE TABLE IF NOT EXISTS `auth_oauth_client` (
+	`id` text PRIMARY KEY NOT NULL,
+	`client_id` text NOT NULL,
+	`client_secret` text,
+	`disabled` integer DEFAULT false NOT NULL,
+	`skip_consent` integer,
+	`enable_end_session` integer,
+	`subject_type` text,
+	`scopes` text,
+	`client_credentials_scopes` text,
+	`application_type` text,
+	`backchannel_logout_session_required` integer,
+	`backchannel_logout_uri` text,
+	`client_discovery_id` text,
+	`dpop_bound_access_tokens` integer,
+	`jwks` text,
+	`jwks_uri` text,
+	`user_id` text,
+	`created_at` integer,
+	`updated_at` integer,
+	`name` text,
+	`uri` text,
+	`icon` text,
+	`contacts` text,
+	`tos` text,
+	`policy` text,
+	`software_id` text,
+	`software_version` text,
+	`software_statement` text,
+	`redirect_uris` text NOT NULL,
+	`post_logout_redirect_uris` text,
+	`token_endpoint_auth_method` text,
+	`grant_types` text,
+	`response_types` text,
+	`public` integer,
+	`type` text,
+	`require_pkce` integer,
+	`reference_id` text,
+	`metadata` text,
+	FOREIGN KEY (`user_id`) REFERENCES `auth_user`(`id`) ON UPDATE no action ON DELETE cascade
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS `auth_oauth_client_client_id_unique` ON `auth_oauth_client` (`client_id`);
+CREATE UNIQUE INDEX IF NOT EXISTS `idx_auth_oauth_client_client_id` ON `auth_oauth_client` (`client_id`);
+CREATE INDEX IF NOT EXISTS `idx_auth_oauth_client_user_id` ON `auth_oauth_client` (`user_id`);
+CREATE INDEX IF NOT EXISTS `idx_auth_oauth_client_reference_id` ON `auth_oauth_client` (`reference_id`);
+CREATE TABLE IF NOT EXISTS `auth_oauth_consent` (
+	`id` text PRIMARY KEY NOT NULL,
+	`client_id` text NOT NULL,
+	`user_id` text,
+	`reference_id` text,
+	`scopes` text NOT NULL,
+	`created_at` integer,
+	`updated_at` integer,
+	`requested_user_info_claims` text,
+	`resources` text,
+	FOREIGN KEY (`user_id`) REFERENCES `auth_user`(`id`) ON UPDATE no action ON DELETE cascade
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS `uq_auth_oauth_consent_client_user` ON `auth_oauth_consent` (`client_id`,`user_id`);
+CREATE INDEX IF NOT EXISTS `idx_auth_oauth_consent_reference_id` ON `auth_oauth_consent` (`reference_id`);
+CREATE TABLE IF NOT EXISTS `auth_oauth_device_code` (
+	`id` text PRIMARY KEY NOT NULL,
+	`device_code` text NOT NULL,
+	`user_code` text NOT NULL,
+	`user_id` text,
+	`expires_at` integer NOT NULL,
+	`status` text NOT NULL,
+	`last_polled_at` integer,
+	`polling_interval` integer,
+	`client_id` text,
+	`scope` text,
+	`oauth_client_id` text,
+	`resources` text
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS `uq_auth_oauth_device_code_device_code` ON `auth_oauth_device_code` (`device_code`);
+CREATE UNIQUE INDEX IF NOT EXISTS `uq_auth_oauth_device_code_user_code` ON `auth_oauth_device_code` (`user_code`);
+CREATE TABLE IF NOT EXISTS `auth_oauth_refresh_token` (
+	`id` text PRIMARY KEY NOT NULL,
+	`token` text NOT NULL,
+	`client_id` text NOT NULL,
+	`session_id` text,
+	`user_id` text NOT NULL,
+	`reference_id` text,
+	`expires_at` integer,
+	`created_at` integer,
+	`revoked` integer,
+	`auth_time` integer,
+	`scopes` text NOT NULL,
+	`authorization_code_id` text,
+	`confirmation` text,
+	`requested_user_info_claims` text,
+	`resources` text,
+	`rotated_at` integer,
+	`rotation_replay_expires_at` integer,
+	`rotation_replay_response` text,
+	FOREIGN KEY (`session_id`) REFERENCES `auth_session`(`id`) ON UPDATE no action ON DELETE set null,
+	FOREIGN KEY (`user_id`) REFERENCES `auth_user`(`id`) ON UPDATE no action ON DELETE cascade
+);
+
+CREATE INDEX IF NOT EXISTS `idx_auth_oauth_refresh_token_token` ON `auth_oauth_refresh_token` (`token`);
+CREATE INDEX IF NOT EXISTS `idx_auth_oauth_refresh_token_client_id` ON `auth_oauth_refresh_token` (`client_id`);
+CREATE INDEX IF NOT EXISTS `idx_auth_oauth_refresh_token_user_id` ON `auth_oauth_refresh_token` (`user_id`);
+CREATE INDEX IF NOT EXISTS `idx_auth_oauth_refresh_token_authorization_code_id` ON `auth_oauth_refresh_token` (`authorization_code_id`);
+CREATE INDEX IF NOT EXISTS `idx_auth_oauth_refresh_token_session_id` ON `auth_oauth_refresh_token` (`session_id`);
+CREATE TABLE IF NOT EXISTS `auth_passkey` (
+	`id` text PRIMARY KEY NOT NULL,
+	`name` text,
+	`public_key` text NOT NULL,
+	`user_id` text NOT NULL,
+	`credential_id` text NOT NULL,
+	`counter` integer NOT NULL,
+	`device_type` text NOT NULL,
+	`backed_up` integer NOT NULL,
+	`transports` text,
+	`created_at` integer,
+	`aaguid` text,
+	FOREIGN KEY (`user_id`) REFERENCES `auth_user`(`id`) ON UPDATE no action ON DELETE cascade
+);
+
+CREATE INDEX IF NOT EXISTS `idx_auth_passkey_user_id` ON `auth_passkey` (`user_id`);
+CREATE INDEX IF NOT EXISTS `idx_auth_passkey_credential_id` ON `auth_passkey` (`credential_id`);
+CREATE TABLE IF NOT EXISTS `auth_session` (
+	`id` text PRIMARY KEY NOT NULL,
+	`expires_at` integer NOT NULL,
+	`token` text NOT NULL,
+	`created_at` integer NOT NULL,
+	`updated_at` integer NOT NULL,
+	`ip_address` text,
+	`user_agent` text,
+	`user_id` text NOT NULL,
+	FOREIGN KEY (`user_id`) REFERENCES `auth_user`(`id`) ON UPDATE no action ON DELETE cascade
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS `auth_session_token_unique` ON `auth_session` (`token`);
+CREATE INDEX IF NOT EXISTS `idx_auth_session_user_id` ON `auth_session` (`user_id`);
+CREATE UNIQUE INDEX IF NOT EXISTS `idx_auth_session_token` ON `auth_session` (`token`);
+CREATE TABLE IF NOT EXISTS `auth_user` (
+	`id` text PRIMARY KEY NOT NULL,
+	`name` text NOT NULL,
+	`email` text NOT NULL,
+	`email_verified` integer DEFAULT false NOT NULL,
+	`created_at` integer NOT NULL,
+	`updated_at` integer NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS `auth_user_email_unique` ON `auth_user` (`email`);
+CREATE UNIQUE INDEX IF NOT EXISTS `idx_auth_user_email` ON `auth_user` (`email`);
+CREATE TABLE IF NOT EXISTS `auth_verification` (
+	`id` text PRIMARY KEY NOT NULL,
+	`identifier` text NOT NULL,
+	`value` text NOT NULL,
+	`expires_at` integer NOT NULL,
+	`created_at` integer NOT NULL,
+	`updated_at` integer NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS `idx_auth_verification_identifier` ON `auth_verification` (`identifier`);
+CREATE TABLE IF NOT EXISTS `blob_copies` (
+	`hash` text NOT NULL,
+	`store_id` text NOT NULL,
+	`recorded_at` text NOT NULL,
+	`verified_at` text,
+	PRIMARY KEY(`hash`, `store_id`),
+	FOREIGN KEY (`hash`) REFERENCES `blobs`(`hash`) ON UPDATE no action ON DELETE cascade,
+	FOREIGN KEY (`store_id`) REFERENCES `blob_stores`(`id`) ON UPDATE no action ON DELETE no action
+);
+
+CREATE INDEX IF NOT EXISTS `idx_blob_copies_store_verified` ON `blob_copies` (`store_id`,`verified_at`);
+CREATE TABLE IF NOT EXISTS `blob_copy_deletions` (
+	`hash` text NOT NULL,
+	`store_id` text NOT NULL,
+	`retry_order` integer NOT NULL,
+	PRIMARY KEY(`hash`, `store_id`)
+);
+
+CREATE INDEX IF NOT EXISTS `idx_blob_copy_deletions_retry` ON `blob_copy_deletions` (`retry_order`,`hash`,`store_id`);
+CREATE TABLE IF NOT EXISTS `blob_orphans` (
+	`hash` text PRIMARY KEY NOT NULL,
+	`reported_at` text NOT NULL,
+	FOREIGN KEY (`hash`) REFERENCES `blobs`(`hash`) ON UPDATE no action ON DELETE cascade
+);
+
+CREATE TABLE IF NOT EXISTS `blob_purges` (
+	`hash` text PRIMARY KEY NOT NULL,
+	`purged_at` text NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS `blob_stores` (
+	`id` text PRIMARY KEY NOT NULL,
+	`kind` text NOT NULL,
+	`locator` text NOT NULL,
+	`policy` text DEFAULT 'all' NOT NULL,
+	`attached_at` text NOT NULL,
+	`detached_at` text
+);
+
+CREATE TABLE IF NOT EXISTS `blob_uploaders` (
+	`hash` text NOT NULL,
+	`uploader` text NOT NULL,
+	PRIMARY KEY(`hash`, `uploader`),
+	FOREIGN KEY (`hash`) REFERENCES `blobs`(`hash`) ON UPDATE no action ON DELETE cascade
+);
+
+CREATE TABLE IF NOT EXISTS `blobs` (
+	`hash` text PRIMARY KEY NOT NULL,
+	`mime_type` text NOT NULL,
+	`size_bytes` integer NOT NULL,
+	`created_at` text NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS `bulk_action_job_carried_items` (
+	`job_id` text NOT NULL,
+	`item_id` text NOT NULL,
+	PRIMARY KEY(`job_id`, `item_id`),
+	FOREIGN KEY (`job_id`) REFERENCES `bulk_action_jobs`(`id`) ON UPDATE no action ON DELETE cascade
+);
+
+CREATE TABLE IF NOT EXISTS `bulk_action_job_purge_hashes` (
+	`job_id` text NOT NULL,
+	`hash` text NOT NULL,
+	PRIMARY KEY(`job_id`, `hash`),
+	FOREIGN KEY (`job_id`) REFERENCES `bulk_action_jobs`(`id`) ON UPDATE no action ON DELETE cascade
+);
+
+CREATE TABLE IF NOT EXISTS `bulk_action_jobs` (
+	`id` text PRIMARY KEY NOT NULL,
+	`api_key_id` text,
+	`credential` text NOT NULL,
+	`status` text NOT NULL,
+	`action` text NOT NULL,
+	`input` text NOT NULL,
+	`matched_ids` text NOT NULL,
+	`matched_count` integer DEFAULT 0 NOT NULL,
+	`claim_generation` integer DEFAULT 0 NOT NULL,
+	`next_offset` integer DEFAULT 0 NOT NULL,
+	`checkpoint_json` text DEFAULT '{"ids":[],"errors":[]}' NOT NULL,
+	`blob_hashes_referenced_count` integer DEFAULT 0 NOT NULL,
+	`processed_count` integer DEFAULT 0 NOT NULL,
+	`succeeded_count` integer DEFAULT 0 NOT NULL,
+	`errored_count` integer DEFAULT 0 NOT NULL,
+	`result` text,
+	`error` text,
+	`worker_id` text,
+	`worker_heartbeat_at` text,
+	`created_at` text NOT NULL,
+	`started_at` text,
+	`finished_at` text
+);
+
+CREATE INDEX IF NOT EXISTS `idx_bulk_action_jobs_status` ON `bulk_action_jobs` (`status`);
+CREATE INDEX IF NOT EXISTS `idx_bulk_action_jobs_gc` ON `bulk_action_jobs` (`status`,`finished_at`);
+CREATE TABLE IF NOT EXISTS `cascade_marks` (
+	`item_id` text PRIMARY KEY NOT NULL,
+	`trashed_with` text NOT NULL,
+	`trashed_with_type` text NOT NULL,
+	FOREIGN KEY (`item_id`) REFERENCES `items`(`id`) ON UPDATE no action ON DELETE cascade
+);
+
+CREATE TABLE IF NOT EXISTS `connector_agreements` (
+	`source` text NOT NULL,
+	`item_id` text NOT NULL,
+	`waiting` integer NOT NULL,
+	`record` text NOT NULL,
+	`updated_at` text NOT NULL,
+	PRIMARY KEY(`source`, `item_id`),
+	FOREIGN KEY (`item_id`) REFERENCES `items`(`id`) ON UPDATE no action ON DELETE cascade
+);
+
+CREATE INDEX IF NOT EXISTS `idx_connector_agreements_waiting` ON `connector_agreements` (`source`,`waiting`,`updated_at`,`item_id`);
+CREATE INDEX IF NOT EXISTS `idx_connector_agreements_updated` ON `connector_agreements` (`source`,`updated_at`,`item_id`);
+CREATE INDEX IF NOT EXISTS `idx_connector_agreements_item` ON `connector_agreements` (`item_id`);
+CREATE TABLE IF NOT EXISTS `connector_holds` (
+	`connector_id` text PRIMARY KEY NOT NULL,
+	`process` text NOT NULL,
+	`expires_at` text NOT NULL,
+	FOREIGN KEY (`connector_id`) REFERENCES `connectors`(`id`) ON UPDATE no action ON DELETE cascade
+);
+
+CREATE TABLE IF NOT EXISTS `connector_runs` (
+	`id` text PRIMARY KEY NOT NULL,
+	`connector_id` text NOT NULL,
+	`outcome` text NOT NULL,
+	`started_at` text NOT NULL,
+	`finished_at` text NOT NULL,
+	`summary` text,
+	`error` text,
+	`reported_at` text NOT NULL,
+	FOREIGN KEY (`connector_id`) REFERENCES `connectors`(`id`) ON UPDATE no action ON DELETE cascade
+);
+
+CREATE INDEX IF NOT EXISTS `idx_connector_runs_connector_reported` ON `connector_runs` (`connector_id`,`reported_at`);
+CREATE TABLE IF NOT EXISTS `connector_states` (
+	`source` text PRIMARY KEY NOT NULL,
+	`state` text NOT NULL,
+	`problems` text DEFAULT '{}' NOT NULL,
+	`updated_at` text NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS `connectors` (
+	`id` text PRIMARY KEY NOT NULL,
+	`key_id` text NOT NULL,
+	`source` text NOT NULL,
+	`name` text NOT NULL,
+	`description` text,
+	`registered_at` text NOT NULL,
+	`updated_at` text NOT NULL,
+	`last_heartbeat_at` text
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS `connectors_key_id_unique` ON `connectors` (`key_id`);
+CREATE TABLE IF NOT EXISTS `edge_types` (
+	`id` text PRIMARY KEY NOT NULL,
+	`schema` text NOT NULL,
+	`created_at` text NOT NULL,
+	`updated_at` text NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS `edge_blob_references` (
+	`hash` text NOT NULL,
+	`edge_id` text NOT NULL,
+	`lends` integer NOT NULL,
+	PRIMARY KEY(`hash`, `edge_id`),
+	FOREIGN KEY (`edge_id`) REFERENCES `edges`(`id`) ON UPDATE no action ON DELETE cascade
+);
+
+CREATE INDEX IF NOT EXISTS `idx_edge_blob_references_edge` ON `edge_blob_references` (`edge_id`);
+CREATE TABLE IF NOT EXISTS `edges` (
+	`id` text PRIMARY KEY NOT NULL,
+	`source_id` text NOT NULL,
+	`target_id` text NOT NULL,
+	`edge_type` text NOT NULL,
+	`properties` text DEFAULT '{}' NOT NULL,
+	`created_at` text NOT NULL,
+	`updated_at` text NOT NULL,
+	`version` integer DEFAULT 1 NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS `idx_edges_source` ON `edges` (`source_id`,`edge_type`);
+CREATE INDEX IF NOT EXISTS `idx_edges_target` ON `edges` (`target_id`,`edge_type`);
+CREATE INDEX IF NOT EXISTS `idx_edges_updated_at_id` ON `edges` (`updated_at`,`id`);
+CREATE TABLE IF NOT EXISTS `enrichment_state` (
+	`item_id` text PRIMARY KEY NOT NULL,
+	`blob_ref` text NOT NULL,
+	`status` text NOT NULL,
+	`attempts` integer DEFAULT 0 NOT NULL,
+	`error` text,
+	`config_signature` text NOT NULL,
+	`updated_at` text NOT NULL,
+	FOREIGN KEY (`item_id`) REFERENCES `items`(`id`) ON UPDATE no action ON DELETE cascade
+);
+
+CREATE TABLE IF NOT EXISTS `event_log` (
+	`id` integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+	`event_type` text NOT NULL,
+	`item_id` text,
+	`edge_id` text,
+	`payload` text NOT NULL,
+	`enable_fanout` integer DEFAULT true NOT NULL,
+	`created_at` text NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS `idx_event_log_created_at` ON `event_log` (`created_at`);
+CREATE INDEX IF NOT EXISTS `idx_event_log_edge_id` ON `event_log` (`edge_id`);
+CREATE TABLE IF NOT EXISTS `extension_blob_references` (
+	`hash` text NOT NULL,
+	`item_id` text NOT NULL,
+	`namespace` text NOT NULL,
+	`lends` integer NOT NULL,
+	PRIMARY KEY(`hash`, `item_id`, `namespace`),
+	FOREIGN KEY (`item_id`) REFERENCES `items`(`id`) ON UPDATE no action ON DELETE cascade
+);
+
+CREATE INDEX IF NOT EXISTS `idx_extension_blob_references_item` ON `extension_blob_references` (`item_id`);
+CREATE TABLE IF NOT EXISTS `folder_status` (
+	`folder_id` text NOT NULL,
+	`sign_in_kind` text NOT NULL,
+	`sign_in_id` text NOT NULL,
+	`sign_in_name` text NOT NULL,
+	`folder_store_id` text NOT NULL,
+	`sequence` integer NOT NULL,
+	`report` text NOT NULL,
+	`received_at` text NOT NULL,
+	PRIMARY KEY(`folder_id`, `sign_in_kind`, `sign_in_id`, `folder_store_id`),
+	CONSTRAINT "folder_status_kind" CHECK("folder_status"."sign_in_kind" IN ('browser', 'app', 'key')),
+	CONSTRAINT "folder_status_sequence" CHECK("folder_status"."sequence" BETWEEN 1 AND 9007199254740991)
+);
+
+CREATE TABLE IF NOT EXISTS `housekeeping` (
+	`name` text PRIMARY KEY NOT NULL,
+	`interval_ms` integer NOT NULL,
+	`next_run_at` text NOT NULL,
+	`running_since` text,
+	`last_started_at` text,
+	`last_finished_at` text,
+	`last_outcome` text,
+	`last_error` text,
+	`last_result` text
+);
+
+CREATE TABLE IF NOT EXISTS `idempotency_records` (
+	`id` text PRIMARY KEY NOT NULL,
+	`credential` text NOT NULL,
+	`idempotency_key` text NOT NULL,
+	`fingerprint` text NOT NULL,
+	`state` text NOT NULL,
+	`response_status` integer,
+	`response_content_type` text,
+	`response_body` text,
+	`authorization` text DEFAULT '[]' NOT NULL,
+	`created_at` text NOT NULL,
+	`completed_at` text
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS `idx_idempotency_records_key` ON `idempotency_records` (`credential`,`idempotency_key`);
+CREATE INDEX IF NOT EXISTS `idx_idempotency_records_gc` ON `idempotency_records` (`created_at`);
+CREATE TABLE IF NOT EXISTS `inbound_deliveries` (
+	`id` text PRIMARY KEY NOT NULL,
+	`endpoint_id` text NOT NULL,
+	`source` text NOT NULL,
+	`received_at` text NOT NULL,
+	`method` text NOT NULL,
+	`query` text NOT NULL,
+	`headers` text NOT NULL,
+	`size` integer NOT NULL,
+	`stored_bytes` integer NOT NULL,
+	`sha256` text NOT NULL,
+	`dedupe_key` text,
+	`handled_at` text,
+	`outcome` text,
+	FOREIGN KEY (`endpoint_id`,`source`) REFERENCES `inbound_endpoints`(`id`,`source`) ON UPDATE no action ON DELETE cascade
+);
+
+CREATE INDEX IF NOT EXISTS `idx_inbound_deliveries_source_handled` ON `inbound_deliveries` (`source`,`handled_at`,`received_at`,`id`);
+CREATE INDEX IF NOT EXISTS `idx_inbound_deliveries_endpoint_dedupe` ON `inbound_deliveries` (`endpoint_id`,`dedupe_key`);
+CREATE INDEX IF NOT EXISTS `idx_inbound_deliveries_received` ON `inbound_deliveries` (`received_at`);
+CREATE INDEX IF NOT EXISTS `idx_inbound_deliveries_handled_age` ON `inbound_deliveries` (`handled_at`,`id`) WHERE "inbound_deliveries"."handled_at" IS NOT NULL;
+CREATE INDEX IF NOT EXISTS `idx_inbound_deliveries_pending_age` ON `inbound_deliveries` (`received_at`,`id`) WHERE "inbound_deliveries"."handled_at" IS NULL;
+CREATE TABLE IF NOT EXISTS `inbound_delivery_bodies` (
+	`delivery_id` text PRIMARY KEY NOT NULL,
+	`body` blob NOT NULL,
+	FOREIGN KEY (`delivery_id`) REFERENCES `inbound_deliveries`(`id`) ON UPDATE no action ON DELETE cascade
+);
+
+CREATE TABLE IF NOT EXISTS `inbound_endpoints` (
+	`id` text PRIMARY KEY NOT NULL,
+	`source` text NOT NULL,
+	`token_hash` text NOT NULL,
+	`token_last4` text NOT NULL,
+	`label` text,
+	`duplicate_header` text,
+	`created_at` text NOT NULL,
+	`retired_at` text,
+	FOREIGN KEY (`source`) REFERENCES `inbound_sources`(`source`) ON UPDATE no action ON DELETE cascade
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS `inbound_endpoints_token_hash_unique` ON `inbound_endpoints` (`token_hash`);
+CREATE INDEX IF NOT EXISTS `idx_inbound_endpoints_source` ON `inbound_endpoints` (`source`);
+CREATE UNIQUE INDEX IF NOT EXISTS `idx_inbound_endpoints_id_source` ON `inbound_endpoints` (`id`,`source`);
+CREATE TABLE IF NOT EXISTS `inbound_sources` (
+	`source` text PRIMARY KEY NOT NULL,
+	`connector_id` text NOT NULL,
+	FOREIGN KEY (`connector_id`) REFERENCES `connectors`(`id`) ON UPDATE no action ON DELETE cascade
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS `inbound_sources_connector_id_unique` ON `inbound_sources` (`connector_id`);
+CREATE TABLE IF NOT EXISTS `item_blob_references` (
+	`hash` text NOT NULL,
+	`item_id` text NOT NULL,
+	`lends` integer NOT NULL,
+	PRIMARY KEY(`hash`, `item_id`),
+	FOREIGN KEY (`item_id`) REFERENCES `items`(`id`) ON UPDATE no action ON DELETE cascade
+);
+
+CREATE INDEX IF NOT EXISTS `idx_item_blob_references_item` ON `item_blob_references` (`item_id`);
+CREATE TABLE IF NOT EXISTS `item_links` (
+	`type` text NOT NULL,
+	`value` text NOT NULL,
+	`item_id` text NOT NULL,
+	PRIMARY KEY(`type`, `value`),
+	FOREIGN KEY (`item_id`) REFERENCES `items`(`id`) ON UPDATE no action ON DELETE cascade
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS `idx_item_links_item` ON `item_links` (`item_id`);
+CREATE TABLE IF NOT EXISTS `item_search_keys` (
+	`seq` integer PRIMARY KEY NOT NULL,
+	`item_id` text NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS `item_search_keys_item_id_unique` ON `item_search_keys` (`item_id`);
+CREATE TABLE IF NOT EXISTS `items` (
+	`id` text PRIMARY KEY NOT NULL,
+	`type` text NOT NULL,
+	`state` text DEFAULT 'active' NOT NULL,
+	`tier` text DEFAULT 'library' NOT NULL,
+	`trashed_at` text,
+	`trashed_by` text,
+	`restored_at` text,
+	`properties` blob NOT NULL,
+	`created_at` text NOT NULL,
+	`updated_at` text NOT NULL,
+	`occurred_at` text NOT NULL,
+	`source` text,
+	`source_id` text,
+	`version` integer DEFAULT 1 NOT NULL,
+	`schema_version` integer,
+	`capture_latitude` real,
+	`capture_longitude` real,
+	`starts_at` text,
+	`ends_at` text,
+	`writer_kind` text,
+	`writer_id` text,
+	`writer_name` text,
+	CONSTRAINT "items_writer_whole" CHECK(("items"."writer_kind" IS NULL AND "items"."writer_id" IS NULL AND "items"."writer_name" IS NULL) OR ("items"."writer_kind" IN ('browser', 'app', 'key', 'local') AND "items"."writer_id" IS NOT NULL AND "items"."writer_name" IS NOT NULL))
+);
+
+CREATE INDEX IF NOT EXISTS `idx_items_type` ON `items` (`type`);
+CREATE INDEX IF NOT EXISTS `idx_items_state` ON `items` (`state`);
+CREATE INDEX IF NOT EXISTS `idx_items_type_state` ON `items` (`type`,`state`);
+CREATE INDEX IF NOT EXISTS `idx_items_created_at` ON `items` (`created_at`);
+CREATE INDEX IF NOT EXISTS `idx_items_occurred_at` ON `items` (`occurred_at`);
+CREATE INDEX IF NOT EXISTS `idx_items_updated_at_id` ON `items` (`updated_at`,`id`);
+CREATE INDEX IF NOT EXISTS `idx_items_created_at_id` ON `items` (`created_at`,`id`);
+CREATE INDEX IF NOT EXISTS `idx_items_occurred_at_id` ON `items` (`occurred_at`,`id`);
+CREATE INDEX IF NOT EXISTS `idx_items_type_created_at` ON `items` (`type`,`created_at`,`id`);
+CREATE INDEX IF NOT EXISTS `idx_items_type_updated_at` ON `items` (`type`,`updated_at`,`id`);
+CREATE INDEX IF NOT EXISTS `idx_items_type_occurred_at` ON `items` (`type`,`occurred_at`,`id`);
+CREATE UNIQUE INDEX IF NOT EXISTS `idx_items_source_dedup` ON `items` (`source`,`source_id`) WHERE source IS NOT NULL;
+CREATE INDEX IF NOT EXISTS `idx_items_source_id_prefix` ON `items` ("source_id" COLLATE NOCASE) WHERE source_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS `idx_items_starts_at` ON `items` (`starts_at`) WHERE starts_at IS NOT NULL;
+CREATE INDEX IF NOT EXISTS `idx_items_ends_at` ON `items` (`ends_at`) WHERE ends_at IS NOT NULL;
+CREATE INDEX IF NOT EXISTS `idx_items_feed_expiry` ON `items` (`type`,`created_at`,`id`) WHERE tier = 'feed' AND state = 'active' AND restored_at IS NULL;
+CREATE INDEX IF NOT EXISTS `idx_items_enrichment_queue` ON `items` (`created_at`) WHERE state <> 'trashed' AND json_extract(properties, '$.blob_ref') IS NOT NULL;
+CREATE TABLE IF NOT EXISTS `link_tombstones` (
+	`type` text NOT NULL,
+	`value` text NOT NULL,
+	`purged_at` text NOT NULL,
+	`settled_at` text NOT NULL,
+	PRIMARY KEY(`type`, `value`)
+);
+
+CREATE TABLE IF NOT EXISTS `metadata` (
+	`item_id` text PRIMARY KEY NOT NULL,
+	`tags` text DEFAULT '[]' NOT NULL,
+	`extensions` text DEFAULT '{}' NOT NULL,
+	FOREIGN KEY (`item_id`) REFERENCES `items`(`id`) ON UPDATE no action ON DELETE cascade
+);
+
+CREATE TABLE IF NOT EXISTS `natural_key_tombstones` (
+	`type` text NOT NULL,
+	`source` text NOT NULL,
+	`source_id` text NOT NULL,
+	`purged_at` text NOT NULL,
+	`settled_at` text NOT NULL,
+	PRIMARY KEY(`type`, `source`, `source_id`)
+);
+
+CREATE INDEX IF NOT EXISTS `idx_natural_key_tombstones_key` ON `natural_key_tombstones` (`source`,`source_id`);
+CREATE TABLE IF NOT EXISTS `outbound_webhook_checkpoint` (
+	`id` integer PRIMARY KEY NOT NULL,
+	`last_event_id` text NOT NULL,
+	`event_id` text,
+	`after_subscription_id` text,
+	CONSTRAINT "outbound_webhook_checkpoint_singleton" CHECK("outbound_webhook_checkpoint"."id" = 1)
+);
+
+CREATE TABLE IF NOT EXISTS `outbound_webhook_deliveries` (
+	`id` text PRIMARY KEY NOT NULL,
+	`webhook_id` text NOT NULL,
+	`event_id` text NOT NULL,
+	`event_type` text NOT NULL,
+	`status_code` integer,
+	`attempt` integer NOT NULL,
+	`error` text,
+	`created_at` text NOT NULL,
+	`next_attempt_at` text,
+	`payload` text,
+	`webhook_url` text,
+	`retry_start_attempt` integer DEFAULT 0 NOT NULL,
+	`claim_token` text,
+	`status` text DEFAULT 'pending' NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS `idx_outbound_webhook_deliveries_webhook_id` ON `outbound_webhook_deliveries` (`webhook_id`);
+CREATE INDEX IF NOT EXISTS `idx_outbound_webhook_deliveries_pending` ON `outbound_webhook_deliveries` (`next_attempt_at`) WHERE status = 'pending';
+CREATE TABLE IF NOT EXISTS `outbound_webhooks` (
+	`id` text PRIMARY KEY NOT NULL,
+	`url` text NOT NULL,
+	`secret` text NOT NULL,
+	`event_start_id` text NOT NULL,
+	`events` text DEFAULT '[]' NOT NULL,
+	`type_filter` text,
+	`active` integer DEFAULT 1 NOT NULL,
+	`key_id` text,
+	`grant_client_id` text,
+	`grant_user_id` text,
+	`created_at` text NOT NULL,
+	`updated_at` text NOT NULL,
+	CONSTRAINT "outbound_webhooks_one_owner" CHECK(("outbound_webhooks"."key_id" IS NOT NULL AND "outbound_webhooks"."grant_client_id" IS NULL AND "outbound_webhooks"."grant_user_id" IS NULL) OR ("outbound_webhooks"."key_id" IS NULL AND "outbound_webhooks"."grant_client_id" IS NOT NULL AND "outbound_webhooks"."grant_user_id" IS NOT NULL))
+);
+
+CREATE TABLE IF NOT EXISTS `owner_picture` (
+	`user_id` text PRIMARY KEY NOT NULL,
+	`content_type` text NOT NULL,
+	`bytes` blob NOT NULL,
+	`sha256` text NOT NULL,
+	FOREIGN KEY (`user_id`) REFERENCES `auth_user`(`id`) ON UPDATE no action ON DELETE cascade
+);
+
+CREATE TABLE IF NOT EXISTS `rate_limit_windows` (
+	`family` text NOT NULL,
+	`window_key` text NOT NULL,
+	`count` integer NOT NULL,
+	`expires_at` text NOT NULL,
+	PRIMARY KEY(`family`, `window_key`)
+);
+
+CREATE INDEX IF NOT EXISTS `idx_rate_limit_windows_expires_at` ON `rate_limit_windows` (`expires_at`);
+CREATE TABLE IF NOT EXISTS `settings` (
+	`key` text PRIMARY KEY NOT NULL,
+	`value` text NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS `trash_cascades` (
+	`item_id` text PRIMARY KEY NOT NULL,
+	`trashed_with` text NOT NULL,
+	FOREIGN KEY (`item_id`) REFERENCES `items`(`id`) ON UPDATE no action ON DELETE cascade,
+	FOREIGN KEY (`trashed_with`) REFERENCES `items`(`id`) ON UPDATE no action ON DELETE cascade
+);
+
+CREATE INDEX IF NOT EXISTS `idx_trash_cascades_with` ON `trash_cascades` (`trashed_with`);
+CREATE TABLE IF NOT EXISTS `types` (
+	`id` text PRIMARY KEY NOT NULL,
+	`schema` text NOT NULL,
+	`origin` text DEFAULT 'user' NOT NULL,
+	`created_by` text,
+	`family` text,
+	`created_at` text NOT NULL,
+	`updated_at` text NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS `idx_types_origin` ON `types` (`origin`);
+CREATE TABLE IF NOT EXISTS `versions` (
+	`id` text PRIMARY KEY NOT NULL,
+	`item_id` text NOT NULL,
+	`version` integer NOT NULL,
+	`properties` text NOT NULL,
+	`tier` text NOT NULL,
+	`occurred_at` text NOT NULL,
+	`source_id` text,
+	`type` text NOT NULL,
+	`created_at` text NOT NULL,
+	`writer_kind` text,
+	`writer_id` text,
+	`writer_name` text,
+	FOREIGN KEY (`item_id`) REFERENCES `items`(`id`) ON UPDATE no action ON DELETE cascade,
+	CONSTRAINT "versions_writer_whole" CHECK(("versions"."writer_kind" IS NULL AND "versions"."writer_id" IS NULL AND "versions"."writer_name" IS NULL) OR ("versions"."writer_kind" IN ('browser', 'app', 'key', 'local') AND "versions"."writer_id" IS NOT NULL AND "versions"."writer_name" IS NOT NULL))
+);
+
+CREATE INDEX IF NOT EXISTS `idx_versions_item_id` ON `versions` (`item_id`);
+
+CREATE TRIGGER IF NOT EXISTS `item_blob_references_insert_lifts_blob_orphans` AFTER INSERT ON `item_blob_references` BEGIN DELETE FROM `blob_orphans` WHERE hash = NEW.hash; END;
+CREATE TRIGGER IF NOT EXISTS `item_blob_references_delete_lifts_blob_orphans` AFTER DELETE ON `item_blob_references` BEGIN DELETE FROM `blob_orphans` WHERE hash = OLD.hash; END;
+CREATE TRIGGER IF NOT EXISTS `edge_blob_references_insert_lifts_blob_orphans` AFTER INSERT ON `edge_blob_references` BEGIN DELETE FROM `blob_orphans` WHERE hash = NEW.hash; END;
+CREATE TRIGGER IF NOT EXISTS `edge_blob_references_delete_lifts_blob_orphans` AFTER DELETE ON `edge_blob_references` BEGIN DELETE FROM `blob_orphans` WHERE hash = OLD.hash; END;
+CREATE TRIGGER IF NOT EXISTS `extension_blob_references_insert_lifts_blob_orphans` AFTER INSERT ON `extension_blob_references` BEGIN DELETE FROM `blob_orphans` WHERE hash = NEW.hash; END;
+CREATE TRIGGER IF NOT EXISTS `extension_blob_references_delete_lifts_blob_orphans` AFTER DELETE ON `extension_blob_references` BEGIN DELETE FROM `blob_orphans` WHERE hash = OLD.hash; END;
+
+CREATE VIRTUAL TABLE IF NOT EXISTS items_fts USING fts5(
+  title,
+  body,
+  description,
+  name,
+  extra,
+  tags,
+  tokenize='porter unicode61'
+);

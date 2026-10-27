@@ -44,6 +44,8 @@ describe("the test hooks and what is released", () => {
       "MARFA_TEST_HOOKS",
       "MARFA_TEST_CLOCK_OFFSET_MS",
       "MARFA_TEST_CONTRACT_VERSION",
+      "MARFA_TEST_MIGRATION_FAULT",
+      "MARFA_TEST_FREE_DISK_BYTES",
     ]) {
       const naming = namingFiles(name);
       // The witness: the scan finds the harness that sets the hooks, so an
