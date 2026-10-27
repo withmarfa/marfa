@@ -1145,7 +1145,7 @@ The owner can choose the icon any type is shown by, a core or connector type amo
 
 When a caller allowed by `types/icon-who` sends `PUT /types/{id}/icon` with an `icon` that is a name `types/icon-name` accepts, for a registered type, the server MUST keep it as the owner's icon for that type and answer `200` with the `type` as `GET /types/{id}` now answers it.
 
-**Reason:** an owner tells types apart by their icons, and a core or connector type's author cannot know which icon its owner wants; changing it through the definition would take a replacement the owner has no right to make to a connector's type.
+**Reason:** an owner tells types apart by their icons, and a core or connector type's author cannot know which icon its owner wants. A core type can't be replaced, and a connector writes its own types again when it starts, so a choice made in the definition would not last.
 
 **Tests:** `compliance/type-icons.test.ts › sets the owner's icon for a type and reads it back`.
 
