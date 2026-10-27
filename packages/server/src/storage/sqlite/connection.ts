@@ -102,7 +102,8 @@ async function openingPlan(
     throw new RefusedDatabaseError(
       `The database in ${sqlitePath} is at schema version ${String(stamped)}, which a newer build wrote, ` +
         `and this build's is ${String(SCHEMA_VERSION)}. Nothing was changed. Start the newer build on it again; ` +
-        "to use this build, restore with it a copy taken before the newer build updated the file.",
+        "to use this build, delete the database's `-wal` and `-shm` files beside it, because SQLite applies a log it finds there, " +
+        "and put a copy taken before the newer build updated the file in its place.",
     );
   }
   if (stamped < 0) {
