@@ -228,6 +228,7 @@ describe("The type catalog a working copy holds", () => {
       parent: "acme.stamp",
       icon: "megaphone",
     });
+    const bare = wireType("acme.bare");
     let ownerChose = false;
     harness = await startHarness("catalog-icon");
     const { server, device } = harness;
@@ -244,6 +245,7 @@ describe("The type catalog a working copy holds", () => {
           : stamp,
         stampedKid,
         loud,
+        bare,
       ]);
     scriptHydration(server, {
       head: "1",
@@ -259,7 +261,7 @@ describe("The type catalog a working copy holds", () => {
         await Promise.all(
           [
             "core.note",
-            "core.event",
+            "acme.bare",
             "acme.stamp",
             "acme.stamp.kid",
             "acme.stamp.loud",
@@ -274,7 +276,7 @@ describe("The type catalog a working copy holds", () => {
       "a type's icon was not the nearest one set, or a type that sets none read as having none",
     ).toEqual({
       "core.note": "sticky-note",
-      "core.event": null,
+      "acme.bare": null,
       "acme.stamp": "stamp",
       "acme.stamp.kid": "stamp",
       "acme.stamp.loud": "megaphone",
