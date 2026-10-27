@@ -169,29 +169,56 @@ The worst case is under eight seconds, and a stop that completes exits `0`. A st
 
 ## Upgrading
 
-Until the first public release, nothing upgrades a database in place. A build whose database schema differs from your instance's refuses to start on it, changes nothing in the file, and says so in its log. Whether a build's schema differs is not something you can read off its version, so treat each new build as one that might. The build that wrote the file can still read it, so going back to that build brings the instance back. A file this build began creating and did not finish, such as one left by a first start that was stopped partway, holds no data; the next start creates the tables it lacks and opens it. A file that lacks tables and holds data was written by another build, and is refused as one.
+A new build starts on the database an earlier build wrote and updates it in place. Before it changes anything, it copies the database beside it, and it keeps that copy until you remove it. Whether a build's schema differs is not something you can read off its version, and you do not need to: a build whose schema is the same opens the file without copying it.
 
-To carry your data into a new build:
+To upgrade, stop the instance and start the new build on the same data directory, or in the container, the same volume. Before it takes requests, the server:
 
-1. With the running build, take an export: `GET /export?format=archive`, with an ordinary credential whose read maps cover everything to export. Note the build's release, which `GET /` answers as `release`: its image, `ghcr.io/withmarfa/marfa-server:<release>`, stays available under that tag, and runs beside the new one on its own volume and port.
-2. Start the new build on a fresh file and an empty blob folder. In the container, that is a new volume. With a bucket, the entrypoint restores the replica under the instance's `S3_PREFIX` onto an empty volume. Under the old instance's prefix that replica is the old build's database, which the new build refuses, so give the new instance a prefix of its own, such as `v2/blobs`, or a new bucket.
-3. Claim the new instance, sign in as its owner, and restore the archive at `/auth/owner/export`. Alternatively, send `POST /restore` through its private socket.
+1. Checks that the disk holding the database has at least twice the database's size free, counting the log beside it. If it does not, the server refuses to start, changes nothing, and says how much space it needs.
+2. Copies the database to a file beside it named `marfa.db.backup-schema-<from>-to-<to>-<time>`, such as `marfa.db.backup-schema-1-to-2-20261027T101500000Z`, where the numbers are the schema versions and the time is in UTC. It writes the copy under a temporary name, checks it, and renames it, so a file with that name is always a whole copy.
+3. Updates the database in one transaction, and checks that every table it kept holds the same number of rows as before, that no more rows refer to missing rows than before, and that the result has the new build's shape. If a check fails, the transaction is rolled back and the server refuses to start, with a message that names the copy.
+4. Logs a line that says it updated the database, from which schema version to which, and where the copy is. The line's `backup_path` field names the copy.
 
-Until the first public release an archive is read only by the build that wrote it, so the restore in step 3 can refuse the archive. Keep the export and the old build until the restore has answered. `search-and-filters/restore-version` in `conformance/spec/search-and-filters.md` states that promise.
+Because the update is one transaction, a server stopped or killed partway leaves the database as it was before the update, and the next start begins the update again with a copy of its own. A server stopped while it writes the copy leaves a file whose name ends in `.partial`, which is not a whole copy and can be deleted. A later start of the same build finds the database already updated and makes no second copy. The `marfa server upgrade` command reads the log line and prints where the copy is.
+
+A build still refuses some files, changes nothing in them, and says why in its log:
+
+- A file that a newer build wrote. Run that build or a newer one.
+- A file whose shape matches no earlier build's schema, such as one changed by hand.
+- A file this build cannot update, because the disk lacks space, the copy could not be made, or the update failed its checks.
+
+For a file whose shape matches no earlier build's, the log says to export it with the build that wrote it, start this build on a fresh file, and restore the archive there, as [Move data to another instance](#move-data-to-another-instance) describes.
+
+A file this build began creating and did not finish, such as one left by a first start that was stopped partway, holds no data; the next start creates the tables it lacks and opens it. A file that lacks tables and holds data is refused.
+
+When the container's server refuses a database, the container stays running and unhealthy with the server's message in its log, rather than stopping. A container that stopped would be started again by its restart policy and refuse again, in a loop. Stop the container to remove it, or point it at another volume. A server that stops for any other reason ends the container with the server's own exit status, and a restart policy may start it again.
+
+### Go back to the earlier build
+
+To go back, start the earlier build on the copy, not on the updated database. A build that knows schema versions refuses a database a newer build updated, and a build from before them may open it without knowing what the update changed. To start it on the copy:
+
+1. Stop the instance. Note the earlier build's release, which its image tag names, such as `ghcr.io/withmarfa/marfa-server:<release>`.
+2. In the data directory, delete `marfa.db-wal` and `marfa.db-shm`, then replace `marfa.db` with the copy, renamed to `marfa.db`. Writes made since the update are not in the copy.
+3. Start the earlier build. With a bucket, the copy is older than the bucket's copy, so start it under a new `S3_PREFIX`, as [Start a backup under a new prefix](#start-a-backup-under-a-new-prefix) says.
+
+If the new build refused the database, nothing was changed: start the earlier build on the same data directory, with no other step.
+
+### Remove the copy
+
+The copy is a whole database, as large as the instance's own, and nothing removes it. Once the new build has run long enough that you will not go back, delete the file. In the container, the copy is in the volume: `docker exec <container> rm /data/marfa.db.backup-schema-1-to-2-<time>` removes it, and `docker cp <container>:/data/<copy> .` copies it out first. Litestream replicates only `marfa.db`, so the copy is not in the bucket.
+
+### Move data to another instance
+
+`GET /export` and `POST /restore` move data between instances. Until the first public release an archive is read only by the build that wrote it, so a restore into another build can refuse the archive. Keep the export and the old build until the restore has answered. `search-and-filters/restore-version` in `conformance/spec/search-and-filters.md` states that promise.
 
 The restore writes the whole archive in one transaction, so a restore that is refused, fails or is interrupted leaves no rows or types, and you can run it again. Blob bytes an interrupted restore placed are removed by the copy cleanup that the `blob-integrity` and `blob-replicate` housekeeping jobs run, a batch at a time: by default `blob-replicate` removes up to 100 each minute. While the restore runs, `GET /health` answers and reports `database_write` as `degraded`, and a request that writes waits for the restore and is refused with `503 write_contention` after five seconds. With rate limiting on, which is the default, that is every request sent with a key or a token, so let the restore answer before you connect clients. The rules under Restore in `conformance/spec/search-and-filters.md` state the restore's limits.
 
 The export reads the whole selection before it sends the first byte, so the response to a large instance starts after a wait. While it runs, it keeps what it has read in the `tmp` folder inside the blob folder, about as much as the archive's text members take uncompressed, and removes it when the response ends. A server that stops during an export leaves the files until its next start, which clears the folder. The export is not a copy of the instance at one instant: a row that is written while it runs is carried as it stood when the export read it. An item created after the export began is not carried. An edge is carried if it was created before the export read its first page of edges and both its items are in the archive, so an edge created while the export read the items is carried, and one created after that is not. Stop your clients before you export if the archive must hold every write. If the server fails after it has started sending, it ends the connection early, so an archive that does not unpack is an incomplete one. The rules under Export in `conformance/spec/search-and-filters.md` state the export's limits.
 
-When the container's server refuses a database, the container stays running and unhealthy with the server's message in its log, rather than stopping. A container that stopped would be started again by its restart policy and refuse again, in a loop. Stop the container to remove it, or point it at another volume. A server that stops for any other reason ends the container with the server's own exit status, and a restart policy may start it again.
-
-The release notes open with the same warning.
-
 ## Backing up the machine
 
 Litestream and the bucket are the recovery path that needs no care. If you also back up the machine the instance runs on, with Time Machine, a host's disk snapshots or a file-copying tool, back up two things:
 
-- **The data directory**, which is the volume mounted at `/data` in the image. It holds the database (`SQLITE_PATH`), the log beside it named `marfa.db-wal` that holds writes not yet moved into the database, and the blob folder (`BLOB_PATH`). In the image it also holds `.marfa.db-litestream`, Litestream's record of the transactions it replicated, which the entrypoint reads to check that the database is not older than the bucket's copy, and the `marfa.db-replica` file, which names the endpoint, bucket and prefix that record is of. Nothing else on the machine belongs to the instance. The OCR model cache under the directory is downloaded again when it is missing and can be left out.
+- **The data directory**, which is the volume mounted at `/data` in the image. It holds the database (`SQLITE_PATH`), the log beside it named `marfa.db-wal` that holds writes not yet moved into the database, and the blob folder (`BLOB_PATH`). In the image it also holds `.marfa.db-litestream`, Litestream's record of the transactions it replicated, which the entrypoint reads to check that the database is not older than the bucket's copy, and the `marfa.db-replica` file, which names the endpoint, bucket and prefix that record is of. After an upgrade it also holds the copy of the database the upgrade took, which you can leave out once you will not go back. Nothing else on the machine belongs to the instance. The OCR model cache under the directory is downloaded again when it is missing and can be left out.
 - **The two secrets**, `API_KEY_SALT` and `MARFA_AUTH_SECRET`, in the deployment's secret store. They are not in the data directory. The database holds a hash of each key made with `API_KEY_SALT`, so a restore without it holds every key and accepts none, and without `MARFA_AUTH_SECRET` every signed-in session ends.
 
 How the copy is taken decides whether it restores. These restore to a working instance with every write the instance had acknowledged before the copy began:

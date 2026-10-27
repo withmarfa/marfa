@@ -263,6 +263,13 @@ impl Docker {
         })
     }
 
+    /// Everything the container logged, on both streams.
+    pub fn logs(&self, name: &str) -> String {
+        self.output(&["logs", name])
+            .map(|output| format!("{}\n{}", text(&output.stdout), text(&output.stderr)))
+            .unwrap_or_default()
+    }
+
     pub fn logs_tail(&self, name: &str) -> String {
         self.output(&["logs", "--tail", "20", name])
             .map(|output| {

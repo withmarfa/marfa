@@ -15,13 +15,15 @@ import { tmpdir } from "node:os";
  * the script's own defaults and the caller's environment.
  *   tsx scripts/marfa-server.ts down [--state <dir>]
  *   tsx scripts/marfa-server.ts status [--state <dir>]
- *   tsx scripts/marfa-server.ts refused [--state <dir>] [--env K=V ...]
+ *   tsx scripts/marfa-server.ts refused [--state <dir>] [--kill-when <text>] [--env K=V ...]
  *   tsx scripts/marfa-server.ts restart [--state <dir>] [--signal TERM|INT|KILL] [--env K=V ...]
  *   tsx scripts/marfa-server.ts clock [--state <dir>] advance <ms>|pause|resume
  *   tsx scripts/marfa-server.ts fault [--state <dir>] set <name>[=<arg>] | clear [<name>] | list
  *
  * `refused` boots the same server on a state directory and waits for it to end
- * instead of for `/health`: for a boot that is meant to be refused.
+ * instead of for `/health`: for a boot that is meant to be refused. With
+ * `--kill-when`, it kills the server's process group with `SIGKILL` as soon
+ * as the server's log holds the text, for a boot stopped partway.
  *
  * `restart` stops the server with the signal (`TERM` by default), prints how
  * it ended as `[marfa-server] previous exit {"code":..,"signal":..,"ms":..}`,
@@ -82,8 +84,11 @@ import {
 import { silenceTelemetry } from "../../vitest.shared.js";
 import { FRESH_SERVER_LOGS } from "../src/utils/fresh-server.js";
 import {
+  groupOf,
+  signalGroup,
   STOP_SIGNALS,
   stopWithSignal,
+  waitUntilGone,
   type StopSignal,
 } from "../src/utils/server-process.js";
 
@@ -112,6 +117,8 @@ interface Args {
   nodeEnv?: string;
   env: Record<string, string>;
   signal: StopSignal;
+  /** For `refused`: the log text at which the server is killed. */
+  killWhen?: string;
   /** What follows the options: the subcommand of `clock` and `fault`. */
   words: string[];
 }
@@ -170,6 +177,9 @@ function parseArgs(argv: string[]): Args {
       if (!Number.isInteger(args.port) || args.port < 0 || args.port > 65_535) {
         throw new Error("--port needs an integer from 0 to 65535");
       }
+    } else if (arg === "--kill-when" && args.command === "refused") {
+      args.killWhen = rest[++i] ?? "";
+      if (args.killWhen === "") throw new Error("--kill-when needs a text");
     } else if (arg === "--node-env") {
       args.nodeEnv = rest[++i] ?? "";
     } else if (arg === "--env") {
@@ -712,11 +722,33 @@ export async function bootServer(args: BootOptions): Promise<void> {
  * stopped and reported, since a refusal that never came is a failure of the
  * fixture's premise.
  */
-export async function bootRefused(args: BootOptions): Promise<void> {
+export async function bootRefused(
+  args: BootOptions,
+  killWhen?: string,
+): Promise<void> {
   const p = paths(args.state);
-  const { child, ended } = await startServer(args);
+  const { child, ended, logStart } = await startServer(args);
   const deadline = Date.now() + REFUSAL_BUDGET_MS;
   while (!ended() && Date.now() < deadline) {
+    if (
+      killWhen !== undefined &&
+      readFileSync(p.log).subarray(logStart).toString("utf8").includes(killWhen)
+    ) {
+      signalGroup(groupOf(args.state), "SIGKILL");
+      if (
+        !(await waitUntilGone(
+          groupOf(args.state),
+          Date.now() + SHUTDOWN_BUDGET_MS,
+        ))
+      ) {
+        throw new Error(`the server under ${args.state} survived SIGKILL`);
+      }
+      cleanupControlDirectory(args.state);
+      console.log(
+        `[marfa-server] killed the server once its log said ${JSON.stringify(killWhen)}; log at ${p.log}`,
+      );
+      return;
+    }
     await new Promise((r) => setTimeout(r, HEALTH_POLL_MS));
   }
   if (!ended()) {
@@ -1016,7 +1048,7 @@ if (
   };
   try {
     if (args.command === "up") await bootServer(boot);
-    else if (args.command === "refused") await bootRefused(boot);
+    else if (args.command === "refused") await bootRefused(boot, args.killWhen);
     else if (args.command === "restart") await restartServer(boot, args.signal);
     else if (args.command === "clock" || args.command === "fault") {
       await runHooks(args);

@@ -8,7 +8,7 @@ import { describe, expect, it } from "vitest";
 import { createClient } from "@libsql/client";
 import { drizzle as drizzleSqlite } from "drizzle-orm/libsql";
 import { SqliteOauthProviderStore } from "./sqlite/oauth-provider-store.js";
-import { SCHEMA_SQL } from "./sqlite/connection.js";
+import { SCHEMA_SQL } from "./sqlite/schema-shape.js";
 
 describe("the live grant clients query plan", () => {
   it("finds grants through the type index and each client through its client_id index, scanning no items", async () => {

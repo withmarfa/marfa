@@ -14,7 +14,8 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { createConnection, SCHEMA_SQL } from "./connection.js";
+import { createConnection } from "./connection.js";
+import { SCHEMA_SQL } from "./schema-shape.js";
 import { RefusedDatabaseError } from "./refused-database.js";
 
 const dirs: string[] = [];

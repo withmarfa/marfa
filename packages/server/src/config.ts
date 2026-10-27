@@ -115,6 +115,13 @@ export interface AppConfig {
    *  instead of the build's, so a harness can show what a change of contract
    *  does to what the server kept. Unset speaks the build's. */
   testContractVersion?: number;
+  /** `MARFA_TEST_MIGRATION_FAULT` and `MARFA_TEST_FREE_DISK_BYTES`: what
+   *  the update of an earlier schema version meets, so a harness can show a
+   *  failed, interrupted or refused update changes nothing. */
+  testMigration?: {
+    fault?: "hold" | "lose-row" | "change-shape";
+    freeDiskBytes?: number;
+  };
   /** The disk store: where every upload lands. Always present. */
   blobPath: string;
   /** Ordinary JSON body cap, excluding the doors with separate caps in
@@ -1133,6 +1140,24 @@ const settingsShape = {
       { defaultNote: "The build's contract version" },
     ),
   ),
+  MARFA_TEST_MIGRATION_FAULT: grouped(
+    { group: "Development and testing", label: "Test migration fault" },
+    setting<"hold" | "lose-row" | "change-shape" | undefined>(
+      choice("hold", "lose-row", "change-shape"),
+      () => undefined,
+      "A failure the update of an earlier schema version meets before it commits: `hold` waits there until the process is stopped, `lose-row` deletes a row the update must keep, and `change-shape` adds a column this build does not declare. Needs `MARFA_TEST_HOOKS`, so a harness can show that a failed or interrupted update changes nothing.",
+      { defaultNote: "None" },
+    ),
+  ),
+  MARFA_TEST_FREE_DISK_BYTES: grouped(
+    { group: "Development and testing", label: "Test free disk space" },
+    setting<number | undefined>(
+      wholeNumber(0, undefined, "bytes"),
+      () => undefined,
+      "The free space, in bytes, the update of an earlier schema version takes the database's volume to have. Needs `MARFA_TEST_HOOKS`, so a harness can show the refusal of an update there is no room for.",
+      { defaultNote: "What the volume reports" },
+    ),
+  ),
   SQLITE_BUSY_BUDGET_MS: grouped(
     { group: "Fine tuning", label: "Database busy wait" },
     count(
@@ -2071,6 +2096,12 @@ const settingsSchema = z.object(settingsShape).superRefine((s, ctx) => {
   if (s.MARFA_TEST_CONTRACT_VERSION !== undefined && !s.MARFA_TEST_HOOKS) {
     refuse("MARFA_TEST_CONTRACT_VERSION", "needs MARFA_TEST_HOOKS to be true");
   }
+  if (s.MARFA_TEST_MIGRATION_FAULT !== undefined && !s.MARFA_TEST_HOOKS) {
+    refuse("MARFA_TEST_MIGRATION_FAULT", "needs MARFA_TEST_HOOKS to be true");
+  }
+  if (s.MARFA_TEST_FREE_DISK_BYTES !== undefined && !s.MARFA_TEST_HOOKS) {
+    refuse("MARFA_TEST_FREE_DISK_BYTES", "needs MARFA_TEST_HOOKS to be true");
+  }
   // Windows are tested in order, so one shorter than the window before it
   // is swallowed by that window: the setting would silently do nothing.
   if (s.VERSION_DAILY_SNAPSHOT_DAYS < s.VERSION_RECENT_DAYS) {
@@ -2331,6 +2362,14 @@ export function loadConfig(
     testHooks: s.MARFA_TEST_HOOKS,
     testClockOffsetMs: s.MARFA_TEST_CLOCK_OFFSET_MS,
     testContractVersion: s.MARFA_TEST_CONTRACT_VERSION,
+    testMigration: {
+      ...(s.MARFA_TEST_MIGRATION_FAULT !== undefined && {
+        fault: s.MARFA_TEST_MIGRATION_FAULT,
+      }),
+      ...(s.MARFA_TEST_FREE_DISK_BYTES !== undefined && {
+        freeDiskBytes: s.MARFA_TEST_FREE_DISK_BYTES,
+      }),
+    },
     blobPath: s.BLOB_PATH,
     maxRequestBytes: s.MARFA_MAX_REQUEST_BYTES,
     maxBulkRequestBytes: s.MARFA_MAX_BULK_REQUEST_BYTES,

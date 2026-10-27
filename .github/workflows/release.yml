@@ -756,8 +756,8 @@ jobs:
           name: release-${{ needs.build.outputs.version }}
           path: artifacts
 
-      # The notes open with what a build whose schema differs does to an
-      # existing database (`scripts/release/upgrade-note.md`), and the
+      # The notes open with what a build does to a database an earlier or
+      # later build wrote (`scripts/release/upgrade-note.md`), and the
       # generated notes follow.
       #
       # A draft, so it can be removed, and seen by nobody until it is made

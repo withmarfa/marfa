@@ -14,7 +14,7 @@ import { is, SQL } from "drizzle-orm";
 import { getTableConfig, SQLiteTable } from "drizzle-orm/sqlite-core";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import * as schema from "./schema.js";
-import { SCHEMA_SQL } from "./connection.js";
+import { SCHEMA_SQL } from "./schema-shape.js";
 
 interface DeclaredIndex {
   unique: boolean;

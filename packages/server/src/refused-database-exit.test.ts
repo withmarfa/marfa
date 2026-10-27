@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createClient } from "@libsql/client";
 import { afterEach, describe, expect, it } from "vitest";
-import { SCHEMA_SQL } from "./storage/sqlite/connection.js";
+import { SCHEMA_SQL } from "./storage/sqlite/schema-shape.js";
 import { REFUSED_DATABASE_EXIT_CODE } from "./storage/sqlite/refused-database.js";
 
 /**

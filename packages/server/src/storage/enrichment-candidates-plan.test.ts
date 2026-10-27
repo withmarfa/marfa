@@ -7,7 +7,7 @@ import { createClient } from "@libsql/client";
 import { registerTypeSchema, unregisterTypeSchema } from "@withmarfa/shared";
 import { drizzle as drizzleSqlite } from "drizzle-orm/libsql";
 import { SqliteEnrichmentStore } from "./sqlite/enrichment-store.js";
-import { SCHEMA_SQL } from "./sqlite/connection.js";
+import { SCHEMA_SQL } from "./sqlite/schema-shape.js";
 
 interface CapturedQuery {
   sql: string;
