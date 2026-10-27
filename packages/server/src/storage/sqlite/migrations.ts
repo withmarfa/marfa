@@ -9,7 +9,7 @@ import {
   statSync,
 } from "node:fs";
 import { basename, dirname, join } from "node:path";
-import { createClient, type Client } from "@libsql/client";
+import { createClient, type Client, type Transaction } from "@libsql/client";
 import * as clock from "../../clock.js";
 import { errorMessage } from "../../error-text.js";
 import { log } from "../../middleware/logger.js";
@@ -151,7 +151,15 @@ export interface MigrationHooks {
   fault?: MigrationFault;
   /** Free bytes to assume beside the database in place of the volume's own. */
   freeDiskBytes?: number;
+  /** How long to wait for another process's write lock, in milliseconds. */
+  busyTimeoutMs?: number;
 }
+
+/**
+ * Another process may hold the write lock for a moment, as a replication
+ * sidecar does, and nothing waits on this start yet.
+ */
+const DEFAULT_BUSY_TIMEOUT_MS = 10_000;
 
 export interface MigrationOutcome {
   from: number;
@@ -319,36 +327,28 @@ export async function migrateInPlace(
   }
 
   const client = createClient({ url: `file:${path}` });
+  let backupPath: string | undefined;
+  let tx: Transaction | undefined;
+  let problems: string[];
   try {
-    // The full-text table is applied apart from the rest, so a file can lack
-    // it and still hold every other table its version declares.
-    const tables = await presentTables(client, ownTables(before));
-    const kept = tables.filter((table) => !changed.has(table));
-    await client.execute("PRAGMA foreign_keys = OFF");
-    // Another process may hold the write lock for a moment, as a
-    // replication sidecar does, and nothing waits on this start yet.
-    await client.execute("PRAGMA busy_timeout = 10000");
-    let backup: { backupPath: string; counts: Map<string, number> };
     try {
-      backup = await takeBackup(client, path, from, to, tables);
-    } catch (error) {
-      throw new RefusedDatabaseError(
-        `The database in ${path} is at schema version ${String(from)} and this build updates it to ${String(to)}, ` +
-          `but the copy taken before an update could not be made: ${errorMessage(error)}. ` +
-          `Nothing was changed. The build that wrote the file still reads it.`,
-        { cause: error },
+      // The full-text table is applied apart from the rest, so a file can lack
+      // it and still hold every other table its version declares.
+      const tables = await presentTables(client, ownTables(before));
+      const kept = tables.filter((table) => !changed.has(table));
+      await client.execute("PRAGMA foreign_keys = OFF");
+      await client.execute(
+        `PRAGMA busy_timeout = ${String(hooks.busyTimeoutMs ?? DEFAULT_BUSY_TIMEOUT_MS)}`,
       );
-    }
-    const { backupPath } = backup;
-    log(
-      "info",
-      `Updating the database in ${path} ${steps}. A copy of it as it was is at ${backupPath}.`,
-      { schema_from: from, schema_to: to, backup_path: backupPath },
-    );
+      const backup = await takeBackup(client, path, from, to, tables);
+      backupPath = backup.backupPath;
+      log(
+        "info",
+        `Updating the database in ${path} ${steps}. A copy of it as it was is at ${backupPath}.`,
+        { schema_from: from, schema_to: to, backup_path: backupPath },
+      );
 
-    const tx = await client.transaction("write");
-    let problems: string[];
-    try {
+      tx = await client.transaction("write");
       const counted = await rowCounts(tx, tables);
       problems = describeCounts(backup.counts, counted).map(
         (problem) => `${problem} in the copy`,
@@ -388,15 +388,19 @@ export async function migrateInPlace(
         await tx.rollback();
       }
     } catch (error) {
-      await tx.rollback().catch(() => undefined);
+      await tx?.rollback().catch(() => undefined);
+      const opening = `The database in ${path} is at schema version ${String(from)} and this build updates it to ${String(to)}`;
       throw new RefusedDatabaseError(
-        `Updating the database in ${path} ${steps} failed: ${errorMessage(error)}. ` +
-          `Nothing was changed: the update was rolled back, so the file is as it was found. ` +
-          `The copy taken before it is at ${backupPath}. The build that wrote the file still reads it.`,
+        backupPath === undefined
+          ? `${opening}, but the copy taken before an update could not be made: ${errorMessage(error)}. ` +
+              `Nothing was changed. The build that wrote the file still reads it.`
+          : `Updating the database in ${path} ${steps} failed: ${errorMessage(error)}. ` +
+              `Nothing was changed: the update was rolled back, so the file is as it was found. ` +
+              `The copy taken before it is at ${backupPath}. The build that wrote the file still reads it.`,
         { cause: error },
       );
     } finally {
-      tx.close();
+      tx?.close();
     }
     if (problems.length > 0) {
       throw new RefusedDatabaseError(
