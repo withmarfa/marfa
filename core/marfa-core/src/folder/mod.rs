@@ -651,6 +651,12 @@ impl Folder {
         storage::storage_cause(&self.root)
     }
 
+    /// Whether git tracks the folder's directory, meaning a git work tree's
+    /// index holds a file in it. `false` where it cannot be told.
+    pub fn git_tracked(&self) -> bool {
+        storage::git_tracked(&self.root)
+    }
+
     /// The path, from the folder's root, of the file bound to the item, if
     /// one is.
     pub fn file_of(&self, item_id: &str) -> Result<Option<String>> {
