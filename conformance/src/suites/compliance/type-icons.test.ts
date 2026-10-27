@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { MarfaClient } from "../../client/api.js";
+import { expectMatchesSchema } from "../../utils/openapi.js";
 import type { TestContext, TypeSchema } from "../../client/types.js";
 import {
   createTestContext,
@@ -155,6 +156,7 @@ describe("the owner's icon for a type", () => {
     const id = await register({ display_hints: { icon: "star" } });
     const set = await setIcon(owner, id, "heart");
     expect(set.status, JSON.stringify(set.error)).toBe(200);
+    await expectMatchesSchema("PUT", "/types/{id}/icon", 200, set.data);
     expect(set.data.type.display_hints?.icon).toBe("heart");
     expect(await iconOf(id)).toBe("heart");
   });
@@ -164,6 +166,7 @@ describe("the owner's icon for a type", () => {
     expect((await setIcon(owner, id, "heart")).status).toBe(200);
     const cleared = await clearIcon(owner, id);
     expect(cleared.status, JSON.stringify(cleared.error)).toBe(200);
+    await expectMatchesSchema("DELETE", "/types/{id}/icon", 200, cleared.data);
     expect(cleared.data.type.display_hints?.icon).toBe("star");
     const again = await clearIcon(owner, id);
     expect(again.status).toBe(200);
