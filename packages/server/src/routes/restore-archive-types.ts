@@ -213,7 +213,7 @@ function parseTypeEntries(entries: ArchiveTypeEntry[]): {
 } {
   const types: PendingType[] = [];
   const edgeTypes: EdgeTypeSchema[] = [];
-  const typeIcons = new Map<string, string>();
+  const typeIcons = new Map<string, string | undefined>();
   const edgeNamesTaken = new Map<string, string>();
 
   for (const entry of entries) {

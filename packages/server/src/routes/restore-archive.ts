@@ -924,7 +924,6 @@ export function restoreArchiveRoutes(
               type_icons_added: result.types.typeIconsAdded,
               type_icons_skipped: result.types.typeIconsSkipped,
               type_icons_skipped_reasons: result.types.typeIconsSkippedReasons,
-              type_icons_skipped_reasons: result.types.typeIconsSkippedReasons,
               edge_types_registered: result.types.edgeTypesRegistered,
               edge_types_skipped: result.types.edgeTypesSkipped,
             },
