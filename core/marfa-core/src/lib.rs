@@ -284,6 +284,57 @@ pub const CONFLICTED_COPY_TAG: &str = "conflicted-copy";
 /// (`versions/copy-link`).
 pub const CONFLICTED_COPY_EDGE: &str = "derived-from";
 
+/// An item and the edges at it as the copy held them when a decision about
+/// the item was made. Two reads are the same where neither the item's
+/// content, state, tags nor edges differ; the times the copy stamps on its
+/// rows say nothing about what a file shows.
+#[derive(Debug, Clone)]
+pub(crate) struct Seen {
+    item: Item,
+    edges: Vec<Edge>,
+}
+
+impl Seen {
+    pub(crate) fn item(&self) -> &Item {
+        &self.item
+    }
+
+    fn of(conn: &Connection, id: &str) -> Result<Option<Seen>> {
+        let Some(item) = store::items_by_ids(conn, &[id.to_string()])?.pop() else {
+            return Ok(None);
+        };
+        let mut edges = store::edges_from(conn, id)?;
+        for edge in store::edges_to(conn, id)? {
+            if !edges.iter().any(|held| held.id == edge.id) {
+                edges.push(edge);
+            }
+        }
+        edges.sort_by(|a, b| a.id.cmp(&b.id));
+        Ok(Some(Seen { item, edges }))
+    }
+}
+
+impl PartialEq for Seen {
+    fn eq(&self, other: &Seen) -> bool {
+        let bare = |item: &Item| Item {
+            created_at: String::new(),
+            updated_at: String::new(),
+            ..item.clone()
+        };
+        let edges = |seen: &Seen| -> Vec<Edge> {
+            seen.edges
+                .iter()
+                .map(|edge| Edge {
+                    created_at: String::new(),
+                    updated_at: String::new(),
+                    ..edge.clone()
+                })
+                .collect()
+        };
+        bare(&self.item) == bare(&other.item) && edges(self) == edges(other)
+    }
+}
+
 impl Core {
     #[cfg(test)]
     pub(crate) fn open_directory(
@@ -1727,16 +1778,33 @@ impl Core {
         self.transition_locally(id, WriteKind::DeleteItem, ItemState::Trashed, "{}")
     }
 
-    /// The same, only while the copy holds the row at `version`, so a change
-    /// heard after the caller decided on that version is never trashed with
-    /// it. `None`, with nothing queued, where the row has moved on or gone.
-    pub(crate) fn delete_item_at(&self, id: &str, version: i64) -> Result<Option<QueuedWrite>> {
+    /// An item and the edges at it as the copy holds them, for a decision
+    /// about the item to be checked against when it is carried out. `None`
+    /// where the copy holds no such row.
+    pub(crate) fn seen(&self, id: &str) -> Result<Option<Seen>> {
+        let conn = self.conn()?;
+        store::refuse_unless_usable(&conn)?;
+        Seen::of(&conn, id)
+    }
+
+    /// The same, only while the copy still holds what `seen` read of the
+    /// item, checked under the lock that queues the delete, so a change heard
+    /// after the caller decided, a tag or an edge included, is never trashed
+    /// with it. `None`, with nothing queued, where the row has moved on or
+    /// gone.
+    pub(crate) fn delete_item_at(&self, id: &str, seen: &Seen) -> Result<Option<QueuedWrite>> {
         self.lock.refuse_unless_writer()?;
         let conn = self.conn()?;
         store::refuse_unless_usable(&conn)?;
-        match store::items_by_ids(&conn, &[id.to_string()])?.pop() {
-            Some(held) if held.version == version => self
-                .transition_held(conn, held, WriteKind::DeleteItem, ItemState::Trashed, "{}")
+        match Seen::of(&conn, id)? {
+            Some(now) if now == *seen => self
+                .transition_held(
+                    conn,
+                    now.item,
+                    WriteKind::DeleteItem,
+                    ItemState::Trashed,
+                    "{}",
+                )
                 .map(Some),
             _ => Ok(None),
         }
@@ -6598,7 +6666,28 @@ mod tests {
                 reader.update_item_as_read("x", &edit).unwrap_err(),
             ),
             ("delete_item", reader.delete_item("x").unwrap_err()),
-            ("delete_item_at", reader.delete_item_at("x", 1).unwrap_err()),
+            (
+                "delete_item_at",
+                reader
+                    .delete_item_at(
+                        "x",
+                        &Seen {
+                            item: Item::from_wire(
+                                crate::store::testing::wire_item(
+                                    "x",
+                                    "core.note",
+                                    "active",
+                                    "2026-01-01T00:00:00Z",
+                                    serde_json::json!({}),
+                                ),
+                                Vec::new(),
+                            )
+                            .unwrap(),
+                            edges: Vec::new(),
+                        },
+                    )
+                    .unwrap_err(),
+            ),
             ("restore_item", reader.restore_item("x").unwrap_err()),
             ("purge_item", reader.purge_item("x", None).unwrap_err()),
             (

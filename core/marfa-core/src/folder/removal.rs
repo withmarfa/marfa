@@ -46,22 +46,26 @@ impl Folder {
         let mut confirmed = Confirmed::default();
         let peers = self.peers();
         let sweep = Sweep::default();
-        for path in &disk {
+        let missing: Vec<(String, String)> = disk
+            .iter()
             // A file put back since is not gone, whatever the pause recorded.
-            if self.exists(self.root.join(path)) {
-                continue;
-            }
-            if let Some(row) = journaled.iter().find(|row| &row.path == path) {
-                match self.let_go_missing(path, &row.item_id, &settings, &peers, &sweep)? {
-                    Missing::Moved => confirmed.moved += 1,
-                    Missing::Arriving | Missing::Changed => {}
-                    Missing::Unsure(reason) => confirmed.unsure.push(Unsure {
-                        path: path.clone(),
-                        reason,
-                    }),
-                    Missing::Deleted => confirmed.deleted += 1,
-                    Missing::Gone => {}
-                }
+            .filter(|path| !self.exists(self.root.join(path)))
+            .filter_map(|path| {
+                let row = journaled.iter().find(|row| &row.path == path)?;
+                Some((path.clone(), row.item_id.clone()))
+            })
+            .collect();
+        self.decide_changed(&missing, &settings, &sweep)?;
+        for (path, item_id) in &missing {
+            match self.let_go_missing(path, item_id, &settings, &peers, &sweep)? {
+                Missing::Moved => confirmed.moved += 1,
+                Missing::Arriving | Missing::Changed => {}
+                Missing::Unsure(reason) => confirmed.unsure.push(Unsure {
+                    path: path.clone(),
+                    reason,
+                }),
+                Missing::Deleted => confirmed.deleted += 1,
+                Missing::Gone => {}
             }
         }
         copy.same_copy(&*self.core.conn()?)?;

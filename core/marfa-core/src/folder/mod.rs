@@ -3644,20 +3644,23 @@ mod tests {
         assert_eq!(pulled.elsewhere, 0, "{pulled:?}");
     }
 
-    #[test]
-    fn a_sweep_queues_no_delete_of_an_item_changed_elsewhere_while_it_decides() {
-        let (_, _registry) = registry::tests::own_registry();
-        let (dir, folder) = folder_with(
-            "01a00000-0000-7000-8000-0000000000c2",
-            serde_json::json!({ "query": {} }),
-            None,
-        );
-        std::fs::write(dir.path().join("note.txt"), "the person's words\n").unwrap();
+    /// A sweep of one deleted note, held after it has found nothing changed,
+    /// while `change` is made to the note's item as another device's change
+    /// heard by a follow would make it. Answers the sweep's report, with the
+    /// folder and the note's directory and item.
+    fn sweep_while_changed(
+        folder_id: &str,
+        change: impl Fn(&Folder, &str) + Sync,
+    ) -> (tempfile::TempDir, Folder, String, ScanReport) {
+        let (dir, folder) = folder_with(folder_id, serde_json::json!({ "query": {} }), None);
+        std::fs::write(dir.path().join("note.md"), "the person's words\n").unwrap();
         assert_eq!(folder.scan().unwrap().created, 1);
-        let id = landed(&folder, "note.txt");
-        std::fs::remove_file(dir.path().join("note.txt")).unwrap();
+        let id = landed(&folder, "note.md");
+        // The file the pull writes is what the folder has agreed it shows.
+        folder.pull().unwrap();
+        std::fs::remove_file(dir.path().join("note.md")).unwrap();
         assert_eq!(folder.scan().unwrap().missing, 1);
-        past_the_grace(&folder, "note.txt");
+        past_the_grace(&folder, "note.md");
 
         // A follow applies another device's change once the sweep has
         // found nothing changed and before it queues the delete.
@@ -3674,7 +3677,7 @@ mod tests {
                     }
                     std::thread::sleep(Duration::from_millis(5));
                 }
-                changed_elsewhere(&folder, &id, "changed elsewhere");
+                change(&folder, &id);
                 crate::fault::release(point);
             });
             let swept = folder.scan();
@@ -3682,16 +3685,29 @@ mod tests {
             swept
         })
         .unwrap();
-        let deletes: Vec<_> = folder
+        (dir, folder, id, swept)
+    }
+
+    fn deletes_queued(folder: &Folder) -> Vec<Option<i64>> {
+        folder
             .core
             .queue()
             .unwrap()
             .into_iter()
             .filter(|write| write.kind == crate::model::WriteKind::DeleteItem)
             .map(|write| write.base_version)
-            .collect();
+            .collect()
+    }
+
+    #[test]
+    fn a_sweep_queues_no_delete_of_an_item_changed_elsewhere_while_it_decides() {
+        let (_, _registry) = registry::tests::own_registry();
+        let (dir, folder, _, swept) =
+            sweep_while_changed("01a00000-0000-7000-8000-0000000000c2", |folder, id| {
+                changed_elsewhere(folder, id, "changed elsewhere")
+            });
         assert_eq!(
-            deletes,
+            deletes_queued(&folder),
             Vec::<Option<i64>>::new(),
             "a delete was queued over a change the sweep never saw: {swept:?}"
         );
@@ -3699,10 +3715,97 @@ mod tests {
         let pulled = folder.pull().unwrap();
         assert_eq!(pulled.revived, 1, "{pulled:?}");
         assert!(
-            std::fs::read_to_string(dir.path().join("note.txt"))
+            std::fs::read_to_string(dir.path().join("note.md"))
                 .unwrap()
                 .contains("changed elsewhere")
         );
+    }
+
+    #[test]
+    fn a_sweep_queues_no_delete_of_an_item_whose_tag_changes_while_it_decides() {
+        let (_, _registry) = registry::tests::own_registry();
+        // The tag a follow adds moves no version, and the file shows it.
+        let (dir, folder, id, swept) =
+            sweep_while_changed("01a00000-0000-7000-8000-0000000000c4", |folder, id| {
+                folder
+                    .core
+                    .conn()
+                    .unwrap()
+                    .execute(
+                        "INSERT INTO tags (item_id, tag) VALUES (?1, 'added-elsewhere')",
+                        [id],
+                    )
+                    .unwrap();
+            });
+        assert_eq!(
+            deletes_queued(&folder),
+            Vec::<Option<i64>>::new(),
+            "a delete was queued over a tag the sweep never saw: {swept:?}"
+        );
+        assert!(swept.trashed.is_empty(), "{swept:?}");
+        assert_eq!(folder.core.get(&id).unwrap().unwrap().version, 1);
+        let pulled = folder.pull().unwrap();
+        assert_eq!(pulled.revived, 1, "{pulled:?}");
+        assert!(
+            std::fs::read_to_string(dir.path().join("note.md"))
+                .unwrap()
+                .contains("added-elsewhere")
+        );
+    }
+
+    #[test]
+    fn a_sweep_queues_no_delete_of_an_item_whose_edge_changes_while_it_decides() {
+        let (_, _registry) = registry::tests::own_registry();
+        // The edge a follow adds moves no version, and the file shows it.
+        let (dir, folder, _, swept) =
+            sweep_while_changed("01a00000-0000-7000-8000-0000000000c6", |folder, id| {
+                let other = folder
+                    .core
+                    .create_item(&crate::model::Draft {
+                        r#type: "core.note".into(),
+                        properties: serde_json::json!({ "title": "Elsewhere" })
+                            .as_object()
+                            .unwrap()
+                            .clone(),
+                        ..Default::default()
+                    })
+                    .unwrap()
+                    .item_id
+                    .unwrap();
+                folder
+                    .core
+                    .create_edge(&crate::model::EdgeDraft {
+                        source_id: id.to_string(),
+                        target_id: other,
+                        edge_type: "about".into(),
+                        properties: Default::default(),
+                        id: None,
+                    })
+                    .unwrap();
+            });
+        assert_eq!(
+            deletes_queued(&folder),
+            Vec::<Option<i64>>::new(),
+            "a delete was queued over an edge the sweep never saw: {swept:?}"
+        );
+        assert!(swept.trashed.is_empty(), "{swept:?}");
+        let pulled = folder.pull().unwrap();
+        assert_eq!(pulled.revived, 1, "{pulled:?}");
+        assert!(
+            std::fs::read_to_string(dir.path().join("note.md"))
+                .unwrap()
+                .contains("Elsewhere")
+        );
+    }
+
+    #[test]
+    fn a_sweep_queues_the_delete_of_an_item_nothing_changed_while_it_decides() {
+        let (_, _registry) = registry::tests::own_registry();
+        // The witness: the same hold with nothing changed in it sends the delete.
+        let (_, folder, id, swept) =
+            sweep_while_changed("01a00000-0000-7000-8000-0000000000c5", |_, _| {});
+        assert_eq!(deletes_queued(&folder), [Some(1)], "{swept:?}");
+        assert_eq!(swept.trashed, ["note.md"], "{swept:?} {id}");
     }
 
     #[test]
@@ -3771,6 +3874,80 @@ mod tests {
                 .unwrap()
                 .is_some()
         );
+    }
+
+    #[test]
+    fn a_sweep_trashes_every_linked_file_deleted_together_in_either_order() {
+        // The sweep goes by path: the first case trashes the target before
+        // the host that links to it is decided, the second the other way.
+        for (n, (target, host)) in [("a.md", "b.md"), ("b.md", "a.md")].into_iter().enumerate() {
+            let (_, _registry) = registry::tests::own_registry();
+            let (dir, folder) = folder_with(
+                &format!("01a00000-0000-7000-8000-0000000000d{n}"),
+                serde_json::json!({ "query": {} }),
+                None,
+            );
+            for name in [target, host] {
+                std::fs::write(dir.path().join(name), format!("{name} words\n")).unwrap();
+            }
+            assert_eq!(folder.scan().unwrap().created, 2);
+            let [target_id, host_id] = [target, host].map(|name| landed(&folder, name));
+            // An edge the server holds, which the host's file shows as a line.
+            folder
+                .core
+                .create_edge(&crate::model::EdgeDraft {
+                    source_id: host_id.clone(),
+                    target_id: target_id.clone(),
+                    edge_type: "about".into(),
+                    properties: Default::default(),
+                    id: None,
+                })
+                .unwrap();
+            folder
+                .core
+                .conn()
+                .unwrap()
+                .execute(
+                    "DELETE FROM queue WHERE kind = ?1",
+                    [crate::model::WriteKind::CreateEdge.as_str()],
+                )
+                .unwrap();
+            folder.pull().unwrap();
+            assert!(
+                read(dir.path(), host).unwrap().contains("about:"),
+                "{target}: the host's file does not show the link"
+            );
+
+            for name in [target, host] {
+                std::fs::remove_file(dir.path().join(name)).unwrap();
+            }
+            assert_eq!(folder.scan().unwrap().missing, 2);
+            for name in [target, host] {
+                past_the_grace(&folder, name);
+            }
+            let swept = folder.scan().unwrap();
+            let mut deleted: Vec<_> = folder
+                .core
+                .queue()
+                .unwrap()
+                .into_iter()
+                .filter(|write| write.kind == crate::model::WriteKind::DeleteItem)
+                .filter_map(|write| write.item_id)
+                .collect();
+            deleted.sort();
+            let mut both = vec![target_id.clone(), host_id.clone()];
+            both.sort();
+            assert_eq!(deleted, both, "{target}: {swept:?}");
+            assert_eq!(swept.deleted, 2, "{target}: {swept:?}");
+            let pulled = folder.pull().unwrap();
+            assert_eq!(pulled.revived, 0, "{target}: {pulled:?}");
+            for name in [target, host] {
+                assert!(
+                    !dir.path().join(name).exists(),
+                    "{target}: {name}, which the person deleted, came back"
+                );
+            }
+        }
     }
 
     /// As if another device had changed the item's body to `body`.
