@@ -834,6 +834,7 @@ fn an_upgrade_moves_forward_and_never_back() {
     let (code, _, stderr) = rig.marfa(&["upgrade", "--release", "0.0.21", "--wait", "5"]);
     assert_eq!(code, 2, "{stderr}");
     assert!(stderr.contains("older"), "{stderr}");
+    assert!(stderr.contains("marfa.db-wal"), "{stderr}");
     assert!(rig.file(".env").contains("MARFA_RELEASE=0.0.22"));
 
     let salt = secrets(&rig);
@@ -894,6 +895,43 @@ fn an_upgrade_says_where_the_copy_of_the_database_is() {
     let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(report["release"], "0.0.24");
     assert_eq!(report["database_update"], serde_json::Value::Null);
+}
+
+#[test]
+fn a_retried_upgrade_still_says_where_the_copy_of_the_database_is() {
+    let rig = Rig::new("upgrade-retry");
+    rig.installed(&["--access", "local"]);
+    let copy = "/data/marfa.db.backup-schema-1-to-2-20260101T000000000Z";
+    fs::write(rig.state.join("unhealthy"), "").unwrap();
+    fs::write(
+        rig.state.join("server-log"),
+        format!(
+            r#"{{"timestamp":"2026-01-01T00:00:01.000Z","level":"info","message":"Updated the database in /data/marfa.db from schema version 1 to 2.","schema_from":1,"schema_to":2,"backup_path":"{copy}"}}"#
+        ) + "\n",
+    )
+    .unwrap();
+
+    // The wait ends while the server is still copying; the env file is
+    // already on the target.
+    let (code, _, stderr) = rig.marfa(&["upgrade", "--release", "0.0.23", "--wait", "1"]);
+    assert_ne!(code, 0);
+    assert!(stderr.contains("did not become healthy"), "{stderr}");
+    assert!(rig.file(".env").contains("MARFA_RELEASE=0.0.23"));
+
+    // The update completed, and the operator runs the command again.
+    fs::remove_file(rig.state.join("unhealthy")).unwrap();
+    let (code, stdout, stderr) = rig.marfa(&["upgrade", "--release", "0.0.23", "--wait", "5"]);
+    assert_eq!(code, 0, "{stderr}");
+    assert!(stdout.contains("Already on 0.0.23"), "{stdout}");
+    assert!(stdout.contains("from schema version 1 to 2"), "{stdout}");
+    assert!(stdout.contains(copy), "{stdout}");
+
+    // Witness: a retry whose log records no update says nothing of a copy.
+    fs::write(rig.state.join("server-log"), "a line of the server's log\n").unwrap();
+    let (code, stdout, stderr) = rig.marfa(&["upgrade", "--release", "0.0.23", "--wait", "5"]);
+    assert_eq!(code, 0, "{stderr}");
+    assert!(stdout.contains("Already on 0.0.23"), "{stdout}");
+    assert!(!stdout.contains("copy"), "{stdout}");
 }
 
 #[test]

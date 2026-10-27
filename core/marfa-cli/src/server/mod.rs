@@ -348,7 +348,7 @@ fn parse_release(release: &str) -> Option<(u64, u64, u64)> {
 fn refuse_older(installed: &str, target: &str) -> Result<(), CliError> {
     if parse_release(target) < parse_release(installed) {
         return Err(CliError::Usage(format!(
-            "{installed} is installed and {target} is older. A newer release may have updated the database in a way an older one does not know, so the server will not go back: restore the copy of the database the upgrade took, or a backup, with the older release instead (https://docs.marfa.so/run/upgrade)"
+            "{installed} is installed and {target} is older. A newer release may have updated the database in a way an older one does not know, so the server will not go back: start the older release on the copy of the database the upgrade took, or on a backup. Delete `marfa.db-wal` and `marfa.db-shm` before you put it in place, because SQLite applies a log it finds beside the database (https://docs.marfa.so/run/upgrade)"
         )));
     }
     Ok(())
@@ -1284,11 +1284,9 @@ fn upgrade(args: UpgradeArgs, out: &Printer) -> Result<(), CliError> {
             env = folder.path(files::DOTENV).display(),
         )));
     }
-    let update = if unchanged {
-        None
-    } else {
-        database_update(&docker.logs(&state.name))
-    };
+    // A retry finds the env file already on the target, though the update
+    // happened after the first run's wait ended, so the log is read either way.
+    let update = database_update(&docker.logs(&state.name));
     let report = json!({
         "name": state.name,
         "from": state.release,
@@ -1301,13 +1299,14 @@ fn upgrade(args: UpgradeArgs, out: &Printer) -> Result<(), CliError> {
         })),
     });
     out.report(&report, || {
-        if unchanged {
-            return format!("Already on {target}.");
-        }
-        let moved = format!("Upgraded from {} to {target}.", state.release);
+        let moved = if unchanged {
+            format!("Already on {target}.")
+        } else {
+            format!("Upgraded from {} to {target}.", state.release)
+        };
         match &update {
             Some(update) => format!(
-                "{moved} The server updated the database from schema version {} to {}. A copy of the database as it was is at {copy} in the volume {name}-data, and stays until you remove it; `docker cp {name}:{copy} .` copies it out.",
+                "{moved} The server's log records that it updated the database from schema version {} to {}. A copy of the database as it was is at {copy} in the volume {name}-data, and stays until you remove it; `docker cp {name}:{copy} .` copies it out.",
                 update.schema_from,
                 update.schema_to,
                 copy = update.copy,
