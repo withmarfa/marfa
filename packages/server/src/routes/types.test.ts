@@ -578,7 +578,7 @@ describe("GET /types/:id — inheritance resolution", () => {
         version: 1,
         parent: "core.note",
         fields: { extra: { type: "string" } },
-        // Override: point title at the inherited notes field, drop body_field.
+        // Override only the title; the other hints come from the parent.
         display_hints: { title_field: "notes" },
       },
     });
@@ -590,9 +590,9 @@ describe("GET /types/:id — inheritance resolution", () => {
     expect(getRes.status).toBe(200);
     const schema = (await getRes.json()) as TypeSchema;
     expect(schema.display_hints?.title_field).toBe("notes");
-    // Whole-block replacement: parent's body_field is not inherited when
-    // the child declares its own display_hints block.
-    expect(schema.display_hints?.body_field).toBeUndefined();
+    // Each hint comes from the nearest type that sets it, so the parent's
+    // body_field still shows through a child that sets only a title.
+    expect(schema.display_hints?.body_field).toBe("body");
   });
 
   it("inherits merge_policy from parent when child omits it", async () => {

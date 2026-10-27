@@ -251,7 +251,11 @@ describe("unreadKeys", () => {
 
   it("holds each nested list to the keys its model has", () => {
     const sorted = (keys: ReadonlySet<string>) => [...keys].sort();
-    expect(sorted(DISPLAY_HINTS_KEYS)).toEqual(["body_field", "title_field"]);
+    expect(sorted(DISPLAY_HINTS_KEYS)).toEqual([
+      "body_field",
+      "icon",
+      "title_field",
+    ]);
     expect(sorted(VERSION_POLICY_KEYS)).toEqual([
       "daily_snapshot_days",
       "max_versions",

@@ -397,12 +397,14 @@
     }
   },
   "routes/types.ts": {
-    "boundary": "Audited type create/update/delete and registry settlement; audit-atomicity.test.ts.",
+    "boundary": "Audited type create/update/delete, the owner's icon set and clear, and registry settlement; audit-atomicity.test.ts.",
     "calls": {
+      "TypeStore.clearIcon": 1,
       "TypeStore.create": 1,
       "TypeStore.delete": 1,
+      "TypeStore.setIcon": 1,
       "TypeStore.update": 1,
-      "runAuditedTransaction": 3
+      "runAuditedTransaction": 5
     }
   },
   "routes/type-move.ts": {

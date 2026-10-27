@@ -580,7 +580,7 @@ function ownerResolver(owned: ReadonlyMap<string, string>): TypeResolver {
 }
 
 const TypeIconBodySchema = z
-  .object({
+  .strictObject({
     icon: z
       .string()
       .describe(
@@ -983,7 +983,7 @@ const setTypeIconRoute = createRoute({
   tags: ["Types"],
   summary: "Set a type's icon",
   description:
-    "Sets the icon the owner wants for a type. It works on every type, the ones Marfa ships and a connector's included. Reads of the type answer this icon in place of the author's, and a subtype with no icon of its own inherits it. Replacing the type, as a connector does each time it starts, leaves it alone, and deleting the type removes it. A connector's key can't call this.",
+    "Sets the owner's icon for a type, one Marfa ships or a connector registers. Reads answer it in place of the author's, and a subtype with no icon inherits it. Replacing the type keeps it. A connector's key can't call this.",
   security: [{ bearerAuth: [] }, { ownerSession: [] }] as Record<
     string,
     string[]

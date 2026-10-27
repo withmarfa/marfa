@@ -17,7 +17,7 @@ const READS: Record<string, string> = {
   MetadataStore: "get getMany listTags getExtensions getExtensionsForItems",
   VersionStore: "list all getByVersion scanProperties listThinningCandidates",
   TypeStore:
-    "list get provenance listRegistered listRegisteredWithProvenance loadAll countRegistered propertyNamesHeld",
+    "list get provenance listRegistered listRegisteredWithProvenance loadAll countRegistered propertyNamesHeld icons",
   EdgeTypeStore: "list get",
   SearchStore: "search",
   KeyStore: "list get validate count",
@@ -51,7 +51,8 @@ const WRITES: Record<string, string> = {
   MetadataStore:
     "set addTags removeTag setExtension setExtensions deleteExtension",
   VersionStore: "create restore deleteByIds",
-  TypeStore: "create update delete seedPlatformTypes deleteRetiredPlatformType",
+  TypeStore:
+    "create update delete seedPlatformTypes deleteRetiredPlatformType setIcon clearIcon",
   EdgeTypeStore: "create replace delete",
   SearchStore: "index setTags remove",
   KeyStore:
