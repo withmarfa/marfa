@@ -235,6 +235,14 @@ Where enrichment is on, the server MUST write the text a person would read in th
 
 **Tests:** `compliance/enrichment-search.test.ts › finds a Web Page by the words on it and not by its markup, script or style`.
 
+### `housekeeping/enrichment-html-bounds`
+
+Where enrichment is on, if a file item whose `mime_type` is `text/html` or `application/xhtml+xml` holds a page with more than 8 MiB of source, more than 512 open elements at one point, or more text than `MARFA_ENRICHMENT_MAX_TEXT_CHARS`, then the server MUST write as the item's `extracted_text` the text of the page up to the first limit it passes, and MUST NOT write text read after it.
+
+**Reason:** a page is written by anyone and read by a parser whose work grows with the depth of its elements, so an unbounded page can hold the server for as long as its author likes. Text found before the limit is still the words a person would search for, and the item is stored either way.
+
+**Tests:** `compliance/enrichment-search.test.ts › keeps the text before a limit a page passes, and reads it within a bound of time`.
+
 ### `housekeeping/enrichment-needs-file-type`
 
 The server MUST NOT offer the enrichment sweep an item whose type inherits from no file type, even one whose type declares `blob_ref` and `mime_type` itself.

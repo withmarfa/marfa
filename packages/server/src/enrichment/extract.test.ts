@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { extractText, isEnrichableMime } from "./extract.js";
 import { Worker } from "node:worker_threads";
 import { TesseractOcr } from "./ocr.js";
+import { HTML_MAX_DEPTH, HTML_MAX_INPUT_BYTES } from "./html.js";
 import type { OcrEngine } from "./ocr.js";
 
 const fixture = (name: string): Promise<Buffer> =>
@@ -503,6 +504,70 @@ describe("extractText from HTML", () => {
     expect(text).toHaveLength(1000);
     expect(text.startsWith("quokka quokka quokka\nquokka")).toBe(true);
     expect(performance.now() - started).toBeLessThan(2000);
+  });
+
+  it("reads a page of many unclosed elements and unmatched closing tags within a second", async () => {
+    const page = `<p>quokkadeep</p>${"<div>".repeat(200_000)}${"</x>".repeat(200_000)}`;
+    expect(page.length).toBeGreaterThan(1_800_000);
+    const started = performance.now();
+    const text = await read(page);
+    expect(performance.now() - started).toBeLessThan(1000);
+    expect(text).toBe("quokkadeep");
+  });
+
+  it("keeps the text of a nested page down to the depth limit and none below it", async () => {
+    const down = (depth: number, word: string) =>
+      `${"<div>".repeat(depth)}${word}`;
+    const kept = await read(down(HTML_MAX_DEPTH, "quokkaatlimit"));
+    const dropped = await read(
+      `<p>quokkabefore</p>${down(HTML_MAX_DEPTH + 1, "quokkabelow")}<p>quokkaafter</p>`,
+    );
+    expect(kept).toBe("quokkaatlimit");
+    expect(dropped).toBe("quokkabefore");
+  });
+
+  it("reads a page of many megabytes of plain paragraphs within two seconds, to the text limit", async () => {
+    const page = `<html><body>${"<p>quokka reads a long page of words</p>\n".repeat(400_000)}</body></html>`;
+    expect(page.length).toBeGreaterThan(16_000_000);
+    const started = performance.now();
+    const text = await read(page, "text/html", { ...OPTS, maxTextChars: 5000 });
+    expect(performance.now() - started).toBeLessThan(2000);
+    expect(text).toHaveLength(5000);
+  });
+
+  it("reads only the first bytes of a page beyond the input limit", async () => {
+    const filler = "<p>quokkafill</p>".repeat(
+      Math.ceil(HTML_MAX_INPUT_BYTES / 17) + 10,
+    );
+    const text = await read(`${filler}<p>quokkabeyondlimit</p>`, "text/html", {
+      ...OPTS,
+      maxTextChars: 100_000_000,
+    });
+    expect(text.startsWith("quokkafill\nquokkafill")).toBe(true);
+    expect(text).not.toContain("quokkabeyondlimit");
+    expect(text.length).toBeGreaterThan(HTML_MAX_INPUT_BYTES / 2);
+  });
+
+  it("reads malformed markup within two seconds and keeps the words before it", async () => {
+    const mess =
+      "<<<>>></ </a b='<p>' <p <b <i></b></i>&amp &#xZZ; &bogus; <!-- <![CDATA[ x -->";
+    const started = performance.now();
+    const text = await read(
+      `<p>quokkaone</p>${mess.repeat(30_000)}${"<!--".repeat(100_000)}`,
+    );
+    expect(performance.now() - started).toBeLessThan(2000);
+    expect(text).toContain("quokkaone");
+  });
+
+  it("gives no text and an error when the time budget ends the read", async () => {
+    const budget = new AbortController();
+    const reading = extractText(
+      Buffer.from(`<p>a</p>${"<p>quokka</p>".repeat(1_000_000)}`),
+      "text/html",
+      { ...OPTS, signal: budget.signal },
+    );
+    budget.abort(new Error("extraction timed out"));
+    await expect(reading).rejects.toThrow("extraction timed out");
   });
 
   it("stops when the budget is aborted", async () => {

@@ -60,8 +60,9 @@ export async function extractText(
   if (TEXT_MIMES.has(mime)) {
     text = bytes.toString("utf8");
   } else if (HTML_MIMES.has(mime)) {
-    text = extractHtmlText(bytes.toString("utf8"), {
+    text = await extractHtmlText(bytes, {
       maxChars: opts.maxTextChars,
+      maxMemoryBytes: opts.office.maxMemoryBytes,
       xml: mime !== "text/html",
       signal: opts.signal,
     });
