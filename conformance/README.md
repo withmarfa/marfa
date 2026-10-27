@@ -157,16 +157,16 @@ the same commands and output.
 Every command takes `--state <dir>`, the directory that holds the instance's
 data, log and env file. The default is `.marfa-state` in the working directory.
 
-| Command                                                          | What it does                                                                                                                                                                                                                                         |
-| ---------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `up [--port <n>] [--env K=V ...]`                                | Boots the target with the settings, claims it, mints the fixture keys and writes the env file. Exits 0 once the target answers `/health` and the keys exist.                                                                                         |
-| `restart [--signal TERM\|INT\|KILL] [--env K=V ...]`             | Stops the target with the signal, prints how it ended as `previous exit {"code":..,"signal":..,"ms":..}`, and boots it again on the same data. The URL may change.                                                                                   |
-| `down`                                                           | Stops the target and removes its data.                                                                                                                                                                                                               |
-| `status`                                                         | Exits 0 when the target is running, and prints its URL.                                                                                                                                                                                              |
-| `refused [--node-env <name>] [--env K=V ...]`                    | Boots with settings the target must refuse, as the `NODE_ENV` named when `--node-env` is given, and waits for it to end. Exits 0 when it ended; its exit record and log are in the state directory.                                                  |
-| `clock advance <ms>`                                             | Moves the target's clock forward. A negative or fractional step is refused and the exit status is 1.                                                                                                                                                 |
-| `clock pause` / `clock resume`                                   | Pauses system-time drift or resumes it, retaining explicit advances. Prints `now` and `offset_ms` as JSON.                                                                                                                                           |
-| `fault set <name>[=<arg>]`, `fault clear [<name>]`, `fault list` | Sets or clears a named fault. `list` prints `{"faults":[{"name":..,"arg":..,"waiting":..,"fired":..}]}`, where `waiting` counts the callers held at a `hold` fault and `fired` the times a `fail` fault has acted or a `resolve` fault has answered. |
+| Command                                                            | What it does                                                                                                                                                                                                                                                                         |
+| ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `up [--port <n>] [--env K=V ...]`                                  | Boots the target with the settings, claims it, mints the fixture keys and writes the env file. Exits 0 once the target answers `/health` and the keys exist.                                                                                                                         |
+| `restart [--signal TERM\|INT\|KILL] [--env K=V ...]`               | Stops the target with the signal, prints how it ended as `previous exit {"code":..,"signal":..,"ms":..}`, and boots it again on the same data. The URL may change.                                                                                                                   |
+| `down`                                                             | Stops the target and removes its data.                                                                                                                                                                                                                                               |
+| `status`                                                           | Exits 0 when the target is running, and prints its URL.                                                                                                                                                                                                                              |
+| `refused [--node-env <name>] [--kill-when <text>] [--env K=V ...]` | Boots with settings the target must refuse, as the `NODE_ENV` named when `--node-env` is given, and waits for it to end. With `--kill-when`, kills the target with `SIGKILL` once its log holds the text. Exits 0 when it ended; its exit record and log are in the state directory. |
+| `clock advance <ms>`                                               | Moves the target's clock forward. A negative or fractional step is refused and the exit status is 1.                                                                                                                                                                                 |
+| `clock pause` / `clock resume`                                     | Pauses system-time drift or resumes it, retaining explicit advances. Prints `now` and `offset_ms` as JSON.                                                                                                                                                                           |
+| `fault set <name>[=<arg>]`, `fault clear [<name>]`, `fault list`   | Sets or clears a named fault. `list` prints `{"faults":[{"name":..,"arg":..,"waiting":..,"fired":..}]}`, where `waiting` counts the callers held at a `hold` fault and `fired` the times a `fail` fault has acted or a `resolve` fault has answered.                                 |
 
 ### The env file
 
@@ -272,6 +272,17 @@ target onto another version for that boot alone: the boot after it is back on
 the target's own. The setting is refused unless the hooks are on. A fixture
 uses it to show what a change of contract does to what the target kept, such as
 the answer stored for a repeated request.
+
+### The schema update
+
+`refused` takes `--env MARFA_TEST_MIGRATION_FAULT=<fault>` to make the update
+of a database at an earlier schema version meet a failure before it commits:
+`hold` waits there until the process is stopped, `lose-row` deletes a row the
+update must keep, and `change-shape` adds a column the target does not declare.
+`--env MARFA_TEST_FREE_DISK_BYTES=<n>` sets the free space the update takes the
+volume to have. Both are refused unless the hooks are on. A fixture uses them,
+with `--kill-when` for `hold`, to show that a failed, interrupted or refused
+update leaves the database as it was.
 
 ### Faults
 

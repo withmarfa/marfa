@@ -8,6 +8,7 @@ import {
   existsSync,
   mkdtempSync,
   openSync,
+  readdirSync,
   readFileSync,
   readSync,
   rmSync,
@@ -26,6 +27,7 @@ import {
   bootRefused,
   FRESH_SERVER_TIMEOUT_MS,
   type FreshServer,
+  serverOutput,
   type RefusedBoot,
   type ServerExit,
 } from "../../utils/fresh-server.js";
@@ -1106,6 +1108,331 @@ describe("starting on a database another build wrote", () => {
       }
     },
     FRESH_SERVER_TIMEOUT_MS,
+  );
+});
+
+/**
+ * Turns a stopped database of this build into one at schema version 1, as
+ * the releases before the `type_icons` table wrote it: the same tables but
+ * that one, with the version stamped.
+ */
+function asVersionOne(db: Database): void {
+  db.exec("DROP TABLE type_icons");
+  db.exec("PRAGMA user_version = 1");
+}
+
+/** The tables whose rows say who the owner, the keys and the instance are. */
+const IDENTITY_TABLES = [
+  "api_keys",
+  "auth_user",
+  "auth_account",
+  "settings",
+  "items",
+] as const;
+
+/** The rows a start writes, which no update is asked to keep. */
+const WRITTEN_AT_START: Record<string, string> = {
+  settings: "WHERE key <> 'health_probe'",
+};
+
+/** Every row of `tables`, each as JSON, so rows are compared whole. */
+function rowsOf(
+  sqlitePath: string,
+  tables: readonly string[],
+): Record<string, string[]> {
+  return withInstanceDatabase(sqlitePath, (db) =>
+    Object.fromEntries(
+      tables.map((table) => [
+        table,
+        db
+          .prepare(
+            `SELECT * FROM \`${table}\` ${WRITTEN_AT_START[table] ?? ""}`,
+          )
+          .all()
+          .map((row) => JSON.stringify(row))
+          .sort(),
+      ]),
+    ),
+  );
+}
+
+function schemaVersion(sqlitePath: string): number {
+  return withInstanceDatabase(sqlitePath, (db) =>
+    Number(
+      (db.prepare("PRAGMA user_version").get() as { user_version: number })
+        .user_version,
+    ),
+  );
+}
+
+/** The copies the server took beside the database before an update. */
+function copiesBeside(stateDir: string): string[] {
+  return readdirSync(stateDir).filter((name) =>
+    /^marfa\.db\.backup-schema-1-to-\d+-\d{8}T\d{9}Z$/.test(name),
+  );
+}
+
+/** The fields of the log line that says the update is done, or none. */
+function updatedLine(
+  output: string,
+): { backup_path?: string; schema_from?: number; schema_to?: number }[] {
+  const found = [];
+  for (const line of output.split("\n")) {
+    try {
+      const entry = JSON.parse(line) as {
+        message?: string;
+        backup_path?: string;
+        schema_from?: number;
+        schema_to?: number;
+      };
+      if (entry.message?.startsWith("Updated the database") === true) {
+        found.push(entry);
+      }
+    } catch {
+      // Not a log line.
+    }
+  }
+  return found;
+}
+
+describe("starting on a database an earlier release wrote", () => {
+  let server: FreshServer;
+  let instanceId: string;
+  let itemIds: string[];
+  let identity: Record<string, string[]>;
+  /** The database at schema version 1, stopped, with the server's rows. */
+  let image: string;
+  const kept: string[] = [];
+
+  const instanceIdOf = async (apiUrl: string): Promise<string> =>
+    (
+      (await (
+        await fetch(`${apiUrl}/`, { headers: { Accept: "application/json" } })
+      ).json()) as { instance_id: string }
+    ).instance_id;
+
+  beforeAll(async () => {
+    server = await bootFreshServer("lifecycle-upgrade");
+    itemIds = await writeNotes(server, "lifecycle-upgrade", 5);
+    instanceId = await instanceIdOf(server.apiUrl);
+    const dir = mkdtempSync(join(tmpdir(), "marfa-upgrade-donor-"));
+    kept.push(dir);
+    image = join(dir, "marfa.db");
+    await server.restart({
+      whileStopped: () => {
+        withInstanceDatabase(server.sqlitePath, asVersionOne);
+        identity = rowsOf(server.sqlitePath, IDENTITY_TABLES);
+        cpSync(server.sqlitePath, image);
+      },
+    });
+  }, FRESH_SERVER_TIMEOUT_MS);
+
+  afterAll(async () => {
+    await server.stop();
+    for (const dir of kept.splice(0)) {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  function bootOnImage(
+    extraEnv: Record<string, string>,
+    options: { change?: (db: Database) => void; killWhen?: string } = {},
+  ): Promise<RefusedBoot> {
+    return bootRefused("lifecycle-upgrade-refused", {
+      prepare: (sqlitePath) => {
+        cpSync(image, sqlitePath);
+        if (options.change) withInstanceDatabase(sqlitePath, options.change);
+      },
+      extraEnv,
+      killWhen: options.killWhen,
+    });
+  }
+
+  it("starts on the database at schema version 1, keeping its items, its keys and the instance's identity", async () => {
+    const client = new MarfaClient({
+      baseUrl: server.apiUrl,
+      apiKey: server.workingKey,
+    });
+    const listed = await client.listItems({ source: "lifecycle-upgrade" });
+
+    expect(schemaVersion(image)).toBe(1);
+    expect(listed.ok, JSON.stringify(listed.error)).toBe(true);
+    expect(listed.ok && listed.data.data.map((item) => item.id).sort()).toEqual(
+      [...itemIds].sort(),
+    );
+    expect(await instanceIdOf(server.apiUrl)).toBe(instanceId);
+    const after = rowsOf(server.sqlitePath, IDENTITY_TABLES);
+    for (const table of IDENTITY_TABLES) {
+      for (const row of identity[table] ?? []) {
+        expect(after[table], table).toContain(row);
+      }
+    }
+    expect(schemaVersion(server.sqlitePath)).toBeGreaterThan(1);
+  });
+
+  it("takes a copy of the database beside it before the update, which holds what the file held", () => {
+    const copies = copiesBeside(server.stateDir);
+
+    expect(copies).toHaveLength(1);
+    const copy = join(server.stateDir, copies[0]!);
+    expect(schemaVersion(copy)).toBe(1);
+    expect(rowsOf(copy, IDENTITY_TABLES)).toEqual(identity);
+  });
+
+  it("logs that it updated the database, naming the copy", () => {
+    const lines = updatedLine(serverOutput(server.stateDir));
+
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatchObject({
+      schema_from: 1,
+      backup_path: join(server.stateDir, copiesBeside(server.stateDir)[0]!),
+    });
+    expect(lines[0]?.schema_to).toBe(schemaVersion(server.sqlitePath));
+  });
+
+  it(
+    "takes no second copy and makes no second update on the next start",
+    async () => {
+      const version = schemaVersion(server.sqlitePath);
+
+      await server.restart();
+
+      expect(copiesBeside(server.stateDir)).toHaveLength(1);
+      expect(updatedLine(serverOutput(server.stateDir))).toHaveLength(1);
+      expect(schemaVersion(server.sqlitePath)).toBe(version);
+    },
+    FRESH_SERVER_TIMEOUT_MS,
+  );
+
+  it.each([
+    ["loses a row", "lose-row", /rows and would hold/],
+    [
+      "leaves a schema other than its own",
+      "change-shape",
+      /settings table has stray/,
+    ],
+  ])(
+    "refuses to start when the update %s, rolls it back and leaves the file as it was",
+    async (_what, fault, says) => {
+      const refused = await bootOnImage({ MARFA_TEST_MIGRATION_FAULT: fault });
+      try {
+        expect(refused).toMatchObject({
+          code: REFUSED_DATABASE_STATUS,
+          signal: null,
+        });
+        expectDatabaseUnchanged(refused);
+        expect(listened(refused)).toBe(false);
+        const text = refusalText(refused);
+        expect(text).toMatch(says);
+        expect(text).toContain(refused.sqlitePath);
+        expect(text).toContain("the update was rolled back");
+        const copies = copiesBeside(refused.stateDir);
+        expect(copies).toHaveLength(1);
+        expect(text).toContain(join(refused.stateDir, copies[0]!));
+      } finally {
+        await refused.stop();
+      }
+    },
+    FRESH_SERVER_TIMEOUT_MS,
+  );
+
+  it(
+    "refuses to start without the free space for the copy and the update, before it writes anything",
+    async () => {
+      const refused = await bootOnImage({ MARFA_TEST_FREE_DISK_BYTES: "1" });
+      try {
+        expect(refused).toMatchObject({
+          code: REFUSED_DATABASE_STATUS,
+          signal: null,
+        });
+        expectDatabaseUnchanged(refused);
+        expect(listened(refused)).toBe(false);
+        expect(refusalText(refused)).toContain("bytes free beside it");
+        expect(copiesBeside(refused.stateDir)).toEqual([]);
+      } finally {
+        await refused.stop();
+      }
+    },
+    FRESH_SERVER_TIMEOUT_MS,
+  );
+
+  it(
+    "refuses to start on a database a newer build wrote, and leaves it as it was",
+    async () => {
+      const refused = await bootOnImage(
+        {},
+        { change: (db) => db.exec("PRAGMA user_version = 1000") },
+      );
+      try {
+        expect(refused).toMatchObject({
+          code: REFUSED_DATABASE_STATUS,
+          signal: null,
+        });
+        expectDatabaseUnchanged(refused);
+        expect(listened(refused)).toBe(false);
+        expect(refusalText(refused)).toContain("which a newer build wrote");
+        expect(refusalText(refused)).toContain(refused.sqlitePath);
+        expect(copiesBeside(refused.stateDir)).toEqual([]);
+      } finally {
+        await refused.stop();
+      }
+    },
+    FRESH_SERVER_TIMEOUT_MS,
+  );
+
+  it(
+    "leaves the database as it was when it is killed during the update, and updates it on the next start",
+    async () => {
+      const killed = await bootOnImage(
+        { MARFA_TEST_MIGRATION_FAULT: "hold" },
+        { killWhen: "Holding the database update open" },
+      );
+      try {
+        expect(killed).toMatchObject({ code: null, signal: "SIGKILL" });
+        expect(listened(killed)).toBe(false);
+        expect(schemaVersion(killed.sqlitePath)).toBe(1);
+        expect(rowsOf(killed.sqlitePath, IDENTITY_TABLES)).toEqual(identity);
+        expect(
+          withInstanceDatabase(killed.sqlitePath, (db) =>
+            db
+              .prepare(
+                "SELECT name FROM sqlite_master WHERE name = 'type_icons'",
+              )
+              .all(),
+          ),
+        ).toEqual([]);
+
+        // The same file and its log, under the server whose keys it holds.
+        // The index of the log is the killed process's, and SQLite remakes it.
+        await server.restart({
+          whileStopped: () => {
+            rmSync(`${server.sqlitePath}-shm`, { force: true });
+            for (const suffix of ["", "-wal"]) {
+              rmSync(`${server.sqlitePath}${suffix}`, { force: true });
+              if (existsSync(`${killed.sqlitePath}${suffix}`)) {
+                copyFileSync(
+                  `${killed.sqlitePath}${suffix}`,
+                  `${server.sqlitePath}${suffix}`,
+                );
+              }
+            }
+          },
+        });
+        const client = new MarfaClient({
+          baseUrl: server.apiUrl,
+          apiKey: server.workingKey,
+        });
+        const listed = await client.listItems({ source: "lifecycle-upgrade" });
+        expect(
+          listed.ok && listed.data.data.map((item) => item.id).sort(),
+        ).toEqual([...itemIds].sort());
+        expect(schemaVersion(server.sqlitePath)).toBeGreaterThan(1);
+        expect(updatedLine(serverOutput(server.stateDir))).toHaveLength(2);
+      } finally {
+        await killed.stop();
+      }
+    },
+    2 * FRESH_SERVER_TIMEOUT_MS,
   );
 });
 
