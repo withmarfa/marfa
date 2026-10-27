@@ -3,8 +3,8 @@
  *
  * The server and Litestream are stand-in executables at the front of the
  * path, so the script runs as the image runs it and the only thing under
- * test is what it does with a status. A server that refuses a database
- * another build wrote must not be started again by whatever restarts the
+ * test is what it does with a status. A server that refuses its database
+ * must not be started again by whatever restarts the
  * container, and one that crashed must.
  */
 import { afterEach, describe, expect, it } from "vitest";
@@ -280,7 +280,7 @@ describe("deploy/entrypoint.sh", () => {
     }
   });
 
-  it("stays up, unhealthy, with the message, when the server refuses a database another build wrote", async () => {
+  it("stays up, unhealthy, with the message, when the server refuses its database", async () => {
     const run = start({
       body: `echo "the schema is not this build's" >&2\nexit ${String(REFUSED)}`,
     });
@@ -288,7 +288,7 @@ describe("deploy/entrypoint.sh", () => {
     await expect.poll(run.output, { timeout: 10_000 }).toContain("stays up");
     expect(await stillRunningAfter(run, 1_500)).toBe(true);
     expect(run.output()).toContain("the schema is not this build's");
-    expect(run.output()).toContain("will not start on it");
+    expect(run.output()).toContain("will not start on the database");
     expect(run.output()).toContain("stays up");
   });
 
@@ -300,7 +300,7 @@ describe("deploy/entrypoint.sh", () => {
 
     await expect.poll(run.output, { timeout: 10_000 }).toContain("stays up");
     expect(await stillRunningAfter(run, 1_500)).toBe(true);
-    expect(run.output()).toContain("will not start on it");
+    expect(run.output()).toContain("will not start on the database");
   });
 
   it("ends 1, and does not stay up, when the server under Litestream stops for another reason", async () => {

@@ -78,21 +78,19 @@ Recovery ends existing browser sessions and preserves app access. It uses the sa
 
 ## Update the server
 
-Railway does not update this instance for you, and you should not let it. A Marfa build can refuse a database that an earlier build wrote, and before the first public release nothing upgrades a database in place; see [the deployment upgrade procedure](README.md#upgrading).
+Railway does not update this instance for you, and you should not let it update the image by itself. A new build updates the database in place at its first start, after it copies the database beside it on the volume, and going back to an earlier build means starting it on that copy; see [the deployment upgrade procedure](README.md#upgrading). Choose when that happens.
 
 - **Template updates do not apply.** Railway [template updates](https://docs.railway.com/templates/updates) work only for services that come from a GitHub repository, and its documentation says there is no mechanism to check for updates to Docker images. Railway does not tell you that the template now names a newer version.
-- **Leave image auto updates off.** Railway can [update an image automatically](https://docs.railway.com/deployments/image-auto-updates) inside a maintenance window. An automatic update redeploys the service with a newer image, and a build that refuses your database leaves the instance unhealthy until you go back.
+- **Leave image auto updates off.** Railway can [update an image automatically](https://docs.railway.com/deployments/image-auto-updates) inside a maintenance window. An automatic update redeploys the service with a newer image, which updates the database when you are not watching.
 - **Keep the tag pinned.** A tag such as `latest` moves to each new release, so a redeploy or an image auto update can change the build under your database. A version tag does not move: the release workflow does not retag a version once published.
 
-To move to a newer release, follow the upgrade procedure:
+To move to a newer release:
 
-1. Sign in to the old instance as its owner, open **Export and restore** (`/auth/owner/export`), and download the archive. Note the old release from `GET /`. Its image, `ghcr.io/withmarfa/marfa-server:<release>`, stays available under that tag.
-2. Start the new release on a fresh volume with a new `S3_PREFIX` or a new bucket. The simplest way on Railway is to deploy the template again in a new project, which uses the release the template names. Change the image tag only before the first deployment of that project. Once a server has started on the volume, its database belongs to that release, and changing the tag afterwards is an upgrade in place.
-3. Claim the new instance, sign in as its owner, and restore the archive on **Export and restore**. Keep the old instance and the archive until the restore succeeds.
+1. Note the running release from `GET /`, and take a volume backup as [Railway volume backups](https://docs.railway.com/volumes/backups) describes.
+2. In the Marfa server's settings, change the source image's tag to the new release, such as `ghcr.io/withmarfa/marfa-server:<release>`, then review and deploy the staged change.
+3. In the deployment's logs, find the line that says the server updated the database and names the copy, then read `GET /health`.
 
-Before the first public release, an archive is read only by the build that wrote it, so the restore in step 3 can refuse an archive from another release. If it does, keep running the old release; your data is still there.
-
-Do not upgrade by changing the image tag on the existing service. If you already did and the server refuses the database, set the tag back to the previous release and deploy. Railway's rollback changes the deployment, not the database contents, so only the build that wrote your database is sure to read it.
+If the new build refuses the database, it changed nothing: set the tag back to the previous release and deploy. Railway's rollback changes the deployment, not the database contents, so once the new build has updated the database, setting the tag back alone runs the previous release on a database it may refuse or not fully know. To go back after an update, restore the volume backup from step 1, which is older than the bucket's copy, as [Restore a volume backup](#restore-a-volume-backup) says, with the tag set back to the previous release in the same deployment.
 
 ## Remove your instance
 
@@ -138,7 +136,7 @@ These settings describe the saved template and its container defaults.
 | `S3_FORCE_PATH_STYLE`       | `false` for newly created Railway buckets                                     |
 | `S3_PREFIX`                 | `blobs`                                                                       |
 
-Railway's [bucket reference variables](https://docs.railway.com/storage-buckets#railway-provided-variables) use `BUCKET` for the S3 name; the display name is different. New buckets use virtual-hosted URLs. Older buckets may require path-style URLs, as shown in their Credentials tab. Each instance needs its own bucket, including separate instances created from the same template. The one exception is the new build in an upgrade, which can share the old instance's bucket under a new `S3_PREFIX`.
+Railway's [bucket reference variables](https://docs.railway.com/storage-buckets#railway-provided-variables) use `BUCKET` for the S3 name; the display name is different. New buckets use virtual-hosted URLs. Older buckets may require path-style URLs, as shown in their Credentials tab. Each instance needs its own bucket, including separate instances created from the same template.
 
 The image names its own build, so the template sets no build variable. `GET /` answers the commit the image was built from as `version` and the release as `release`, and `/health` reports the commit. Each tag is published for `linux/amd64` and `linux/arm64`, and a published version tag is never moved. The package is public, so Railway pulls it without registry credentials.
 

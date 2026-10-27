@@ -15,8 +15,9 @@
 # its own; that is a local or trial container, never a deployment, and the
 # line below says so in the log.
 #
-# A server that stops because the database on the volume was written by
-# another build has not crashed: starting it again meets the same file. It
+# A server that stops because it refuses the database on the volume, one a
+# newer build wrote, one it cannot update or one whose update failed and was
+# rolled back, has not crashed: starting it again meets the same file. It
 # says so with its own exit status, which this script writes down, and the
 # container then stays up, and unhealthy, with the server's message in the
 # log, so that no restart policy turns the refusal into a loop, with a bucket
@@ -78,8 +79,8 @@ esac
 
 mkdir -p "$(dirname "$SQLITE_PATH")" "$BLOB_PATH"
 
-# The status the server stops with when it refuses a database another build
-# wrote: `REFUSED_DATABASE_EXIT_CODE` in
+# The status the server stops with when it refuses a database:
+# `REFUSED_DATABASE_EXIT_CODE` in
 # `packages/server/src/storage/sqlite/refused-database.ts`.
 REFUSED_DATABASE=78
 
@@ -189,7 +190,7 @@ else
 fi
 
 if [ -e "$MARFA_RUN_DIR/refused-database" ]; then
-  echo "The database at $SQLITE_PATH was written by another build, so this server will not start on it, and the message above says how to carry its data forward. This container stays up, unhealthy, so that nothing restarts it into the same refusal; stop it to remove it." >&2
+  echo "This server will not start on the database at $SQLITE_PATH, and the message above says why and what to do. This container stays up, unhealthy, so that nothing restarts it into the same refusal; stop it to remove it." >&2
   trap 'kill "$napping" 2>/dev/null || true; exit 0' TERM INT
   while :; do
     sleep 3600 &
