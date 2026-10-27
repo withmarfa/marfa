@@ -34,6 +34,7 @@ const CORE_TYPE_IDENTIFIERS = [
   "core.file.audio",
   "core.file.image",
   "core.file.video",
+  "core.file.webpage",
   "core.highlight",
   "core.media",
   "core.media.album",

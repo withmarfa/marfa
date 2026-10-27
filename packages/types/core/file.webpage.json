@@ -1,0 +1,11 @@
+{
+  "id": "core.file.webpage",
+  "parent": "core.file",
+  "label": "Web Page",
+  "description": "An HTML page held as a file, such as a report an agent wrote. Inherits all core.file fields.",
+  "version": 0,
+  "fields": {},
+  "display_hints": {
+    "title_field": "title"
+  }
+}

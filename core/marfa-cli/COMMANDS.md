@@ -784,7 +784,7 @@ marfa items add [OPTIONS] <FILE>
 | --- | --- |
 | `--mime-type <TYPE>` | The file's MIME type. Guessed from the extension when omitted. |
 | `--title <TITLE>` | The file item's title. Defaults to the file's name. |
-| `--type <TYPE>` | The file item's type. Defaults to `core.file`, or the image, audio or video subtype when the MIME type says. |
+| `--type <TYPE>` | The file item's type. Defaults to `core.file`, or the image, audio, video or web page subtype when the MIME type says. |
 | `--tag <TAG>` | A tag, repeatable. |
 | `--tier <TIER>` | The tier to write it at; the server's default is the library. One of `library`, `feed`. |
 
@@ -805,7 +805,7 @@ marfa items attach [OPTIONS] <ID> <FILE>
 | --- | --- |
 | `--mime-type <TYPE>` | The file's MIME type. Guessed from the extension when omitted. |
 | `--title <TITLE>` | The file item's title. Defaults to the file's name. |
-| `--type <TYPE>` | The file item's type. Defaults to `core.file`, or the image, audio or video subtype when the MIME type says. |
+| `--type <TYPE>` | The file item's type. Defaults to `core.file`, or the image, audio, video or web page subtype when the MIME type says. |
 
 ### marfa items stats
 

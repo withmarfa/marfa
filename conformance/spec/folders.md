@@ -3922,6 +3922,14 @@ When a nonempty non-document file is admitted by a folder’s query or an embed,
 
 **Tests:** `device/folders-placement.test.ts › pushes a file that is not a document as a file item, its bytes uploaded first`, `device/folders-frontmatter.test.ts › sends an embedded file with its file`.
 
+### `folders/binary-webpage`
+
+When a nonempty file at an `.html`, `.htm` or `.xhtml` name, in any letter case, is admitted by a folder's query or an embed and the held catalog holds `core.file.webpage`, a device MUST create a file item of type `core.file.webpage`.
+
+**Reason:** an agent that writes a page into a folder Marfa follows expects the page kept as a page, with no step of its own to type it.
+
+**Tests:** `device/folders-placement.test.ts › pushes a file that is not a document as a file item, its bytes uploaded first`.
+
 ### `folders/binary-edited`
 
 When the bytes of a bound file item change in a folder, a device MUST queue an upload followed by an item update naming the new bytes regardless of the file’s extension.

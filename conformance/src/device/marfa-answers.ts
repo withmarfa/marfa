@@ -294,6 +294,12 @@ export const SCRIPTED_TYPES: ReadonlyArray<Record<string, unknown>> = [
     fields: FILE_FIELDS,
     mergePolicy: { fields: {}, default: "last_writer_wins" },
   }),
+  wireType("core.file.webpage", {
+    parent: "core.file",
+    titleField: "title",
+    fields: FILE_FIELDS,
+    mergePolicy: { fields: {}, default: "last_writer_wins" },
+  }),
   wireType("core.file.image", {
     parent: "core.file",
     titleField: "title",

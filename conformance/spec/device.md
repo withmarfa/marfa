@@ -3904,7 +3904,9 @@ Where a file is attached or added with no MIME type, a device MUST take the MIME
 
 ### `device/file-type-default`
 
-Where a file is attached or added with no type, a device MUST give the file item `core.file.image`, `core.file.audio` or `core.file.video` for a MIME type of that kind, and `core.file` for any other.
+Where a file is attached or added with no type, a device MUST give the file item `core.file.image`, `core.file.audio` or `core.file.video` for a MIME type of that kind, `core.file.webpage` for the MIME type `text/html` or `application/xhtml+xml`, and `core.file` for any other.
+
+**Reason:** a page is an HTML file whatever the top-level part of its MIME type, which names only text; a parameter such as a charset, and the case of the type, do not change what it is.
 
 **Tests:** `device/queue.test.ts › types an added file by its extension, whatever its case, where it is told nothing`, `› adds a file as an upload and a file item, linked to nothing`.
 

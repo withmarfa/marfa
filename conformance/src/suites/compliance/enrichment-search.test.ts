@@ -50,6 +50,22 @@ async function textFile(title: string, text: string): Promise<string> {
   return created.data.item.id;
 }
 
+async function webPage(
+  title: string,
+  html: string,
+  mimeType: string,
+): Promise<string> {
+  const uploaded = await client.uploadBlob(Buffer.from(html), mimeType);
+  expect(uploaded.status).toBe(201);
+  const created = await client.createItem({
+    type: "core.file.webpage",
+    tier: "library",
+    properties: { blob_ref: uploaded.data.hash, mime_type: mimeType, title },
+  });
+  expect(created.status, JSON.stringify(created.error)).toBe(201);
+  return created.data.item.id;
+}
+
 async function found(query: string, state?: string): Promise<string[]> {
   const result = await client.search(query, {
     limit: 50,
@@ -94,6 +110,47 @@ describe("search over extracted file text", () => {
     expect(await found("zorblax")).toEqual([hit]);
     expect(await found("ledger")).toEqual([hit]);
     expect(await found("quietude")).toEqual([other]);
+  }, 120_000);
+
+  it("finds a Web Page by the words on it and not by its markup, script or style", async () => {
+    const page = await webPage(
+      "weekly report",
+      `<!doctype html><html><head><title>Fjordish summary</title>
+       <style>.styleonlyword { color: red }</style>
+       <script>const scriptonlyword = "<p>nope</p>";</script></head>
+       <body><h1>Heading</h1><p>Sales rose by <b>brindlewick</b> &amp; more.</p>
+       <p class="attributeonlyword" data-x="datavalueword">Second&nbsp;paragraph</p>
+       <!-- commentonlyword --></body></html>`,
+      "text/html; charset=utf-8",
+    );
+    // A page the tokenizer must recover from, typed as an old page.
+    const broken = await webPage(
+      "broken report",
+      "<div><p>unclosed <b>marmalade <script>var s = 1;",
+      "TEXT/HTML",
+    );
+
+    await sweep();
+
+    const read = await client.getItem(page);
+    expect(read.data.item.properties.extracted_text).toBe(
+      "Fjordish summary\nHeading\nSales rose by brindlewick & more.\nSecond paragraph",
+    );
+    expect(await found("brindlewick")).toEqual([page]);
+    expect(await found("fjordish")).toEqual([page]);
+    expect(await found("marmalade")).toEqual([broken]);
+    // The witness is the words above, found in the same pages: the tag, the
+    // attribute, the style, the script and the comment hold words that are
+    // not.
+    for (const word of [
+      "styleonlyword",
+      "scriptonlyword",
+      "attributeonlyword",
+      "datavalueword",
+      "commentonlyword",
+    ]) {
+      expect(await found(word), word).toEqual([]);
+    }
   }, 120_000);
 
   it("leaves a file in the bin unmatched, and matches it again once restored", async () => {

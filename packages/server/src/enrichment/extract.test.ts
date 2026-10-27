@@ -412,3 +412,107 @@ describe.skipIf(process.env.MARFA_TEST_OCR !== "1")("real OCR", () => {
     }
   }, 120_000);
 });
+
+describe("extractText from HTML", () => {
+  const read = async (
+    html: string,
+    mime = "text/html",
+    opts: typeof OPTS = OPTS,
+  ): Promise<string> => {
+    const out = await extractText(Buffer.from(html), mime, opts);
+    if (out.kind !== "text") throw new Error(`expected text, got ${out.kind}`);
+    return out.text;
+  };
+
+  it("keeps the visible text and no markup", async () => {
+    const text = await read(
+      `<!doctype html><html><head><title>Quarterly &amp; yearly</title>
+       <style>.quokkacss { color: red }</style></head>
+       <body><h1>Report</h1><p>Sales rose &pound;5 &#x2014; <b>quokkahtml</b>.</p>
+       <script>var quokkascript = "<p>not text</p>";</script>
+       <noscript>enable scripts</noscript><!-- quokkacomment --></body></html>`,
+    );
+    expect(text).toContain("quokkahtml");
+    expect(text).toContain("Quarterly & yearly");
+    expect(text).toContain("Sales rose £5 — quokkahtml.");
+    for (const absent of ["<", "quokkacss", "quokkascript", "quokkacomment"]) {
+      expect(text, absent).not.toContain(absent);
+    }
+    expect(text).not.toContain("enable scripts");
+  });
+
+  it("separates block elements so words do not run together", async () => {
+    const text = await read(
+      "<div>one</div><div>two</div><ul><li>three</li><li>four</li></ul>a<br>b<table><tr><td>c</td><td>d</td></tr></table>",
+    );
+    expect(text).toBe("one\ntwo\nthree\nfour\na\nb\nc d");
+  });
+
+  it("keeps the line breaks of preformatted text", async () => {
+    expect(await read("<pre>a\n\n\nb</pre><p>c</p>")).toBe("a\nb\nc");
+  });
+
+  it("reads a MIME type that carries a charset, in any case", async () => {
+    expect(await read("<p>quokka</p>", "Text/HTML; charset=utf-8")).toBe(
+      "quokka",
+    );
+    expect(
+      isEnrichableMime("text/html; charset=utf-8", { ocrAvailable: false }),
+    ).toBe(true);
+  });
+
+  it("reads an XHTML page with self-closing tags", async () => {
+    expect(
+      await read("<div/><p>after</p><br/>end", "application/xhtml+xml"),
+    ).toBe("after\nend");
+  });
+
+  it("answers empty for a page that is only script and style", async () => {
+    const out = await extractText(
+      Buffer.from(
+        `<html><head><style>${"p{}".repeat(5000)}</style></head><body><script>${"x();".repeat(5000)}</script></body></html>`,
+      ),
+      "text/html",
+      OPTS,
+    );
+    expect(out.kind).toBe("empty");
+  });
+
+  it("finds the text of a page that is mostly script", async () => {
+    const text = await read(
+      `<script>${"x();".repeat(100_000)}</script><p>quokkaburied</p><script>y()</script>`,
+    );
+    expect(text).toBe("quokkaburied");
+  });
+
+  it("recovers what it can from malformed HTML", async () => {
+    const text = await read(
+      "<div><p>first <b>bold <i>italic</div></span></p>second</b> <a href='x' <p>third &bogus; &amp",
+    );
+    expect(text).toContain("first");
+    expect(text).toContain("second");
+    expect(text).toContain("&bogus;");
+    expect(await read("<p>unterminated <script>quokka")).toBe("unterminated");
+    expect(await read("not html at all")).toBe("not html at all");
+  });
+
+  it("cuts a page far beyond the limit to the limit", async () => {
+    const page = `<html><body>${"<p>quokka quokka quokka</p>".repeat(200_000)}</body></html>`;
+    const started = performance.now();
+    const text = await read(page, "text/html", { ...OPTS, maxTextChars: 1000 });
+    expect(text).toHaveLength(1000);
+    expect(text.startsWith("quokka quokka quokka\nquokka")).toBe(true);
+    expect(performance.now() - started).toBeLessThan(2000);
+  });
+
+  it("stops when the budget is aborted", async () => {
+    const budget = new AbortController();
+    budget.abort(new Error("extraction timed out"));
+    await expect(
+      extractText(Buffer.from("<p>a</p>"), "text/html", {
+        ...OPTS,
+        signal: budget.signal,
+      }),
+    ).rejects.toThrow("extraction timed out");
+  });
+});
