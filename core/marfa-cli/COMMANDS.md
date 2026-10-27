@@ -3545,7 +3545,7 @@ marfa folders [OPTIONS] <COMMAND>
 
 ### marfa folders add
 
-Make a directory a folder that follows a `system.folder`'s settings, which `folders create` makes. Needs read on `system.folder`. Warns on standard error, once, and goes on, if the directory is in iCloud Drive, a cloud service's synced location or a network file system.
+Make a directory a folder that follows a `system.folder`'s settings, which `folders create` makes. Needs read on `system.folder`. Warns on standard error, once, and goes on, if the directory is in iCloud Drive, a cloud service's synced location or a network file system, or if git tracks it.
 
 ```text
 marfa folders add [OPTIONS] --folder <ID> <DIR>

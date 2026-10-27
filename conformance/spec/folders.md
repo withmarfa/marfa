@@ -6688,6 +6688,30 @@ When a folder is added, or a watch starts on a folder, whose directory is on a f
 
 **Tests:** waiting on #2027.
 
+### `folders/git-tracked-warns`
+
+When a folder is added whose directory is tracked by git, meaning the directory is in a git work tree and that work tree’s index holds a file in it, the CLI MUST print one line on standard error that begins `marfa: warning: ` and names git and the directory.
+
+**Reason:** A checkout, reset or branch switch changes those files and Marfa syncs the changes, so git and Marfa both change the same files. A folder kept beside code is best put in a directory git ignores.
+
+**Tests:** `device/folders-git-warning.test.ts › warns on standard error when git tracks the directory, and adds it all the same`, `› warns of a directory in a linked work tree, where .git is a file`, `› keeps standard output to its JSON document under --json`.
+
+### `folders/git-tracked-continues`
+
+If the CLI prints the git warning, then the CLI MUST add the folder as it would a directory git does not track.
+
+**Reason:** Someone who backs up through git is not stopped; the warning informs the person.
+
+**Tests:** `device/folders-git-warning.test.ts › warns on standard error when git tracks the directory, and adds it all the same`.
+
+### `folders/git-untracked-silent`
+
+While a folder’s directory is not tracked by git, whether it is ignored by git, holds no file in a git index, is outside every git work tree, or git cannot be run or answers with an error, the CLI MUST NOT print the git warning for it.
+
+**Reason:** `.git` alone does not say a directory is tracked, and nothing git owns yet cannot be changed by a checkout. The warning only informs, so a missing or failing `git` never fails the add.
+
+**Tests:** `device/folders-git-warning.test.ts › prints no warning for a directory that is ignored, untracked, or outside a repository`, `› prints no warning, and adds the folder, when git cannot be run`.
+
 ### `folders/storage-warning-continues`
 
 If the CLI prints a storage warning, then the CLI MUST add the folder or watch it as it would a directory elsewhere.

@@ -26,6 +26,41 @@ pub enum StorageCause {
     NetworkFileSystem(String),
 }
 
+/// Whether git tracks `dir`: it is in a git work tree and the index holds a
+/// file in it. A directory that is untracked or ignored, one outside any work
+/// tree, a machine with no `git`, and any error from git all answer `false`,
+/// since the answer only informs. A `.git` file, as in a linked work tree or
+/// a submodule, is read by git like a `.git` directory.
+pub fn git_tracked(dir: &Path) -> bool {
+    use std::io::Read;
+    use std::process::{Command, Stdio};
+    let Ok(mut git) = Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(["ls-files", "--cached", "-z"])
+        // A hook or a script that runs Marfa can set these for its own
+        // repository, which is not the directory's.
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_INDEX_FILE")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+    else {
+        return false;
+    };
+    // One byte is enough to know; a large index need not be read.
+    let mut first = [0u8; 1];
+    let tracked = git
+        .stdout
+        .take()
+        .is_some_and(|mut out| matches!(out.read(&mut first), Ok(1)));
+    let _ = git.kill();
+    let _ = git.wait();
+    tracked
+}
+
 /// The cause for `dir`, or `None` for a directory anywhere else, and for one
 /// that cannot be examined. Reads the file system, so it can wait on a mount
 /// that does not answer.
@@ -433,5 +468,65 @@ mod tests {
         for magic in [0xEF53, 0x0102_1994, 0x9123_683E, 0x517B, 0x6969_0000, 0] {
             assert_eq!(network_by_magic(magic), None, "{magic:#x}");
         }
+    }
+
+    fn git(dir: &Path, args: &[&str]) {
+        let status = std::process::Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args(["-c", "user.name=t", "-c", "user.email=t@example.com"])
+            .args(args)
+            .env_remove("GIT_DIR")
+            .status()
+            .unwrap();
+        assert!(status.success(), "git {args:?}");
+    }
+
+    #[test]
+    fn git_tracks_a_directory_only_while_its_index_holds_a_file_in_it() {
+        let temp = tempdir();
+        let repo = temp.path().to_path_buf();
+        git(&repo, &["init", "-q"]);
+        std::fs::write(repo.join(".gitignore"), "marfa/\n").unwrap();
+        for below in ["tracked", "untracked", "marfa", "empty"] {
+            std::fs::create_dir_all(repo.join(below)).unwrap();
+        }
+        std::fs::write(repo.join("tracked/a.md"), "a").unwrap();
+        std::fs::write(repo.join("untracked/b.md"), "b").unwrap();
+        std::fs::write(repo.join("marfa/c.md"), "c").unwrap();
+        git(&repo, &["add", ".gitignore", "tracked"]);
+        // Tracked, and below a tracked directory.
+        assert!(git_tracked(&repo.join("tracked")));
+        assert!(git_tracked(&repo));
+        // The witness above: the same repository, so each of these is a
+        // directory git is asked about and does not track.
+        assert!(!git_tracked(&repo.join("untracked")));
+        assert!(!git_tracked(&repo.join("marfa")));
+        assert!(!git_tracked(&repo.join("empty")));
+        // Not a directory that exists.
+        assert!(!git_tracked(&repo.join("missing")));
+    }
+
+    #[test]
+    fn a_directory_outside_any_work_tree_is_not_tracked() {
+        let temp = tempdir();
+        let dir = made(temp.path(), "notes");
+        std::fs::write(dir.join("a.md"), "a").unwrap();
+        assert!(!git_tracked(&dir));
+    }
+
+    #[test]
+    fn a_dot_git_file_marks_a_work_tree_as_a_dot_git_directory_does() {
+        let temp = tempdir();
+        let main = made(temp.path(), "main");
+        git(&main, &["init", "-q"]);
+        std::fs::create_dir_all(main.join("notes")).unwrap();
+        std::fs::write(main.join("notes/a.md"), "a").unwrap();
+        git(&main, &["add", "notes"]);
+        git(&main, &["commit", "-q", "-m", "first"]);
+        let linked = temp.path().join("linked");
+        git(&main, &["worktree", "add", "-q", linked.to_str().unwrap()]);
+        assert!(linked.join(".git").is_file());
+        assert!(git_tracked(&linked.join("notes")));
     }
 }

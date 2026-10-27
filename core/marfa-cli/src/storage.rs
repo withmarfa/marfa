@@ -24,6 +24,22 @@ pub fn warn(folder: &Folder) {
     );
 }
 
+/// Warns on standard error, and goes on, if git tracks the directory of a
+/// folder just added. Only the add says it: where a folder sits is chosen
+/// there, and a watch would repeat advice that no longer changes anything.
+pub fn warn_git(folder: &Folder) {
+    if folder.git_tracked() {
+        let _ = writeln!(std::io::stderr(), "{}", git_notice(folder.root()));
+    }
+}
+
+fn git_notice(dir: &Path) -> String {
+    format!(
+        "marfa: warning: git tracks {}, so a checkout, reset or branch switch changes its files and Marfa syncs those changes, with git and Marfa both changing the same files; put a folder kept beside code in a directory git ignores; Marfa goes on",
+        dir.display()
+    )
+}
+
 /// The same for a folder whose watch has started, where the watch has said
 /// already what it found.
 pub fn warn_of(dir: &Path, cause: &StorageCause) {
