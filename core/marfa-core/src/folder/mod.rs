@@ -971,6 +971,17 @@ impl Folder {
             .is_ok_and(|(directory, name)| directory.entry_kind(Path::new(&name)).is_ok())
     }
 
+    /// Whether a regular file is at `path`, as the walk takes one: a directory
+    /// or a symbolic link there is no file.
+    fn is_file(&self, path: impl AsRef<Path>) -> bool {
+        self.location(path.as_ref(), false)
+            .is_ok_and(|(directory, name)| {
+                directory
+                    .entry_kind(Path::new(&name))
+                    .is_ok_and(|kind| kind == crate::directory::FileType::RegularFile)
+            })
+    }
+
     fn remove_file(&self, path: &Path, still: impl FnOnce(&[u8]) -> bool) -> std::io::Result<bool> {
         let (directory, name) = self.location(path, false)?;
         landing::remove_at(&directory, Path::new(&name), still)
@@ -3967,6 +3978,90 @@ mod tests {
                 .unwrap()
                 .is_empty()
         );
+    }
+
+    /// What a person can leave at the path of a missing file that is not a
+    /// file the walk takes.
+    fn not_a_file_at(dir: &Path, name: &str, kind: usize) {
+        let at = dir.join(name);
+        let outside = dir.join(STATE_DIR).join("elsewhere");
+        match kind {
+            0 => std::fs::create_dir(&at).unwrap(),
+            1 => {
+                std::fs::create_dir(&outside).unwrap();
+                std::os::unix::fs::symlink(&outside, &at).unwrap();
+            }
+            _ => {
+                std::fs::write(&outside, "elsewhere\n").unwrap();
+                std::os::unix::fs::symlink(&outside, &at).unwrap();
+            }
+        }
+    }
+
+    #[test]
+    fn a_sweep_trashes_the_item_of_a_file_replaced_by_what_is_no_file() {
+        for kind in 0..3 {
+            let (_, _registry) = registry::tests::own_registry();
+            let (dir, folder) = folder_with(
+                &format!("01a00000-0000-7000-8000-0000000000f{kind}"),
+                serde_json::json!({ "query": {} }),
+                None,
+            );
+            std::fs::write(dir.path().join("a.md"), "a words\n").unwrap();
+            assert_eq!(folder.scan().unwrap().created, 1);
+            let a = landed(&folder, "a.md");
+            folder.pull().unwrap();
+            std::fs::remove_file(dir.path().join("a.md")).unwrap();
+            assert_eq!(folder.scan().unwrap().missing, 1);
+            past_the_grace(&folder, "a.md");
+            not_a_file_at(dir.path(), "a.md", kind);
+            let swept = folder.scan().unwrap();
+            assert_eq!(swept.trashed, ["a.md"], "{kind}: {swept:?}");
+            assert_eq!(
+                deletes_queued(&folder).len(),
+                1,
+                "{kind}: no delete was queued: {swept:?}"
+            );
+            let conn = folder.core.conn().unwrap();
+            assert!(
+                state::bound_at(&conn, "a.md").unwrap().is_none(),
+                "{kind}: {a} is still bound"
+            );
+            assert!(state::journaled(&conn).unwrap().is_empty());
+        }
+    }
+
+    #[test]
+    fn a_confirmed_removal_trashes_the_item_of_a_file_replaced_by_what_is_no_file() {
+        for kind in 0..3 {
+            let (_, _registry) = registry::tests::own_registry();
+            let (dir, folder) = folder_with(
+                &format!("01a00000-0000-7000-8000-0000000000f{}", kind + 4),
+                serde_json::json!({
+                    "query": {},
+                    "removal_threshold": { "files": 0, "fraction": 0.0 }
+                }),
+                None,
+            );
+            std::fs::write(dir.path().join("a.md"), "a words\n").unwrap();
+            assert_eq!(folder.scan().unwrap().created, 1);
+            landed(&folder, "a.md");
+            folder.pull().unwrap();
+            std::fs::remove_file(dir.path().join("a.md")).unwrap();
+            assert_eq!(folder.scan().unwrap().missing, 1);
+            past_the_grace(&folder, "a.md");
+            let held = folder.scan().unwrap();
+            assert_eq!(held.paused, 1, "{kind}: {held:?}");
+            not_a_file_at(dir.path(), "a.md", kind);
+            let confirmed = folder.confirm().unwrap();
+            assert_eq!(confirmed.deleted, 1, "{kind}: {confirmed:?}");
+            assert_eq!(deletes_queued(&folder).len(), 1, "{kind}");
+            assert!(
+                state::bound_at(&folder.core.conn().unwrap(), "a.md")
+                    .unwrap()
+                    .is_none()
+            );
+        }
     }
 
     #[test]

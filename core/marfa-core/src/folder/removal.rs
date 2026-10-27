@@ -49,7 +49,7 @@ impl Folder {
         let missing: Vec<(String, String)> = disk
             .iter()
             // A file put back since is not gone, whatever the pause recorded.
-            .filter(|path| !self.exists(self.root.join(path)))
+            .filter(|path| !self.is_file(self.root.join(path)))
             .filter_map(|path| {
                 let row = journaled.iter().find(|row| &row.path == path)?;
                 Some((path.clone(), row.item_id.clone()))

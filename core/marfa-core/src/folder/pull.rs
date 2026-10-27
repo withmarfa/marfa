@@ -1758,7 +1758,7 @@ impl Folder {
         bound: &state::Bound,
         (catalog, edge_types, names): Basis<'_>,
     ) -> Result<bool> {
-        if self.exists(self.root.join(&bound.path))
+        if self.is_file(self.root.join(&bound.path))
             || !journaled_for(&*self.core.conn()?, &bound.path, &item.id)?
         {
             return Ok(false);

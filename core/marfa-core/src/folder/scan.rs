@@ -1940,7 +1940,7 @@ impl Folder {
                     // A file at a path another item's binding holds is that
                     // item's, and answers nothing for this one.
                     let put_back = || -> Result<bool> {
-                        if bound.is_none() || !self.exists(self.root.join(path)) {
+                        if bound.is_none() || !self.is_file(self.root.join(path)) {
                             return Ok(false);
                         }
                         // No longer missing, so a scan that moves the file
