@@ -5181,6 +5181,8 @@ describe("an upload is a queued write", () => {
         "core.file",
       ],
       ["Photo.JPG", "image/jpeg", "core.file.image"],
+      ["page.html", "text/html", "core.file.webpage"],
+      ["OLD.HTM", "text/html", "core.file.webpage"],
       ["blob.unknown", "application/octet-stream", "core.file"],
     ] as const) {
       const added = await device.addFile(fileOf(name, `bytes of ${name}\n`));

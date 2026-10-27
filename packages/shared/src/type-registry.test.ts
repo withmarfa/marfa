@@ -61,6 +61,7 @@ describe("TYPE_REGISTRY", () => {
       "core.file.image",
       "core.file.audio",
       "core.file.video",
+      "core.file.webpage",
     ];
     for (const id of fileTypes) {
       expect(TYPE_REGISTRY.has(id), `missing ${id}`).toBe(true);
@@ -1286,6 +1287,11 @@ describe("merge_policy — per-type registry snapshot", () => {
     },
     {
       typeId: "core.file.video",
+      expectedKeepBoth: [],
+      expectedDefault: "last_writer_wins",
+    },
+    {
+      typeId: "core.file.webpage",
       expectedKeepBoth: [],
       expectedDefault: "last_writer_wins",
     },

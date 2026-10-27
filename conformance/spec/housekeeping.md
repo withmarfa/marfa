@@ -137,7 +137,7 @@ While a run of one housekeeping job is in progress, the server MUST run another 
 
 ## The enrichment sweep
 
-The `enrichment-sweep` job reads a file item's bytes and writes what it finds onto the item: an image's `width` and `height`, and a file's `extracted_text`. Enrichment is on unless a setting switches it off. OCR, which reads text from images, has a switch of its own.
+The `enrichment-sweep` job reads a file item's bytes and writes what it finds onto the item: an image's `width` and `height`, and a file's `extracted_text`: the bytes of a plain-text file, the text of a page or document, or the words read from an image. Enrichment is on unless a setting switches it off. OCR, which reads text from images, has a switch of its own.
 
 ### `housekeeping/enrichment-failure-counted`
 
@@ -226,6 +226,22 @@ Where enrichment is on, the server MUST write `width` and `height` from the imag
 Where enrichment is on, the server MUST write the plain-text bytes of an item whose type inherits from `core.file` as its `extracted_text`, whatever the type is named.
 
 **Tests:** `compliance/enrichment-by-inheritance.test.ts › takes a type inheriting from a file type as that file, whatever its name`.
+
+### `housekeeping/enrichment-html-text`
+
+Where enrichment is on, the server MUST write the text a person would read in the page, with no markup, script or style, and with its character references decoded, as the `extracted_text` of a file item whose `mime_type` is `text/html` or `application/xhtml+xml`, whatever parameters or letter case the `mime_type` carries.
+
+**Reason:** a Web Page is found by the words on it. Markup, the names of its attributes and the code of its scripts are not words a person wrote to be found, and an unreadable page must not stop the server.
+
+**Tests:** `compliance/enrichment-search.test.ts › finds a Web Page by the words on it and not by its markup, script or style`.
+
+### `housekeeping/enrichment-html-bounds`
+
+Where enrichment is on, if a file item whose `mime_type` is `text/html` or `application/xhtml+xml` holds a page with more than 8 MiB of source, more than 512 open elements at one point, or more text than `MARFA_ENRICHMENT_MAX_TEXT_CHARS`, then the server MUST write as the item's `extracted_text` only the text of the page before the first limit it passes.
+
+**Reason:** a page is written by anyone and read by a parser whose work grows with the depth of its elements, so an unbounded page can hold the server for as long as its author likes. Text found before the limit is still the words a person would search for, and the item is stored either way.
+
+**Tests:** `compliance/enrichment-search.test.ts › keeps the text before a limit a page passes, and reads it within a bound of time`.
 
 ### `housekeeping/enrichment-needs-file-type`
 

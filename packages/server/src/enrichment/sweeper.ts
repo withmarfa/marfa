@@ -13,7 +13,7 @@ import { runAuditedTransaction } from "../storage/audited-transaction.js";
 import { writeItem } from "../storage/item-write.js";
 import type { OcrEngine } from "./ocr.js";
 import { extractText, isEnrichableMime } from "./extract.js";
-import { ExtractionLimitError } from "./office.js";
+import { ExtractionLimitError } from "./isolated.js";
 import { yieldBulkWork } from "../bulk-actions/yield.js";
 import {
   DIMENSION_FIELDS,

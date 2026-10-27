@@ -4,6 +4,7 @@ import {
   extractOfficeText,
   type OfficeLimits,
 } from "./office.js";
+import { HTML_MIMES, extractHtmlText } from "./html.js";
 import { OCR_MIMES } from "./ocr.js";
 import type { OcrEngine } from "./ocr.js";
 
@@ -30,6 +31,7 @@ export function isEnrichableMime(
   const bare = mime.split(";")[0]?.trim().toLowerCase() ?? "";
   return (
     TEXT_MIMES.has(bare) ||
+    HTML_MIMES.has(bare) ||
     bare in OFFICE_MIME_TO_FILE_TYPE ||
     (opts.ocrAvailable && OCR_MIMES.has(bare))
   );
@@ -37,9 +39,10 @@ export function isEnrichableMime(
 
 /**
  * Deterministic text extraction, dispatched on the item's declared MIME
- * type: plain text decodes, document formats parse (embedded text only),
- * images OCR when an engine is supplied. Anything else is `unsupported`,
- * which the sweeper records once and never retries.
+ * type: plain text decodes, HTML pages are reduced to their visible text,
+ * document formats parse (embedded text only), images OCR when an engine is
+ * supplied. Anything else is `unsupported`, which the sweeper records once and
+ * never retries.
  */
 export async function extractText(
   bytes: Buffer,
@@ -56,6 +59,13 @@ export async function extractText(
   let text: string;
   if (TEXT_MIMES.has(mime)) {
     text = bytes.toString("utf8");
+  } else if (HTML_MIMES.has(mime)) {
+    text = await extractHtmlText(bytes, {
+      maxChars: opts.maxTextChars,
+      maxMemoryBytes: opts.office.maxMemoryBytes,
+      xml: mime !== "text/html",
+      signal: opts.signal,
+    });
   } else if (mime in OFFICE_MIME_TO_FILE_TYPE) {
     const fileType = OFFICE_MIME_TO_FILE_TYPE[mime];
     if (fileType === undefined) return { kind: "unsupported" };

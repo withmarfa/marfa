@@ -351,6 +351,30 @@ const coreFileVideo: TypeSchema = {
   merge_policy: { default: "last_writer_wins" },
 };
 
+const coreFileWebpage: TypeSchema = {
+  id: "core.file.webpage",
+  parent: "core.file",
+  label: "Web Page",
+  description: "An HTML page held as a file, such as a report an agent wrote. Inherits all core.file fields.",
+  version: 0,
+  fields: {
+    blob_ref: { type: "string", description: "Reference to the binary content (sha256:<hex>)", required: true },
+    mime_type: { type: "string", description: "MIME type", required: true },
+    title: { type: "string", description: "Filename or title" },
+    description: { type: "string", description: "What the file contains" },
+    url: { type: "url", description: "Web address" },
+    source_url: { type: "url", description: "Where the file was sourced from" },
+    author: { type: "string", description: "Who created the file" },
+    language: { type: "string", description: "BCP 47 language code", format: "bcp47" },
+    notes: { type: "string", description: "Personal annotations" },
+    extracted_text: { type: "string", description: "Machine-extracted text content of the referenced blob (server enrichment: document text or image OCR)" },
+    executable: { type: "boolean", description: "Whether the file may be run as a program; absent means it may not" },
+    size_bytes: { type: "integer", description: "Size in bytes of the referenced blob (set by the server from the bytes the instance holds; absent where whoever named blob_ref never proved it holds them)" },
+  },
+  display_hints: { title_field: "title" },
+  merge_policy: { default: "last_writer_wins" },
+};
+
 const coreMediaAlbum: TypeSchema = {
   id: "core.media.album",
   parent: "core.media",
@@ -556,6 +580,7 @@ export const ALL_TYPES: TypeSchema[] = [
   coreFileAudio,
   coreFileImage,
   coreFileVideo,
+  coreFileWebpage,
   coreMediaAlbum,
   coreMediaArticle,
   coreMediaBook,
@@ -629,6 +654,7 @@ export const ALL_TYPE_IDS = [
   "core.file.audio",
   "core.file.image",
   "core.file.video",
+  "core.file.webpage",
   "core.highlight",
   "core.media",
   "core.media.album",
@@ -1218,6 +1244,57 @@ export const SHIPPED_TYPE_SHAPES = {
       },
       "width": {
         "type": "integer"
+      }
+    },
+    "merge_policy": {
+      "default": "last_writer_wins"
+    },
+    "parent": "core.file",
+    "version": 0
+  },
+  "core.file.webpage": {
+    "display_hints": {
+      "title_field": "title"
+    },
+    "fields": {
+      "author": {
+        "type": "string"
+      },
+      "blob_ref": {
+        "required": true,
+        "type": "string"
+      },
+      "description": {
+        "type": "string"
+      },
+      "executable": {
+        "type": "boolean"
+      },
+      "extracted_text": {
+        "type": "string"
+      },
+      "language": {
+        "format": "bcp47",
+        "type": "string"
+      },
+      "mime_type": {
+        "required": true,
+        "type": "string"
+      },
+      "notes": {
+        "type": "string"
+      },
+      "size_bytes": {
+        "type": "integer"
+      },
+      "source_url": {
+        "type": "url"
+      },
+      "title": {
+        "type": "string"
+      },
+      "url": {
+        "type": "url"
       }
     },
     "merge_policy": {

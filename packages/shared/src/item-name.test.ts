@@ -14,6 +14,7 @@ it("names every built-in type through its display hints", () => {
     "core.file.audio": "title",
     "core.file.image": "title",
     "core.file.video": "title",
+    "core.file.webpage": "title",
     "core.highlight": "text",
     "core.media": "title",
     "core.media.album": "title",

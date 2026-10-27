@@ -1457,6 +1457,7 @@ pub fn mime_type_for(path: &Path, given: Option<&str>) -> String {
         "txt" => "text/plain",
         "md" | "markdown" => "text/markdown",
         "html" | "htm" => "text/html",
+        "xhtml" => "application/xhtml+xml",
         "json" => "application/json",
         "csv" => "text/csv",
         "mp3" => "audio/mpeg",
@@ -1470,11 +1471,24 @@ pub fn mime_type_for(path: &Path, given: Option<&str>) -> String {
     .to_string()
 }
 
+/// The file type a MIME type names when the writer names none. Parameters
+/// and case do not change the kind (`Text/HTML; charset=utf-8` is a page), and
+/// a page is a Web Page whatever its top-level part, which names only text.
 pub fn file_type_for(mime_type: &str, given: Option<&str>) -> String {
     if let Some(given) = given {
         return given.to_string();
     }
-    match mime_type.split('/').next().unwrap_or("") {
+    let essence = mime_type
+        .split(';')
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_ascii_lowercase();
+    match essence.as_str() {
+        "text/html" | "application/xhtml+xml" => return "core.file.webpage".to_string(),
+        _ => {}
+    }
+    match essence.split('/').next().unwrap_or("") {
         "image" => "core.file.image",
         "audio" => "core.file.audio",
         "video" => "core.file.video",
@@ -2715,6 +2729,32 @@ pub(crate) mod tests {
         assert_eq!(file_type_for("audio/mpeg", None), "core.file.audio");
         assert_eq!(file_type_for("image/png", None), "core.file.image");
         assert_eq!(file_type_for("image/png", Some("user.scan")), "user.scan");
+    }
+
+    #[test]
+    fn a_page_is_a_web_page_by_its_mime_type() {
+        for mime in [
+            "text/html",
+            "text/html; charset=utf-8",
+            "Text/HTML ;charset=ISO-8859-1",
+            "application/xhtml+xml",
+        ] {
+            assert_eq!(file_type_for(mime, None), "core.file.webpage", "{mime}");
+        }
+        for name in ["a.html", "A.HTML", "old.htm", "OLD.Htm", "a.xhtml"] {
+            let mime = mime_type_for(Path::new(name), None);
+            assert_eq!(file_type_for(&mime, None), "core.file.webpage", "{name}");
+        }
+        // The rest of text stays a file, and so does a page that says it is
+        // something else; a writer's own type wins.
+        assert_eq!(file_type_for("text/plain", None), "core.file");
+        assert_eq!(file_type_for("text/htmlish", None), "core.file");
+        assert_eq!(file_type_for("text/html", Some("core.file")), "core.file");
+        assert_eq!(
+            file_type_for("text/html", Some("user.report")),
+            "user.report"
+        );
+        assert_eq!(file_type_for("IMAGE/PNG; x=1", None), "core.file.image");
     }
 
     #[test]

@@ -5572,6 +5572,9 @@ describe("a file that is not a document", () => {
     writeFileSync(join(harness.dir, "blank.png"), Buffer.alloc(0));
     // A subtype the server does not register: a file all the same.
     writeFileSync(join(harness.dir, "song.mp3"), Buffer.from("ID3 a song"));
+    // A page, whatever the case or the spelling of its extension.
+    writeFileSync(join(harness.dir, "report.html"), "<p>a page</p>");
+    writeFileSync(join(harness.dir, "OLD.HTM"), "<p>an old page</p>");
     const scanned = await harness.folder.scan();
     expect(
       scanned.ok,
@@ -5581,7 +5584,7 @@ describe("a file that is not a document", () => {
     expect(
       scanned.value.created,
       "the photo was not pushed, so a file dropped beside the notes never leaves the machine",
-    ).toBe(3);
+    ).toBe(5);
     expect(
       scanned.value.skipped,
       "an empty file was pushed, and the server refuses an empty blob",
@@ -5614,6 +5617,15 @@ describe("a file that is not a document", () => {
       )?.type,
       "a file whose subtype the server does not register was not pushed as a file",
     ).toBe("core.file");
+    for (const page of ["report.html", "OLD.HTM"]) {
+      expect(
+        sentCreates(harness).find(
+          (create) =>
+            (create.properties as Record<string, unknown>).title === page,
+        )?.type,
+        `${page} was not pushed as a Web Page`,
+      ).toBe("core.file.webpage");
+    }
     const db = new DatabaseSync(join(harness.dir, ".marfa", "core.sqlite"), {
       readOnly: true,
     });
@@ -5669,9 +5681,12 @@ describe("a file that is not a document", () => {
       "the file item went out before the bytes it names",
     ).toBeLessThan(order.indexOf("/items photo.png"));
     expect(
-      harness.server.requests.find((request) => request.pathname === "/blobs")
-        ?.raw,
-    ).toEqual(photo);
+      harness.server.requests.some(
+        (request) =>
+          request.pathname === "/blobs" && photo.equals(request.raw ?? ""),
+      ),
+      "the photo's bytes were never uploaded",
+    ).toBe(true);
     expect(
       readFileSync(join(harness.dir, "photo.png")),
       "the pull that ended the push rewrote the photo",

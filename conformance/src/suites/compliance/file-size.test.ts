@@ -120,6 +120,7 @@ describe("a file item carries the size of the bytes it names", () => {
       "core.file.image",
       "core.file.audio",
       "core.file.video",
+      "core.file.webpage",
     ]) {
       const blob = await upload(type.length * 3);
       const item = await file({ blob_ref: blob.hash }, type);

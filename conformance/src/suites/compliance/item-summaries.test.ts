@@ -65,6 +65,7 @@ it("names every built-in and custom type with bounded plain text and fallback fi
     "core.file.audio": "title",
     "core.file.image": "title",
     "core.file.video": "title",
+    "core.file.webpage": "title",
     "core.highlight": "text",
     "core.media": "title",
     "core.media.album": "title",

@@ -312,6 +312,7 @@ describe("a file item carries the size of the bytes it names", () => {
         "core.file.image",
         "core.file.audio",
         "core.file.video",
+        "core.file.webpage",
         "acme.scan_size_test",
       ]) {
         const blob = await upload(ctx.workingKey, type.length);

@@ -459,8 +459,8 @@ pub struct AddArgs {
     /// The file item's title. Defaults to the file's name.
     #[arg(long)]
     pub title: Option<String>,
-    /// The file item's type. Defaults to `core.file`, or the image, audio or
-    /// video subtype when the MIME type says.
+    /// The file item's type. Defaults to `core.file`, or the image, audio,
+    /// video or web page subtype when the MIME type says.
     #[arg(long = "type", value_name = "TYPE")]
     pub type_: Option<String>,
     /// A tag, repeatable.
@@ -483,8 +483,8 @@ pub struct AttachArgs {
     /// The file item's title. Defaults to the file's name.
     #[arg(long)]
     pub title: Option<String>,
-    /// The file item's type. Defaults to `core.file`, or the image, audio or
-    /// video subtype when the MIME type says.
+    /// The file item's type. Defaults to `core.file`, or the image, audio,
+    /// video or web page subtype when the MIME type says.
     #[arg(long = "type", value_name = "TYPE")]
     pub type_: Option<String>,
 }

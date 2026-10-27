@@ -4,7 +4,8 @@ import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { ExtractionLimitError, extractOfficeText } from "./office.js";
+import { ExtractionLimitError } from "./isolated.js";
+import { extractOfficeText } from "./office.js";
 import { docx, longParagraph, manyParagraphs } from "./test-documents.js";
 
 const MIB = 1024 * 1024;

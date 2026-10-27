@@ -1388,6 +1388,7 @@ export const CONSENT_SCOPE_DESCRIPTIONS: Record<string, string> = {
   "core.file.audio": "Audio files and recordings.",
   "core.file.image": "Photos and images.",
   "core.file.video": "Videos.",
+  "core.file.webpage": "Web pages saved as files.",
 
   // Media
   //

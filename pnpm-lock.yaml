@@ -187,6 +187,9 @@ importers:
       hono:
         specifier: ^4.13.10
         version: 4.13.12
+      htmlparser2:
+        specifier: ^12.0.0
+        version: 12.0.0
       image-dimensions:
         specifier: ^2.6.0
         version: 2.6.0
@@ -2027,6 +2030,22 @@ packages:
     resolution: {integrity: sha512-Btj2BOOO83o3WyH59e8MgXsxEQVcarkUOpEYrubB0urwnN10yQ364rsiByU11nZlqWYZm05i/of7io4mzihBtQ==}
     engines: {node: '>=8'}
 
+  dom-serializer@3.1.1:
+    resolution: {integrity: sha512-4MEa38/QexBob6gFNwu+EGdWvhJ1OKuNwdYY3Y3NyeWDQfnGeDYQUDfIRzWu5B5gsv03so2Uxd28YC6zrsx3Lw==}
+    engines: {node: '>=20.19.0'}
+
+  domelementtype@3.0.0:
+    resolution: {integrity: sha512-umCQid3jKbDmVjx8jGaW7uUykm4DEUeyV21hPxNMo2nV955DhUThwqyOIDtreepP31hl84X7G5U9ZfsWvIB3Pg==}
+    engines: {node: '>=20.19.0'}
+
+  domhandler@6.0.1:
+    resolution: {integrity: sha512-gYzvtM72ZtxQO0T048kd6HWSbbGCNOUwcnfQ01cqIJ4X2IYKFFHZ5mKvrQETcFXxsRObZulDaKmy//R7TPtsBg==}
+    engines: {node: '>=20.19.0'}
+
+  domutils@4.0.2:
+    resolution: {integrity: sha512-qI4JLRKnSzqFqr7hAlS5xQDusBCjKSEG4t4+7aNrIQMHBcsC2TGEhuyABJdYkgSewL57PNLYEiibY2iPKhKpaA==}
+    engines: {node: '>=20.19.0'}
+
   dotenv@18.0.5:
     resolution: {integrity: sha512-aBrGvt6KhjxbEnatqMWOMidftwsrCiCvqh1yNIGB9QyF0J+VcWkKDMsvYOEm7ZS82oiV+BT1sTOtIlAmUlTpwQ==}
     engines: {node: '>=12'}
@@ -2133,6 +2152,10 @@ packages:
 
   end-of-stream@1.4.5:
     resolution: {integrity: sha512-ooEGc6HP26xXq/N+GCGOT0JKCLDGrq2bQUZrQ7gyrJiZANJ/8YDTxTpQBXGMn+WbIQXNVpyWymm7KYVICQnyOg==}
+
+  entities@8.1.0:
+    resolution: {integrity: sha512-kxL7msIffSuh9aaFAMD7rxAIuTRMAHMeBtgHW2yUdWw732ZNh4MehkF2gdjvtdmikkaIP9bFDDJOPlsvm7avrA==}
+    engines: {node: '>=20.19.0'}
 
   es-module-lexer@2.3.2:
     resolution: {integrity: sha512-poHGpORABojJJucnV9KbOavETW8lBVnphkW77ER5/BQ5Fz7oXSoCNek7IH3vR5nRjdsEz926ibFYX8KtLQmdyw==}
@@ -2299,6 +2322,10 @@ packages:
 
   hookified@2.2.0:
     resolution: {integrity: sha512-p/LgFzRN5FeoD3DLS6bkUapeye6E4SI6yJs6KetENd18S+FBthqYq2amJUWpt5z0EQwwHemidjY5OqJGEKm5uA==}
+
+  htmlparser2@12.0.0:
+    resolution: {integrity: sha512-Tz7u1i95/g2x2jz81+x0FBVhBhY5aRTvD3tXXdFaljuNdzDLJ8UGNRrTcj2cgQvAg3iW/h77Fz15nLW0L0CrZw==}
+    engines: {node: '>=20.19.0'}
 
   https-proxy-agent@7.0.6:
     resolution: {integrity: sha512-vK9P5/iUfdl95AI+JVyUuIcVtd4ofvtrOr3HNtM2yxC9bnMbEdp3x01OhQNnjb8IJYi38VlTE3mBXwcfvywuSw==}
@@ -4816,6 +4843,24 @@ snapshots:
 
   detect-libc@2.1.2: {}
 
+  dom-serializer@3.1.1:
+    dependencies:
+      domelementtype: 3.0.0
+      domhandler: 6.0.1
+      entities: 8.1.0
+
+  domelementtype@3.0.0: {}
+
+  domhandler@6.0.1:
+    dependencies:
+      domelementtype: 3.0.0
+
+  domutils@4.0.2:
+    dependencies:
+      dom-serializer: 3.1.1
+      domelementtype: 3.0.0
+      domhandler: 6.0.1
+
   dotenv@18.0.5: {}
 
   drizzle-kit@0.31.11:
@@ -4840,6 +4885,8 @@ snapshots:
     dependencies:
       once: 1.4.0
     optional: true
+
+  entities@8.1.0: {}
 
   es-module-lexer@2.3.2: {}
 
@@ -5072,6 +5119,13 @@ snapshots:
   hookified@1.15.1: {}
 
   hookified@2.2.0: {}
+
+  htmlparser2@12.0.0:
+    dependencies:
+      domelementtype: 3.0.0
+      domhandler: 6.0.1
+      domutils: 4.0.2
+      entities: 8.1.0
 
   https-proxy-agent@7.0.6(supports-color@10.2.2):
     dependencies:
