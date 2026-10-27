@@ -103,6 +103,7 @@ describe("The type catalog a working copy holds", () => {
         "core.event",
         "core.file",
         "core.file.image",
+        "core.file.webpage",
         "core.highlight",
         "core.note",
       ].sort(),

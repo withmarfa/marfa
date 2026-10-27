@@ -237,7 +237,7 @@ Where enrichment is on, the server MUST write the text a person would read in th
 
 ### `housekeeping/enrichment-html-bounds`
 
-Where enrichment is on, if a file item whose `mime_type` is `text/html` or `application/xhtml+xml` holds a page with more than 8 MiB of source, more than 512 open elements at one point, or more text than `MARFA_ENRICHMENT_MAX_TEXT_CHARS`, then the server MUST write as the item's `extracted_text` the text of the page up to the first limit it passes, and MUST NOT write text read after it.
+Where enrichment is on, if a file item whose `mime_type` is `text/html` or `application/xhtml+xml` holds a page with more than 8 MiB of source, more than 512 open elements at one point, or more text than `MARFA_ENRICHMENT_MAX_TEXT_CHARS`, then the server MUST write as the item's `extracted_text` only the text of the page before the first limit it passes.
 
 **Reason:** a page is written by anyone and read by a parser whose work grows with the depth of its elements, so an unbounded page can hold the server for as long as its author likes. Text found before the limit is still the words a person would search for, and the item is stored either way.
 
