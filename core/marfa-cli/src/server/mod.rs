@@ -48,11 +48,13 @@ pub enum ServerCommand {
     /// address the server believes. Every question has a flag, and `--yes` or
     /// a non-terminal answers none: the flag or the default is used.
     Install(InstallArgs),
-    /// Move the server to a release, after printing what to read first.
+    /// Move the server to a release, which updates its database in place.
     ///
-    /// Moves to the release you name, or to this binary's own. It refuses an
-    /// older release than the one installed, because a newer release may have
-    /// changed the database's shape.
+    /// Moves to the release you name, or to this binary's own. A release
+    /// whose database schema is newer copies the database beside it first,
+    /// then updates it, and this command says where the copy is. It refuses
+    /// an older release than the one installed, because an older release
+    /// does not know what a newer one changed in the database.
     Upgrade(UpgradeArgs),
     /// Whether the server runs, its release and address, and whether it is claimed.
     Status(DirArgs),
@@ -341,12 +343,12 @@ fn parse_release(release: &str) -> Option<(u64, u64, u64)> {
     parts.next().is_none().then_some(version)
 }
 
-/// A newer release may have changed the database's shape, so the server never
-/// goes back to an older one.
+/// A newer release may have updated the database in a way an older one does
+/// not know, so the server never goes back to an older one.
 fn refuse_older(installed: &str, target: &str) -> Result<(), CliError> {
     if parse_release(target) < parse_release(installed) {
         return Err(CliError::Usage(format!(
-            "{installed} is installed and {target} is older. A newer release may have changed the database's shape, so the server will not go back: restore a backup into a fresh install of the older release instead"
+            "{installed} is installed and {target} is older. A newer release may have updated the database in a way an older one does not know, so the server will not go back: restore the copy of the database the upgrade took, or a backup, with the older release instead (https://docs.marfa.so/run/upgrade)"
         )));
     }
     Ok(())
@@ -1146,6 +1148,10 @@ fn http_agent() -> ureq::Agent {
         .into()
 }
 
+/// What the image's entrypoint logs when the server refuses its database and
+/// the container stays up, unhealthy, rather than restart into the refusal.
+const REFUSED_DATABASE: &str = "will not start on the database";
+
 fn wait_until_healthy(
     docker: &Docker,
     name: &str,
@@ -1169,6 +1175,12 @@ fn wait_until_healthy(
                 "the server stopped: {}\n{}",
                 state.status,
                 docker.logs_tail(name)
+            )));
+        }
+        let tail = docker.logs_tail(name);
+        if tail.contains(REFUSED_DATABASE) {
+            return Err(CliError::Install(format!(
+                "the server will not start on its database. Its log ends:\n{tail}"
             )));
         }
         if Instant::now() >= deadline {
@@ -1255,27 +1267,82 @@ fn upgrade(args: UpgradeArgs, out: &Printer) -> Result<(), CliError> {
     }
     if !unchanged {
         steps.say(&format!(
-            "Read the changelog for {target} first (https://docs.marfa.so/changelog). If it says the database changes shape, follow the Upgrade guide (https://docs.marfa.so/run/upgrade) instead of this command."
+            "If {target} has a newer database schema, the server copies the database beside it and then updates it in place."
         ));
         dotenv.set("MARFA_RELEASE", &target)?;
         files::write_if_changed(&folder.path(files::DOTENV), &dotenv.render(), false)?;
     }
     write_compose(&folder, &steps)?;
     start(&docker, &folder.dir, &state.name, &target, &steps)?;
-    wait_until_healthy(&docker, &state.name, state.port, args.wait)?;
+    if let Err(error) = wait_until_healthy(&docker, &state.name, state.port, args.wait) {
+        if unchanged || !docker.logs_tail(&state.name).contains(REFUSED_DATABASE) {
+            return Err(error);
+        }
+        return Err(CliError::Install(format!(
+            "{error}\n\n{target} did not update the database, and the server says why above. A refused update leaves the database as it was, so {from} still reads it: to go back, set MARFA_RELEASE={from} in {env} and run `marfa server start`.",
+            from = state.release,
+            env = folder.path(files::DOTENV).display(),
+        )));
+    }
+    let update = if unchanged {
+        None
+    } else {
+        database_update(&docker.logs(&state.name))
+    };
     let report = json!({
         "name": state.name,
         "from": state.release,
         "release": target,
         "changed": !unchanged,
+        "database_update": update.as_ref().map(|update| json!({
+            "schema_from": update.schema_from,
+            "schema_to": update.schema_to,
+            "copy": update.copy,
+        })),
     });
     out.report(&report, || {
         if unchanged {
-            format!("Already on {target}.")
-        } else {
-            format!("Upgraded from {} to {target}.", state.release)
+            return format!("Already on {target}.");
+        }
+        let moved = format!("Upgraded from {} to {target}.", state.release);
+        match &update {
+            Some(update) => format!(
+                "{moved} The server updated the database from schema version {} to {}. A copy of the database as it was is at {copy} in the volume {name}-data, and stays until you remove it; `docker cp {name}:{copy} .` copies it out.",
+                update.schema_from,
+                update.schema_to,
+                copy = update.copy,
+                name = state.name,
+            ),
+            None => moved,
         }
     })
+}
+
+/// What the server logged of the update it made to the database on start.
+struct DatabaseUpdate {
+    schema_from: u64,
+    schema_to: u64,
+    copy: String,
+}
+
+/// The update the server's log reports, read from its JSON lines: the last
+/// one, since the log of a container holds every start it made.
+fn database_update(log: &str) -> Option<DatabaseUpdate> {
+    log.lines()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line.trim()).ok())
+        .filter(|entry| {
+            entry["message"]
+                .as_str()
+                .is_some_and(|message| message.starts_with("Updated the database"))
+        })
+        .filter_map(|entry| {
+            Some(DatabaseUpdate {
+                schema_from: entry["schema_from"].as_u64()?,
+                schema_to: entry["schema_to"].as_u64()?,
+                copy: entry["backup_path"].as_str()?.to_string(),
+            })
+        })
+        .next_back()
 }
 
 // ---- start --------------------------------------------------------------

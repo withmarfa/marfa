@@ -61,7 +61,7 @@ case "$1" in
       *"setup status"*) if [ -e "$S/claimed" ]; then echo '{"claimed":true}'; else echo '{"claimed":false}'; fi ;;
       *"setup open"*) echo '{"url":"http://localhost/setup#handoff=TICKET123","expires_at":"2030-01-01T00:00:00Z"}' ;;
     esac ;;
-  logs) echo "a line of the server's log" ;;
+  logs) if [ -e "$S/server-log" ]; then cat "$S/server-log"; else echo "a line of the server's log"; fi ;;
   *) echo "unexpected: $*" >&2; exit 1 ;;
 esac
 "#;
@@ -320,9 +320,12 @@ fn serve_health(port: u16, state: &Path, stop: &AtomicBool) {
             Ok((mut stream, _)) => {
                 let mut buffer = [0u8; 512];
                 let _ = stream.read(&mut buffer);
-                let _ = stream.write_all(
-                    b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok",
-                );
+                let answer: &[u8] = if state.join("unhealthy").exists() {
+                    b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 2\r\nConnection: close\r\n\r\nno"
+                } else {
+                    b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok"
+                };
+                let _ = stream.write_all(answer);
             }
             Err(_) => std::thread::sleep(Duration::from_millis(10)),
         }
@@ -843,6 +846,84 @@ fn an_upgrade_moves_forward_and_never_back() {
     let (code, stdout, _) = rig.marfa(&["upgrade", "--release", "0.0.23", "--wait", "5"]);
     assert_eq!(code, 0);
     assert!(stdout.contains("Already on 0.0.23"), "{stdout}");
+}
+
+#[test]
+fn an_upgrade_says_where_the_copy_of_the_database_is() {
+    let rig = Rig::new("upgrade-copy");
+    rig.installed(&["--access", "local"]);
+    fs::write(
+        rig.state.join("server-log"),
+        concat!(
+            r#"{"timestamp":"2026-01-01T00:00:00.000Z","level":"info","message":"Updating the database in /data/marfa.db from schema version 1 to 2.","schema_from":1,"schema_to":2,"backup_path":"/data/marfa.db.backup-schema-1-to-2-20260101T000000000Z"}"#,
+            "\n",
+            r#"{"timestamp":"2026-01-01T00:00:01.000Z","level":"info","message":"Updated the database in /data/marfa.db from schema version 1 to 2.","schema_from":1,"schema_to":2,"backup_path":"/data/marfa.db.backup-schema-1-to-2-20260101T000000000Z"}"#,
+            "\nnot a log line\n",
+        ),
+    )
+    .unwrap();
+
+    let (code, stdout, stderr) = rig.marfa(&["upgrade", "--release", "0.0.23", "--wait", "5"]);
+    assert_eq!(code, 0, "{stderr}");
+    assert!(stdout.contains("0.0.22 to 0.0.23"), "{stdout}");
+    assert!(stdout.contains("from schema version 1 to 2"), "{stdout}");
+    assert!(
+        stdout.contains("/data/marfa.db.backup-schema-1-to-2-20260101T000000000Z"),
+        "{stdout}"
+    );
+
+    // Witness: a start that logged no update says nothing of one.
+    fs::write(rig.state.join("server-log"), "a line of the server's log\n").unwrap();
+    let output = output_of(
+        Command::new(env!("CARGO_BIN_EXE_marfa"))
+            .args([
+                "--json",
+                "server",
+                "upgrade",
+                "--release",
+                "0.0.24",
+                "--wait",
+                "5",
+                "--dir",
+            ])
+            .arg(&rig.dir)
+            .env("MARFA_DOCKER", rig.root.join("docker"))
+            .env("FAKE_DOCKER_STATE", &rig.state)
+            .env("MARFA_AUTOSTART_ROOT", rig.home()),
+    );
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["release"], "0.0.24");
+    assert_eq!(report["database_update"], serde_json::Value::Null);
+}
+
+#[test]
+fn an_upgrade_the_server_refuses_says_how_to_go_back() {
+    let rig = Rig::new("upgrade-refused");
+    rig.installed(&["--access", "local"]);
+    fs::write(rig.state.join("unhealthy"), "").unwrap();
+    fs::write(
+        rig.state.join("server-log"),
+        concat!(
+            r#"{"timestamp":"2026-01-01T00:00:00.000Z","level":"error","message":"Failed to start server","error":"Updating the database in /data/marfa.db from schema version 1 to 2 failed. Nothing was changed."}"#,
+            "\nThis server will not start on the database at /data/marfa.db, and the message above says why and what to do.\n",
+        ),
+    )
+    .unwrap();
+
+    let started = std::time::Instant::now();
+    let (code, _, stderr) = rig.marfa(&["upgrade", "--release", "0.0.23", "--wait", "30"]);
+    assert_ne!(code, 0);
+    assert!(
+        started.elapsed() < Duration::from_secs(20),
+        "it waited out --wait"
+    );
+    assert!(stderr.contains("Nothing was changed"), "{stderr}");
+    assert!(
+        stderr.contains("0.0.23 did not update the database"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("MARFA_RELEASE=0.0.22"), "{stderr}");
+    assert!(stderr.contains("marfa server start"), "{stderr}");
 }
 
 #[test]

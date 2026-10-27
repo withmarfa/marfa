@@ -3958,9 +3958,9 @@ marfa server install [OPTIONS]
 
 ### marfa server upgrade
 
-Move the server to a release, after printing what to read first.
+Move the server to a release, which updates its database in place.
 
-Moves to the release you name, or to this binary's own. It refuses an older release than the one installed, because a newer release may have changed the database's shape.
+Moves to the release you name, or to this binary's own. A release whose database schema is newer copies the database beside it first, then updates it, and this command says where the copy is. It refuses an older release than the one installed, because an older release does not know what a newer one changed in the database.
 
 ```text
 marfa server upgrade [OPTIONS]
