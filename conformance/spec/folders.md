@@ -4522,25 +4522,25 @@ While a missing folder file is found in another registered folder, by its identi
 
 ### `folders/move-keeps-item`
 
-When a file bound to an item moves to another registered folder and that folder binds no other file to the item, a device MUST bind the moved file to that item, whether or not the receiving folder's query holds it, except where `folders/moved-arrival-markdown-new` admits the file as a new item.
+When a file bound to an item moves to another registered folder and that folder binds no other file to the item, a device MUST bind the moved file to that item, whether or not the receiving folder's query holds it, except where `folders/moved-arrival-markdown-new` or `folders/cross-folder-hidden-item` admits the file as a new item.
 
-**Reason:** the person moved a file, not the note it carries. The folder the file left trashes the item only once no registered folder holds the file (`folders/missing-file-trashed`). A file whose ID is still in a file left in the first folder is a copy (`folders/cross-folder-copy`) and is not a move.
+**Reason:** the person moved a file, not the note it carries. The folder the file left trashes the item only once no registered folder holds the file (`folders/missing-file-trashed`). A file whose ID is still in a file left in the first folder is a copy (`folders/cross-folder-copy`) and is not a move. An item the server will not show to the receiving folder cannot be bound there, so its file is a new item (`folders/cross-folder-hidden-item`).
 
 **Tests:** `device/folders-one-mac.test.ts › does not trash a file moved to another folder`, `device/folders-one-mac.test.ts › keeps one item, and every edit made before and after the move, of a bound file moved to another folder`, `device/folders-one-mac.test.ts › tells a copy into another folder from a move`.
 
 ### `folders/move-no-second-item`
 
-When a file bound to an item moves to another registered folder, a device MUST NOT admit the moved file as a new item, unless the receiving folder binds another file to the item or `folders/moved-arrival-markdown-new` admits it.
+When a file bound to an item moves to another registered folder, a device MUST NOT admit the moved file as a new item, unless the receiving folder binds another file to the item, or `folders/moved-arrival-markdown-new` or `folders/cross-folder-hidden-item` admits it.
 
-**Reason:** a second item would hold the person's words twice and leave the first to be trashed with the edits made since. A receiving folder that binds another file to the item holds a copy (`folders/cross-folder-copy`). A Markdown file that carries no ID line is no note's file, and its words are kept in the new item.
+**Reason:** a second item would hold the person's words twice and leave the first to be trashed with the edits made since. A receiving folder that binds another file to the item holds a copy (`folders/cross-folder-copy`). A Markdown file that carries no ID line is no note's file, and its words are kept in the new item. An item the server will not show to the receiving folder is not there to hold the words, so the file becomes a new item.
 
 **Tests:** `device/folders-one-mac.test.ts › keeps one item, and every edit made before and after the move, of a bound file moved to another folder`, `device/folders-one-mac.test.ts › makes no second item when another device changes a moved file's item inside the grace`.
 
 ### `folders/move-keeps-edits`
 
-When a file bound to an item moves to another registered folder, a device MUST deliver to the item every edit made to the file before the move and every edit made to it after.
+When a file bound to an item moves to another registered folder and the moved file stays bound to that item, a device MUST deliver to the item every edit made to the file before the move and every edit made to it after.
 
-**Reason:** an edit read before the move reaches the item whether the move came before or after the scan that read it, and the receiving folder reads the edits made after. An edit the folder it left had queued and not yet sent is sent beside the receiving folder's own read of the same words from the same version, so the server keeps the later send as a conflicted copy of the item with the same words. No edit is lost, and the move itself makes no item.
+**Reason:** an edit read before the move reaches the item whether the move came before or after the scan that read it, and the receiving folder reads the edits made after. An edit the folder it left had queued and not yet sent is sent beside the receiving folder's own read of the same words from the same version, so the server keeps the later send as a conflicted copy of the item with the same words. No edit is lost, and the move itself makes no item. Where the moved file becomes a new item instead (`folders/moved-arrival-markdown-new`, `folders/cross-folder-hidden-item`), the edits go to the new item.
 
 **Tests:** `device/folders-one-mac.test.ts › keeps one item, and every edit made before and after the move, of a bound file moved to another folder`, `device/folders-one-mac.test.ts › keeps an edit already queued in the folder a bound file left, and makes no item for the move`.
 
