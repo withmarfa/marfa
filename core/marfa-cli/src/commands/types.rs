@@ -38,6 +38,20 @@ pub enum TypesCommand {
         #[command(flatten)]
         body: BodySource,
     },
+    /// Set the icon the owner wants for a type, one Marfa ships included. Reads of the type then answer it in place of the author's icon, and a subtype with no icon of its own inherits it. Needs `schema.write` and write on the type in the key's type map; a connector's key is refused. The owner's own sign-in and a local command can always set it.
+    ///
+    /// The icon is the kebab-case name of an icon in the Lucide release Marfa pins, such as `calendar-days`. Marfa refuses any other name.
+    SetIcon {
+        /// The type id.
+        id: String,
+        /// The Lucide icon name, such as `book-open`.
+        icon: String,
+    },
+    /// Remove the icon the owner set for a type, so the author's shows again. Needs the same access as `set-icon`.
+    ClearIcon {
+        /// The type id.
+        id: String,
+    },
     /// Remove a registered type. Needs `schema.write` and write on the type in the key's type map. Refused while items of the type exist or a folder, view or webhook names it. `marfa types move` moves the items and changes those settings.
     Delete {
         /// The type id.
@@ -162,6 +176,14 @@ pub fn delete_request(id: &str, force: bool) -> Request {
     Request::delete(&["types", id]).query_flag("force", force)
 }
 
+pub fn set_icon_request(id: &str, icon: &str) -> Request {
+    Request::put(&["types", id, "icon"]).json(serde_json::json!({ "icon": icon }))
+}
+
+pub fn clear_icon_request(id: &str) -> Request {
+    Request::delete(&["types", id, "icon"])
+}
+
 pub fn move_request(args: &MoveArgs) -> Result<Request, CliError> {
     let mut body = Map::new();
     body.insert("to".into(), Value::String(args.to.clone()));
@@ -208,6 +230,8 @@ pub fn run(
         TypesCommand::Normalize(body) => normalize_request(body.read()?),
         TypesCommand::Replace { id, body } => replace_request(id, body.read()?),
         TypesCommand::Delete { id, force } => delete_request(id, *force),
+        TypesCommand::SetIcon { id, icon } => set_icon_request(id, icon),
+        TypesCommand::ClearIcon { id } => clear_icon_request(id),
         TypesCommand::Retired => retired_request(),
         TypesCommand::DeleteRetired { id } => delete_retired_request(id),
     };

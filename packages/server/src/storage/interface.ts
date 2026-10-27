@@ -1199,6 +1199,19 @@ export interface TypeStore {
    *  since the caller looked stays deleted. */
   update(id: string, schema: TypeSchema): Promise<TypeSchema>;
   delete(id: string): Promise<void>;
+  /**
+   * The icon the owner chose for each type that has one, by type identifier.
+   * Kept apart from the type's own definition, so replacing a type, or a
+   * build reseeding a shipped one, leaves it alone, and deleting the type
+   * deletes it.
+   */
+  icons(): Promise<ReadonlyMap<string, string>>;
+  /** Records the owner's icon for a type, replacing an earlier choice. A type
+   *  that is not there is refused `type_not_found`. */
+  setIcon(id: string, icon: string): Promise<void>;
+  /** Removes the owner's icon for a type, so the type's own shows again.
+   *  Answers whether a choice was there. */
+  clearIcon(id: string): Promise<boolean>;
   /** The instance's own registrations, without the shipped core and system
    *  set `list` folds in. Exists because an export has to carry the
    *  registrations a restore would otherwise be missing, and only the

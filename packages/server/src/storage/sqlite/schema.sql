@@ -731,6 +731,13 @@ CREATE TABLE IF NOT EXISTS `trash_cascades` (
 );
 
 CREATE INDEX IF NOT EXISTS `idx_trash_cascades_with` ON `trash_cascades` (`trashed_with`);
+CREATE TABLE IF NOT EXISTS `type_icons` (
+	`type_id` text PRIMARY KEY NOT NULL,
+	`icon` text NOT NULL,
+	`updated_at` text NOT NULL,
+	FOREIGN KEY (`type_id`) REFERENCES `types`(`id`) ON UPDATE no action ON DELETE cascade
+);
+
 CREATE TABLE IF NOT EXISTS `types` (
 	`id` text PRIMARY KEY NOT NULL,
 	`schema` text NOT NULL,

@@ -643,6 +643,17 @@ export const types = sqliteTable(
   (t) => [index("idx_types_origin").on(t.origin)],
 );
 
+// The icon the owner chose for a type, kept apart from the type's own row so
+// that a connector replacing its type, or a build reseeding a shipped one,
+// never touches the choice. The row goes with the type.
+export const typeIcons = sqliteTable("type_icons", {
+  type_id: text("type_id")
+    .primaryKey()
+    .references(() => types.id, { onDelete: "cascade" }),
+  icon: text("icon").notNull(),
+  updated_at: text("updated_at").notNull(),
+});
+
 // The instance's edge-type registrations.
 export const edgeTypes = sqliteTable("edge_types", {
   id: text("id").primaryKey(),

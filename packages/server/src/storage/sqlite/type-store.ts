@@ -20,7 +20,7 @@ import { and, eq, inArray, ne, sql } from "drizzle-orm";
 import type { LoadedType, TypeProvenance, TypeStore } from "../interface.js";
 import { databaseFailureCodes } from "../../error-text.js";
 import { safeJsonParse } from "../json-utils.js";
-import { items, types } from "./schema.js";
+import { items, typeIcons, types } from "./schema.js";
 import type { DrizzleDb } from "./connection.js";
 import { toLoadedTypes } from "../loaded-types.js";
 import { buildTypeLinks, forgetType, rebuildTypeLinks } from "./item-links.js";
@@ -169,6 +169,40 @@ export class SqliteTypeStore implements TypeStore {
       await forgetType(tx, id);
       await reindexChangedTypes(tx, id, shapes);
     });
+  }
+
+  async icons(): Promise<ReadonlyMap<string, string>> {
+    const rows = await this.db.select().from(typeIcons).all();
+    return new Map(rows.map((row) => [row.type_id, row.icon]));
+  }
+
+  async setIcon(id: string, icon: string): Promise<void> {
+    const now = clock.now().toISOString();
+    await this.db.transaction(async (tx) => {
+      const held = await tx
+        .select({ id: types.id })
+        .from(types)
+        .where(eq(types.id, id))
+        .get();
+      if (!held) {
+        throw new MarfaError(
+          ErrorCode.TYPE_NOT_FOUND,
+          `Type "${id}" not found`,
+        );
+      }
+      await tx.run(sql`
+        INSERT INTO type_icons (type_id, icon, updated_at)
+        VALUES (${id}, ${icon}, ${now})
+        ON CONFLICT (type_id) DO UPDATE SET icon = excluded.icon, updated_at = excluded.updated_at
+      `);
+    });
+  }
+
+  async clearIcon(id: string): Promise<boolean> {
+    const cleared = await this.db.run(
+      sql`DELETE FROM type_icons WHERE type_id = ${id}`,
+    );
+    return cleared.rowsAffected > 0;
   }
 
   async propertyNamesHeld(

@@ -153,6 +153,8 @@ const STANDING: Record<string, string> = {
   "PUT /types/:id": "schema.write or metadata.types:write",
   "DELETE /types/:id": "schema.write",
   "POST /types/:id/move": "write on the type it moves",
+  "PUT /types/:id/icon": "schema.write",
+  "DELETE /types/:id/icon": "schema.write",
   "POST /edge-types": "metadata.edge_types:write",
   "DELETE /edge-types/:id": "schema.write",
   "POST /connectors": WORKING_KEY,
