@@ -6,6 +6,7 @@
   "version": 0,
   "fields": {},
   "display_hints": {
-    "title_field": "title"
+    "title_field": "title",
+    "icon": "globe"
   }
 }

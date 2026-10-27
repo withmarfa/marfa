@@ -371,7 +371,7 @@ const coreFileWebpage: TypeSchema = {
     executable: { type: "boolean", description: "Whether the file may be run as a program; absent means it may not" },
     size_bytes: { type: "integer", description: "Size in bytes of the referenced blob (set by the server from the bytes the instance holds; absent where whoever named blob_ref never proved it holds them)" },
   },
-  display_hints: { title_field: "title" },
+  display_hints: { title_field: "title", icon: "globe" },
   merge_policy: { default: "last_writer_wins" },
 };
 
@@ -1259,6 +1259,7 @@ export const SHIPPED_TYPE_SHAPES = {
   },
   "core.file.webpage": {
     "display_hints": {
+      "icon": "globe",
       "title_field": "title"
     },
     "fields": {

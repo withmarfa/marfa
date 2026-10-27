@@ -304,6 +304,7 @@ export const SCRIPTED_TYPES: ReadonlyArray<Record<string, unknown>> = [
   wireType("core.file.webpage", {
     parent: "core.file",
     titleField: "title",
+    icon: "globe",
     fields: FILE_FIELDS,
     mergePolicy: { fields: {}, default: "last_writer_wins" },
   }),

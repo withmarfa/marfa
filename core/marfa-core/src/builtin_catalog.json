@@ -813,7 +813,8 @@
     }
    },
    "display_hints": {
-    "title_field": "title"
+    "title_field": "title",
+    "icon": "globe"
    },
    "merge_policy": {
     "default": "last_writer_wins"
