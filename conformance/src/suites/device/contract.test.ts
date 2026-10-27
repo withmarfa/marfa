@@ -1039,6 +1039,8 @@ const invocations: Record<string, () => string[]> = {
   "types replace": () => ["--body", '{"id":"user.t"}', "user.t"],
   "types delete": () => ["user.t"],
   "types move": () => ["user.t", "user.u"],
+  "types set-icon": () => ["user.t", "book-open"],
+  "types clear-icon": () => ["user.t"],
   search: () => ["q"],
   "items occurrences": () => ["--from", WHEN, "--to", LATER],
   "metadata tags": () => [],

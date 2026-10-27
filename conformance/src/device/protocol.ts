@@ -249,6 +249,8 @@ export interface ItemType {
   fields: TypeField[];
   title_field: string | null;
   body_field: string | null;
+  /** The Lucide icon name, from the nearest type that sets one. */
+  icon: string | null;
   link_field: string | null;
   roles: string[];
   compatible_with: string[];

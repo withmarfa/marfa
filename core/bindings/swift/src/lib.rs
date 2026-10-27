@@ -618,6 +618,8 @@ pub struct ItemType {
     pub fields: Vec<TypeField>,
     pub title_field: Option<String>,
     pub body_field: Option<String>,
+    /// The Lucide icon name, kebab-case.
+    pub icon: Option<String>,
     pub link_field: Option<String>,
     pub roles: Vec<String>,
     pub compatible_with: Vec<String>,
@@ -694,6 +696,7 @@ impl From<marfa_core::ItemType> for ItemType {
             fields: held.fields.into_iter().map(Into::into).collect(),
             title_field: held.title_field,
             body_field: held.body_field,
+            icon: held.icon,
             link_field: held.link_field,
             roles: held.roles,
             compatible_with: held.compatible_with,

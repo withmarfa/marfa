@@ -119,8 +119,9 @@ function buildChain(typeId: string, resolve: TypeResolver): TypeSchema[] {
  * and returning an inheritance-resolved view:
  *
  * - `fields`: merged root→leaf, per-key, preserving child-owned refinements.
- * - `display_hints` — nearest-ancestor-wins. The first ancestor with a
- *   non-undefined block (starting from the leaf) supplies the whole block.
+ * - `display_hints` — per hint, nearest-ancestor-wins. `title_field`,
+ *   `body_field` and `icon` each come from the nearest type in the chain
+ *   that sets that hint.
  * - `version_policy` — merged root→leaf, per-key, which is
  *   `merge_policy`'s inheritance behavior.
  * - `merge_policy` — delegated to `resolveMergePolicy`.
@@ -148,15 +149,18 @@ export function resolveTypeSchema(
     Object.assign(fields, ancestor.fields);
   }
 
-  // display_hints: nearest-ancestor-wins. Walk leaf→root (chain is root→leaf,
-  // so iterate in reverse) and take the first defined block.
+  // display_hints: each hint comes from the nearest type that sets that hint,
+  // so a child can set an icon and keep its parent's title. Walk root→leaf and
+  // let a nearer value replace a farther one.
   let displayHints: DisplayHints | undefined;
-  for (let i = chain.length - 1; i >= 0; i--) {
-    const hints = chain[i]?.display_hints;
-    if (hints) {
-      displayHints = hints;
-      break;
-    }
+  for (const ancestor of chain) {
+    const hints = ancestor.display_hints;
+    if (!hints) continue;
+    const set = Object.fromEntries(
+      Object.entries(hints).filter(([, value]) => value !== undefined),
+    );
+    if (Object.keys(set).length === 0) continue;
+    displayHints = { ...(displayHints ?? {}), ...set };
   }
 
   // version_policy: root→leaf, per-key merge. Matches merge_policy semantics

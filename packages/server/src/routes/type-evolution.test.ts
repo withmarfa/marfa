@@ -171,7 +171,7 @@ describe("a key holding metadata.types:write evolves the types it registered", (
     const after = await stored(id);
     expect(after.label).toBe("Vendor issue");
     expect(after.version).toBe(2);
-    expect(after.display_hints).toEqual({ title_field: "vendor_state" });
+    expect(after.display_hints).toMatchObject({ title_field: "vendor_state" });
   });
 
   it("takes a resubmission with no change", async () => {

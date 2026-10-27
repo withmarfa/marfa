@@ -58,7 +58,8 @@
   },
   "required": ["blob_ref", "mime_type"],
   "display_hints": {
-    "title_field": "title"
+    "title_field": "title",
+    "icon": "file"
   },
   "merge_policy": {
     "default": "last_writer_wins"

@@ -146,7 +146,7 @@ describe("a key whose type map reaches a type evolves it", () => {
     );
     const after = await client.getType(id);
     expect(after.data.label).toBe("Vendor issue");
-    expect(after.data.display_hints).toEqual({ title_field: "vendor_state" });
+    expect(after.data.display_hints?.title_field).toBe("vendor_state");
   });
 
   const NEEDS_SCHEMA_WRITE: [string, (id: string) => Definition, string][] = [

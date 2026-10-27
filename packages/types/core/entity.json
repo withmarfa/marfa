@@ -51,7 +51,8 @@
   },
   "required": ["name"],
   "display_hints": {
-    "title_field": "name"
+    "title_field": "name",
+    "icon": "shapes"
   },
   "merge_policy": {
     "default": "last_writer_wins"

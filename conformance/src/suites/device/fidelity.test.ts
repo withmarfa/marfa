@@ -2360,10 +2360,15 @@ describe("the scripted answers match the server's", () => {
         kind: "json",
         status: registry.status,
         body: {
-          row: wireType("core.entity.person", {
-            parent: "core.entity",
-            titleField: "name",
-          }),
+          row: {
+            ...wireType("core.entity.person", {
+              parent: "core.entity",
+              icon: "user",
+            }),
+            // The list answers each type's hints as declared, so a child
+            // that sets only an icon carries no title field of its own.
+            display_hints: { icon: "user" },
+          },
         },
       },
       {
@@ -2371,6 +2376,7 @@ describe("the scripted answers match the server's", () => {
           "row.id",
           "row.parent",
           "row.display_hints.title_field",
+          "row.display_hints.icon",
           "row.provenance.origin",
           "row.provenance.created_by",
         ],

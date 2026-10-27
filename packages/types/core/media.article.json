@@ -17,5 +17,8 @@
       "type": "integer",
       "description": "Word count"
     }
+  },
+  "display_hints": {
+    "icon": "newspaper"
   }
 }

@@ -21,6 +21,7 @@ import {
   normalizeEdgeProperties,
   validateTypeSchema,
   malformedTypeIdentifier,
+  iconNameIssue,
 } from "@withmarfa/shared";
 import type { EdgeTypeSchema, TypeSchema } from "@withmarfa/shared";
 import { runAuditedTransaction } from "../storage/audited-transaction.js";
@@ -40,6 +41,8 @@ import { assertParentChain } from "./_parent-chain.js";
 export interface ArchiveTypeEntry {
   type?: unknown;
   edge_type?: unknown;
+  /** One owner icon: `{ type_id, icon }`. */
+  type_icon?: unknown;
   /** Provenance for the `type` on the same line. Optional because a line
    *  can be hand-written or damaged, not because any archive this build
    *  reads omits it. */
@@ -58,6 +61,18 @@ export interface ArchiveTypeResult {
   typesSkipped: number;
   edgeTypesRegistered: number;
   edgeTypesSkipped: number;
+  typeIconsAdded: number;
+  typeIconsSkipped: number;
+  /** How many icons were skipped for each reason: `already_set` or
+   *  `unknown_icon`. */
+  typeIconsSkippedReasons: Record<string, number>;
+}
+
+/** The owner's icon for a type, as an archive carries it. An `icon` that is
+ *  not a name in the pinned Lucide release is `undefined`, and skipped. */
+export interface ArchiveTypeIcon {
+  typeId: string;
+  icon: string | undefined;
 }
 
 /**
@@ -194,9 +209,11 @@ function provenanceFor(
 function parseTypeEntries(entries: ArchiveTypeEntry[]): {
   types: PendingType[];
   edgeTypes: EdgeTypeSchema[];
+  typeIcons: ArchiveTypeIcon[];
 } {
   const types: PendingType[] = [];
   const edgeTypes: EdgeTypeSchema[] = [];
+  const typeIcons = new Map<string, string | undefined>();
   const edgeNamesTaken = new Map<string, string>();
 
   for (const entry of entries) {
@@ -278,6 +295,42 @@ function parseTypeEntries(entries: ArchiveTypeEntry[]): {
       continue;
     }
 
+    if (entry.type_icon !== undefined) {
+      const raw: { type_id?: unknown; icon?: unknown } | null | undefined =
+        typeof entry.type_icon === "object" ? entry.type_icon : undefined;
+      if (
+        raw === undefined ||
+        raw === null ||
+        typeof raw.type_id !== "string" ||
+        !isValidTypeIdentifier(raw.type_id)
+      ) {
+        throw malformedTypeIdentifier(
+          "type_icon.type_id",
+          "Archive carries a type icon with an invalid type identifier",
+        );
+      }
+      // A line without a string icon is damaged and refused. A string that
+      // names no icon of this release is a well-formed line from a build with
+      // another release: it is skipped and counted, as an edge that cannot be
+      // restored is.
+      const refused = iconNameIssue(raw.icon, "type_icon.icon");
+      if (typeof raw.icon !== "string" && refused) {
+        throw new MarfaError(
+          ErrorCode.INVALID_SCHEMA,
+          `Archive carries an invalid icon for "${raw.type_id}"`,
+          { errors: [refused] },
+        );
+      }
+      if (typeIcons.has(raw.type_id)) {
+        throw new MarfaError(
+          ErrorCode.VALIDATION_ERROR,
+          `Archive carries more than one icon for "${raw.type_id}"`,
+        );
+      }
+      typeIcons.set(raw.type_id, refused ? undefined : (raw.icon as string));
+      continue;
+    }
+
     // A line naming neither key is refused rather than skipped.
     //
     // Every refusal this function exists for — a reserved namespace, a
@@ -289,16 +342,20 @@ function parseTypeEntries(entries: ArchiveTypeEntry[]): {
     // archive that genuinely carried none.
     throw new MarfaError(
       ErrorCode.VALIDATION_ERROR,
-      `Archive carries a types.ndjson line naming neither "type" nor "edge_type": {${Object.keys(entry).join(", ")}}`,
+      `Archive carries a types.ndjson line naming none of "type", "edge_type" or "type_icon": {${Object.keys(entry).join(", ")}}`,
     );
   }
 
-  return { types, edgeTypes };
+  return {
+    types,
+    edgeTypes,
+    typeIcons: [...typeIcons].map(([typeId, icon]) => ({ typeId, icon })),
+  };
 }
 
 /** The registrations an archive is planned against. */
 export interface ArchiveTypeBaseline {
-  types: Pick<Storage["types"], "listRegistered">;
+  types: Pick<Storage["types"], "listRegistered" | "icons">;
   edgeTypes: Pick<Storage["edgeTypes"], "list">;
 }
 
@@ -309,6 +366,9 @@ export interface ArchiveTypePlan {
   edgeTypes: EdgeTypeSchema[];
   typesSkipped: number;
   edgeTypesSkipped: number;
+  /** The owner's icons for types the target has none for. */
+  typeIcons: ArchiveTypeIcon[];
+  typeIconsSkippedReasons: Record<string, number>;
 }
 
 /**
@@ -324,7 +384,7 @@ export async function planArchiveTypes(
   storage: ArchiveTypeBaseline,
   entries: ArchiveTypeEntry[],
 ): Promise<ArchiveTypePlan> {
-  const { types, edgeTypes } = parseTypeEntries(entries);
+  const { types, edgeTypes, typeIcons } = parseTypeEntries(entries);
 
   // What is registered is a question about this database,
   // not about the in-memory registry: the registry is process state
@@ -368,6 +428,31 @@ export async function planArchiveTypes(
     }
   }
 
+  // An icon belongs to a type this instance will hold once the archive is
+  // written, and is added only where the owner has chosen none already.
+  const heldIcons = await storage.types.icons();
+  const iconsToWrite: ArchiveTypeIcon[] = [];
+  const typeIconsSkippedReasons: Record<string, number> = {};
+  for (const entry of typeIcons) {
+    const held =
+      existingTypes.has(entry.typeId) ||
+      types.some(({ schema }) => schema.id === entry.typeId) ||
+      getTypeSchema(entry.typeId) !== undefined;
+    if (!held) {
+      throw new MarfaError(
+        ErrorCode.INVALID_SCHEMA,
+        `Archive carries an icon for "${entry.typeId}", which neither the archive nor this instance registers`,
+      );
+    }
+    if (entry.icon === undefined) {
+      typeIconsSkippedReasons.unknown_icon =
+        (typeIconsSkippedReasons.unknown_icon ?? 0) + 1;
+    } else if (heldIcons.has(entry.typeId)) {
+      typeIconsSkippedReasons.already_set =
+        (typeIconsSkippedReasons.already_set ?? 0) + 1;
+    } else iconsToWrite.push(entry);
+  }
+
   if (conflicts.length > 0) {
     throw new MarfaError(
       ErrorCode.CONFLICT,
@@ -381,6 +466,8 @@ export async function planArchiveTypes(
     edgeTypes: edgeTypesToWrite,
     typesSkipped,
     edgeTypesSkipped,
+    typeIcons: iconsToWrite,
+    typeIconsSkippedReasons,
   };
 }
 
@@ -454,7 +541,29 @@ export async function writeArchiveTypes(
       ),
   });
 
+  // Checked again where it is written: an icon the owner set since the plan
+  // was read is kept.
+  let typeIconsAdded = 0;
+  const typeIconsSkippedReasons = { ...plan.typeIconsSkippedReasons };
+  const heldIcons = await storage.types.icons();
+  for (const { typeId, icon } of plan.typeIcons) {
+    if (icon === undefined) continue;
+    if (heldIcons.has(typeId)) {
+      typeIconsSkippedReasons.already_set =
+        (typeIconsSkippedReasons.already_set ?? 0) + 1;
+      continue;
+    }
+    await storage.types.setIcon(typeId, icon);
+    typeIconsAdded += 1;
+  }
+
   return {
+    typeIconsAdded,
+    typeIconsSkipped: Object.values(typeIconsSkippedReasons).reduce(
+      (sum, n) => sum + n,
+      0,
+    ),
+    typeIconsSkippedReasons,
     typesRegistered: plan.types.length,
     typesSkipped: plan.typesSkipped,
     edgeTypesRegistered: plan.edgeTypes.length,

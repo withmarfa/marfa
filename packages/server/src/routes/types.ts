@@ -18,6 +18,7 @@ import {
   FIELD_FORMATS,
   malformedTypeIdentifier,
   labelledTypeDefinition,
+  iconNameIssue,
 } from "@withmarfa/shared";
 import type { SchemaValidationIssue, TypeSchema } from "@withmarfa/shared";
 import type { Context, Next } from "hono";
@@ -196,13 +197,24 @@ const DisplayHintsSchema = z
     body_field: z
       .string()
       .optional()
-      .describe("The field that holds an item's body for display."),
+      .describe(
+        "The field that holds an item's body for display. The field holds Markdown.",
+      ),
+    icon: z
+      .string()
+      .optional()
+      .describe(
+        "The icon that stands for the type, as the kebab-case name of an icon in the Lucide release Marfa pins, such as `calendar-days`. On a type read back, the owner's own choice replaces the author's.",
+      ),
   })
-  .describe("Which fields of a type clients show as an item's title and body.")
+  .describe(
+    "How clients show a type and its items: the fields that hold an item's title and body, and the type's icon. Each hint comes from the nearest type that sets it.",
+  )
   .openapi("DisplayHints");
 
 const MERGE_POLICY = "How Marfa merges conflicting edits to the type's items.";
-const DISPLAY_HINTS = "Which fields clients show as an item's title and body.";
+const DISPLAY_HINTS =
+  "How clients show the type and its items: the title field, the body field and the icon.";
 const VERSION_POLICY = "How long Marfa keeps the versions of the type's items.";
 const RETENTION_POLICY =
   "How long Marfa keeps the type's items in the feed tier.";
@@ -544,6 +556,109 @@ const TypeResponseSchema = z
   .describe("One type.")
   .openapi("TypeResponse");
 
+/**
+ * The type as it reads for this owner: their icon in place of the author's.
+ * It is the type's own `display_hints.icon`, so a subtype that sets none
+ * inherits it exactly as it would an author's, and one that sets its own
+ * still shows that.
+ */
+function withOwnerIcon<T extends TypeSchema>(
+  schema: T,
+  owned: ReadonlyMap<string, string>,
+): T {
+  const icon = owned.get(schema.id);
+  if (icon === undefined) return schema;
+  return { ...schema, display_hints: { ...schema.display_hints, icon } };
+}
+
+const DISPLAY_HINT_KEYS = ["title_field", "body_field", "icon"] as const;
+
+/**
+ * The hints the type reads as, which is what a caller that reads a type and
+ * writes the answer back submits. A parent chain that cannot be walked, the
+ * state a replacement exists to correct, leaves nothing to compare with.
+ */
+function readDisplayHints(
+  id: string,
+  owned: ReadonlyMap<string, string>,
+): TypeSchema["display_hints"] {
+  try {
+    return resolveTypeSchema(id, ownerResolver(owned))?.display_hints;
+  } catch (err) {
+    if (
+      err instanceof MarfaError &&
+      err.code === ErrorCode.TYPE_CHAIN_UNRESOLVABLE
+    ) {
+      return undefined;
+    }
+    throw err;
+  }
+}
+
+/**
+ * A definition written back as read carries more than its author wrote: the
+ * owner's icon, and every hint the type takes from an ancestor. A hint the
+ * stored definition does not set, and the submission gives the value the type
+ * reads as, is that read-back, so it is dropped and the type goes on
+ * following its ancestor. The icon the definition does set is kept when the
+ * submitted one is the owner's, so clearing the owner's icon shows the
+ * author's again.
+ */
+function withoutReadBack<T extends TypeSchema>(
+  schema: T,
+  stored: TypeSchema,
+  owned: ReadonlyMap<string, string>,
+): T {
+  const submitted = schema.display_hints;
+  if (submitted === undefined) return schema;
+  const read = readDisplayHints(stored.id, owned);
+  const ownerIcon = owned.get(stored.id);
+  const hints: Record<string, string> = {};
+  for (const key of DISPLAY_HINT_KEYS) {
+    const value = submitted[key];
+    if (value === undefined) continue;
+    const own = stored.display_hints?.[key];
+    if (key === "icon" && ownerIcon !== undefined && value === ownerIcon) {
+      if (own !== undefined) hints[key] = own;
+    } else if (own === undefined && value === read?.[key]) {
+      continue;
+    } else {
+      hints[key] = value;
+    }
+  }
+  const rest: Record<string, unknown> = { ...(schema as TypeSchema) };
+  delete rest.display_hints;
+  if (Object.keys(hints).length > 0) rest.display_hints = hints;
+  return rest as T;
+}
+
+/** The registry as the owner sees it: each type with their icon, if any. */
+function ownerResolver(owned: ReadonlyMap<string, string>): TypeResolver {
+  return (id) => {
+    const schema = getTypeSchema(id);
+    return schema && withOwnerIcon(schema, owned);
+  };
+}
+
+const TypeIconBodySchema = z
+  .strictObject({
+    icon: z
+      .string()
+      .describe(
+        "The kebab-case name of an icon in the Lucide release Marfa pins, such as `calendar-days`.",
+      ),
+  })
+  .describe("The icon to show for a type.")
+  .openapi("TypeIconRequest");
+
+const typeIdParams = z.object({
+  id: z
+    .string()
+    .describe(
+      "The identifier of the type, such as `core.note` or `acme.deal`.",
+    ),
+});
+
 // ---------------------------------------------------------------------------
 // Route definitions
 // ---------------------------------------------------------------------------
@@ -746,7 +861,7 @@ const normalizeTypeRoute = createRoute({
                 "The canonical registered type's declared definition; `null` if its identifier is not registered.",
               ),
               resolved_type: nullableRef(TypeSchemaResponse).describe(
-                "The canonical registered definition, with inherited fields, policies and roles resolved as on `GET /types/{id}`; `null` if its identifier is not registered.",
+                "The canonical registered definition, with inherited fields, policies and roles resolved as on `GET /types/{id}`, with the author's icon and not the owner's; `null` if its identifier is not registered.",
               ),
             })
             .describe(
@@ -887,6 +1002,99 @@ const replaceTypeRoute = createRoute({
   },
 });
 
+function requireIconDoorId(c: Context<AppEnv>, next: Next) {
+  const id = c.req.param("id") ?? "";
+  if (!isValidTypeIdentifier(id)) {
+    throw malformedTypeIdentifier("id", `Invalid type identifier: ${id}`);
+  }
+  return next();
+}
+
+const iconDoorResponses = {
+  401: {
+    content: {
+      "application/json": { schema: makeErrorResponseSchema(["unauthorized"]) },
+    },
+    description: "Unauthorized",
+  },
+  403: {
+    content: {
+      "application/json": {
+        schema: makeErrorResponseSchema(["forbidden", "type_not_permitted"]),
+      },
+    },
+    description:
+      "- `forbidden`: you lack `schema.write`, or your key is a connector's, which cannot change what the owner chose.\n- `type_not_permitted`: your type map doesn't grant write on the type.",
+  },
+  404: {
+    content: {
+      "application/json": {
+        schema: makeErrorResponseSchema(["type_not_found"]),
+      },
+    },
+    description: "`type_not_found`: no type has this identifier.",
+  },
+} as const;
+
+const setTypeIconRoute = createRoute({
+  operationId: "setTypeIcon",
+  method: "put",
+  path: "/{id}/icon",
+  middleware: [changesSchema, requireIconDoorId] as const,
+  tags: ["Types"],
+  summary: "Set a type's icon",
+  description:
+    "Sets the owner's icon for a type. Reads answer it in place of the author's, and a subtype with no icon inherits it. Replacing the type keeps it. Needs `schema.write` and write on the type, as replacing it does.",
+  security: [{ bearerAuth: [] }, { ownerSession: [] }] as Record<
+    string,
+    string[]
+  >[],
+  request: {
+    params: typeIdParams,
+    query: z.object({}),
+    body: { content: { "application/json": { schema: TypeIconBodySchema } } },
+  },
+  responses: {
+    200: {
+      content: { "application/json": { schema: TypeResponseSchema } },
+      description: "Returns the type, with the icon.",
+    },
+    400: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["invalid_schema"]),
+        },
+      },
+      description:
+        "`invalid_schema`: `icon` isn't the name of an icon in the pinned Lucide release (`details.errors` names it).",
+    },
+    ...iconDoorResponses,
+  },
+});
+
+const clearTypeIconRoute = createRoute({
+  operationId: "clearTypeIcon",
+  method: "delete",
+  path: "/{id}/icon",
+  middleware: [changesSchema, requireIconDoorId] as const,
+  tags: ["Types"],
+  summary: "Clear a type's icon",
+  description:
+    "Removes the icon the owner set for a type, so reads show the author's again. Clearing a type with no owner icon succeeds and changes nothing.",
+  security: [{ bearerAuth: [] }, { ownerSession: [] }] as Record<
+    string,
+    string[]
+  >[],
+  request: { params: typeIdParams, query: z.object({}) },
+  responses: {
+    200: {
+      content: { "application/json": { schema: TypeResponseSchema } },
+      description: "Returns the type, with the author's icon if it has one.",
+    },
+    ...iconDoorResponses,
+  },
+});
+
 const deleteTypeRoute = createRoute({
   operationId: "deleteType",
   method: "delete",
@@ -989,18 +1197,21 @@ export function typeRoutes(storage: Storage) {
           (await storage.types.loadAll()).map((row) => [row.schema.id, row]),
         );
         const resolve: TypeResolver = (id) => getTypeSchema(id);
-        return listTypes().map((schema) => {
-          const roles = resolveRoles(schema.id, resolve);
-          const row = rows.get(schema.id);
-          return {
-            ...schema,
-            ...(roles ? { roles } : {}),
-            provenance: {
-              origin: row?.origin ?? ("unknown" as const),
-              created_by: row?.created_by ?? null,
-            },
-          };
-        });
+        const owned = await storage.types.icons();
+        return listTypes()
+          .map((schema) => withOwnerIcon(schema, owned))
+          .map((schema) => {
+            const roles = resolveRoles(schema.id, resolve);
+            const row = rows.get(schema.id);
+            return {
+              ...schema,
+              ...(roles ? { roles } : {}),
+              provenance: {
+                origin: row?.origin ?? ("unknown" as const),
+                created_by: row?.created_by ?? null,
+              },
+            };
+          });
       },
       { signal: c.req.raw.signal },
     );
@@ -1012,7 +1223,8 @@ export function typeRoutes(storage: Storage) {
     const { id } = c.req.valid("param");
     const result = await storage.runInReadSnapshot(
       async () => {
-        const schema = resolveTypeSchema(id, (typeId) => getTypeSchema(typeId));
+        const owned = await storage.types.icons();
+        const schema = resolveTypeSchema(id, ownerResolver(owned));
         if (!schema)
           throw new MarfaError(
             ErrorCode.TYPE_NOT_FOUND,
@@ -1174,7 +1386,11 @@ export function typeRoutes(storage: Storage) {
             throw schemaRefusal(result.errors);
           }
 
-          const schema = labelledTypeDefinition(result.data);
+          const schema = withoutReadBack(
+            labelledTypeDefinition(result.data),
+            stored,
+            await storage.types.icons(),
+          );
           await requireTypeReplacement(c, stored, schema, (types, names) =>
             storage.types.propertyNamesHeld(types, names),
           );
@@ -1190,7 +1406,10 @@ export function typeRoutes(storage: Storage) {
           }
           const updated = await storage.types.update(id, schema);
           assertCompatibleDependents([id]);
-          return { ...updated, provenance: await storage.types.provenance(id) };
+          return {
+            ...withOwnerIcon(updated, await storage.types.icons()),
+            provenance: await storage.types.provenance(id),
+          };
         },
         {
           client_ip: c.get("clientIp") ?? null,
@@ -1205,6 +1424,75 @@ export function typeRoutes(storage: Storage) {
     },
     refuseAsTheValidatorWould,
   );
+
+  /** Admit the caller to change the owner's icon for `id`, or refuse it. The
+   *  owner and a local command may; a key needs `schema.write` and write on
+   *  the type in its map, the same as to replace the type. */
+  function requireIconChange(c: Context<AppEnv>, id: string) {
+    if (!getTypeSchema(id)) {
+      throw new MarfaError(ErrorCode.TYPE_NOT_FOUND, `Type "${id}" not found`);
+    }
+    if (isDirectAuthority(c)) return;
+    requireTypeSchemaWrite(c, "change", id);
+  }
+
+  async function iconAnswer(id: string) {
+    const owned = await storage.types.icons();
+    const schema = resolveTypeSchema(id, ownerResolver(owned));
+    if (!schema) {
+      throw new MarfaError(ErrorCode.TYPE_NOT_FOUND, `Type "${id}" not found`);
+    }
+    return {
+      type: { ...schema, provenance: await storage.types.provenance(id) },
+    };
+  }
+
+  router.openapi(setTypeIconRoute, async (c) => {
+    const { id } = c.req.valid("param");
+    const { icon } = c.req.valid("json");
+    const refused = iconNameIssue(icon, "icon");
+    if (refused) {
+      throw new MarfaError(ErrorCode.INVALID_SCHEMA, "Invalid type icon", {
+        errors: [refused],
+      });
+    }
+    const answer = await runAuditedTransaction(
+      storage,
+      async () => {
+        requireIconChange(c, id);
+        await storage.types.setIcon(id, icon);
+        return iconAnswer(id);
+      },
+      {
+        client_ip: c.get("clientIp") ?? null,
+        key_id: authorityId(c),
+        action: "type.icon.set",
+        resource_type: "type",
+        resource_id: id,
+      },
+    );
+    return c.json(answer, 200);
+  });
+
+  router.openapi(clearTypeIconRoute, async (c) => {
+    const { id } = c.req.valid("param");
+    const answer = await runAuditedTransaction(
+      storage,
+      async () => {
+        requireIconChange(c, id);
+        await storage.types.clearIcon(id);
+        return iconAnswer(id);
+      },
+      {
+        client_ip: c.get("clientIp") ?? null,
+        key_id: authorityId(c),
+        action: "type.icon.clear",
+        resource_type: "type",
+        resource_id: id,
+      },
+    );
+    return c.json(answer, 200);
+  });
 
   router.openapi(deleteTypeRoute, async (c) => {
     const { id } = c.req.valid("param");

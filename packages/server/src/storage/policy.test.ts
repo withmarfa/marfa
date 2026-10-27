@@ -181,6 +181,69 @@ describe("resolveMergePolicy — agreement with codegen-time resolution", () => 
  * write to find out, and a generated kit would surface the field as always
  * empty, which reads as a definite "declares no roles" rather than as missing.
  */
+describe("resolveTypeSchema display_hints", () => {
+  const base: TypeSchema = {
+    id: "acme.shelf",
+    version: 1,
+    fields: { name: { type: "string" }, text: { type: "string" } },
+    display_hints: { title_field: "name", body_field: "text", icon: "box" },
+  };
+
+  it("takes each hint from the nearest type that sets that hint", () => {
+    const resolver = makeResolver([
+      base,
+      {
+        id: "acme.shelf.a",
+        version: 1,
+        fields: {},
+        parent: "acme.shelf",
+        display_hints: { icon: "star" },
+      },
+      {
+        id: "acme.shelf.a.b",
+        version: 1,
+        fields: { label: { type: "string" } },
+        parent: "acme.shelf.a",
+        display_hints: { title_field: "label" },
+      },
+    ]);
+    expect(resolveTypeSchema("acme.shelf.a", resolver)?.display_hints).toEqual({
+      title_field: "name",
+      body_field: "text",
+      icon: "star",
+    });
+    expect(
+      resolveTypeSchema("acme.shelf.a.b", resolver)?.display_hints,
+    ).toEqual({ title_field: "label", body_field: "text", icon: "star" });
+  });
+
+  it("shows a parent's title and the child's own icon together", () => {
+    const resolver = makeResolver([
+      { ...base, display_hints: { title_field: "name" } },
+      {
+        id: "acme.shelf.a",
+        version: 1,
+        fields: {},
+        parent: "acme.shelf",
+        display_hints: { icon: "star" },
+      },
+    ]);
+    expect(resolveTypeSchema("acme.shelf.a", resolver)?.display_hints).toEqual({
+      title_field: "name",
+      icon: "star",
+    });
+  });
+
+  it("leaves the block off when no type in the chain sets any hint", () => {
+    const resolver = makeResolver([
+      { id: "acme.bare", version: 1, fields: {} },
+    ]);
+    expect(
+      resolveTypeSchema("acme.bare", resolver)?.display_hints,
+    ).toBeUndefined();
+  });
+});
+
 describe("resolveTypeSchema roles", () => {
   it("returns the role for a type that declares it", () => {
     for (const id of [

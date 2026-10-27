@@ -62,6 +62,8 @@ pub const OPERATIONS: &[Operation] = &[
     reached("normalizeType", "types normalize"),
     reached("getType", "types get"),
     reached("replaceType", "types replace"),
+    reached("setTypeIcon", "types set-icon"),
+    reached("clearTypeIcon", "types clear-icon"),
     reached("deleteType", "types delete"),
     reached("moveType", "types move"),
     reached("searchItems", "search"),

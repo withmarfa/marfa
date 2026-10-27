@@ -20,6 +20,7 @@ import {
   ROLE_CONSTRAINT_PREFIX,
   SHIPPED_TYPE_SHAPES,
   TYPE_ROLES,
+  iconNameIssue,
   isRoleConstraint,
   normalizeEdgeProperties,
   roleFromConstraint,
@@ -81,6 +82,7 @@ export { ALL_TYPES, ALL_SYSTEM_TYPES, ALL_TYPE_IDS, SHIPPED_TYPE_SHAPES };
 export {
   ROLE_CONSTRAINT_PREFIX,
   TYPE_ROLES,
+  iconNameIssue,
   isRoleConstraint,
   roleFromConstraint,
 };

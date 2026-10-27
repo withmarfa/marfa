@@ -4338,10 +4338,10 @@ describe("what frontmatter says", () => {
     ]);
   });
 
-  it("takes the display hints of the nearest type that declares any, whole, as the server resolves them", async () => {
-    // A subtype naming only a body inherits no title from its parent: the
-    // server's read of the type answers the subtype's block alone
-    // (`types/read-display-hints`), so the folder falls back to `title`
+  it("takes each display hint from the nearest type that sets it, as the server resolves them", async () => {
+    // A subtype naming only a body keeps its parent's title field: the
+    // server's read of the type takes each hint from the nearest type that
+    // sets it (`types/read-display-hint`), and so does the folder
     // (`device/catalog-type-read`).
     harness = await folderHarness("folder-partial-hints", {
       settings: { query: { types: ["user.quote"] } },
@@ -4366,24 +4366,17 @@ describe("what frontmatter says", () => {
     });
     scriptFolderWrites(harness);
     expect((await harness.folder.pull()).ok).toBe(true);
-    put(
-      harness,
-      "Saying.md",
-      "---\ntype: user.quote\ntext: Quoted\n---\nWorth it.\n",
-    );
+    put(harness, "Saying.md", "---\ntype: user.quote\n---\nWorth it.\n");
     // The witness: the parent's own hints still name its title.
     put(harness, "Line.md", "---\ntype: core.highlight\n---\nKept.\n");
     const pushed = await harness.folder.push();
     expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
     expect(
       sentCreates(harness).map((sent) => [sent.type, sent.properties]),
-      "a subtype naming only its body took its title field from its parent's hints, which the server's read of the type does not",
+      "a subtype naming only its body did not take its title field from its parent's hints, as the server's read of the type does",
     ).toEqual([
       ["core.highlight", { note: "Kept.\n", text: "Line" }],
-      [
-        "user.quote",
-        { comment: "Worth it.\n", text: "Quoted", title: "Saying" },
-      ],
+      ["user.quote", { comment: "Worth it.\n", text: "Saying" }],
     ]);
   });
 

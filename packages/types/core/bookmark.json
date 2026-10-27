@@ -57,7 +57,8 @@
   "required": [],
   "display_hints": {
     "title_field": "title",
-    "body_field": "body"
+    "body_field": "body",
+    "icon": "bookmark"
   },
   "merge_policy": {
     "fields": {

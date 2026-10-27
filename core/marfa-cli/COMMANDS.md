@@ -1316,6 +1316,33 @@ marfa types replace [OPTIONS] <ID>
 | `--file <PATH>` | A file holding the JSON body; `-` reads stdin. |
 | `--body <JSON>` | The JSON body inline. |
 
+### marfa types set-icon
+
+Set the icon the owner wants for a type, one Marfa ships included. Reads of the type then answer it in place of the author's icon, and a subtype with no icon of its own inherits it. Needs `schema.write` and write on the type in the key's type map, as replacing the type does. The owner's own sign-in and a local command can always set it.
+
+The icon is the kebab-case name of an icon in the Lucide release Marfa pins, such as `calendar-days`. Marfa refuses any other name.
+
+```text
+marfa types set-icon [OPTIONS] <ID> <ICON>
+```
+
+| Argument | Description |
+| --- | --- |
+| `<ID>` | The type id. |
+| `<ICON>` | The Lucide icon name, such as `book-open`. |
+
+### marfa types clear-icon
+
+Remove the icon the owner set for a type, so the author's shows again. Needs the same access as `set-icon`.
+
+```text
+marfa types clear-icon [OPTIONS] <ID>
+```
+
+| Argument | Description |
+| --- | --- |
+| `<ID>` | The type id. |
+
 ### marfa types delete
 
 Remove a registered type. Needs `schema.write` and write on the type in the key's type map. Refused while items of the type exist or a folder, view or webhook names it. `marfa types move` moves the items and changes those settings.

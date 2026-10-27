@@ -20,7 +20,8 @@
   },
   "required": ["from"],
   "display_hints": {
-    "body_field": "body"
+    "body_field": "body",
+    "icon": "message-square"
   },
   "merge_policy": {
     "fields": {

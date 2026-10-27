@@ -8,6 +8,7 @@
 // nothing here may reach back into shared; registry access is injected through
 // `SchemaValidationContext` instead.
 
+import { isLucideIcon, LUCIDE_VERSION } from "./lucide-icons.js";
 import { TYPE_ROLES } from "./schema-types.js";
 import type {
   DisplayHints,
@@ -939,10 +940,11 @@ export function validateTypeSchema(
   }
   const hints = asRecord(obj.display_hints);
   if (hints) {
-    const dh: { title_field?: string; body_field?: string } = {};
+    const dh: { title_field?: string; body_field?: string; icon?: string } = {};
     if (typeof hints.title_field === "string")
       dh.title_field = hints.title_field;
     if (typeof hints.body_field === "string") dh.body_field = hints.body_field;
+    if (typeof hints.icon === "string") dh.icon = hints.icon;
     if (Object.keys(dh).length > 0) schema.display_hints = dh;
   }
   if (typeof obj.link_field === "string") schema.link_field = obj.link_field;
@@ -1134,6 +1136,25 @@ function validateThumbnails(
   }
 }
 
+/**
+ * The refusal for a value that is not the name of an icon in the pinned
+ * Lucide release, or nothing when it is one. `field` names the member in the
+ * refusal: `display_hints.icon` in a type's definition, `icon` where the
+ * owner sets one directly.
+ */
+export function iconNameIssue(
+  value: unknown,
+  field: string,
+): SchemaValidationIssue | undefined {
+  if (typeof value === "string" && isLucideIcon(value)) return undefined;
+  return issue({
+    field,
+    expected: `the kebab-case name of an icon in Lucide ${LUCIDE_VERSION}`,
+    actual: describe(value),
+    hint: 'Use a name from lucide.dev/icons, such as "calendar-days".',
+  });
+}
+
 function validateDisplayHints(
   obj: Record<string, unknown>,
   visibleFields: ReadonlySet<string>,
@@ -1149,10 +1170,14 @@ function validateDisplayHints(
         field: "display_hints",
         expected: "an object, or nothing",
         actual: describe(obj.display_hints),
-        hint: 'Write display_hints as { "title_field": "...", "body_field": "..." }.',
+        hint: 'Write display_hints as { "title_field": "...", "body_field": "...", "icon": "..." }.',
       }),
     );
     return;
+  }
+  if (hints.icon !== undefined) {
+    const refused = iconNameIssue(hints.icon, "display_hints.icon");
+    if (refused) errors.push(refused);
   }
   for (const hintKey of ["title_field", "body_field"] as const) {
     const value = hints[hintKey];
@@ -2146,6 +2171,7 @@ export const DISPLAY_HINTS_KEYS: ReadonlySet<string> = new Set(
   Object.keys({
     title_field: true,
     body_field: true,
+    icon: true,
   } satisfies Record<keyof DisplayHints, true>),
 );
 

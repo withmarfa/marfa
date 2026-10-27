@@ -1379,6 +1379,30 @@ describe("an interrupted hydration", () => {
     expect(listed(server)).toEqual([null, "1", "2", null, "1", "2"]);
   });
 
+  it("resumes under a catalog that differs only in a type's icon, and holds the new icon", async () => {
+    let catalog = typeCatalog([
+      wireType("user.late", { parent: "core.note", icon: "star" }),
+    ]);
+    const { device } = await interrupted("resume-icon-only", {
+      catalog: () => catalog,
+    });
+    const first = await device.status();
+    expect(first.ok).toBe(true);
+    const before = first.ok ? first.value.catalog_version : undefined;
+    catalog = typeCatalog([
+      wireType("user.late", { parent: "core.note", icon: "moon" }),
+    ]);
+    const again = await device.hydrate(["core.note"], "library");
+    expect(again.ok, JSON.stringify(again)).toBe(true);
+    if (!again.ok) return;
+    expect([again.value.resumed, again.value.restarted]).toEqual([
+      true,
+      undefined,
+    ]);
+    const after = await device.status();
+    expect(after.ok ? after.value.catalog_version : after).not.toBe(before);
+  });
+
   it("starts again from the first page when another instance answers", async () => {
     const replaced = "00000000-0000-7000-8000-0000000000ff";
     let instance = SCRIPTED_INSTANCE;

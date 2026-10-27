@@ -182,6 +182,29 @@ const CHANGING: Record<string, Driver> = {
     }
   },
 
+  // The owner's icon for a type changes what the registry answers, and is
+  // held to the same map; a connector's key is refused whatever its map says.
+  "PUT /types/:id/icon": async ({ refused, served, name }) => {
+    const id = `other.${name}-icon`;
+    await registerType(served, id);
+    const set = (key: string) =>
+      request(ctx.app, "PUT", `/types/${id}/icon`, {
+        key,
+        body: { icon: "box" },
+      });
+    await expectRefused(await set(refused), "type_not_permitted", id);
+    expect((await set(served)).status).toBe(200);
+  },
+
+  "DELETE /types/:id/icon": async ({ refused, served, name }) => {
+    const id = `other.${name}-icon-clear`;
+    await registerType(served, id);
+    const clear = (key: string) =>
+      request(ctx.app, "DELETE", `/types/${id}/icon`, { key });
+    await expectRefused(await clear(refused), "type_not_permitted", id);
+    expect((await clear(served)).status).toBe(200);
+  },
+
   // A move changes the items of a type rather than the registry, held to the
   // same map on the type it moves from and the type it moves to.
   "POST /types/:id/move": async ({ refused, served, name }) => {

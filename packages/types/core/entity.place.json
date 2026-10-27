@@ -45,6 +45,6 @@
   },
   "required": [],
   "display_hints": {
-    "title_field": "name"
+    "icon": "map-pin"
   }
 }

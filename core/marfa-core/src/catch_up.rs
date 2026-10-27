@@ -307,7 +307,7 @@ fn adopt(
 ) -> Result<Catalog> {
     let conn = core.conn()?;
     context.same_copy(&conn)?;
-    if store::replace_catalog(&conn, catalog)? {
+    if store::replace_catalog(&conn, catalog)?.is_changed() {
         *changed = true;
     }
     Catalog::load(&conn)

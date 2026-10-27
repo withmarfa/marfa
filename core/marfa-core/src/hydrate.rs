@@ -684,11 +684,21 @@ fn resume_point(
     })
 }
 
-/// Whether `catalog` differs from the one the copy holds, leaving the copy's.
+/// Whether `catalog` differs from the one the copy holds in anything a row's
+/// index reads, leaving the copy's. A catalog that differs in types' icons
+/// alone is adopted on the spot: the rows taken are indexed as the rest would
+/// be, so the walk resumes under it (`device/hydrate-icon-only-catalog`).
 fn catalog_differs(core: &Core, catalog: &WireCatalog) -> Result<bool> {
     let mut conn = core.conn()?;
     let tx = conn.transaction()?;
-    store::replace_catalog(&tx, catalog)
+    match store::replace_catalog(&tx, catalog)? {
+        store::CatalogChange::Unchanged => Ok(false),
+        store::CatalogChange::IconsOnly => {
+            tx.commit()?;
+            Ok(false)
+        }
+        store::CatalogChange::Changed => Ok(true),
+    }
 }
 
 /// Asks the log for the events after `head` and reads only as far as the

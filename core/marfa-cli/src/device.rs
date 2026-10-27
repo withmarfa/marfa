@@ -1708,6 +1708,7 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
                         for (name, value) in [
                             ("title", &held.title_field),
                             ("body", &held.body_field),
+                            ("icon", &held.icon),
                             ("link", &held.link_field),
                         ] {
                             if let Some(value) = value {

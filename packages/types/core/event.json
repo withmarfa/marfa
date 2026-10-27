@@ -82,7 +82,8 @@
   "required": ["title"],
   "display_hints": {
     "title_field": "title",
-    "body_field": "description"
+    "body_field": "description",
+    "icon": "calendar"
   },
   "merge_policy": {
     "fields": {

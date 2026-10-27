@@ -19,11 +19,10 @@ const BODY_PROPERTY: &str = "body";
 
 struct Entry {
     parent: Option<String>,
-    /// Whether the type declares a `display_hints` block of its own.
-    hinted: bool,
     title_field: Option<String>,
     thumbnail_field: Option<String>,
     body_field: Option<String>,
+    icon: Option<String>,
     /// The properties the type declares itself, not those it inherits.
     fields: Vec<String>,
     definitions: Map<String, Value>,
@@ -126,6 +125,9 @@ pub struct ItemType {
     pub fields: Vec<TypeField>,
     pub title_field: Option<String>,
     pub body_field: Option<String>,
+    /// The Lucide icon that stands for the type, kebab-case: the owner's
+    /// choice where they made one, else the nearest author's.
+    pub icon: Option<String>,
     pub link_field: Option<String>,
     pub roles: Vec<String>,
     pub compatible_with: Vec<String>,
@@ -360,6 +362,7 @@ fn resolve(
         fields: fields.into_values().collect(),
         title_field: hints.title_field(id).map(str::to_string),
         body_field: hints.body_field(id).map(str::to_string),
+        icon: hints.icon(id).map(str::to_string),
         link_field: text(own, "link_field"),
         roles: texts(own, "roles"),
         compatible_with: texts(own, "compatible_with"),
@@ -491,7 +494,7 @@ impl Catalog {
             "SELECT id, parent, title_field, thumbnail_field,
                     json_extract(json, '$.display_hints.body_field'),
                     json_extract(json, '$.fields'),
-                    json_type(json, '$.display_hints') IS NOT NULL
+                    json_extract(json, '$.display_hints.icon')
                FROM types",
         )?;
         let rows = statement.query_map([], |row| {
@@ -502,12 +505,12 @@ impl Catalog {
                 row.get::<_, Option<String>>(3)?,
                 row.get::<_, Option<String>>(4)?,
                 row.get::<_, Option<String>>(5)?,
-                row.get::<_, bool>(6)?,
+                row.get::<_, Option<String>>(6)?,
             ))
         })?;
         let mut entries = HashMap::new();
         for row in rows {
-            let (id, parent, title_field, thumbnail_field, body_field, fields, hinted) = row?;
+            let (id, parent, title_field, thumbnail_field, body_field, fields, icon) = row?;
             let fields: Map<String, Value> = fields
                 .map(|fields| serde_json::from_str(&fields))
                 .transpose()?
@@ -516,10 +519,10 @@ impl Catalog {
                 id,
                 Entry {
                     parent,
-                    hinted,
                     title_field,
                     thumbnail_field,
                     body_field,
+                    icon,
                     fields: fields.keys().cloned().collect(),
                     definitions: fields,
                 },
@@ -756,16 +759,24 @@ impl Catalog {
         self.entries.contains_key(type_id)
     }
 
-    /// From the hints of the nearest type that declares any, taken whole as
-    /// `GET /types/{id}` resolves them: a subtype naming only its body
-    /// inherits no title.
+    /// From the nearest type that sets a title field, as `GET /types/{id}`
+    /// resolves it: each display hint is inherited on its own, so a subtype
+    /// naming only its body keeps its parent's title.
     pub fn title_field(&self, type_id: &str) -> Option<&str> {
-        self.hints(type_id)?.title_field.as_deref()
+        self.nearest(type_id, |entry| entry.title_field.as_deref())
     }
 
-    /// The property a type's text lives in, from the same hints as its title.
+    /// The property a type's text lives in, from the nearest type that sets
+    /// one.
     pub fn body_field(&self, type_id: &str) -> Option<&str> {
-        self.hints(type_id)?.body_field.as_deref()
+        self.nearest(type_id, |entry| entry.body_field.as_deref())
+    }
+
+    /// The Lucide icon of the nearest type that sets one. The catalog holds
+    /// the owner's choice for a type in that type's place, so it is this
+    /// icon where a type has one and is inherited like any other.
+    pub fn icon(&self, type_id: &str) -> Option<&str> {
+        self.nearest(type_id, |entry| entry.icon.as_deref())
     }
 
     /// The property an item of the type is titled by: its hints' title field,
@@ -803,18 +814,6 @@ impl Catalog {
             unreadable_properties: unreadable.why(&item.id),
             ..self.shown(item)
         }
-    }
-
-    fn hints(&self, type_id: &str) -> Option<&Entry> {
-        let mut current = type_id;
-        for _ in 0..MAX_PARENT_WALK {
-            let entry = self.entries.get(current)?;
-            if entry.hinted {
-                return Some(entry);
-            }
-            current = entry.parent.as_deref()?;
-        }
-        None
     }
 
     /// Every type the copy holds, with the properties each declares itself.
@@ -922,10 +921,10 @@ mod tests {
                         id.to_string(),
                         Entry {
                             parent: parent.map(str::to_string),
-                            hinted: false,
                             title_field: None,
                             thumbnail_field: None,
                             body_field: None,
+                            icon: None,
                             fields: Vec::new(),
                             definitions: Map::new(),
                         },
@@ -1009,7 +1008,7 @@ mod tests {
                 { "id": "acme.base", "label": "Base",
                   "fields": { "name": { "type": "string", "required": true },
                               "note": { "type": "string" } },
-                  "display_hints": { "title_field": "name", "body_field": "note" } },
+                  "display_hints": { "title_field": "name", "body_field": "note", "icon": "box" } },
                 { "id": "acme.mid", "parent": "acme.base",
                   "fields": { "name": { "type": "string", "required": true, "description": "again" } },
                   "display_hints": { "title_field": "name" } },
@@ -1035,9 +1034,13 @@ mod tests {
         );
         assert_eq!(leaf.fields[0].description.as_deref(), Some("again"));
         assert_eq!(
-            (leaf.title_field.as_deref(), leaf.body_field),
-            (Some("name"), None),
-            "the hints were merged field by field, where the server takes the nearest block whole"
+            (
+                leaf.title_field.as_deref(),
+                leaf.body_field.as_deref(),
+                leaf.icon.as_deref()
+            ),
+            (Some("name"), Some("note"), Some("box")),
+            "each hint comes from the nearest type that sets it"
         );
         assert_eq!(leaf.label.as_deref(), Some("Leaf"));
         assert_eq!(leaf.parent.as_deref(), Some("acme.mid"));
@@ -1045,33 +1048,60 @@ mod tests {
     }
 
     #[test]
-    fn every_reader_takes_the_nearest_hints_whole() {
+    fn every_reader_takes_each_hint_from_the_nearest_type_that_sets_it() {
         let conn = held(
             serde_json::json!([
                 { "id": "acme.base", "fields": { "name": { "type": "string" } },
-                  "display_hints": { "title_field": "name", "body_field": "text" } },
+                  "display_hints": { "title_field": "name", "body_field": "text", "icon": "box" } },
                 { "id": "acme.leaf", "parent": "acme.base",
                   "fields": { "comment": { "type": "string" } },
                   "display_hints": { "body_field": "comment" } },
+                { "id": "acme.starred", "parent": "acme.base", "fields": {},
+                  "display_hints": { "icon": "star" } },
+                { "id": "acme.titled", "parent": "acme.starred",
+                  "fields": { "label": { "type": "string" } },
+                  "display_hints": { "title_field": "label" } },
                 { "id": "acme.bare", "parent": "acme.base", "fields": {} }
             ]),
             serde_json::json!([]),
         );
         let catalog = Catalog::load(&conn).unwrap();
-        assert_eq!(
+        let hints = |id: &str| {
             (
-                catalog.title_field("acme.leaf"),
-                catalog.body_field("acme.leaf")
-            ),
-            (None, Some("comment")),
-            "a subtype naming only its body took its title from its parent's hints"
+                catalog.title_field(id).map(str::to_string),
+                catalog.body_field(id).map(str::to_string),
+                catalog.icon(id).map(str::to_string),
+            )
+        };
+        let some = |value: &str| Some(value.to_string());
+        assert_eq!(
+            hints("acme.leaf"),
+            (some("name"), some("comment"), some("box")),
+            "a subtype naming only its body lost its parent's title or icon"
         );
-        // The witness: a subtype with no hints of its own takes its parent's.
-        assert_eq!(catalog.title_field("acme.bare"), Some("name"));
+        assert_eq!(
+            hints("acme.starred"),
+            (some("name"), some("text"), some("star")),
+            "a subtype naming only an icon lost its parent's title or body"
+        );
+        assert_eq!(
+            hints("acme.titled"),
+            (some("label"), some("text"), some("star")),
+            "a hint was not taken from the nearest type that sets it"
+        );
+        assert_eq!(
+            hints("acme.bare"),
+            (some("name"), some("text"), some("box"))
+        );
+        assert_eq!(hints("acme.unheld"), (None, None, None));
         let leaf = item_type(&conn, "acme.leaf").unwrap();
         assert_eq!(
-            (leaf.title_field, leaf.body_field.as_deref()),
-            (None, Some("comment"))
+            (
+                leaf.title_field.as_deref(),
+                leaf.body_field.as_deref(),
+                leaf.icon.as_deref()
+            ),
+            (Some("name"), Some("comment"), Some("box"))
         );
     }
 
@@ -1091,6 +1121,9 @@ mod tests {
                   "display_hints": { "body_field": "text" } },
                 { "id": "acme.person", "fields": { "name": { "type": "string" } },
                   "display_hints": { "title_field": "name" } },
+                { "id": "acme.person.fan", "parent": "acme.person",
+                  "fields": { "quote": { "type": "string" } },
+                  "display_hints": { "body_field": "quote" } },
                 { "id": "acme.plain", "fields": {} }
             ]),
             serde_json::json!([]),
@@ -1139,6 +1172,14 @@ mod tests {
             "a subtype naming only its body did not fall back to `title`"
         );
         assert_eq!(shown("acme.person", every.clone()), (text("N"), text("B")));
+        assert_eq!(
+            shown(
+                "acme.person.fan",
+                serde_json::json!({ "name": "N", "quote": "Q", "title": "T" })
+            ),
+            (text("N"), text("Q")),
+            "a subtype naming only its body lost its parent's title field"
+        );
         assert_eq!(shown("acme.plain", every.clone()), (text("T"), text("B")));
         assert_eq!(
             shown("acme.unheld", every),
@@ -1700,11 +1741,23 @@ mod tests {
                 "reverse_name": reverse, "written_at": "target", "shipped": false
             })],
         };
-        assert!(store::replace_catalog(&conn, &catalog("mentored-by")).unwrap());
+        assert!(
+            store::replace_catalog(&conn, &catalog("mentored-by"))
+                .unwrap()
+                .is_changed()
+        );
         assert_eq!(store::catalog_version(&conn).unwrap(), Some(1));
-        assert!(!store::replace_catalog(&conn, &catalog("mentored-by")).unwrap());
+        assert!(
+            !store::replace_catalog(&conn, &catalog("mentored-by"))
+                .unwrap()
+                .is_changed()
+        );
         assert_eq!(store::catalog_version(&conn).unwrap(), Some(1));
-        assert!(store::replace_catalog(&conn, &catalog("taught-by")).unwrap());
+        assert!(
+            store::replace_catalog(&conn, &catalog("taught-by"))
+                .unwrap()
+                .is_changed()
+        );
         assert_eq!(store::catalog_version(&conn).unwrap(), Some(2));
         let mentor = edge_type(&conn, "mentor-of").unwrap();
         assert_eq!(

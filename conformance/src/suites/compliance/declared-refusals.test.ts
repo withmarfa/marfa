@@ -800,12 +800,15 @@ describe("a query key no door declares", () => {
       template === "/restore" ||
       template === "/trash" ||
       template === "/trash/empty" ||
+      (template.startsWith("/types/") && template.endsWith("/icon")) ||
       template.startsWith("/items/summaries")
     ) {
       const response = await getOwnerClient().rawRequest(`${path}?${STRAY}=1`, {
-        method: method as "GET" | "POST" | "PATCH" | "DELETE",
+        method: method as "GET" | "POST" | "PATCH" | "PUT" | "DELETE",
         headers: { "Content-Type": "application/json" },
-        ...(method === "POST" || method === "PATCH" ? { body: "{}" } : {}),
+        ...(method === "POST" || method === "PATCH" || method === "PUT"
+          ? { body: "{}" }
+          : {}),
       });
       return {
         status: response.status,
@@ -882,7 +885,8 @@ describe("a query key no door declares", () => {
           door.method,
           door.path,
           key,
-          door.method === "PUT" && door.path === "/types/{id}"
+          (door.method === "PUT" && door.path === "/types/{id}") ||
+            door.path === "/types/{id}/icon"
             ? ownType
             : UNKNOWN,
         );

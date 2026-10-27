@@ -134,6 +134,8 @@ export function wireType(
     parent?: string;
     titleField?: string;
     bodyField?: string;
+    /** The Lucide icon the type declares; absent where it declares none. */
+    icon?: string;
     fields?: Record<string, unknown>;
     /** Which fields collide how. What decides whether a resolution names a
      *  sibling (`queue-and-verdicts/success-conflicted`), so a scripted type without one
@@ -162,6 +164,7 @@ export function wireType(
       ...(options.bodyField === undefined
         ? {}
         : { body_field: options.bodyField }),
+      ...(options.icon === undefined ? {} : { icon: options.icon }),
     },
     merge_policy: options.mergePolicy ?? {
       fields: { body: "keep_both_copies" },
@@ -244,6 +247,7 @@ const FILE_FIELDS = {
 export const SCRIPTED_TYPES: ReadonlyArray<Record<string, unknown>> = [
   wireType("core.note", {
     bodyField: "body",
+    icon: "sticky-note",
     // The four the deployment seeds `core.note` with. Mirrored rather than
     // abbreviated: a device resolving a title field reads this registry, and
     // a scripted type thinner than the real one is a registry no server
@@ -266,6 +270,7 @@ export const SCRIPTED_TYPES: ReadonlyArray<Record<string, unknown>> = [
   // A body kept in a property other than `body`, as `core.event`'s is.
   wireType("core.event", {
     bodyField: "description",
+    icon: "calendar",
     fields: {
       title: { type: "string", description: "Event name", required: true },
       description: { type: "string", description: "Event details" },
@@ -280,6 +285,7 @@ export const SCRIPTED_TYPES: ReadonlyArray<Record<string, unknown>> = [
   wireType("core.highlight", {
     titleField: "text",
     bodyField: "note",
+    icon: "highlighter",
     fields: {
       text: {
         type: "string",
@@ -291,12 +297,14 @@ export const SCRIPTED_TYPES: ReadonlyArray<Record<string, unknown>> = [
   }),
   wireType("core.file", {
     titleField: "title",
+    icon: "file",
     fields: FILE_FIELDS,
     mergePolicy: { fields: {}, default: "last_writer_wins" },
   }),
   wireType("core.file.webpage", {
     parent: "core.file",
     titleField: "title",
+    icon: "globe",
     fields: FILE_FIELDS,
     mergePolicy: { fields: {}, default: "last_writer_wins" },
   }),
@@ -335,6 +343,7 @@ export const SCRIPTED_TYPES: ReadonlyArray<Record<string, unknown>> = [
     mergePolicy: { fields: {}, default: "last_writer_wins" },
   }),
   wireType("core.bookmark", {
+    icon: "bookmark",
     titleField: "title",
     bodyField: "body",
     fields: {

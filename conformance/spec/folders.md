@@ -1104,13 +1104,13 @@ When a Markdown frontmatter line names neither an own field, metadata line, nor 
 
 When a device reads or writes a document, a device MUST use the type's resolved `body_field` as the body property, falling back to `body`.
 
-**Tests:** `device/folders-frontmatter.test.ts › takes body and title from the type's display hints`, `device/folders-frontmatter.test.ts › takes the display hints of the nearest type that declares any, whole, as the server resolves them`.
+**Tests:** `device/folders-frontmatter.test.ts › takes body and title from the type's display hints`, `device/folders-frontmatter.test.ts › takes each display hint from the nearest type that sets it, as the server resolves them`.
 
 ### `folders/title-property`
 
 When a device derives a document title from its filename or a filename from its title, a device MUST use the type's resolved `title_field`, falling back to `title`.
 
-**Tests:** `device/folders-frontmatter.test.ts › takes body and title from the type's display hints`, `device/folders-frontmatter.test.ts › takes the display hints of the nearest type that declares any, whole, as the server resolves them`.
+**Tests:** `device/folders-frontmatter.test.ts › takes body and title from the type's display hints`, `device/folders-frontmatter.test.ts › takes each display hint from the nearest type that sets it, as the server resolves them`.
 
 ### `folders/body-over-line`
 

@@ -199,6 +199,8 @@ export const PUBLIC_TAGS: readonly PublicTag[] = [
       "deleteType",
       "moveType",
       "normalizeType",
+      "setTypeIcon",
+      "clearTypeIcon",
     ],
   },
   {

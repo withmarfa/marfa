@@ -41,7 +41,11 @@ const UNKNOWN_ID = "019537a0-7b80-7000-8000-000000000000";
  * names a writable type before the rest of the request is read.
  */
 const OWN_TYPE = "census.door";
-const BY_PATH: Record<string, string> = { "PUT /types/:id": OWN_TYPE };
+const BY_PATH: Record<string, string> = {
+  "PUT /types/:id": OWN_TYPE,
+  "PUT /types/:id/icon": OWN_TYPE,
+  "DELETE /types/:id/icon": OWN_TYPE,
+};
 const STRAY = "definitely-not-a-filter";
 
 /**
