@@ -119,6 +119,8 @@ export interface ArchiveManifest {
    *  platform-seeded rows sharing the table. */
   type_count: number;
   edge_type_count: number;
+  /** The owner's icons carried in `types.ndjson`, one line each. */
+  type_icon_count: number;
   blobs: Record<string, { mime_type: string; size_bytes: number }>;
   /** The blobs the archive names and does not carry, in the shape of
    *  `blobs`, and not counted in `blob_count`: those left out by
@@ -262,6 +264,7 @@ interface Selection {
   edgeCount: number;
   typeCount: number;
   edgeTypeCount: number;
+  typeIconCount: number;
 }
 
 interface BlobSelection {
@@ -373,6 +376,7 @@ async function prepareArchiveExport(
         blob_count: selection.blobCount,
         type_count: selection.typeCount,
         edge_type_count: selection.edgeTypeCount,
+        type_icon_count: selection.typeIconCount,
       } satisfies Omit<ArchiveManifest, "blobs" | "missing_blobs">);
       try {
         // `collectBlobs` checked the blob entries a page at a time.
@@ -662,6 +666,7 @@ async function collectSelection(input: {
 
   const registrations = new Map<string, LoadedType>();
   const edgeRegistrations = new Map<string, EdgeTypeSchema>();
+  let ownerIcons: ReadonlyMap<string, string> = new Map();
   const captureRegistrations = async () => {
     // Keep removed registrations for carried rows, and replace retained
     // definitions whenever a later page sees them. The complete selection is
@@ -673,6 +678,7 @@ async function collectSelection(input: {
     for (const schema of await storage.edgeTypes.list()) {
       edgeRegistrations.set(schema.id, schema);
     }
+    ownerIcons = await storage.types.icons();
   };
   const captureBlobs = async (
     hashes: Set<string>,
@@ -864,6 +870,11 @@ async function collectSelection(input: {
     typeLines.push(`${JSON.stringify({ edge_type: schema })}\n`);
     edgeTypeCount += 1;
   }
+  for (const [type_id, icon] of [...ownerIcons].sort(([a], [b]) =>
+    a < b ? -1 : a > b ? 1 : 0,
+  )) {
+    typeLines.push(`${JSON.stringify({ type_icon: { type_id, icon } })}\n`);
+  }
   await types.append(typeLines.join(""));
 
   await Promise.all([
@@ -882,6 +893,7 @@ async function collectSelection(input: {
     edgeCount,
     typeCount,
     edgeTypeCount,
+    typeIconCount: ownerIcons.size,
   };
 }
 

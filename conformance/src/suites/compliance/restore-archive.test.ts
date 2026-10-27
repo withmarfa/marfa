@@ -808,7 +808,7 @@ describe("what a restore answers", () => {
     return { a, b, edgeId, hash, archive };
   }
 
-  it("answers ten counts, each for the kind of thing it counts, on the first restore and on a repeat", async () => {
+  it("answers twelve counts, each for the kind of thing it counts, on the first restore and on a repeat", async () => {
     const ids = {
       type: `user.restoreanswer${ctx.runId}`,
       edgeType: `restoreanswer.${ctx.runId}`,
@@ -832,6 +832,8 @@ describe("what a restore answers", () => {
         "edges_skipped",
         "edges_skipped_reasons",
         "imported",
+        "type_icons_added",
+        "type_icons_skipped",
         "types_registered",
         "types_skipped",
       ].sort(),
@@ -848,6 +850,8 @@ describe("what a restore answers", () => {
       types_skipped: 0,
       edge_types_registered: 1,
       edge_types_skipped: 0,
+      type_icons_added: 0,
+      type_icons_skipped: 0,
     });
     await expectMatchesSchema("POST", "/restore", 200, first.data);
 
@@ -881,6 +885,8 @@ describe("what a restore answers", () => {
       types_skipped: 1,
       edge_types_registered: 0,
       edge_types_skipped: 1,
+      type_icons_added: 0,
+      type_icons_skipped: 0,
     });
     await expectMatchesSchema("POST", "/restore", 200, again.data);
   });

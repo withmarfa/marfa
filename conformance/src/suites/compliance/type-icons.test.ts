@@ -1,9 +1,15 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { MarfaClient } from "../../client/api.js";
 import { expectMatchesSchema } from "../../utils/openapi.js";
+import {
+  listTarGzEntries,
+  readTarGzEntry,
+  tarGz,
+} from "../../utils/archive.js";
 import type { TestContext, TypeSchema } from "../../client/types.js";
 import {
   createTestContext,
+  getManagementClient,
   getOwnerClient,
   trackItem,
   trackKey,
@@ -222,6 +228,40 @@ describe("the owner's icon for a type", () => {
     expect(await iconOf(id)).toBe("moon");
   });
 
+  it("does not bake the owner's icon into the definition when a read is written back", async () => {
+    const id = await register({ display_hints: { icon: "box" } });
+    expect((await setIcon(owner, id, "package")).status).toBe(200);
+    const read = await client.getType(id);
+    expect(read.ok).toBe(true);
+    expect(read.data.display_hints?.icon).toBe("package");
+    const written = await client.replaceType(id, read.data);
+    expect(written.ok, JSON.stringify(written.error)).toBe(true);
+    expect((await clearIcon(owner, id)).status).toBe(200);
+    expect(await iconOf(id)).toBe("box");
+
+    const bare = await register();
+    expect((await setIcon(owner, bare, "package")).status).toBe(200);
+    const bareRead = await client.getType(bare);
+    const bareWritten = await client.replaceType(bare, bareRead.data);
+    expect(bareWritten.ok, JSON.stringify(bareWritten.error)).toBe(true);
+    expect((await clearIcon(owner, bare)).status).toBe(200);
+    expect(await iconOf(bare)).toBeUndefined();
+  });
+
+  it("normalizes on the author's side, with the author's icon in resolved_type", async () => {
+    const id = await register({ display_hints: { icon: "box" } });
+    expect((await setIcon(owner, id, "package")).status).toBe(200);
+    const normalized = await client.rawRequest<{
+      resolved_type: TypeSchema | null;
+    }>("/types/normalize", {
+      method: "POST",
+      body: { id, fields: { heading: { type: "string" } } },
+    });
+    expect(normalized.status).toBe(200);
+    expect(normalized.data.resolved_type?.display_hints?.icon).toBe("box");
+    expect(await iconOf(id)).toBe("package");
+  });
+
   it("refuses a name outside the pinned release and a type nothing registered, and keeps the earlier choice", async () => {
     const id = await register({ display_hints: { icon: "star" } });
     expect((await setIcon(owner, id, "heart")).status).toBe(200);
@@ -289,6 +329,81 @@ describe("the owner's icon for a type", () => {
     }
     expect(await iconOf(id)).toBe("heart");
     expect((await clearIcon(allowed, id)).status).toBe(200);
+
+    // A key a connector is registered under is held to the same rule: it
+    // changes the icon with schema.write on the type, and not without.
+    const registered = await allowed.registerConnector({
+      name: `${ctx.runId} icons`,
+    });
+    expect(registered.status).toBe(201);
+    try {
+      expect((await setIcon(allowed, id, "moon")).status).toBe(200);
+      expect(await iconOf(id)).toBe("moon");
+      expect((await clearIcon(allowed, id)).status).toBe(200);
+      expect(await iconOf(id)).toBeUndefined();
+    } finally {
+      await getManagementClient().deleteConnectorState(registered.data.id);
+    }
+  });
+
+  it("carries the owner's icons in an archive and adds back those the instance lacks, replacing none", async () => {
+    const id = await register();
+    expect((await setIcon(owner, id, "box")).status).toBe(200);
+    const archive = await client.exportArchive({ source: ctx.source });
+    expect(archive.status).toBe(200);
+    const lines = (readTarGzEntry(archive.data, "types.ndjson") ?? "")
+      .split("\n")
+      .filter((line) => line.trim() !== "")
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+    const carried = lines.filter((line) => "type_icon" in line);
+    expect(carried.map((line) => line.type_icon)).toContainEqual({
+      type_id: id,
+      icon: "box",
+    });
+    const manifest = JSON.parse(
+      readTarGzEntry(archive.data, "manifest.json") ?? "{}",
+    ) as { type_icon_count: number };
+    expect(manifest.type_icon_count).toBe(carried.length);
+
+    // An icon the owner chose since the export stays.
+    expect((await setIcon(owner, id, "sun")).status).toBe(200);
+    const kept = await owner.restoreArchive(archive.data);
+    expect(kept.ok, JSON.stringify(kept.error)).toBe(true);
+    expect(kept.data.type_icons_skipped).toBeGreaterThanOrEqual(1);
+    expect(await iconOf(id)).toBe("sun");
+
+    // With none chosen, the archive's is added.
+    expect((await clearIcon(owner, id)).status).toBe(200);
+    const added = await owner.restoreArchive(archive.data);
+    expect(added.ok, JSON.stringify(added.error)).toBe(true);
+    expect(added.data.type_icons_added).toBeGreaterThanOrEqual(1);
+    expect(await iconOf(id)).toBe("box");
+    expect((await clearIcon(owner, id)).status).toBe(200);
+  });
+
+  it("refuses an archive whose icon line names no Lucide icon or no type, and writes nothing", async () => {
+    const id = await register();
+    const archive = await client.exportArchive({ source: ctx.source });
+    expect(archive.status).toBe(200);
+    for (const line of [
+      { type_id: id, icon: "Not-An-Icon" },
+      { type_id: `user.icons-nowhere-${ctx.runId}`, icon: "box" },
+    ]) {
+      const bad = tarGz(
+        listTarGzEntries(archive.data).map((entry) => ({
+          name: entry.name,
+          body:
+            entry.name === "types.ndjson"
+              ? entry.body.toString("utf8") +
+                `${JSON.stringify({ type_icon: line })}\n`
+              : entry.body,
+        })),
+      );
+      const refused = await owner.restoreArchive(bad);
+      expect(refused.status, JSON.stringify(line)).toBe(400);
+      expect(refused.error?.error.code).toBe("invalid_schema");
+    }
+    expect(await iconOf(id)).toBeUndefined();
   });
 
   it("discards the owner's icon with the type", async () => {

@@ -337,7 +337,10 @@ export async function runArchiveValidation(
       at = { kind: "type", id: null, type: null };
       const typePlan = await planArchiveTypes(
         {
-          types: { listRegistered: () => Promise.resolve([]) },
+          types: {
+            listRegistered: () => Promise.resolve([]),
+            icons: () => Promise.resolve(new Map()),
+          },
           edgeTypes: { list: () => Promise.resolve([]) },
         },
         await archiveTypeEntries(input.lineFiles["types.ndjson"], pace),

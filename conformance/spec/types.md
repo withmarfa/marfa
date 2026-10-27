@@ -1091,9 +1091,9 @@ When an authenticated caller sends `POST /types/normalize`, the server MUST admi
 
 ### `types/normalize-answer`
 
-When a valid candidate is sent to `POST /types/normalize`, the server MUST return its canonical declared definition in `type`, the canonical declared registered definition in `registered_type` and the canonical registered definition resolved as on `GET /types/{id}` in `resolved_type`, from one registry view.
+When a valid candidate is sent to `POST /types/normalize`, the server MUST return its canonical declared definition in `type`, the canonical declared registered definition in `registered_type` and the canonical registered definition resolved as on `GET /types/{id}`, with the author's icon and not the owner's (`types/icon-read`), in `resolved_type`, from one registry view.
 
-**Tests:** `compliance/connector-interfaces.test.ts › normalizes equivalent declarations without write authority and retains inherited refinements`.
+**Tests:** `compliance/connector-interfaces.test.ts › normalizes equivalent declarations without write authority and retains inherited refinements`, `compliance/type-icons.test.ts › normalizes on the author's side, with the author's icon in resolved_type`.
 
 ### `types/normalize-absent`
 
@@ -1173,6 +1173,14 @@ When a caller replaces a type with `PUT /types/{id}`, the server MUST keep the o
 
 **Tests:** `compliance/type-icons.test.ts › keeps the owner's icon through a replacement of the type`.
 
+### `types/icon-write-back`
+
+When the `display_hints.icon` a caller submits to `PUT /types/{id}` equals the owner's icon for that type, the server MUST store the icon the definition already had, or none if it had none.
+
+**Reason:** a caller that reads a type and writes the answer back sends the owner's icon as if the author had chosen it; storing it would make clearing the owner's icon show a name the author never wrote, and `types/icon-kept` could not hold.
+
+**Tests:** `compliance/type-icons.test.ts › does not bake the owner's icon into the definition when a read is written back`.
+
 ### `types/icon-refused`
 
 If `PUT /types/{id}/icon` names an `icon` that `types/icon-name` refuses, then the server MUST answer `400 invalid_schema` naming the member `icon`.
@@ -1193,15 +1201,15 @@ If `PUT /types/{id}/icon` or `DELETE /types/{id}/icon` names a type nothing regi
 
 When the owner's session, a local process, or a key holding `schema.write` and write on the type in its type map sends `PUT /types/{id}/icon` or `DELETE /types/{id}/icon`, the server MUST allow the call.
 
-**Reason:** the icon is a presentation choice made over the author's, and a key that may not change a type's definition may not change how the owner sees it.
+**Reason:** the icon is a presentation choice made over the author's, and who may set or clear it is exactly who may replace the type; a key that may not change a type's definition may not change how the owner sees it.
 
 **Tests:** `compliance/type-icons.test.ts › allows a key with schema.write on the type and refuses one without`.
 
 ### `types/icon-who-refused`
 
-If a caller other than those `types/icon-who` names sends `PUT /types/{id}/icon` or `DELETE /types/{id}/icon`, a connector's key among them whatever permissions it holds, then the server MUST answer `403 forbidden`.
+If a key without `schema.write`, or without write on the type in its type map, sends `PUT /types/{id}/icon` or `DELETE /types/{id}/icon`, then the server MUST answer `403` (`forbidden` for the missing permission, `type_not_permitted` for the missing write on the type) and leave the owner's icon as it was.
 
-**Reason:** the connector is the author whose default the choice overrides, so its own key cannot be the one to overwrite the owner's choice.
+**Reason:** changing the icon is replacing how the owner sees the type, so it needs what replacing the type needs, and a key that is a connector's gets no more and no less than any other.
 
 **Tests:** `compliance/type-icons.test.ts › allows a key with schema.write on the type and refuses one without`.
 

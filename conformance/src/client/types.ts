@@ -711,6 +711,8 @@ export interface RestoreArchiveResponse {
   edges_skipped_reasons: Record<string, number>;
   blobs_imported: number;
   blobs_missing: string[];
+  type_icons_added: number;
+  type_icons_skipped: number;
 }
 
 export interface PerfResult {

@@ -57,7 +57,8 @@ function wellFormedRefusal(
 function archivedTypeId(entry: unknown): unknown {
   if (!isRecord(entry)) return undefined;
   const registered = entry.type ?? entry.edge_type;
-  return isRecord(registered) ? registered.id : undefined;
+  if (isRecord(registered)) return registered.id;
+  return isRecord(entry.type_icon) ? entry.type_icon.type_id : undefined;
 }
 
 export function archiveScalarRefusal(

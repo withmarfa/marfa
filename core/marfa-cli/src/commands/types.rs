@@ -38,7 +38,7 @@ pub enum TypesCommand {
         #[command(flatten)]
         body: BodySource,
     },
-    /// Set the icon the owner wants for a type, one Marfa ships included. Reads of the type then answer it in place of the author's icon, and a subtype with no icon of its own inherits it. Needs `schema.write` and write on the type in the key's type map; a connector's key is refused. The owner's own sign-in and a local command can always set it.
+    /// Set the icon the owner wants for a type, one Marfa ships included. Reads of the type then answer it in place of the author's icon, and a subtype with no icon of its own inherits it. Needs `schema.write` and write on the type in the key's type map, as replacing the type does. The owner's own sign-in and a local command can always set it.
     ///
     /// The icon is the kebab-case name of an icon in the Lucide release Marfa pins, such as `calendar-days`. Marfa refuses any other name.
     SetIcon {

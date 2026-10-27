@@ -209,6 +209,61 @@ describe("PUT and DELETE /types/{id}/icon", () => {
     expect((await readType(id)).display_hints?.icon).toBe("archive");
   });
 
+  it("does not bake the owner's icon into the definition when a read is written back unchanged", async () => {
+    const id = `acme.${name()}`;
+    await register(id, { display_hints: { icon: "box" } });
+    await ownerSetIcon(id, "package");
+
+    const read = (await (
+      await request(ctx.app, "GET", `/types/${id}`, { key: ctx.workingKey })
+    ).json()) as Record<string, unknown>;
+    expect((read.display_hints as { icon: string }).icon).toBe("package");
+    const written = await request(ctx.app, "PUT", `/types/${id}`, {
+      key: ctx.workingKey,
+      body: read,
+    });
+    expect(written.status).toBe(200);
+
+    await ownerClearIcon(id);
+    expect((await readType(id)).display_hints?.icon).toBe("box");
+  });
+
+  it("keeps no icon in the definition when a read of a type that had none is written back", async () => {
+    const id = `acme.${name()}`;
+    await register(id);
+    await ownerSetIcon(id, "package");
+    const read = (await (
+      await request(ctx.app, "GET", `/types/${id}`, { key: ctx.workingKey })
+    ).json()) as Record<string, unknown>;
+    expect(
+      (
+        await request(ctx.app, "PUT", `/types/${id}`, {
+          key: ctx.workingKey,
+          body: read,
+        })
+      ).status,
+    ).toBe(200);
+    await ownerClearIcon(id);
+    expect((await readType(id)).display_hints?.icon).toBeUndefined();
+  });
+
+  it("normalizes on the author's side: resolved_type carries the author's icon, not the owner's", async () => {
+    const id = `acme.${name()}`;
+    await register(id, { display_hints: { icon: "box" } });
+    await ownerSetIcon(id, "package");
+    const res = await request(ctx.app, "POST", "/types/normalize", {
+      key: ctx.workingKey,
+      body: { id, fields: { title: { type: "string" } } },
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      registered_type: TypeBody;
+      resolved_type: TypeBody;
+    };
+    expect(body.registered_type.display_hints?.icon).toBe("box");
+    expect(body.resolved_type.display_hints?.icon).toBe("box");
+  });
+
   it("inherits to a subtype with no icon of its own, and yields to one with its own", async () => {
     const parent = `acme.${name()}`;
     await register(parent, { display_hints: { icon: "folder" } });
@@ -285,7 +340,7 @@ describe("PUT and DELETE /types/{id}/icon", () => {
     expect((await readType(id)).display_hints?.icon).toBeUndefined();
   });
 
-  it("is refused to a connector's key, even one holding schema.write", async () => {
+  it("is open to a connector's key holding schema.write on the type, as to any other key", async () => {
     const id = `acme.${name()}`;
     await register(id);
     const connectorKey = await mintWorkingKey(ctx, {
@@ -298,21 +353,32 @@ describe("PUT and DELETE /types/{id}/icon", () => {
     });
     expect(registered.status).toBe(201);
 
-    for (const method of ["PUT", "DELETE"] as const) {
-      const res = await request(ctx.app, method, `/types/${id}/icon`, {
-        key: connectorKey,
-        ...(method === "PUT" ? { body: { icon: "box" } } : {}),
-      });
-      expect(res.status, method).toBe(403);
-      expect((await errorOf(res)).code).toBe("forbidden");
-    }
+    const set = await request(ctx.app, "PUT", `/types/${id}/icon`, {
+      key: connectorKey,
+      body: { icon: "box" },
+    });
+    expect(set.status).toBe(200);
+    expect((await readType(id)).display_hints?.icon).toBe("box");
+    const cleared = await request(ctx.app, "DELETE", `/types/${id}/icon`, {
+      key: connectorKey,
+    });
+    expect(cleared.status).toBe(200);
     expect((await readType(id)).display_hints?.icon).toBeUndefined();
 
-    // The connector still replaces its own type, and the owner's choice holds.
-    await ownerSetIcon(id, "package");
-    expect((await replace(id, { label: "Again" }, connectorKey)).status).toBe(
-      200,
-    );
-    expect((await readType(id)).display_hints?.icon).toBe("package");
+    // A connector key without schema.write is refused like any other key.
+    const bare = await mintWorkingKey(ctx, {
+      permissions: [],
+      metadata_permissions: { types: "write" },
+      type_permissions: { "acme.*": "write" },
+    });
+    await request(ctx.app, "POST", "/connectors", {
+      key: bare,
+      body: { name: "Bare connector" },
+    });
+    const refused = await request(ctx.app, "PUT", `/types/${id}/icon`, {
+      key: bare,
+      body: { icon: "box" },
+    });
+    expect(refused.status).toBe(403);
   });
 });

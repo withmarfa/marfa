@@ -378,6 +378,7 @@
     "calls": {
       "EdgeTypeStore.create": 1,
       "TypeStore.create": 1,
+      "TypeStore.setIcon": 1,
       "TypeStore.update": 1,
       "runAuditedTransaction": 2
     }

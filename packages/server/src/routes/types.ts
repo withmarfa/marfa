@@ -571,6 +571,30 @@ function withOwnerIcon<T extends TypeSchema>(
   return { ...schema, display_hints: { ...schema.display_hints, icon } };
 }
 
+/**
+ * A definition written back as read carries the owner's icon as its own.
+ * When the submitted icon is the owner's, it is that read-back and not the
+ * author's choice, so the definition keeps the icon it had, or none, and
+ * clearing the owner's icon shows the author's again.
+ */
+function withoutOwnerIcon<T extends TypeSchema>(
+  schema: T,
+  stored: TypeSchema,
+  owned: string | undefined,
+): T {
+  if (owned === undefined || schema.display_hints?.icon !== owned) {
+    return schema;
+  }
+  const hints: Record<string, unknown> = { ...schema.display_hints };
+  delete hints.icon;
+  const kept = stored.display_hints?.icon;
+  if (kept !== undefined) hints.icon = kept;
+  const rest: Record<string, unknown> = { ...(schema as TypeSchema) };
+  delete rest.display_hints;
+  if (Object.keys(hints).length > 0) rest.display_hints = hints;
+  return rest as T;
+}
+
 /** The registry as the owner sees it: each type with their icon, if any. */
 function ownerResolver(owned: ReadonlyMap<string, string>): TypeResolver {
   return (id) => {
@@ -800,7 +824,7 @@ const normalizeTypeRoute = createRoute({
                 "The canonical registered type's declared definition; `null` if its identifier is not registered.",
               ),
               resolved_type: nullableRef(TypeSchemaResponse).describe(
-                "The canonical registered definition, with inherited fields, policies and roles resolved as on `GET /types/{id}`; `null` if its identifier is not registered.",
+                "The canonical registered definition, with inherited fields, policies and roles resolved as on `GET /types/{id}`, with the author's icon and not the owner's; `null` if its identifier is not registered.",
               ),
             })
             .describe(
@@ -983,7 +1007,7 @@ const setTypeIconRoute = createRoute({
   tags: ["Types"],
   summary: "Set a type's icon",
   description:
-    "Sets the owner's icon for a type, one Marfa ships or a connector registers. Reads answer it in place of the author's, and a subtype with no icon inherits it. Replacing the type keeps it. A connector's key can't call this.",
+    "Sets the owner's icon for a type. Reads answer it in place of the author's, and a subtype with no icon inherits it. Replacing the type keeps it. Needs `schema.write` and write on the type, as replacing it does.",
   security: [{ bearerAuth: [] }, { ownerSession: [] }] as Record<
     string,
     string[]
@@ -1325,7 +1349,11 @@ export function typeRoutes(storage: Storage) {
             throw schemaRefusal(result.errors);
           }
 
-          const schema = labelledTypeDefinition(result.data);
+          const schema = withoutOwnerIcon(
+            labelledTypeDefinition(result.data),
+            stored,
+            (await storage.types.icons()).get(id),
+          );
           await requireTypeReplacement(c, stored, schema, (types, names) =>
             storage.types.propertyNamesHeld(types, names),
           );
@@ -1362,22 +1390,13 @@ export function typeRoutes(storage: Storage) {
 
   /** Admit the caller to change the owner's icon for `id`, or refuse it. The
    *  owner and a local command may; a key needs `schema.write` and write on
-   *  the type in its map, and a connector's key is refused, because the
-   *  connector is the author this choice overrides. */
-  async function requireIconChange(c: Context<AppEnv>, id: string) {
+   *  the type in its map, the same as to replace the type. */
+  function requireIconChange(c: Context<AppEnv>, id: string) {
     if (!getTypeSchema(id)) {
       throw new MarfaError(ErrorCode.TYPE_NOT_FOUND, `Type "${id}" not found`);
     }
     if (isDirectAuthority(c)) return;
     requireTypeSchemaWrite(c, "change", id);
-    const key = requireAuth(c);
-    const registrations = await storage.connectors.list();
-    if (registrations.some((registration) => registration.key_id === key.id)) {
-      throw new MarfaError(
-        ErrorCode.FORBIDDEN,
-        "A connector's key can't change the icon the owner chose for a type",
-      );
-    }
   }
 
   async function iconAnswer(id: string) {
@@ -1403,7 +1422,7 @@ export function typeRoutes(storage: Storage) {
     const answer = await runAuditedTransaction(
       storage,
       async () => {
-        await requireIconChange(c, id);
+        requireIconChange(c, id);
         await storage.types.setIcon(id, icon);
         return iconAnswer(id);
       },
@@ -1423,7 +1442,7 @@ export function typeRoutes(storage: Storage) {
     const answer = await runAuditedTransaction(
       storage,
       async () => {
-        await requireIconChange(c, id);
+        requireIconChange(c, id);
         await storage.types.clearIcon(id);
         return iconAnswer(id);
       },

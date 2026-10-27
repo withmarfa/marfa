@@ -802,7 +802,7 @@ export interface paths {
         get?: never;
         /**
          * Set a type's icon
-         * @description Sets the owner's icon for a type, one Marfa ships or a connector registers. Reads answer it in place of the author's, and a subtype with no icon inherits it. Replacing the type keeps it. A connector's key can't call this.
+         * @description Sets the owner's icon for a type. Reads answer it in place of the author's, and a subtype with no icon inherits it. Replacing the type keeps it. Needs `schema.write` and write on the type, as replacing it does.
          */
         put: operations["setTypeIcon"];
         post?: never;
@@ -3726,7 +3726,7 @@ export interface components {
             type: components["schemas"]["TypeDefinition"] & unknown;
             /** @description The canonical registered type's declared definition; `null` if its identifier is not registered. */
             registered_type: components["schemas"]["TypeDefinition"] | null;
-            /** @description The canonical registered definition, with inherited fields, policies and roles resolved as on `GET /types/{id}`; `null` if its identifier is not registered. */
+            /** @description The canonical registered definition, with inherited fields, policies and roles resolved as on `GET /types/{id}`, with the author's icon and not the owner's; `null` if its identifier is not registered. */
             resolved_type: components["schemas"]["TypeDefinition"] | null;
         };
         /** @description An error response. */
@@ -29820,6 +29820,10 @@ export interface operations {
                         edge_types_registered: number;
                         /** @description How many edge types Marfa skipped because the instance already registers them identically. */
                         edge_types_skipped: number;
+                        /** @description How many of the owner's type icons Marfa added, for types the instance had no owner icon for. */
+                        type_icons_added: number;
+                        /** @description How many of the owner's type icons Marfa skipped because the instance already has an owner icon for the type. */
+                        type_icons_skipped: number;
                     };
                 };
             };
