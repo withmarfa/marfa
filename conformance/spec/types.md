@@ -1181,6 +1181,14 @@ When the `display_hints.icon` a caller submits to `PUT /types/{id}` equals the o
 
 **Tests:** `compliance/type-icons.test.ts › does not bake the owner's icon into the definition when a read is written back`.
 
+### `types/hint-write-back`
+
+When the definition stored for a type sets none of a display hint (`title_field`, `body_field` or `icon`) and the value a caller submits for it to `PUT /types/{id}` equals the value `GET /types/{id}` answers for that hint, the server MUST store no value for that hint.
+
+**Reason:** a caller that reads a subtype and writes the answer back sends every hint the subtype takes from an ancestor, and the owner's icon an ancestor shows, as if the subtype had chosen it; storing them would stop the subtype following its ancestor (`types/read-display-hint`), and clearing the owner's icon would leave the subtype showing it. A subtype that sets a hint to a value other than the one it reads as keeps it.
+
+**Tests:** `compliance/type-icons.test.ts › does not freeze the hints a subtype inherits when its read is written back`, `compliance/type-icons.test.ts › keeps a hint a subtype sets differently from its parent when its read is written back`.
+
 ### `types/icon-refused`
 
 If `PUT /types/{id}/icon` names an `icon` that `types/icon-name` refuses, then the server MUST answer `400 invalid_schema` naming the member `icon`.

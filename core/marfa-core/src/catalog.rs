@@ -1741,11 +1741,23 @@ mod tests {
                 "reverse_name": reverse, "written_at": "target", "shipped": false
             })],
         };
-        assert!(store::replace_catalog(&conn, &catalog("mentored-by")).unwrap());
+        assert!(
+            store::replace_catalog(&conn, &catalog("mentored-by"))
+                .unwrap()
+                .is_changed()
+        );
         assert_eq!(store::catalog_version(&conn).unwrap(), Some(1));
-        assert!(!store::replace_catalog(&conn, &catalog("mentored-by")).unwrap());
+        assert!(
+            !store::replace_catalog(&conn, &catalog("mentored-by"))
+                .unwrap()
+                .is_changed()
+        );
         assert_eq!(store::catalog_version(&conn).unwrap(), Some(1));
-        assert!(store::replace_catalog(&conn, &catalog("taught-by")).unwrap());
+        assert!(
+            store::replace_catalog(&conn, &catalog("taught-by"))
+                .unwrap()
+                .is_changed()
+        );
         assert_eq!(store::catalog_version(&conn).unwrap(), Some(2));
         let mentor = edge_type(&conn, "mentor-of").unwrap();
         assert_eq!(

@@ -58775,7 +58775,14 @@
                     },
                     "type_icons_skipped": {
                       "type": "number",
-                      "description": "How many of the owner's type icons Marfa skipped because the instance already has an owner icon for the type."
+                      "description": "How many of the owner's type icons Marfa skipped."
+                    },
+                    "type_icons_skipped_reasons": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "number"
+                      },
+                      "description": "How many of the owner's type icons Marfa skipped for each reason: `already_set` when the instance already has an owner icon for the type, `unknown_icon` when the name is not an icon of the Lucide release Marfa pins."
                     }
                   },
                   "required": [
@@ -58791,7 +58798,8 @@
                     "edge_types_registered",
                     "edge_types_skipped",
                     "type_icons_added",
-                    "type_icons_skipped"
+                    "type_icons_skipped",
+                    "type_icons_skipped_reasons"
                   ]
                 }
               }

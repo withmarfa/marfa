@@ -5,8 +5,9 @@
  * `application/gzip` (not JSON); response is `{imported, duplicates,
  * edges_imported, edges_skipped, edges_skipped_reasons, blobs_imported,
  * blobs_missing, types_registered, types_skipped, edge_types_registered,
- * edge_types_skipped, type_icons_added, type_icons_skipped}`. Enforces the manifest version 0 contract and blob-hash
- * verification, and checks every row before writing any. Memory does not
+ * edge_types_skipped, type_icons_added, type_icons_skipped,
+ * type_icons_skipped_reasons}`. Enforces the manifest version 0 contract and
+ * blob-hash verification, and checks every row before writing any. Memory does not
  * grow with the archive: entries it does not read are skipped, the rest are
  * read one line at a time, and no row is held past its line. It writes in a
  * single transaction covering type and edge-type registrations, blob rows,
@@ -179,8 +180,11 @@ const restoreArchiveRoute = createRoute({
               ),
             type_icons_skipped: z
               .number()
+              .describe("How many of the owner's type icons Marfa skipped."),
+            type_icons_skipped_reasons: z
+              .record(z.string(), z.number())
               .describe(
-                "How many of the owner's type icons Marfa skipped because the instance already has an owner icon for the type.",
+                "How many of the owner's type icons Marfa skipped for each reason: `already_set` when the instance already has an owner icon for the type, `unknown_icon` when the name is not an icon of the Lucide release Marfa pins.",
               ),
           }),
         },
@@ -785,6 +789,7 @@ async function restoreRows(
         types_skipped: result.types.typesSkipped,
         type_icons_added: result.types.typeIconsAdded,
         type_icons_skipped: result.types.typeIconsSkipped,
+        type_icons_skipped_reasons: result.types.typeIconsSkippedReasons,
         edge_types_registered: result.types.edgeTypesRegistered,
         edge_types_skipped: result.types.edgeTypesSkipped,
         total_items: restore.totalItems,
@@ -918,6 +923,8 @@ export function restoreArchiveRoutes(
               types_skipped: result.types.typesSkipped,
               type_icons_added: result.types.typeIconsAdded,
               type_icons_skipped: result.types.typeIconsSkipped,
+              type_icons_skipped_reasons: result.types.typeIconsSkippedReasons,
+              type_icons_skipped_reasons: result.types.typeIconsSkippedReasons,
               edge_types_registered: result.types.edgeTypesRegistered,
               edge_types_skipped: result.types.edgeTypesSkipped,
             },

@@ -571,24 +571,61 @@ function withOwnerIcon<T extends TypeSchema>(
   return { ...schema, display_hints: { ...schema.display_hints, icon } };
 }
 
+const DISPLAY_HINT_KEYS = ["title_field", "body_field", "icon"] as const;
+
 /**
- * A definition written back as read carries the owner's icon as its own.
- * When the submitted icon is the owner's, it is that read-back and not the
- * author's choice, so the definition keeps the icon it had, or none, and
- * clearing the owner's icon shows the author's again.
+ * The hints the type reads as, which is what a caller that reads a type and
+ * writes the answer back submits. A parent chain that cannot be walked, the
+ * state a replacement exists to correct, leaves nothing to compare with.
  */
-function withoutOwnerIcon<T extends TypeSchema>(
+function readDisplayHints(
+  id: string,
+  owned: ReadonlyMap<string, string>,
+): TypeSchema["display_hints"] {
+  try {
+    return resolveTypeSchema(id, ownerResolver(owned))?.display_hints;
+  } catch (err) {
+    if (
+      err instanceof MarfaError &&
+      err.code === ErrorCode.TYPE_CHAIN_UNRESOLVABLE
+    ) {
+      return undefined;
+    }
+    throw err;
+  }
+}
+
+/**
+ * A definition written back as read carries more than its author wrote: the
+ * owner's icon, and every hint the type takes from an ancestor. A hint the
+ * stored definition does not set, and the submission gives the value the type
+ * reads as, is that read-back, so it is dropped and the type goes on
+ * following its ancestor. The icon the definition does set is kept when the
+ * submitted one is the owner's, so clearing the owner's icon shows the
+ * author's again.
+ */
+function withoutReadBack<T extends TypeSchema>(
   schema: T,
   stored: TypeSchema,
-  owned: string | undefined,
+  owned: ReadonlyMap<string, string>,
 ): T {
-  if (owned === undefined || schema.display_hints?.icon !== owned) {
-    return schema;
+  const submitted = schema.display_hints;
+  if (submitted === undefined) return schema;
+  const read = readDisplayHints(stored.id, owned);
+  const ownerIcon = owned.get(stored.id);
+  const hints: Record<string, string> = {};
+  for (const key of DISPLAY_HINT_KEYS) {
+    const value = submitted[key];
+    if (value === undefined) continue;
+    const own = stored.display_hints?.[key];
+    if (key === "icon" && ownerIcon !== undefined && value === ownerIcon) {
+      if (own !== undefined) hints[key] = own;
+    } else if (own === undefined && value === read?.[key]) {
+      continue;
+    } else {
+      hints[key] = value;
+    }
   }
-  const hints: Record<string, unknown> = { ...schema.display_hints };
-  delete hints.icon;
-  const kept = stored.display_hints?.icon;
-  if (kept !== undefined) hints.icon = kept;
   const rest: Record<string, unknown> = { ...(schema as TypeSchema) };
   delete rest.display_hints;
   if (Object.keys(hints).length > 0) rest.display_hints = hints;
@@ -1349,10 +1386,10 @@ export function typeRoutes(storage: Storage) {
             throw schemaRefusal(result.errors);
           }
 
-          const schema = withoutOwnerIcon(
+          const schema = withoutReadBack(
             labelledTypeDefinition(result.data),
             stored,
-            (await storage.types.icons()).get(id),
+            await storage.types.icons(),
           );
           await requireTypeReplacement(c, stored, schema, (types, names) =>
             storage.types.propertyNamesHeld(types, names),

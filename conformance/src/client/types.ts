@@ -713,6 +713,7 @@ export interface RestoreArchiveResponse {
   blobs_missing: string[];
   type_icons_added: number;
   type_icons_skipped: number;
+  type_icons_skipped_reasons: Record<string, number>;
 }
 
 export interface PerfResult {

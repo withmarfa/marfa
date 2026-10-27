@@ -63,12 +63,16 @@ export interface ArchiveTypeResult {
   edgeTypesSkipped: number;
   typeIconsAdded: number;
   typeIconsSkipped: number;
+  /** How many icons were skipped for each reason: `already_set` or
+   *  `unknown_icon`. */
+  typeIconsSkippedReasons: Record<string, number>;
 }
 
-/** The owner's icon for a type, as an archive carries it. */
+/** The owner's icon for a type, as an archive carries it. An `icon` that is
+ *  not a name in the pinned Lucide release is `undefined`, and skipped. */
 export interface ArchiveTypeIcon {
   typeId: string;
-  icon: string;
+  icon: string | undefined;
 }
 
 /**
@@ -305,8 +309,12 @@ function parseTypeEntries(entries: ArchiveTypeEntry[]): {
           "Archive carries a type icon with an invalid type identifier",
         );
       }
+      // A line without a string icon is damaged and refused. A string that
+      // names no icon of this release is a well-formed line from a build with
+      // another release: it is skipped and counted, as an edge that cannot be
+      // restored is.
       const refused = iconNameIssue(raw.icon, "type_icon.icon");
-      if (refused) {
+      if (typeof raw.icon !== "string" && refused) {
         throw new MarfaError(
           ErrorCode.INVALID_SCHEMA,
           `Archive carries an invalid icon for "${raw.type_id}"`,
@@ -319,7 +327,7 @@ function parseTypeEntries(entries: ArchiveTypeEntry[]): {
           `Archive carries more than one icon for "${raw.type_id}"`,
         );
       }
-      typeIcons.set(raw.type_id, raw.icon as string);
+      typeIcons.set(raw.type_id, refused ? undefined : (raw.icon as string));
       continue;
     }
 
@@ -360,7 +368,7 @@ export interface ArchiveTypePlan {
   edgeTypesSkipped: number;
   /** The owner's icons for types the target has none for. */
   typeIcons: ArchiveTypeIcon[];
-  typeIconsSkipped: number;
+  typeIconsSkippedReasons: Record<string, number>;
 }
 
 /**
@@ -424,7 +432,7 @@ export async function planArchiveTypes(
   // written, and is added only where the owner has chosen none already.
   const heldIcons = await storage.types.icons();
   const iconsToWrite: ArchiveTypeIcon[] = [];
-  let typeIconsSkipped = 0;
+  const typeIconsSkippedReasons: Record<string, number> = {};
   for (const entry of typeIcons) {
     const held =
       existingTypes.has(entry.typeId) ||
@@ -436,8 +444,13 @@ export async function planArchiveTypes(
         `Archive carries an icon for "${entry.typeId}", which neither the archive nor this instance registers`,
       );
     }
-    if (heldIcons.has(entry.typeId)) typeIconsSkipped += 1;
-    else iconsToWrite.push(entry);
+    if (entry.icon === undefined) {
+      typeIconsSkippedReasons.unknown_icon =
+        (typeIconsSkippedReasons.unknown_icon ?? 0) + 1;
+    } else if (heldIcons.has(entry.typeId)) {
+      typeIconsSkippedReasons.already_set =
+        (typeIconsSkippedReasons.already_set ?? 0) + 1;
+    } else iconsToWrite.push(entry);
   }
 
   if (conflicts.length > 0) {
@@ -454,7 +467,7 @@ export async function planArchiveTypes(
     typesSkipped,
     edgeTypesSkipped,
     typeIcons: iconsToWrite,
-    typeIconsSkipped,
+    typeIconsSkippedReasons,
   };
 }
 
@@ -531,11 +544,13 @@ export async function writeArchiveTypes(
   // Checked again where it is written: an icon the owner set since the plan
   // was read is kept.
   let typeIconsAdded = 0;
-  let typeIconsSkipped = plan.typeIconsSkipped;
+  const typeIconsSkippedReasons = { ...plan.typeIconsSkippedReasons };
   const heldIcons = await storage.types.icons();
   for (const { typeId, icon } of plan.typeIcons) {
+    if (icon === undefined) continue;
     if (heldIcons.has(typeId)) {
-      typeIconsSkipped += 1;
+      typeIconsSkippedReasons.already_set =
+        (typeIconsSkippedReasons.already_set ?? 0) + 1;
       continue;
     }
     await storage.types.setIcon(typeId, icon);
@@ -544,7 +559,11 @@ export async function writeArchiveTypes(
 
   return {
     typeIconsAdded,
-    typeIconsSkipped,
+    typeIconsSkipped: Object.values(typeIconsSkippedReasons).reduce(
+      (sum, n) => sum + n,
+      0,
+    ),
+    typeIconsSkippedReasons,
     typesRegistered: plan.types.length,
     typesSkipped: plan.typesSkipped,
     edgeTypesRegistered: plan.edgeTypes.length,

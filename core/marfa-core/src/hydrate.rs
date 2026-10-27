@@ -691,13 +691,14 @@ fn resume_point(
 fn catalog_differs(core: &Core, catalog: &WireCatalog) -> Result<bool> {
     let mut conn = core.conn()?;
     let tx = conn.transaction()?;
-    let icons_only = store::catalog_differs_only_in_icons(&tx, catalog)?;
-    let changed = store::replace_catalog(&tx, catalog)?;
-    if changed && icons_only {
-        tx.commit()?;
-        return Ok(false);
+    match store::replace_catalog(&tx, catalog)? {
+        store::CatalogChange::Unchanged => Ok(false),
+        store::CatalogChange::IconsOnly => {
+            tx.commit()?;
+            Ok(false)
+        }
+        store::CatalogChange::Changed => Ok(true),
     }
-    Ok(changed)
 }
 
 /// Asks the log for the events after `head` and reads only as far as the

@@ -29822,8 +29822,12 @@ export interface operations {
                         edge_types_skipped: number;
                         /** @description How many of the owner's type icons Marfa added, for types the instance had no owner icon for. */
                         type_icons_added: number;
-                        /** @description How many of the owner's type icons Marfa skipped because the instance already has an owner icon for the type. */
+                        /** @description How many of the owner's type icons Marfa skipped. */
                         type_icons_skipped: number;
+                        /** @description How many of the owner's type icons Marfa skipped for each reason: `already_set` when the instance already has an owner icon for the type, `unknown_icon` when the name is not an icon of the Lucide release Marfa pins. */
+                        type_icons_skipped_reasons: {
+                            [key: string]: number;
+                        };
                     };
                 };
             };

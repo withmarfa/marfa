@@ -1382,13 +1382,21 @@ When `POST /restore` reads a `type_icon` line, the server MUST set that icon for
 
 **Tests:** `compliance/type-icons.test.ts › carries the owner's icons in an archive and adds back those the instance lacks, replacing none`.
 
+### `search-and-filters/restore-type-icons-skipped`
+
+If a `type_icon` line of an archive names an icon outside the pinned Lucide release, then the server MUST skip that line, set no icon for the type, and count it in `type_icons_skipped` and under `unknown_icon` in `type_icons_skipped_reasons`; an icon skipped because the instance has an owner icon for the type is counted under `already_set`.
+
+**Reason:** an archive made by a build that pins another release holds a well-formed line this instance cannot draw, and one such line must not keep an owner from restoring everything else, as an edge a restore cannot place is skipped and counted instead of refusing the archive (`search-and-filters/restore-edge-skips`).
+
+**Tests:** `compliance/type-icons.test.ts › skips and counts an icon outside the pinned release, and refuses a line that names no type or no icon string, writing nothing`.
+
 ### `search-and-filters/restore-type-icons-refused`
 
-If a `type_icon` line of an archive names an icon outside the pinned Lucide release, or a type that neither the archive nor the instance registers, then the server MUST answer `POST /restore` with `400 invalid_schema` and write nothing.
+If a `type_icon` line of an archive is not an object holding a `type_id` and a string `icon`, or names a type that neither the archive nor the instance registers, then the server MUST answer `POST /restore` with `400 invalid_schema` and write nothing.
 
-**Reason:** a restore holds an icon to the rules of `types/icon-name` and `types/icon-missing-type`, as it holds an invalid type, and it checks every row before it writes any.
+**Reason:** a line that is damaged, or an icon for a type nothing registers (`types/icon-missing-type`), is a fault in the archive and not a difference of release, and a restore checks every row before it writes any.
 
-**Tests:** `compliance/type-icons.test.ts › refuses an archive whose icon line names no Lucide icon or no type, and writes nothing`.
+**Tests:** `compliance/type-icons.test.ts › skips and counts an icon outside the pinned release, and refuses a line that names no type or no icon string, writing nothing`.
 
 ### `search-and-filters/archive-history`
 
@@ -1586,9 +1594,9 @@ When direct owner or local authority sends `POST /restore` with an archive that 
 
 ### `search-and-filters/restore-counts`
 
-When `POST /restore` succeeds, the server MUST carry the counts `imported`, `duplicates`, `edges_imported`, `edges_skipped`, `edges_skipped_reasons`, `blobs_imported`, `types_registered`, `types_skipped`, `edge_types_registered`, `edge_types_skipped`, `type_icons_added` and `type_icons_skipped`, each for the kind of thing it counts.
+When `POST /restore` succeeds, the server MUST carry the counts `imported`, `duplicates`, `edges_imported`, `edges_skipped`, `edges_skipped_reasons`, `blobs_imported`, `types_registered`, `types_skipped`, `edge_types_registered`, `edge_types_skipped`, `type_icons_added`, `type_icons_skipped` and `type_icons_skipped_reasons`, each for the kind of thing it counts.
 
-**Tests:** `compliance/restore-archive.test.ts › answers twelve counts, each for the kind of thing it counts, on the first restore and on a repeat`.
+**Tests:** `compliance/restore-archive.test.ts › answers thirteen counts, each for the kind of thing it counts, on the first restore and on a repeat`.
 
 ### `search-and-filters/restore-blobs-missing`
 
@@ -1720,7 +1728,7 @@ When `POST /restore` skips an edge, the server MUST count it in `edges_skipped_r
 
 **Reason:** a restore judges each edge as `POST /edges` does, except where `search-and-filters/restore-edges-bin`, `search-and-filters/restore-edges-unregistered`, `search-and-filters/restore-edges-end-unregistered` and `edges/properties-restore-kept` say otherwise and for an `in-folder` edge to a revoked folder, which it keeps as the folder kept it (`edges/folder-revoked-keeps`). It skips an edge it refuses rather than refusing the archive.
 
-**Tests:** `compliance/restore-archive.test.ts › answers twelve counts, each for the kind of thing it counts, on the first restore and on a repeat`, `› counts an edge that POST /edges would refuse under the code of its refusal, and keeps one whose type nothing registers`, `compliance/archive-scalars.test.ts › refuses an invalid edge version even when its endpoint is missing`.
+**Tests:** `compliance/restore-archive.test.ts › answers thirteen counts, each for the kind of thing it counts, on the first restore and on a repeat`, `› counts an edge that POST /edges would refuse under the code of its refusal, and keeps one whose type nothing registers`, `compliance/archive-scalars.test.ts › refuses an invalid edge version even when its endpoint is missing`.
 
 ### `search-and-filters/restore-items-kept`
 
@@ -1748,7 +1756,7 @@ When an archived item holds an id or a natural key that a row on the instance al
 
 **Reason:** a link is one row's within its type (`items/link-taken`).
 
-**Tests:** `compliance/restore-archive.test.ts › round-trips: archive export then restore accepts the same payload`, `› answers twelve counts, each for the kind of thing it counts, on the first restore and on a repeat`, `compliance/links.test.ts › counts an archived row whose link another row holds as a duplicate`.
+**Tests:** `compliance/restore-archive.test.ts › round-trips: archive export then restore accepts the same payload`, `› answers thirteen counts, each for the kind of thing it counts, on the first restore and on a repeat`, `compliance/links.test.ts › counts an archived row whose link another row holds as a duplicate`.
 
 ### `search-and-filters/restore-duplicate-kept`
 

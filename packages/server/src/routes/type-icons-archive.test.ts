@@ -120,6 +120,7 @@ describe("the owner's icons in an archive", () => {
     expect(await restored.json()).toMatchObject({
       type_icons_added: 1,
       type_icons_skipped: 1,
+      type_icons_skipped_reasons: { already_set: 1 },
     });
     expect(await iconOn(target, custom)).toBe("box");
     expect(await iconOn(target, "core.note")).toBe("heart");
@@ -129,10 +130,11 @@ describe("the owner's icons in an archive", () => {
     expect(await again.json()).toMatchObject({
       type_icons_added: 0,
       type_icons_skipped: 2,
+      type_icons_skipped_reasons: { already_set: 2 },
     });
   });
 
-  it("refuses an archive naming an icon outside the pinned Lucide release, and writes nothing", async () => {
+  it("skips and counts an icon outside the pinned Lucide release, and restores the rest", async () => {
     const { custom, archive } = await iconedSource();
     const entries = await extractArchive(archive);
     const lines = entries.get("types.ndjson")!.toString();
@@ -143,13 +145,37 @@ describe("the owner's icons in an archive", () => {
     });
     unregisterTypeSchema(custom);
     const target = await newContext();
-    const refused = await restore(target, bad);
-    expect(refused.status).toBe(400);
-    expect(
-      ((await refused.json()) as { error: { code: string } }).error.code,
-    ).toBe("invalid_schema");
-    expect(await iconOn(target, "core.note")).toBe("sticky-note");
-    expect((await target.storage.types.icons()).size).toBe(0);
+    const restored = await restore(target, bad);
+    expect(restored.status, await restored.clone().text()).toBe(200);
+    expect(await restored.json()).toMatchObject({
+      type_icons_added: 2,
+      type_icons_skipped: 1,
+      type_icons_skipped_reasons: { unknown_icon: 1 },
+    });
+    expect(await iconOn(target, custom)).toBe("box");
+    expect(await iconOn(target, "core.note")).toBe("notebook-pen");
+    expect(await iconOn(target, "core.task")).not.toBe("Not-An-Icon");
+    expect((await target.storage.types.icons()).has("core.task")).toBe(false);
+  });
+
+  it("refuses a type_icon line that is not an object holding a string icon, and writes nothing", async () => {
+    const { custom, archive } = await iconedSource();
+    const entries = await extractArchive(archive);
+    const lines = entries.get("types.ndjson")!.toString();
+    for (const line of [
+      { type_icon: { type_id: "core.task" } },
+      { type_icon: { type_id: "core.task", icon: 7 } },
+      { type_icon: { icon: "box" } },
+    ]) {
+      const bad = await repack(entries, {
+        "types.ndjson": `${lines}${JSON.stringify(line)}\n`,
+      });
+      unregisterTypeSchema(custom);
+      const target = await newContext();
+      const refused = await restore(target, bad);
+      expect(refused.status, JSON.stringify(line)).toBe(400);
+      expect((await target.storage.types.icons()).size).toBe(0);
+    }
   });
 
   it("refuses an icon for a type neither the archive nor the target holds", async () => {

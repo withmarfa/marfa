@@ -247,6 +247,88 @@ describe("PUT and DELETE /types/{id}/icon", () => {
     expect((await readType(id)).display_hints?.icon).toBeUndefined();
   });
 
+  it("does not freeze a hint a subtype inherits when its read is written back", async () => {
+    const parent = `acme.${name()}`;
+    const fields = { heading: { type: "string" }, text: { type: "string" } };
+    await register(parent, {
+      fields,
+      display_hints: { title_field: "heading", icon: "folder" },
+    });
+    const child = `${parent}.kid`;
+    await register(child, { parent, fields: {} });
+    await ownerSetIcon(parent, "package");
+
+    const read = (await (
+      await request(ctx.app, "GET", `/types/${child}`, {
+        key: ctx.workingKey,
+      })
+    ).json()) as Record<string, unknown>;
+    expect(read.display_hints).toEqual({
+      title_field: "heading",
+      icon: "package",
+    });
+    const written = await request(ctx.app, "PUT", `/types/${child}`, {
+      key: ctx.workingKey,
+      body: read,
+    });
+    expect(written.status, JSON.stringify(await written.clone().json())).toBe(
+      200,
+    );
+
+    // The child still follows its parent: the owner's icon clears, and the
+    // author changes the title.
+    await ownerClearIcon(parent);
+    const changed = await replace(parent, {
+      fields,
+      display_hints: { title_field: "text", icon: "folder" },
+    });
+    expect(changed.status).toBe(200);
+    expect((await readType(child)).display_hints).toEqual({
+      title_field: "text",
+      icon: "folder",
+    });
+  });
+
+  it("keeps a hint a subtype sets differently from its parent when its read is written back", async () => {
+    const parent = `acme.${name()}`;
+    const fields = { heading: { type: "string" }, text: { type: "string" } };
+    await register(parent, {
+      fields,
+      display_hints: { title_field: "heading", icon: "folder" },
+    });
+    const child = `${parent}.own`;
+    await register(child, {
+      parent,
+      fields: {},
+      display_hints: { title_field: "text", icon: "star" },
+    });
+    await ownerSetIcon(parent, "package");
+
+    const read = (await (
+      await request(ctx.app, "GET", `/types/${child}`, {
+        key: ctx.workingKey,
+      })
+    ).json()) as Record<string, unknown>;
+    expect(
+      (
+        await request(ctx.app, "PUT", `/types/${child}`, {
+          key: ctx.workingKey,
+          body: read,
+        })
+      ).status,
+    ).toBe(200);
+    await ownerClearIcon(parent);
+    expect((await readType(child)).display_hints).toEqual({
+      title_field: "text",
+      icon: "star",
+    });
+    const listed = await listedType(child);
+    expect(listed?.display_hints).toEqual({
+      title_field: "text",
+      icon: "star",
+    });
+  });
+
   it("normalizes on the author's side: resolved_type carries the author's icon, not the owner's", async () => {
     const id = `acme.${name()}`;
     await register(id, { display_hints: { icon: "box" } });

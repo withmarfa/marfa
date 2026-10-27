@@ -248,6 +248,66 @@ describe("the owner's icon for a type", () => {
     expect(await iconOf(bare)).toBeUndefined();
   });
 
+  it("does not freeze the hints a subtype inherits when its read is written back", async () => {
+    const parent = await register({
+      display_hints: { title_field: "heading", icon: "folder" },
+    });
+    const child = `${parent}.kid`;
+    const made = await client.registerType({
+      id: child,
+      parent,
+      fields: {},
+    });
+    expect(made.ok, JSON.stringify(made.error)).toBe(true);
+    expect((await setIcon(owner, parent, "package")).status).toBe(200);
+
+    const read = await client.getType(child);
+    expect(read.ok).toBe(true);
+    expect(read.data.display_hints).toEqual({
+      title_field: "heading",
+      icon: "package",
+    });
+    const written = await client.replaceType(child, read.data);
+    expect(written.ok, JSON.stringify(written.error)).toBe(true);
+
+    expect((await clearIcon(owner, parent)).status).toBe(200);
+    const parentRead = await client.getType(parent);
+    const changed = await client.replaceType(parent, {
+      ...parentRead.data,
+      display_hints: { title_field: "text", icon: "folder" },
+    });
+    expect(changed.ok, JSON.stringify(changed.error)).toBe(true);
+    const after = await client.getType(child);
+    expect(after.data.display_hints).toEqual({
+      title_field: "text",
+      icon: "folder",
+    });
+  });
+
+  it("keeps a hint a subtype sets differently from its parent when its read is written back", async () => {
+    const parent = await register({
+      display_hints: { title_field: "heading", icon: "folder" },
+    });
+    const child = `${parent}.own`;
+    const made = await client.registerType({
+      id: child,
+      parent,
+      fields: {},
+      display_hints: { title_field: "text", icon: "star" },
+    });
+    expect(made.ok, JSON.stringify(made.error)).toBe(true);
+    expect((await setIcon(owner, parent, "package")).status).toBe(200);
+
+    const read = await client.getType(child);
+    const written = await client.replaceType(child, read.data);
+    expect(written.ok, JSON.stringify(written.error)).toBe(true);
+    expect((await clearIcon(owner, parent)).status).toBe(200);
+    expect((await client.getType(child)).data.display_hints).toEqual({
+      title_field: "text",
+      icon: "star",
+    });
+  });
+
   it("normalizes on the author's side, with the author's icon in resolved_type", async () => {
     const id = await register({ display_hints: { icon: "box" } });
     expect((await setIcon(owner, id, "package")).status).toBe(200);
@@ -381,15 +441,12 @@ describe("the owner's icon for a type", () => {
     expect((await clearIcon(owner, id)).status).toBe(200);
   });
 
-  it("refuses an archive whose icon line names no Lucide icon or no type, and writes nothing", async () => {
+  it("skips and counts an icon outside the pinned release, and refuses a line that names no type or no icon string, writing nothing", async () => {
     const id = await register();
     const archive = await client.exportArchive({ source: ctx.source });
     expect(archive.status).toBe(200);
-    for (const line of [
-      { type_id: id, icon: "Not-An-Icon" },
-      { type_id: `user.icons-nowhere-${ctx.runId}`, icon: "box" },
-    ]) {
-      const bad = tarGz(
+    const withLine = (line: unknown) =>
+      tarGz(
         listTarGzEntries(archive.data).map((entry) => ({
           name: entry.name,
           body:
@@ -399,7 +456,20 @@ describe("the owner's icon for a type", () => {
               : entry.body,
         })),
       );
-      const refused = await owner.restoreArchive(bad);
+
+    const skipped = await owner.restoreArchive(
+      withLine({ type_id: id, icon: "Not-An-Icon" }),
+    );
+    expect(skipped.ok, JSON.stringify(skipped.error)).toBe(true);
+    expect(skipped.data.type_icons_skipped_reasons.unknown_icon).toBe(1);
+    expect(await iconOf(id)).toBeUndefined();
+
+    for (const line of [
+      { type_id: `user.icons-nowhere-${ctx.runId}`, icon: "box" },
+      { type_id: id, icon: 7 },
+      { type_id: id },
+    ]) {
+      const refused = await owner.restoreArchive(withLine(line));
       expect(refused.status, JSON.stringify(line)).toBe(400);
       expect(refused.error?.error.code).toBe("invalid_schema");
     }
