@@ -7,10 +7,17 @@
  */
 import { createClient, type Client } from "@libsql/client";
 import { createHash } from "node:crypto";
-import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createConnection } from "./connection.js";
 import {
   MIGRATIONS,
@@ -442,5 +449,83 @@ describe("a migration", () => {
     await migrateInPlace(path, 1, {}, remake);
 
     expect(await rowsOf(path, tables)).toEqual(before);
+  });
+});
+
+describe("starting on a file URL with an authority", () => {
+  for (const suffix of ["", "?tls=0"]) {
+    it(`updates the file the driver opens${suffix === "" ? "" : ", with a query"}`, async () => {
+      const path = scratch();
+      const folder = join(path, "..", "my data");
+      mkdirSync(folder);
+      const spaced = join(folder, "marfa.db");
+      await versionOne(spaced);
+      const url = `file://localhost${spaced.replaceAll(" ", "%20")}${suffix}`;
+
+      await open(url);
+
+      const client = createClient({ url });
+      const version = await client.execute("PRAGMA user_version");
+      client.close();
+      expect(version.rows[0]?.user_version).toBe(SCHEMA_VERSION);
+      expect(backups(spaced)).toHaveLength(1);
+    });
+  }
+});
+
+describe("an update that cannot reach the file or the copy", () => {
+  it("refuses, naming the copy, when another process holds the write lock past the wait", async () => {
+    const path = scratch();
+    await versionOne(path);
+    const was = await contents(path);
+    const holder = createClient({ url: `file:${path}` });
+    await holder.execute("PRAGMA busy_timeout = 0");
+    const held = await holder.transaction("write");
+    try {
+      const refusal = await migrateInPlace(path, 1, {
+        busyTimeoutMs: 50,
+      }).catch((e: unknown) => e);
+
+      expect(refusal).toBeInstanceOf(RefusedDatabaseError);
+      expect(String(refusal)).toContain("Nothing was changed");
+      expect(String(refusal)).toContain(
+        join(path, "..", backups(path)[0] ?? "no copy"),
+      );
+      expect(backups(path)).toHaveLength(1);
+    } finally {
+      await held.rollback();
+      held.close();
+      holder.close();
+    }
+    expect(await contents(path)).toEqual(was);
+    expect(await contents(path)).toMatchObject({ user_version: 1 });
+    // Witness: with the lock released the same file is updated.
+    await migrateInPlace(path, 1, { busyTimeoutMs: 50 });
+    expect(await contents(path)).toMatchObject({
+      user_version: SCHEMA_VERSION,
+    });
+  });
+
+  it("refuses, naming nothing taken, when the copy cannot be made", async () => {
+    const path = scratch();
+    await versionOne(path);
+    const was = hash(path);
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      vi.setSystemTime(new Date("2026-10-27T10:15:00.123Z"));
+      writeFileSync(
+        `${path}.backup-schema-1-to-2-20261027T101500123Z`,
+        "in the way",
+      );
+
+      const refusal = await migrateInPlace(path, 1).catch((e: unknown) => e);
+
+      expect(refusal).toBeInstanceOf(RefusedDatabaseError);
+      expect(String(refusal)).toContain("already exists");
+      expect(String(refusal)).toContain("Nothing was changed");
+      expect(hash(path)).toBe(was);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

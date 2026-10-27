@@ -925,12 +925,19 @@ function toLibsqlUrl(pathOrUrl: string): string {
   return `file:${pathOrUrl}`;
 }
 
-/** The file a path or a `file:` URL names. */
-function fileSystemPath(sqlitePath: string): string {
+/** `file:`, an optional `//authority`, the path, and what the driver drops: a query. */
+const FILE_URL = /^file:(?:\/\/[^/?#]*)?(?<path>[^?#]*)/u;
+
+/**
+ * The file a path or a `file:` URL names, read as the driver reads it
+ * (`@libsql/core`'s `parseUri`): `file:path`, `file:/path` and
+ * `file://host/path` all name the path after the authority, percent-decoded,
+ * with the query left out. `fileURLToPath` does not agree with the driver on
+ * a relative `file:path` or on an encoded `/`.
+ */
+export function fileSystemPath(sqlitePath: string): string {
   if (!sqlitePath.startsWith("file:")) return sqlitePath;
-  return decodeURIComponent(
-    sqlitePath.slice("file:".length).split("?")[0] ?? "",
-  );
+  return decodeURIComponent(FILE_URL.exec(sqlitePath)?.groups?.path ?? "");
 }
 
 /**
