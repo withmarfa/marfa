@@ -3895,6 +3895,81 @@ mod tests {
     }
 
     #[test]
+    fn a_file_put_back_and_then_moved_over_by_another_leaves_no_delete_of_its_item() {
+        let (_, _registry) = registry::tests::own_registry();
+        let (dir, folder) = folder_with(
+            "01a00000-0000-7000-8000-0000000000e8",
+            serde_json::json!({ "query": {} }),
+            None,
+        );
+        for name in ["a.md", "b.md"] {
+            std::fs::write(dir.path().join(name), format!("{name} words\n")).unwrap();
+        }
+        assert_eq!(folder.scan().unwrap().created, 2);
+        let [a, b] = ["a.md", "b.md"].map(|name| landed(&folder, name));
+        folder.pull().unwrap();
+        // As the pull wrote them, so each carries its item's ID.
+        let written = ["a.md", "b.md"].map(|name| std::fs::read(dir.path().join(name)).unwrap());
+        for name in ["a.md", "b.md"] {
+            std::fs::remove_file(dir.path().join(name)).unwrap();
+        }
+        assert_eq!(folder.scan().unwrap().missing, 2);
+        for name in ["a.md", "b.md"] {
+            past_the_grace(&folder, name);
+        }
+        // Both files come back while the sweep holds on the first, so it
+        // leaves a.md at its second check and b.md at its first.
+        let point = &format!("folder-sweep-decided:{a}");
+        crate::fault::arm(point);
+        let swept = std::thread::scope(|scope| {
+            let putting_back = scope.spawn(|| {
+                let waited = std::time::Instant::now();
+                while crate::fault::waiting(point) == 0 {
+                    if waited.elapsed() > Duration::from_secs(10) {
+                        crate::fault::release(point);
+                        panic!("the sweep never decided");
+                    }
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+                for (name, bytes) in ["a.md", "b.md"].into_iter().zip(&written) {
+                    std::fs::write(dir.path().join(name), bytes).unwrap();
+                }
+                crate::fault::release(point);
+            });
+            let swept = folder.scan();
+            putting_back.join().unwrap();
+            swept
+        })
+        .unwrap();
+        assert!(swept.trashed.is_empty(), "{swept:?}");
+        // Before the next scan the person moves a.md aside and b.md onto its
+        // name.
+        std::fs::rename(dir.path().join("a.md"), dir.path().join("c.md")).unwrap();
+        std::fs::rename(dir.path().join("b.md"), dir.path().join("a.md")).unwrap();
+        let again = folder.scan().unwrap();
+        assert!(again.trashed.is_empty(), "{again:?}");
+        // Any later sweep too, with the file of each in place.
+        folder.scan().unwrap();
+        for id in [&a, &b] {
+            assert_ne!(
+                folder.core.get(id).unwrap().unwrap().state,
+                ItemState::Trashed,
+                "the item of a file in place was trashed"
+            );
+        }
+        assert_eq!(
+            deletes_queued(&folder),
+            Vec::<Option<i64>>::new(),
+            "a delete was queued for a file in place: {again:?}"
+        );
+        assert!(
+            state::journaled(&folder.core.conn().unwrap())
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
     fn a_sweep_queues_the_delete_of_an_item_nothing_changed_while_it_decides() {
         let (_, _registry) = registry::tests::own_registry();
         // The witness: the same hold with nothing changed in it sends the delete.

@@ -110,8 +110,9 @@ pub(super) enum Missing {
     /// Still bound and journaled, until the folder it went to binds it.
     Arriving,
     Unsure(String),
-    /// Changed elsewhere in what the file showed: still bound and journaled,
-    /// for a pull to write back.
+    /// Changed elsewhere in what the file showed, so still bound and
+    /// journaled for a pull to write back; or put back, so still bound and
+    /// no longer journaled.
     Changed,
     Deleted,
     Gone,
@@ -1938,11 +1939,19 @@ impl Folder {
                     let mut attempts = 0;
                     // A file at a path another item's binding holds is that
                     // item's, and answers nothing for this one.
-                    let put_back = || bound.is_some() && self.exists(self.root.join(path));
+                    let put_back = || -> Result<bool> {
+                        if bound.is_none() || !self.exists(self.root.join(path)) {
+                            return Ok(false);
+                        }
+                        // No longer missing, so a scan that moves the file
+                        // elsewhere finds no row to delete the item by.
+                        state::journal_clear_for(&*self.core.conn()?, path, item_id)?;
+                        Ok(true)
+                    };
                     loop {
                         // Neither a decision made earlier in the sweep nor the
                         // file-item read looks at the disk.
-                        if put_back() {
+                        if put_back()? {
                             return Ok(Missing::Changed);
                         }
                         let (seen, changed) = match decided.take() {
@@ -1984,7 +1993,7 @@ impl Folder {
                         crate::fault::hold(|| format!("folder-sweep-decided:{item_id}"));
                         // Restoring a file changes neither its item nor its
                         // edges, so the queued delete would not notice.
-                        if put_back() {
+                        if put_back()? {
                             return Ok(Missing::Changed);
                         }
                         // Queued only while the item is as the decision read
