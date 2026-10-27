@@ -1,3 +1,7 @@
+use std::cell::RefCell;
+
+use crate::Seen;
+
 use super::{
     BTreeMap, BoundFiles, Captured, Catalog, ControlFlow, CoreError, Directory, Duration,
     EdgeTypes, EdgeWork, Flagged, Folder, HashMap, HashSet, ID_FIELD, Item, ItemState,
@@ -106,8 +110,9 @@ pub(super) enum Missing {
     /// Still bound and journaled, until the folder it went to binds it.
     Arriving,
     Unsure(String),
-    /// Changed elsewhere in what the file showed: still bound and journaled,
-    /// for a pull to write back.
+    /// Changed elsewhere in what the file showed, so still bound and
+    /// journaled for a pull to write back; or put back, so still bound and
+    /// no longer journaled.
     Changed,
     Deleted,
     Gone,
@@ -122,6 +127,12 @@ const DECIDE_ATTEMPTS: usize = 3;
 pub(super) struct Sweep {
     members: OnceCell<HashSet<String>>,
     shown: OnceCell<(EdgeTypes, Names)>,
+    /// Whether each missing file's item changed in what the file showed, with
+    /// what the decision read of it, made before the sweep queued any delete.
+    /// A delete the sweep queues takes its item out of the names and links
+    /// other files render, so a file decided on afterwards would read as
+    /// changed.
+    decided: RefCell<HashMap<String, (Seen, bool)>>,
 }
 
 impl Sweep {
@@ -1800,24 +1811,26 @@ impl Folder {
         state::set_paused(&*self.core.conn()?, state::Removal::Disk, &[])?;
         let now = crate::store::iso_at(crate::clock::system_time());
         let sweep = Sweep::default();
-        for state::Journaled {
-            path,
-            item_id,
-            missing_since,
-            kept,
-        } in journaled
-        {
-            if !elapsed_past(&missing_since, &now, RENAME_GRACE) {
+        let mut due = Vec::new();
+        for row in journaled {
+            if !elapsed_past(&row.missing_since, &now, RENAME_GRACE) {
                 continue;
             }
-            match kept {
+            match row.kept {
                 Some(state::Kept::Unsure(reason)) if !full => {
-                    report.unsure.push(Unsure { path, reason });
+                    report.unsure.push(Unsure {
+                        path: row.path,
+                        reason,
+                    });
                     continue;
                 }
                 Some(state::Kept::Arriving) if !full => continue,
                 _ => {}
             }
+            due.push((row.path, row.item_id));
+        }
+        self.decide_changed(&due, settings, &sweep)?;
+        for (path, item_id) in due {
             match self.let_go_missing(&path, &item_id, settings, peers, &sweep)? {
                 Missing::Moved => report.moved_away += 1,
                 Missing::Arriving | Missing::Changed => {}
@@ -1828,6 +1841,45 @@ impl Folder {
                 }
                 Missing::Gone => {}
             }
+        }
+        Ok(())
+    }
+
+    /// Decides for every file of `missing`, a path and its item, whether its
+    /// item changed in what the file showed, before `let_go_missing` queues
+    /// the first delete (`folders/missing-file-trashed`).
+    pub(super) fn decide_changed(
+        &self,
+        missing: &[(String, String)],
+        settings: &Settings,
+        sweep: &Sweep,
+    ) -> Result<()> {
+        for (path, item_id) in missing {
+            let (held, bound) = {
+                let conn = self.core.conn()?;
+                (
+                    crate::store::items_by_ids(&conn, std::slice::from_ref(item_id))?.pop(),
+                    state::bound_at(&conn, path)?.filter(|bound| &bound.item_id == item_id),
+                )
+            };
+            let (Some(item), Some(bound)) = (held, bound) else {
+                continue;
+            };
+            if item.state == ItemState::Trashed || !self.holds(item_id, settings, &sweep.members) {
+                continue;
+            }
+            let catalog = Catalog::load(&*self.core.conn()?)?;
+            // Read first, so a change after it is one the delete finds.
+            let Some(seen) = self.core.seen(item_id)? else {
+                continue;
+            };
+            let (edge_types, names) = sweep.shown(self, &catalog)?;
+            let changed =
+                self.changed_while_missing(seen.item(), &bound, (&catalog, edge_types, names))?;
+            sweep
+                .decided
+                .borrow_mut()
+                .insert(item_id.clone(), (seen, changed));
         }
         Ok(())
     }
@@ -1883,21 +1935,52 @@ impl Folder {
                     return Ok(Missing::Unsure(reason));
                 }
                 Look::Nowhere => {
-                    let mut item = item;
+                    let mut decided = sweep.decided.borrow_mut().remove(item_id);
                     let mut attempts = 0;
+                    // A file at a path another item's binding holds is that
+                    // item's, and answers nothing for this one.
+                    let put_back = || -> Result<bool> {
+                        if bound.is_none() || !self.is_file(self.root.join(path)) {
+                            return Ok(false);
+                        }
+                        // No longer missing, so a scan that moves the file
+                        // elsewhere finds no row to delete the item by.
+                        state::journal_clear_for(&*self.core.conn()?, path, item_id)?;
+                        Ok(true)
+                    };
                     loop {
-                        // No pull writes the file of an item the query no
-                        // longer holds, so the person's delete of it stands.
-                        let changed = match bound.as_ref().filter(|_| holds) {
-                            Some(bound) => {
-                                let (edge_types, names) = sweep.shown(self, &catalog)?;
-                                self.changed_while_missing(
-                                    &item,
-                                    bound,
-                                    (&catalog, edge_types, names),
-                                )?
+                        // Neither a decision made earlier in the sweep nor the
+                        // file-item read looks at the disk.
+                        if put_back()? {
+                            return Ok(Missing::Changed);
+                        }
+                        let (seen, changed) = match decided.take() {
+                            Some(decided) => decided,
+                            None => {
+                                // Read first, so a change after it is one the
+                                // delete finds.
+                                let Some(seen) = self.core.seen(item_id)? else {
+                                    break Missing::Gone;
+                                };
+                                if seen.item().state == ItemState::Trashed {
+                                    break Missing::Gone;
+                                }
+                                // No pull writes the file of an item the query
+                                // no longer holds, so the person's delete of it
+                                // stands.
+                                let changed = match bound.as_ref().filter(|_| holds) {
+                                    Some(bound) => {
+                                        let (edge_types, names) = sweep.shown(self, &catalog)?;
+                                        self.changed_while_missing(
+                                            seen.item(),
+                                            bound,
+                                            (&catalog, edge_types, names),
+                                        )?
+                                    }
+                                    None => false,
+                                };
+                                (seen, changed)
                             }
-                            None => false,
                         };
                         // A row that goes on moving while the sweep decides is
                         // as good as changed.
@@ -1908,20 +1991,18 @@ impl Folder {
                         }
                         #[cfg(debug_assertions)]
                         crate::fault::hold(|| format!("folder-sweep-decided:{item_id}"));
-                        // Queued at the version decided on, so a change heard
-                        // meanwhile is decided again rather than trashed.
-                        if self.core.delete_item_at(item_id, item.version)?.is_some() {
+                        // Restoring a file changes neither its item nor its
+                        // edges, so the queued delete would not notice.
+                        if put_back()? {
+                            return Ok(Missing::Changed);
+                        }
+                        // Queued only while the item is as the decision read
+                        // it, so a change heard meanwhile is decided again
+                        // rather than trashed.
+                        if self.core.delete_item_at(item_id, &seen)?.is_some() {
                             break Missing::Deleted;
                         }
                         attempts += 1;
-                        let newer = {
-                            let conn = self.core.conn()?;
-                            crate::store::items_by_ids(&conn, &[item_id.to_string()])?.pop()
-                        };
-                        match newer.filter(|item| item.state != ItemState::Trashed) {
-                            Some(newer) => item = newer,
-                            None => break Missing::Gone,
-                        }
                     }
                 }
             }

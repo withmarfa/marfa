@@ -4404,6 +4404,8 @@ When two folder queries both hold an item and each folder has its own bound file
 
 When a missing folder file’s deletion grace expires, no other folder holds the moved file and `folders/missing-file-changed-revives` does not restore the file, a device MUST queue deletion of its item.
 
+**Reason:** the files of one sweep are decided before any of them is trashed, so files deleted together are all trashed, whichever the sweep reaches first and whether they link one another. A link line in a file shows the note it names by title, and a note already trashed by the same sweep would otherwise read as a change made elsewhere.
+
 **Tests:** `device/folders-one-mac.test.ts › trashes a missing file found in no folder on the Mac, and says so`, `device/folders-one-mac.test.ts › takes a file item at a document name moved to another folder as that item, and trashes it only where no folder holds it`, `device/folders-one-mac.test.ts › trashes an unchanged file item's missing file from a scan with no server, whose bytes it no longer holds`.
 
 ### `folders/missing-file-trashed-path-reported`
@@ -4416,7 +4418,7 @@ When a missing folder file’s deletion grace expires, no other folder holds the
 
 When a device finds a missing folder file in no other registered folder past its rename grace, or on confirming its paused removal, and another device has changed the file's item in content the file showed while the folder's query still holds the item, a device MUST restore the file from the changed item.
 
-**Reason:** The change is newer than the person's deletion, which no other device has heard of yet, so it wins as it does inside the grace (`folders/delete-remote-revives`). A pull writes no file back while its move cannot be told (`folders/uncertain-move-no-replacement`), so a change made inside the grace may show only once the move is told. The device tells the change from its working copy alone, with no server and no held bytes, so a scan that reaches no server decides it too: a file item by whether its item still names the blob the folder last wrote or sent the file as, and a document by whether its item still shows what the folder last agreed. It decides on the item's version that the deletion is queued against, so a change heard while it decides is decided again rather than trashed with it.
+**Reason:** The change is newer than the person's deletion, which no other device has heard of yet, so it wins as it does inside the grace (`folders/delete-remote-revives`). A pull writes no file back while its move cannot be told (`folders/uncertain-move-no-replacement`), so a change made inside the grace may show only once the move is told. The device tells the change from its working copy alone, with no server and no held bytes, so a scan that reaches no server decides it too: a file item by whether its item still names the blob the folder last wrote or sent the file as, and a document by whether its item still shows what the folder last agreed. It decides on everything it read of the item, its version, tags and edges, and queues the deletion only while the working copy still holds exactly that, so a change heard while it decides is decided again rather than trashed with it.
 
 **Tests:** `device/folders-one-mac.test.ts › writes back a file deleted while another folder could not be read, once that folder holds no copy, when another device changed its item inside the grace`, `device/folders-one-mac.test.ts › trashes no item of a confirmed removal that another device changed since its file went, and writes the file back`.
 
@@ -4472,11 +4474,11 @@ When a file at a name other than `.md` or `.markdown` (in any letter case) arriv
 
 ### `folders/moved-arrival-markdown-new`
 
-When a file at a `.md` or `.markdown` name (in any letter case) that carries no ID arrives from another folder whose missing-file binding of a note identifies it by identity or bytes, a device MUST admit the arriving file as a new item.
+When a file at a `.md` or `.markdown` name (in any letter case) that carries no ID arrives from another folder, where the file it left was a note bound by identity or bytes or a new note whose ID line was never written, a device MUST admit the arriving file as a new item.
 
-**Reason:** a note's Markdown file carries its ID line, so a Markdown file without one is not that note's file. A `.txt` note moved to another folder as `.md` is a new item there.
+**Reason:** a note's Markdown file carries its ID line, so a Markdown file without one is not that note's file. A `.txt` note moved to another folder as `.md` is a new item there. A new note moved before its ID line is written has no item bound to it, and the folder it left cannot name an item the arriving file belongs to, so the receiving folder admits it with every edit made before and after the move, and the first folder trashes nothing (`folders/move-no-second-item`). Every way tried to bind a file that has no ID line yet opened a worse failure than this second item.
 
-**Tests:** `device/folders-one-mac.test.ts › makes a new item of a text note moved to another folder as Markdown, and keeps its words`.
+**Tests:** `device/folders-one-mac.test.ts › makes a new item of a text note moved to another folder as Markdown, and keeps its words`, `device/folders-one-mac.test.ts › makes a second item of a new note moved before its id line is written, and keeps its edits`.
 
 ### `folders/moved-file-item-bytes`
 
@@ -4517,6 +4519,30 @@ While a missing folder file is found in another registered folder, by its identi
 **Reason:** written again, the file makes the moved file read as a copy in the folder it went to, which then admits it as a second item (`folders/cross-folder-copy`). The change still reaches the item, since the moved file merges it once that folder binds it. A file whose folders both hold its item, each with its own file, is not a move (`folders/two-folders-delete`), and is written back under `folders/delete-remote-revives`.
 
 **Tests:** `device/folders-one-mac.test.ts › makes no second item when another device changes a moved file's item inside the grace`.
+
+### `folders/move-keeps-item`
+
+When a file bound to an item moves to another registered folder and that folder binds no other file to the item, a device MUST bind the moved file to that item, whether or not the receiving folder's query holds it, except where `folders/moved-arrival-markdown-new` or `folders/cross-folder-hidden-item` admits the file as a new item.
+
+**Reason:** the person moved a file, not the note it carries. The folder the file left trashes the item only once no registered folder holds the file (`folders/missing-file-trashed`). A file whose ID is still in a file left in the first folder is a copy (`folders/cross-folder-copy`) and is not a move. An item the server will not show to the receiving folder cannot be bound there, so its file is a new item (`folders/cross-folder-hidden-item`).
+
+**Tests:** `device/folders-one-mac.test.ts › does not trash a file moved to another folder`, `device/folders-one-mac.test.ts › keeps one item, and every edit made before and after the move, of a bound file moved to another folder`, `device/folders-one-mac.test.ts › tells a copy into another folder from a move`.
+
+### `folders/move-no-second-item`
+
+When a file bound to an item moves to another registered folder, a device MUST NOT admit the moved file as a new item, unless the receiving folder binds another file to the item, or `folders/moved-arrival-markdown-new` or `folders/cross-folder-hidden-item` admits it.
+
+**Reason:** a second item would hold the person's words twice and leave the first to be trashed with the edits made since. A receiving folder that binds another file to the item holds a copy (`folders/cross-folder-copy`). A Markdown file that carries no ID line is no note's file, and its words are kept in the new item. An item the server will not show to the receiving folder is not there to hold the words, so the file becomes a new item.
+
+**Tests:** `device/folders-one-mac.test.ts › keeps one item, and every edit made before and after the move, of a bound file moved to another folder`, `device/folders-one-mac.test.ts › makes no second item when another device changes a moved file's item inside the grace`.
+
+### `folders/move-keeps-edits`
+
+When a file bound to an item moves to another registered folder and the moved file stays bound to that item, a device MUST deliver to the item every edit made to the file before the move and every edit made to it after.
+
+**Reason:** an edit read before the move reaches the item whether the move came before or after the scan that read it, and the receiving folder reads the edits made after. An edit the folder it left had queued and not yet sent is sent beside the receiving folder's own read of the same words from the same version, so the server keeps the later send as a conflicted copy of the item with the same words. No edit is lost, and the move itself makes no item. Where the moved file becomes a new item instead (`folders/moved-arrival-markdown-new`, `folders/cross-folder-hidden-item`), the edits go to the new item.
+
+**Tests:** `device/folders-one-mac.test.ts › keeps one item, and every edit made before and after the move, of a bound file moved to another folder`, `device/folders-one-mac.test.ts › keeps an edit already queued in the folder a bound file left, and makes no item for the move`.
 
 ## Watching every folder
 
