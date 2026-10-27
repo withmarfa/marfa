@@ -27,5 +27,8 @@
       "description": "MIME type of the resource at media_url, such as audio/mpeg or video/mp4. Describes what media_url points at, not what this item is."
     }
   },
-  "required": []
+  "required": [],
+  "display_hints": {
+    "icon": "film"
+  }
 }

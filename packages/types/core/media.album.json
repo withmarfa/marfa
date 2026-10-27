@@ -15,5 +15,8 @@
       "description": "Total track count"
     }
   },
-  "required": []
+  "required": [],
+  "display_hints": {
+    "icon": "disc-3"
+  }
 }

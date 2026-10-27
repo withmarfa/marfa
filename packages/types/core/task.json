@@ -62,7 +62,8 @@
   "required": ["title"],
   "display_hints": {
     "title_field": "title",
-    "body_field": "body"
+    "body_field": "body",
+    "icon": "square-check-big"
   },
   "merge_policy": {
     "fields": {

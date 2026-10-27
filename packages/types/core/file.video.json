@@ -36,6 +36,6 @@
     }
   },
   "display_hints": {
-    "title_field": "title"
+    "icon": "file-video-camera"
   }
 }

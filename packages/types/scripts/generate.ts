@@ -112,21 +112,6 @@ function resolveFields(schema: TypeSchema): Record<string, FieldDefinition> {
   return fields;
 }
 
-/** Nearest declaration wins; an omitted block inherits the ancestor's. */
-function resolveInherited<K extends "display_hints" | "merge_policy">(
-  schema: TypeSchema,
-  key: K,
-): TypeSchema[K] {
-  const seen = new Set<string>();
-  let cursor: TypeSchema | undefined = schema;
-  while (cursor && !seen.has(cursor.id)) {
-    seen.add(cursor.id);
-    if (cursor[key]) return cursor[key];
-    cursor = cursor.parent ? registry.get(cursor.parent) : undefined;
-  }
-  return undefined;
-}
-
 /**
  * `merge_policy` is the one inherited block that composes rather than
  * replaces: a child's per-field entries layer over the ancestors' and its
@@ -183,8 +168,6 @@ function buildFamily(raws: RawSchema[]): TypeSchema[] {
     };
     registry.set(schema.id, schema);
     schema.fields = resolveFields(result.data);
-    const hints = resolveInherited(result.data, "display_hints");
-    if (hints) schema.display_hints = hints;
     const mergePolicy = resolveMergePolicy(result.data);
     if (mergePolicy) schema.merge_policy = mergePolicy;
     built.push(schema);
@@ -263,6 +246,9 @@ function emitSchema(schema: TypeSchema, lines: string[]): void {
     }
     if (schema.display_hints.body_field) {
       parts.push(`body_field: ${quote(schema.display_hints.body_field)}`);
+    }
+    if (schema.display_hints.icon) {
+      parts.push(`icon: ${quote(schema.display_hints.icon)}`);
     }
     if (parts.length > 0) {
       lines.push(`  display_hints: { ${parts.join(", ")} },`);

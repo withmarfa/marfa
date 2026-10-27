@@ -3140,8 +3140,8 @@ pub fn replace_types(conn: &Connection, types: &[WireType]) -> Result<bool, Core
             if let Some(label) = &entry.label {
                 json.insert("label".into(), Value::String(label.clone()));
             }
-            // The block whole, present or not: the nearest type that has one
-            // gives a subtype all of its hints.
+            // The hints as the type declares them, not as it inherits them:
+            // each hint is resolved from the nearest type that sets it.
             if let Some(declared) = &entry.display_hints {
                 let mut block = Map::new();
                 if let Some(title) = &declared.title_field {
@@ -3149,6 +3149,9 @@ pub fn replace_types(conn: &Connection, types: &[WireType]) -> Result<bool, Core
                 }
                 if let Some(body) = &declared.body_field {
                     block.insert("body_field".into(), Value::String(body.clone()));
+                }
+                if let Some(icon) = &declared.icon {
+                    block.insert("icon".into(), Value::String(icon.clone()));
                 }
                 json.insert("display_hints".into(), Value::Object(block));
             }
@@ -5581,6 +5584,7 @@ pub(crate) mod testing {
             display_hints: Some(WireDisplayHints {
                 title_field: title_field.map(str::to_string),
                 body_field: None,
+                icon: None,
             }),
             rest: Map::new(),
         }

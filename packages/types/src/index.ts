@@ -16,6 +16,8 @@ export type {
 } from "./schema-types.js";
 export { TYPE_ROLES } from "./schema-types.js";
 
+export { LUCIDE_ICON_NAMES, LUCIDE_VERSION } from "./lucide-icons.js";
+
 export type {
   SchemaValidationIssue,
   TypeSchemaValidationResult,
@@ -29,6 +31,7 @@ export {
   MAX_FEED_DAYS,
   RESERVED_ITEM_FIELDS,
   ROLE_CONSTRAINT_PREFIX,
+  iconNameIssue,
   isRoleConstraint,
   normalizeEdgeProperties,
   roleFromConstraint,

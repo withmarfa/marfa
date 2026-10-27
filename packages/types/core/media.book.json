@@ -18,5 +18,8 @@
       "description": "Edition designation"
     }
   },
-  "required": []
+  "required": [],
+  "display_hints": {
+    "icon": "book-open"
+  }
 }
