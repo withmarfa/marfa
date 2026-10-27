@@ -81,7 +81,7 @@ export const HTML_MAX_INPUT_BYTES = 8 * 1024 * 1024;
 /**
  * Open elements held before the rest of the page is left unread, and the text
  * found before that point is kept. Each unmatched closing tag scans the open
- * elements, here and in the tokenizer, so an unbounded depth makes a page of
+ * elements, here and in the parser, so an unbounded depth makes a page of
  * unclosed tags followed by stray closing tags take quadratic time.
  */
 export const HTML_MAX_DEPTH = 512;
