@@ -12,7 +12,7 @@ use std::sync::Arc;
 use super::first;
 use crate::directory::Directory;
 use crate::lock::WriterLock;
-use crate::{Core, CoreError, FolderStore, Handle, Result, Server, store};
+use crate::{Core, CoreError, FolderStore, Result, Server, store};
 
 /// Whether the meta key `key` is one the folder records of itself and no
 /// hydration brings back: every key a folder sets starts `folder_`; the
@@ -32,11 +32,12 @@ fn carried(key: &str) -> bool {
         || key == store::META_INSTANCE_ID
 }
 
-/// Opens the folder's store in `state` under `lock`. A store this build
+/// Opens the folder's store in `state` under `lock`, refused with
+/// `ReadingHandle` unless `lock` is the writer's. A store this build
 /// refuses `wrong_schema` that holds nothing unsent and that this build can
-/// carry is replaced first, where `lock` is the writer's, and the reason it
-/// was refused is answered with the store. `adding` replaces one that names
-/// no folder too, since the add names it.
+/// carry is replaced first, and the reason it was refused is answered with
+/// the store. `adding` replaces one that names no folder too, since the add
+/// names it.
 pub(super) fn opened(
     state: &Directory,
     label: &Path,
@@ -44,6 +45,8 @@ pub(super) fn opened(
     lock: Arc<WriterLock>,
     adding: bool,
 ) -> Result<(Core, Option<String>)> {
+    // Before the open, which adds a table the store lacks.
+    lock.refuse_unless_writer()?;
     let reason = match Core::open_claimed(state, label, server.clone(), Arc::clone(&lock)) {
         Ok(core) => return Ok((core, None)),
         Err(CoreError::WrongSchema {
@@ -51,10 +54,7 @@ pub(super) fn opened(
             unsent: Some(0),
             folder: Some(folder),
             ..
-        }) if lock.handle() == Handle::Writer
-            && (folder == FolderStore::Replaceable
-                || (adding && folder == FolderStore::Unnamed)) =>
-        {
+        }) if folder == FolderStore::Replaceable || (adding && folder == FolderStore::Unnamed) => {
             reason
         }
         Err(error) => return Err(error),
@@ -64,9 +64,18 @@ pub(super) fn opened(
     Ok((core, Some(reason)))
 }
 
+/// Whether the folder's store lacks a table this build makes, which the
+/// folder's writer adds on open.
+pub(super) fn lacks_table(state: &Directory) -> bool {
+    crate::directory_vfs::DirectoryVfs::new(state.file())
+        .and_then(|vfs| store::folder_store_lacks_table(&vfs))
+        .unwrap_or(false)
+}
+
 /// The origin the folder's store was hydrated from and whether its first
 /// sync waits, read from a store this build refuses `wrong_schema` while it
-/// holds nothing unsent, which the folder's writer replaces on open.
+/// holds nothing unsent, which the folder's writer replaces on open, or from
+/// one that lacks a table the writer adds.
 pub(super) fn recorded(state: &Directory) -> Result<(Option<String>, bool)> {
     let vfs = crate::directory_vfs::DirectoryVfs::new(state.file())?;
     let mut held =

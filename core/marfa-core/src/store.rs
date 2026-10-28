@@ -427,6 +427,21 @@ pub(crate) fn refused_folder_meta(
     meta_of(&conn, keys)
 }
 
+/// Whether the folder store holds this build's `meta` but lacks a table this
+/// build makes, which its writer adds on open (`device/added-table`).
+#[cfg(unix)]
+pub(crate) fn folder_store_lacks_table(
+    vfs: &crate::directory_vfs::DirectoryVfs,
+) -> Result<bool, CoreError> {
+    let conn = vfs.open(
+        FOLDER_STORE,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )?;
+    conn.busy_timeout(std::time::Duration::from_secs(5))?;
+    let held = held_shape(&conn)?;
+    Ok(held.contains_key("meta") && built_shape()?.keys().any(|name| !held.contains_key(name)))
+}
+
 #[cfg(unix)]
 fn meta_of(conn: &Connection, keys: &[&str]) -> Result<HashMap<String, String>, CoreError> {
     let mut held = HashMap::new();

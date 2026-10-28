@@ -354,7 +354,7 @@ While a device holds a reading handle, a device MUST refuse every write `reading
 
 **Reason:** two writers of one file would each queue into it and neither would see the other's rows.
 
-**Tests:** `device/working-copy.test.ts › gives a second opener a reading handle that refuses writes`, `device/local-refusals.test.ts › refuses a hydration, a catch-up and a follow from a reading handle`.
+**Tests:** `device/working-copy.test.ts › gives a second opener a reading handle that refuses writes`, `device/local-refusals.test.ts › refuses a hydration, a catch-up and a follow from a reading handle`, `device/folders-watch-every.test.ts › leaves a store that lacks a table untouched while another process holds its folder, and adds the table once it is let go`.
 
 ### `device/reading-handle-queues-nothing`
 
@@ -3638,7 +3638,7 @@ If a device opens to read a store that lacks a table this build adds, then a dev
 
 When a device opens to write a store made before a table this build adds, a device MUST add the table and open the store.
 
-**Tests:** `device/working-copy.test.ts › opens a store made before a table this build adds, and adds it`.
+**Tests:** `device/working-copy.test.ts › opens a store made before a table this build adds, and adds it`, `device/folders-watch-every.test.ts › watches every folder whose store lacks a table this build makes, adding the table`.
 
 ### `device/wrong-schema`
 
