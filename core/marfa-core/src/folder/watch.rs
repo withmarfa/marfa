@@ -12,6 +12,7 @@ use super::{
     StorageCause, Uncarried, Unsure,
 };
 use crate::error::CoreError;
+use crate::priority::{inheriting, lowered};
 
 /// An editor saves a file in several steps; a scan between two of them
 /// would push a half-written file.
@@ -164,7 +165,8 @@ impl Folder {
     /// a pass. A pass also runs every second while the last one left work that
     /// time alone moves on, such as a delete's grace running out, and a full
     /// one every minute. A pass under way when `stop` is raised finishes
-    /// first.
+    /// first. On Apple platforms the calling thread runs at utility quality of
+    /// service until this returns, and so do the threads the watch starts.
     pub fn watch<E>(
         &self,
         stop: &AtomicBool,
@@ -194,6 +196,7 @@ impl Folder {
         requests: Option<Requests>,
         mut tell: impl FnMut(WatchEvent) -> Result<(), E>,
     ) -> Result<WatchEnd, WatchError<E>> {
+        let _lowered = lowered();
         // Only a person's go-ahead lets it write or send, and none can reach
         // a folder this watch holds.
         self.refuse_while_waiting()?;
@@ -205,20 +208,11 @@ impl Folder {
         let health = Mutex::new(FollowHealth::default());
         std::thread::scope(|scope| {
             let server_wakes = sender.clone();
-            let follower = scope.spawn(|| {
-                super::run_as_utility_work();
-                follow(self, &ended, server_wakes, &health)
-            });
-            let reporter = scope.spawn(|| {
-                super::run_as_utility_work();
-                self.health_follow(&ended)
-            });
+            let follower = scope.spawn(inheriting(|| follow(self, &ended, server_wakes, &health)));
+            let reporter = scope.spawn(inheriting(|| self.health_follow(&ended)));
             let looker = requests.map(|requests| {
                 let (wakes, ended, asked) = (sender.clone(), &ended, &asked);
-                scope.spawn(move || {
-                    super::run_as_utility_work();
-                    look(requests, ended, asked, wakes)
-                })
+                scope.spawn(inheriting(move || look(requests, ended, asked, wakes)))
             });
             let watched = {
                 // A guard, so a pass or a `tell` that panics still ends the
@@ -1744,5 +1738,40 @@ mod tests {
             wait_unless_stopped(&stop, RETRY_MOST);
         });
         assert!(started.elapsed() < 5 * SECOND, "{:?}", started.elapsed());
+    }
+    #[cfg(target_vendor = "apple")]
+    #[test]
+    fn a_direct_call_to_watch_runs_at_utility_and_puts_the_callers_class_back() {
+        use crate::priority::current_class;
+        const UTILITY: u32 = libc::qos_class_t::QOS_CLASS_UTILITY as u32;
+        let dir = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+        let state = dir.path().join(crate::folder::STATE_DIR);
+        std::fs::create_dir_all(&state).unwrap();
+        let core = crate::Core::open(state.join("core.sqlite"), None).unwrap();
+        crate::folder::settings_file::bind(&core, "01a00000-0000-7000-8000-000000000001").unwrap();
+        drop(core);
+        let folder = Folder::open(dir.path(), None).unwrap();
+        let (before, during, after) = std::thread::scope(|scope| {
+            scope
+                .spawn(|| {
+                    let stop = AtomicBool::new(false);
+                    let before = current_class();
+                    let mut during = None;
+                    let _ = folder.watch(&stop, |event| {
+                        if let WatchEvent::Watching { .. } = event {
+                            during = Some(current_class());
+                            stop.store(true, Ordering::SeqCst);
+                        }
+                        Ok::<(), ()>(())
+                    });
+                    (before, during, current_class())
+                })
+                .join()
+                .unwrap()
+        });
+        // The witness: the thread that calls is not at utility until it watches.
+        assert_ne!(before, UTILITY);
+        assert_eq!(during, Some(UTILITY));
+        assert_eq!(after, before);
     }
 }

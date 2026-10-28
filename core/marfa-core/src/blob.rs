@@ -11,6 +11,7 @@ use ureq::Agent;
 use crate::Result;
 use crate::error::CoreError;
 use crate::http::{Call, CallBody, Http, Method};
+use crate::priority::inheriting;
 
 pub(crate) const PREFIX: &str = "sha256:";
 
@@ -1251,7 +1252,7 @@ struct Idle {
 impl Idle {
     fn watching(mut source: impl Read + Send + 'static, idle: Duration) -> Idle {
         let (sender, chunks) = std::sync::mpsc::sync_channel(4);
-        std::thread::spawn(move || {
+        std::thread::spawn(inheriting(move || {
             let mut buffer = vec![0u8; 64 * 1024];
             loop {
                 let chunk = match source.read(&mut buffer) {
@@ -1263,7 +1264,7 @@ impl Idle {
                     return;
                 }
             }
-        });
+        }));
         Idle {
             chunks,
             idle,

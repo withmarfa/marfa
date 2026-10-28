@@ -1201,9 +1201,11 @@ describe("the watch run by a service manager", () => {
   });
 
   // The scheduler gives utility quality of service a priority of 20 and the
-  // default class 31, which `ps -M` lists for each thread.
+  // default class 31, which `ps -M` lists for each thread. The command's own
+  // threads beside the watch, three as the binary is built now, stay at the
+  // default.
   it.runIf(process.platform === "darwin")(
-    "runs the threads of a folder watch at utility quality of service",
+    "runs the threads of a folder watch, and the threads they start, at utility quality of service",
     async () => {
       const harness = await folderHarness("autostart-utility");
       made.push(harness);
@@ -1222,14 +1224,17 @@ describe("the watch run by a service manager", () => {
       await vi.waitFor(() => {
         const found = priorities();
         // The witness: ps tells the default class from the utility one, and
-        // the thread that starts the others stays at the default.
+        // the threads the process starts for itself stay at the default.
         expect(found).toContain("31");
-        expect(found.filter((priority) => priority === "20").length).toBe(
-          found.filter((priority) => priority !== "31").length,
-        );
         expect(
           found.filter((priority) => priority === "20").length,
-        ).toBeGreaterThanOrEqual(4);
+        ).toBeGreaterThanOrEqual(8);
+        expect(
+          found.filter((priority) => priority === "31").length,
+        ).toBeLessThanOrEqual(3);
+        expect(
+          found.filter((priority) => priority !== "31" && priority !== "20"),
+        ).toEqual([]);
       }, WAIT);
       process.kill(watch.pid(), "SIGTERM");
       await watch.exited();

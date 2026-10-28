@@ -580,7 +580,6 @@ impl Folders {
         let stop = Arc::new(AtomicBool::new(false));
         let flag = Arc::clone(&stop);
         std::thread::spawn(move || {
-            marfa_core::folder::run_as_utility_work();
             // Caught, so a listener waiting to be told the watch ended is told.
             let watched = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 keep_in_step(folder, server, renewal, &flag, &*listener)

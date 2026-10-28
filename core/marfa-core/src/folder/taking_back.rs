@@ -11,6 +11,7 @@ use super::watch::WatchError;
 use super::{Folder, RETRY_HANDED, handover};
 use crate::Result;
 use crate::error::CoreError;
+use crate::priority::lowered;
 
 /// How often the stop is looked at while the next try waits.
 const POLL: Duration = Duration::from_millis(100);
@@ -62,6 +63,9 @@ impl Folder {
     /// `listed_before` is [`Folder::listed_at`] as it stood before the folder
     /// was let go. Opened, a folder would be listed again, so one a command
     /// took off the registry is not opened.
+    ///
+    /// On Apple platforms the calling thread runs at utility quality of
+    /// service until this returns, as the watch it belongs to does.
     pub fn take_back<E>(
         root: &Path,
         listed_before: Option<bool>,
@@ -69,6 +73,7 @@ impl Folder {
         reopen: impl FnMut() -> Result<Folder>,
         held_elsewhere: impl FnMut() -> std::result::Result<(), E>,
     ) -> std::result::Result<TakeBack, WatchError<E>> {
+        let _lowered = lowered();
         taking_back(
             root,
             listed_before,

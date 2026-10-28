@@ -5120,7 +5120,7 @@ When `folders autostart on` writes the agent, the CLI MUST set it to start the w
 
 Where the platform is macOS, when `folders autostart on` writes the agent, the CLI MUST set the agent’s `ProcessType` to `Background`.
 
-**Reason:** launchd limits the CPU and I/O of a background job so that work the person did not ask for does not disrupt what they are doing, and on Apple silicon runs it on the efficiency cores.
+**Reason:** launchd applies background resource limits to reduce interference with foreground work.
 
 **Tests:** `device/folders-autostart.test.ts › writes an agent in the person's account that runs the watch of every folder by this binary's path, holding no credential, and starts it`.
 
@@ -5274,11 +5274,11 @@ Where telemetry is on, when `folders watch` receives `SIGTERM`, the CLI MUST end
 
 ### `folders/watch-utility-priority`
 
-While a folder watch runs on an Apple platform, a device MUST run each thread that keeps a folder in step, which scans, sends, pulls and follows the server’s changes, at utility quality of service.
+While a folder watch runs on an Apple platform, a device MUST run the thread that calls the watch, the threads that keep a folder in step, which scan, send, pull and follow the server’s changes, and each thread those threads start at utility quality of service.
 
-**Reason:** A watch is work the person did not ask for at that moment. Utility, not background, because a background thread can be deferred for far longer than the few seconds an edit may wait to reach the server, as in Low Power Mode.
+**Reason:** A watch is work the person did not ask for at that moment. Utility, not background, because a background thread can be deferred for far longer than the few seconds an edit may wait to reach the server, as in Low Power Mode. A thread started from a thread at utility is at the default class unless it is set. The core puts a calling thread back to the class it had once the watch ends, since the caller goes on to other work; no device command or binding calls the watch on a thread that goes on, so the core's own tests hold that.
 
-**Tests:** `device/folders-autostart.test.ts › runs the threads of a folder watch at utility quality of service`.
+**Tests:** `device/folders-autostart.test.ts › runs the threads of a folder watch, and the threads they start, at utility quality of service`.
 
 ### `folders/watch-log`
 

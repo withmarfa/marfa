@@ -13,6 +13,7 @@ use super::watch_record::{Observed, WatchRecord};
 use super::{Folder, STATE_DIR, StorageCause, first, handover};
 use crate::directory::Directory;
 use crate::error::CoreError;
+use crate::priority::{inheriting, lowered};
 use crate::{Core, store};
 
 /// How often the registry is read again for folders added and removed.
@@ -183,6 +184,8 @@ pub trait EveryFolder: Sync {
 /// one it no longer lists ends. A folder that cannot be watched is told once
 /// and tried again, and the others go on. What each folder's watch is doing
 /// is kept in `record`, and its watches are marked ended once this returns.
+/// On Apple platforms the calling thread and the threads it starts run at
+/// utility quality of service until this returns.
 pub fn watch_every<W: EveryFolder>(
     registry: &Registry,
     stop: &AtomicBool,
@@ -436,16 +439,16 @@ fn supervise<S: Supervised>(
     record: &WatchRecord,
     timing: Timing,
 ) -> Result<(), S::Error> {
+    let _lowered = lowered();
     std::thread::scope(|scope| {
-        scope.spawn(|| {
-            super::run_as_utility_work();
+        scope.spawn(inheriting(|| {
             record.keep(|reason| {
                 let _ = every.tell(Every::Record {
                     path: record.path(),
                     reason,
                 });
             });
-        });
+        }));
         let mut entries: BTreeMap<PathBuf, Entry<'_, S::Error>> = BTreeMap::new();
         let mut unread: Option<String> = None;
         let mut none_said = false;
@@ -785,7 +788,7 @@ fn start_due<'scope, 'env, S: Supervised>(
                 }));
                 let handle = {
                     let (dir, stop, start) = (dir.clone(), Arc::clone(&stop), Arc::clone(&start));
-                    scope.spawn(move || run(every, record, &dir, &stop, &start))
+                    scope.spawn(inheriting(move || run(every, record, &dir, &stop, &start)))
                 };
                 entry.run = Run::Watching {
                     stop,
@@ -820,7 +823,6 @@ fn run<S: Supervised>(
     stop: &AtomicBool,
     start: &Mutex<Start>,
 ) -> Outcome<S::Error> {
-    super::run_as_utility_work();
     if every.missing(dir) {
         return Outcome::Missing;
     }
@@ -1035,7 +1037,7 @@ mod tests {
         fn open(&self, dir: &Path) -> Result<Fake, Unwatched> {
             lock(&self.opened).push(dir.to_path_buf());
             #[cfg(target_vendor = "apple")]
-            lock(&self.classes).push(crate::folder::priority::current_class());
+            lock(&self.classes).push(crate::priority::current_class());
             if let Some((gated_dir, at, gate)) = &self.open_gate
                 && dir == gated_dir
                 && self.opened(&dir.to_string_lossy()) == *at
@@ -1190,10 +1192,10 @@ mod tests {
         .unwrap();
         let classes = lock(&machine.classes).clone();
         assert_eq!(classes.len(), 2);
-        // The witness: this thread, which the supervisor's start from, is not
-        // at utility, so the class is set on the folder's own thread.
+        // The witness: this thread is not at utility until the supervisor
+        // lowers it, so each folder's thread took its class from the supervisor.
         assert_ne!(
-            crate::folder::priority::current_class(),
+            crate::priority::current_class(),
             libc::qos_class_t::QOS_CLASS_UTILITY as u32
         );
         for class in classes {

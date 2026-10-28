@@ -15,7 +15,6 @@ mod made;
 mod names;
 pub(crate) mod placement;
 mod preserve;
-mod priority;
 mod pull;
 mod push;
 mod refused;
@@ -39,7 +38,6 @@ mod watch;
 mod watch_record;
 pub use every::{Every, EveryFolder, HANDED_OVER, MISSING, RETRY_HANDED, Unwatched, watch_every};
 pub use handover::{HANDOVER_WAIT, held_by_another, not_handed_over};
-pub use priority::run_as_utility_work;
 pub use status::{FileStatus, FirstSyncStatus, Paused, StatusReport};
 pub use storage::StorageCause;
 #[cfg(unix)]
