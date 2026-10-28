@@ -6302,7 +6302,7 @@ While a folder watch runs, a device MUST perform a full scan at its first pass a
 
 ### `folders/watch-quiet-pass-unrendered`
 
-When a quick or full pass of a folder watch finds no file changed on disk and sends or takes in no write, while the working copy and the folder's record of its files are as they were when the watch's previous pull began and that pull wrote, moved or removed no file and left none unwritten or waiting on another folder, a device MUST NOT render any folder file.
+When a quick or full pass of a folder watch finds no file changed on disk and sends or takes in no write, while the working copy and the folder's record of its files are as they were when the watch's previous pull began, that pull wrote, moved or removed no file and left none unwritten or waiting on another folder, and every path where a symbolic link, a package or another folder kept that pull from writing is still kept so for the same reason, a device MUST NOT render any folder file.
 
 **Reason:** a pass can start every second while a folder changes, and a pull renders every file the folder holds to compare it with the disk, so a watch on a quiet folder of hundreds of files would spend the processor on rendering what it already wrote.
 

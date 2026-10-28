@@ -8,8 +8,8 @@ use notify::{EventKind, RecursiveMode, Watcher};
 use super::handover::{self, Requests};
 use super::lists::Lists;
 use super::{
-    Drained, Flagged, Folder, PullReport, SETTINGS_FILE, STATE_DIR, ScanReport, SettingsFileReport,
-    StorageCause, Uncarried, Unsure,
+    Barred, Drained, Flagged, Folder, PullReport, SETTINGS_FILE, STATE_DIR, ScanReport,
+    SettingsFileReport, StorageCause, Uncarried, Unsure,
 };
 use crate::error::CoreError;
 use crate::priority::{inheriting, lowered};
@@ -447,6 +447,7 @@ impl Folder {
                     .lock()
                     .expect("give-way lock")
                     .is_empty()
+                && self.still_barred(&last.barred)
         }) {
             Some(last) => {
                 let pull = last.report.clone();
@@ -456,10 +457,12 @@ impl Folder {
             None => {
                 #[cfg(debug_assertions)]
                 crate::fault::hold(|| "folder-pass-pull");
-                let pull = self.pull()?;
+                let (pull, barred) = self.pull_noting(|| self.pull());
+                let pull = pull?;
                 if self.left_nothing(&pull) {
                     telling.pulled = Some(Pulled {
                         from: mark,
+                        barred,
                         report: pull.clone(),
                     });
                 }
@@ -828,10 +831,12 @@ struct Mark {
     record: [u8; 32],
 }
 
-/// A pull that changed nothing and left nothing to do, and where it began.
+/// A pull that changed nothing and left nothing to do, where it began, and
+/// where the disk kept it from writing.
 #[derive(Debug, Clone)]
 struct Pulled {
     from: Mark,
+    barred: Barred,
     report: PullReport,
 }
 
@@ -909,7 +914,8 @@ struct Telling {
     /// move on.
     at_rest: bool,
     /// The last pull, where a pass that finds the copy and the record as it
-    /// began would render every file as it was, so pulls nothing.
+    /// began, and the disk still in the way where it was, would render every
+    /// file as it was, so pulls nothing.
     pulled: Option<Pulled>,
 }
 

@@ -187,6 +187,9 @@ pub struct Folder {
     /// path the file kept and the one refused, not tried again while both
     /// stand, so a volume that refuses them is not asked at every pass.
     refused_renames: std::sync::Mutex<HashMap<String, (String, String)>>,
+    /// Where the disk kept a watch's pull from writing, gathered while that
+    /// pull runs.
+    barred: std::sync::Mutex<Option<Barred>>,
     /// Why the store this open found was refused, where the open replaced it.
     replaced: Option<String>,
 }
@@ -391,6 +394,7 @@ impl Folder {
             unread_give_ways: std::sync::Mutex::new(Default::default()),
             permissions: std::sync::OnceLock::new(),
             refused_renames: std::sync::Mutex::new(HashMap::new()),
+            barred: std::sync::Mutex::new(None),
             replaced: None,
         };
         let row = added.row_on_server()?;
@@ -513,6 +517,7 @@ impl Folder {
             unread_give_ways: std::sync::Mutex::new(Default::default()),
             permissions: std::sync::OnceLock::new(),
             refused_renames: std::sync::Mutex::new(HashMap::new()),
+            barred: std::sync::Mutex::new(None),
             replaced,
         })
     }
@@ -555,6 +560,7 @@ impl Folder {
             unread_give_ways: std::sync::Mutex::new(Default::default()),
             permissions: std::sync::OnceLock::new(),
             refused_renames: std::sync::Mutex::new(HashMap::new()),
+            barred: std::sync::Mutex::new(None),
             replaced: None,
         })
     }
@@ -813,10 +819,24 @@ impl Folder {
 
     /// Why the folder does not write at `path`, where it does not.
     fn not_writing_at(&self, lists: &Lists, path: &str) -> Option<&'static str> {
+        if plainly_inside(&self.root_dir, path) && !lists.takes(path) {
+            return Some("the folder's lists do not take the path");
+        }
+        let barred = self.barred_on_disk(path);
+        if let Some(why) = barred
+            && let Ok(mut noted) = self.barred.lock()
+            && let Some(noted) = noted.as_mut()
+        {
+            noted.insert(path.to_string(), why);
+        }
+        barred
+    }
+
+    /// Why what is on the disk keeps the folder from writing at `path`,
+    /// whatever its lists take.
+    fn barred_on_disk(&self, path: &str) -> Option<&'static str> {
         if !plainly_inside(&self.root_dir, path) {
             Some("the path leads out of the folder")
-        } else if !lists.takes(path) {
-            Some("the folder's lists do not take the path")
         } else if in_package(&self.root_dir, path) {
             Some("the path is inside a package")
         } else if in_nested_folder(&self.root_dir, path) {
@@ -825,7 +845,36 @@ impl Folder {
             None
         }
     }
+
+    /// Runs `pull` and answers with each path the disk kept it from writing
+    /// at, and why.
+    fn pull_noting<T>(&self, pull: impl FnOnce() -> T) -> (T, Barred) {
+        let set = |noting: Option<Barred>| {
+            std::mem::replace(
+                &mut *self
+                    .barred
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner()),
+                noting,
+            )
+        };
+        set(Some(Barred::new()));
+        let pulled = pull();
+        (pulled, set(None).unwrap_or_default())
+    }
+
+    /// Whether the disk still keeps the folder from writing at each path, for
+    /// the same reason. No scan tells when one of these goes, since a scan
+    /// neither enters another folder nor follows a link.
+    fn still_barred(&self, barred: &Barred) -> bool {
+        barred
+            .iter()
+            .all(|(path, why)| self.barred_on_disk(path) == Some(*why))
+    }
 }
+
+/// Paths the disk kept a pull from writing at, and why.
+pub(super) type Barred = BTreeMap<String, &'static str>;
 
 fn swap_root(root: &Path, fault: &str) {
     if crate::fault::named(fault).is_some() {
@@ -3640,6 +3689,130 @@ mod tests {
             assert!(text.ends_with(body), "{text}");
             settle(&folder, &mut passes);
         }
+    }
+
+    /// An item the server places at `path`, which the folder has no file of.
+    fn placed_remotely(folder: &Folder, path: &str) -> String {
+        let id = "01a00000-0000-7000-8000-0000000000f9";
+        let conn = folder.core.conn().unwrap();
+        crate::store::upsert_item(
+            &conn,
+            &crate::store::testing::note(id, "remote", "body", "2026-01-01T00:00:00Z"),
+            None,
+            &Default::default(),
+        )
+        .unwrap();
+        let mut edge =
+            crate::store::testing::wire_edge("remote-place", id, &folder.folder, PLACEMENT_EDGE);
+        edge.properties
+            .insert("path".into(), serde_json::json!(path));
+        crate::store::put_server_edge(&conn, &edge).unwrap();
+        id.to_string()
+    }
+
+    /// Makes `dir` another folder, which this folder does not write into.
+    fn nested_folder(dir: &Path) -> PathBuf {
+        let state = dir.join(STATE_DIR);
+        std::fs::create_dir_all(&state).unwrap();
+        let store = state.join("core.sqlite");
+        std::fs::write(&store, "").unwrap();
+        store
+    }
+
+    /// Runs a quick and two full passes, as a watch would after a change.
+    fn quick_then_full(folder: &Folder, passes: &mut watch::Passes) {
+        for full in [false, true, true] {
+            passes.run(folder, full).unwrap();
+        }
+    }
+
+    #[test]
+    fn a_watch_pass_writes_a_file_once_the_folder_around_its_path_is_gone() {
+        let (dir, folder, _server, mut passes) = watched_notes(&["a.md"]);
+        let boundary = nested_folder(&dir.path().join("nested"));
+        placed_remotely(&folder, "nested/remote.md");
+        quick_then_full(&folder, &mut passes);
+        let file = dir.path().join("nested/remote.md");
+        assert!(!file.exists());
+        // A pull that leaves an item outside the folder is still reused.
+        settle(&folder, &mut passes);
+        passes.run(&folder, true).unwrap();
+        assert_eq!(rendered(), 0, "a quiet full pass rendered a file");
+
+        std::fs::remove_file(&boundary).unwrap();
+        passes.run(&folder, false).unwrap();
+        assert!(file.exists(), "the next pass left the file unwritten");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_watch_pass_writes_a_file_once_a_link_in_its_path_is_gone() {
+        let (dir, folder, _server, mut passes) = watched_notes(&["a.md"]);
+        let away = tempfile::tempdir().unwrap();
+        let link = dir.path().join("linked");
+        std::os::unix::fs::symlink(away.path(), &link).unwrap();
+        placed_remotely(&folder, "linked/remote.md");
+        quick_then_full(&folder, &mut passes);
+        let file = dir.path().join("linked/remote.md");
+        assert!(!away.path().join("remote.md").exists());
+        settle(&folder, &mut passes);
+
+        std::fs::remove_file(&link).unwrap();
+        passes.run(&folder, false).unwrap();
+        assert!(file.exists(), "the next pass left the file unwritten");
+        assert!(!away.path().join("remote.md").exists());
+    }
+
+    #[test]
+    fn a_watch_pass_takes_a_departed_file_away_once_the_folder_around_it_is_gone() {
+        let (dir, folder, _server, mut passes) = watched_notes(&["a.md"]);
+        let boundary = nested_folder(&dir.path().join("nested"));
+        let file = dir.path().join("nested/old.md");
+        let bytes = b"---\ntitle: old\n---\nold\n";
+        std::fs::write(&file, bytes).unwrap();
+        {
+            let conn = folder.core.conn().unwrap();
+            let id = "01a00000-0000-7000-8000-0000000000f8";
+            crate::store::upsert_item(
+                &conn,
+                &crate::store::testing::wire_item(
+                    id,
+                    "core.note",
+                    "trashed",
+                    "2026-01-01T00:00:00Z",
+                    serde_json::json!({ "title": "old", "body": "old" }),
+                ),
+                None,
+                &Default::default(),
+            )
+            .unwrap();
+            state::bind(
+                &conn,
+                &state::Bound {
+                    path: "nested/old.md".into(),
+                    item_id: id.into(),
+                    identity: None,
+                    content_hash: state::hash(bytes),
+                    presentation: None,
+                    blob: None,
+                    written_hash: Some(state::hash(bytes)),
+                    links: Vec::new(),
+                    lines: Vec::new(),
+                    edit_line: None,
+                    held: None,
+                    own: None,
+                    writes: state::Writes::default(),
+                },
+            )
+            .unwrap();
+        }
+        quick_then_full(&folder, &mut passes);
+        assert!(file.exists());
+        settle(&folder, &mut passes);
+
+        std::fs::remove_file(&boundary).unwrap();
+        passes.run(&folder, false).unwrap();
+        assert!(!file.exists(), "the next pass left the file in place");
     }
 
     #[test]
