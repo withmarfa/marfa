@@ -2,9 +2,12 @@
 //! profile, the command line and the environment each name one, and that a
 //! key never reaches a server it was not named for.
 
+#[allow(dead_code)]
+#[path = "../src/door.rs"]
+mod door;
 mod isolated;
 
-use std::io::{Read, Write};
+use std::io::Write;
 use std::net::TcpListener;
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
@@ -17,8 +20,6 @@ const PROFILE_KEY: &str = "marfa_k1_profile_key_5d1c";
 const OUTSIDE_KEY: &str = "marfa_k1_outside_key_9b2e";
 const FAILING_STDOUT: &str = "marfa_k1_failing_stdout_3a7f";
 
-/// A server that answers every request alike and keeps the method, the path
-/// and the bearer of each.
 /// Each request's line and its bearer.
 type Seen = Arc<Mutex<Vec<(String, Option<String>)>>>;
 
@@ -28,6 +29,11 @@ struct Server {
 }
 
 impl Server {
+    /// A server that answers every request alike and keeps the line and the
+    /// bearer of each. It reads a request whole, body included, before it
+    /// answers and closes: a close with request bytes unread resets the
+    /// connection, and macOS then refuses the client's next socket option
+    /// with `EINVAL` (os error 22) in place of reading the answer.
     fn answering(status: &'static str, body: &'static str) -> Server {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let url = format!("http://{}", listener.local_addr().unwrap());
@@ -36,16 +42,11 @@ impl Server {
         std::thread::spawn(move || {
             for stream in listener.incoming() {
                 let Ok(mut stream) = stream else { continue };
-                let mut request = [0u8; 16384];
-                let read = stream.read(&mut request).unwrap_or(0);
-                let head = String::from_utf8_lossy(&request[..read]).into_owned();
-                let line = head.lines().next().unwrap_or_default().to_string();
-                let bearer = head.lines().find_map(|line| {
-                    let (name, value) = line.split_once(':')?;
-                    name.eq_ignore_ascii_case("authorization")
-                        .then(|| value.trim().trim_start_matches("Bearer ").to_string())
-                });
-                kept.lock().unwrap().push((line, bearer));
+                let request = door::read_request(&mut stream);
+                let bearer = request
+                    .header("authorization")
+                    .map(|value| value.trim_start_matches("Bearer ").to_string());
+                kept.lock().unwrap().push((request.line, bearer));
                 let _ = write!(
                     stream,
                     "HTTP/1.1 {status}\r\ncontent-type: application/json\r\nx-marfa-contract: {}\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
