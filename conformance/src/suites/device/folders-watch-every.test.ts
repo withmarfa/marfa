@@ -12,6 +12,7 @@ import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { describe, it, expect, afterEach, vi } from "vitest";
 import {
   copyItemEvent,
@@ -198,6 +199,54 @@ describe("a watch of every folder", () => {
     for (const harness of [a, b]) {
       expect(watching(watch, harness.dir), watch.stdout).toBe(true);
     }
+  });
+
+  it("watches every folder whose store lacks a table this build makes, adding the table", async () => {
+    const { a, b } = await twoFolders("every-lacking");
+    const stores = [a, b].map((harness) =>
+      join(harness.dir, ".marfa", "core.sqlite"),
+    );
+    const holds = (store: string): boolean => {
+      const db = new DatabaseSync(store, { readOnly: true });
+      try {
+        return (
+          db
+            .prepare("SELECT 1 FROM sqlite_master WHERE name = 'copy_changes'")
+            .get() !== undefined
+        );
+      } finally {
+        db.close();
+      }
+    };
+    for (const store of stores) {
+      const db = new DatabaseSync(store);
+      try {
+        const triggers = db
+          .prepare(
+            "SELECT name FROM sqlite_master WHERE type = 'trigger' AND sql LIKE '%copy_changes%'",
+          )
+          .all() as Array<{ name: string }>;
+        for (const { name } of triggers) db.exec(`DROP TRIGGER "${name}"`);
+        db.exec("DROP TABLE copy_changes");
+      } finally {
+        db.close();
+      }
+    }
+    expect(stores.map(holds)).toEqual([false, false]);
+
+    put(a, "Disk A.md", "---\ntitle: Disk A\n---\nwritten in a\n");
+    put(b, "Disk B.md", "---\ntitle: Disk B\n---\nwritten in b\n");
+    const watch = hold(a.folder.watchEvery());
+    await vi.waitFor(() => {
+      for (const harness of [a, b]) {
+        expect(
+          watching(watch, harness.dir),
+          `${watch.stdout}${watch.stderr}`,
+        ).toBe(true);
+      }
+      expect(sentTitles(a).sort()).toEqual(["Disk A", "Disk B"]);
+    }, WAIT);
+    expect(stores.map(holds)).toEqual([true, true]);
   });
 
   it("says once why a listed folder cannot be watched, goes on with the others, and takes it up once it can be", async () => {

@@ -3638,7 +3638,7 @@ If a device opens to read a store that lacks a table this build adds, then a dev
 
 When a device opens to write a store made before a table this build adds, a device MUST add the table and open the store.
 
-**Tests:** `device/working-copy.test.ts › opens a store made before a table this build adds, and adds it`.
+**Tests:** `device/working-copy.test.ts › opens a store made before a table this build adds, and adds it`, `device/folders-watch-every.test.ts › watches every folder whose store lacks a table this build makes, adding the table`.
 
 ### `device/wrong-schema`
 
