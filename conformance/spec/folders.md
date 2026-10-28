@@ -6310,11 +6310,27 @@ While a folder watch runs, a device MUST perform a full scan at its first pass a
 
 ### `folders/watch-quiet-pass-unrendered`
 
-When a quick or full pass of a folder watch finds no file changed on disk and sends or takes in no write, while the working copy and the folder's record of its files are as they were when the watch's previous pull began, that pull wrote, moved or removed no file and left none unwritten or waiting on another folder, and every path where a symbolic link, a package or another folder kept that pull from writing is still kept so for the same reason, a device MUST NOT render any folder file.
+When a quick or full pass of a folder watch finds no file changed on disk and sends or takes in no write, while the working copy and the folder's record of its files are as they were when the watch's previous pull began, that pull wrote, moved or removed no file and left none unwritten or waiting on another folder, every path where a symbolic link, a package or another folder kept that pull from writing is still kept so for the same reason, and `folders/watch-hourly-full-render` does not apply, a device MUST NOT render any folder file.
 
 **Reason:** a pass can start every second while a folder changes, and a pull renders every file the folder holds to compare it with the disk, so a watch on a quiet folder of hundreds of files would spend the processor on rendering what it already wrote.
 
 **Tests:** `device/binding-folders-clock.test.ts › renders no file on a quick or full pass of a quiet folder, and renders one after an edit`.
+
+### `folders/watch-pull-renders-reached`
+
+When a folder watch's pull follows an earlier pull of the same watch that ran to its end, while the working copy's generation and the folder's settings are as they were when that earlier pull began, no more than 4,096 items changed since then, and `folders/watch-hourly-full-render` does not apply, a device MUST NOT render the file of an item that the earlier pull found or left as the item renders, unless one of the following changed after that earlier pull began: the item, its tags or pins, its writes waiting to be sent, one of its edges, an item at the other end of one of its edges other than a placement in a folder, the folder's record of a file of the item or of such an item, an item that answers to a name the item or such an item answers to, or the types the working copy holds.
+
+**Reason:** a file renders from its item, the item's edges, the items at their other ends, the names those items answer to, the types and the folder's own record of the file, so a pull that renders every file to find the few a change reaches spends the processor on a folder of hundreds of files each time one note changes.
+
+**Tests:** `device/binding-folders-clock.test.ts › renders only the file an edit changes, and every file once an hour`.
+
+### `folders/watch-hourly-full-render`
+
+When an hour has passed since a folder watch's pull last rendered every folder file, a device MUST run a pull at the watch's next pass and render every folder file in it, even where the pass finds nothing changed.
+
+**Reason:** the choice of `folders/watch-pull-renders-reached` follows what a file renders from, and a full render at least once an hour finds and rewrites a file whose source that choice missed.
+
+**Tests:** `device/binding-folders-clock.test.ts › renders only the file an edit changes, and every file once an hour`, `device/binding-folders-clock.test.ts › rewrites at the hourly render a file the choice of files to render left out`.
 
 ### `folders/executable-created`
 

@@ -421,3 +421,161 @@ CREATE TRIGGER IF NOT EXISTS queue_revise_delete AFTER DELETE ON queue BEGIN
   INSERT INTO meta (key, value) VALUES ('copy_revision', '1')
     ON CONFLICT (key) DO UPDATE SET value = CAST(value AS INTEGER) + 1;
 END;
+
+-- Each item a change to the copy touched, numbered by its latest change, so a
+-- folder watch renders only the files a change since its last pull reaches.
+-- The triggers on the tables `copy_revision` follows write it, for the same
+-- reason. `''` stands for every item, for a change to the types that every
+-- file is rendered by. One row an item, so it holds no more rows than the
+-- copy has held items; a watch reads past its own number and deletes nothing,
+-- since every folder's watch reads it.
+CREATE TABLE IF NOT EXISTS copy_changes (
+  item_id TEXT PRIMARY KEY,
+  seq INTEGER NOT NULL
+) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS copy_changes_seq ON copy_changes (seq);
+
+CREATE TRIGGER IF NOT EXISTS types_change_insert AFTER INSERT ON types BEGIN
+  INSERT INTO copy_changes (item_id, seq)
+    SELECT id, (SELECT coalesce(max(seq), 0) + 1 FROM copy_changes)
+    FROM (SELECT '' AS id) WHERE id IS NOT NULL
+    ON CONFLICT (item_id) DO UPDATE SET seq = excluded.seq;
+END;
+CREATE TRIGGER IF NOT EXISTS types_change_update AFTER UPDATE ON types BEGIN
+  INSERT INTO copy_changes (item_id, seq)
+    SELECT id, (SELECT coalesce(max(seq), 0) + 1 FROM copy_changes)
+    FROM (SELECT '' AS id) WHERE id IS NOT NULL
+    ON CONFLICT (item_id) DO UPDATE SET seq = excluded.seq;
+END;
+CREATE TRIGGER IF NOT EXISTS types_change_delete AFTER DELETE ON types BEGIN
+  INSERT INTO copy_changes (item_id, seq)
+    SELECT id, (SELECT coalesce(max(seq), 0) + 1 FROM copy_changes)
+    FROM (SELECT '' AS id) WHERE id IS NOT NULL
+    ON CONFLICT (item_id) DO UPDATE SET seq = excluded.seq;
+END;
+CREATE TRIGGER IF NOT EXISTS edge_types_change_insert AFTER INSERT ON edge_types BEGIN
+  INSERT INTO copy_changes (item_id, seq)
+    SELECT id, (SELECT coalesce(max(seq), 0) + 1 FROM copy_changes)
+    FROM (SELECT '' AS id) WHERE id IS NOT NULL
+    ON CONFLICT (item_id) DO UPDATE SET seq = excluded.seq;
+END;
+CREATE TRIGGER IF NOT EXISTS edge_types_change_update AFTER UPDATE ON edge_types BEGIN
+  INSERT INTO copy_changes (item_id, seq)
+    SELECT id, (SELECT coalesce(max(seq), 0) + 1 FROM copy_changes)
+    FROM (SELECT '' AS id) WHERE id IS NOT NULL
+    ON CONFLICT (item_id) DO UPDATE SET seq = excluded.seq;
+END;
+CREATE TRIGGER IF NOT EXISTS edge_types_change_delete AFTER DELETE ON edge_types BEGIN
+  INSERT INTO copy_changes (item_id, seq)
+    SELECT id, (SELECT coalesce(max(seq), 0) + 1 FROM copy_changes)
+    FROM (SELECT '' AS id) WHERE id IS NOT NULL
+    ON CONFLICT (item_id) DO UPDATE SET seq = excluded.seq;
+END;
+CREATE TRIGGER IF NOT EXISTS declared_types_change_insert AFTER INSERT ON declared_types BEGIN
+  INSERT INTO copy_changes (item_id, seq)
+    SELECT id, (SELECT coalesce(max(seq), 0) + 1 FROM copy_changes)
+    FROM (SELECT '' AS id) WHERE id IS NOT NULL
+    ON CONFLICT (item_id) DO UPDATE SET seq = excluded.seq;
+END;
+CREATE TRIGGER IF NOT EXISTS declared_types_change_update AFTER UPDATE ON declared_types BEGIN
+  INSERT INTO copy_changes (item_id, seq)
+    SELECT id, (SELECT coalesce(max(seq), 0) + 1 FROM copy_changes)
+    FROM (SELECT '' AS id) WHERE id IS NOT NULL
+    ON CONFLICT (item_id) DO UPDATE SET seq = excluded.seq;
+END;
+CREATE TRIGGER IF NOT EXISTS declared_types_change_delete AFTER DELETE ON declared_types BEGIN
+  INSERT INTO copy_changes (item_id, seq)
+    SELECT id, (SELECT coalesce(max(seq), 0) + 1 FROM copy_changes)
+    FROM (SELECT '' AS id) WHERE id IS NOT NULL
+    ON CONFLICT (item_id) DO UPDATE SET seq = excluded.seq;
+END;
+CREATE TRIGGER IF NOT EXISTS items_change_insert AFTER INSERT ON items BEGIN
+  INSERT INTO copy_changes (item_id, seq)
+    SELECT id, (SELECT coalesce(max(seq), 0) + 1 FROM copy_changes)
+    FROM (SELECT NEW.id AS id) WHERE id IS NOT NULL
+    ON CONFLICT (item_id) DO UPDATE SET seq = excluded.seq;
+END;
+CREATE TRIGGER IF NOT EXISTS items_change_update AFTER UPDATE ON items BEGIN
+  INSERT INTO copy_changes (item_id, seq)
+    SELECT id, (SELECT coalesce(max(seq), 0) + 1 FROM copy_changes)
+    FROM (SELECT OLD.id AS id UNION SELECT NEW.id) WHERE id IS NOT NULL
+    ON CONFLICT (item_id) DO UPDATE SET seq = excluded.seq;
+END;
+CREATE TRIGGER IF NOT EXISTS items_change_delete AFTER DELETE ON items BEGIN
+  INSERT INTO copy_changes (item_id, seq)
+    SELECT id, (SELECT coalesce(max(seq), 0) + 1 FROM copy_changes)
+    FROM (SELECT OLD.id AS id) WHERE id IS NOT NULL
+    ON CONFLICT (item_id) DO UPDATE SET seq = excluded.seq;
+END;
+CREATE TRIGGER IF NOT EXISTS edges_change_insert AFTER INSERT ON edges BEGIN
+  INSERT INTO copy_changes (item_id, seq)
+    SELECT id, (SELECT coalesce(max(seq), 0) + 1 FROM copy_changes)
+    FROM (SELECT NEW.source_id AS id UNION SELECT NEW.target_id) WHERE id IS NOT NULL
+    ON CONFLICT (item_id) DO UPDATE SET seq = excluded.seq;
+END;
+CREATE TRIGGER IF NOT EXISTS edges_change_update AFTER UPDATE ON edges BEGIN
+  INSERT INTO copy_changes (item_id, seq)
+    SELECT id, (SELECT coalesce(max(seq), 0) + 1 FROM copy_changes)
+    FROM (SELECT OLD.source_id AS id UNION SELECT OLD.target_id UNION SELECT NEW.source_id UNION SELECT NEW.target_id) WHERE id IS NOT NULL
+    ON CONFLICT (item_id) DO UPDATE SET seq = excluded.seq;
+END;
+CREATE TRIGGER IF NOT EXISTS edges_change_delete AFTER DELETE ON edges BEGIN
+  INSERT INTO copy_changes (item_id, seq)
+    SELECT id, (SELECT coalesce(max(seq), 0) + 1 FROM copy_changes)
+    FROM (SELECT OLD.source_id AS id UNION SELECT OLD.target_id) WHERE id IS NOT NULL
+    ON CONFLICT (item_id) DO UPDATE SET seq = excluded.seq;
+END;
+CREATE TRIGGER IF NOT EXISTS tags_change_insert AFTER INSERT ON tags BEGIN
+  INSERT INTO copy_changes (item_id, seq)
+    SELECT id, (SELECT coalesce(max(seq), 0) + 1 FROM copy_changes)
+    FROM (SELECT NEW.item_id AS id) WHERE id IS NOT NULL
+    ON CONFLICT (item_id) DO UPDATE SET seq = excluded.seq;
+END;
+CREATE TRIGGER IF NOT EXISTS tags_change_update AFTER UPDATE ON tags BEGIN
+  INSERT INTO copy_changes (item_id, seq)
+    SELECT id, (SELECT coalesce(max(seq), 0) + 1 FROM copy_changes)
+    FROM (SELECT OLD.item_id AS id UNION SELECT NEW.item_id) WHERE id IS NOT NULL
+    ON CONFLICT (item_id) DO UPDATE SET seq = excluded.seq;
+END;
+CREATE TRIGGER IF NOT EXISTS tags_change_delete AFTER DELETE ON tags BEGIN
+  INSERT INTO copy_changes (item_id, seq)
+    SELECT id, (SELECT coalesce(max(seq), 0) + 1 FROM copy_changes)
+    FROM (SELECT OLD.item_id AS id) WHERE id IS NOT NULL
+    ON CONFLICT (item_id) DO UPDATE SET seq = excluded.seq;
+END;
+CREATE TRIGGER IF NOT EXISTS pins_change_insert AFTER INSERT ON pins BEGIN
+  INSERT INTO copy_changes (item_id, seq)
+    SELECT id, (SELECT coalesce(max(seq), 0) + 1 FROM copy_changes)
+    FROM (SELECT NEW.item_id AS id) WHERE id IS NOT NULL
+    ON CONFLICT (item_id) DO UPDATE SET seq = excluded.seq;
+END;
+CREATE TRIGGER IF NOT EXISTS pins_change_update AFTER UPDATE ON pins BEGIN
+  INSERT INTO copy_changes (item_id, seq)
+    SELECT id, (SELECT coalesce(max(seq), 0) + 1 FROM copy_changes)
+    FROM (SELECT OLD.item_id AS id UNION SELECT NEW.item_id) WHERE id IS NOT NULL
+    ON CONFLICT (item_id) DO UPDATE SET seq = excluded.seq;
+END;
+CREATE TRIGGER IF NOT EXISTS pins_change_delete AFTER DELETE ON pins BEGIN
+  INSERT INTO copy_changes (item_id, seq)
+    SELECT id, (SELECT coalesce(max(seq), 0) + 1 FROM copy_changes)
+    FROM (SELECT OLD.item_id AS id) WHERE id IS NOT NULL
+    ON CONFLICT (item_id) DO UPDATE SET seq = excluded.seq;
+END;
+CREATE TRIGGER IF NOT EXISTS queue_change_insert AFTER INSERT ON queue BEGIN
+  INSERT INTO copy_changes (item_id, seq)
+    SELECT id, (SELECT coalesce(max(seq), 0) + 1 FROM copy_changes)
+    FROM (SELECT NEW.item_id AS id UNION SELECT NEW.target_id) WHERE id IS NOT NULL
+    ON CONFLICT (item_id) DO UPDATE SET seq = excluded.seq;
+END;
+CREATE TRIGGER IF NOT EXISTS queue_change_update AFTER UPDATE ON queue BEGIN
+  INSERT INTO copy_changes (item_id, seq)
+    SELECT id, (SELECT coalesce(max(seq), 0) + 1 FROM copy_changes)
+    FROM (SELECT OLD.item_id AS id UNION SELECT OLD.target_id UNION SELECT NEW.item_id UNION SELECT NEW.target_id) WHERE id IS NOT NULL
+    ON CONFLICT (item_id) DO UPDATE SET seq = excluded.seq;
+END;
+CREATE TRIGGER IF NOT EXISTS queue_change_delete AFTER DELETE ON queue BEGIN
+  INSERT INTO copy_changes (item_id, seq)
+    SELECT id, (SELECT coalesce(max(seq), 0) + 1 FROM copy_changes)
+    FROM (SELECT OLD.item_id AS id UNION SELECT OLD.target_id) WHERE id IS NOT NULL
+    ON CONFLICT (item_id) DO UPDATE SET seq = excluded.seq;
+END;

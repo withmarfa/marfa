@@ -1,3 +1,4 @@
+use super::selective::{Pick, Selection};
 use super::{
     ATTACHMENT_EDGE, BoundFiles, Catalog, CoreError, EdgeTypes, FOLDER_TYPE, Flagged, Folder,
     HashMap, HashSet, Item, ItemState, Lists, Look, Mode, Names, OFlags, Path, Peers, Result,
@@ -50,6 +51,8 @@ struct Rendering<'a> {
     lists: &'a Lists,
     peers: &'a Peers<'a>,
     members: &'a HashSet<String>,
+    /// A watch's choice of the files to render; `None` renders every one.
+    pick: Option<&'a Pick>,
 }
 
 impl Rendering<'_> {
@@ -253,12 +256,22 @@ impl Folder {
     /// Pulls again from the start where the copy changed under it, such as a
     /// catch-up applying a purge, since what it read is then stale.
     pub fn pull(&self) -> Result<PullReport> {
+        self.pull_with(None)
+    }
+
+    /// A watch's pull, which renders only the files a change since its last
+    /// pull reaches.
+    pub(super) fn pull_selecting(&self, selection: &mut Selection) -> Result<PullReport> {
+        self.pull_with(Some(selection))
+    }
+
+    fn pull_with(&self, mut selection: Option<&mut Selection>) -> Result<PullReport> {
         self.refuse_while_waiting()?;
         let mut earlier = PullReport::default();
         let mut attempts = 1;
         loop {
             let mut report = PullReport::default();
-            match self.pull_into(None, &mut report) {
+            match self.pull_into(None, &mut report, selection.as_deref_mut()) {
                 Ok(()) => {
                     report.add_writes(&earlier);
                     report.root_gone = report.root_gone.or_else(|| self.root_gone());
@@ -281,6 +294,7 @@ impl Folder {
         &self,
         planning: Option<&mut PullPlan>,
         report: &mut PullReport,
+        selection: Option<&mut Selection>,
     ) -> Result<()> {
         if let Some(gone) = self.root_gone() {
             report.root_gone = Some(gone);
@@ -288,6 +302,10 @@ impl Folder {
         }
         let context = crate::reach::Context::capture(&*self.core.conn()?)?;
         state::settle_landings(&*self.core.conn()?, &self.root_dir)?;
+        let mut pick = match &selection {
+            Some(selection) => Some(selection.begin(self)?),
+            None => None,
+        };
         let settings = self.settings()?;
         let lists = settings.lists()?;
         let mut members = self.members(&settings)?;
@@ -405,6 +423,9 @@ impl Folder {
         report.skipped = skipped.iter().filter(|id| !members.contains(*id)).count();
         // After the pins, so a line names a target the copy now holds.
         let names = Names::load(&*self.core.conn()?, &catalog, &BoundFiles)?;
+        if let (Some(selection), Some(pick)) = (&selection, &mut pick) {
+            selection.choose(self, pick, &settings, &names)?;
+        }
         report.unplaced = withheld.len();
         let mut placing: Vec<Placing> = Vec::new();
         let unmatched_ids: Vec<String> = work
@@ -605,6 +626,7 @@ impl Folder {
             lists: &lists,
             peers: &peers,
             members: &members,
+            pick: pick.as_ref(),
         };
         let mut refused = HashSet::new();
         for entry in placing {
@@ -660,6 +682,10 @@ impl Folder {
         });
         context.same_copy(&*self.core.conn()?)?;
         report.settings = self.write_settings_if_moved()?;
+        drop(rendering);
+        if let (Some(selection), Some(pick)) = (selection, pick) {
+            selection.end(pick, &settings, names);
+        }
         Ok(())
     }
 
@@ -733,6 +759,16 @@ impl Folder {
         } = entry;
         let (item, want) = (*item, want.clone());
         let catalog = rendering.catalog;
+        // The file the last pull found or left as its item renders, which no
+        // change since reaches, renders as it is.
+        if taken.is_none()
+            && let Some(bound) = bound
+            && bound.path == want
+            && rendering.pick.is_some_and(|pick| pick.skips(&item.id))
+            && self.exists(self.root.join(&want))
+        {
+            return self.stay(item, bound, &want, rendering, withheld, report);
+        }
         if taken.is_some() {
             match self.take_in(entry, rendering, withheld, report)? {
                 TakeIn::Taken => return Ok(PlacementWrite::Done),
@@ -996,30 +1032,13 @@ impl Folder {
             )?;
             state::journal_clear_for(&conn, &want, &item.id)?;
             report.unchanged += 1;
+            if let Some(pick) = rendering.pick {
+                pick.settle(&item.id);
+            }
             return Ok(PlacementWrite::Done);
         }
-        if in_place {
-            if let Some(bound) = bound
-                .as_ref()
-                .filter(|bound| bound.writes.deferred_title.is_some())
-            {
-                state::bind(
-                    &*self.core.conn()?,
-                    &state::Bound {
-                        writes: state::Writes {
-                            deferred_title: None,
-                            ..bound.writes.clone()
-                        },
-                        ..bound.clone()
-                    },
-                )?;
-            }
-            if bytes_of(item, catalog).is_some() {
-                self.keep_executable(item, &want, &rendering.context.borrow())?;
-            }
-            report.placed += usize::from(self.place(&item.id, &want, withheld)?);
-            report.unchanged += 1;
-            return Ok(PlacementWrite::Done);
+        if in_place && let Some(bound) = bound {
+            return self.stay(item, bound, &want, rendering, withheld, report);
         }
 
         // Written over an edit still waiting, the line it writes is spent
@@ -1185,6 +1204,46 @@ impl Folder {
             report.written += 1;
         } else {
             report.rewritten += 1;
+        }
+        if let Some(pick) = rendering.pick {
+            pick.settle(&item.id);
+            if entry.taken.is_none() && entry.bound.as_ref().is_some_and(|bound| bound.path == want)
+            {
+                pick.rewrote(&item.id, &want);
+            }
+        }
+        Ok(PlacementWrite::Done)
+    }
+
+    /// Leaves a file that holds what its item renders where it is.
+    fn stay(
+        &self,
+        item: &Item,
+        bound: &state::Bound,
+        want: &str,
+        rendering: &Rendering<'_>,
+        withheld: &placement::Withheld,
+        report: &mut PullReport,
+    ) -> Result<PlacementWrite> {
+        if bound.writes.deferred_title.is_some() {
+            state::bind(
+                &*self.core.conn()?,
+                &state::Bound {
+                    writes: state::Writes {
+                        deferred_title: None,
+                        ..bound.writes.clone()
+                    },
+                    ..bound.clone()
+                },
+            )?;
+        }
+        if bytes_of(item, rendering.catalog).is_some() {
+            self.keep_executable(item, want, &rendering.context.borrow())?;
+        }
+        report.placed += usize::from(self.place(&item.id, want, withheld)?);
+        report.unchanged += 1;
+        if let Some(pick) = rendering.pick {
+            pick.settle(&item.id);
         }
         Ok(PlacementWrite::Done)
     }
@@ -2109,6 +2168,7 @@ mod tests {
                 lists: &lists,
                 peers: &Peers::of(&folder, None),
                 members: &HashSet::new(),
+                pick: None,
             };
             let entry = Placing {
                 item: &item,
@@ -2187,6 +2247,7 @@ mod tests {
                 lists: &lists,
                 peers: &Peers::of(&folder, None),
                 members: &HashSet::new(),
+                pick: None,
             };
             let entry = Placing {
                 item: &item,

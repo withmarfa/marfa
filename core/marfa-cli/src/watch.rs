@@ -535,6 +535,12 @@ fn tell(
             ));
             Ok(())
         }
+        WatchEvent::Missed { path } => {
+            say.note(&format!(
+                "warning: the hourly check rewrote {path}, which a change had reached and the watch had left as it was"
+            ));
+            Ok(())
+        }
         WatchEvent::WatcherFailed(error) => {
             say.note(&format!("watch error: {error}"));
             Ok(())

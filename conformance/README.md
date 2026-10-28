@@ -512,16 +512,20 @@ follows.
     loop, a filesystem change, and its pass and scan boundaries.
     `folder-pass-pull`: a pass that has scanned and sent, before a pull it
     runs. `folder-render`: each item's file the folder renders.
+    `folder-render-missed`: a watch's hourly render of every file rewriting
+    one that the watch's choice of the files to render had left out.
   - `folder-handover-wait`, `folder-handed-over`, and
     `folder-take-back-wait`: an asking call's wait, its acquired folder, and
     the watch's retry before taking it back. `folders-watch-polled` observes
     the registry supervisor's turn.
 - **Failures.** `testHooks.fail(point, on)` makes the engine fail where it
   reaches `point`, and `testHooks.fail(point, false)` stops. The engine counts
-  each reach as `testHooks.reached` does. Two points fail: `data-version`, the
-  read a reading handle's watch makes to learn that another process saved, and
+  each reach as `testHooks.reached` does. Three points fail: `data-version`,
+  the read a reading handle's watch makes to learn that another process saved;
   `replace-refused-make`, which fails the replacement of a refused store after
-  its empty store has been made, so the old store is put back.
+  its empty store has been made, so the old store is put back; and
+  `folder-selection-narrow`, which makes a watch's pull choose no file a
+  change reaches, so the hourly render of every file has one to find.
 - **Listeners and stores.** `watch` can be called more than once on one working
   copy, and each call is a listener. The host can make a listener block in each
   change, throw from one, and open the store the moment it is told it ended
