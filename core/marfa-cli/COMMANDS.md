@@ -3828,7 +3828,7 @@ marfa folders autostart [OPTIONS] <COMMAND>
 
 ### marfa folders autostart on
 
-Sync every folder from login, and start now: writes a launchd agent on macOS or a systemd user unit on Linux, in your own account, that runs `folders watch` with no directory by this binary's path. It holds no credential and no server: each folder uses the server its copy came from and the credential the keychain keeps for it. Run again, it changes nothing unless the agent would differ.
+Sync every folder from login, and start now: writes a launchd agent on macOS or a systemd user unit on Linux, in your own account, that runs `folders watch` with no directory by this binary's path. It holds no credential and no server: each folder uses the server its copy came from and the credential the keychain keeps for it. Run again, it changes nothing unless the agent would differ, as one written by an earlier build does. The watch runs as background work, at a lower CPU and I/O priority, to reduce interference with foreground work.
 
 With `--key-file` the agent runs the watch with that file in place of the keychain, for a machine where nobody signs in to unlock it. The agent holds the file's path and never what is in it.
 
@@ -3850,7 +3850,7 @@ marfa folders autostart off [OPTIONS]
 
 ### marfa folders autostart status
 
-Say whether folders sync from login: whether the agent is installed and running, the binary it runs, where it logs, and what the watch's record says of each folder. Asks no server and needs no credential.
+Say whether folders sync from login: whether the agent is installed and running, whether it differs from what `on` would write now, the binary it runs, where it logs, and what the watch's record says of each folder. Asks no server and needs no credential.
 
 ```text
 marfa folders autostart status [OPTIONS]

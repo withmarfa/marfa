@@ -711,3 +711,28 @@ fn a_stopped_read_finishes_a_renewal_under_way_and_starts_none_after() {
         "a renewal began after the stop"
     );
 }
+
+#[cfg(target_vendor = "apple")]
+#[test]
+fn a_read_started_for_work_at_utility_runs_at_utility_and_one_for_other_work_does_not() {
+    use crate::priority::current_class;
+    const UTILITY: u32 = libc::qos_class_t::QOS_CLASS_UTILITY as u32;
+    let http = crate::http::Http::new("http://127.0.0.1:1", "k").unwrap();
+    let read = |lowered: bool| {
+        std::thread::scope(|scope| {
+            scope
+                .spawn(|| {
+                    let _lowered = lowered.then(crate::priority::lowered);
+                    let stop = AtomicBool::new(false);
+                    crate::catch_up::ask_unless_stopped(&stop, &http, |_| Ok(current_class()))
+                        .unwrap()
+                })
+                .join()
+                .unwrap()
+        })
+    };
+    // The witness: asked for from work at the default class, the read is not
+    // lowered.
+    assert_ne!(read(false), UTILITY);
+    assert_eq!(read(true), UTILITY);
+}

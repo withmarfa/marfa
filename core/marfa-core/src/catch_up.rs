@@ -14,6 +14,7 @@ use crate::drain::DrainReport;
 use crate::error::CoreError;
 use crate::http::Http;
 use crate::model::{CatchUpReport, SliceTier, Subject, Tier};
+use crate::priority::inheriting;
 use crate::reach::{self, Context};
 use crate::sse::{Frame, Frames};
 use crate::store;
@@ -323,7 +324,7 @@ fn open(http: &Http, cursor: &str, bound: Duration) -> Result<Receiver<io::Resul
     // carries the frame of a row retyped out of it.
     let reader = http.open_events(Some(cursor), bound)?;
     let (sender, frames) = mpsc::sync_channel::<io::Result<Frame>>(256);
-    thread::spawn(move || {
+    thread::spawn(inheriting(move || {
         let mut frames = Frames::new(BufReader::new(reader));
         loop {
             match frames.next_frame() {
@@ -339,7 +340,7 @@ fn open(http: &Http, cursor: &str, bound: Duration) -> Result<Receiver<io::Resul
                 }
             }
         }
-    });
+    }));
     Ok(frames)
 }
 
@@ -686,12 +687,12 @@ pub(crate) fn ask_unless_stopped<T: Send + 'static>(
     let asked = http.to_let_go();
     let reading = asked.clone();
     let (sender, answer) = mpsc::sync_channel::<Result<T>>(1);
-    thread::spawn(move || {
+    thread::spawn(inheriting(move || {
         if sender.send(read(&reading)).is_err() {
             #[cfg(debug_assertions)]
             crate::fault::hold(|| "answer-dropped");
         }
-    });
+    }));
     loop {
         if stop.load(Ordering::Relaxed) {
             asked.let_go();
@@ -1043,7 +1044,7 @@ impl Recovery<'_, '_> {
         }
         let (core, stop, asked, told) = (self.core, self.stop, self.asked, self.told.clone());
         let carried = Carried::here();
-        scope.spawn(move || {
+        scope.spawn(inheriting(move || {
             carried.run(|| {
                 loop {
                     let event = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -1067,7 +1068,7 @@ impl Recovery<'_, '_> {
                     return;
                 }
             });
-        });
+        }));
     }
 
     /// What the drains it started have told since it last looked.
@@ -1234,7 +1235,7 @@ fn reach(http: &Arc<Http>, cursor: &str, stop: &AtomicBool, poll: Duration) -> O
     let asked = http.to_let_go();
     let http = asked.clone();
     let cursor = cursor.to_string();
-    thread::spawn(move || {
+    thread::spawn(inheriting(move || {
         let reached = (|| {
             let instance = http.instance_id()?;
             let catalog = http.catalog()?;
@@ -1242,7 +1243,7 @@ fn reach(http: &Arc<Http>, cursor: &str, stop: &AtomicBool, poll: Duration) -> O
             Ok((instance, catalog, frames))
         })();
         let _ = sender.send(reached);
-    });
+    }));
     loop {
         if stop.load(Ordering::Relaxed) {
             asked.let_go();

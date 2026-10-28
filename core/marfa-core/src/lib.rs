@@ -35,6 +35,7 @@ mod js;
 mod lock;
 mod model;
 mod names;
+mod priority;
 mod query;
 mod reach;
 #[cfg(test)]

@@ -24,6 +24,7 @@ use super::landing::land_at;
 use super::registry::{Registry, open_lock, resolved};
 use super::watch::{Raise, WatchEnd, WatchError, WatchEvent};
 use crate::directory::Directory;
+use crate::priority::{inheriting, lowered};
 use crate::store;
 
 /// The record's file name, beside the registry's `folders.json`.
@@ -286,7 +287,7 @@ impl WatchRecord {
     ) -> R {
         let done = AtomicBool::new(false);
         std::thread::scope(|scope| {
-            scope.spawn(|| {
+            scope.spawn(inheriting(|| {
                 let mut seen: Option<Snapshot> = None;
                 while !done.load(Ordering::SeqCst) {
                     if let Some(health) = folder.observed()
@@ -300,7 +301,7 @@ impl WatchRecord {
                         std::thread::sleep(POLL);
                     }
                 }
-            });
+            }));
             let raise = Raise(&done);
             let ran = run();
             drop(raise);
@@ -341,8 +342,11 @@ impl WatchRecord {
     /// asks, until [`WatchRecord::finish`]. `warn` is told once, with the
     /// reason, if the record cannot be written; the writing goes on, so the
     /// record appears once it can be. A beat that finds the file's lock held
-    /// by another process is tried again at the next poll.
+    /// by another process is tried again at the next poll. On Apple platforms
+    /// the calling thread runs at utility quality of service until this
+    /// returns.
     pub fn keep(&self, warn: impl Fn(&str)) {
+        let _lowered = lowered();
         loop {
             let due = {
                 let inner = self.inner();
@@ -424,12 +428,12 @@ impl WatchRecord {
         let (path, pid, writing) = (self.path.clone(), self.pid, Arc::clone(&self.writing));
         let (done, landed) = mpsc::channel();
         // Detached, so that a disk that does not answer cannot hold the end.
-        std::thread::spawn(move || {
+        std::thread::spawn(inheriting(move || {
             let _writing = writing
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             let _ = done.send(publish(&path, pid, mine, LAST_LOCK));
-        });
+        }));
         let _ = landed.recv_timeout(LAST_WRITE);
     }
 
