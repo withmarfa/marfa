@@ -593,37 +593,38 @@ mod tests {
         let changed = Arc::new(AtomicBool::new(false));
         let witnessed = changed.clone();
         let mut type_reads = 0;
-        folder
-            .core
-            .conn()
-            .unwrap()
-            .authorizer(Some(move |ctx: AuthContext<'_>| {
-                if matches!(
+        let conn = folder.core.conn().unwrap();
+        // The authorizer sees a statement only as it is prepared, and a
+        // cached statement is prepared once.
+        conn.set_prepared_statement_cache_capacity(0);
+        conn.authorizer(Some(move |ctx: AuthContext<'_>| {
+            if matches!(
+                ctx.action,
+                AuthAction::Read {
+                    table_name: "types",
+                    column_name: "parent"
+                }
+            ) {
+                type_reads += 1;
+            }
+            if type_reads >= 2
+                && matches!(
                     ctx.action,
                     AuthAction::Read {
-                        table_name: "types",
-                        column_name: "parent"
+                        table_name: "meta",
+                        column_name: "value"
                     }
-                ) {
-                    type_reads += 1;
-                }
-                if type_reads >= 2
-                    && matches!(
-                        ctx.action,
-                        AuthAction::Read {
-                            table_name: "meta",
-                            column_name: "value"
-                        }
-                    )
-                    && !witnessed.swap(true, Ordering::SeqCst)
-                {
-                    // The next catalog is unreadable. This status began with the
-                    // previous one and must not combine the two revisions.
-                    store::replace_catalog(&writing, &wire_catalog("unreadable")).unwrap();
-                }
-                Authorization::Allow
-            }))
-            .unwrap();
+                )
+                && !witnessed.swap(true, Ordering::SeqCst)
+            {
+                // The next catalog is unreadable. This status began with the
+                // previous one and must not combine the two revisions.
+                store::replace_catalog(&writing, &wire_catalog("unreadable")).unwrap();
+            }
+            Authorization::Allow
+        }))
+        .unwrap();
+        drop(conn);
         let status = folder.status().unwrap();
         assert!(
             changed.load(Ordering::SeqCst),

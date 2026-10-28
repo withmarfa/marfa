@@ -961,9 +961,8 @@ fn queued_in_main(conn: &Connection, id: &str) -> Result<bool, CoreError> {
 
 pub fn meta_get(conn: &Connection, key: &str) -> Result<Option<String>, CoreError> {
     Ok(conn
-        .query_row("SELECT value FROM meta WHERE key = ?1", [key], |row| {
-            row.get(0)
-        })
+        .prepare_cached("SELECT value FROM meta WHERE key = ?1")?
+        .query_row([key], |row| row.get(0))
         .optional()?)
 }
 
