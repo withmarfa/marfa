@@ -4500,7 +4500,7 @@ While a missing folder file is found in another registered folder in a file that
 
 While a scan keeps a missing folder file’s binding under `folders/moved-binding-kept`, a pull leaves a missing folder file unwritten under `folders/moved-not-revived`, or another registered folder holds a file that carries the ID of an item this folder has not bound and that folder has not bound the file, a device MUST count the item as `elsewhere`.
 
-**Reason:** a pull runs at every pass of a watch, so past the rename grace it reads where the scan found the missing file instead of looking in the other folders itself. A quick pass keeps the last scan’s finding and a full pass looks again, so a watch releases the binding at its first full pass after the other folder binds the file.
+**Reason:** a watch pulls at every pass while an item counts as `elsewhere`, so past the rename grace it reads where the scan found the missing file instead of looking in the other folders itself. A quick pass keeps the last scan’s finding and a full pass looks again, so a watch releases the binding at its first full pass after the other folder binds the file.
 
 **Tests:** `device/folders-one-mac.test.ts › does not trash a file moved to another folder`, `device/folders-one-mac.test.ts › keeps one item when a file item both folders hold moves between them and the %s folder scans first`, `device/folders-one-mac.test.ts › follows a move by copy and delete, by id and by bytes`, `device/folders-one-mac.test.ts › makes no second item when another device changes a moved file's item inside the grace`.
 
@@ -6299,6 +6299,14 @@ When a folder file changes while a watch scan reads it, a device MUST read it ag
 While a folder watch runs, a device MUST perform a full scan at its first pass and at the first pass after sixty seconds since the previous full scan.
 
 **Tests:** `device/binding-folders-clock.test.ts › performs a full first pass and the first pass past sixty seconds`.
+
+### `folders/watch-quiet-pass-unrendered`
+
+When a quick or full pass of a folder watch finds no file changed on disk and sends or takes in no write, while the working copy and the folder's record of its files are as they were when the watch's previous pull began, that pull wrote, moved or removed no file and left none unwritten or waiting on another folder, and every path where a symbolic link, a package or another folder kept that pull from writing is still kept so for the same reason, a device MUST NOT render any folder file.
+
+**Reason:** a pass can start every second while a folder changes, and a pull renders every file the folder holds to compare it with the disk, so a watch on a quiet folder of hundreds of files would spend the processor on rendering what it already wrote.
+
+**Tests:** `device/binding-folders-clock.test.ts › renders no file on a quick or full pass of a quiet folder, and renders one after an edit`.
 
 ### `folders/executable-created`
 

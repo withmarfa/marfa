@@ -187,6 +187,9 @@ pub struct Folder {
     /// path the file kept and the one refused, not tried again while both
     /// stand, so a volume that refuses them is not asked at every pass.
     refused_renames: std::sync::Mutex<HashMap<String, (String, String)>>,
+    /// Where the disk kept a watch's pull from writing, gathered while that
+    /// pull runs.
+    barred: std::sync::Mutex<Option<Barred>>,
     /// Why the store this open found was refused, where the open replaced it.
     replaced: Option<String>,
 }
@@ -391,6 +394,7 @@ impl Folder {
             unread_give_ways: std::sync::Mutex::new(Default::default()),
             permissions: std::sync::OnceLock::new(),
             refused_renames: std::sync::Mutex::new(HashMap::new()),
+            barred: std::sync::Mutex::new(None),
             replaced: None,
         };
         let row = added.row_on_server()?;
@@ -513,6 +517,7 @@ impl Folder {
             unread_give_ways: std::sync::Mutex::new(Default::default()),
             permissions: std::sync::OnceLock::new(),
             refused_renames: std::sync::Mutex::new(HashMap::new()),
+            barred: std::sync::Mutex::new(None),
             replaced,
         })
     }
@@ -555,6 +560,7 @@ impl Folder {
             unread_give_ways: std::sync::Mutex::new(Default::default()),
             permissions: std::sync::OnceLock::new(),
             refused_renames: std::sync::Mutex::new(HashMap::new()),
+            barred: std::sync::Mutex::new(None),
             replaced: None,
         })
     }
@@ -813,10 +819,26 @@ impl Folder {
 
     /// Why the folder does not write at `path`, where it does not.
     fn not_writing_at(&self, lists: &Lists, path: &str) -> Option<&'static str> {
+        // The disk is read once: a link that went between two reads would
+        // let a path past the lists.
+        let barred = self.barred_on_disk(path);
+        if barred != Some(LEADS_OUT) && !lists.takes(path) {
+            return Some("the folder's lists do not take the path");
+        }
+        if let Some(why) = barred
+            && let Ok(mut noted) = self.barred.lock()
+            && let Some(noted) = noted.as_mut()
+        {
+            noted.insert(path.to_string(), why);
+        }
+        barred
+    }
+
+    /// Why what is on the disk keeps the folder from writing at `path`,
+    /// whatever its lists take.
+    fn barred_on_disk(&self, path: &str) -> Option<&'static str> {
         if !plainly_inside(&self.root_dir, path) {
-            Some("the path leads out of the folder")
-        } else if !lists.takes(path) {
-            Some("the folder's lists do not take the path")
+            Some(LEADS_OUT)
         } else if in_package(&self.root_dir, path) {
             Some("the path is inside a package")
         } else if in_nested_folder(&self.root_dir, path) {
@@ -825,7 +847,38 @@ impl Folder {
             None
         }
     }
+
+    /// Runs `pull` and answers with each path the disk kept it from writing
+    /// at, and why.
+    fn pull_noting<T>(&self, pull: impl FnOnce() -> T) -> (T, Barred) {
+        let set = |noting: Option<Barred>| {
+            std::mem::replace(
+                &mut *self
+                    .barred
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner()),
+                noting,
+            )
+        };
+        set(Some(Barred::new()));
+        let pulled = pull();
+        (pulled, set(None).unwrap_or_default())
+    }
+
+    /// Whether the disk still keeps the folder from writing at each path, for
+    /// the same reason. No scan tells when one of these goes, since a scan
+    /// neither enters another folder nor follows a link.
+    fn still_barred(&self, barred: &Barred) -> bool {
+        barred
+            .iter()
+            .all(|(path, why)| self.barred_on_disk(path) == Some(*why))
+    }
 }
+
+const LEADS_OUT: &str = "the path leads out of the folder";
+
+/// Paths the disk kept a pull from writing at, and why.
+pub(super) type Barred = BTreeMap<String, &'static str>;
 
 fn swap_root(root: &Path, fault: &str) {
     if crate::fault::named(fault).is_some() {
@@ -1969,6 +2022,10 @@ impl Folder {
         edge_types: &EdgeTypes,
         lines: LinesBy<'_>,
     ) -> Result<Rendered> {
+        #[cfg(test)]
+        tests::RENDERED.with(|rendered| rendered.set(rendered.get() + 1));
+        #[cfg(debug_assertions)]
+        crate::fault::hold(|| "folder-render");
         let body_field = fields::body_field(catalog, &item.r#type);
         let body = item
             .properties
@@ -2450,6 +2507,16 @@ mod tests {
 
     fn documents_read() -> usize {
         DOCUMENTS_READ.with(std::cell::Cell::get)
+    }
+
+    thread_local! {
+        /// How many times this thread rendered an item's file.
+        pub(super) static RENDERED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    }
+
+    /// How many files this thread rendered since the last call.
+    pub(super) fn rendered() -> usize {
+        RENDERED.with(|rendered| rendered.replace(0))
     }
 
     thread_local! {
@@ -3523,6 +3590,302 @@ mod tests {
         conn.execute("UPDATE items SET version = 1 WHERE id = ?1", [&item_id])
             .unwrap();
         item_id
+    }
+
+    /// `settled_notes`, each note's create answered as a server would, so a
+    /// watch's pass over them finds nothing to do.
+    fn answered_notes(names: &[&str]) -> (ScannedDir, Folder) {
+        let (dir, folder) = settled_notes(names);
+        for name in names {
+            landed(&folder, name);
+        }
+        folder
+            .core
+            .conn()
+            .unwrap()
+            .execute("DELETE FROM queue", [])
+            .unwrap();
+        (dir, folder)
+    }
+
+    /// `answered_notes`, with a server that answers nothing it is not
+    /// scripted to, and passes of a watch run over it until one renders
+    /// nothing: the first renders each note, and the next takes in what the
+    /// first wrote.
+    fn watched_notes(
+        names: &[&str],
+    ) -> (ScannedDir, Folder, crate::scripted::Scripted, watch::Passes) {
+        let (dir, folder) = answered_notes(names);
+        drop(folder);
+        let server = crate::scripted::Scripted::start();
+        let folder = Folder::open(
+            dir.path(),
+            Some(crate::Server {
+                url: server.url(),
+                key: "fixture".into(),
+            }),
+        )
+        .unwrap();
+        let mut passes = watch::Passes::default();
+        rendered();
+        passes.run(&folder, true).unwrap();
+        assert!(rendered() > 0, "the first pass rendered no file");
+        settle(&folder, &mut passes);
+        (dir, folder, server, passes)
+    }
+
+    /// Runs quick passes until one renders nothing, which the third must.
+    fn settle(folder: &Folder, passes: &mut watch::Passes) {
+        for _ in 0..3 {
+            passes.run(folder, false).unwrap();
+            if rendered() == 0 {
+                return;
+            }
+        }
+        panic!("three passes over an unchanged folder each rendered files");
+    }
+
+    fn files_of(dir: &Path) -> Vec<(String, String)> {
+        let mut files: Vec<(String, String)> = std::fs::read_dir(dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .filter(|path| path.is_file())
+            .map(|path| {
+                (
+                    path.file_name().unwrap().to_string_lossy().into_owned(),
+                    std::fs::read_to_string(&path).unwrap(),
+                )
+            })
+            .collect();
+        files.sort();
+        files
+    }
+
+    /// Changes the note's body in the copy, as a catch-up applying the
+    /// server's change does.
+    fn changed_on_the_server(folder: &Folder, path: &str, body: &str) {
+        let conn = folder.core.conn().unwrap();
+        let item_id = state::bound_at(&conn, path).unwrap().unwrap().item_id;
+        let changed = conn
+            .execute(
+                "UPDATE items SET properties = json_set(properties, '$.body', ?2), version = version + 1 WHERE id = ?1",
+                [item_id.as_str(), body],
+            )
+            .unwrap();
+        assert_eq!(changed, 1);
+    }
+
+    #[test]
+    fn a_quiet_watch_pass_renders_no_file_and_one_after_a_change_to_the_copy_does() {
+        let (dir, folder, _server, mut passes) = watched_notes(&["a.md", "b.md"]);
+        for (full, body) in [(false, "quick"), (true, "full")] {
+            let files = files_of(dir.path());
+            passes.run(&folder, full).unwrap();
+            assert_eq!(rendered(), 0, "a quiet pass, full: {full}");
+            assert_eq!(files_of(dir.path()), files);
+
+            // The witness: the same pass over a copy the server changed
+            // renders the files and writes the change.
+            changed_on_the_server(&folder, "a.md", body);
+            passes.run(&folder, full).unwrap();
+            assert!(rendered() > 0, "full: {full}");
+            let text = std::fs::read_to_string(dir.path().join("a.md")).unwrap();
+            assert!(text.ends_with(body), "{text}");
+            settle(&folder, &mut passes);
+        }
+    }
+
+    /// An item the server places at `path`, which the folder has no file of.
+    fn placed_remotely(folder: &Folder, path: &str) -> String {
+        let id = "01a00000-0000-7000-8000-0000000000f9";
+        let conn = folder.core.conn().unwrap();
+        crate::store::upsert_item(
+            &conn,
+            &crate::store::testing::note(id, "remote", "body", "2026-01-01T00:00:00Z"),
+            None,
+            &Default::default(),
+        )
+        .unwrap();
+        let mut edge =
+            crate::store::testing::wire_edge("remote-place", id, &folder.folder, PLACEMENT_EDGE);
+        edge.properties
+            .insert("path".into(), serde_json::json!(path));
+        crate::store::put_server_edge(&conn, &edge).unwrap();
+        id.to_string()
+    }
+
+    /// Makes `dir` another folder, which this folder does not write into.
+    fn nested_folder(dir: &Path) -> PathBuf {
+        let state = dir.join(STATE_DIR);
+        std::fs::create_dir_all(&state).unwrap();
+        let store = state.join("core.sqlite");
+        std::fs::write(&store, "").unwrap();
+        store
+    }
+
+    /// Runs a quick and two full passes, as a watch would after a change.
+    fn quick_then_full(folder: &Folder, passes: &mut watch::Passes) {
+        for full in [false, true, true] {
+            passes.run(folder, full).unwrap();
+        }
+    }
+
+    #[test]
+    fn a_watch_pass_writes_a_file_once_the_folder_around_its_path_is_gone() {
+        let (dir, folder, _server, mut passes) = watched_notes(&["a.md"]);
+        let boundary = nested_folder(&dir.path().join("nested"));
+        placed_remotely(&folder, "nested/remote.md");
+        quick_then_full(&folder, &mut passes);
+        let file = dir.path().join("nested/remote.md");
+        assert!(!file.exists());
+        // A pull that leaves an item outside the folder is still reused.
+        settle(&folder, &mut passes);
+        passes.run(&folder, true).unwrap();
+        assert_eq!(rendered(), 0, "a quiet full pass rendered a file");
+
+        std::fs::remove_file(&boundary).unwrap();
+        passes.run(&folder, false).unwrap();
+        assert!(file.exists(), "the next pass left the file unwritten");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_watch_pass_writes_a_file_once_a_link_in_its_path_is_gone() {
+        let (dir, folder, _server, mut passes) = watched_notes(&["a.md"]);
+        let away = tempfile::tempdir().unwrap();
+        let link = dir.path().join("linked");
+        std::os::unix::fs::symlink(away.path(), &link).unwrap();
+        placed_remotely(&folder, "linked/remote.md");
+        quick_then_full(&folder, &mut passes);
+        let file = dir.path().join("linked/remote.md");
+        assert!(!away.path().join("remote.md").exists());
+        settle(&folder, &mut passes);
+
+        std::fs::remove_file(&link).unwrap();
+        passes.run(&folder, false).unwrap();
+        assert!(file.exists(), "the next pass left the file unwritten");
+        assert!(!away.path().join("remote.md").exists());
+    }
+
+    #[test]
+    fn a_watch_pass_takes_a_departed_file_away_once_the_folder_around_it_is_gone() {
+        let (dir, folder, _server, mut passes) = watched_notes(&["a.md"]);
+        let boundary = nested_folder(&dir.path().join("nested"));
+        let file = dir.path().join("nested/old.md");
+        let bytes = b"---\ntitle: old\n---\nold\n";
+        std::fs::write(&file, bytes).unwrap();
+        {
+            let conn = folder.core.conn().unwrap();
+            let id = "01a00000-0000-7000-8000-0000000000f8";
+            crate::store::upsert_item(
+                &conn,
+                &crate::store::testing::wire_item(
+                    id,
+                    "core.note",
+                    "trashed",
+                    "2026-01-01T00:00:00Z",
+                    serde_json::json!({ "title": "old", "body": "old" }),
+                ),
+                None,
+                &Default::default(),
+            )
+            .unwrap();
+            state::bind(
+                &conn,
+                &state::Bound {
+                    path: "nested/old.md".into(),
+                    item_id: id.into(),
+                    identity: None,
+                    content_hash: state::hash(bytes),
+                    presentation: None,
+                    blob: None,
+                    written_hash: Some(state::hash(bytes)),
+                    links: Vec::new(),
+                    lines: Vec::new(),
+                    edit_line: None,
+                    held: None,
+                    own: None,
+                    writes: state::Writes::default(),
+                },
+            )
+            .unwrap();
+        }
+        quick_then_full(&folder, &mut passes);
+        assert!(file.exists());
+        settle(&folder, &mut passes);
+
+        std::fs::remove_file(&boundary).unwrap();
+        passes.run(&folder, false).unwrap();
+        assert!(!file.exists(), "the next pass left the file in place");
+    }
+
+    #[test]
+    fn a_quiet_watch_pass_puts_back_a_deleted_settings_file() {
+        let (_dir, folder, _server, mut passes) = watched_notes(&["a.md"]);
+        let path = folder.root.join(STATE_DIR).join(SETTINGS_FILE);
+        let text = std::fs::read_to_string(&path).unwrap();
+        std::fs::remove_file(&path).unwrap();
+        passes.run(&folder, false).unwrap();
+        assert_eq!(rendered(), 0, "the pass pulled");
+        assert_eq!(std::fs::read_to_string(&path).ok(), Some(text));
+    }
+
+    #[test]
+    fn a_watch_pass_pulls_again_while_an_edge_end_is_unheld() {
+        let (dir, folder, server, mut passes) = watched_notes(&["a.md"]);
+        let gone = "01a00000-0000-7000-8000-0000000000e9";
+        server.on(
+            &format!("/items/{gone}"),
+            vec![crate::scripted::certified(crate::scripted::refusal(
+                404,
+                "item_not_found",
+            ))],
+        );
+        // The bin, where a pin looks for an end the server does not hold.
+        server.on(
+            "/items",
+            vec![crate::scripted::certified(crate::scripted::json(
+                200,
+                r#"{"data":[],"next_cursor":null}"#,
+            ))],
+        );
+        {
+            let conn = folder.core.conn().unwrap();
+            let item_id = state::bound_at(&conn, "a.md").unwrap().unwrap().item_id;
+            crate::store::put_server_edge(
+                &conn,
+                &crate::store::testing::wire_edge("about-gone", &item_id, gone, "about"),
+            )
+            .unwrap();
+        }
+        passes.run(&folder, false).unwrap();
+        assert!(rendered() > 0);
+        assert!(
+            std::fs::read_to_string(dir.path().join("a.md"))
+                .unwrap()
+                .contains(gone)
+        );
+        // The server holds no such item, so each pull asks for it again.
+        let end = format!("/items/{gone}");
+        for full in [false, true, false] {
+            let asked = server.seen(&end).len();
+            passes.run(&folder, full).unwrap();
+            assert_eq!(server.seen(&end).len(), asked + 1, "full: {full}");
+        }
+
+        // The witness: once no line names the end, the passes settle and stop
+        // asking for it.
+        folder
+            .core
+            .conn()
+            .unwrap()
+            .execute("DELETE FROM edges WHERE id = 'about-gone'", [])
+            .unwrap();
+        settle(&folder, &mut passes);
+        let asked = server.seen(&end).len();
+        passes.run(&folder, true).unwrap();
+        assert_eq!(rendered(), 0);
+        assert_eq!(server.seen(&end).len(), asked);
     }
 
     /// Moves the journaled delete at `path` past the grace.

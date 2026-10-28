@@ -415,7 +415,8 @@ impl Folder {
             .collect();
         report.unmatched = unmatched_ids.len();
         state::set_unmatched(&*self.core.conn()?, &unmatched_ids)?;
-        // Read, not looked for in the other folders: a pull runs every pass.
+        // Read, not looked for in the other folders: one arriving there is
+        // counted, so a watch pulls again at its next pass.
         let kept: HashMap<String, (String, state::Kept)> = state::journaled(&*self.core.conn()?)?
             .into_iter()
             .filter_map(|row| Some((row.path, (row.item_id, row.kept?))))
@@ -1967,6 +1968,9 @@ impl Folder {
                 crate::store::pin(&*self.core.conn()?, id)?
             } else {
                 // Unreadable now, offline or gone: the line names it by id.
+                // A pin the server refuses lets go of the pin it took, which
+                // moves the copy revision, so a watch's next pass pulls and
+                // asks again.
                 match self.core.pin(id) {
                     Ok(_) => true,
                     Err(

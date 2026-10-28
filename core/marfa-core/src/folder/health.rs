@@ -8,7 +8,7 @@ use super::{Folder, PullReport, StatusReport, elsewhere, state};
 use crate::http::{Call, CallBody, Method};
 use crate::{CoreError, Result, store};
 
-const META: &str = "folder_health";
+pub(super) const META: &str = "folder_health";
 const MAX_SAFE: u64 = 9_007_199_254_740_991;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -801,6 +801,7 @@ mod tests {
             unread_give_ways: std::sync::Mutex::new(Default::default()),
             permissions: std::sync::OnceLock::new(),
             refused_renames: std::sync::Mutex::new(Default::default()),
+            barred: std::sync::Mutex::new(None),
             replaced: None,
             root_dir,
             state_dir,
