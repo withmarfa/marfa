@@ -535,9 +535,6 @@ describe("folder syncing from login", () => {
       autostart(root, "status", { registry, json: false }).stdout,
     ).not.toContain("earlier marfa");
 
-    // The agent as an earlier build wrote it: on macOS, one that ran the watch
-    // as background work; on Linux, one without the settings that lower its
-    // priority.
     const earlier = macOS
       ? current.replace(
           "\t<key>Nice</key>\n\t<integer>10</integer>\n\t<key>LowPriorityIO</key>\n\t<true/>\n",

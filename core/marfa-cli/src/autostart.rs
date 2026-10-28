@@ -184,11 +184,8 @@ impl Agent {
         }
     }
 
-    /// The agent sets no `ProcessType`: `Background` holds every thread of the
-    /// process at the lowest scheduling priority, so on a machine whose cores
-    /// are all busy a pass waits for minutes. The watch's threads lower
-    /// themselves to utility quality of service instead, which gives way under
-    /// load without stopping.
+    /// Avoid `Background` process-wide throttling: it can starve the watch's
+    /// utility-QoS threads when every core is busy.
     fn plist(&self) -> Result<String, CliError> {
         let arguments = self
             .arguments()?
@@ -1326,7 +1323,6 @@ mod tests {
             "\t<key>Nice</key>\n\t<integer>10</integer>\n\t<key>LowPriorityIO</key>\n\t<true/>\n";
         for (manager, without, instead) in [
             (Manager::Launchd, LAUNCHD_PRIORITY, ""),
-            // As written by a build that ran the watch as background work.
             (
                 Manager::Launchd,
                 LAUNCHD_PRIORITY,
