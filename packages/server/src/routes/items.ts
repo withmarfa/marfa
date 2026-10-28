@@ -227,7 +227,7 @@ const createItemRoute = createRoute({
   tags: ["Items"],
   summary: "Create an item",
   description:
-    "Creates an item. If `source_id` matches an existing item under the same source, updates that item instead. Repeating an `id` you already created returns the stored item with `acknowledged: true` and writes nothing.",
+    "Creates an item. If `source_id` matches an existing item under the same source, updates that item instead. Repeating an `id` you already created returns the stored item with `acknowledged: true` and writes nothing. With `mode` set to `create_only`, an item that already holds the `source_id` or the `id` is refused as `item_exists` and nothing is written.",
   security: [{ bearerAuth: [] }],
   middleware: readsSomeType,
   request: {
@@ -274,6 +274,12 @@ const createItemRoute = createRoute({
               .optional()
               .describe(
                 "The item's identifier at its source, such as a vendor's row ID. With `source`, it is the item's natural key: creating with a key that exists updates that item.",
+              ),
+            mode: z
+              .enum(["upsert", "create_only"])
+              .optional()
+              .describe(
+                "`upsert` (the default) updates the item `source_id` matches. `create_only` refuses an item that already holds the `source_id` under the source, or the `id`, in any state, as `item_exists` (409) with `details.existing_id`, and writes nothing.",
               ),
             version: z
               .number()
@@ -388,6 +394,7 @@ const createItemRoute = createRoute({
             makeErrorResponseSchema([
               "conflict",
               "id_reused",
+              "item_exists",
               "link_taken",
               "type_mismatch",
             ]),
@@ -395,7 +402,7 @@ const createItemRoute = createRoute({
         },
       },
       description:
-        "- `id_reused`: `id` names an item of another type.\n- `conflict`: `id` names an item you can't read.\n- `link_taken`: another item of the type holds this link. `details.existing_id` names it.\n- `type_mismatch`: `source_id` matches an item of another type.\n- `version_conflict`, `ancestor_unavailable`: `version` is stale.",
+        "- `item_exists`: `mode` is `create_only` and an item already holds the `source_id` under the source, or the `id`. `details.existing_id` names it, `details.matched_by` is `source_id` or `id`.\n- `id_reused`: `id` names an item of another type.\n- `conflict`: `id` names an item you can't read.\n- `link_taken`: another item of the type holds this link. `details.existing_id` names it.\n- `type_mismatch`: `source_id` matches an item of another type.\n- `version_conflict`, `ancestor_unavailable`: `version` is stale.",
     },
   },
 });
@@ -1425,7 +1432,7 @@ export function itemRoutes(storage: Storage) {
           { kind: "credential", key },
           {
             op: "put",
-            door: "item",
+            door: body.mode === "create_only" ? "item_create_only" : "item",
             type,
             properties: body.properties,
             ...(body.id !== undefined && { id: body.id }),

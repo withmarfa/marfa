@@ -317,6 +317,17 @@ export enum ErrorCode {
    */
   ID_REUSED = "id_reused",
   /**
+   * `POST /items` with `mode: "create_only"` names a `(source, source_id)` or
+   * an `id` that an item already holds, in any state, the bin included.
+   * Nothing is written. `details.existing_id` names the item and
+   * `details.matched_by` says which key found it.
+   *
+   * Its own code rather than `id_reused` or `source_id_conflict`: the first
+   * answers an id that names a different item, the second a `PATCH` that
+   * moves a row onto a taken key, and this asks for no change at all.
+   */
+  ITEM_EXISTS = "item_exists",
+  /**
    * An `Idempotency-Key` names a request that is still being served.
    *
    * The record is claimed by an INSERT against a unique index, so exactly
@@ -636,6 +647,11 @@ export const ERROR_CODES: Record<AnsweredCode, ErrorCodeInfo> = {
   [ErrorCode.ID_REUSED]: {
     status: 409,
     summary: "A caller-minted id already names a different item or edge.",
+  },
+  [ErrorCode.ITEM_EXISTS]: {
+    status: 409,
+    summary:
+      "A create that asked not to overwrite names a source and source id, or an id, that an item already holds. Nothing is written. `details.existing_id` names the item.",
   },
   [ErrorCode.HOUSEKEEPING_JOB_NOT_FOUND]: {
     status: 404,

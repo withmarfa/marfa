@@ -141,7 +141,7 @@ export interface ItemPut extends RowChange {
   op: "put";
   /** Which door, which decides what an id or natural key that matches
    *  does. */
-  door: "item" | "bulk_upsert" | "bulk_create_only";
+  door: "item" | "item_create_only" | "bulk_upsert" | "bulk_create_only";
   type: string;
   id?: string;
   state?: ItemState;
@@ -915,7 +915,9 @@ async function put(
   const write: ItemPut =
     sent.tags === undefined ? sent : { ...sent, tags: distinctTags(sent.tags) };
   const key = credentialOf(writer);
-  if (write.door === "item") assertCreatableState(write.type, write.state);
+  if (write.door === "item" || write.door === "item_create_only") {
+    assertCreatableState(write.type, write.state);
+  }
   assertTypeWrite(writer, write.type);
   const source = itemProvenanceSource(key, write.source);
   const enforcement = await enforcementFor(storage, writer);
@@ -948,6 +950,7 @@ async function put(
         }
         break;
       }
+      case "item_create_only":
       case "bulk_create_only":
         if (byId) {
           existing = byId;
@@ -963,6 +966,28 @@ async function put(
         }
         break;
     }
+  }
+
+  if (existing && write.door === "item_create_only") {
+    if (mayRead(writer, existing.type)) {
+      if (key !== undefined) rememberItemSubject(existing, "read");
+      throw new MarfaError(
+        ErrorCode.ITEM_EXISTS,
+        `An item already holds this ${matchedBy === "id" ? "id" : "source and source id"}`,
+        { existing_id: existing.id, matched_by: matchedBy },
+      );
+    }
+    // A natural key held by a row of a type the caller may not read tells it
+    // only that the key is taken. An id held by one goes on to the insert's
+    // plain `conflict`, as it does without the mode.
+    if (matchedBy === "source_id") {
+      throw new MarfaError(
+        ErrorCode.TYPE_NOT_PERMITTED,
+        "The natural key resolves a row of a type this credential may not reach",
+      );
+    }
+    existing = null;
+    matchedBy = null;
   }
 
   if (existing && write.door === "bulk_create_only") {

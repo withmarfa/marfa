@@ -81,6 +81,9 @@ export interface CreateItemInput {
   source?: string;
   source_id?: string;
   state?: string;
+  /** `create_only` refuses an item that already holds the `source_id` or the
+   *  `id` (`409 item_exists`), where the default `upsert` updates it. */
+  mode?: "upsert" | "create_only";
   /**
    * Only meaningful when `source_id` resolves a live row: that upsert is
    * conditional and answers what the update door answers. Ignored on a
