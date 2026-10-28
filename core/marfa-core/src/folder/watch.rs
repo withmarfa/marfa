@@ -7,6 +7,7 @@ use notify::{EventKind, RecursiveMode, Watcher};
 
 use super::handover::{self, Requests};
 use super::lists::Lists;
+use super::selective::Selection;
 use super::{
     Barred, Drained, Flagged, Folder, PullReport, SETTINGS_FILE, STATE_DIR, ScanReport,
     SettingsFileReport, StorageCause, Uncarried, Unsure,
@@ -69,6 +70,11 @@ pub enum WatchEvent {
     /// that minute. Told at most once a minute, to a log; the bindings do not
     /// carry it.
     Busy { passes: usize },
+    /// The hourly render of every file rewrote the file at `path`, which the
+    /// watch's choice of the files a change reaches would have left as it
+    /// was: a change that choice does not follow. Told to a log; the
+    /// bindings do not carry it.
+    Missed { path: String },
 }
 
 /// One pass of a watch: the settings edit sent, the scan, the drain and the
@@ -414,6 +420,7 @@ impl Folder {
         // it left off once the directory is back.
         if scan.root_gone.is_some() {
             telling.pulled = None;
+            telling.selection.forget();
             self.health_observe(false, full, None, None, false);
             if let Some(event) = telling.waiting(settings, scan) {
                 tell(event).map_err(WatchError::Told)?;
@@ -441,6 +448,7 @@ impl Folder {
             last.from == mark
                 && quiet(&settings, &scan, &drain)
                 && !telling.unreachable
+                && !telling.selection.full_render_due()
                 && !self.has_unanswered_writes()
                 && self
                     .unread_give_ways
@@ -462,8 +470,12 @@ impl Folder {
             None => {
                 #[cfg(debug_assertions)]
                 crate::fault::hold(|| "folder-pass-pull");
-                let (pull, barred) = self.pull_noting(|| self.pull());
+                let (pull, barred) =
+                    self.pull_noting(|| self.pull_selecting(&mut telling.selection));
                 let pull = pull?;
+                for path in telling.selection.take_missed() {
+                    tell(WatchEvent::Missed { path }).map_err(WatchError::Told)?;
+                }
                 if self.left_nothing(&pull) {
                     telling.pulled = Some(Pulled {
                         from: mark,
@@ -567,18 +579,32 @@ impl Folder {
 pub(super) struct Passes {
     telling: Telling,
     health: Mutex<FollowHealth>,
+    /// The paths each `Missed` the passes told named.
+    pub(super) missed: Vec<String>,
 }
 
 #[cfg(test)]
 impl Passes {
     pub(super) fn run(&mut self, folder: &Folder, full: bool) -> Result<(), CoreError> {
         let asked = AtomicBool::new(false);
-        let mut told = |_: WatchEvent| Ok::<(), ()>(());
+        let missed = &mut self.missed;
+        let mut told = |event: WatchEvent| {
+            if let WatchEvent::Missed { path } = event {
+                missed.push(path);
+            }
+            Ok::<(), ()>(())
+        };
         match folder.pass(full, &asked, &mut self.telling, &mut told, &self.health) {
             Ok(_) => Ok(()),
             Err(WatchError::Core(error)) => Err(error),
             Err(other) => panic!("the pass ended the watch: {other:?}"),
         }
+    }
+
+    /// Makes the next pull render every file, as an hour after the last
+    /// that did.
+    pub(super) fn render_all_next(&mut self) {
+        self.telling.selection.render_all_next();
     }
 }
 
@@ -922,6 +948,7 @@ struct Telling {
     /// began, and the disk still in the way where it was, would render every
     /// file as it was, so pulls nothing.
     pulled: Option<Pulled>,
+    selection: Selection,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]

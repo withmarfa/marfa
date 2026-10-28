@@ -20,6 +20,7 @@ mod push;
 mod refused;
 mod removal;
 mod scan;
+mod selective;
 mod unmatched;
 pub(crate) use first::waiting;
 pub use first::{FirstSync, Synced};
@@ -2024,6 +2025,8 @@ impl Folder {
     ) -> Result<Rendered> {
         #[cfg(test)]
         tests::RENDERED.with(|rendered| rendered.set(rendered.get() + 1));
+        #[cfg(test)]
+        tests::RENDERED_ITEMS.with(|rendered| rendered.borrow_mut().insert(item.id.clone()));
         #[cfg(debug_assertions)]
         crate::fault::hold(|| "folder-render");
         let body_field = fields::body_field(catalog, &item.r#type);
@@ -2516,7 +2519,20 @@ mod tests {
 
     /// How many files this thread rendered since the last call.
     pub(super) fn rendered() -> usize {
+        RENDERED_ITEMS.with(|rendered| rendered.borrow_mut().clear());
         RENDERED.with(|rendered| rendered.replace(0))
+    }
+
+    thread_local! {
+        /// The items whose file this thread rendered.
+        pub(super) static RENDERED_ITEMS: RefCell<std::collections::BTreeSet<String>> =
+            const { RefCell::new(std::collections::BTreeSet::new()) };
+    }
+
+    /// The items whose file this thread rendered since the last call.
+    fn rendered_items() -> std::collections::BTreeSet<String> {
+        RENDERED.with(|rendered| rendered.set(0));
+        RENDERED_ITEMS.with(|rendered| std::mem::take(&mut *rendered.borrow_mut()))
     }
 
     thread_local! {
@@ -3693,6 +3709,205 @@ mod tests {
             assert!(text.ends_with(body), "{text}");
             settle(&folder, &mut passes);
         }
+    }
+
+    fn id_at(folder: &Folder, path: &str) -> String {
+        state::bound_at(&folder.core.conn().unwrap(), path)
+            .unwrap()
+            .unwrap()
+            .item_id
+    }
+
+    /// A `references` edge from the item at `from` to the item at `to`, as a
+    /// catch-up takes one in.
+    fn referenced_on_the_server(folder: &Folder, id: &str, from: &str, to: &str) {
+        let edge = crate::store::testing::wire_edge(
+            id,
+            &id_at(folder, from),
+            &id_at(folder, to),
+            LINK_EDGE,
+        );
+        crate::store::put_server_edge(&folder.core.conn().unwrap(), &edge).unwrap();
+    }
+
+    /// Retitles the item at `path` and moves its file to `to`, as a catch-up
+    /// taking in the server's change to both does.
+    fn renamed_on_the_server(folder: &Folder, path: &str, title: &str, to: &str) {
+        let id = id_at(folder, path);
+        let place = folder
+            .core
+            .edges_from(&id)
+            .unwrap()
+            .into_iter()
+            .find(|edge| edge.edge_type == PLACEMENT_EDGE && edge.target_id == folder.folder)
+            .unwrap();
+        let mut edge = place.as_wire();
+        edge.properties.insert("path".into(), serde_json::json!(to));
+        edge.version += 1;
+        let conn = folder.core.conn().unwrap();
+        let changed = conn
+            .execute(
+                "UPDATE items SET properties = json_set(properties, '$.title', ?2), version = version + 1 WHERE id = ?1",
+                [id.as_str(), title],
+            )
+            .unwrap();
+        assert_eq!(changed, 1);
+        crate::store::put_server_edge(&conn, &edge).unwrap();
+    }
+
+    /// A note titled `title` the server places at `path`.
+    fn titled_remotely(folder: &Folder, id: &str, title: &str, path: &str) {
+        let conn = folder.core.conn().unwrap();
+        crate::store::upsert_item(
+            &conn,
+            &crate::store::testing::note(id, title, "body", "2026-01-01T00:00:00Z"),
+            None,
+            &Default::default(),
+        )
+        .unwrap();
+        let mut edge = crate::store::testing::wire_edge(
+            &format!("{id}-place"),
+            id,
+            &folder.folder,
+            PLACEMENT_EDGE,
+        );
+        edge.properties
+            .insert("path".into(), serde_json::json!(path));
+        crate::store::put_server_edge(&conn, &edge).unwrap();
+    }
+
+    /// Runs quick passes until one renders nothing, answering the items the
+    /// others rendered. A file's move can come after another file showing
+    /// its item rendered, which the next pass renders again.
+    fn quieted(folder: &Folder, passes: &mut watch::Passes) -> std::collections::BTreeSet<String> {
+        rendered_items();
+        let mut items = std::collections::BTreeSet::new();
+        for _ in 0..5 {
+            passes.run(folder, false).unwrap();
+            let pass = rendered_items();
+            if pass.is_empty() {
+                return items;
+            }
+            items.extend(pass);
+        }
+        panic!("five passes over a folder after one change each rendered files");
+    }
+
+    /// Makes a series of changes to a watched folder's copy, each
+    /// followed by quick passes until one renders nothing, and after each
+    /// pulls once as a one-off pull does, rendering every file. Answers the
+    /// first change after which that pull wrote a file, where the watch's
+    /// choice of the files to render left out one a change reached.
+    fn first_missed(neighbors_left_out: bool) -> Option<&'static str> {
+        let (dir, folder, _server, mut passes) = watched_notes(&["a.md", "b.md", "c.md", "d.md"]);
+        selective::LEAVE_OUT_NEIGHBORS.with(|left_out| left_out.set(neighbors_left_out));
+        let steps: [(&str, &dyn Fn()); 5] = [
+            ("an edge from a to b", &|| {
+                referenced_on_the_server(&folder, "edge-a-b", "a.md", "b.md");
+            }),
+            ("b renamed", &|| {
+                renamed_on_the_server(&folder, "b.md", "bee", "b2.md")
+            }),
+            ("another item takes b's title", &|| {
+                titled_remotely(
+                    &folder,
+                    "01a00000-0000-7000-8000-0000000000e1",
+                    "bee",
+                    "z.md",
+                );
+            }),
+            ("an edge from c to d", &|| {
+                referenced_on_the_server(&folder, "edge-c-d", "c.md", "d.md");
+            }),
+            ("c's body changed", &|| {
+                changed_on_the_server(&folder, "c.md", "changed")
+            }),
+        ];
+        let mut missed = None;
+        for (step, change) in steps {
+            change();
+            quieted(&folder, &mut passes);
+            let files = files_of(dir.path());
+            let full = folder.pull().unwrap();
+            if full.written + full.rewritten + full.moved > 0 || files_of(dir.path()) != files {
+                missed = Some(step);
+                break;
+            }
+            settle(&folder, &mut passes);
+        }
+        selective::LEAVE_OUT_NEIGHBORS.with(|left_out| left_out.set(false));
+        missed
+    }
+
+    #[test]
+    fn a_watch_pull_renders_every_file_a_change_reaches_as_a_full_pull_would() {
+        assert_eq!(first_missed(false), None);
+    }
+
+    /// The witness: a choice that leaves out the files showing a changed
+    /// item is caught.
+    #[test]
+    fn a_watch_pull_that_leaves_out_a_file_a_change_reaches_is_caught() {
+        assert_eq!(first_missed(true), Some("b renamed"));
+    }
+
+    #[test]
+    fn a_watch_pull_renders_only_the_file_a_change_reaches_and_those_showing_its_item() {
+        let (dir, folder, _server, mut passes) = watched_notes(&["a.md", "b.md", "c.md"]);
+        let (a, b, c) = (
+            id_at(&folder, "a.md"),
+            id_at(&folder, "b.md"),
+            id_at(&folder, "c.md"),
+        );
+        referenced_on_the_server(&folder, "edge-a-b", "a.md", "b.md");
+        passes.run(&folder, false).unwrap();
+        let text = std::fs::read_to_string(dir.path().join("a.md")).unwrap();
+        assert!(text.contains("[[b.md]]"), "{text}");
+        settle(&folder, &mut passes);
+
+        // The witness: the first pull of a watch renders every file.
+        let mut fresh = watch::Passes::default();
+        fresh.run(&folder, false).unwrap();
+        assert_eq!(
+            rendered_items(),
+            [&a, &b, &c].into_iter().cloned().collect()
+        );
+        settle(&folder, &mut fresh);
+
+        renamed_on_the_server(&folder, "b.md", "bee", "b2.md");
+        assert_eq!(
+            quieted(&folder, &mut fresh),
+            [&a, &b].into_iter().cloned().collect()
+        );
+        let text = std::fs::read_to_string(dir.path().join("a.md")).unwrap();
+        assert!(text.contains("[[bee]]"), "{text}");
+        assert!(dir.path().join("b2.md").exists());
+    }
+
+    #[test]
+    fn the_hourly_full_render_tells_of_each_file_the_choice_left_out() {
+        let (dir, folder, _server, mut passes) = watched_notes(&["a.md", "b.md"]);
+        let narrow = crate::fault::fail_on_this_thread("folder-selection-narrow");
+        changed_on_the_server(&folder, "a.md", "missed");
+        passes.run(&folder, false).unwrap();
+        drop(narrow);
+        let text = std::fs::read_to_string(dir.path().join("a.md")).unwrap();
+        assert!(!text.ends_with("missed"), "{text}");
+
+        // Within the hour, a full pass of the quiet folder renders nothing.
+        passes.run(&folder, true).unwrap();
+        assert_eq!(rendered(), 0);
+        assert_eq!(passes.missed, Vec::<String>::new());
+
+        passes.render_all_next();
+        passes.run(&folder, false).unwrap();
+        assert_eq!(
+            rendered_items(),
+            [id_at(&folder, "a.md"), id_at(&folder, "b.md")].into()
+        );
+        let text = std::fs::read_to_string(dir.path().join("a.md")).unwrap();
+        assert!(text.ends_with("missed"), "{text}");
+        assert_eq!(passes.missed, ["a.md"]);
     }
 
     /// An item the server places at `path`, which the folder has no file of.

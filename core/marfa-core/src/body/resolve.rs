@@ -65,6 +65,23 @@ impl Names {
     pub fn of(&self, name: &str) -> Option<&BTreeSet<String>> {
         self.ids.get(&folded(name.trim()))
     }
+
+    /// Every item answering to a name that `earlier` gave other items.
+    pub fn differing(&self, earlier: &Names) -> BTreeSet<String> {
+        let mut found = BTreeSet::new();
+        for (name, ids) in &self.ids {
+            if earlier.ids.get(name) != Some(ids) {
+                found.extend(ids.iter().cloned());
+                found.extend(earlier.ids.get(name).into_iter().flatten().cloned());
+            }
+        }
+        for (name, ids) in &earlier.ids {
+            if !self.ids.contains_key(name) {
+                found.extend(ids.iter().cloned());
+            }
+        }
+        found
+    }
 }
 
 /// A path as the names it answers to, folded.

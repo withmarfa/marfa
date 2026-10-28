@@ -107,7 +107,7 @@ impl Folder {
             .filter(|write| matches!(write.kind, WriteKind::CreateItem | WriteKind::UpdateItem))
             .count();
         let mut pulled = super::PullPlan::default();
-        self.pull_into(Some(&mut pulled), &mut super::PullReport::default())?;
+        self.pull_into(Some(&mut pulled), &mut super::PullReport::default(), None)?;
         let plan = FirstSync {
             write: pulled.write,
             send,
