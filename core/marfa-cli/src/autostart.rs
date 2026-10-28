@@ -59,7 +59,7 @@ pub enum AutostartCommand {
     /// from and the credential the keychain keeps for it. Run again, it
     /// changes nothing unless the agent would differ, as one written by an
     /// earlier build does. The watch runs as background work, at a lower CPU
-    /// and I/O priority, so it does not slow what you are doing.
+    /// and I/O priority, to reduce interference with foreground work.
     ///
     /// With `--key-file` the agent runs the watch with that file in place of
     /// the keychain, for a machine where nobody signs in to unlock it. The
@@ -258,7 +258,6 @@ WantedBy=default.target
         ))
     }
 
-    /// `None` for a file this command did not write as it now would.
     fn read(manager: Manager, written: &str) -> Option<Agent> {
         let (arguments, registry) = match manager {
             Manager::Launchd => (
