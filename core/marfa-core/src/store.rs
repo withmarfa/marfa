@@ -51,6 +51,10 @@ pub const META_LOCAL_CATALOG: &str = "local_catalog";
 /// again: set when the server was lost or a drain left a write undelivered,
 /// and cleared by a drain that left none or found no work.
 pub const META_DRAIN_OWED: &str = "drain_owed";
+/// Moved by the triggers in `schema.sql` with every change to a row of the
+/// copy or the queue, so a reader can tell the copy changed even where its
+/// own connection made the change.
+pub const META_COPY_REVISION: &str = "copy_revision";
 pub const HYDRATE_IN_PROGRESS: &str = "in_progress";
 pub const SCHEMA_VERSION: &str = "0";
 
@@ -987,6 +991,16 @@ pub fn set_drain_owed(conn: &Connection, owed: bool) -> Result<(), CoreError> {
 pub fn meta_delete(conn: &Connection, key: &str) -> Result<(), CoreError> {
     conn.execute("DELETE FROM meta WHERE key = ?1", [key])?;
     Ok(())
+}
+
+/// Zero for a store whose copy has never changed.
+pub fn copy_revision(conn: &Connection) -> Result<u64, CoreError> {
+    match meta_get(conn, META_COPY_REVISION)? {
+        Some(value) => value
+            .parse()
+            .map_err(|_| CoreError::Store(format!("the copy's revision {value:?} is no number"))),
+        None => Ok(0),
+    }
 }
 
 /// Says nothing about whether a hydration has ever run: a fresh store has no
@@ -7633,6 +7647,149 @@ mod tests {
             "the write moved onto the row does not follow the row's own write ahead of it"
         );
         assert_eq!(queued_write(&conn, &own.id).unwrap().unwrap().follows, None);
+    }
+
+    /// Each table whose change moves the copy's revision, with a row to
+    /// insert, an update of it and its delete.
+    const REVISED: [(&str, &str, &str, &str); 8] = [
+        (
+            "types",
+            "INSERT INTO types (id, json) VALUES ('t', '{}')",
+            "UPDATE types SET label = 'T' WHERE id = 't'",
+            "DELETE FROM types WHERE id = 't'",
+        ),
+        (
+            "edge_types",
+            "INSERT INTO edge_types (id, json) VALUES ('e', '{}')",
+            "UPDATE edge_types SET json = '{\"id\":\"e\"}' WHERE id = 'e'",
+            "DELETE FROM edge_types WHERE id = 'e'",
+        ),
+        (
+            "declared_types",
+            "INSERT INTO declared_types (id, json) VALUES ('d', '{}')",
+            "UPDATE declared_types SET json = '{\"id\":\"d\"}' WHERE id = 'd'",
+            "DELETE FROM declared_types WHERE id = 'd'",
+        ),
+        (
+            "items",
+            "INSERT INTO items (id, type, state, version, schema_version, source, occurred_at, created_at, updated_at, properties) VALUES ('i', 'core.note', 'active', 1, 1, 'test', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', '{}')",
+            "UPDATE items SET version = 2 WHERE id = 'i'",
+            "DELETE FROM items WHERE id = 'i'",
+        ),
+        (
+            "edges",
+            "INSERT INTO edges (id, source_id, target_id, edge_type, properties, version, created_at, updated_at) VALUES ('g', 'a', 'b', 'references', '{}', 1, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+            "UPDATE edges SET version = 2 WHERE id = 'g'",
+            "DELETE FROM edges WHERE id = 'g'",
+        ),
+        (
+            "tags",
+            "INSERT INTO tags (item_id, tag) VALUES ('held', 'x')",
+            "UPDATE tags SET tag = 'y' WHERE item_id = 'held'",
+            "DELETE FROM tags WHERE item_id = 'held'",
+        ),
+        (
+            "pins",
+            "INSERT INTO pins (item_id) VALUES ('p')",
+            "UPDATE pins SET item_id = 'q' WHERE item_id = 'p'",
+            "DELETE FROM pins WHERE item_id = 'q'",
+        ),
+        (
+            "queue",
+            "INSERT INTO queue (id, kind, idempotency_key, payload, queued_at) VALUES ('w', 'update_item', 'k', '{}', '2026-01-01T00:00:00Z')",
+            "UPDATE queue SET verdict = 'accepted' WHERE id = 'w'",
+            "DELETE FROM queue WHERE id = 'w'",
+        ),
+    ];
+
+    #[test]
+    fn the_copy_revision_moves_with_each_change_to_the_copy_or_the_queue_alone() {
+        let conn = conn();
+        upsert_item(
+            &conn,
+            &note("held", "t", "b", "2026-01-01T00:00:00Z"),
+            None,
+            &Indexing::default(),
+        )
+        .unwrap();
+        for (table, insert, update, delete) in REVISED {
+            for statement in [insert, update, delete] {
+                let before = copy_revision(&conn).unwrap();
+                assert_eq!(conn.execute(statement, []).unwrap(), 1, "{statement}");
+                assert_eq!(
+                    copy_revision(&conn).unwrap(),
+                    before + 1,
+                    "{table}: {statement}"
+                );
+            }
+        }
+        // The witness is each change above; the folder's own record, the
+        // file cache's bookkeeping and `meta` itself leave it where it is.
+        let before = copy_revision(&conn).unwrap();
+        conn.execute_batch(
+            "INSERT INTO folder_files (path, item_id, content_hash, links, edge_lines, seen_at) VALUES ('a.md', 'held', 'h', '[]', '[]', '2026-01-01T00:00:00Z');
+             UPDATE folder_files SET written_hash = 'h' WHERE path = 'a.md';
+             INSERT INTO folder_journal (path, item_id, missing_since) VALUES ('a.md', 'held', '2026-01-01T00:00:00Z');
+             INSERT INTO folder_stats (path, stat) VALUES ('a.md', '{}');
+             INSERT INTO attachment_bytes (hex) VALUES ('00');
+             INSERT INTO read_backs (subject, id) VALUES ('item', 'held');",
+        )
+        .unwrap();
+        meta_set(&conn, META_EVENT_CURSOR, "7").unwrap();
+        assert_eq!(copy_revision(&conn).unwrap(), before);
+        assert_eq!(
+            meta_get(&conn, META_COPY_REVISION).unwrap().as_deref(),
+            Some(before.to_string().as_str()),
+            "the triggers write the key the reader reads"
+        );
+    }
+
+    #[test]
+    fn a_store_made_before_the_copy_revision_gains_its_triggers_when_opened_to_write() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("older.sqlite");
+        let triggers = |conn: &Connection| -> Vec<String> {
+            let mut statement = conn
+                .prepare("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name LIKE '%\\_revise\\_%' ESCAPE '\\' ORDER BY name")
+                .unwrap();
+            statement
+                .query_map([], |row| row.get(0))
+                .unwrap()
+                .collect::<rusqlite::Result<_>>()
+                .unwrap()
+        };
+        {
+            let conn = open(&path).unwrap();
+            let made = triggers(&conn);
+            assert_eq!(made.len(), REVISED.len() * 3, "{made:?}");
+            for name in &made {
+                conn.execute_batch(&format!("DROP TRIGGER {name};"))
+                    .unwrap();
+            }
+            upsert_item(
+                &conn,
+                &note("row", "t", "b", "2026-01-01T00:00:00Z"),
+                None,
+                &Indexing::default(),
+            )
+            .unwrap();
+            assert_eq!(copy_revision(&conn).unwrap(), 0);
+        }
+        let reading = read_connection(
+            Connection::open_with_flags(&path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap(),
+            &path,
+        )
+        .unwrap();
+        assert!(item_held(&reading, "row").unwrap());
+        assert!(triggers(&reading).is_empty(), "a reader wrote the schema");
+        drop(reading);
+
+        let conn = open(&path).unwrap();
+        assert_eq!(triggers(&conn).len(), REVISED.len() * 3);
+        assert!(item_held(&conn, "row").unwrap());
+        conn.execute("UPDATE items SET version = 2 WHERE id = 'row'", [])
+            .unwrap();
+        assert_eq!(copy_revision(&conn).unwrap(), 1);
     }
 
     #[test]

@@ -591,6 +591,50 @@ pub fn journaled(conn: &Connection) -> Result<Vec<Journaled>, CoreError> {
     Ok(journaled)
 }
 
+/// A digest of what the folder keeps of its files: each binding but when it
+/// was last seen, the journal, and the folder's entries in `meta` but its
+/// health and its rate-limit wait, which a pass writes whatever it finds.
+pub fn record_digest(conn: &Connection) -> Result<[u8; 32], CoreError> {
+    use rusqlite::types::ValueRef;
+    use sha2::{Digest, Sha256};
+    let mut digest = Sha256::new();
+    let mut take = |sql: &str, params: &[&dyn rusqlite::ToSql]| -> Result<(), CoreError> {
+        let mut statement = conn.prepare(sql)?;
+        let columns = statement.column_count();
+        let mut rows = statement.query(params)?;
+        while let Some(row) = rows.next()? {
+            for column in 0..columns {
+                // Tagged and length-prefixed, so no two rows read as one.
+                let (tag, bytes): (u8, Vec<u8>) = match row.get_ref(column)? {
+                    ValueRef::Null => (0, Vec::new()),
+                    ValueRef::Integer(value) => (1, value.to_le_bytes().to_vec()),
+                    ValueRef::Real(value) => (2, value.to_le_bytes().to_vec()),
+                    ValueRef::Text(value) => (3, value.to_vec()),
+                    ValueRef::Blob(value) => (4, value.to_vec()),
+                };
+                digest.update([tag]);
+                digest.update((bytes.len() as u64).to_le_bytes());
+                digest.update(&bytes);
+            }
+        }
+        digest.update([0xff]);
+        Ok(())
+    };
+    take(
+        "SELECT path, item_id, identity, content_hash, presentation, blob, written_hash, links, edge_lines, edit_line, held, own, writes FROM folder_files ORDER BY path",
+        &[],
+    )?;
+    take(
+        "SELECT path, item_id, missing_since, kept, reason FROM folder_journal ORDER BY path",
+        &[],
+    )?;
+    take(
+        "SELECT key, value FROM meta WHERE key LIKE 'folder\\_%' ESCAPE '\\' AND key NOT IN (?1, ?2) ORDER BY key",
+        &[&super::health::META, &super::watch::SEND_AGAIN_AT],
+    )?;
+    Ok(digest.finalize().into())
+}
+
 pub fn bound_count(conn: &Connection) -> Result<usize, CoreError> {
     let count: i64 = conn.query_row("SELECT COUNT(*) FROM folder_files", [], |row| row.get(0))?;
     Ok(usize::try_from(count).unwrap_or(0))

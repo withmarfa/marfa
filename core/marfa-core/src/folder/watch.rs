@@ -344,7 +344,8 @@ impl Folder {
             }
             let full = full_due(last_full, crate::clock::now());
             // A tick alone moves nothing on a folder the last pass left at
-            // rest: a pass renders every file, so it is not run to find out.
+            // rest: a pass walks the whole folder, so it is not run to find
+            // out.
             if !full && !changed && telling.at_rest {
                 continue;
             }
@@ -412,6 +413,7 @@ impl Folder {
         // Told once, and every tick looks again, so the watch goes on where
         // it left off once the directory is back.
         if scan.root_gone.is_some() {
+            telling.pulled = None;
             self.health_observe(false, full, None, None, false);
             if let Some(event) = telling.waiting(settings, scan) {
                 tell(event).map_err(WatchError::Told)?;
@@ -434,9 +436,36 @@ impl Folder {
         if asking() {
             return Ok(None);
         }
-        #[cfg(debug_assertions)]
-        crate::fault::hold(|| "folder-pass-pull");
-        let pull = self.pull()?;
+        let mark = self.mark()?;
+        let pull = match telling.pulled.take().filter(|last| {
+            last.from == mark
+                && quiet(&settings, &scan, &drain)
+                && !telling.unreachable
+                && !self.has_unanswered_writes()
+                && self
+                    .unread_give_ways
+                    .lock()
+                    .expect("give-way lock")
+                    .is_empty()
+        }) {
+            Some(last) => {
+                let pull = last.report.clone();
+                telling.pulled = Some(last);
+                pull
+            }
+            None => {
+                #[cfg(debug_assertions)]
+                crate::fault::hold(|| "folder-pass-pull");
+                let pull = self.pull()?;
+                if self.left_nothing(&pull) {
+                    telling.pulled = Some(Pulled {
+                        from: mark,
+                        report: pull.clone(),
+                    });
+                }
+                pull
+            }
+        };
         let problem = drain
             .report
             .unavailable
@@ -520,6 +549,28 @@ impl Folder {
             tell(event).map_err(WatchError::Told)?;
         }
         refused.map_or(Ok(wait), |error| Err(WatchError::CredentialRefused(error)))
+    }
+}
+
+/// A watch's passes run one at a time on the calling thread, with no follow
+/// and no file events, for a test to say when each runs.
+#[cfg(test)]
+#[derive(Default)]
+pub(super) struct Passes {
+    telling: Telling,
+    health: Mutex<FollowHealth>,
+}
+
+#[cfg(test)]
+impl Passes {
+    pub(super) fn run(&mut self, folder: &Folder, full: bool) -> Result<(), CoreError> {
+        let asked = AtomicBool::new(false);
+        let mut told = |_: WatchEvent| Ok::<(), ()>(());
+        match folder.pass(full, &asked, &mut self.telling, &mut told, &self.health) {
+            Ok(_) => Ok(()),
+            Err(WatchError::Core(error)) => Err(error),
+            Err(other) => panic!("the pass ended the watch: {other:?}"),
+        }
     }
 }
 
@@ -629,9 +680,51 @@ fn look(mut requests: Requests, ended: &AtomicBool, asked: &AtomicBool, wakes: m
 /// engine's wall clock, the time before which the server asked for no write.
 /// Kept in the store rather than the watch, so a watch that hands its folder
 /// to a command, and is started again, waits out what the server last said.
-const SEND_AGAIN_AT: &str = "folder_send_again_at";
+pub(super) const SEND_AGAIN_AT: &str = "folder_send_again_at";
 
 impl Folder {
+    /// Read in one transaction, so a change committed between two of the
+    /// reads is not half seen.
+    fn mark(&self) -> Result<Mark, CoreError> {
+        let conn = self.core.conn()?;
+        let read = conn.unchecked_transaction()?;
+        let mark = Mark {
+            revision: crate::store::copy_revision(&read)?,
+            generation: crate::reach::generation(&read)?,
+            record: super::state::record_digest(&read)?,
+        };
+        read.commit()?;
+        Ok(mark)
+    }
+
+    /// Whether a pull changed nothing and left nothing that the next pull of
+    /// the same copy and record would read anew: a write it failed or held
+    /// back, or a file another folder may yet take or let go.
+    fn left_nothing(&self, pull: &PullReport) -> bool {
+        pull.written
+            + pull.rewritten
+            + pull.moved
+            + pull.revived
+            + pull.placed
+            + pull.ended
+            + pull.removed
+            + pull.taken
+            + pull.let_go
+            + pull.unwritten
+            + pull.absent
+            + pull.unplaced
+            + pull.unmatched
+            + pull.kept
+            + pull.paused
+            + pull.elsewhere
+            == 0
+            && !pull.settings.sent
+            && !pull.settings.written
+            && pull.settings.flagged.is_none()
+            && pull.settings.unwritten.is_none()
+            && pull.root_gone.is_none()
+    }
+
     /// Keeps the wait a drain of this folder was told, whoever drained: a
     /// later answer replaces an earlier one, and a later drain with no wait
     /// ends it where the server took writes or writes were left undelivered
@@ -727,6 +820,56 @@ impl Gate {
     }
 }
 
+/// Where the copy and the folder's record stood as a pull began.
+#[derive(Debug, Clone, PartialEq)]
+struct Mark {
+    revision: u64,
+    generation: u64,
+    record: [u8; 32],
+}
+
+/// A pull that changed nothing and left nothing to do, and where it began.
+#[derive(Debug, Clone)]
+struct Pulled {
+    from: Mark,
+    report: PullReport,
+}
+
+/// Whether a pass's settings step, scan and drain found nothing to do and
+/// nothing still on its way: a file settling, missing or waiting on an
+/// answer, or a write the server has not taken.
+fn quiet(settings: &SettingsFileReport, scan: &ScanReport, drain: &Drained) -> bool {
+    !settings.sent
+        && !settings.written
+        && settings.flagged.is_none()
+        && settings.unwritten.is_none()
+        && scan.created
+            + scan.updated
+            + scan.renamed
+            + scan.deleted
+            + scan.moved_away
+            + scan.requeued
+            + scan.missing
+            + scan.waiting
+            + scan.paused
+            == 0
+        && scan.trashed.is_empty()
+        && scan.settling.is_empty()
+        && scan.unsure.is_empty()
+        && scan.directories.is_empty()
+        && drain.report.answered
+            + drain.report.held
+            + drain.report.undelivered
+            + drain.report.unsent
+            + drain.report.unmade
+            + drain.rebased
+            + drain.gave_way
+            == 0
+        && drain.report.unavailable.is_none()
+        && drain.report.stopped.is_none()
+        && drain.report.unclaimed_sources.is_empty()
+}
+
 /// Whether a pass did anything: it changed a file, sent a write or took an
 /// answer in.
 fn stirred(
@@ -765,6 +908,9 @@ struct Telling {
     /// The last pass ran to its end and left nothing that time alone would
     /// move on.
     at_rest: bool,
+    /// The last pull, where a pass that finds the copy and the record as it
+    /// began would render every file as it was, so pulls nothing.
+    pulled: Option<Pulled>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]

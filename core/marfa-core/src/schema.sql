@@ -317,3 +317,107 @@ CREATE TABLE IF NOT EXISTS attachment_bytes (
   hex TEXT PRIMARY KEY,
   miss TEXT
 ) WITHOUT ROWID;
+
+-- `copy_revision` in `meta` moves with every change to a row a folder's pull
+-- reads, whoever made it: a catch-up, a hydration, a write laid over the copy
+-- before the server answers, a drain's answer or its rollback. A folder watch
+-- skips the pull of a pass that finds it where the last pull began. Triggers,
+-- because neither the event cursor nor `PRAGMA data_version` sees a change
+-- made on the reader's own connection. None on a folder's own tables, which
+-- the watch compares by their content.
+CREATE TRIGGER IF NOT EXISTS types_revise_insert AFTER INSERT ON types BEGIN
+  INSERT INTO meta (key, value) VALUES ('copy_revision', '1')
+    ON CONFLICT (key) DO UPDATE SET value = CAST(value AS INTEGER) + 1;
+END;
+CREATE TRIGGER IF NOT EXISTS types_revise_update AFTER UPDATE ON types BEGIN
+  INSERT INTO meta (key, value) VALUES ('copy_revision', '1')
+    ON CONFLICT (key) DO UPDATE SET value = CAST(value AS INTEGER) + 1;
+END;
+CREATE TRIGGER IF NOT EXISTS types_revise_delete AFTER DELETE ON types BEGIN
+  INSERT INTO meta (key, value) VALUES ('copy_revision', '1')
+    ON CONFLICT (key) DO UPDATE SET value = CAST(value AS INTEGER) + 1;
+END;
+CREATE TRIGGER IF NOT EXISTS edge_types_revise_insert AFTER INSERT ON edge_types BEGIN
+  INSERT INTO meta (key, value) VALUES ('copy_revision', '1')
+    ON CONFLICT (key) DO UPDATE SET value = CAST(value AS INTEGER) + 1;
+END;
+CREATE TRIGGER IF NOT EXISTS edge_types_revise_update AFTER UPDATE ON edge_types BEGIN
+  INSERT INTO meta (key, value) VALUES ('copy_revision', '1')
+    ON CONFLICT (key) DO UPDATE SET value = CAST(value AS INTEGER) + 1;
+END;
+CREATE TRIGGER IF NOT EXISTS edge_types_revise_delete AFTER DELETE ON edge_types BEGIN
+  INSERT INTO meta (key, value) VALUES ('copy_revision', '1')
+    ON CONFLICT (key) DO UPDATE SET value = CAST(value AS INTEGER) + 1;
+END;
+CREATE TRIGGER IF NOT EXISTS declared_types_revise_insert AFTER INSERT ON declared_types BEGIN
+  INSERT INTO meta (key, value) VALUES ('copy_revision', '1')
+    ON CONFLICT (key) DO UPDATE SET value = CAST(value AS INTEGER) + 1;
+END;
+CREATE TRIGGER IF NOT EXISTS declared_types_revise_update AFTER UPDATE ON declared_types BEGIN
+  INSERT INTO meta (key, value) VALUES ('copy_revision', '1')
+    ON CONFLICT (key) DO UPDATE SET value = CAST(value AS INTEGER) + 1;
+END;
+CREATE TRIGGER IF NOT EXISTS declared_types_revise_delete AFTER DELETE ON declared_types BEGIN
+  INSERT INTO meta (key, value) VALUES ('copy_revision', '1')
+    ON CONFLICT (key) DO UPDATE SET value = CAST(value AS INTEGER) + 1;
+END;
+CREATE TRIGGER IF NOT EXISTS items_revise_insert AFTER INSERT ON items BEGIN
+  INSERT INTO meta (key, value) VALUES ('copy_revision', '1')
+    ON CONFLICT (key) DO UPDATE SET value = CAST(value AS INTEGER) + 1;
+END;
+CREATE TRIGGER IF NOT EXISTS items_revise_update AFTER UPDATE ON items BEGIN
+  INSERT INTO meta (key, value) VALUES ('copy_revision', '1')
+    ON CONFLICT (key) DO UPDATE SET value = CAST(value AS INTEGER) + 1;
+END;
+CREATE TRIGGER IF NOT EXISTS items_revise_delete AFTER DELETE ON items BEGIN
+  INSERT INTO meta (key, value) VALUES ('copy_revision', '1')
+    ON CONFLICT (key) DO UPDATE SET value = CAST(value AS INTEGER) + 1;
+END;
+CREATE TRIGGER IF NOT EXISTS edges_revise_insert AFTER INSERT ON edges BEGIN
+  INSERT INTO meta (key, value) VALUES ('copy_revision', '1')
+    ON CONFLICT (key) DO UPDATE SET value = CAST(value AS INTEGER) + 1;
+END;
+CREATE TRIGGER IF NOT EXISTS edges_revise_update AFTER UPDATE ON edges BEGIN
+  INSERT INTO meta (key, value) VALUES ('copy_revision', '1')
+    ON CONFLICT (key) DO UPDATE SET value = CAST(value AS INTEGER) + 1;
+END;
+CREATE TRIGGER IF NOT EXISTS edges_revise_delete AFTER DELETE ON edges BEGIN
+  INSERT INTO meta (key, value) VALUES ('copy_revision', '1')
+    ON CONFLICT (key) DO UPDATE SET value = CAST(value AS INTEGER) + 1;
+END;
+CREATE TRIGGER IF NOT EXISTS tags_revise_insert AFTER INSERT ON tags BEGIN
+  INSERT INTO meta (key, value) VALUES ('copy_revision', '1')
+    ON CONFLICT (key) DO UPDATE SET value = CAST(value AS INTEGER) + 1;
+END;
+CREATE TRIGGER IF NOT EXISTS tags_revise_update AFTER UPDATE ON tags BEGIN
+  INSERT INTO meta (key, value) VALUES ('copy_revision', '1')
+    ON CONFLICT (key) DO UPDATE SET value = CAST(value AS INTEGER) + 1;
+END;
+CREATE TRIGGER IF NOT EXISTS tags_revise_delete AFTER DELETE ON tags BEGIN
+  INSERT INTO meta (key, value) VALUES ('copy_revision', '1')
+    ON CONFLICT (key) DO UPDATE SET value = CAST(value AS INTEGER) + 1;
+END;
+CREATE TRIGGER IF NOT EXISTS pins_revise_insert AFTER INSERT ON pins BEGIN
+  INSERT INTO meta (key, value) VALUES ('copy_revision', '1')
+    ON CONFLICT (key) DO UPDATE SET value = CAST(value AS INTEGER) + 1;
+END;
+CREATE TRIGGER IF NOT EXISTS pins_revise_update AFTER UPDATE ON pins BEGIN
+  INSERT INTO meta (key, value) VALUES ('copy_revision', '1')
+    ON CONFLICT (key) DO UPDATE SET value = CAST(value AS INTEGER) + 1;
+END;
+CREATE TRIGGER IF NOT EXISTS pins_revise_delete AFTER DELETE ON pins BEGIN
+  INSERT INTO meta (key, value) VALUES ('copy_revision', '1')
+    ON CONFLICT (key) DO UPDATE SET value = CAST(value AS INTEGER) + 1;
+END;
+CREATE TRIGGER IF NOT EXISTS queue_revise_insert AFTER INSERT ON queue BEGIN
+  INSERT INTO meta (key, value) VALUES ('copy_revision', '1')
+    ON CONFLICT (key) DO UPDATE SET value = CAST(value AS INTEGER) + 1;
+END;
+CREATE TRIGGER IF NOT EXISTS queue_revise_update AFTER UPDATE ON queue BEGIN
+  INSERT INTO meta (key, value) VALUES ('copy_revision', '1')
+    ON CONFLICT (key) DO UPDATE SET value = CAST(value AS INTEGER) + 1;
+END;
+CREATE TRIGGER IF NOT EXISTS queue_revise_delete AFTER DELETE ON queue BEGIN
+  INSERT INTO meta (key, value) VALUES ('copy_revision', '1')
+    ON CONFLICT (key) DO UPDATE SET value = CAST(value AS INTEGER) + 1;
+END;

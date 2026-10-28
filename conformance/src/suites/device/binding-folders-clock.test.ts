@@ -271,6 +271,65 @@ describe("folder clock and scan boundaries", () => {
     await device.hooks.release("folder-pass-ended");
   });
 
+  it("renders no file on a quick or full pass of a quiet folder, and renders one after an edit", async () => {
+    const harness = await prepared("binding-quiet-pass", {
+      "first.md": "---\ntitle: First\n---\nfirst words\n",
+      "second.md": "---\ntitle: Second\n---\nsecond words\n",
+    });
+    const { device, dir } = harness;
+    const contents = () =>
+      Object.fromEntries(
+        notesIn(dir).map((name) => [name, readFileSync(join(dir, name))]),
+      );
+    await startFirstPass(harness);
+    await untilHeld(device, "folder-pass-ended");
+    // A pull's own writes come back to the next pass, which can render once
+    // more before the folder is quiet.
+    let rendered = await device.hooks.reached("folder-render");
+    for (let pass = 0; pass < 3; pass += 1) {
+      await nextPass(harness);
+      const now = await device.hooks.reached("folder-render");
+      if (now === rendered) break;
+      rendered = now;
+    }
+    const before = contents();
+
+    await nextPass(harness);
+    expect(await device.hooks.reached("folder-quick-scan")).toBeGreaterThan(0);
+    expect(
+      await device.hooks.reached("folder-render"),
+      "a quick pass of a quiet folder rendered a file",
+    ).toBe(rendered);
+
+    await nextTurn(harness);
+    await device.clock.advance(60_000);
+    const settings = settingsFile(harness);
+    writeFileSync(settings, readFileSync(settings));
+    await device.hooks.release("folder-watch-turn");
+    await untilHeld(device, "folder-pass-ended");
+    expect(await device.hooks.reached("folder-full-scan")).toBe(2);
+    expect(
+      await device.hooks.reached("folder-render"),
+      "a full pass of a quiet folder rendered a file",
+    ).toBe(rendered);
+    expect(contents()).toEqual(before);
+
+    // The witness: the same pass after an edit renders.
+    await nextTurn(harness);
+    await device.clock.advance(5_000);
+    const edited = readFileSync(join(dir, "first.md"), "utf8").replace(
+      "first words",
+      "edited words",
+    );
+    writeFileSync(join(dir, "first.md"), edited);
+    await device.hooks.release("folder-watch-turn");
+    await untilHeld(device, "folder-pass-ended");
+    expect(await device.hooks.reached("folder-render")).toBeGreaterThan(
+      rendered,
+    );
+    await device.hooks.release("folder-pass-ended");
+  });
+
   it("starts a pass after five seconds even while filesystem changes keep arriving", async () => {
     const harness = await prepared("binding-settle-ceiling");
     const { device } = harness;

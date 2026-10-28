@@ -8,7 +8,7 @@ use super::{Folder, PullReport, StatusReport, elsewhere, state};
 use crate::http::{Call, CallBody, Method};
 use crate::{CoreError, Result, store};
 
-const META: &str = "folder_health";
+pub(super) const META: &str = "folder_health";
 const MAX_SAFE: u64 = 9_007_199_254_740_991;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]

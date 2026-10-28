@@ -1969,6 +1969,10 @@ impl Folder {
         edge_types: &EdgeTypes,
         lines: LinesBy<'_>,
     ) -> Result<Rendered> {
+        #[cfg(test)]
+        tests::RENDERED.with(|rendered| rendered.set(rendered.get() + 1));
+        #[cfg(debug_assertions)]
+        crate::fault::hold(|| "folder-render");
         let body_field = fields::body_field(catalog, &item.r#type);
         let body = item
             .properties
@@ -2450,6 +2454,16 @@ mod tests {
 
     fn documents_read() -> usize {
         DOCUMENTS_READ.with(std::cell::Cell::get)
+    }
+
+    thread_local! {
+        /// How many times this thread rendered an item's file.
+        pub(super) static RENDERED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    }
+
+    /// How many files this thread rendered since the last call.
+    pub(super) fn rendered() -> usize {
+        RENDERED.with(|rendered| rendered.replace(0))
     }
 
     thread_local! {
@@ -3523,6 +3537,167 @@ mod tests {
         conn.execute("UPDATE items SET version = 1 WHERE id = ?1", [&item_id])
             .unwrap();
         item_id
+    }
+
+    /// `settled_notes`, each note's create answered as a server would, so a
+    /// watch's pass over them finds nothing to do.
+    fn answered_notes(names: &[&str]) -> (ScannedDir, Folder) {
+        let (dir, folder) = settled_notes(names);
+        for name in names {
+            landed(&folder, name);
+        }
+        folder
+            .core
+            .conn()
+            .unwrap()
+            .execute("DELETE FROM queue", [])
+            .unwrap();
+        (dir, folder)
+    }
+
+    /// `answered_notes`, with a server that answers nothing it is not
+    /// scripted to, and passes of a watch run over it until one renders
+    /// nothing: the first renders each note, and the next takes in what the
+    /// first wrote.
+    fn watched_notes(
+        names: &[&str],
+    ) -> (ScannedDir, Folder, crate::scripted::Scripted, watch::Passes) {
+        let (dir, folder) = answered_notes(names);
+        drop(folder);
+        let server = crate::scripted::Scripted::start();
+        let folder = Folder::open(
+            dir.path(),
+            Some(crate::Server {
+                url: server.url(),
+                key: "fixture".into(),
+            }),
+        )
+        .unwrap();
+        let mut passes = watch::Passes::default();
+        rendered();
+        passes.run(&folder, true).unwrap();
+        assert!(rendered() > 0, "the first pass rendered no file");
+        settle(&folder, &mut passes);
+        (dir, folder, server, passes)
+    }
+
+    /// Runs quick passes until one renders nothing, which the third must.
+    fn settle(folder: &Folder, passes: &mut watch::Passes) {
+        for _ in 0..3 {
+            passes.run(folder, false).unwrap();
+            if rendered() == 0 {
+                return;
+            }
+        }
+        panic!("three passes over an unchanged folder each rendered files");
+    }
+
+    fn files_of(dir: &Path) -> Vec<(String, String)> {
+        let mut files: Vec<(String, String)> = std::fs::read_dir(dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .filter(|path| path.is_file())
+            .map(|path| {
+                (
+                    path.file_name().unwrap().to_string_lossy().into_owned(),
+                    std::fs::read_to_string(&path).unwrap(),
+                )
+            })
+            .collect();
+        files.sort();
+        files
+    }
+
+    /// Changes the note's body in the copy, as a catch-up applying the
+    /// server's change does.
+    fn changed_on_the_server(folder: &Folder, path: &str, body: &str) {
+        let conn = folder.core.conn().unwrap();
+        let item_id = state::bound_at(&conn, path).unwrap().unwrap().item_id;
+        let changed = conn
+            .execute(
+                "UPDATE items SET properties = json_set(properties, '$.body', ?2), version = version + 1 WHERE id = ?1",
+                [item_id.as_str(), body],
+            )
+            .unwrap();
+        assert_eq!(changed, 1);
+    }
+
+    #[test]
+    fn a_quiet_watch_pass_renders_no_file_and_one_after_a_change_to_the_copy_does() {
+        let (dir, folder, _server, mut passes) = watched_notes(&["a.md", "b.md"]);
+        for (full, body) in [(false, "quick"), (true, "full")] {
+            let files = files_of(dir.path());
+            passes.run(&folder, full).unwrap();
+            assert_eq!(rendered(), 0, "a quiet pass, full: {full}");
+            assert_eq!(files_of(dir.path()), files);
+
+            // The witness: the same pass over a copy the server changed
+            // renders the files and writes the change.
+            changed_on_the_server(&folder, "a.md", body);
+            passes.run(&folder, full).unwrap();
+            assert!(rendered() > 0, "full: {full}");
+            let text = std::fs::read_to_string(dir.path().join("a.md")).unwrap();
+            assert!(text.ends_with(body), "{text}");
+            settle(&folder, &mut passes);
+        }
+    }
+
+    #[test]
+    fn a_watch_pass_pulls_again_while_an_edge_end_is_unheld() {
+        let (dir, folder, server, mut passes) = watched_notes(&["a.md"]);
+        let gone = "01a00000-0000-7000-8000-0000000000e9";
+        server.on(
+            &format!("/items/{gone}"),
+            vec![crate::scripted::certified(crate::scripted::refusal(
+                404,
+                "item_not_found",
+            ))],
+        );
+        // The bin, where a pin looks for an end the server does not hold.
+        server.on(
+            "/items",
+            vec![crate::scripted::certified(crate::scripted::json(
+                200,
+                r#"{"data":[],"next_cursor":null}"#,
+            ))],
+        );
+        {
+            let conn = folder.core.conn().unwrap();
+            let item_id = state::bound_at(&conn, "a.md").unwrap().unwrap().item_id;
+            crate::store::put_server_edge(
+                &conn,
+                &crate::store::testing::wire_edge("about-gone", &item_id, gone, "about"),
+            )
+            .unwrap();
+        }
+        passes.run(&folder, false).unwrap();
+        assert!(rendered() > 0);
+        assert!(
+            std::fs::read_to_string(dir.path().join("a.md"))
+                .unwrap()
+                .contains(gone)
+        );
+        // The server holds no such item, so each pull asks for it again.
+        let end = format!("/items/{gone}");
+        for full in [false, true, false] {
+            let asked = server.seen(&end).len();
+            passes.run(&folder, full).unwrap();
+            assert_eq!(server.seen(&end).len(), asked + 1, "full: {full}");
+        }
+
+        // The witness: once no line names the end, the passes settle and stop
+        // asking for it.
+        folder
+            .core
+            .conn()
+            .unwrap()
+            .execute("DELETE FROM edges WHERE id = 'about-gone'", [])
+            .unwrap();
+        settle(&folder, &mut passes);
+        let asked = server.seen(&end).len();
+        passes.run(&folder, true).unwrap();
+        assert_eq!(rendered(), 0);
+        assert_eq!(server.seen(&end).len(), asked);
     }
 
     /// Moves the journaled delete at `path` past the grace.
