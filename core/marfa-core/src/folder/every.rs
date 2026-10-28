@@ -438,6 +438,7 @@ fn supervise<S: Supervised>(
 ) -> Result<(), S::Error> {
     std::thread::scope(|scope| {
         scope.spawn(|| {
+            super::run_as_utility_work();
             record.keep(|reason| {
                 let _ = every.tell(Every::Record {
                     path: record.path(),
@@ -819,6 +820,7 @@ fn run<S: Supervised>(
     stop: &AtomicBool,
     start: &Mutex<Start>,
 ) -> Outcome<S::Error> {
+    super::run_as_utility_work();
     if every.missing(dir) {
         return Outcome::Missing;
     }
@@ -977,6 +979,9 @@ mod tests {
     struct Machine {
         opens: Mutex<HashMap<PathBuf, VecDeque<Result<Goes, Unwatched>>>>,
         opened: Mutex<Vec<PathBuf>>,
+        /// The quality of service class each open ran at.
+        #[cfg(target_vendor = "apple")]
+        classes: Mutex<Vec<u32>>,
         open_gate: Option<(PathBuf, usize, Arc<OpenGate>)>,
         told: Mutex<Vec<String>>,
         ended: Mutex<Vec<String>>,
@@ -1029,6 +1034,8 @@ mod tests {
 
         fn open(&self, dir: &Path) -> Result<Fake, Unwatched> {
             lock(&self.opened).push(dir.to_path_buf());
+            #[cfg(target_vendor = "apple")]
+            lock(&self.classes).push(crate::folder::priority::current_class());
             if let Some((gated_dir, at, gate)) = &self.open_gate
                 && dir == gated_dir
                 && self.opened(&dir.to_string_lossy()) == *at
@@ -1168,6 +1175,30 @@ mod tests {
 
     fn count(machine: &Machine, line: &str) -> usize {
         machine.told().iter().filter(|told| *told == line).count()
+    }
+
+    #[cfg(target_vendor = "apple")]
+    #[test]
+    fn each_folder_is_watched_on_a_thread_at_utility_quality_of_service() {
+        let machine = Machine::default();
+        machine.opens("/a", vec![Ok(Goes::Lasts)]);
+        machine.opens("/b", vec![Ok(Goes::Lasts)]);
+        let listing = listed(&["/a", "/b"]);
+        supervised(&machine, &listing, |machine| {
+            count(machine, "watching /a") == 1 && count(machine, "watching /b") == 1
+        })
+        .unwrap();
+        let classes = lock(&machine.classes).clone();
+        assert_eq!(classes.len(), 2);
+        // The witness: this thread, which the supervisor's start from, is not
+        // at utility, so the class is set on the folder's own thread.
+        assert_ne!(
+            crate::folder::priority::current_class(),
+            libc::qos_class_t::QOS_CLASS_UTILITY as u32
+        );
+        for class in classes {
+            assert_eq!(class, libc::qos_class_t::QOS_CLASS_UTILITY as u32);
+        }
     }
 
     #[test]

@@ -205,11 +205,20 @@ impl Folder {
         let health = Mutex::new(FollowHealth::default());
         std::thread::scope(|scope| {
             let server_wakes = sender.clone();
-            let follower = scope.spawn(|| follow(self, &ended, server_wakes, &health));
-            let reporter = scope.spawn(|| self.health_follow(&ended));
+            let follower = scope.spawn(|| {
+                super::run_as_utility_work();
+                follow(self, &ended, server_wakes, &health)
+            });
+            let reporter = scope.spawn(|| {
+                super::run_as_utility_work();
+                self.health_follow(&ended)
+            });
             let looker = requests.map(|requests| {
                 let (wakes, ended, asked) = (sender.clone(), &ended, &asked);
-                scope.spawn(move || look(requests, ended, asked, wakes))
+                scope.spawn(move || {
+                    super::run_as_utility_work();
+                    look(requests, ended, asked, wakes)
+                })
             });
             let watched = {
                 // A guard, so a pass or a `tell` that panics still ends the

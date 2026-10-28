@@ -39,12 +39,14 @@ pub fn watch(
     if let Some(record) = &record {
         let record = Arc::clone(record);
         std::thread::spawn(move || {
+            marfa_core::folder::run_as_utility_work();
             record.keep(|reason| record_unwritten(json, record.path(), reason));
         });
     }
     let (done, ended) = mpsc::channel();
     let kept = record.clone();
     std::thread::spawn(move || {
+        marfa_core::folder::run_as_utility_work();
         let _ = done.send(keep_in_step(
             folder,
             &server,
@@ -88,6 +90,7 @@ pub fn watch_every(named: &Named, stop_after: Option<u64>, json: bool) -> Result
     let (done, ended) = mpsc::channel();
     let kept = Arc::clone(&record);
     std::thread::spawn(move || {
+        marfa_core::folder::run_as_utility_work();
         let _ = done.send(marfa_core::folder::watch_every(
             &registry, stop, &machine, &kept,
         ));

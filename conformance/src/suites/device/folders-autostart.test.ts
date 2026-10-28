@@ -327,6 +327,7 @@ interface Status {
   running?: boolean;
   pid?: number | null;
   manager_error?: string;
+  outdated: boolean;
   binary: { path: string; exists: boolean; this_binary: boolean } | null;
   log: string | null;
   registry: string | null;
@@ -413,6 +414,7 @@ describe("folder syncing from login", () => {
         RunAtLoad: true,
         KeepAlive: { SuccessfulExit: false },
         ThrottleInterval: 30,
+        ProcessType: "Background",
       });
       expect(
         managerState(root).calls.filter((call) => !call.startsWith("print")),
@@ -423,6 +425,9 @@ describe("folder syncing from login", () => {
     } else {
       expect(written).toContain("\nRestart=on-failure\n");
       expect(written).toContain("\nRestartSec=30\n");
+      expect(written).toContain("\nNice=10\n");
+      expect(written).toContain("\nIOSchedulingClass=best-effort\n");
+      expect(written).toContain("\nIOSchedulingPriority=7\n");
       expect(written).toContain("\n[Install]\nWantedBy=default.target\n");
       expect(
         managerState(root).calls.filter(
@@ -515,6 +520,51 @@ describe("folder syncing from login", () => {
       binary: null,
       record: null,
     });
+  });
+
+  it("says when the agent was written by an earlier marfa, and on replaces it", () => {
+    const root = standIn("earlier");
+    const registry = registryOf(root);
+    autostart(root, "on", { registry });
+    const current = readFileSync(agentFile(root), "utf8");
+    expect(
+      parsed<Status>(autostart(root, "status", { registry })).outdated,
+    ).toBe(false);
+    expect(
+      autostart(root, "status", { registry, json: false }).stdout,
+    ).not.toContain("earlier marfa");
+
+    // The agent as an earlier build wrote it: the same, without the settings
+    // that mark the watch as background work.
+    const earlier = macOS
+      ? current.replace(
+          "\t<key>ProcessType</key>\n\t<string>Background</string>\n",
+          "",
+        )
+      : current.replace(
+          "Nice=10\nIOSchedulingClass=best-effort\nIOSchedulingPriority=7\n",
+          "",
+        );
+    expect(earlier).not.toBe(current);
+    writeFileSync(agentFile(root), earlier);
+
+    const status = parsed<Status>(autostart(root, "status", { registry }));
+    expect(status).toMatchObject({ installed: true, outdated: true });
+    // Still read as the agent it is, not as a file marfa did not write.
+    expect(status.binary).toMatchObject({ path: requireBinary() });
+    expect(status.log).toBe(join(dirname(registry), "folder-watch.log"));
+    const said = autostart(root, "status", { registry, json: false }).stdout;
+    expect(said).toContain(
+      "was written by an earlier marfa and differs from what `marfa folders autostart on` writes now; run `marfa folders autostart on` again with the same options to replace it",
+    );
+
+    expect(parsed<Switched>(autostart(root, "on", { registry })).changed).toBe(
+      true,
+    );
+    expect(readFileSync(agentFile(root), "utf8")).toBe(current);
+    expect(
+      parsed<Status>(autostart(root, "status", { registry })).outdated,
+    ).toBe(false);
   });
 
   it("refuses --url, --key and --profile, and writes nothing", () => {
@@ -1149,6 +1199,42 @@ describe("the watch run by a service manager", () => {
     expect(entry()?.ended_at).not.toBeNull();
     expect(entry()?.folders.every((folder) => !folder.watching)).toBe(true);
   });
+
+  // The scheduler gives utility quality of service a priority of 20 and the
+  // default class 31, which `ps -M` lists for each thread.
+  it.runIf(process.platform === "darwin")(
+    "runs the threads of a folder watch at utility quality of service",
+    async () => {
+      const harness = await folderHarness("autostart-utility");
+      made.push(harness);
+      const watch = harness.folder.watchEvery();
+      held.push(watch);
+      await vi.waitFor(
+        () => expect(watch.stderr).toContain("watching every folder"),
+        WAIT,
+      );
+      const priorities = () =>
+        execFileSync("ps", ["-M", "-p", String(watch.pid()), "-o", "pri"], {
+          encoding: "utf8",
+        })
+          .split("\n")
+          .flatMap((line) => line.match(/(\d+)T\s*$/)?.[1] ?? []);
+      await vi.waitFor(() => {
+        const found = priorities();
+        // The witness: ps tells the default class from the utility one, and
+        // the thread that starts the others stays at the default.
+        expect(found).toContain("31");
+        expect(found.filter((priority) => priority === "20").length).toBe(
+          found.filter((priority) => priority !== "31").length,
+        );
+        expect(
+          found.filter((priority) => priority === "20").length,
+        ).toBeGreaterThanOrEqual(4);
+      }, WAIT);
+      process.kill(watch.pid(), "SIGTERM");
+      await watch.exited();
+    },
+  );
 
   it("ends on SIGTERM with exit status 0 while it sends telemetry, too", async () => {
     const harness = await folderHarness("autostart-term-telemetry");

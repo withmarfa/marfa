@@ -322,6 +322,7 @@ impl Folders {
         let server = self.server.clone();
         let origin = server.as_ref().map(|server| server.url.clone());
         std::thread::spawn(move || {
+            marfa_core::folder::run_as_utility_work();
             let watched = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 keep_in_step(folder, server, &flag, &tell)
             }));

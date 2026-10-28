@@ -38,6 +38,14 @@ pub const RESTART_SECONDS: u32 = 30;
 const CREDENTIAL_REASONS: [&str; 4] =
     ["no_credential", "no_keychain", "unauthorized", "signed_out"];
 
+/// The watch's nice level under systemd. A user unit may raise it without
+/// privilege, and the cpu controller that `CPUWeight=` needs is not always
+/// delegated to a user manager.
+const NICE: u8 = 10;
+
+/// The watch's I/O priority within the best-effort class: 7 is the lowest.
+const IO_PRIORITY: u8 = 7;
+
 /// How long `off`, or an `on` that replaces a loaded agent, waits for launchd
 /// to let go of the agent it unloaded.
 const UNLOAD_WAIT: Duration = Duration::from_secs(10);
@@ -49,7 +57,9 @@ pub enum AutostartCommand {
     /// `folders watch` with no directory by this binary's path. It holds no
     /// credential and no server: each folder uses the server its copy came
     /// from and the credential the keychain keeps for it. Run again, it
-    /// changes nothing unless the agent would differ.
+    /// changes nothing unless the agent would differ, as one written by an
+    /// earlier build does. The watch runs as background work, at a lower CPU
+    /// and I/O priority, so it does not slow what you are doing.
     ///
     /// With `--key-file` the agent runs the watch with that file in place of
     /// the keychain, for a machine where nobody signs in to unlock it. The
@@ -68,8 +78,9 @@ pub enum AutostartCommand {
     /// agent. Run again, it changes nothing.
     Off,
     /// Say whether folders sync from login: whether the agent is installed
-    /// and running, the binary it runs, where it logs, and what the watch's
-    /// record says of each folder. Asks no server and needs no credential.
+    /// and running, whether it differs from what `on` would write now, the
+    /// binary it runs, where it logs, and what the watch's record says of each
+    /// folder. Asks no server and needs no credential.
     Status,
 }
 
@@ -202,6 +213,8 @@ impl Agent {
 \t</dict>
 \t<key>ThrottleInterval</key>
 \t<integer>{RESTART_SECONDS}</integer>
+\t<key>ProcessType</key>
+\t<string>Background</string>
 </dict>
 </plist>
 ",
@@ -235,6 +248,9 @@ ExecStart={exec}
 Environment={environment}
 Restart=on-failure
 RestartSec={RESTART_SECONDS}
+Nice={NICE}
+IOSchedulingClass=best-effort
+IOSchedulingPriority={IO_PRIORITY}
 
 [Install]
 WantedBy=default.target
@@ -291,6 +307,14 @@ WantedBy=default.target
             key_file,
         })
     }
+}
+
+/// Whether `written` is an agent this command wrote and would not write now,
+/// as one written by an earlier build is.
+fn outdated(manager: Manager, written: &str) -> bool {
+    Agent::read(manager, written)
+        .and_then(|agent| agent.render(manager).ok())
+        .is_some_and(|wanted| wanted != written)
 }
 
 /// The path the binary was run by, where it leads to the binary running:
@@ -915,6 +939,9 @@ struct Status {
     state: Option<State>,
     #[serde(skip_serializing_if = "Option::is_none")]
     manager_error: Option<String>,
+    /// Whether the installed file is one `on` wrote but would not write now,
+    /// as one from an earlier build is.
+    outdated: bool,
     /// What the installed file runs; `None` where it is not one `on` writes.
     binary: Option<Binary>,
     log: Option<PathBuf>,
@@ -1039,6 +1066,9 @@ fn status(place: &Place, json: bool) -> Result<(), CliError> {
         file: place.file.clone(),
         state,
         manager_error,
+        outdated: installed
+            .as_deref()
+            .is_some_and(|written| outdated(place.manager, written)),
         binary,
         log: agent.as_ref().map(|agent| agent.log.clone()),
         registry: agent.as_ref().map(|agent| agent.registry.clone()),
@@ -1090,6 +1120,12 @@ fn describe_status(place: &Place, report: &Status) -> String {
     if report.state.as_ref().and_then(|state| state.enabled) == Some(false) {
         lines.push(format!(
             "{UNIT} is not enabled, so it does not start at login; `marfa folders autostart on` enables it"
+        ));
+    }
+    if report.outdated {
+        lines.push(format!(
+            "{} was written by an earlier marfa and differs from what `marfa folders autostart on` writes now; run `marfa folders autostart on` again with the same options to replace it",
+            report.file.display()
         ));
     }
     let Some(binary) = &report.binary else {
@@ -1248,6 +1284,60 @@ mod tests {
         assert!(unit.contains("Environment=\"MARFA_FOLDER_REGISTRY=/data/marfa/folders.json\"\n"));
         assert!(unit.contains("Restart=on-failure\nRestartSec=30\n"));
         assert!(unit.contains("[Install]\nWantedBy=default.target\n"));
+    }
+
+    #[test]
+    fn the_launchd_agent_is_marked_as_background_work() {
+        let plist = agent("/bin/marfa").plist().unwrap();
+        assert!(plist.contains("<key>ProcessType</key>\n\t<string>Background</string>"));
+    }
+
+    #[test]
+    fn the_systemd_unit_lowers_the_watch_cpu_and_io_priority() {
+        let unit = agent("/bin/marfa").unit().unwrap();
+        let service = unit
+            .split("[Service]\n")
+            .nth(1)
+            .and_then(|rest| rest.split("\n[").next())
+            .unwrap();
+        for line in [
+            "Nice=10",
+            "IOSchedulingClass=best-effort",
+            "IOSchedulingPriority=7",
+        ] {
+            assert!(service.lines().any(|found| found == line), "{line}");
+        }
+        // No cpu controller is assumed to be delegated to a user unit.
+        assert!(!unit.contains("CPUWeight"));
+    }
+
+    #[test]
+    fn an_agent_from_an_earlier_build_is_one_to_replace() {
+        for (manager, without) in [
+            (
+                Manager::Launchd,
+                "\t<key>ProcessType</key>\n\t<string>Background</string>\n",
+            ),
+            (
+                Manager::Systemd,
+                "Nice=10\nIOSchedulingClass=best-effort\nIOSchedulingPriority=7\n",
+            ),
+        ] {
+            let current = agent("/bin/marfa").render(manager).unwrap();
+            assert!(current.contains(without), "{manager:?}");
+            let earlier = current.replace(without, "");
+            assert_ne!(earlier, current, "{manager:?}");
+            // It still reads as the agent it was, so `status` can name it.
+            assert_eq!(
+                Agent::read(manager, &earlier),
+                Some(agent("/bin/marfa")),
+                "{manager:?}"
+            );
+            assert!(outdated(manager, &earlier), "{manager:?}");
+            // Witness: the agent `on` writes now is not.
+            assert!(!outdated(manager, &current), "{manager:?}");
+        }
+        assert!(!outdated(Manager::Launchd, "something else"));
     }
 
     #[test]

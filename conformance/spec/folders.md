@@ -5116,6 +5116,22 @@ When `folders autostart on` writes the agent, the CLI MUST set it to start the w
 
 **Tests:** `device/folders-autostart.test.ts › writes an agent in the person's account that runs the watch of every folder by this binary's path, holding no credential, and starts it`.
 
+### `folders/autostart-launchd-background`
+
+Where the platform is macOS, when `folders autostart on` writes the agent, the CLI MUST set the agent’s `ProcessType` to `Background`.
+
+**Reason:** launchd limits the CPU and I/O of a background job so that work the person did not ask for does not disrupt what they are doing, and on Apple silicon runs it on the efficiency cores.
+
+**Tests:** `device/folders-autostart.test.ts › writes an agent in the person's account that runs the watch of every folder by this binary's path, holding no credential, and starts it`.
+
+### `folders/autostart-systemd-priority`
+
+Where the platform is Linux, when `folders autostart on` writes the agent, the CLI MUST set the unit’s `Nice` to 10, its `IOSchedulingClass` to `best-effort` and its `IOSchedulingPriority` to 7.
+
+**Reason:** The watch lowers its CPU and I/O priority without privilege. The unit sets no `CPUWeight`, since a user manager does not always have the cpu controller delegated.
+
+**Tests:** `device/folders-autostart.test.ts › writes an agent in the person's account that runs the watch of every folder by this binary's path, holding no credential, and starts it`.
+
 ### `folders/autostart-at-login`
 
 Where folder syncing from login is on, when the person signs in, a device MUST keep every listed folder in step with no terminal open.
@@ -5232,6 +5248,14 @@ When `folders autostart status` finds a folder in the current entry not watched 
 
 **Tests:** `device/folders-autostart.test.ts › says whether the watch runs, where it logs, and from the record which folders it has no credential for, with no server or credential of its own`.
 
+### `folders/autostart-status-earlier-build`
+
+When `folders autostart status` runs while the installed agent is one the command wrote but would not write now, the CLI MUST report that it differs from the one `folders autostart on` writes now, and that running `folders autostart on` again with the same options replaces it.
+
+**Reason:** An agent written by an earlier build goes on running as it was written until `on` replaces it, so the settings a later build adds, such as those that lower its priority, reach it only then.
+
+**Tests:** `device/folders-autostart.test.ts › says when the agent was written by an earlier marfa, and on replaces it`.
+
 ### `folders/watch-terminate`
 
 When `folders watch` receives `SIGTERM`, the CLI MUST end within three seconds with exit status 0.
@@ -5247,6 +5271,14 @@ Where telemetry is on, when `folders watch` receives `SIGTERM`, the CLI MUST end
 **Reason:** The thread that sends telemetry starts before the watch, and `SIGTERM` reaching it would end the process at once, which a service manager reads as a failure.
 
 **Tests:** `device/folders-autostart.test.ts › ends on SIGTERM with exit status 0 while it sends telemetry, too`.
+
+### `folders/watch-utility-priority`
+
+While a folder watch runs on an Apple platform, a device MUST run each thread that keeps a folder in step, which scans, sends, pulls and follows the server’s changes, at utility quality of service.
+
+**Reason:** A watch is work the person did not ask for at that moment. Utility, not background, because a background thread can be deferred for far longer than the few seconds an edit may wait to reach the server, as in Low Power Mode.
+
+**Tests:** `device/folders-autostart.test.ts › runs the threads of a folder watch at utility quality of service`.
 
 ### `folders/watch-log`
 
