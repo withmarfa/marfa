@@ -819,10 +819,12 @@ impl Folder {
 
     /// Why the folder does not write at `path`, where it does not.
     fn not_writing_at(&self, lists: &Lists, path: &str) -> Option<&'static str> {
-        if plainly_inside(&self.root_dir, path) && !lists.takes(path) {
+        // The disk is read once: a link that went between two reads would
+        // let a path past the lists.
+        let barred = self.barred_on_disk(path);
+        if barred != Some(LEADS_OUT) && !lists.takes(path) {
             return Some("the folder's lists do not take the path");
         }
-        let barred = self.barred_on_disk(path);
         if let Some(why) = barred
             && let Ok(mut noted) = self.barred.lock()
             && let Some(noted) = noted.as_mut()
@@ -836,7 +838,7 @@ impl Folder {
     /// whatever its lists take.
     fn barred_on_disk(&self, path: &str) -> Option<&'static str> {
         if !plainly_inside(&self.root_dir, path) {
-            Some("the path leads out of the folder")
+            Some(LEADS_OUT)
         } else if in_package(&self.root_dir, path) {
             Some("the path is inside a package")
         } else if in_nested_folder(&self.root_dir, path) {
@@ -872,6 +874,8 @@ impl Folder {
             .all(|(path, why)| self.barred_on_disk(path) == Some(*why))
     }
 }
+
+const LEADS_OUT: &str = "the path leads out of the folder";
 
 /// Paths the disk kept a pull from writing at, and why.
 pub(super) type Barred = BTreeMap<String, &'static str>;
