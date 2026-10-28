@@ -31,9 +31,21 @@ if [[ "$(basename "$(dirname "$1")")" == deps ]]; then
   if [[ -z "${MARFA_FOLDER_REGISTRY:-}" ]]; then
     # Resolve the system temporary parent, whose macOS /var spelling is an alias.
     test_temp_parent="$(cd "${TMPDIR:-/tmp}" && pwd -P)"
-    MARFA_FOLDER_REGISTRY="$(mktemp -d "${test_temp_parent}/marfa-test-registry.XXXXXX")/folders.json"
+    registry_dir="$(mktemp -d "${test_temp_parent}/marfa-test-registry.XXXXXX")"
+    MARFA_FOLDER_REGISTRY="${registry_dir}/folders.json"
     export MARFA_FOLDER_REGISTRY
   fi
 fi
 
-exec "$@"
+if [[ -z "${registry_dir:-}" ]]; then
+  exec "$@"
+fi
+
+# Not exec: the directory this run made has to go when the test binary ends,
+# or one is left behind for every binary of every run.
+trap 'rm -rf "${registry_dir}"' EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+status=0
+"$@" || status=$?
+exit "${status}"
