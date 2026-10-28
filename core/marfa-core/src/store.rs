@@ -1002,6 +1002,32 @@ pub fn copy_revision(conn: &Connection) -> Result<u64, CoreError> {
     }
 }
 
+/// The number of the latest change `copy_changes` holds, 0 for none.
+pub(crate) fn last_change(conn: &Connection) -> Result<i64, CoreError> {
+    Ok(conn.query_row(
+        "SELECT coalesce(max(seq), 0) FROM copy_changes",
+        [],
+        |row| row.get(0),
+    )?)
+}
+
+/// The items changed after change `since`, or `None` where more than `most`
+/// did or the types changed, which reaches every item.
+pub(crate) fn changed_since(
+    conn: &Connection,
+    since: i64,
+    most: usize,
+) -> Result<Option<HashSet<String>>, CoreError> {
+    let mut statement = conn.prepare("SELECT item_id FROM copy_changes WHERE seq > ?1 LIMIT ?2")?;
+    let ids = statement
+        .query_map(
+            params![since, i64::try_from(most).unwrap_or(i64::MAX - 1) + 1],
+            |row| row.get::<_, String>(0),
+        )?
+        .collect::<rusqlite::Result<HashSet<String>>>()?;
+    Ok((ids.len() <= most && !ids.contains("")).then_some(ids))
+}
+
 /// Says nothing about whether a hydration has ever run: a fresh store has no
 /// in-progress marker either.
 pub fn hydration_complete(conn: &Connection) -> Result<bool, CoreError> {
@@ -5957,6 +5983,55 @@ mod tests {
     }
 
     #[test]
+    fn each_change_to_the_copy_names_the_items_it_touches() {
+        let conn = testing::conn();
+        let since = |from: i64| changed_since(&conn, from, 8).unwrap();
+        let ids = |names: &[&str]| Some(names.iter().map(|id| id.to_string()).collect());
+        let empty = crate::catalog::Catalog::empty();
+        let from = last_change(&conn).unwrap();
+        for id in ["a", "b", "c"] {
+            put_server_item(
+                &conn,
+                &note(id, id, "", "2026-01-01T00:00:00Z"),
+                Some(&[]),
+                &empty,
+            )
+            .unwrap();
+        }
+        assert_eq!(since(from), ids(&["a", "b", "c"]));
+
+        let from = last_change(&conn).unwrap();
+        assert_eq!(since(from), ids(&[]));
+        put_server_edge(&conn, &wire_edge("a-b", "a", "b", "references")).unwrap();
+        assert_eq!(since(from), ids(&["a", "b"]));
+
+        let from = last_change(&conn).unwrap();
+        pin(&conn, "c").unwrap();
+        assert_eq!(since(from), ids(&["c"]));
+
+        // A change to the types reaches every item, as does one past `most`.
+        let from = last_change(&conn).unwrap();
+        replace_types(&conn, &[wire_type("acme.photo", None, None)]).unwrap();
+        assert_eq!(since(from), None);
+        let from = last_change(&conn).unwrap();
+        for id in 0..9 {
+            let id = format!("n{id}");
+            put_server_item(
+                &conn,
+                &note(&id, &id, "", "2026-01-01T00:00:00Z"),
+                Some(&[]),
+                &empty,
+            )
+            .unwrap();
+        }
+        assert_eq!(since(from), None);
+        assert_eq!(
+            changed_since(&conn, from, 9).unwrap().map(|ids| ids.len()),
+            Some(9)
+        );
+    }
+
+    #[test]
     fn a_copy_without_reach_proof_is_unreadable() {
         let conn = testing::conn();
         meta_set(&conn, META_EVENT_CURSOR, "10").unwrap();
@@ -8491,7 +8566,7 @@ mod tests {
             .collect();
         assert_eq!(
             crate::folder::state::hash(named.as_bytes()),
-            "813b6fdceb4f69f3",
+            "2f094505382755ef",
             "the shape of a table changed, which refuses every store made before it"
         );
         // The comment strip reads `--` alone, so a block comment would ride
