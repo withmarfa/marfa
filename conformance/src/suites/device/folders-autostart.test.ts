@@ -414,7 +414,8 @@ describe("folder syncing from login", () => {
         RunAtLoad: true,
         KeepAlive: { SuccessfulExit: false },
         ThrottleInterval: 30,
-        ProcessType: "Background",
+        Nice: 10,
+        LowPriorityIO: true,
       });
       expect(
         managerState(root).calls.filter((call) => !call.startsWith("print")),
@@ -534,12 +535,10 @@ describe("folder syncing from login", () => {
       autostart(root, "status", { registry, json: false }).stdout,
     ).not.toContain("earlier marfa");
 
-    // The agent as an earlier build wrote it: the same, without the settings
-    // that mark the watch as background work.
     const earlier = macOS
       ? current.replace(
+          "\t<key>Nice</key>\n\t<integer>10</integer>\n\t<key>LowPriorityIO</key>\n\t<true/>\n",
           "\t<key>ProcessType</key>\n\t<string>Background</string>\n",
-          "",
         )
       : current.replace(
           "Nice=10\nIOSchedulingClass=best-effort\nIOSchedulingPriority=7\n",

@@ -5116,11 +5116,19 @@ When `folders autostart on` writes the agent, the CLI MUST set it to start the w
 
 **Tests:** `device/folders-autostart.test.ts › writes an agent in the person's account that runs the watch of every folder by this binary's path, holding no credential, and starts it`.
 
-### `folders/autostart-launchd-background`
+### `folders/autostart-launchd-priority`
 
-Where the platform is macOS, when `folders autostart on` writes the agent, the CLI MUST set the agent’s `ProcessType` to `Background`.
+Where the platform is macOS, when `folders autostart on` writes the agent, the CLI MUST set the agent’s `Nice` to 10 and its `LowPriorityIO` to true.
 
-**Reason:** launchd applies background resource limits to reduce interference with foreground work.
+**Reason:** The watch lowers its CPU and I/O priority without privilege, as the systemd unit does under `folders/autostart-systemd-priority`. Its threads also give way to foreground work through utility quality of service under `folders/watch-utility-priority`.
+
+**Tests:** `device/folders-autostart.test.ts › writes an agent in the person's account that runs the watch of every folder by this binary's path, holding no credential, and starts it`.
+
+### `folders/autostart-launchd-not-background`
+
+Where the platform is macOS, when `folders autostart on` writes the agent, the CLI MUST NOT set the agent’s `ProcessType`.
+
+**Reason:** A `Background` agent can starve the watch when every core is busy. Omitting the key uses launchd's `Standard` policy, which applies light CPU and I/O limits without the `Background` classification.
 
 **Tests:** `device/folders-autostart.test.ts › writes an agent in the person's account that runs the watch of every folder by this binary's path, holding no credential, and starts it`.
 
