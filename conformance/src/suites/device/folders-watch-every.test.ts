@@ -176,7 +176,6 @@ function holdsCopyChanges(store: string): boolean {
   }
 }
 
-/** Makes `store` one from before this build added `copy_changes`. */
 function dropCopyChanges(store: string): void {
   const db = new DatabaseSync(store);
   try {
@@ -300,7 +299,6 @@ describe("a watch of every folder", () => {
       expect(watching(watch, harness.dir), watch.stdout).toBe(false);
     }
 
-    // Let go, the same watch takes each folder and adds the table.
     release();
     await vi.waitFor(
       () => {
