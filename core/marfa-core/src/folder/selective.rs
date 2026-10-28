@@ -129,16 +129,11 @@ impl Selection {
         changed.extend(names.differing(&last.names));
         let mut reached = changed.clone();
         if !neighbors_left_out() {
+            let conn = folder.core.conn()?;
             for id in &changed {
-                for edge in folder
-                    .core
-                    .edges_from(id)?
-                    .into_iter()
-                    .chain(folder.core.edges_to(id)?)
-                    .filter(|edge| edge.edge_type != PLACEMENT_EDGE)
-                {
-                    reached.insert(edge.source_id);
-                    reached.insert(edge.target_id);
+                for (source, target) in crate::store::edge_neighbors(&conn, id, PLACEMENT_EDGE)? {
+                    reached.insert(source);
+                    reached.insert(target);
                 }
             }
         }

@@ -3711,6 +3711,292 @@ mod tests {
         }
     }
 
+    fn settle_selecting(folder: &Folder, selection: &mut selective::Selection) {
+        for _ in 0..8 {
+            rendered_items();
+            folder.pull_selecting(selection).unwrap();
+            if rendered_items().is_empty() {
+                return;
+            }
+        }
+        panic!("selective pull did not settle");
+    }
+
+    fn assert_a_full_pull_changes_nothing(dir: &Path, folder: &Folder) {
+        let before = files_of(dir);
+        let full = folder.pull().unwrap();
+        assert_eq!(full.written + full.rewritten + full.moved, 0, "{full:?}");
+        assert_eq!(before, files_of(dir));
+    }
+
+    #[test]
+    fn a_title_another_item_takes_reaches_the_file_of_an_edge_not_its_own() {
+        let (dir, folder, _server, _) = watched_notes(&["a.md", "b.md", "c.md"]);
+        referenced_on_the_server(&folder, "edge-a-b", "a.md", "b.md");
+        let a = id_at(&folder, "a.md");
+        let c = id_at(&folder, "c.md");
+        let mut selection = selective::Selection::default();
+        settle_selecting(&folder, &mut selection);
+        for title in ["b.md", "different"] {
+            folder.core.conn().unwrap().execute(
+                "UPDATE items SET properties = json_set(properties, '$.title', ?2), version = version + 1 WHERE id = ?1",
+                [&c, title],
+            ).unwrap();
+            rendered_items();
+            folder.pull_selecting(&mut selection).unwrap();
+            assert!(
+                rendered_items().contains(&a),
+                "a not reached by collision {title}"
+            );
+            settle_selecting(&folder, &mut selection);
+            assert_a_full_pull_changes_nothing(dir.path(), &folder);
+        }
+    }
+
+    #[test]
+    fn a_body_reference_that_hides_an_edge_follows_the_move_of_its_target() {
+        let (dir, folder, _server, _) = watched_notes(&["a.md", "b.md", "c.md"]);
+        referenced_on_the_server(&folder, "edge-a-b", "a.md", "b.md");
+        changed_on_the_server(&folder, "a.md", "[[b.md]]");
+        let mut selection = selective::Selection::default();
+        settle_selecting(&folder, &mut selection);
+        assert!(
+            !std::fs::read_to_string(dir.path().join("a.md"))
+                .unwrap()
+                .contains("references:")
+        );
+        renamed_on_the_server(&folder, "b.md", "bee", "bee.md");
+        settle_selecting(&folder, &mut selection);
+        let text = std::fs::read_to_string(dir.path().join("a.md")).unwrap();
+        assert!(text.contains("references:"), "{text}");
+        assert_a_full_pull_changes_nothing(dir.path(), &folder);
+    }
+
+    #[test]
+    fn a_rename_on_disk_reaches_the_file_that_shows_the_path() {
+        let (dir, folder, _server, _) = watched_notes(&["a.md", "b.md", "c.md"]);
+        referenced_on_the_server(&folder, "edge-a-b", "a.md", "b.md");
+        let a = id_at(&folder, "a.md");
+        let mut selection = selective::Selection::default();
+        settle_selecting(&folder, &mut selection);
+        std::fs::rename(dir.path().join("b.md"), dir.path().join("renamed.md")).unwrap();
+        folder.scan().unwrap();
+        rendered_items();
+        folder.pull_selecting(&mut selection).unwrap();
+        assert!(rendered_items().contains(&a));
+        settle_selecting(&folder, &mut selection);
+        assert_a_full_pull_changes_nothing(dir.path(), &folder);
+    }
+
+    #[test]
+    fn a_change_to_the_types_the_generation_or_the_settings_renders_every_file() {
+        let (dir, folder, _server, _) = watched_notes(&["a.md", "b.md", "c.md"]);
+        let all: std::collections::BTreeSet<_> =
+            ["a.md", "b.md", "c.md"].map(|p| id_at(&folder, p)).into();
+        let mut selection = selective::Selection::default();
+        settle_selecting(&folder, &mut selection);
+        for kind in [
+            "types",
+            "edge_types",
+            "declared_types",
+            "generation",
+            "settings",
+        ] {
+            {
+                let conn = folder.core.conn().unwrap();
+                match kind {
+                    "declared_types" => {
+                        conn.execute("INSERT INTO declared_types (id, json) SELECT id, json FROM types LIMIT 1", []).unwrap();
+                    }
+                    "types" | "edge_types" => {
+                        let count = conn
+                            .execute(&format!("UPDATE {kind} SET id = id"), [])
+                            .unwrap();
+                        assert!(count > 0, "empty {kind}");
+                    }
+                    "generation" => crate::reach::advance_generation(&conn).unwrap(),
+                    "settings" => {
+                        conn.execute("UPDATE items SET properties = json_set(properties, '$.title', 'changed folder') WHERE id = ?1", [&folder.folder]).unwrap();
+                    }
+                    _ => unreachable!(),
+                }
+            }
+            rendered_items();
+            folder.pull_selecting(&mut selection).unwrap();
+            assert_eq!(rendered_items(), all, "{kind}");
+            settle_selecting(&folder, &mut selection);
+            assert_a_full_pull_changes_nothing(dir.path(), &folder);
+        }
+    }
+
+    #[test]
+    fn a_change_made_after_the_choice_is_rendered_by_the_next_pull() {
+        let (dir, folder, _server, _) = watched_notes(&["a.md", "b.md"]);
+        let mut selection = selective::Selection::default();
+        settle_selecting(&folder, &mut selection);
+        let settings = folder.settings().unwrap();
+        let catalog = Catalog::load(&folder.core.conn().unwrap()).unwrap();
+        let names = Names::load(&folder.core.conn().unwrap(), &catalog, &BoundFiles).unwrap();
+        let mut pick = selection.begin(&folder).unwrap();
+        selection
+            .choose(&folder, &mut pick, &settings, &names)
+            .unwrap();
+        for p in ["a.md", "b.md"] {
+            pick.settle(&id_at(&folder, p));
+        }
+        changed_on_the_server(&folder, "a.md", "arrived during pull");
+        selection.end(pick, &settings, names);
+        folder.pull_selecting(&mut selection).unwrap();
+        assert!(
+            std::fs::read_to_string(dir.path().join("a.md"))
+                .unwrap()
+                .ends_with("arrived during pull")
+        );
+        settle_selecting(&folder, &mut selection);
+        assert_a_full_pull_changes_nothing(dir.path(), &folder);
+    }
+
+    #[test]
+    fn an_attachments_names_and_kind_reach_the_file_that_embeds_it() {
+        let (dir, folder, _server, _) = watched_notes(&["a.md", "c.md"]);
+        std::fs::write(dir.path().join("photo.bin"), "binary fixture").unwrap();
+        folder.scan().unwrap();
+        let file = landed(&folder, "photo.bin");
+        let a = id_at(&folder, "a.md");
+        folder
+            .core
+            .conn()
+            .unwrap()
+            .execute("DELETE FROM queue", [])
+            .unwrap();
+        let edge = crate::store::testing::wire_edge("attachment", &file, &a, ATTACHMENT_EDGE);
+        crate::store::put_server_edge(&folder.core.conn().unwrap(), &edge).unwrap();
+        changed_on_the_server(&folder, "a.md", "![[photo.bin]]");
+        let mut selection = selective::Selection::default();
+        settle_selecting(&folder, &mut selection);
+        for change in ["title-and-path", "kind"] {
+            match change {
+                "title-and-path" => {
+                    renamed_on_the_server(&folder, "photo.bin", "image.bin", "image.bin")
+                }
+                _ => {
+                    folder.core.conn().unwrap().execute("UPDATE items SET type = 'core.note', version = version + 1 WHERE id = ?1", [&file]).unwrap();
+                }
+            }
+            rendered_items();
+            folder.pull_selecting(&mut selection).unwrap();
+            assert!(
+                rendered_items().contains(&a),
+                "host not reached after {change}"
+            );
+            settle_selecting(&folder, &mut selection);
+            assert_a_full_pull_changes_nothing(dir.path(), &folder);
+        }
+    }
+
+    #[test]
+    fn a_change_to_what_the_filter_or_beneath_takes_in_renders_as_a_full_pull_does() {
+        let (dir, folder, _server, _) = watched_notes(&["a.md", "b.md", "c.md", "d.md"]);
+        let ids = ["a.md", "b.md", "c.md", "d.md"].map(|p| id_at(&folder, p));
+        for (n, (from, to)) in [(0, 1), (1, 2), (2, 3)].into_iter().enumerate() {
+            let edge = crate::store::testing::wire_edge(
+                &format!("parent-{n}"),
+                &ids[from],
+                &ids[to],
+                "parent-of",
+            );
+            crate::store::put_server_edge(&folder.core.conn().unwrap(), &edge).unwrap();
+        }
+        folder.core.conn().unwrap().execute("UPDATE items SET properties = json_set(properties, '$.query.beneath', ?2) WHERE id = ?1", [&folder.folder, &ids[0]]).unwrap();
+        let mut selection = selective::Selection::default();
+        settle_selecting(&folder, &mut selection);
+        assert!(
+            folder
+                .members(&folder.settings().unwrap())
+                .unwrap()
+                .contains(&ids[3])
+        );
+        folder
+            .core
+            .conn()
+            .unwrap()
+            .execute("DELETE FROM edges WHERE id = 'parent-0'", [])
+            .unwrap();
+        assert!(
+            !folder
+                .members(&folder.settings().unwrap())
+                .unwrap()
+                .contains(&ids[3])
+        );
+        settle_selecting(&folder, &mut selection);
+        assert_a_full_pull_changes_nothing(dir.path(), &folder);
+        folder.core.conn().unwrap().execute("UPDATE items SET properties = json_set(json_remove(properties, '$.query.beneath'), '$.query.filter', 'properties.title eq \"c.md\"') WHERE id = ?1", [&folder.folder]).unwrap();
+        settle_selecting(&folder, &mut selection);
+        let c = &ids[2];
+        folder.core.conn().unwrap().execute("UPDATE items SET properties = json_set(properties, '$.title', 'different') WHERE id = ?1", [c]).unwrap();
+        assert!(
+            !folder
+                .members(&folder.settings().unwrap())
+                .unwrap()
+                .contains(c)
+        );
+        settle_selecting(&folder, &mut selection);
+        assert_a_full_pull_changes_nothing(dir.path(), &folder);
+    }
+
+    #[test]
+    fn an_edit_on_disk_then_withdrawn_renders_as_a_full_pull_does() {
+        let (dir, folder, _server, _) = watched_notes(&["a.md", "b.md"]);
+        let a = id_at(&folder, "a.md");
+        let mut selection = selective::Selection::default();
+        settle_selecting(&folder, &mut selection);
+        let path = dir.path().join("a.md");
+        let text = std::fs::read_to_string(&path)
+            .unwrap()
+            .replace("body", "edited body");
+        std::fs::write(&path, text).unwrap();
+        folder.scan().unwrap();
+        settle_selecting(&folder, &mut selection);
+        assert!(
+            std::fs::read_to_string(&path)
+                .unwrap()
+                .contains("edited body")
+        );
+        let queued = folder.core.queue().unwrap();
+        assert!(!queued.is_empty());
+        for write in queued {
+            let conn = folder.core.conn().unwrap();
+            let held = crate::store::held_for(&conn, &write.id).unwrap();
+            crate::store::withdraw(&conn, &write, &held).unwrap();
+        }
+        settle_selecting(&folder, &mut selection);
+        assert!(
+            !folder.core.get(&a).unwrap().unwrap().properties["body"]
+                .as_str()
+                .unwrap()
+                .contains("edited body")
+        );
+        assert_a_full_pull_changes_nothing(dir.path(), &folder);
+    }
+
+    #[test]
+    fn an_edge_outside_the_folder_with_unreadable_properties_does_not_stop_the_watch() {
+        let (_dir, folder, _server, mut passes) = watched_notes(&["a.md", "b.md"]);
+        let edge =
+            crate::store::testing::wire_edge("outside-edge", "outside-a", "outside-b", LINK_EDGE);
+        {
+            let conn = folder.core.conn().unwrap();
+            crate::store::put_server_edge(&conn, &edge).unwrap();
+            conn.execute(
+                "UPDATE edges SET properties = 'not-json' WHERE id = 'outside-edge'",
+                [],
+            )
+            .unwrap();
+        }
+        folder.pull().unwrap();
+        passes.run(&folder, false).unwrap();
+    }
+
     fn id_at(folder: &Folder, path: &str) -> String {
         state::bound_at(&folder.core.conn().unwrap(), path)
             .unwrap()

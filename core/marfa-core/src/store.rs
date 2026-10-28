@@ -4139,6 +4139,24 @@ pub fn edges_to(conn: &Connection, target_id: &str) -> Result<Vec<Edge>, CoreErr
     edges_at(conn, "target_id", target_id, &mut Unreadable::Refuse)
 }
 
+/// The items at the other end of each edge of `id` that is not of type
+/// `except`, read from the ends alone so an edge whose properties cannot be
+/// read still names them.
+pub(crate) fn edge_neighbors(
+    conn: &Connection,
+    id: &str,
+    except: &str,
+) -> Result<Vec<(String, String)>, CoreError> {
+    let mut statement = conn.prepare_cached(
+        "SELECT source_id, target_id FROM edges
+          WHERE (source_id = ?1 OR target_id = ?1) AND edge_type != ?2",
+    )?;
+    let ends = statement
+        .query_map(params![id, except], |row| Ok((row.get(0)?, row.get(1)?)))?
+        .collect::<rusqlite::Result<_>>()?;
+    Ok(ends)
+}
+
 pub fn edges_of_type(conn: &Connection, edge_type: &str) -> Result<Vec<Edge>, CoreError> {
     edges_at(conn, "edge_type", edge_type, &mut Unreadable::Refuse)
 }
