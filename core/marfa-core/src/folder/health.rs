@@ -3,8 +3,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
-use super::{Folder, PullReport, StatusReport, elsewhere, state};
+use super::{Folder, PullReport, StatusReport, elsewhere, identity, state};
 use crate::http::{Call, CallBody, Method};
 use crate::{CoreError, Result, store};
 
@@ -232,6 +233,56 @@ fn local_snapshot(status: &StatusReport) -> Snapshot {
     }
 }
 
+/// What an observation takes from the folder's status.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Local {
+    snapshot: Snapshot,
+    inventory_complete: bool,
+}
+
+impl Local {
+    fn of(status: &StatusReport) -> Local {
+        Local {
+            snapshot: local_snapshot(status),
+            inventory_complete: status.inventory_complete(),
+        }
+    }
+}
+
+/// Everything a status and the conflict count are computed from: the
+/// folder's record of its files, every entry in the store's `meta` but the
+/// health report and the rate-limit wait (the copy revision there moves with
+/// every change to the copy and the queue), and each file and directory the
+/// walk reaches, by its path, identity and bytes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Inputs {
+    store: [u8; 32],
+    disk: [u8; 32],
+}
+
+/// What one observation was asked to record.
+struct Observing<'a> {
+    reuse: bool,
+    complete: bool,
+    refresh: bool,
+    pull: Option<&'a PullReport>,
+    error: Option<&'a CoreError>,
+    settings_problem: bool,
+}
+
+/// A status and conflict count, and the inputs they were computed from.
+#[derive(Debug)]
+pub(super) struct Computed {
+    inputs: Inputs,
+    local: Local,
+    conflicts: u64,
+}
+
+fn part(digest: &mut Sha256, bytes: &[u8]) {
+    digest.update((bytes.len() as u64).to_le_bytes());
+    digest.update(bytes);
+}
+
 fn observed_downloads(pull: &PullReport) -> (u64, Vec<Problem>) {
     let mut pending = HashSet::new();
     let mut blocked = HashSet::new();
@@ -272,24 +323,58 @@ impl Folder {
         error: Option<&CoreError>,
         settings_problem: bool,
     ) {
-        let _ = self.health_observe_inner(complete, refresh, pull, error, settings_problem);
+        let observing = Observing {
+            reuse: false,
+            complete,
+            refresh,
+            pull,
+            error,
+            settings_problem,
+        };
+        let _ = self.health_observe_inner(observing);
     }
 
-    fn health_observe_inner(
+    /// `health_observe`, but where nothing the folder's status is computed
+    /// from has changed since this folder last computed it here, that status
+    /// is reused rather than read again, as a watch's full pass every minute
+    /// would.
+    pub(super) fn health_observe_reusing(
         &self,
         complete: bool,
         refresh: bool,
         pull: Option<&PullReport>,
         error: Option<&CoreError>,
         settings_problem: bool,
-    ) -> Result<()> {
+    ) {
+        let observing = Observing {
+            reuse: true,
+            complete,
+            refresh,
+            pull,
+            error,
+            settings_problem,
+        };
+        let _ = self.health_observe_inner(observing);
+    }
+
+    fn health_observe_inner(&self, observing: Observing<'_>) -> Result<()> {
+        let Observing {
+            reuse,
+            complete,
+            refresh,
+            pull,
+            error,
+            settings_problem,
+        } = observing;
         let id = elsewhere::store_id(&self.core)?;
         let previous = State::load(&*self.core.conn()?)?.observed;
-        let status = self.status();
+        let (status, conflicts) = self.health_status(reuse);
         let known = status.is_ok();
-        let inventory_complete = status.as_ref().is_ok_and(StatusReport::inventory_complete);
+        let inventory_complete = status
+            .as_ref()
+            .is_ok_and(|status| status.inventory_complete);
         let mut snapshot = match status {
-            Ok(status) => local_snapshot(&status),
+            Ok(status) => status.snapshot,
             Err(_) => {
                 let mut snapshot = previous.clone().unwrap_or_default();
                 snapshot.first_sync_waiting = self
@@ -310,7 +395,7 @@ impl Folder {
         if !inventory_complete && let Some(previous) = &previous {
             snapshot.pending_uploads = snapshot.pending_uploads.max(previous.pending_uploads);
         }
-        if let Ok(conflicts) = self.current_conflicts() {
+        if let Ok(conflicts) = conflicts {
             snapshot
                 .problems
                 .retain(|problem| problem.code != Code::Conflict);
@@ -424,6 +509,124 @@ impl Folder {
         Ok(count(copies.len()))
     }
 
+    /// The folder's status and conflict count. Where `reuse` and nothing they
+    /// are computed from has changed since this folder last computed them
+    /// with `reuse`, those are answered instead.
+    fn health_status(&self, reuse: bool) -> (Result<Local>, Result<u64>) {
+        let compute = || {
+            #[cfg(test)]
+            tests::STATUS_COMPUTED.with(|computed| computed.set(computed.get() + 1));
+            (
+                self.status().map(|status| Local::of(&status)),
+                self.current_conflicts(),
+            )
+        };
+        if !reuse {
+            return compute();
+        }
+        let before = self.status_inputs();
+        if let Some(before) = &before
+            && let Some(computed) = self
+                .health_status
+                .lock()
+                .expect("health status lock")
+                .as_ref()
+                .filter(|computed| computed.inputs == *before)
+        {
+            return (Ok(computed.local.clone()), Ok(computed.conflicts));
+        }
+        let (local, conflicts) = compute();
+        // Kept only where the inputs held still across the computation, so
+        // a change made during it is never taken for what it saw.
+        let after = self.status_inputs();
+        *self.health_status.lock().expect("health status lock") =
+            match (before, after, &local, &conflicts) {
+                (Some(before), Some(after), Ok(local), Ok(conflicts)) if before == after => {
+                    Some(Computed {
+                        inputs: after,
+                        local: local.clone(),
+                        conflicts: *conflicts,
+                    })
+                }
+                _ => None,
+            };
+        (local, conflicts)
+    }
+
+    /// `None` where a status could not be computed from them alone: the
+    /// folder's directory is gone or replaced, a read failed, or a crash cut
+    /// off a write whose file the status reads wherever it is.
+    fn status_inputs(&self) -> Option<Inputs> {
+        if self.root_gone().is_some() {
+            return None;
+        }
+        let store = {
+            let conn = self.core.conn().ok()?;
+            let read = conn.unchecked_transaction().ok()?;
+            if state::every_bound(&read)
+                .ok()?
+                .iter()
+                .any(|row| row.writes.landing.is_some())
+            {
+                return None;
+            }
+            let mut digest = Sha256::new();
+            digest.update(state::record_digest(&read).ok()?);
+            let mut statement = read
+                .prepare("SELECT key, value FROM meta WHERE key NOT IN (?1, ?2) ORDER BY key")
+                .ok()?;
+            let mut rows = statement.query([META, super::watch::SEND_AGAIN_AT]).ok()?;
+            while let Some(row) = rows.next().ok()? {
+                part(&mut digest, row.get_ref(0).ok()?.as_bytes().ok()?);
+                part(&mut digest, row.get_ref(1).ok()?.as_bytes().ok()?);
+            }
+            drop(rows);
+            drop(statement);
+            read.commit().ok()?;
+            digest.finalize().into()
+        };
+        let walked = self.walked(&self.settings().ok()?.lists().ok()?);
+        let mut digest = Sha256::new();
+        for path in &walked.files {
+            part(
+                &mut digest,
+                identity::relative(&self.root, path).ok()?.as_bytes(),
+            );
+            let captured = walked.opened.get(path);
+            let identity = captured
+                .and_then(|captured| identity::of(&captured.metadata.borrow()))
+                .or_else(|| walked.unread.get(path).copied());
+            part(
+                &mut digest,
+                identity
+                    .map(|identity| identity.key())
+                    .unwrap_or_default()
+                    .as_bytes(),
+            );
+            match captured.map(|captured| captured.read()) {
+                Some(Ok(bytes)) => {
+                    digest.update([1]);
+                    part(&mut digest, &bytes);
+                }
+                Some(Err(error)) => {
+                    digest.update([2]);
+                    part(&mut digest, error.to_string().as_bytes());
+                }
+                None => digest.update([0]),
+            }
+        }
+        digest.update([0xff]);
+        for directory in &walked.directories {
+            part(&mut digest, directory.path.as_bytes());
+            part(&mut digest, directory.flag.as_bytes());
+            part(&mut digest, directory.reason.as_bytes());
+        }
+        Some(Inputs {
+            store,
+            disk: digest.finalize().into(),
+        })
+    }
+
     fn health_refresh_for_receipt(&self, floor: u64) -> Result<()> {
         let current = State::load(&*self.core.conn()?)?;
         if current
@@ -449,7 +652,14 @@ impl Folder {
                 .iter()
                 .any(|p| p.code == Code::SettingsInvalid)
         });
-        self.health_observe_inner(false, true, None, error.as_ref(), settings)
+        self.health_observe_inner(Observing {
+            reuse: false,
+            complete: false,
+            refresh: true,
+            pull: None,
+            error: error.as_ref(),
+            settings_problem: settings,
+        })
     }
 
     pub(super) fn health_send(&self) {
@@ -548,6 +758,158 @@ impl Folder {
 mod tests {
     use super::super::{FileStatus, Flagged, Paused};
     use super::*;
+
+    thread_local! {
+        /// How many times this thread computed a status for a health
+        /// observation.
+        pub(super) static STATUS_COMPUTED: std::cell::Cell<usize> =
+            const { std::cell::Cell::new(0) };
+    }
+
+    /// How many times this thread computed a status for a health observation
+    /// since the last call.
+    fn status_computed() -> usize {
+        STATUS_COMPUTED.with(|computed| computed.replace(0))
+    }
+
+    /// Asserts that what a reusing observation would take as the folder's
+    /// status and conflict count now is what computing them again gives.
+    fn reuses_what_it_would_compute(folder: &Folder) {
+        let (reused_local, reused_conflicts) = folder.health_status(true);
+        assert_eq!(status_computed(), 0, "the status was not reused");
+        let (local, conflicts) = folder.health_status(false);
+        assert_eq!(status_computed(), 1);
+        assert_eq!(reused_local.unwrap(), local.unwrap());
+        assert_eq!(reused_conflicts.unwrap(), conflicts.unwrap());
+    }
+
+    /// The record a reusing observation leaves, and the one an observation
+    /// that computes the status again leaves from the same previous record.
+    fn observed_both_ways(
+        folder: &Folder,
+        complete: bool,
+        error: Option<&CoreError>,
+    ) -> (Snapshot, Snapshot) {
+        let before = State::load(&folder.core.conn().unwrap()).unwrap();
+        folder.health_observe_reusing(complete, true, None, error, false);
+        let reused = folder.observed_health().unwrap();
+        assert_eq!(status_computed(), 0, "the status was not reused");
+        before.save(&folder.core.conn().unwrap()).unwrap();
+        folder.health_observe(complete, true, None, error, false);
+        let computed = folder.observed_health().unwrap();
+        assert_eq!(status_computed(), 1);
+        // Each observation that finds the folder clean stamps its own time.
+        let stamped = |mut snapshot: Snapshot| {
+            snapshot.last_success_at = snapshot.last_success_at.map(|_| String::new());
+            snapshot
+        };
+        (stamped(reused), stamped(computed))
+    }
+
+    fn problem(snapshot: &Snapshot, code: Code) -> Option<u64> {
+        snapshot
+            .problems
+            .iter()
+            .find(|problem| problem.code == code)
+            .map(|problem| problem.count)
+    }
+
+    #[test]
+    fn a_quiet_full_watch_pass_reuses_the_status_and_one_after_an_edit_does_not() {
+        let (dir, folder, server, mut passes) =
+            super::super::tests::watched_notes(&["a.md", "b.md"]);
+        passes.run(&folder, true).unwrap();
+        status_computed();
+        passes.run(&folder, true).unwrap();
+        assert_eq!(
+            status_computed(),
+            0,
+            "a quiet full pass computed the status"
+        );
+        reuses_what_it_would_compute(&folder);
+
+        // The witness: a full pass after the file changed computes it again.
+        // The server is gone, so the edit stays to be sent.
+        drop(server);
+        let path = dir.path().join("a.md");
+        let text = std::fs::read_to_string(&path).unwrap();
+        std::fs::write(&path, format!("{text}\nedited\n")).unwrap();
+        passes.run(&folder, true).unwrap();
+        assert!(
+            status_computed() > 0,
+            "the full pass after an edit reused it"
+        );
+        let edited = folder.observed_health().unwrap();
+        assert_eq!(edited.pending_uploads, 1, "{edited:?}");
+        reuses_what_it_would_compute(&folder);
+    }
+
+    #[test]
+    fn a_full_watch_pass_counts_a_conflicted_copy_that_appeared() {
+        let (_dir, folder, _server, mut passes) =
+            super::super::tests::watched_notes(&["a.md", "b.md"]);
+        passes.run(&folder, true).unwrap();
+        passes.run(&folder, true).unwrap();
+        status_computed();
+        assert_eq!(
+            problem(&folder.observed_health().unwrap(), Code::Conflict),
+            None
+        );
+
+        // As a catch-up would take in b.md becoming a conflicted copy of a.md.
+        {
+            let conn = folder.core.conn().unwrap();
+            let original = state::bound_at(&conn, "a.md").unwrap().unwrap().item_id;
+            let copy = state::bound_at(&conn, "b.md").unwrap().unwrap().item_id;
+            store::add_tags(&conn, &copy, &[crate::CONFLICTED_COPY_TAG.into()]).unwrap();
+            store::upsert_edge(
+                &conn,
+                &store::testing::wire_edge(
+                    "derivation",
+                    &copy,
+                    &original,
+                    crate::CONFLICTED_COPY_EDGE,
+                ),
+            )
+            .unwrap();
+        }
+        passes.run(&folder, true).unwrap();
+        assert!(status_computed() > 0);
+        assert_eq!(
+            problem(&folder.observed_health().unwrap(), Code::Conflict),
+            Some(1)
+        );
+        reuses_what_it_would_compute(&folder);
+
+        passes.run(&folder, true).unwrap();
+        assert_eq!(
+            status_computed(),
+            0,
+            "a quiet full pass computed the status"
+        );
+        assert_eq!(
+            problem(&folder.observed_health().unwrap(), Code::Conflict),
+            Some(1)
+        );
+    }
+
+    #[test]
+    fn a_reused_status_records_the_server_unreachable_and_then_reachable() {
+        let (_dir, folder, _server, mut passes) = super::super::tests::watched_notes(&["a.md"]);
+        passes.run(&folder, true).unwrap();
+        passes.run(&folder, true).unwrap();
+        status_computed();
+
+        let unreachable = CoreError::Network("unavailable".into());
+        let (reused, computed) = observed_both_ways(&folder, false, Some(&unreachable));
+        assert_eq!(reused, computed);
+        assert_eq!(problem(&reused, Code::Unavailable), Some(1), "{reused:?}");
+
+        let (reused, computed) = observed_both_ways(&folder, true, None);
+        assert_eq!(reused, computed);
+        assert_eq!(problem(&reused, Code::Unavailable), None, "{reused:?}");
+        assert!(reused.last_success_at.is_some(), "{reused:?}");
+    }
 
     fn receipt(sequence: u64, accepted: bool) -> Ack {
         Ack {
@@ -802,6 +1164,7 @@ mod tests {
             permissions: std::sync::OnceLock::new(),
             refused_renames: std::sync::Mutex::new(Default::default()),
             barred: std::sync::Mutex::new(None),
+            health_status: std::sync::Mutex::new(None),
             replaced: None,
             root_dir,
             state_dir,

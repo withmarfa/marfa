@@ -191,6 +191,9 @@ pub struct Folder {
     /// Where the disk kept a watch's pull from writing, gathered while that
     /// pull runs.
     barred: std::sync::Mutex<Option<Barred>>,
+    /// The status a watch's health observation last computed, with what it
+    /// was computed from.
+    health_status: std::sync::Mutex<Option<health::Computed>>,
     /// Why the store this open found was refused, where the open replaced it.
     replaced: Option<String>,
 }
@@ -396,6 +399,7 @@ impl Folder {
             permissions: std::sync::OnceLock::new(),
             refused_renames: std::sync::Mutex::new(HashMap::new()),
             barred: std::sync::Mutex::new(None),
+            health_status: std::sync::Mutex::new(None),
             replaced: None,
         };
         let row = added.row_on_server()?;
@@ -519,6 +523,7 @@ impl Folder {
             permissions: std::sync::OnceLock::new(),
             refused_renames: std::sync::Mutex::new(HashMap::new()),
             barred: std::sync::Mutex::new(None),
+            health_status: std::sync::Mutex::new(None),
             replaced,
         })
     }
@@ -562,6 +567,7 @@ impl Folder {
             permissions: std::sync::OnceLock::new(),
             refused_renames: std::sync::Mutex::new(HashMap::new()),
             barred: std::sync::Mutex::new(None),
+            health_status: std::sync::Mutex::new(None),
             replaced: None,
         })
     }
@@ -2554,7 +2560,7 @@ mod tests {
 
     /// A scanned folder's directory, with the registry of its own the test
     /// lists its folders in, so no two tests share one.
-    struct ScannedDir {
+    pub(super) struct ScannedDir {
         dir: tempfile::TempDir,
         _registry: registry::tests::OwnRegistry,
     }
@@ -3628,7 +3634,7 @@ mod tests {
     /// scripted to, and passes of a watch run over it until one renders
     /// nothing: the first renders each note, and the next takes in what the
     /// first wrote.
-    fn watched_notes(
+    pub(super) fn watched_notes(
         names: &[&str],
     ) -> (ScannedDir, Folder, crate::scripted::Scripted, watch::Passes) {
         let (dir, folder) = answered_notes(names);
@@ -3651,7 +3657,7 @@ mod tests {
     }
 
     /// Runs quick passes until one renders nothing, which the third must.
-    fn settle(folder: &Folder, passes: &mut watch::Passes) {
+    pub(super) fn settle(folder: &Folder, passes: &mut watch::Passes) {
         for _ in 0..3 {
             passes.run(folder, false).unwrap();
             if rendered() == 0 {
