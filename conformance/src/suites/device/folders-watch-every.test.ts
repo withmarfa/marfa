@@ -159,6 +159,46 @@ function hold(command: HeldCommand): HeldCommand {
 
 const WAIT = { timeout: 30_000, interval: 100 };
 
+function storeOf(harness: FolderHarness): string {
+  return join(harness.dir, ".marfa", "core.sqlite");
+}
+
+function holdsCopyChanges(store: string): boolean {
+  const db = new DatabaseSync(store, { readOnly: true });
+  try {
+    return (
+      db
+        .prepare("SELECT 1 FROM sqlite_master WHERE name = 'copy_changes'")
+        .get() !== undefined
+    );
+  } finally {
+    db.close();
+  }
+}
+
+/** Makes `store` one from before this build added `copy_changes`. */
+function dropCopyChanges(store: string): void {
+  const db = new DatabaseSync(store);
+  try {
+    const triggers = db
+      .prepare(
+        "SELECT name FROM sqlite_master WHERE type = 'trigger' AND sql LIKE '%copy_changes%'",
+      )
+      .all() as Array<{ name: string }>;
+    for (const { name } of triggers) db.exec(`DROP TRIGGER "${name}"`);
+    db.exec("DROP TABLE copy_changes");
+  } finally {
+    db.close();
+  }
+}
+
+/** The store's bytes and its write-ahead log's, which hold any write. */
+function bytesOf(store: string): string[] {
+  return [store, `${store}-wal`].map((file) =>
+    existsSync(file) ? readFileSync(file).toString("base64") : "",
+  );
+}
+
 describe("a watch of every folder", () => {
   it("keeps every listed folder in step in one process, naming the folder on every line", async () => {
     const { a, b } = await twoFolders("every-both", {
@@ -203,36 +243,9 @@ describe("a watch of every folder", () => {
 
   it("watches every folder whose store lacks a table this build makes, adding the table", async () => {
     const { a, b } = await twoFolders("every-lacking");
-    const stores = [a, b].map((harness) =>
-      join(harness.dir, ".marfa", "core.sqlite"),
-    );
-    const holds = (store: string): boolean => {
-      const db = new DatabaseSync(store, { readOnly: true });
-      try {
-        return (
-          db
-            .prepare("SELECT 1 FROM sqlite_master WHERE name = 'copy_changes'")
-            .get() !== undefined
-        );
-      } finally {
-        db.close();
-      }
-    };
-    for (const store of stores) {
-      const db = new DatabaseSync(store);
-      try {
-        const triggers = db
-          .prepare(
-            "SELECT name FROM sqlite_master WHERE type = 'trigger' AND sql LIKE '%copy_changes%'",
-          )
-          .all() as Array<{ name: string }>;
-        for (const { name } of triggers) db.exec(`DROP TRIGGER "${name}"`);
-        db.exec("DROP TABLE copy_changes");
-      } finally {
-        db.close();
-      }
-    }
-    expect(stores.map(holds)).toEqual([false, false]);
+    const stores = [a, b].map(storeOf);
+    for (const store of stores) dropCopyChanges(store);
+    expect(stores.map(holdsCopyChanges)).toEqual([false, false]);
 
     put(a, "Disk A.md", "---\ntitle: Disk A\n---\nwritten in a\n");
     put(b, "Disk B.md", "---\ntitle: Disk B\n---\nwritten in b\n");
@@ -246,7 +259,61 @@ describe("a watch of every folder", () => {
       }
       expect(sentTitles(a).sort()).toEqual(["Disk A", "Disk B"]);
     }, WAIT);
-    expect(stores.map(holds)).toEqual([true, true]);
+    expect(stores.map(holdsCopyChanges)).toEqual([true, true]);
+  });
+
+  it("leaves a store that lacks a table untouched while another process holds its folder, and adds the table once it is let go", async () => {
+    const { a, b } = await twoFolders("every-lacking-held");
+    const stores = [a, b].map(storeOf);
+    for (const store of stores) dropCopyChanges(store);
+    expect(stores.map(holdsCopyChanges)).toEqual([false, false]);
+    const before = stores.map(bytesOf);
+    // Another process holds each folder's writer role.
+    const locks = [a, b].map((harness) => {
+      const lock = new DatabaseSync(
+        join(harness.dir, ".marfa", "core.sqlite.writer-lock"),
+      );
+      lock.exec("BEGIN EXCLUSIVE");
+      return lock;
+    });
+    const release = (): void => {
+      for (const lock of locks.splice(0)) lock.close();
+    };
+    cleanups.push(release);
+
+    const watch = hold(a.folder.watchEvery());
+    await vi.waitFor(() => {
+      for (const harness of [a, b]) {
+        expect(
+          linesFor(watch, harness.dir).some(
+            (line) => line.code === "reading_handle",
+          ),
+          `${watch.stdout}${watch.stderr}`,
+        ).toBe(true);
+      }
+    }, WAIT);
+    expect(
+      stores.map(bytesOf),
+      `a watch that could not take a folder changed its store: ${watch.stdout}`,
+    ).toEqual(before);
+    for (const harness of [a, b]) {
+      expect(watching(watch, harness.dir), watch.stdout).toBe(false);
+    }
+
+    // Let go, the same watch takes each folder and adds the table.
+    release();
+    await vi.waitFor(
+      () => {
+        for (const harness of [a, b]) {
+          expect(
+            watching(watch, harness.dir),
+            `${watch.stdout}${watch.stderr}`,
+          ).toBe(true);
+        }
+      },
+      { ...WAIT, timeout: 60_000 },
+    );
+    expect(stores.map(holdsCopyChanges)).toEqual([true, true]);
   });
 
   it("says once why a listed folder cannot be watched, goes on with the others, and takes it up once it can be", async () => {

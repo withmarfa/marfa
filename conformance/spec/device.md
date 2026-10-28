@@ -354,7 +354,7 @@ While a device holds a reading handle, a device MUST refuse every write `reading
 
 **Reason:** two writers of one file would each queue into it and neither would see the other's rows.
 
-**Tests:** `device/working-copy.test.ts › gives a second opener a reading handle that refuses writes`, `device/local-refusals.test.ts › refuses a hydration, a catch-up and a follow from a reading handle`.
+**Tests:** `device/working-copy.test.ts › gives a second opener a reading handle that refuses writes`, `device/local-refusals.test.ts › refuses a hydration, a catch-up and a follow from a reading handle`, `device/folders-watch-every.test.ts › leaves a store that lacks a table untouched while another process holds its folder, and adds the table once it is let go`.
 
 ### `device/reading-handle-queues-nothing`
 
