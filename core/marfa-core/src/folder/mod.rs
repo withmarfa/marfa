@@ -3816,6 +3816,17 @@ mod tests {
     }
 
     #[test]
+    fn a_quiet_watch_pass_puts_back_a_deleted_settings_file() {
+        let (_dir, folder, _server, mut passes) = watched_notes(&["a.md"]);
+        let path = folder.root.join(STATE_DIR).join(SETTINGS_FILE);
+        let text = std::fs::read_to_string(&path).unwrap();
+        std::fs::remove_file(&path).unwrap();
+        passes.run(&folder, false).unwrap();
+        assert_eq!(rendered(), 0, "the pass pulled");
+        assert_eq!(std::fs::read_to_string(&path).ok(), Some(text));
+    }
+
+    #[test]
     fn a_watch_pass_pulls_again_while_an_edge_end_is_unheld() {
         let (dir, folder, server, mut passes) = watched_notes(&["a.md"]);
         let gone = "01a00000-0000-7000-8000-0000000000e9";

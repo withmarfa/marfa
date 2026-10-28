@@ -450,7 +450,12 @@ impl Folder {
                 && self.still_barred(&last.barred)
         }) {
             Some(last) => {
-                let pull = last.report.clone();
+                // The settings file is in the folder's state directory, which
+                // no scan reads, and putting it back renders no file.
+                let pull = PullReport {
+                    settings: self.write_settings_if_moved()?,
+                    ..last.report.clone()
+                };
                 telling.pulled = Some(last);
                 pull
             }
