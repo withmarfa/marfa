@@ -1116,6 +1116,27 @@ mod tests {
         }
     }
 
+    /// As [`quick`], but no held-back start is told by time alone. A watch
+    /// that ends at once can be stalled on a loaded machine for longer than a
+    /// short hold after it told it watches, and is then rightly told to have
+    /// lasted; a test that counts what ends at once says nothing then.
+    fn never_recovered() -> Timing {
+        Timing {
+            recovered: Duration::from_secs(3600),
+            ..quick()
+        }
+    }
+
+    /// As [`quick`], but a folder let go stays the command's for every try. On
+    /// a loaded machine two tries can be further apart than a short hold, and
+    /// the folder is then rightly said to be another process's.
+    fn held_throughout() -> Timing {
+        Timing {
+            held: Duration::from_secs(3600),
+            ..quick()
+        }
+    }
+
     /// Runs the supervisor over the listing `listed` gives until `until`
     /// holds or a bound passes, then stops it and answers what it returned.
     fn supervised(
@@ -1218,8 +1239,16 @@ mod tests {
         let listing = listed(&dirs.iter().map(String::as_str).collect::<Vec<_>>());
         let temp = tempfile::tempdir().unwrap();
         let record = WatchRecord::at(temp.path().join("record.json"), 1, Duration::from_secs(5));
+        // The set is told once it has stayed the same for a reread. Fifty
+        // first looks on a loaded machine are taken in over up to about 100
+        // milliseconds, so a reread of 10 would rightly tell part of the set
+        // first.
+        let settled = Timing {
+            reread: Duration::from_millis(500),
+            ..quick()
+        };
         let started = Instant::now();
-        supervised_timed(&machine, &listing, &record, quick(), |machine| {
+        supervised_timed(&machine, &listing, &record, settled, |machine| {
             count(machine, "watching /real") == 1
                 && count(machine, "missing 50") == 1
                 && started.elapsed() >= Duration::from_secs(1)
@@ -1259,7 +1288,7 @@ mod tests {
         machine.opens("/gone0", vec![Ok(Goes::Lasts)]);
         let machine_back = machine;
         lock(&machine_back.told).clear();
-        supervised_timed(&machine_back, &listing, &record, quick(), |machine| {
+        supervised_timed(&machine_back, &listing, &record, settled, |machine| {
             count(machine, "watching /gone0") == 1 && count(machine, "missing 49") == 1
         })
         .unwrap();
@@ -1370,17 +1399,25 @@ mod tests {
             vec![
                 Ok(Goes::Ends(reason("watch"))),
                 Ok(Goes::Ends(reason("watch"))),
-                Ok(Goes::Lasts),
+                Ok(Goes::Passes),
             ],
         );
         let listing = listed(&["/a"]);
-        supervised(&machine, &listing, |machine| {
-            count(machine, "watching /a") == 2
+        let temp = tempfile::tempdir().unwrap();
+        let record = WatchRecord::at(temp.path().join("record.json"), 1, Duration::from_secs(5));
+        // The try that lasts says it watches by its pass, not by time.
+        supervised_timed(&machine, &listing, &record, never_recovered(), |machine| {
+            count(machine, "/a reach") == 1
         })
         .unwrap();
         assert_eq!(
             machine.told(),
-            vec!["watching /a", "unwatched /a watch", "watching /a"],
+            vec![
+                "watching /a",
+                "unwatched /a watch",
+                "watching /a",
+                "/a reach"
+            ],
             "a try that ended as the last one did was said to start"
         );
         assert_eq!(machine.opened("/a"), 3);
@@ -1553,17 +1590,9 @@ mod tests {
             ],
         );
         let listing = listed(&["/a"]);
-        // A watch that is still running 150 milliseconds after it told it
-        // watches is told to have recovered, and its end is then told again.
-        // These watches end at once, so a loaded machine that stalls one for
-        // that long would break the count; no watch here may recover.
         let temp = tempfile::tempdir().unwrap();
         let record = WatchRecord::at(temp.path().join("record.json"), 1, Duration::from_secs(5));
-        let timing = Timing {
-            recovered: Duration::from_secs(3600),
-            ..quick()
-        };
-        supervised_timed(&machine, &listing, &record, timing, |machine| {
+        supervised_timed(&machine, &listing, &record, never_recovered(), |machine| {
             machine.opened("/a") == 4
                 && lock(&machine.ended).len() == 3
                 && count(machine, "unwatched /a watch") == 1
@@ -1699,14 +1728,7 @@ mod tests {
         let record = WatchRecord::at(temp.path().join("record.json"), 7, Duration::from_secs(5));
         let (failed, lasting) = (AtomicBool::new(false), AtomicBool::new(false));
         let recovered = Mutex::new(Vec::new());
-        // No wall-clock time is allowed to recover the folder: a watch that
-        // is starved for longer than a short hold would be told, rightly, as
-        // having lasted, and the test would then say nothing of the order.
-        let never = Timing {
-            recovered: Duration::from_secs(3600),
-            ..quick()
-        };
-        supervised_timed(&machine, &listing, &record, never, |machine| {
+        supervised_timed(&machine, &listing, &record, never_recovered(), |machine| {
             if record.state_of(Path::new("/b")) == Some((true, None)) {
                 lasting.store(true, Ordering::SeqCst);
             }
@@ -1774,7 +1796,9 @@ mod tests {
         );
         machine.opens("/a", vec![Ok(Goes::Passes)]);
         let listing = listed(&["/a", "/asked"]);
-        supervised(&machine, &listing, |machine| {
+        let temp = tempfile::tempdir().unwrap();
+        let record = WatchRecord::at(temp.path().join("record.json"), 1, Duration::from_secs(5));
+        supervised_timed(&machine, &listing, &record, held_throughout(), |machine| {
             count(machine, "taken back /asked") == 1
                 && count(machine, "watching /a") == 1
                 && count(machine, "/a reach") == 1
@@ -1920,7 +1944,9 @@ mod tests {
             ],
         );
         let listing = listed(&["/asked"]);
-        supervised(&machine, &listing, |machine| {
+        let temp = tempfile::tempdir().unwrap();
+        let record = WatchRecord::at(temp.path().join("record.json"), 1, Duration::from_secs(5));
+        supervised_timed(&machine, &listing, &record, held_throughout(), |machine| {
             count(machine, "watching /asked") == 1
         })
         .unwrap();
