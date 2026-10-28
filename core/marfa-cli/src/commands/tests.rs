@@ -93,6 +93,27 @@ fn a_create_carries_the_properties_the_tags_and_only_the_fields_named() {
 }
 
 #[test]
+fn a_create_only_create_sends_the_bulk_door_mode_and_a_plain_one_sends_none() {
+    let create = |create_only| {
+        items::create_request(&items::CreateArgs {
+            type_: "core.note".into(),
+            source_id: Some("row-1".into()),
+            create_only,
+            ..Default::default()
+        })
+        .unwrap()
+    };
+    assert_eq!(
+        body(&create(true)),
+        &json!({ "type": "core.note", "source_id": "row-1", "mode": "create_only" })
+    );
+    assert_eq!(
+        body(&create(false)),
+        &json!({ "type": "core.note", "source_id": "row-1" })
+    );
+}
+
+#[test]
 fn a_property_given_both_ways_is_refused_rather_than_resolved() {
     let refused = PropertyArgs {
         properties: Some(r#"{"title":"one"}"#.into()),
