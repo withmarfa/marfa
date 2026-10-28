@@ -92,7 +92,17 @@ impl FileStatus {
 impl Folder {
     /// Writes nothing, so a store opened without holding it answers it.
     pub(super) fn status(&self) -> Result<StatusReport> {
+        self.status_reading(None)
+    }
+
+    /// `status`, noting in `reads` what it read of each file it walked.
+    pub(super) fn status_reading(
+        &self,
+        mut reads: Option<&mut super::health::Reads>,
+    ) -> Result<StatusReport> {
         self.refuse_if_gone()?;
+        #[cfg(debug_assertions)]
+        crate::fault::hold(|| format!("folder-status:{}", self.root.display()));
         let settings = self.settings()?;
         let (catalog, edge_types) = {
             let conn = self.core.conn()?;
@@ -158,10 +168,13 @@ impl Folder {
         }
         for (path, key) in paths.iter().zip(&keys) {
             seen.insert(key.clone());
-            let bytes = walked
-                .opened
-                .get(path)
-                .and_then(|captured| captured.read().ok());
+            let read = walked.opened.get(path).map(super::Captured::read);
+            #[cfg(debug_assertions)]
+            crate::fault::hold(|| format!("folder-status-read:{}", path.display()));
+            if let Some(reads) = reads.as_deref_mut() {
+                reads.note(path, read.as_ref());
+            }
+            let bytes = read.and_then(std::result::Result::ok);
             let file_item = match bytes.as_deref() {
                 Some(bytes) if is_document(path) => self.file_item_at(
                     path,
@@ -243,6 +256,9 @@ impl Folder {
                     ..FileStatus::new(&bound.path, at, "waiting")
                 }
             });
+        }
+        if let Some(reads) = reads {
+            reads.finish(self, &walked);
         }
         files.sort_by(|a, b| a.path.cmp(&b.path));
         Ok(StatusReport {
@@ -574,6 +590,7 @@ mod tests {
             permissions: std::sync::OnceLock::new(),
             refused_renames: std::sync::Mutex::new(Default::default()),
             barred: std::sync::Mutex::new(None),
+            health_status: std::sync::Mutex::new(None),
             replaced: None,
             root_dir: crate::directory::Directory::open(&dir.path().canonicalize().unwrap())
                 .unwrap(),

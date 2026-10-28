@@ -520,7 +520,7 @@ impl Folder {
             pull.clone(),
         );
         if full || event.is_some() || telling.health_changed {
-            self.health_observe(
+            self.health_observe_reusing(
                 complete,
                 full,
                 Some(&pull),
