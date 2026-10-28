@@ -38,9 +38,9 @@ pub const RESTART_SECONDS: u32 = 30;
 const CREDENTIAL_REASONS: [&str; 4] =
     ["no_credential", "no_keychain", "unauthorized", "signed_out"];
 
-/// The watch's nice level under systemd. A user unit may raise it without
-/// privilege, and the cpu controller that `CPUWeight=` needs is not always
-/// delegated to a user manager.
+/// The watch's nice level, under launchd and systemd alike. An agent or a
+/// user unit may raise it without privilege, and the cpu controller that
+/// systemd's `CPUWeight=` needs is not always delegated to a user manager.
 const NICE: u8 = 10;
 
 /// The watch's I/O priority within the best-effort class: 7 is the lowest.
@@ -58,8 +58,9 @@ pub enum AutostartCommand {
     /// credential and no server: each folder uses the server its copy came
     /// from and the credential the keychain keeps for it. Run again, it
     /// changes nothing unless the agent would differ, as one written by an
-    /// earlier build does. The watch runs as background work, at a lower CPU
-    /// and I/O priority, to reduce interference with foreground work.
+    /// earlier build does. The watch runs at a lower CPU and I/O priority, so
+    /// it gives way to foreground work but keeps working when every core is
+    /// busy.
     ///
     /// With `--key-file` the agent runs the watch with that file in place of
     /// the keychain, for a machine where nobody signs in to unlock it. The
@@ -183,6 +184,11 @@ impl Agent {
         }
     }
 
+    /// The agent sets no `ProcessType`: `Background` holds every thread of the
+    /// process at the lowest scheduling priority, so on a machine whose cores
+    /// are all busy a pass waits for minutes. The watch's threads lower
+    /// themselves to utility quality of service instead, which gives way under
+    /// load without stopping.
     fn plist(&self) -> Result<String, CliError> {
         let arguments = self
             .arguments()?
@@ -213,8 +219,10 @@ impl Agent {
 \t</dict>
 \t<key>ThrottleInterval</key>
 \t<integer>{RESTART_SECONDS}</integer>
-\t<key>ProcessType</key>
-\t<string>Background</string>
+\t<key>Nice</key>
+\t<integer>{NICE}</integer>
+\t<key>LowPriorityIO</key>
+\t<true/>
 </dict>
 </plist>
 ",
@@ -1286,9 +1294,11 @@ mod tests {
     }
 
     #[test]
-    fn the_launchd_agent_is_marked_as_background_work() {
+    fn the_launchd_agent_lowers_the_watch_cpu_and_io_priority_and_is_not_background_work() {
         let plist = agent("/bin/marfa").plist().unwrap();
-        assert!(plist.contains("<key>ProcessType</key>\n\t<string>Background</string>"));
+        assert!(plist.contains("\t<key>Nice</key>\n\t<integer>10</integer>\n"));
+        assert!(plist.contains("\t<key>LowPriorityIO</key>\n\t<true/>\n"));
+        assert!(!plist.contains("ProcessType"));
     }
 
     #[test]
@@ -1312,19 +1322,25 @@ mod tests {
 
     #[test]
     fn an_agent_from_an_earlier_build_is_one_to_replace() {
-        for (manager, without) in [
+        const LAUNCHD_PRIORITY: &str =
+            "\t<key>Nice</key>\n\t<integer>10</integer>\n\t<key>LowPriorityIO</key>\n\t<true/>\n";
+        for (manager, without, instead) in [
+            (Manager::Launchd, LAUNCHD_PRIORITY, ""),
+            // As written by a build that ran the watch as background work.
             (
                 Manager::Launchd,
+                LAUNCHD_PRIORITY,
                 "\t<key>ProcessType</key>\n\t<string>Background</string>\n",
             ),
             (
                 Manager::Systemd,
                 "Nice=10\nIOSchedulingClass=best-effort\nIOSchedulingPriority=7\n",
+                "",
             ),
         ] {
             let current = agent("/bin/marfa").render(manager).unwrap();
             assert!(current.contains(without), "{manager:?}");
-            let earlier = current.replace(without, "");
+            let earlier = current.replace(without, instead);
             assert_ne!(earlier, current, "{manager:?}");
             // It still reads as the agent it was, so `status` can name it.
             assert_eq!(
