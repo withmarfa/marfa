@@ -68,16 +68,14 @@ afterAll(async () => {
   await stopFreshServers();
 }, 2 * FRESH_SERVER_TIMEOUT_MS);
 
-/** A connection with a key of its own that writes every type. */
+/** A connection with a key of its own, holding what the working key holds. */
 async function connectWithNewKey(label: string): Promise<McpConnection> {
   const minted = await new MarfaClient({
     baseUrl: server.apiUrl,
-    apiKey: server.managementKey,
+    apiKey: server.workingKey,
   }).createKey({
     label: `mcp-scripted-${label}`,
     source: `mcp-scripted-${label}`,
-    permissions: [],
-    type_permissions: { "*": "write" },
   });
   expect(minted.status, JSON.stringify(minted.error)).toBe(201);
   return connectMcp(server.apiUrl, minted.data.key);

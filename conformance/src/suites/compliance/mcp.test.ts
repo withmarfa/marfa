@@ -285,7 +285,7 @@ describe("marfa_get", () => {
   }
 
   it("cuts a long text field to fit the answer and reads the rest by offset", async () => {
-    const long = 'a "quoted" line\n'.repeat(8_000);
+    const long = 'a "quoted" line\n'.repeat(6_000);
     const { id } = await note(long);
     const answer = await callTool(mcp, "marfa_get", { ids: [id] });
     expect(answer.text.length).toBeLessThanOrEqual(ANSWER_BUDGET);

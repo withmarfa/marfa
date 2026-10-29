@@ -38,7 +38,7 @@ When a client of MCP revision 2025-11-25 opens with `initialize`, the server MUS
 
 ### `mcp/no-listen`
 
-When a client calls `subscriptions/listen` on `/mcp`, the server MUST answer with the JSON-RPC error `-32601` in a JSON body and MUST NOT open a stream.
+When a client calls `subscriptions/listen` on `/mcp`, the server MUST answer in a JSON body, not a stream, with the JSON-RPC error `-32601`.
 
 **Reason:** the endpoint keeps no session and no stream between requests, so a listen held open would only hold a connection.
 
