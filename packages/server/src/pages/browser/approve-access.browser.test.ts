@@ -1143,7 +1143,7 @@ describe("Approve access in a browser, choosing types in place of all data", () 
           .allTextContents();
         expect(names.length).toBeGreaterThan(0);
         expect(names.every((n) => /note/i.test(n))).toBe(true);
-        // Enter in the search field sends nothing: the form's first button is disabled.
+        // Enter in the search field sends nothing.
         await search.press("Enter");
         expect(b.page.url()).toContain("/auth/authorize");
         expect(b.callbacks.length).toBe(0);

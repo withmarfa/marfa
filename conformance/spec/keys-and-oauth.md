@@ -1361,7 +1361,7 @@ The consent screen at `/auth/authorize` and the device approval page at `/auth/d
 
 Where a request names a scope other than `openid` and `offline_access` that the app's standing consent does not cover, the server MUST offer, on the consent screen and the device approval page, the access choices Full access and Choose access as a form field named `access` with the values `full` and `choose`, with Full access selected.
 
-**Reason:** Most people want to give an app what it asked for. Full access says so in one choice, and Choose access keeps every control for the person who wants less. A request that names nothing else offers nothing to choose, so it carries no `access` field. A request whose every scope is carried offers nothing to choose.
+**Reason:** Most people want to give an app what it asked for. Full access says so in one choice, and Choose access keeps every control for the person who wants less. A request that names nothing else offers nothing to choose, so it carries no `access` field. Nor does a request whose every scope the app's standing consent already covers.
 
 **Tests:** `compliance/approval-screens.test.ts › offers full access selected, and choosing access, on both pages`, `› offers no choice of access where the request names nothing to choose`, `› offers no choice of access where the app's standing consent covers every scope, on both pages`.
 
