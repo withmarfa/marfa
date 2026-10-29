@@ -35,7 +35,13 @@
  * rather than expiring a budget that names nothing.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { createTestContext, request, readSse, settle } from "../test-utils.js";
+import {
+  createTestContext,
+  request,
+  readSse,
+  settle,
+  cleanupTestContext,
+} from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { initEventLog } from "../pubsub.js";
 
@@ -50,7 +56,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await ctx.cleanup();
+  await cleanupTestContext(ctx);
 });
 
 /** The newest id in the event log, or 0 when it is empty. Read rather than

@@ -5,6 +5,7 @@ import {
   request,
   seedOauthBearer,
   type TestContext,
+  cleanupTestContext,
 } from "../test-utils.js";
 import type { Connector } from "../storage/interface.js";
 
@@ -15,7 +16,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await ctx.cleanup();
+  await cleanupTestContext(ctx);
 });
 
 const READS = [

@@ -32,6 +32,7 @@ import {
   readSse,
   runBulkActionAsync,
   settle,
+  cleanupTestContext,
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { initEventLog } from "../pubsub.js";
@@ -49,7 +50,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await ctx.cleanup();
+  await cleanupTestContext(ctx);
 });
 
 async function note(body: string): Promise<string> {

@@ -3,7 +3,12 @@ import { readdir } from "node:fs/promises";
 import { dirname } from "node:path";
 import { describe, expect, it, beforeAll, afterAll, vi } from "vitest";
 import { Readable } from "node:stream";
-import { createTestContext, request, withSecondStore } from "../test-utils.js";
+import {
+  createTestContext,
+  request,
+  withSecondStore,
+  cleanupTestContext,
+} from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { BlobOrphanReporter } from "../housekeeping/blob-orphans.js";
 import type { BlobStore } from "../storage/blob-store.js";
@@ -15,7 +20,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await ctx.cleanup();
+  await cleanupTestContext(ctx);
 });
 
 async function upload(

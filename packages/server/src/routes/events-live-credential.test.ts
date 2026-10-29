@@ -19,6 +19,7 @@ import {
   readSseWriting,
   request,
   seedOauthBearer,
+  cleanupTestContext,
 } from "../test-utils.js";
 import { eventRoutes } from "./events.js";
 
@@ -29,7 +30,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await ctx.cleanup();
+  await cleanupTestContext(ctx);
 });
 
 async function write(type: string, marker: string): Promise<void> {

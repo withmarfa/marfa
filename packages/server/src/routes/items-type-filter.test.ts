@@ -15,7 +15,12 @@
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { TestContext } from "../test-utils.js";
-import { createTestContext, mintWorkingKey, request } from "../test-utils.js";
+import {
+  createTestContext,
+  mintWorkingKey,
+  request,
+  cleanupTestContext,
+} from "../test-utils.js";
 
 // Two identifiers that differ only where `LIKE` would treat `_` as a
 // wildcard, plus a child of the underscored one so the subtree half of the
@@ -49,7 +54,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await ctx.cleanup();
+  await cleanupTestContext(ctx);
 });
 
 async function listTypes(query: string, key: string): Promise<string[]> {

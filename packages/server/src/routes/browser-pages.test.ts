@@ -1,6 +1,11 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { visibleText } from "../pages/reading.js";
-import { mintWorkingKey, request, createTestContext } from "../test-utils.js";
+import {
+  mintWorkingKey,
+  request,
+  createTestContext,
+  cleanupTestContext,
+} from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 
 vi.setConfig({ testTimeout: 60_000 });
@@ -12,7 +17,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await ctx.cleanup();
+  await cleanupTestContext(ctx);
 });
 
 async function page(path: string): Promise<{ status: number; html: string }> {

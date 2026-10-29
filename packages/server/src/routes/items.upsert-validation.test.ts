@@ -10,7 +10,12 @@
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { TestContext } from "../test-utils.js";
-import { createTestContext, mintWorkingKey, request } from "../test-utils.js";
+import {
+  createTestContext,
+  mintWorkingKey,
+  request,
+  cleanupTestContext,
+} from "../test-utils.js";
 
 let ctx: TestContext;
 
@@ -32,7 +37,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await ctx.cleanup();
+  await cleanupTestContext(ctx);
 });
 
 /** First sync of an upstream record, through the door the connector uses. */

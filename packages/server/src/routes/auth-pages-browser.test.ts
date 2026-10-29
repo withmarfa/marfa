@@ -12,7 +12,7 @@ import type { Browser, Page } from "playwright-core";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { launchTestBrowser, listen, reserveOrigin } from "../test-browser.js";
 import type { TestContext } from "../test-utils.js";
-import { createTestContext } from "../test-utils.js";
+import { createTestContext, cleanupTestContext } from "../test-utils.js";
 
 const launched = await launchTestBrowser();
 const browser: Browser | null = launched instanceof Error ? null : launched;
@@ -55,7 +55,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await server.close();
-  await ctx.cleanup();
+  await cleanupTestContext(ctx);
   await browser?.close();
 });
 

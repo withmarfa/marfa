@@ -17,7 +17,11 @@ import { createGunzip } from "node:zlib";
 import { Readable } from "node:stream";
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
 import * as tar from "tar-stream";
-import { createTestContext, request } from "../test-utils.js";
+import {
+  createTestContext,
+  request,
+  cleanupTestContext,
+} from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 
 let ctx: TestContext;
@@ -51,7 +55,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await ctx.cleanup();
+  await cleanupTestContext(ctx);
 });
 
 /** Ids carried by an NDJSON export, restricted to this file's rows. */

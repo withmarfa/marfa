@@ -2,7 +2,11 @@
  * Input no person would type is refused `400`, never answered `500`.
  */
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
-import { createTestContext, request } from "../test-utils.js";
+import {
+  createTestContext,
+  request,
+  cleanupTestContext,
+} from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { MAX_JSON_DEPTH } from "../json-depth.js";
 import { MAX_TAG_LENGTH } from "../tag-limits.js";
@@ -14,7 +18,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await ctx.cleanup();
+  await cleanupTestContext(ctx);
 });
 
 /** `levels` objects nested in one another, as the JSON text a client sends. */

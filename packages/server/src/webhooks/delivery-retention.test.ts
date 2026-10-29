@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { createTestContext } from "../test-utils.js";
+import { createTestContext, cleanupTestContext } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { Housekeeping } from "../housekeeping/scheduler.js";
 import { registerHousekeepingJobs } from "../housekeeping/registrations.js";
@@ -20,7 +20,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await ctx.cleanup();
+  await cleanupTestContext(ctx);
 });
 
 const DAY_MS = 86_400_000;

@@ -9,7 +9,11 @@
  * row, the only position from which its earlier writes have happened.
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { createTestContext, request } from "../test-utils.js";
+import {
+  createTestContext,
+  request,
+  cleanupTestContext,
+} from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { runChunk } from "./index.js";
 import { resolveLiveCredential } from "../auth/live-credential.js";
@@ -33,7 +37,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await ctx.cleanup();
+  await cleanupTestContext(ctx);
 });
 
 async function note(body: string): Promise<string> {

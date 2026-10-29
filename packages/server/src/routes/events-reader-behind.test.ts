@@ -29,6 +29,7 @@ import {
   settle,
   storedViewerKey,
   TEST_API_KEY_SALT,
+  cleanupTestContext,
 } from "../test-utils.js";
 import { eventRoutes, type EventRoutesOptions } from "./events.js";
 
@@ -41,7 +42,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   __resetEventLogForTests();
-  await ctx.cleanup();
+  await cleanupTestContext(ctx);
 });
 
 const BOUND = 16 * 1024;

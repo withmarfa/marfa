@@ -1,6 +1,6 @@
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
 import { itemWrites } from "./item-writes.js";
-import { createTestContext } from "../test-utils.js";
+import { createTestContext, cleanupTestContext } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { conflictedSiblingId } from "./conflict.js";
 import { isValidId } from "@withmarfa/shared";
@@ -23,7 +23,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await ctx.cleanup();
+  await cleanupTestContext(ctx);
 });
 
 /** A note whose next stale write at `base` collides on `body`. */

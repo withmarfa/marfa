@@ -5,7 +5,12 @@ import { pageForms, pageLinks, visibleText } from "../pages/reading.js";
 import { HOSTILE } from "../pages/test-fixture.js";
 import { createConsolePages } from "./console.js";
 import { MAX_CONSOLE_RETURN_TO_LENGTH } from "./console-gate.js";
-import { createTestContext, request, type TestContext } from "../test-utils.js";
+import {
+  createTestContext,
+  request,
+  type TestContext,
+  cleanupTestContext,
+} from "../test-utils.js";
 
 const BROWSER = {
   accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
@@ -16,7 +21,7 @@ beforeAll(async () => {
   ctx = await createTestContext();
 });
 afterAll(async () => {
-  await ctx.cleanup();
+  await cleanupTestContext(ctx);
 });
 
 const asBrowser = (path: string, cookie?: string) =>

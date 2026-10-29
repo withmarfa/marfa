@@ -20,7 +20,7 @@ import {
 } from "../../routes/content-security-policy.js";
 import { renderHttpErrorPage } from "../../routes/http-error-page.js";
 import { renderSignedOutPage } from "../../routes/signed-out-page.js";
-import { createTestContext } from "../../test-utils.js";
+import { createTestContext, cleanupTestContext } from "../../test-utils.js";
 import type { TestContext } from "../../test-utils.js";
 import { parsePageSize } from "../navigation.js";
 import { MomentFixture, renderFixturePage } from "../test-fixture.js";
@@ -123,7 +123,7 @@ afterAll(async () => {
     }),
   );
   await real.close();
-  await ctx.cleanup();
+  await cleanupTestContext(ctx);
 });
 
 /** Records every policy violation the page reports, from before its first script. */

@@ -1,5 +1,10 @@
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
-import { createTestContext, request, seedOauthBearer } from "../test-utils.js";
+import {
+  createTestContext,
+  request,
+  seedOauthBearer,
+  cleanupTestContext,
+} from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import type { Connector, ConnectorRun } from "../storage/interface.js";
 import { RUNS_KEPT_PER_CONNECTOR } from "../storage/sqlite/connector-store.js";
@@ -25,7 +30,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await ctx.cleanup();
+  await cleanupTestContext(ctx);
 });
 
 async function json<T>(res: Response): Promise<T> {

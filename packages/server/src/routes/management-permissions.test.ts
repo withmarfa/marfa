@@ -6,6 +6,7 @@ import {
   request,
   seedOauthBearer,
   type TestContext,
+  cleanupTestContext,
 } from "../test-utils.js";
 
 let ctx: TestContext;
@@ -22,7 +23,7 @@ beforeAll(async () => {
 });
 afterAll(async () => {
   await ctx.housekeeping.stop();
-  await ctx.cleanup();
+  await cleanupTestContext(ctx);
 });
 
 async function credential(permission?: Permission): Promise<string> {

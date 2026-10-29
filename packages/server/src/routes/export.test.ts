@@ -5,7 +5,12 @@ import type { AddressInfo } from "node:net";
 import { serve } from "@hono/node-server";
 import { describe, expect, it, beforeAll, afterAll, vi } from "vitest";
 import * as tar from "tar-stream";
-import { createTestContext, mintWorkingKey, request } from "../test-utils.js";
+import {
+  createTestContext,
+  mintWorkingKey,
+  request,
+  cleanupTestContext,
+} from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { ensureInstanceId } from "../storage/instance-id.js";
 
@@ -16,7 +21,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await ctx.cleanup();
+  await cleanupTestContext(ctx);
 });
 
 describe("GET /export", () => {

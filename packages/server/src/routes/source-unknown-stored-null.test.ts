@@ -5,7 +5,11 @@
  * witness that each door still narrows.
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { createTestContext, request } from "../test-utils.js";
+import {
+  createTestContext,
+  request,
+  cleanupTestContext,
+} from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 
 let ctx: TestContext;
@@ -34,7 +38,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await ctx.cleanup();
+  await cleanupTestContext(ctx);
 });
 
 const mine = new Set([NULL_ID, OTHER_ID]);

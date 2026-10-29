@@ -4,13 +4,14 @@ import {
   mintWorkingKey,
   request,
   type TestContext,
+  cleanupTestContext,
 } from "../test-utils.js";
 let ctx: TestContext;
 beforeAll(async () => {
   ctx = await createTestContext();
 });
 afterAll(async () => {
-  await ctx.cleanup();
+  await cleanupTestContext(ctx);
 });
 it("keeps the creating sign-in apart from a replacement definition", async () => {
   const created = await request(ctx.app, "POST", "/types", {

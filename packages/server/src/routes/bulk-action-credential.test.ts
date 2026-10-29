@@ -3,7 +3,12 @@ import { BulkActionWorker } from "../bulk-actions/index.js";
 import { afterBulkChunkCommit } from "../bulk-actions/test-helpers.js";
 import type { BulkActionJob, BulkActionResult } from "../bulk-actions/types.js";
 import type { TestContext } from "../test-utils.js";
-import { createTestContext, request, seedOauthBearer } from "../test-utils.js";
+import {
+  createTestContext,
+  request,
+  seedOauthBearer,
+  cleanupTestContext,
+} from "../test-utils.js";
 
 /**
  * A bulk-action job acts on what the credential that queued it holds when
@@ -17,7 +22,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await ctx.cleanup();
+  await cleanupTestContext(ctx);
 });
 
 function marker(prefix: string): string {

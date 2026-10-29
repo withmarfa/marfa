@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { pageButtons, visibleText } from "../pages/reading.js";
-import { createTestContext } from "../test-utils.js";
+import { createTestContext, cleanupTestContext } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 
 let ctx: TestContext;
@@ -29,7 +29,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await ctx.housekeeping.stop();
-  await ctx.cleanup();
+  await cleanupTestContext(ctx);
 });
 
 async function html(path: string): Promise<string> {

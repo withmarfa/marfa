@@ -20,7 +20,7 @@
  */
 import { itemWrites } from "./item-writes.js";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { createTestContext } from "../test-utils.js";
+import { createTestContext, cleanupTestContext } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { softDeleteState } from "@withmarfa/shared";
 
@@ -31,7 +31,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await ctx.cleanup();
+  await cleanupTestContext(ctx);
 });
 
 async function connection(): Promise<string> {

@@ -29,7 +29,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { IDEMPOTENT_WRITE_DOORS } from "../middleware/idempotency.js";
 import { buildPublishedOpenAPISpec } from "../openapi-published.js";
-import { createTestContext } from "../test-utils.js";
+import { createTestContext, cleanupTestContext } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 
 let ctx: TestContext;
@@ -39,7 +39,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await ctx.cleanup();
+  await cleanupTestContext(ctx);
 });
 
 const SERVER_SRC = resolve(dirname(fileURLToPath(import.meta.url)), "..");

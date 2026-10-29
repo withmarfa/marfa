@@ -4,6 +4,7 @@ import {
   request,
   seedOauthBearer,
   TEST_API_KEY_SALT,
+  cleanupTestContext,
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import type { CreateKeyInput } from "@withmarfa/shared";
@@ -16,7 +17,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await ctx.cleanup();
+  await cleanupTestContext(ctx);
 });
 
 /** Store a key directly, so a fixture can hold what no door would mint. */

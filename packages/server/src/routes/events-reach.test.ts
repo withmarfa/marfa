@@ -10,6 +10,7 @@ import {
   request,
   seedOauthBearer,
   type TestContext,
+  cleanupTestContext,
 } from "../test-utils.js";
 import { eventRoutes, type EventRoutesOptions } from "./events.js";
 
@@ -25,7 +26,7 @@ beforeAll(async () => {
   ).instance_id;
 });
 afterAll(async () => {
-  await ctx.cleanup();
+  await cleanupTestContext(ctx);
 });
 function app(options: EventRoutesOptions = {}): Hono<AppEnv> {
   const app = new Hono<AppEnv>();

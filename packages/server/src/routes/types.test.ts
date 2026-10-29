@@ -1,6 +1,10 @@
 import { canonicalTypeDefinition } from "./_canonical-type.js";
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
-import { createTestContext, request } from "../test-utils.js";
+import {
+  createTestContext,
+  request,
+  cleanupTestContext,
+} from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import type { TypeSchema } from "@withmarfa/shared";
 import {
@@ -16,7 +20,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await ctx.cleanup();
+  await cleanupTestContext(ctx);
 });
 
 const baseType = {

@@ -1,7 +1,12 @@
 import { readFileSync } from "node:fs";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ITEM_PROPERTY_BAGS } from "./item-property-numbers.js";
-import { createTestContext, inlineOpenApiRefs, request } from "./test-utils.js";
+import {
+  createTestContext,
+  inlineOpenApiRefs,
+  request,
+  cleanupTestContext,
+} from "./test-utils.js";
 import type { TestContext } from "./test-utils.js";
 
 let ctx: TestContext;
@@ -11,7 +16,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await ctx.cleanup();
+  await cleanupTestContext(ctx);
 });
 
 interface ErrorBody {

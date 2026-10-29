@@ -10,7 +10,7 @@ import {
   listen,
   reserveOrigin,
 } from "../../test-browser.js";
-import { createTestContext } from "../../test-utils.js";
+import { createTestContext, cleanupTestContext } from "../../test-utils.js";
 import type { TestContext } from "../../test-utils.js";
 import { readInstanceConfig } from "../../storage/instance-config.js";
 
@@ -39,7 +39,7 @@ afterAll(async () => {
   if (launched instanceof Error) return;
   await browser.close();
   await server.close();
-  await ctx.cleanup();
+  await cleanupTestContext(ctx);
 });
 
 describe("General", () => {

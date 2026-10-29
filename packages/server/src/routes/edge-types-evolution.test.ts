@@ -4,6 +4,7 @@ import {
   request,
   raceTheNextTransaction,
   type TestContext,
+  cleanupTestContext,
 } from "../test-utils.js";
 
 let ctx: TestContext;
@@ -13,7 +14,7 @@ beforeAll(async () => {
   ctx = await createTestContext();
 });
 afterAll(async () => {
-  await ctx.cleanup();
+  await cleanupTestContext(ctx);
 });
 
 const base = (id: string) => ({

@@ -11,7 +11,12 @@
  * produce the shape: it announces every edge of the row first and the row last.
  */
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
-import { createTestContext, readSseWriting, request } from "../test-utils.js";
+import {
+  createTestContext,
+  readSseWriting,
+  request,
+  cleanupTestContext,
+} from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { __resetEventLogForTests, initEventLog } from "../pubsub.js";
 
@@ -25,7 +30,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   __resetEventLogForTests();
-  await ctx.cleanup();
+  await cleanupTestContext(ctx);
 });
 
 async function note(body: string): Promise<string> {

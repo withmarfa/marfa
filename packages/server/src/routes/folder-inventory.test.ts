@@ -4,6 +4,7 @@ import {
   request,
   seedOauthBearer,
   type TestContext,
+  cleanupTestContext,
 } from "../test-utils.js";
 import { FOLDER_PROBLEM_CODES } from "@withmarfa/shared";
 import { visibleText } from "../pages/reading.js";
@@ -12,7 +13,7 @@ beforeAll(async () => {
   ctx = await createTestContext();
 });
 afterAll(async () => {
-  await ctx.cleanup();
+  await cleanupTestContext(ctx);
 });
 const owner = (path: string, html = false) =>
   ctx.app.request(path, {

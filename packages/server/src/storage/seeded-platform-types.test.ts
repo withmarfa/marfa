@@ -11,7 +11,11 @@
  * why the invariant is asserted here rather than left to each one.
  */
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
-import { createTestContext, type TestContext } from "../test-utils.js";
+import {
+  createTestContext,
+  type TestContext,
+  cleanupTestContext,
+} from "../test-utils.js";
 
 let ctx: TestContext;
 
@@ -20,7 +24,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await ctx.cleanup();
+  await cleanupTestContext(ctx);
 });
 
 describe("the seeded platform set", () => {

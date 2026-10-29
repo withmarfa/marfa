@@ -7,6 +7,7 @@ import {
   mintWorkingKey,
   request,
   runBulkActionAsync,
+  cleanupTestContext,
 } from "../test-utils.js";
 
 /**
@@ -122,7 +123,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await ctx.cleanup();
+  await cleanupTestContext(ctx);
 });
 
 describe("the match set narrows to what the caller may write", () => {

@@ -20,6 +20,7 @@ import {
   request,
   runBulkActionAsync,
   seedOauthBearer,
+  cleanupTestContext,
 } from "../test-utils.js";
 import { blobPrincipal } from "./_blob-reach.js";
 
@@ -41,7 +42,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await ctx.cleanup();
+  await cleanupTestContext(ctx);
 });
 
 function sweeper(): TextEnrichmentSweeper {

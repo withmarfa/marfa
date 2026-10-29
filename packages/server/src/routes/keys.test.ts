@@ -6,6 +6,7 @@ import {
   request,
   seedOauthBearer,
   TEST_API_KEY_SALT,
+  cleanupTestContext,
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { hashApiKey } from "../middleware/auth.js";
@@ -19,7 +20,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await ctx.cleanup();
+  await cleanupTestContext(ctx);
 });
 
 async function createKey(overrides: Record<string, unknown> = {}): Promise<{

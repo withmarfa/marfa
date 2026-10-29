@@ -3,6 +3,7 @@ import {
   createTestContext,
   request,
   runBulkActionAsync,
+  cleanupTestContext,
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { registerTypeSchema, unregisterTypeSchema } from "@withmarfa/shared";
@@ -29,7 +30,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await ctx.cleanup();
+  await cleanupTestContext(ctx);
 });
 
 /** A required string given a number. No door may accept it. */

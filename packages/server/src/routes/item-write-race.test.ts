@@ -15,6 +15,7 @@ import {
   mintWorkingKey,
   raceTheNextTransaction,
   request,
+  cleanupTestContext,
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { BulkActionWorker } from "../bulk-actions/worker.js";
@@ -34,7 +35,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await ctx.cleanup();
+  await cleanupTestContext(ctx);
 });
 
 async function seedNote(

@@ -1,14 +1,18 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { writeItem } from "../storage/item-write.js";
 import type { TestContext } from "../test-utils.js";
-import { createTestContext, request } from "../test-utils.js";
+import {
+  createTestContext,
+  request,
+  cleanupTestContext,
+} from "../test-utils.js";
 
 let ctx: TestContext;
 beforeAll(async () => {
   ctx = await createTestContext();
 });
 afterAll(async () => {
-  await ctx.cleanup();
+  await cleanupTestContext(ctx);
 });
 
 describe("the view door", () => {

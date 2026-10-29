@@ -8,7 +8,7 @@
  * number are held here as well, where a change to either fails first.
  */
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
-import { createTestContext } from "./test-utils.js";
+import { createTestContext, cleanupTestContext } from "./test-utils.js";
 import type { TestContext } from "./test-utils.js";
 import { ensureInstanceId } from "./storage/instance-id.js";
 import { buildPublishedOpenAPISpec } from "./openapi-published.js";
@@ -20,7 +20,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await ctx.cleanup();
+  await cleanupTestContext(ctx);
 });
 
 describe("GET /", () => {

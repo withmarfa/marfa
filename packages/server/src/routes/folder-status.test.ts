@@ -1,12 +1,16 @@
 import { afterAll, beforeAll, expect, it } from "vitest";
-import { createTestContext, request } from "../test-utils.js";
+import {
+  createTestContext,
+  request,
+  cleanupTestContext,
+} from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 let ctx: TestContext;
 beforeAll(async () => {
   ctx = await createTestContext();
 });
 afterAll(async () => {
-  await ctx.cleanup();
+  await cleanupTestContext(ctx);
 });
 it("accepts and reads a folder-copy report", async () => {
   const made = await request(ctx.app, "POST", "/folders", {

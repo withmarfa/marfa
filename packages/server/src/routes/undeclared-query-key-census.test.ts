@@ -9,7 +9,7 @@
  * without the refusal has to be classified here before this file goes green.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { createTestContext } from "../test-utils.js";
+import { createTestContext, cleanupTestContext } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 
 let ctx: TestContext;
@@ -31,7 +31,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await ctx.cleanup();
+  await cleanupTestContext(ctx);
 });
 
 const UNKNOWN_ID = "019537a0-7b80-7000-8000-000000000000";

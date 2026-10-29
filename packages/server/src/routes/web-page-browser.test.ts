@@ -16,7 +16,11 @@
 import type { Browser, BrowserContext } from "playwright-core";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { launchTestBrowser, listen, reserveOrigin } from "../test-browser.js";
-import { createTestContext, type TestContext } from "../test-utils.js";
+import {
+  createTestContext,
+  type TestContext,
+  cleanupTestContext,
+} from "../test-utils.js";
 
 const launched = await launchTestBrowser();
 const browser: Browser | null = launched instanceof Error ? null : launched;
@@ -50,7 +54,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await server.close();
-  await ctx.cleanup();
+  await cleanupTestContext(ctx);
   await browser?.close();
 });
 

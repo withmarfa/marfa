@@ -19,6 +19,7 @@ import {
   request,
   runBulkActionAsync,
   type TestContext,
+  cleanupTestContext,
 } from "../test-utils.js";
 import { initEventLog, __resetEventLogForTests } from "../pubsub.js";
 
@@ -34,7 +35,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   __resetEventLogForTests();
-  await ctx.cleanup();
+  await cleanupTestContext(ctx);
 });
 
 /** Highest id in the log right now, so a case reads only its own rows. */

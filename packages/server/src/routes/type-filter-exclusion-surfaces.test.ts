@@ -23,7 +23,12 @@
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { TestContext } from "../test-utils.js";
-import { createTestContext, mintWorkingKey, request } from "../test-utils.js";
+import {
+  createTestContext,
+  mintWorkingKey,
+  request,
+  cleanupTestContext,
+} from "../test-utils.js";
 
 const KEPT = "user.kept_note";
 const WITHHELD = "user.withheld_note";
@@ -59,7 +64,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await ctx.cleanup();
+  await cleanupTestContext(ctx);
 });
 
 /**

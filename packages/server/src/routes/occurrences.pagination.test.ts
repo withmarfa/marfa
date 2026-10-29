@@ -18,7 +18,11 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT } from "../page-limits.js";
 import { OpenAPIHono } from "@hono/zod-openapi";
-import { createTestContext, request } from "../test-utils.js";
+import {
+  createTestContext,
+  request,
+  cleanupTestContext,
+} from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import {
   gatherSeriesSeeds,
@@ -63,7 +67,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await ctx.cleanup();
+  await cleanupTestContext(ctx);
 });
 
 async function occurrences(

@@ -24,6 +24,7 @@ import {
   request,
   TEST_API_KEY_SALT,
   type TestContext,
+  cleanupTestContext,
 } from "../test-utils.js";
 import { initEventLog, __resetEventLogForTests } from "../pubsub.js";
 import { credentialScopedKey } from "../middleware/idempotency.js";
@@ -48,7 +49,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   __resetEventLogForTests();
-  await ctx.cleanup();
+  await cleanupTestContext(ctx);
 });
 
 async function logCursor(): Promise<bigint> {

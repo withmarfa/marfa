@@ -1,7 +1,12 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { pageLinks, visibleText } from "../pages/reading.js";
 import type { Connector, ConnectorRun } from "../storage/interface.js";
-import { createTestContext, request, type TestContext } from "../test-utils.js";
+import {
+  createTestContext,
+  request,
+  type TestContext,
+  cleanupTestContext,
+} from "../test-utils.js";
 import { connectorStatus, SILENT_AFTER_MS } from "./connector-status.js";
 
 const HOUR = 60 * 60 * 1000;
@@ -73,7 +78,7 @@ beforeAll(async () => {
   ctx = await createTestContext();
 });
 afterAll(async () => {
-  await ctx.cleanup();
+  await cleanupTestContext(ctx);
 });
 
 const BROWSER = { accept: "text/html,application/xhtml+xml" };

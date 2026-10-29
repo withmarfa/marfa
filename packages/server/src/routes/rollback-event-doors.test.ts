@@ -52,6 +52,7 @@ import {
   runBulkActionAsync,
   settle,
   TEST_API_KEY_SALT,
+  cleanupTestContext,
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import {
@@ -80,7 +81,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   __resetEventLogForTests();
-  await ctx.cleanup();
+  await cleanupTestContext(ctx);
 });
 
 // ---------------------------------------------------------------------------

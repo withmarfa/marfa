@@ -6,6 +6,7 @@ import {
   mintWorkingKey,
   request,
   type TestContext,
+  cleanupTestContext,
 } from "../test-utils.js";
 
 let ctx: TestContext;
@@ -25,7 +26,7 @@ afterEach(() => {
   clearFaults();
 });
 afterAll(async () => {
-  await ctx.cleanup();
+  await cleanupTestContext(ctx);
 });
 
 const reads = [

@@ -1,5 +1,10 @@
 import { afterAll, beforeAll, expect, it } from "vitest";
-import { createTestContext, request, type TestContext } from "../test-utils.js";
+import {
+  createTestContext,
+  request,
+  type TestContext,
+  cleanupTestContext,
+} from "../test-utils.js";
 import { itemWrites } from "../storage/item-writes.js";
 
 let ctx: TestContext;
@@ -39,7 +44,7 @@ beforeAll(async () => {
   trashedId = trash.id;
 });
 afterAll(async () => {
-  await ctx.cleanup();
+  await cleanupTestContext(ctx);
 });
 
 it("keeps items visible when their custom type was removed", async () => {

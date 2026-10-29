@@ -7,7 +7,12 @@
  * the other's stored answer, which can name rows it may not read.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { createTestContext, mintWorkingKey, request } from "../test-utils.js";
+import {
+  createTestContext,
+  mintWorkingKey,
+  request,
+  cleanupTestContext,
+} from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { BulkActionWorker } from "../bulk-actions/worker.js";
 
@@ -20,7 +25,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await ctx.cleanup();
+  await cleanupTestContext(ctx);
 });
 
 const fresh = (label: string): string =>

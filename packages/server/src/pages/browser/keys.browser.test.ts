@@ -15,6 +15,7 @@ import {
   createTestContext,
   mintWorkingKey,
   TEST_CONTENT_PERMISSIONS,
+  cleanupTestContext,
 } from "../../test-utils.js";
 import type { TestContext } from "../../test-utils.js";
 
@@ -44,7 +45,7 @@ afterAll(async () => {
   if (launched instanceof Error) return;
   await browser.close();
   await server.close();
-  await ctx.cleanup();
+  await cleanupTestContext(ctx);
 });
 
 let nextAddress = 1;

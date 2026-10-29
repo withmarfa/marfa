@@ -1,5 +1,10 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { createTestContext, request, settle } from "../test-utils.js";
+import {
+  createTestContext,
+  request,
+  settle,
+  cleanupTestContext,
+} from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { getTypeSchema } from "@withmarfa/shared";
 
@@ -10,7 +15,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await ctx.cleanup();
+  await cleanupTestContext(ctx);
 });
 
 const RUN = Math.random().toString(36).slice(2, 8);

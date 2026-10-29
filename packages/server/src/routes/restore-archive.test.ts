@@ -20,6 +20,7 @@ import {
   mintWorkingKey,
   request,
   settle,
+  cleanupTestContext,
 } from "../test-utils.js";
 
 let ctx: TestContext;
@@ -35,7 +36,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   __resetEventLogForTests();
-  await ctx.cleanup();
+  await cleanupTestContext(ctx);
 });
 
 /** Highest id in the log right now, so a case reads only its own rows. */

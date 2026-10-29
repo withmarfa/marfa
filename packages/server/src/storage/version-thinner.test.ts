@@ -15,7 +15,11 @@ import {
   unregisterTypeSchema,
 } from "@withmarfa/shared";
 import type { TypeSchema } from "@withmarfa/shared";
-import { createTestContext, request } from "../test-utils.js";
+import {
+  createTestContext,
+  request,
+  cleanupTestContext,
+} from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { VersionThinner } from "./version-thinner.js";
 import type { ResolvedPolicy } from "./version-thinning.js";
@@ -62,7 +66,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await ctx.cleanup();
+  await cleanupTestContext(ctx);
 });
 
 beforeEach(() => {

@@ -10,6 +10,7 @@ import {
   createTestContext,
   overwritePropertiesUnchecked,
   request,
+  cleanupTestContext,
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { MAX_WINDOW_DAYS } from "./occurrences.js";
@@ -45,7 +46,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await ctx.cleanup();
+  await cleanupTestContext(ctx);
 });
 
 async function createEvent(

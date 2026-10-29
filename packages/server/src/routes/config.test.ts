@@ -6,7 +6,11 @@ import {
 } from "../storage/instance-config.js";
 import type { Storage } from "../storage/interface.js";
 import type { TestContext } from "../test-utils.js";
-import { createTestContext, request } from "../test-utils.js";
+import {
+  createTestContext,
+  request,
+  cleanupTestContext,
+} from "../test-utils.js";
 
 // ----- The shared context: the door's defaults when nothing is set -----
 let ctx: TestContext;
@@ -16,7 +20,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await ctx.cleanup();
+  await cleanupTestContext(ctx);
 });
 
 describe("GET /config", () => {
