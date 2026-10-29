@@ -12,7 +12,7 @@ import {
 import { GROUP_PATHS, type McpGroup } from "./groups.js";
 import { connectMcp } from "./test-client.js";
 import {
-  instructionsFor,
+  SERVER_INSTRUCTIONS,
   TOOL_GROUPS,
   TOOL_OPERATIONS,
   type ToolName,
@@ -90,8 +90,8 @@ describe("the MCP tools", () => {
             TOOL_GROUPS[tool] === "items" || TOOL_GROUPS[tool] === group,
         );
         expect(tools.map((tool) => tool.name).sort()).toEqual(expected.sort());
-        expect(client.getInstructions()).toBe(instructionsFor(group));
-        const instructions = instructionsFor(group);
+        expect(client.getInstructions()).toBe(SERVER_INSTRUCTIONS);
+        const instructions = SERVER_INSTRUCTIONS;
         const size = JSON.stringify(tools).length + instructions.length;
         expect(size).toBeLessThanOrEqual(
           TOOL_LIST_BUDGET_CHARS + (group === "items" ? 0 : GROUP_BUDGET_CHARS),
