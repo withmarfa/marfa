@@ -314,7 +314,18 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
     PAGE_ASSETS_AND_TESTS,
   ],
   [/^packages\/server\//, SERVER],
-  [/^packages\/client\//, ["workspace", "clients-freshness"]],
+  // The server imports the client at runtime: the MCP tools call the API
+  // through it.
+  [
+    /^packages\/client\//,
+    [
+      "workspace",
+      "clients-freshness",
+      ...CONFORMANCE,
+      "mcp-conformance",
+      "image",
+    ],
+  ],
 
   [/^conformance\/scripts\/restore-drill\.ts$/, ["workspace", "restore-drill"]],
   [
