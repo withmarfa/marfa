@@ -358,10 +358,14 @@ export class MarfaClient {
   async trashItems(
     ids: string[],
     digest?: string,
+    options?: { idempotencyKey?: string },
   ): Promise<ApiResponse<{ ok: boolean }>> {
     return this.request<{ ok: boolean }>("/items/trash", {
       method: "POST",
       body: { ids, ...(digest !== undefined && { digest }) },
+      ...(options?.idempotencyKey && {
+        headers: { "Idempotency-Key": options.idempotencyKey },
+      }),
     });
   }
 

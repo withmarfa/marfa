@@ -105,6 +105,22 @@ async function sharing(): Promise<{ a: string; b: string; shared: string }> {
 }
 
 describe("POST /items/trash-preview", () => {
+  it("refuses a repeated Idempotency-Key with another body and trashes nothing more", async () => {
+    const first = await note();
+    const second = await note();
+    const key = `trash-idem-${ctx.runId}-${Math.random().toString(36).slice(2, 8)}`;
+    const trashed = await client.trashItems([first], undefined, {
+      idempotencyKey: key,
+    });
+    expect(trashed.status).toBe(200);
+    const reused = await client.trashItems([second], undefined, {
+      idempotencyKey: key,
+    });
+    expect(reused.status).toBe(422);
+    expect(reused.error?.error.code).toBe("idempotency_key_reused");
+    expect((await client.getItem(second)).status).toBe(200);
+  });
+
   it("names the item and everything a cascade would take with it, leaves first, and the trash then takes exactly that", async () => {
     const parent = await note();
     const first = await note();
