@@ -187,7 +187,7 @@ const trashRefusals = {
       },
     },
     description:
-      "- `item_not_found`: no item has an ID in `ids`, or its type is one you can't read. If the item is in the trash and you can read its type, `details.trashed` is `true`.",
+      "- `item_not_found`: an ID in `ids` names no item, or names an item whose type you can't read. If that item is in the trash and you can read its type, `details.trashed` is `true`.",
   },
 } as const;
 

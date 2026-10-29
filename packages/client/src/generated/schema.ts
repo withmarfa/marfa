@@ -7502,7 +7502,7 @@ export interface operations {
                     "application/json": components["schemas"]["TypeNotPermittedRefusal"];
                 };
             };
-            /** @description - `item_not_found`: no item has an ID in `ids`, or its type is one you can't read. If the item is in the trash and you can read its type, `details.trashed` is `true`. */
+            /** @description - `item_not_found`: an ID in `ids` names no item, or names an item whose type you can't read. If that item is in the trash and you can read its type, `details.trashed` is `true`. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -7704,7 +7704,7 @@ export interface operations {
                     "application/json": components["schemas"]["TypeNotPermittedRefusal"];
                 };
             };
-            /** @description - `item_not_found`: no item has an ID in `ids`, or its type is one you can't read. If the item is in the trash and you can read its type, `details.trashed` is `true`. */
+            /** @description - `item_not_found`: an ID in `ids` names no item, or names an item whose type you can't read. If that item is in the trash and you can read its type, `details.trashed` is `true`. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];

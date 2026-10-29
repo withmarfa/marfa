@@ -265,8 +265,8 @@ async function fingerprint(
     String(contract),
     c.req.method,
     canonicalPath(url.pathname),
-    // These doors accept only closed enums, whole-number versions and a
-    // lowercase hex digest in the query. A free-text query parameter would
+    // These doors accept only closed enums and whole-number versions in the
+    // query. A free-text query parameter would
     // need canonicalization to let retries re-encode it, and a retry that
     // reorders the parameters is read as another request.
     url.search,
