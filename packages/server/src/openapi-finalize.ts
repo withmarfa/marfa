@@ -354,7 +354,13 @@ export const PUBLIC_TAGS: readonly PublicTag[] = [
   {
     name: "Instance",
     description: "The instance itself: what it is and how it's configured.",
-    operations: ["getInstance", "getConfig", "updateConfig", "replaceConfig"],
+    operations: [
+      "getInstance",
+      "getOverview",
+      "getConfig",
+      "updateConfig",
+      "replaceConfig",
+    ],
   },
   {
     name: "Health and maintenance",

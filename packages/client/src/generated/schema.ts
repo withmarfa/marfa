@@ -1868,6 +1868,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/overview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get an overview
+         * @description Returns what the instance holds that your credential can reach: types with item counts, edge types, top tags, views and folders, and what your credential may do. Every list is capped. Needs no type access.
+         */
+        get: operations["getOverview"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/config": {
         parameters: {
             query?: never;
@@ -4085,6 +4105,149 @@ export interface components {
             /** @description How many active items you can read carry the tag. */
             count: number;
         };
+        /**
+         * @description A summary of what this instance holds and what your credential may reach.
+         * @example {
+         *       "instance": {
+         *         "name": "Marfa",
+         *         "version": "dev"
+         *       },
+         *       "credential": {
+         *         "kind": "key",
+         *         "label": "Notes agent",
+         *         "type_permissions": {
+         *           "write": [
+         *             "core.note"
+         *           ],
+         *           "read": [
+         *             "*"
+         *           ]
+         *         },
+         *         "permissions": [
+         *           "audit.read"
+         *         ]
+         *       },
+         *       "types": [
+         *         {
+         *           "id": "core.note",
+         *           "description": "A piece of writing.",
+         *           "count": 128
+         *         }
+         *       ],
+         *       "edge_types": [
+         *         {
+         *           "id": "references",
+         *           "access": "write"
+         *         }
+         *       ],
+         *       "tags": [
+         *         {
+         *           "tag": "work",
+         *           "count": 40
+         *         }
+         *       ],
+         *       "views": [
+         *         {
+         *           "id": "019537a0-7b80-7000-8000-000000000000",
+         *           "title": "Reading list"
+         *         }
+         *       ]
+         *     }
+         */
+        Overview: {
+            /** @description The instance's name and the build it runs. */
+            instance: {
+                /** @description The instance's display name. */
+                name: string;
+                /** @description The build the instance runs. */
+                version: string;
+                /** @description The release the build was made as. Absent for a build that is not a release. */
+                release?: string;
+            };
+            /** @description The credential that sent the request, and what it may do. */
+            credential: {
+                /**
+                 * @description `key` for an API key, `app` for a signed-in app's token.
+                 * @enum {string}
+                 */
+                kind: "key" | "app";
+                /** @description The key's label. Absent for an app. */
+                label?: string;
+                /** @description Your type map by level, each list sorted and cut at 30 patterns. Absent when the map is empty. */
+                type_permissions?: {
+                    /** @description Type patterns you can read and write, such as `core.*`. Absent when none. */
+                    write?: string[];
+                    /** @description Type patterns you can only read. Absent when none. */
+                    read?: string[];
+                    /** @description Type patterns denied even where a wider pattern grants access. Absent when none. */
+                    none?: string[];
+                };
+                /** @description The permissions you hold. Absent when you hold none. */
+                permissions?: components["schemas"]["Permission"][];
+            };
+            /** @description The types you can read, most items first, then by identifier, at most 50. Types in the `system` namespace are left out. Absent when you can read none. */
+            types?: components["schemas"]["OverviewType"][];
+            /** @description The edge types you can read or write, sorted by identifier, at most 50. Absent when you can read no type or can use no edge type. */
+            edge_types?: components["schemas"]["OverviewEdgeType"][];
+            /** @description The most used tags on items you can read, at most 30. Absent when there are none. */
+            tags?: components["schemas"]["TagCount"][];
+            /** @description The views you can read, sorted by title, at most 30. Absent when there are none. */
+            views?: components["schemas"]["OverviewView"][];
+            /** @description The folders you can read, sorted by title, at most 30. Absent when there are none. */
+            folders?: components["schemas"]["OverviewFolder"][];
+            /** @description Each list that was cut, with how many entries it held before the cut. Names are `types`, `edge_types`, `tags`, `views`, `folders` and `credential.type_permissions.<level>`. Absent when nothing was cut. */
+            truncated?: {
+                [key: string]: number;
+            };
+        };
+        /**
+         * @description A permission a credential can hold, for an operation the type, edge, extension, metadata and profile maps don't cover. `schema.write` replaces and deletes types and edge types; `keys.mint` mints keys and lists, changes and revokes those within the caller's reach; `keys.manage` lists and revokes every key and changes one without widening it; `items.purge` purges trashed items; `webhooks.manage` manages webhooks; `config.manage` reads and replaces `/config`; `audit.read` reads the audit log; `grants.manage` lists and revokes other apps' access; `instance.read` reads health, metrics, housekeeping, retired platform types, blob storage reports and every bulk job's status; `instance.maintain` runs housekeeping, resets platform type definitions and cancels bulk jobs; `connectors.manage` administers connector registrations and their endpoints, and clears their retained state; and `blobs.manage` manages every blob.
+         * @enum {string}
+         */
+        Permission: "webhooks.manage" | "schema.write" | "config.manage" | "audit.read" | "items.purge" | "keys.mint" | "grants.manage" | "instance.read" | "instance.maintain" | "connectors.manage" | "blobs.manage" | "keys.manage";
+        /** @description A type you can read, and how many active items it has. */
+        OverviewType: {
+            /**
+             * @description The type's identifier.
+             * @example core.note
+             */
+            id: string;
+            /** @description What the type holds, cut at 100 characters. Absent when the type has none. */
+            description?: string;
+            /** @description How many active items of the type you can read. */
+            count: number;
+        };
+        /** @description An edge type your edge permissions cover, and at which level. */
+        OverviewEdgeType: {
+            /**
+             * @description The edge type's identifier.
+             * @example parent-of
+             */
+            id: string;
+            /** @description What the edge type means, cut at 100 characters. Absent when it has none. */
+            description?: string;
+            access: components["schemas"]["PermissionLevel"] & unknown;
+        };
+        /** @description A view you can read. */
+        OverviewView: {
+            /**
+             * @description The ID of the view.
+             * @example 019537a0-7b80-7000-8000-000000000000
+             */
+            id: string;
+            /** @description The view's title, cut at 100 characters. */
+            title: string;
+        };
+        /** @description A folder you can read. */
+        OverviewFolder: {
+            /**
+             * @description The ID of the folder.
+             * @example 019537a0-7b80-7000-8000-000000000000
+             */
+            id: string;
+            /** @description The folder's title, cut at 100 characters. */
+            title: string;
+        };
         /** @description An error response. */
         RequestTimeoutRefusal: {
             /** @description What went wrong. */
@@ -4907,11 +5070,6 @@ export interface components {
             /** @description When the key's use was last recorded, in UTC, or `null` if none is recorded. Marfa records usage asynchronously at most once an hour; a busy or unavailable store can delay or drop a record. */
             last_used_at: string | null;
         };
-        /**
-         * @description A permission a credential can hold, for an operation the type, edge, extension, metadata and profile maps don't cover. `schema.write` replaces and deletes types and edge types; `keys.mint` mints keys and lists, changes and revokes those within the caller's reach; `keys.manage` lists and revokes every key and changes one without widening it; `items.purge` purges trashed items; `webhooks.manage` manages webhooks; `config.manage` reads and replaces `/config`; `audit.read` reads the audit log; `grants.manage` lists and revokes other apps' access; `instance.read` reads health, metrics, housekeeping, retired platform types, blob storage reports and every bulk job's status; `instance.maintain` runs housekeeping, resets platform type definitions and cancels bulk jobs; `connectors.manage` administers connector registrations and their endpoints, and clears their retained state; and `blobs.manage` manages every blob.
-         * @enum {string}
-         */
-        Permission: "webhooks.manage" | "schema.write" | "config.manage" | "audit.read" | "items.purge" | "keys.mint" | "grants.manage" | "instance.read" | "instance.maintain" | "connectors.manage" | "blobs.manage" | "keys.manage";
         /**
          * @description What a key may do with a type: `read` it, `write` it (which includes reading), or `none`, which denies a type a wildcard entry would reach.
          * @enum {string}
@@ -27996,6 +28154,122 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
+                };
+            };
+        };
+    };
+    getOverview: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Returns the overview. A credential that reaches nothing gets the instance and credential only. */
+            200: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Overview"];
+                };
+            };
+            /** @description - `validation_error`: the query has a parameter this endpoint doesn't take. */
+            400: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ValidationErrorRefusal"];
+                };
+            };
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            401: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UnauthorizedRefusal"];
+                };
+            };
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
+            429: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RateLimitedRefusal"];
+                };
+            };
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
+            500: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InternalErrorRefusal"];
+                };
+            };
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            503: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WriteContentionRefusal"];
+                };
+            };
+            /** @description `insufficient_storage`: the disk that holds the instance's data has no room for the request, or the request would leave less free than the instance keeps in reserve. Nothing changed, unless `details.write_outcome` is `unknown`, which means the write may have landed: read what you changed before you repeat it. Free space on the disk, then try the request again. */
+            507: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InsufficientStorageRefusal"];
                 };
             };
         };

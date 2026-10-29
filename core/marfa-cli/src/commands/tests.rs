@@ -1978,3 +1978,62 @@ fn a_picture_over_two_mebibytes_is_refused_before_any_request_is_built() {
     }
     assert!(exact.is_ok(), "a picture of exactly 2 MiB is allowed");
 }
+
+#[test]
+fn the_overview_is_one_credentialed_read_of_the_overview_path() {
+    let request = overview::request();
+    assert_eq!(request.method, Method::Get);
+    assert_eq!(request.path(), "/overview");
+    assert!(request.query.is_empty());
+}
+
+#[test]
+fn the_overview_reads_as_sections_with_what_was_cut() {
+    let text = overview::describe(&json!({
+        "instance": { "name": "Marfa", "version": "abc", "release": "0.1.2" },
+        "credential": {
+            "kind": "key",
+            "label": "Notes agent",
+            "type_permissions": { "write": ["core.note"], "read": ["*"] },
+            "permissions": ["audit.read"]
+        },
+        "types": [{ "id": "core.note", "description": "Writing.", "count": 3 }],
+        "edge_types": [{ "id": "references", "access": "write" }],
+        "tags": [{ "tag": "work", "count": 2 }],
+        "views": [{ "id": "v1", "title": "Reading list" }],
+        "truncated": { "tags": 40, "credential.type_permissions.read": 31 }
+    }));
+    assert_eq!(
+        text,
+        [
+            "instance Marfa (0.1.2, build abc)",
+            "credential key Notes agent",
+            "  can read and write core.note",
+            "  can read * (and others, 31 in all)",
+            "  permissions audit.read",
+            "",
+            "types",
+            "  core.note (3)  Writing.",
+            "",
+            "edge types",
+            "  references (write)",
+            "",
+            "tags",
+            "  work (2)",
+            "  and 39 more, 40 in all",
+            "",
+            "views",
+            "  v1  Reading list",
+        ]
+        .join("\n")
+    );
+}
+
+#[test]
+fn an_overview_of_a_credential_that_reaches_nothing_is_two_lines() {
+    let text = overview::describe(&json!({
+        "instance": { "name": "Marfa", "version": "abc" },
+        "credential": { "kind": "app" }
+    }));
+    assert_eq!(text, "instance Marfa (abc)\ncredential app");
+}

@@ -15,7 +15,7 @@ import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 // Schemas
 // ---------------------------------------------------------------------------
 
-const TagWithCountSchema = z
+export const TagWithCountSchema = z
   .object({
     tag: z.string().describe("The tag."),
     count: z

@@ -35,8 +35,8 @@ use clap::{ArgMatches, CommandFactory, FromArgMatches, Parser, Subcommand};
 
 use crate::commands::{
     apps, audit, blobs, config, connectors, docs, edge_types, edges, events, export, extensions,
-    housekeeping, items, keys, login, logout, metadata, metrics, operations, owner, profile,
-    restore, search, sign_ins, status, types, views, webhooks, whoami,
+    housekeeping, items, keys, login, logout, metadata, metrics, operations, overview, owner,
+    profile, restore, search, sign_ins, status, types, views, webhooks, whoami,
 };
 use crate::device::DeviceArgs;
 use crate::error::{CliError, DOCS_HINT, Exit, long_help_footer};
@@ -150,6 +150,8 @@ enum Command {
     Status,
     /// Instance-wide counters and process uptime. Needs `instance.read`.
     Metrics,
+    /// What the credential can reach: types with counts, edge types, top tags, views, folders and what the credential may do.
+    Overview,
     /// Which server, instance and credential a bare command would use.
     Whoami,
     /// Sign in to a server as an app: a code the owner approves in the browser.
@@ -620,6 +622,7 @@ fn run(cli: Cli) -> Result<Exit, CliError> {
         }
         Command::Status => status::run(&remote()?, &out),
         Command::Metrics => metrics::run(&remote()?, &out),
+        Command::Overview => overview::run(&remote()?, &out),
         Command::Whoami => whoami::run(&remote()?, &out),
         Command::Items { command } => items::run(command, &remote()?, &out),
         Command::Edges { command } => edges::run(command, &remote()?, &out),

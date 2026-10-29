@@ -5090,6 +5090,289 @@
         ],
         "description": "A tag, and how many items carry it."
       },
+      "Overview": {
+        "type": "object",
+        "properties": {
+          "instance": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "description": "The instance's display name."
+              },
+              "version": {
+                "type": "string",
+                "description": "The build the instance runs."
+              },
+              "release": {
+                "type": "string",
+                "description": "The release the build was made as. Absent for a build that is not a release."
+              }
+            },
+            "required": [
+              "name",
+              "version"
+            ],
+            "description": "The instance's name and the build it runs."
+          },
+          "credential": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "key",
+                  "app"
+                ],
+                "description": "`key` for an API key, `app` for a signed-in app's token."
+              },
+              "label": {
+                "type": "string",
+                "description": "The key's label. Absent for an app."
+              },
+              "type_permissions": {
+                "type": "object",
+                "properties": {
+                  "write": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "Type patterns you can read and write, such as `core.*`. Absent when none."
+                  },
+                  "read": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "Type patterns you can only read. Absent when none."
+                  },
+                  "none": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "Type patterns denied even where a wider pattern grants access. Absent when none."
+                  }
+                },
+                "description": "Your type map by level, each list sorted and cut at 30 patterns. Absent when the map is empty."
+              },
+              "permissions": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Permission"
+                },
+                "description": "The permissions you hold. Absent when you hold none."
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "description": "The credential that sent the request, and what it may do."
+          },
+          "types": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OverviewType"
+            },
+            "description": "The types you can read, most items first, then by identifier, at most 50. Types in the `system` namespace are left out. Absent when you can read none."
+          },
+          "edge_types": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OverviewEdgeType"
+            },
+            "description": "The edge types you can read or write, sorted by identifier, at most 50. Absent when you can read no type or can use no edge type."
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TagCount"
+            },
+            "description": "The most used tags on items you can read, at most 30. Absent when there are none."
+          },
+          "views": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OverviewView"
+            },
+            "description": "The views you can read, sorted by title, at most 30. Absent when there are none."
+          },
+          "folders": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OverviewFolder"
+            },
+            "description": "The folders you can read, sorted by title, at most 30. Absent when there are none."
+          },
+          "truncated": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "description": "Each list that was cut, with how many entries it held before the cut. Names are `types`, `edge_types`, `tags`, `views`, `folders` and `credential.type_permissions.<level>`. Absent when nothing was cut."
+          }
+        },
+        "required": [
+          "instance",
+          "credential"
+        ],
+        "description": "A summary of what this instance holds and what your credential may reach.",
+        "example": {
+          "instance": {
+            "name": "Marfa",
+            "version": "dev"
+          },
+          "credential": {
+            "kind": "key",
+            "label": "Notes agent",
+            "type_permissions": {
+              "write": [
+                "core.note"
+              ],
+              "read": [
+                "*"
+              ]
+            },
+            "permissions": [
+              "audit.read"
+            ]
+          },
+          "types": [
+            {
+              "id": "core.note",
+              "description": "A piece of writing.",
+              "count": 128
+            }
+          ],
+          "edge_types": [
+            {
+              "id": "references",
+              "access": "write"
+            }
+          ],
+          "tags": [
+            {
+              "tag": "work",
+              "count": 40
+            }
+          ],
+          "views": [
+            {
+              "id": "019537a0-7b80-7000-8000-000000000000",
+              "title": "Reading list"
+            }
+          ]
+        }
+      },
+      "Permission": {
+        "type": "string",
+        "enum": [
+          "webhooks.manage",
+          "schema.write",
+          "config.manage",
+          "audit.read",
+          "items.purge",
+          "keys.mint",
+          "grants.manage",
+          "instance.read",
+          "instance.maintain",
+          "connectors.manage",
+          "blobs.manage",
+          "keys.manage"
+        ],
+        "description": "A permission a credential can hold, for an operation the type, edge, extension, metadata and profile maps don't cover. `schema.write` replaces and deletes types and edge types; `keys.mint` mints keys and lists, changes and revokes those within the caller's reach; `keys.manage` lists and revokes every key and changes one without widening it; `items.purge` purges trashed items; `webhooks.manage` manages webhooks; `config.manage` reads and replaces `/config`; `audit.read` reads the audit log; `grants.manage` lists and revokes other apps' access; `instance.read` reads health, metrics, housekeeping, retired platform types, blob storage reports and every bulk job's status; `instance.maintain` runs housekeeping, resets platform type definitions and cancels bulk jobs; `connectors.manage` administers connector registrations and their endpoints, and clears their retained state; and `blobs.manage` manages every blob."
+      },
+      "OverviewType": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The type's identifier.",
+            "example": "core.note"
+          },
+          "description": {
+            "type": "string",
+            "description": "What the type holds, cut at 100 characters. Absent when the type has none."
+          },
+          "count": {
+            "type": "integer",
+            "description": "How many active items of the type you can read."
+          }
+        },
+        "required": [
+          "id",
+          "count"
+        ],
+        "description": "A type you can read, and how many active items it has."
+      },
+      "OverviewEdgeType": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The edge type's identifier.",
+            "example": "parent-of"
+          },
+          "description": {
+            "type": "string",
+            "description": "What the edge type means, cut at 100 characters. Absent when it has none."
+          },
+          "access": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/PermissionLevel"
+              },
+              {
+                "description": "`write` where your edge permissions cover writing edges of the type, otherwise `read`. Creating an edge also needs write access to the type of its source item."
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "access"
+        ],
+        "description": "An edge type your edge permissions cover, and at which level."
+      },
+      "OverviewView": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The ID of the view.",
+            "example": "019537a0-7b80-7000-8000-000000000000"
+          },
+          "title": {
+            "type": "string",
+            "description": "The view's title, cut at 100 characters."
+          }
+        },
+        "required": [
+          "id",
+          "title"
+        ],
+        "description": "A view you can read."
+      },
+      "OverviewFolder": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The ID of the folder.",
+            "example": "019537a0-7b80-7000-8000-000000000000"
+          },
+          "title": {
+            "type": "string",
+            "description": "The folder's title, cut at 100 characters."
+          }
+        },
+        "required": [
+          "id",
+          "title"
+        ],
+        "description": "A folder you can read."
+      },
       "RequestTimeoutRefusal": {
         "type": "object",
         "properties": {
@@ -7272,24 +7555,6 @@
           "last_used_at"
         ],
         "description": "A new API key, with its plaintext `key`."
-      },
-      "Permission": {
-        "type": "string",
-        "enum": [
-          "webhooks.manage",
-          "schema.write",
-          "config.manage",
-          "audit.read",
-          "items.purge",
-          "keys.mint",
-          "grants.manage",
-          "instance.read",
-          "instance.maintain",
-          "connectors.manage",
-          "blobs.manage",
-          "keys.manage"
-        ],
-        "description": "A permission a credential can hold, for an operation the type, edge, extension, metadata and profile maps don't cover. `schema.write` replaces and deletes types and edge types; `keys.mint` mints keys and lists, changes and revokes those within the caller's reach; `keys.manage` lists and revokes every key and changes one without widening it; `items.purge` purges trashed items; `webhooks.manage` manages webhooks; `config.manage` reads and replaces `/config`; `audit.read` reads the audit log; `grants.manage` lists and revokes other apps' access; `instance.read` reads health, metrics, housekeeping, retired platform types, blob storage reports and every bulk job's status; `instance.maintain` runs housekeeping, resets platform type definitions and cancels bulk jobs; `connectors.manage` administers connector registrations and their endpoints, and clears their retained state; and `blobs.manage` manages every blob."
       },
       "TypePermissionLevel": {
         "type": "string",
@@ -54935,6 +55200,233 @@
         }
       }
     },
+    "/overview": {
+      "get": {
+        "operationId": "getOverview",
+        "tags": [
+          "Instance"
+        ],
+        "summary": "Get an overview",
+        "description": "Returns what the instance holds that your credential can reach: types with item counts, edge types, top tags, views and folders, and what your credential may do. Every list is capped. Needs no type access.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Returns the overview. A credential that reaches nothing gets the instance and credential only.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Overview"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/X-RateLimit-Limit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/X-RateLimit-Remaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/X-RateLimit-Reset"
+              }
+            }
+          },
+          "400": {
+            "description": "- `validation_error`: the query has a parameter this endpoint doesn't take.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/X-RateLimit-Limit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/X-RateLimit-Remaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/X-RateLimit-Reset"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`: the request has no credential, or its credential is not valid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnauthorizedRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/X-RateLimit-Limit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/X-RateLimit-Remaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/X-RateLimit-Reset"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "429": {
+            "description": "`rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RateLimitedRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/X-RateLimit-Limit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/X-RateLimit-Remaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/X-RateLimit-Reset"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              },
+              "Retry-After": {
+                "$ref": "#/components/headers/Retry-After"
+              }
+            }
+          },
+          "500": {
+            "description": "`internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternalErrorRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/X-RateLimit-Limit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/X-RateLimit-Remaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/X-RateLimit-Reset"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "503": {
+            "description": "`write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WriteContentionRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/X-RateLimit-Limit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/X-RateLimit-Remaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/X-RateLimit-Reset"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "507": {
+            "description": "`insufficient_storage`: the disk that holds the instance's data has no room for the request, or the request would leave less free than the instance keeps in reserve. Nothing changed, unless `details.write_outcome` is `unknown`, which means the write may have landed: read what you changed before you repeat it. Free space on the disk, then try the request again.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InsufficientStorageRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/X-RateLimit-Limit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/X-RateLimit-Remaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/X-RateLimit-Reset"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          }
+        }
+      }
+    },
     "/config": {
       "get": {
         "operationId": "getConfig",
@@ -59521,6 +60013,7 @@
       "description": "The instance itself: what it is and how it's configured.",
       "x-operation-order": [
         "getInstance",
+        "getOverview",
         "getConfig",
         "updateConfig",
         "replaceConfig"

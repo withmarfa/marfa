@@ -195,6 +195,7 @@ const OPEN_BY_ROW: Record<string, string> = {
   "POST /types/normalize": EVERYONE,
   "GET /types/:id": EVERYONE,
   "GET /edge-types": EVERYONE,
+  "GET /overview": EVERYONE,
   "GET /connectors/:id/agreements": OWNER,
   "POST /connectors/:id/agreements": OWNER,
   "POST /connectors/:id/agreements/lookup": OWNER,
