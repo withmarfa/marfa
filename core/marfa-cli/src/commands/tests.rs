@@ -1654,6 +1654,7 @@ mod dispatch {
         items::run(
             items::ItemsCommand::Delete {
                 id: "i".into(),
+                dry_run: false,
                 idempotency: items::IdempotencyArgs {
                     idempotency_key: Some("once".into()),
                 },
@@ -1666,6 +1667,47 @@ mod dispatch {
         assert_eq!(received[0].method(), "DELETE");
         assert_eq!(received[0].path(), "/items/i");
         assert_eq!(received[0].header("idempotency-key"), Some("once"));
+    }
+
+    #[test]
+    fn a_dry_run_delete_asks_for_the_trash_preview_and_moves_nothing() {
+        let door = Door::open(vec![Answer::json(
+            "200 OK",
+            r#"{"id":"i","type":"core.note","version":1,"items":[],"count":1}"#,
+        )]);
+        items::run(
+            items::ItemsCommand::Delete {
+                id: "i".into(),
+                dry_run: true,
+                idempotency: items::IdempotencyArgs {
+                    idempotency_key: None,
+                },
+            },
+            &remote_at(&door),
+            &QUIET,
+        )
+        .unwrap();
+        let received = door.received();
+        assert_eq!(received.len(), 1);
+        assert_eq!(received[0].method(), "GET");
+        assert_eq!(received[0].path(), "/items/i/trash-preview");
+    }
+
+    #[test]
+    fn a_dry_run_delete_refuses_an_idempotency_key() {
+        use clap::Parser;
+        assert!(
+            crate::Cli::try_parse_from([
+                "marfa",
+                "items",
+                "delete",
+                "i",
+                "--dry-run",
+                "--idempotency-key",
+                "once",
+            ])
+            .is_err()
+        );
     }
 
     #[test]

@@ -49,6 +49,10 @@ pub enum ItemsCommand {
     Delete {
         /// The item id.
         id: String,
+        /// Show what the delete would move to the bin, the items beneath it
+        /// included, and move nothing.
+        #[arg(long, conflicts_with = "idempotency_key")]
+        dry_run: bool,
         #[command(flatten)]
         idempotency: IdempotencyArgs,
     },
@@ -716,6 +720,10 @@ pub fn delete_request(id: &str) -> Request {
     Request::delete(&["items", id])
 }
 
+pub fn trash_preview_request(id: &str) -> Request {
+    Request::get(&["items", id, "trash-preview"])
+}
+
 pub fn restore_request(id: &str) -> Request {
     Request::post(&["items", id, "restore"])
 }
@@ -1013,7 +1021,9 @@ pub fn attached_to_request(file_item_id: &str, target_id: &str) -> Request {
 
 pub fn run(command: ItemsCommand, remote: &Remote, out: &Printer) -> Result<(), CliError> {
     let done = match &command {
-        ItemsCommand::Delete { id, .. } => Some(format!("trashed {id}")),
+        ItemsCommand::Delete {
+            id, dry_run: false, ..
+        } => Some(format!("trashed {id}")),
         ItemsCommand::Purge { id, .. } => Some(format!("purged {id}")),
         _ => None,
     };
@@ -1026,7 +1036,12 @@ pub fn run(command: ItemsCommand, remote: &Remote, out: &Printer) -> Result<(), 
         ItemsCommand::Get { id, include } => get_request(id, include.as_deref()),
         ItemsCommand::Create(args) => create_request(args)?,
         ItemsCommand::Update(args) => update_request(args)?,
-        ItemsCommand::Delete { id, idempotency } => idempotency.apply(delete_request(id)),
+        ItemsCommand::Delete {
+            id, dry_run: true, ..
+        } => trash_preview_request(id),
+        ItemsCommand::Delete {
+            id, idempotency, ..
+        } => idempotency.apply(delete_request(id)),
         ItemsCommand::Restore { id, idempotency } => idempotency.apply(restore_request(id)),
         ItemsCommand::Transition {
             id,

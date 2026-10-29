@@ -641,6 +641,7 @@ marfa items delete [OPTIONS] <ID>
 
 | Option | Description |
 | --- | --- |
+| `--dry-run` | Show what the delete would move to the bin, the items beneath it included, and move nothing. |
 | `--idempotency-key <KEY>` | Sent as `Idempotency-Key`, so a repeat is answered from the record rather than written twice. |
 
 ### marfa items restore
