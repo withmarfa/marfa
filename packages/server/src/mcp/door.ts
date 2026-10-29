@@ -12,6 +12,11 @@
  * It keeps no stream open: `subscriptions/listen` is answered as a method
  * it does not serve, before the SDK would hold a stream for it.
  *
+ * A tool call by a signed-in app that the API refused for a scope the app
+ * was not granted, before anything was written, is answered with an
+ * `insufficient_scope` challenge naming that scope, so the app can ask the
+ * person for it and call again.
+ *
  * A browser page may call it only from an origin the owner approved, since
  * a bearer in a page's script is that page's to use; any other `Origin` is
  * refused, as the transport asks of a server.
@@ -27,10 +32,11 @@ import {
 import { refuseUndeclaredKeysOf } from "../middleware/undeclared-query-keys.js";
 import { McpApi } from "./api.js";
 import { nowMs } from "../clock.js";
-import { mcpUnauthorized } from "./challenge.js";
+import { mcpInsufficientScope, mcpUnauthorized } from "../auth/mcp-resource.js";
 import type { ToolContext } from "./context.js";
 import { type ToolFetchOptions, toolFetchFor } from "./file-fetch.js";
 import { createMarfaMcpServer } from "./server.js";
+import { isToolCall, scopeTheCallLacked } from "./step-up.js";
 
 export interface McpDoorOptions {
   /** Where the instance is served, as its own links name it. */
@@ -133,7 +139,7 @@ export function mcpRoutes(options: McpDoorOptions): Hono<AppEnv> {
       });
     }
     const grant = c.get("oauthGrant");
-    return handler.fetch(c.req.raw, {
+    const response = await handler.fetch(c.req.raw, {
       ...(parsedBody !== undefined && { parsedBody }),
       authInfo: {
         token: credential,
@@ -141,6 +147,22 @@ export function mcpRoutes(options: McpDoorOptions): Hono<AppEnv> {
         scopes: grant === undefined ? [] : [...grant.scopes],
         extra: { [TOOL_CONTEXT]: ctx },
       },
+    });
+    if (grant === undefined || !isToolCall(parsedBody)) return response;
+    const body = await response.text();
+    const lacked = ctx.api.wrote
+      ? undefined
+      : scopeTheCallLacked(
+          parsedBody,
+          body,
+          response.headers.get("content-type"),
+        );
+    if (lacked !== undefined) {
+      return mcpInsufficientScope(options.baseUrl, "/mcp", [lacked]);
+    }
+    return new Response(body, {
+      status: response.status,
+      headers: response.headers,
     });
   });
 

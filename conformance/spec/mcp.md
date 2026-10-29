@@ -4,13 +4,7 @@ The MCP endpoint, `/mcp`, serves Marfa's tools to an agent over Streamable HTTP.
 
 ## Who may call it
 
-### `mcp/unauthenticated-challenge`
-
-If a request to `/mcp` carries no credential the server accepts, then the server MUST answer `401 unauthorized` with the header `WWW-Authenticate: Bearer resource_metadata="<base>/.well-known/oauth-protected-resource/mcp"`, where `<base>` is the instance's public URL.
-
-**Reason:** an MCP client starts its sign-in from the protected resource metadata the challenge names.
-
-**Tests:** `compliance/mcp.test.ts › answers a request without a credential with 401 and a Bearer challenge naming the endpoint's resource metadata`.
+The challenges an MCP client signs in and steps up from are stated with the server's other resources, in `keys-and-oauth/mcp-challenge-credential` and `keys-and-oauth/mcp-challenge-scope`.
 
 ### `mcp/foreign-origin`
 

@@ -1797,11 +1797,11 @@ If a token request names as `resource` anything other than this server's origin 
 
 ### `keys-and-oauth/resource-one-audience`
 
-When the server issues an access token, the server MUST accept that token at its API and at each of its MCP endpoints, `/mcp`, `/mcp/schema` and `/mcp/admin`, whichever of them the token request named as `resource`.
+When the server issues an access token, the server MUST accept that token at its API and at each MCP endpoint it serves, whichever of its resources the token request named as `resource`.
 
 **Reason:** The API and the MCP endpoints are addresses of one protected resource, and an MCP endpoint calls the API with the token it was sent.
 
-**Tests:** waiting on #2445.
+**Tests:** `compliance/oauth-tokens.test.ts › accepts a token at the API and at /mcp, whichever of the server's resources it was issued for`.
 
 ### `keys-and-oauth/resource-one-value`
 
@@ -1829,19 +1829,19 @@ If an authorization request names as `resource` anything other than this server'
 
 ### `keys-and-oauth/mcp-challenge-credential`
 
-If a request to `/mcp`, `/mcp/schema` or `/mcp/admin` carries no credential the server accepts, then the server MUST answer `401` with `WWW-Authenticate: Bearer resource_metadata="<url>"`, naming the URL of that endpoint's protected resource metadata.
+If a request to an MCP endpoint the server serves carries no credential the server accepts, then the server MUST answer `401 unauthorized` with `WWW-Authenticate: Bearer resource_metadata="<url>"`, naming the URL of that endpoint's protected resource metadata.
 
 **Reason:** RFC 9728 section 5.1: the challenge is how an MCP client finds where to sign in.
 
-**Tests:** waiting on #2445.
+**Tests:** `compliance/mcp.test.ts › answers a request without a credential with 401 and a Bearer challenge naming the endpoint's resource metadata`.
 
 ### `keys-and-oauth/mcp-challenge-scope`
 
-If a request to `/mcp`, `/mcp/schema` or `/mcp/admin` carries a credential that lacks a scope the call needs, then the server MUST answer `403` with a `WWW-Authenticate` Bearer challenge holding `error="insufficient_scope"`, the scopes the call needs as `scope` and the endpoint's `resource_metadata`.
+If a tool call to an MCP endpoint the server serves carries an app's access token, and the API refuses the call for a scope the token lacks before the call changes anything, then the server MUST answer `403` with a `WWW-Authenticate` Bearer challenge holding `error="insufficient_scope"`, that scope as `scope` and the endpoint's `resource_metadata`.
 
-**Reason:** RFC 6750 section 3.1: the challenge names what to ask for, so an MCP client can ask the person for more without starting over.
+**Reason:** RFC 6750 section 3.1: the challenge names what to ask for, so an MCP client can ask the person for more without starting over. A call that already changed something is answered with the tool's error instead, since calling it again would repeat that change. An API key is not issued through sign-in, so it has no sign-in to step up, and a refusal to one stays the tool's error.
 
-**Tests:** waiting on #2445.
+**Tests:** `compliance/oauth-tokens.test.ts › challenges a tool call the token lacks a scope for with 403 insufficient_scope, naming the scope and the endpoint's metadata`.
 
 ## Revocation and introspection
 

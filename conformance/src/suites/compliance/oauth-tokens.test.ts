@@ -337,6 +337,99 @@ describe("the resource parameter", () => {
   });
 });
 
+describe("the MCP endpoint", () => {
+  /** A token for `scope`, with `resource` named at authorization and at the token request. */
+  async function tokenNaming(
+    app: App,
+    scope: string,
+    resource: string,
+  ): Promise<string> {
+    const proof = pkce();
+    const consent = await sentTo(
+      server,
+      await authorize(
+        server,
+        authorizeQuery(app.clientId, scope, proof, {
+          prompt: "consent",
+          resource,
+        }),
+        cookie,
+      ),
+    );
+    const sent = await decide(server, origin, cookie, consent!, true, [
+      ...scope.split(" "),
+    ]);
+    const issued = await token(server, {
+      grant_type: "authorization_code",
+      code: sent?.searchParams.get("code") ?? "",
+      redirect_uri: CALLBACK,
+      code_verifier: proof.verifier,
+      client_id: app.clientId,
+      resource,
+    });
+    expect(issued.status, JSON.stringify(issued.body)).toBe(200);
+    return issued.body.access_token!;
+  }
+
+  function mcp(accessToken: string, message: unknown): Promise<Response> {
+    return fetch(`${server.apiUrl}/mcp`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${accessToken}`,
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+      },
+      body: JSON.stringify(message),
+    });
+  }
+
+  it("accepts a token at the API and at /mcp, whichever of the server's resources it was issued for", async () => {
+    const app = await registerApp(server, NOTES);
+    for (const resource of [origin, ...MCP_PATHS.map((p) => `${origin}${p}`)]) {
+      const accessToken = await tokenNaming(app, NOTES, resource);
+      expect(await itemsStatus(server, accessToken), resource).toBe(200);
+      const listed = await mcp(accessToken, {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/list",
+        params: {},
+      });
+      expect(listed.status, resource).toBe(200);
+      expect(await listed.text(), resource).toContain("marfa_find");
+    }
+  });
+
+  it("challenges a tool call the token lacks a scope for with 403 insufficient_scope, naming the scope and the endpoint's metadata", async () => {
+    const scope = "core.task:write core.note:read";
+    const app = await registerApp(server, scope);
+    const accessToken = await tokenNaming(app, scope, `${origin}/mcp`);
+    const create = (type: string) =>
+      mcp(accessToken, {
+        jsonrpc: "2.0",
+        id: 2,
+        method: "tools/call",
+        params: {
+          name: "marfa_create",
+          arguments: { type, properties: { title: "Needs a scope" } },
+        },
+      });
+    const challenged = await create("core.note");
+    expect(challenged.status).toBe(403);
+    const header = challenged.headers.get("www-authenticate") ?? "";
+    expect(header).toMatch(/^Bearer /);
+    expect(header).toContain('error="insufficient_scope"');
+    expect(header).toContain('scope="core.note:write"');
+    expect(header).toContain(
+      `resource_metadata="${origin}/.well-known/oauth-protected-resource/mcp"`,
+    );
+    await challenged.body?.cancel();
+    // The witness: the type the token writes is saved.
+    const saved = await create("core.task");
+    expect(saved.status).toBe(200);
+    expect(await saved.text()).toContain("created");
+  });
+});
+
 describe("revocation", () => {
   it("of an access token ends it at once", async () => {
     const app = await registerApp(server, NOTES);

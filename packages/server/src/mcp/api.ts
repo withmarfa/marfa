@@ -54,20 +54,41 @@ export function refusalFromBody(status: number, body: unknown): ApiRefusal {
   };
 }
 
+/**
+ * Requests that change nothing a person would lose by sending them again:
+ * a read sent as POST, and a blob, which is stored by its hash.
+ */
+const SAFE_TO_REPEAT = new Set(["/items/bulk-get", "/blobs"]);
+
 /** The API, for one MCP request. */
 export class McpApi {
   readonly client: MarfaClient;
+  /** Whether a call so far changed something, so it is not safe to repeat. */
+  wrote = false;
 
   constructor(options: McpApiOptions) {
+    const base = options.baseUrl.replace(/\/+$/, "");
+    const basePath = new URL(base).pathname.replace(/\/+$/, "");
     this.client = createClient({
-      baseUrl: options.baseUrl.replace(/\/+$/, ""),
+      baseUrl: base,
       credential: options.credential,
-      fetch: (input, init) =>
-        options.dispatch(
+      fetch: async (input, init) => {
+        const request =
           input instanceof Request && init === undefined
             ? input
-            : new Request(input, init),
-        ),
+            : new Request(input, init);
+        const response = await options.dispatch(request);
+        if (
+          response.ok &&
+          request.method !== "GET" &&
+          !SAFE_TO_REPEAT.has(
+            new URL(request.url).pathname.slice(basePath.length),
+          )
+        ) {
+          this.wrote = true;
+        }
+        return response;
+      },
     });
   }
 

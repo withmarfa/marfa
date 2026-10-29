@@ -3,9 +3,10 @@ import {
   createTestContext,
   mintWorkingKey,
   request,
+  seedOauthBearer,
   type TestContext,
 } from "../test-utils.js";
-import { connectMcp, MCP_URL } from "./test-client.js";
+import { callTool, connectMcp, MCP_URL } from "./test-client.js";
 import { SERVER_INSTRUCTIONS } from "./server.js";
 
 let ctx: TestContext;
@@ -180,6 +181,102 @@ describe("/mcp", () => {
           arguments: { type: "core.note", properties: { title: "x" } },
         }),
       ).rejects.toThrow(/marfa_create/);
+    } finally {
+      await client.close();
+    }
+  });
+
+  it("asks an app for the scope a tool call needs, before the call writes anything", async () => {
+    const { token } = await seedOauthBearer(ctx, [
+      "core.task:write",
+      "core.note:read",
+    ]);
+    const call = (type: string) =>
+      post(
+        { Authorization: `Bearer ${token}` },
+        {
+          jsonrpc: "2.0",
+          id: 3,
+          method: "tools/call",
+          params: {
+            name: "marfa_create",
+            arguments: { type, properties: { title: "Step up" } },
+          },
+        },
+      );
+    const response = await call("core.note");
+    expect(response.status).toBe(403);
+    const base = ctx.config.authBaseUrl.replace(/\/+$/, "");
+    const challenge = response.headers.get("www-authenticate") ?? "";
+    expect(challenge).toMatch(/^Bearer error="insufficient_scope"/);
+    expect(challenge).toContain('scope="core.note:write"');
+    expect(challenge).toContain(
+      `resource_metadata="${base}/.well-known/oauth-protected-resource/mcp"`,
+    );
+    expect(await response.json()).toMatchObject({
+      error: {
+        code: "forbidden",
+        details: { required_scope: "core.note:write" },
+      },
+    });
+    // The witness: a type the grant writes is saved.
+    const saved = await call("core.task");
+    expect(saved.status).toBe(200);
+    expect(await saved.text()).toContain('"created\\":true');
+    // A client of the 2026-07-28 revision meets the same challenge.
+    const client = await connectMcp(ctx, token, { negotiation: "auto" });
+    try {
+      await expect(
+        client.callTool({
+          name: "marfa_create",
+          arguments: { type: "core.note", properties: { title: "Step up" } },
+        }),
+      ).rejects.toThrow(/core\.note:write/);
+    } finally {
+      await client.close();
+    }
+  });
+
+  it("answers an API key that lacks a type with a tool error, not a challenge", async () => {
+    const key = await mintWorkingKey(ctx, {
+      type_permissions: { "core.task": "write", "core.note": "read" },
+    });
+    const client = await connectMcp(ctx, key);
+    try {
+      const answer = await callTool(client, "marfa_create", {
+        type: "core.note",
+        properties: { title: "No step up" },
+      });
+      expect(answer.isError).toBe(true);
+      expect(answer.body).toMatchObject({
+        error: { code: "type_not_permitted" },
+      });
+    } finally {
+      await client.close();
+    }
+  });
+
+  it("answers an app a tool error, not a challenge, once the call has written", async () => {
+    const { token } = await seedOauthBearer(ctx, [
+      "core.task:write",
+      "core.note:read",
+    ]);
+    const client = await connectMcp(ctx, token);
+    try {
+      const target = await callTool(client, "marfa_create", {
+        type: "core.task",
+        properties: { title: "Target" },
+      });
+      const answer = await callTool(client, "marfa_update", {
+        id: target.structured?.id,
+        version: target.structured?.version,
+        properties: { title: "Renamed" },
+        add_edges: [
+          { edge_type: "attached-to", target_id: target.structured?.id },
+        ],
+      });
+      expect(answer.isError, answer.text).toBe(true);
+      expect(answer.text).toContain("edge_permission_denied");
     } finally {
       await client.close();
     }
