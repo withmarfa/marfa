@@ -1263,24 +1263,64 @@ async function trash(
   row: Item,
 ): Promise<Item[]> {
   const root: CascadeRoot = { id: row.id, type: row.type };
+  const { toTrash, taken } = await planTrash(storage, writer, row);
+  const by = await versionWriter(storage, writer);
+  for (const id of toTrash) {
+    await itemWrites(storage).delete(id, id === row.id ? undefined : root, by);
+  }
+  return taken;
+}
+
+/**
+ * What moving `row` to the trash takes and whether anything refuses it: the
+ * ids in the order they are trashed, leaves first, and every row but `row`
+ * itself as it stands. Both the trash and its preview ask this, so a preview
+ * names what the move would take and refuses what the move would refuse.
+ */
+async function planTrash(
+  storage: Storage,
+  writer: ItemWriter,
+  row: Item,
+): Promise<{ toTrash: string[]; taken: Item[] }> {
   let toTrash: string[];
   try {
     toTrash = await planCascadeDelete(storage.edges, row.id);
   } catch (err) {
     throw await withoutHiddenBlockers(storage, writer, err);
   }
-  const taken = await Promise.all(toTrash.map((id) => storage.items.get(id)));
-  for (const snap of taken) {
+  const snaps = await Promise.all(toTrash.map((id) => storage.items.get(id)));
+  for (const snap of snaps) {
     if (!snap) continue;
     refuseUnlessUninstalled(snap, mayRead(writer, snap.type));
   }
-  const by = await versionWriter(storage, writer);
-  for (const id of toTrash) {
-    await itemWrites(storage).delete(id, id === row.id ? undefined : root, by);
-  }
-  return taken.filter(
-    (snap): snap is Item => snap !== null && snap.id !== row.id,
-  );
+  return {
+    toTrash,
+    taken: snaps.filter(
+      (snap): snap is Item => snap !== null && snap.id !== row.id,
+    ),
+  };
+}
+
+/**
+ * What `DELETE /items/{id}` would trash for this credential, refused as the
+ * delete would refuse it: the row, and the rows a cascading edge takes with
+ * it that the credential may read, leaves first. Rows it may not read are
+ * trashed too and are left out here, as a refusal leaves out a hidden
+ * blocker. Writes nothing.
+ */
+export async function previewTrash(
+  storage: Storage,
+  key: ApiKey,
+  id: string,
+): Promise<{ row: Item; taken: Item[] }> {
+  const writer: ItemWriter = { kind: "credential", key };
+  const row = await lifecycleRow(storage, writer, id, {
+    includeTrashed: false,
+    message: `Item ${id} not found`,
+  });
+  assertTypeWrite(writer, row);
+  const { taken } = await planTrash(storage, writer, row);
+  return { row, taken: taken.filter((snap) => mayRead(writer, snap.type)) };
 }
 
 /**
