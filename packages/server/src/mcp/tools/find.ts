@@ -38,16 +38,28 @@ interface ListedItem {
   created_at?: string;
 }
 
-function plain(text: string): string {
-  return text
-    .replace(/<[^>]*>/g, "")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&amp;/g, "&")
-    .replace(/\s+/g, " ")
-    .trim();
+const ESCAPED: Readonly<Record<string, string>> = {
+  amp: "&",
+  lt: "<",
+  gt: ">",
+  quot: '"',
+  "#39": "'",
+};
+
+function collapsed(text: string): string {
+  return text.replace(/\s+/g, " ").trim();
+}
+
+/** A search excerpt as text: its only markup is `<mark>` and five escapes. */
+function excerptText(html: string): string {
+  return collapsed(
+    html
+      .replace(/<\/?mark>/g, "")
+      .replace(
+        /&(amp|lt|gt|quot|#39);/g,
+        (whole, name: string) => ESCAPED[name] ?? whole,
+      ),
+  );
 }
 
 function clip(text: string, limit: number): string {
@@ -62,7 +74,7 @@ function preview(properties: Record<string, unknown>, title: string): string {
   for (const field of ["body", "text", "description", "notes", "summary"]) {
     const value = properties[field];
     if (typeof value !== "string") continue;
-    const text = plain(value);
+    const text = collapsed(value);
     if (text !== "" && text !== title) return clip(text, SNIPPET_CHARS);
   }
   return "";
@@ -72,7 +84,7 @@ function rowOf(item: ListedItem, snippetHtml?: string): Row {
   const title = itemName(item.properties);
   const snippet =
     snippetHtml !== undefined
-      ? clip(plain(snippetHtml), SNIPPET_CHARS)
+      ? clip(excerptText(snippetHtml), SNIPPET_CHARS)
       : preview(item.properties, title);
   return {
     id: item.id,
