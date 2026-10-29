@@ -4835,7 +4835,7 @@
             "items": {
               "$ref": "#/components/schemas/SearchResult"
             },
-            "description": "The results, best match first."
+            "description": "The results, in the order of `sort`."
           },
           "next_cursor": {
             "type": [
@@ -26337,7 +26337,7 @@
           "Search"
         ],
         "summary": "Search items",
-        "description": "Returns a page of the items you can read whose text properties or tags match `q`, ranked by BM25 relevance, with ties ordered by item ID.",
+        "description": "Returns a page of the items you can read whose text properties or tags match `q`, best match first unless you give a `sort`. Items that tie come in ID order.",
         "security": [
           {
             "bearerAuth": []
@@ -26373,6 +26373,16 @@
             "required": false,
             "description": "Only return items in this lifecycle state. Without it, you get `active` items. `any` searches every state, but trashed items are never searchable.",
             "name": "state",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Only return items stamped with this source."
+            },
+            "required": false,
+            "description": "Only return items stamped with this source.",
+            "name": "source",
             "in": "query"
           },
           {
@@ -26446,11 +26456,36 @@
           {
             "schema": {
               "type": "string",
-              "minLength": 1,
-              "description": "Only return items whose own time (`occurred_at`, else `created_at`) is after this RFC 3339 time."
+              "pattern": "^(relevance|created_at|updated_at|occurred_at|properties\\.[a-z0-9_]+)$",
+              "description": "How to order the results: `relevance` (the default), `created_at`, `updated_at`, `occurred_at` or `properties.<field>`, such as `properties.due_at`. Items without a value for a property come last."
             },
             "required": false,
-            "description": "Only return items whose own time (`occurred_at`, else `created_at`) is after this RFC 3339 time.",
+            "description": "How to order the results: `relevance` (the default), `created_at`, `updated_at`, `occurred_at` or `properties.<field>`, such as `properties.due_at`. Items without a value for a property come last.",
+            "name": "sort",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "asc",
+                "desc"
+              ],
+              "description": "Sort direction. Defaults to `desc`: best match first under `relevance`, newest or largest first otherwise. Under `relevance`, `asc` puts the worst match first."
+            },
+            "required": false,
+            "description": "Sort direction. Defaults to `desc`: best match first under `relevance`, newest or largest first otherwise. Under `relevance`, `asc` puts the worst match first.",
+            "name": "direction",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Only return items whose own time (`occurred_at`, else `created_at`) is after this time. For the modification time, use `updated_after`."
+            },
+            "required": false,
+            "description": "Only return items whose own time (`occurred_at`, else `created_at`) is after this time. For the modification time, use `updated_after`.",
             "name": "occurred_after",
             "in": "query"
           },
@@ -26458,11 +26493,33 @@
             "schema": {
               "type": "string",
               "minLength": 1,
-              "description": "Only return items whose own time (`occurred_at`, else `created_at`) is before this RFC 3339 time."
+              "description": "Only return items whose own time (`occurred_at`, else `created_at`) is before this time."
             },
             "required": false,
-            "description": "Only return items whose own time (`occurred_at`, else `created_at`) is before this RFC 3339 time.",
+            "description": "Only return items whose own time (`occurred_at`, else `created_at`) is before this time.",
             "name": "occurred_before",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Only return items changed at or after this time. Items can share an instant, so the bound includes it. It doesn't change the ordering, so it works with any `sort`."
+            },
+            "required": false,
+            "description": "Only return items changed at or after this time. Items can share an instant, so the bound includes it. It doesn't change the ordering, so it works with any `sort`.",
+            "name": "updated_after",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Only return items changed before this time. It doesn't change the ordering, so it works with any `sort`."
+            },
+            "required": false,
+            "description": "Only return items changed before this time. It doesn't change the ordering, so it works with any `sort`.",
+            "name": "updated_before",
             "in": "query"
           }
         ],
@@ -26495,7 +26552,7 @@
             }
           },
           "400": {
-            "description": "- `missing_required_field`: `q` is missing.\n- `validation_error`: a parameter is unknown or invalid, such as a `state` that isn't a lifecycle state or `any`, a time that isn't an instant, or a `cursor` from another search.\n- `unknown_type`: `type` is a concrete type that nothing registers.",
+            "description": "- `missing_required_field`: `q` is missing.\n- `validation_error`: a parameter is unknown or invalid, such as a `state` that isn't a lifecycle state or `any`, a time that isn't an instant, or a `cursor` from another search or sort.\n- `unknown_type`: `type` is a concrete type that nothing registers.",
             "content": {
               "application/json": {
                 "schema": {

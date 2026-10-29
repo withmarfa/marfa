@@ -400,6 +400,10 @@ const createItemRoute = createRoute({
   },
 });
 
+/** The `sort` fields of a listing, as a pattern alternative. Search takes the same ones beside `relevance`. */
+export const LISTING_SORT_FIELDS =
+  "created_at|updated_at|occurred_at|properties\\.[a-z0-9_]+";
+
 /**
  * The query keys that decide which items a listing answers, apart from how
  * it orders and pages them. The stats door takes the same keys, so a count
@@ -443,7 +447,7 @@ export const listingNarrowingKeys = {
     ),
 };
 
-const listingBoundKeys = {
+export const listingBoundKeys = {
   occurred_after: z
     .string()
     .min(1)
@@ -460,11 +464,12 @@ const listingBoundKeys = {
     ),
   updated_after: z
     .string()
-    // Non-empty, because the ordering switches on this parameter
-    // rather than on `sort`: an empty value would order by
-    // `(updated_at, id)` ascending and bound nothing, so a client
+    // Non-empty, because an empty value would bound nothing. On a listing
+    // the ordering switches on this parameter rather than on `sort`, so it
+    // would also order by `(updated_at, id)` ascending, and a client
     // building the query before it holds a cursor would walk the
-    // whole corpus under the shape of a narrow catch-up.
+    // whole corpus under the shape of a narrow catch-up. Search shares
+    // the key and orders by `sort` alone.
     .min(1)
     .optional()
     .describe(
@@ -577,7 +582,7 @@ const listItemsRoute = createRoute({
       sort: z
         .string()
         .regex(
-          /^(created_at|updated_at|occurred_at|properties\.[a-z0-9_]+)$/,
+          new RegExp(`^(${LISTING_SORT_FIELDS})$`),
           "sort must be created_at, updated_at, occurred_at, or properties.<field>",
         )
         .optional()

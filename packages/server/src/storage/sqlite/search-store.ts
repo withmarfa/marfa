@@ -1,4 +1,4 @@
-import { sql, type SQL } from "drizzle-orm";
+import { sql, type SQL, type SQLWrapper } from "drizzle-orm";
 import { alias } from "drizzle-orm/sqlite-core";
 import {
   ErrorCode,
@@ -7,11 +7,17 @@ import {
   parseFilter,
   type SearchResult,
 } from "@withmarfa/shared";
-import type { SearchStore, SearchFilters } from "../interface.js";
-import { normalizeTimeBound } from "../interface.js";
+import type {
+  SearchSortField,
+  SearchStore,
+  SearchFilters,
+} from "../interface.js";
+import { normalizeTimeBound, parseSortField } from "../interface.js";
+import { buildPropertySortExpr } from "../property-sort.js";
 import {
   filterToSqlConditions,
   notSystemTypeSql,
+  sourceColumnSql,
   sourceFilterToSql,
   typeFilterSql,
   typeSubtreeSql,
@@ -169,6 +175,36 @@ export async function reindexChangedTypes(
   }
 }
 
+/**
+ * The ORDER BY of a search. Every ordering ends in the item ID, so a page
+ * boundary falls in the same place on each read.
+ *
+ * Relevance puts the best match first when descending, and BM25 scores the
+ * best match lowest. A system column breaks ties by ID in the direction of
+ * the sort, as the item listing does. A property puts the rows without a
+ * scalar there last in either direction, with ties by ID ascending.
+ */
+function searchOrder(
+  columns: Record<
+    "created_at" | "updated_at" | "occurred_at" | "properties",
+    SQLWrapper
+  >,
+  sort: SearchSortField | undefined,
+  descending: boolean,
+): SQL {
+  if (sort === undefined || sort === "relevance") {
+    return descending ? sql`rank, i.id` : sql`rank DESC, i.id`;
+  }
+  const target = parseSortField(sort);
+  const direction = descending ? sql`DESC` : sql`ASC`;
+  if (target.kind === "property") {
+    const value = buildPropertySortExpr(columns.properties, target.field);
+    return sql`(${value}) IS NULL, ${value} ${direction}, i.id`;
+  }
+  const column = columns[target.column];
+  return sql`${column} ${direction}, i.id ${direction}`;
+}
+
 export class SqliteSearchStore implements SearchStore {
   constructor(private db: DrizzleDb) {}
 
@@ -261,6 +297,27 @@ export class SqliteSearchStore implements SearchStore {
       );
     }
 
+    if (filters.source) {
+      conditions.push(sql`${sourceColumnSql(i.source)} = ${filters.source}`);
+    }
+
+    // The item store's twins: `updated_at` at or after the lower bound,
+    // before the upper, each normalized to the stored width.
+    const updatedAfter = normalizeTimeBound(
+      filters.updated_after,
+      "updated_after",
+    );
+    if (updatedAfter !== undefined) {
+      conditions.push(sql`${i.updated_at} >= ${updatedAfter}`);
+    }
+    const updatedBefore = normalizeTimeBound(
+      filters.updated_before,
+      "updated_before",
+    );
+    if (updatedBefore !== undefined) {
+      conditions.push(sql`${i.updated_at} < ${updatedBefore}`);
+    }
+
     // Items must have ALL specified tags (AND semantics).
     for (const tag of filters.tags ?? []) {
       conditions.push(
@@ -292,6 +349,9 @@ export class SqliteSearchStore implements SearchStore {
       );
     }
 
+    const descending = (filters.direction ?? "desc") === "desc";
+    const orderBy = searchOrder(i, filters.sort, descending);
+
     const statement = sql`
       SELECT
         snippet(items_fts, -1, ${sql.raw(`'${MARK_OPEN}', '${MARK_CLOSE}'`)}, '...', 32) AS snippet,
@@ -311,7 +371,7 @@ export class SqliteSearchStore implements SearchStore {
           conditions.map((condition) => sql`AND ${condition}`),
           sql` `,
         )}
-      ORDER BY rank, i.id
+      ORDER BY ${orderBy}
       LIMIT ${limit} OFFSET ${offset}
     `;
 

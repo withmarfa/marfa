@@ -117,7 +117,7 @@ describe("source narrows the doors that declare it to the rows stamped with it",
     expect(await selected({ source: otherSource })).toEqual([theirs]);
   });
 
-  it("GET /search refuses a source, which it does not declare, rather than answering every source", async () => {
+  it("GET /search answers only the rows stamped with the source named", async () => {
     // The witness: the same search without the key finds both rows.
     const both = await client.search(word);
     expect(both.status).toBe(200);
@@ -125,13 +125,10 @@ describe("source narrows the doors that declare it to the rows stamped with it",
       [ours, theirs].sort(),
     );
 
-    const refused = await client.rawRequest<unknown>(
-      `/search?q=${enc(word)}&source=${enc(ctx.source)}`,
-    );
-    expect(refused.status).toBe(400);
-    expect(refused.error?.error.code).toBe("validation_error");
-    expect(refused.error?.error.details?.unknown_parameters).toEqual([
-      "source",
-    ]);
+    const mine = await client.search(word, { source: ctx.source });
+    expect(mine.status, JSON.stringify(mine.error)).toBe(200);
+    expect(mine.data.data.map((hit) => hit.item.id)).toEqual([ours]);
+    const yours = await client.search(word, { source: otherSource });
+    expect(yours.data.data.map((hit) => hit.item.id)).toEqual([theirs]);
   });
 });

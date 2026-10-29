@@ -443,6 +443,11 @@ export class MarfaClient {
       tier?: "library" | "feed" | "all";
       occurred_after?: string;
       occurred_before?: string;
+      source?: string;
+      updated_after?: string;
+      updated_before?: string;
+      sort?: string;
+      direction?: "asc" | "desc";
       limit?: number;
       /** Structured filter expression, the same grammar `GET /items`
        *  takes — edge terms included. */

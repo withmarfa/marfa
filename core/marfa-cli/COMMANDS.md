@@ -1401,7 +1401,7 @@ marfa types delete-retired [OPTIONS] <ID>
 
 ## search
 
-Full-text search on the server, best match first.
+Full-text search on the server, best match first unless a sort is given.
 
 ### marfa search
 
@@ -1417,12 +1417,17 @@ marfa search [OPTIONS] <QUERY>
 | --- | --- |
 | `--type <TYPE>` | A type identifier; its subtypes are included. |
 | `--state <STATE>` | One state, or `any`. Unset answers the active state. One of `active`, `archived`, `trashed`, `revoked`, `any`. |
+| `--source <SOURCE>` | The source the items were written under. |
 | `--tier <TIER>` | One tier, or `all`. One of `library`, `feed`, `all`. |
 | `--tag <TAG>` | Hits must carry every tag given. |
 | `--filter <FILTER>` | A property filter in the server's filter grammar. |
 | `--occurred-after <TIME>` | Exclusive lower bound on the item's own time, RFC 3339. |
 | `--occurred-before <TIME>` | Exclusive upper bound on the item's own time, RFC 3339. |
-| `--include <NAME>` | Extra to hydrate onto each hit: `edges`, `metadata`. |
+| `--updated-after <TIME>` | Inclusive lower bound on the modification time, RFC 3339. |
+| `--updated-before <TIME>` | Exclusive upper bound on the modification time, RFC 3339. |
+| `--sort <FIELD>` | What to order by: `relevance` (the default), `created-at`, `updated-at`, `occurred-at` or `properties.<field>`. |
+| `--direction <DIRECTION>` | `asc` or `desc`; the server's default is best match or newest first. One of `asc`, `desc`. |
+| `--include <NAME>` | Extra to include: `system` also returns `system.*` items, which are left out by default. |
 | `--limit <LIMIT>` | How many at most. |
 | `--cursor <CURSOR>` | The cursor the previous page answered with. |
 
