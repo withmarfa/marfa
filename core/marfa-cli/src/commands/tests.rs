@@ -2112,6 +2112,7 @@ fn the_overview_reads_as_sections_with_what_was_cut() {
             "permissions": ["audit.read"]
         },
         "types": [{ "id": "core.note", "description": "Writing.", "count": 3 }],
+        "total": 3,
         "edge_types": [{ "id": "references", "access": "write" }],
         "tags": [{ "tag": "work", "count": 2 }],
         "views": [{ "id": "v1", "title": "Reading list" }],
@@ -2126,7 +2127,7 @@ fn the_overview_reads_as_sections_with_what_was_cut() {
             "  can read * (and others, 31 in all)",
             "  permissions audit.read",
             "",
-            "types",
+            "types, 3 items in all",
             "  core.note (3)  Writing.",
             "",
             "edge types",

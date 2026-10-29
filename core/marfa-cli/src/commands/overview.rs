@@ -109,7 +109,12 @@ pub fn describe(overview: &Value) -> String {
     if let Some(permissions) = credential.get("permissions") {
         lines.push(format!("  permissions {}", strings(permissions).join(", ")));
     }
-    section(&mut lines, overview, "types", "types", |entry| {
+    let types = match overview.get("total").and_then(Value::as_u64) {
+        Some(1) => "types, 1 item in all".to_string(),
+        Some(total) => format!("types, {total} items in all"),
+        None => "types".to_string(),
+    };
+    section(&mut lines, overview, &types, "types", |entry| {
         with_description(format!("{} ({})", text(entry, "id"), entry["count"]), entry)
     });
     section(&mut lines, overview, "edge types", "edge_types", |entry| {

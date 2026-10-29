@@ -18,6 +18,7 @@ const outputSchema = z.looseObject({
       }),
     )
     .optional(),
+  total: z.number().optional(),
   edge_types: z
     .array(
       z.looseObject({

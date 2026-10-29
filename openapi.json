@@ -5311,6 +5311,11 @@
             },
             "description": "The types you can read, most items first, then by identifier, at most 50. Types in the `system` namespace are left out. Absent when you can read none."
           },
+          "total": {
+            "type": "integer",
+            "description": "How many active items you can read across every type `types` would list before its cut. Absent when `types` is.",
+            "example": 128
+          },
           "edge_types": {
             "type": "array",
             "items": {
@@ -5379,6 +5384,7 @@
               "count": 128
             }
           ],
+          "total": 128,
           "edge_types": [
             {
               "id": "references",

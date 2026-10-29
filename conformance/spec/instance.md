@@ -320,7 +320,7 @@ When `GET /overview` is answered `200`, the server MUST give `instance` with the
 
 ### `instance/overview-no-reach`
 
-When the credential may read no type, the server MUST answer `GET /overview` with `200`, `instance` and `credential`, and no list, whatever its edge permissions.
+When the credential may read no type, the server MUST answer `GET /overview` with `200`, `instance` and `credential`, and no list and no `total`, whatever its edge permissions.
 
 **Tests:** `compliance/overview.test.ts › answers a key that reaches no type with the instance and itself only`.
 
@@ -335,6 +335,14 @@ The server MUST leave an empty list or an absent field out of the `GET /overview
 When `GET /overview` is answered `200`, the server MUST list in `types` each type outside the `system` namespace that the credential may read, including a type registered while the server runs, with its `id`, its `description` when it has one and the `count` of its active items that the credential may read.
 
 **Tests:** `compliance/overview.test.ts › answers the instance, the key, and what it reads with counts, tags, edge types, views and folders`.
+
+### `instance/overview-total`
+
+When `GET /overview` is answered `200` with `types`, the server MUST give in `total` the number of active items the credential may read across every type `types` would list before its cut.
+
+**Reason:** `types` is cut at its cap, so a caller cannot add up the counts it was sent to learn how much it can reach.
+
+**Tests:** `compliance/overview.test.ts › answers the instance, the key, and what it reads with counts, tags, edge types, views and folders`, `› leaves out a type the key cannot read and everything counted from it`.
 
 ### `instance/overview-types-order`
 

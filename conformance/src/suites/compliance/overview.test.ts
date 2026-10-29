@@ -17,6 +17,7 @@ interface Overview {
     permissions?: string[];
   };
   types?: { id: string; description?: string; count: number }[];
+  total?: number;
   edge_types?: { id: string; description?: string; access: string }[];
   tags?: { tag: string; count: number }[];
   views?: { id: string; title: string }[];
@@ -144,6 +145,7 @@ describe("GET /overview", () => {
       types.map((t) => t.count).sort((a, b) => b - a),
     );
     expect(types.some((t) => t.id.startsWith("system."))).toBe(false);
+    expect(answer.total).toBe(types.reduce((sum, t) => sum + t.count, 0));
     expect(answer.tags).toEqual([
       { tag: "alpha", count: 2 },
       { tag: "beta", count: 1 },
@@ -181,6 +183,7 @@ describe("GET /overview", () => {
     const answer = await overview(narrow);
 
     expect(answer.types?.map((t) => t.id)).toEqual(["core.note"]);
+    expect(answer.total).toBe(2);
     expect(answer.tags?.map((t) => t.tag)).toEqual(["alpha", "beta"]);
     expect(answer.views).toBeUndefined();
     expect(answer.folders).toBeUndefined();
@@ -190,6 +193,7 @@ describe("GET /overview", () => {
     expect(answer.credential.permissions).toBeUndefined();
     const witness = await overview(server.workingKey);
     expect(witness.types?.map((t) => t.id)).toContain("core.bookmark");
+    expect(witness.total).toBeGreaterThan(2);
     expect(witness.tags?.map((t) => t.tag)).toContain("only-on-bookmarks");
   });
 

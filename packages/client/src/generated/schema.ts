@@ -4253,6 +4253,7 @@ export interface components {
          *           "count": 128
          *         }
          *       ],
+         *       "total": 128,
          *       "edge_types": [
          *         {
          *           "id": "references",
@@ -4306,6 +4307,11 @@ export interface components {
             };
             /** @description The types you can read, most items first, then by identifier, at most 50. Types in the `system` namespace are left out. Absent when you can read none. */
             types?: components["schemas"]["OverviewType"][];
+            /**
+             * @description How many active items you can read across every type `types` would list before its cut. Absent when `types` is.
+             * @example 128
+             */
+            total?: number;
             /** @description The edge types you can read or write, sorted by identifier, at most 50. Absent when you can read no type or can use no edge type. */
             edge_types?: components["schemas"]["OverviewEdgeType"][];
             /** @description The most used tags on items you can read, at most 30. Absent when there are none. */
