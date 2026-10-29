@@ -159,6 +159,13 @@
       "HousekeepingStore.wake": 1
     }
   },
+  "mcp/file-fetch.ts": {
+    "boundary": "Standalone observation audit of each MCP file fetch after its outcome, fetched or refused; operational exemption for the per-credential fetch rate counters. mcp/tools.test.ts.",
+    "calls": {
+      "AuditStore.log": 1,
+      "RateLimitStore.incrementWindows": 1
+    }
+  },
   "middleware/auth.ts": {
     "boundary": "Existing operational exemption: credential last-used stamps only; credential lifecycle changes use the audited provider boundary.",
     "calls": {
