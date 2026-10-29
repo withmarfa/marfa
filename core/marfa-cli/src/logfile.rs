@@ -31,7 +31,7 @@ pub fn redirect(path: &Path) -> Result<(), CliError> {
     // start adds to this file; the one before it is not the log's to keep.
     let launchd = path.with_file_name(LAUNCHD_NAME);
     if is_full(&launchd) {
-        let _ = set_aside(&launchd);
+        let _ = set_aside_and_remake(&launchd);
     }
     if is_full(&path) {
         set_aside(&path)?;
@@ -89,6 +89,19 @@ fn set_aside(path: &Path) -> io::Result<()> {
         Err(error) if error.kind() != io::ErrorKind::NotFound => Err(error),
         _ => Ok(()),
     }
+}
+
+/// Moves the file aside and leaves an empty one for its owner alone at the
+/// name, since launchd opens the file it names as the job starts and would
+/// make a missing one readable by others.
+fn set_aside_and_remake(path: &Path) -> io::Result<()> {
+    set_aside(path)?;
+    OpenOptions::new()
+        .create(true)
+        .append(true)
+        .mode(0o600)
+        .open(path)
+        .map(drop)
 }
 
 fn attach(path: &Path) -> io::Result<()> {
@@ -152,6 +165,27 @@ mod tests {
         // Nothing to move is no failure.
         set_aside(&path).unwrap();
         assert_eq!(std::fs::read_to_string(older(&path)).unwrap(), "older");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_launchd_file_moved_aside_is_made_again_for_its_owner_alone() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("marfa-cli-remake-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(LAUNCHD_NAME);
+        std::fs::write(&path, "full").unwrap();
+        let mode = |path: &Path| std::fs::metadata(path).unwrap().permissions().mode() & 0o777;
+        // Witness: moved aside alone, nothing is left at the name for launchd's
+        // own, world-readable file to replace.
+        set_aside(&path).unwrap();
+        assert!(!path.exists());
+        std::fs::rename(older(&path), &path).unwrap();
+        set_aside_and_remake(&path).unwrap();
+        assert_eq!(std::fs::read_to_string(older(&path)).unwrap(), "full");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "");
+        assert_eq!(mode(&path), 0o600);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
