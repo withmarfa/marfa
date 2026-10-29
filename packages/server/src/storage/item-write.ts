@@ -1331,8 +1331,9 @@ export async function previewTrash(
 
 /**
  * A SHA-256 hash, in hex, of the items a trash takes that the writer may
- * read, with their versions, in no particular order: a preview answers it,
- * and a trash that names it goes ahead only on the same.
+ * read, each as its ID and version, sorted so the order they come in does
+ * not change it: a preview answers it, and a trash that names it goes ahead
+ * only on the same.
  */
 function trashDigest(
   items: readonly { id: string; version: number }[],

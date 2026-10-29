@@ -68,11 +68,6 @@ export const TRASH_PREVIEW_LIMIT = 100;
 /** The most IDs a trash preview checks with `check_ids`. */
 export const TRASH_PREVIEW_CHECK_LIMIT = 20;
 
-/**
- * A SHA-256 over every item a trash would take that the key may read, each
- * as its ID and version, in ID order: equal for two previews only if the
- * same items at the same versions would go.
- */
 const TrashPreviewEntrySchema = z
   .object({
     id: z
