@@ -182,7 +182,8 @@ it.each(IDEMPOTENT_WRITE_DOORS)(
     } else if (door.includes("/extensions")) {
       path = path.replace(":id", item.id).replace(":namespace", "replayed");
       if (method === "PUT") body = { replayed: true };
-    } else if (door.endsWith("bulk-actions"))
+    } else if (door.endsWith("/items/trash")) body = { ids: [item.id] };
+    else if (door.endsWith("bulk-actions"))
       body = {
         action: "update_tags",
         add: ["replay"],

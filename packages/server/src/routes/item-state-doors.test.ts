@@ -148,6 +148,9 @@ const NOT_A_STATE_CREATE_DOOR: Record<string, string> = {
   "POST /items/bulk-actions":
     "its transition action runs through `storage.items.transition`, so the graph is enforced per row in the store",
   "POST /items/bulk-get": "read-only batch fetch",
+  "POST /items/trash":
+    "moves existing rows to the bin through the same write a delete makes, reaches no created row's state",
+  "POST /items/trash-preview": "read-only preview of a trash",
   "POST /items/lookup": "read-only lookup by link, natural key or id",
   "POST /items/tombstones": "writes a purge's record, reaches no row's state",
   "POST /items/:id/tags": "metadata layer, reaches no state",

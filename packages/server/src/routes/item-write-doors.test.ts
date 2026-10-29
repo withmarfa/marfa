@@ -351,6 +351,9 @@ const NOT_A_PROPERTIES_DOOR: Record<string, string> = {
   "POST /items/summaries/:id/purge":
     "purges an existing trashed row without creating a row or writing properties",
   "POST /items/bulk-get": "read-only batch fetch",
+  "POST /items/trash":
+    "moves existing rows to the bin through the same write a delete makes, writes no properties",
+  "POST /items/trash-preview": "read-only preview of a trash",
   "POST /items/lookup": "read-only lookup by link, natural key or id",
   "POST /items/tombstones": "writes a purge's record, not an item's properties",
   "POST /items/:id/tags": "metadata layer, not the item's properties",
