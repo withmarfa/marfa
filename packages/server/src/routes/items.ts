@@ -279,7 +279,7 @@ const createItemRoute = createRoute({
               .enum(["upsert", "create_only"])
               .optional()
               .describe(
-                "`upsert` (the default) updates the item `source_id` matches. `create_only` refuses an item that already holds the `source_id` under the source, or the `id`, in any state, as `item_exists` (409) with `details.existing_id`, and writes nothing.",
+                "`upsert` (the default) updates the item `source_id` matches. `create_only` writes nothing when an item already holds the `source_id` under the source, or the `id`, in any state, and answers `item_exists` (409) with `details.existing_id`.",
               ),
             version: z
               .number()

@@ -6150,7 +6150,7 @@ export interface operations {
                     /** @description The item's identifier at its source, such as a vendor's row ID. With `source`, it is the item's natural key: creating with a key that exists updates that item. */
                     source_id?: string;
                     /**
-                     * @description `upsert` (the default) updates the item `source_id` matches. `create_only` refuses an item that already holds the `source_id` under the source, or the `id`, in any state, as `item_exists` (409) with `details.existing_id`, and writes nothing.
+                     * @description `upsert` (the default) updates the item `source_id` matches. `create_only` writes nothing when an item already holds the `source_id` under the source, or the `id`, in any state, and answers `item_exists` (409) with `details.existing_id`.
                      * @enum {string}
                      */
                     mode?: "upsert" | "create_only";
