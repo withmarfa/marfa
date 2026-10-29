@@ -726,7 +726,9 @@ When `GET /search` names `sort=properties.<field>`, the server MUST order the hi
 
 When `GET /search` orders hits that tie on relevance or on a property, the server MUST order them by item ID ascending in both directions.
 
-**Tests:** `compliance/search-ordering.test.ts › breaks a tie by item ID, ascending`.
+**Reason:** an unordered tie is two answers to one query.
+
+**Tests:** `compliance/search-ordering.test.ts › breaks a tie by item ID, ascending`, `compliance/search-matching.test.ts › $name: $query`.
 
 ### `search-and-filters/search-sort-invalid`
 
@@ -884,19 +886,11 @@ When a type is registered, replaced, or deleted with `force`, the server MUST ma
 
 ### `search-and-filters/rank-bm25`
 
-The server MUST order hits by BM25 over the `title`, `body`, `description`, `name`, extra properties and tags at equal weight, best first.
+When `GET /search` names no `sort`, or `sort=relevance`, the server MUST rank hits by BM25 over the `title`, `body`, `description`, `name`, extra properties and tags at equal weight.
 
 **Reason:** a device ranks by the same measure (`device/rank-bm25`), so the two orders agree where they rank the same rows.
 
 **Tests:** `compliance/search-matching.test.ts › $name: $query`, `› scores a hit by its rank and gives the better hit the higher score`.
-
-### `search-and-filters/rank-ties`
-
-The server MUST order hits of equal rank by item identifier, ascending.
-
-**Reason:** an unordered tie is two answers to one query.
-
-**Tests:** `compliance/search-matching.test.ts › $name: $query`.
 
 ### `search-and-filters/excerpt-words`
 
