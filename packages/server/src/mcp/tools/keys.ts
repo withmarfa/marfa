@@ -91,7 +91,7 @@ export function registerManageKey(server: McpServer, ctx: ToolContext): void {
     {
       title: "Make or narrow a key",
       description:
-        "Use to make an API key for an app or script, or to narrow what a key may reach. A key never gets more than this credential holds. Making a key returns its secret once: give it to the person, who keeps it.",
+        "Use to make an API key for an app or script, or to narrow what a key may reach. A key never gets more than this credential holds; a new key that names no permissions or maps gets all of it, so name only what the key needs. Making a key returns its secret once: give it to the person, who keeps it.",
       inputSchema: z.strictObject({
         action: z.enum(["make", "narrow"]),
         id: itemId.optional().describe("The key to narrow."),

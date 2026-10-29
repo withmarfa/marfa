@@ -21,7 +21,7 @@ const field = z
       .string()
       .min(1)
       .describe(
-        "string, number, integer, boolean, url, email, datetime, date, enum, array or object.",
+        "string, number, integer, boolean, url, email, datetime, date, enum, array, object or thumbnail.",
       ),
     description: z.string().optional(),
     required: z.boolean().optional(),
