@@ -464,11 +464,12 @@ export const listingBoundKeys = {
     ),
   updated_after: z
     .string()
-    // Non-empty, because the ordering switches on this parameter
-    // rather than on `sort`: an empty value would order by
-    // `(updated_at, id)` ascending and bound nothing, so a client
+    // Non-empty, because an empty value would bound nothing. On a listing
+    // the ordering switches on this parameter rather than on `sort`, so it
+    // would also order by `(updated_at, id)` ascending, and a client
     // building the query before it holds a cursor would walk the
-    // whole corpus under the shape of a narrow catch-up.
+    // whole corpus under the shape of a narrow catch-up. Search shares
+    // the key and orders by `sort` alone.
     .min(1)
     .optional()
     .describe(
