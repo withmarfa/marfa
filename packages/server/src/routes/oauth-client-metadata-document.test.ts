@@ -9,6 +9,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import { createRequire, syncBuiltinESMExports } from "node:module";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { FIRST_FETCH_BUDGET } from "../auth/client-metadata-discovery.js";
 import { transactionControl } from "../storage/sqlite/transaction-control.js";
 import type { TestAppOptions, TestContext } from "../test-utils.js";
 import { createTestContext, request, TEST_OWNER } from "../test-utils.js";
@@ -311,5 +312,164 @@ describe("discovery for metadata document clients", () => {
     };
     expect(body.client_id_metadata_document_supported).toBe(true);
     expect(body.token_endpoint_auth_methods_supported).toContain("none");
+  });
+});
+
+/**
+ * Connects the client at {@link CLIENT_ID} the whole way: authorization,
+ * approval and the code exchange. Returns its refresh token.
+ */
+async function connect(c: TestContext): Promise<string> {
+  const { verifier, challenge } = pkce();
+  const consent = await authorize(c, {
+    client_id: CLIENT_ID,
+    redirect_uri: CALLBACK,
+    code_challenge: challenge,
+    scope: `${SCOPE} offline_access`,
+  });
+  expect(reachedConsent(consent), consent.headers.get("location") ?? "").toBe(
+    true,
+  );
+  const location = consent.headers.get("location") ?? "";
+  const decision = await request(c.app, "POST", "/auth/authorize/decision", {
+    form: {
+      accept: "true",
+      oauth_query: location.slice(location.indexOf("?") + 1),
+      scopes: [SCOPE, "offline_access"],
+    },
+    headers: { cookie: c.owner.cookie, origin: BASE },
+  });
+  const code = new URL(decision.headers.get("location") ?? "").searchParams.get(
+    "code",
+  );
+  const token = await request(c.app, "POST", "/auth/oauth2/token", {
+    form: {
+      grant_type: "authorization_code",
+      code: code ?? "",
+      redirect_uri: CALLBACK,
+      client_id: CLIENT_ID,
+      code_verifier: verifier,
+    },
+  });
+  const body = (await token.json()) as Record<string, unknown>;
+  expect(token.status, JSON.stringify(body)).toBe(200);
+  expect(typeof body.refresh_token).toBe("string");
+  return String(body.refresh_token);
+}
+
+function refresh(c: TestContext, refreshToken: string): Promise<Response> {
+  return request(c.app, "POST", "/auth/oauth2/token", {
+    form: {
+      grant_type: "refresh_token",
+      refresh_token: refreshToken,
+      client_id: CLIENT_ID,
+    },
+  });
+}
+
+/** A document the server must fetch again every time it resolves the client. */
+function uncached(body: unknown): Response {
+  return Response.json(body, { headers: { "cache-control": "no-cache" } });
+}
+
+describe("a stored metadata document client", () => {
+  it("keeps authorizing and refreshing after many unknown clients ask to be discovered", async () => {
+    const fetched: string[] = [];
+    const fetch: Fetch = (input, init) => {
+      const url = new Request(input, init).url;
+      fetched.push(url);
+      return uncached(metadata({ client_id: url }));
+    };
+    const c = await contextServing(fetch);
+    const refreshToken = await connect(c);
+
+    for (let i = 0; i < 150; i++) {
+      await authorize(c, {
+        client_id: `https://n${String(i)}.example.test/client.json`,
+        redirect_uri: CALLBACK,
+      });
+    }
+    const fetchedBefore = fetched.length;
+    const again = await authorize(c, {
+      client_id: CLIENT_ID,
+      redirect_uri: CALLBACK,
+    });
+    const answer = new URL(again.headers.get("location") ?? "", BASE);
+    expect(again.status).toBe(302);
+    expect(answer.searchParams.get("error"), answer.href).toBeNull();
+    expect(
+      reachedConsent(again) || answer.searchParams.get("code") !== null,
+    ).toBe(true);
+    const refreshed = await refresh(c, refreshToken);
+    expect(refreshed.status, await refreshed.clone().text()).toBe(200);
+
+    // The stored client's document was fetched again, and the unknown
+    // clients reached the transport only within their own budget.
+    expect(fetched.slice(fetchedBefore)).toContain(CLIENT_ID);
+    const unknown = fetched.filter((url) => url !== CLIENT_ID).length;
+    expect(unknown).toBeGreaterThan(0);
+    expect(unknown).toBeLessThanOrEqual(FIRST_FETCH_BUDGET.perMinute);
+  });
+
+  it.each([
+    [
+      "the host cannot be reached",
+      () => {
+        throw new TypeError("fetch failed");
+      },
+    ],
+    [
+      "the host answers 503",
+      () => new Response("unavailable", { status: 503 }),
+    ],
+    [
+      "the document breaks off partway",
+      () =>
+        new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(new TextEncoder().encode('{"client_id":'));
+              controller.error(new Error("connection reset"));
+            },
+          }),
+          { headers: { "content-type": "application/json" } },
+        ),
+    ],
+  ])("keeps refreshing while %s", async (_, unreachable) => {
+    let reachable = true;
+    const server = documentServer(() =>
+      reachable ? uncached(metadata()) : unreachable(),
+    );
+    const c = await contextServing(server.fetch);
+    const refreshToken = await connect(c);
+
+    reachable = false;
+    const calls = server.calls.length;
+    const refreshed = await refresh(c, refreshToken);
+    // The witness: the refresh did try the document.
+    expect(server.calls.length).toBeGreaterThan(calls);
+    const body = (await refreshed.json()) as Record<string, unknown>;
+    expect(refreshed.status, JSON.stringify(body)).toBe(200);
+    expect(String(body.access_token).startsWith("marfa_at_")).toBe(true);
+  });
+
+  it("is refused once its document no longer validates", async () => {
+    let valid = true;
+    const server = documentServer(() =>
+      uncached(
+        valid
+          ? metadata()
+          : metadata({ client_id: "https://app.example.test/other.json" }),
+      ),
+    );
+    const c = await contextServing(server.fetch);
+    const refreshToken = await connect(c);
+
+    valid = false;
+    const refused = await refresh(c, refreshToken);
+    expect(refused.status).toBe(400);
+    expect(((await refused.json()) as { error?: string }).error).toBe(
+      "invalid_client",
+    );
   });
 });

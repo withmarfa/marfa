@@ -31,7 +31,6 @@ import {
   oauthDeviceAuthorization,
   type ClientMetadataResourceFetch,
 } from "@better-auth/oauth-provider";
-import { cimd } from "@better-auth/cimd";
 import { fetchClientMetadataResource as fetchOverPinnedAddress } from "@better-auth/cimd/node";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { jwt } from "better-auth/plugins";
@@ -45,6 +44,7 @@ import {
   makeTokenHasher,
   validateDeviceScope,
 } from "./oauth-provider.js";
+import { clientMetadataDiscoveryPlugin } from "./client-metadata-discovery.js";
 import { withIdempotentConsent } from "./consent-idempotent-adapter.js";
 import { withHashedDeviceCodes } from "./hashed-device-code-adapter.js";
 import { CLIENT_ADDRESS_HEADER } from "../middleware/client-ip.js";
@@ -634,11 +634,9 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
             // its `client_id` instead of registering, as MCP clients do. The
             // provider creates the client from the document the first time it
             // meets one, with the same allowlist a registration gets.
-            cimd({
-              fetchClientMetadataResource:
-                options.fetchClientMetadataResource ?? fetchOverPinnedAddress,
-              metadataProfile: "mcp-2026-07-28",
-            }),
+            clientMetadataDiscoveryPlugin(
+              options.fetchClientMetadataResource ?? fetchOverPinnedAddress,
+            ),
             // The RFC 8628 device grant, as the provider's own extension: it
             // mints and claims the codes, approves or denies them, and hands
             // the exchange to the provider's shared issuance at
