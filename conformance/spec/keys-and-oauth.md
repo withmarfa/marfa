@@ -1743,6 +1743,14 @@ When a token request names this server's origin as `resource`, with or without a
 
 **Tests:** `compliance/oauth-tokens.test.ts › is accepted when it names this server, and the token works here`.
 
+### `keys-and-oauth/resource-case`
+
+When a token request names this server's origin or one of its MCP endpoints with the scheme or host in other letter case, the server MUST issue an access token this server accepts.
+
+**Reason:** RFC 3986 section 6.2.2.1: a URI's scheme and host compare without case, while its path compares exactly, so `/MCP` names no MCP endpoint.
+
+**Tests:** `compliance/oauth-tokens.test.ts › is accepted when the scheme and host are in capitals`.
+
 ### `keys-and-oauth/resource-mcp`
 
 When an authorization request and the token request that redeems its code each name one of this server's MCP endpoints as `resource`, the server MUST issue an access token this server accepts.
@@ -1751,27 +1759,35 @@ When an authorization request and the token request that redeems its code each n
 
 ### `keys-and-oauth/resource-other-server`
 
-If a token request names as `resource` anything other than this server's origin or one of its MCP endpoints, such as another server, `/mcp/` or `/mcp/other`, then the server MUST answer `400 invalid_target`.
+If a token request names as `resource` anything other than this server's origin or one of its MCP endpoints, such as another server, `/mcp/`, `/MCP` or `/mcp/other`, then the server MUST answer `400 invalid_target`.
 
 **Tests:** `compliance/oauth-tokens.test.ts › is refused invalid_target when it names another server`.
+
+### `keys-and-oauth/resource-one-audience`
+
+When the server issues an access token, the server MUST accept that token at its API and at each of its MCP endpoints, `/mcp`, `/mcp/schema` and `/mcp/admin`, whichever of them the token request named as `resource`.
+
+**Reason:** The API and the MCP endpoints are addresses of one protected resource, and an MCP endpoint calls the API with the token it was sent.
+
+**Tests:** waiting on #2445.
 
 ### `keys-and-oauth/resource-one-value`
 
 If a token request names `resource` more than once, then the server MUST answer `400 invalid_target`.
 
-**Reason:** Every token the server issues is accepted by this server alone, so a token for two resources would promise an audience it does not have.
+**Reason:** Every token the server issues is accepted at all of its resources (`keys-and-oauth/resource-one-audience`), so a second value would ask for nothing the first does not give.
 
 **Tests:** `compliance/oauth-tokens.test.ts › is refused invalid_target when a token request names more than one`.
 
 ### `keys-and-oauth/resource-authorize-refused`
 
-If an authorization request names as `resource` anything other than this server's origin or one of its MCP endpoints, with a redirect URI the client registered, then the server MUST send the browser to that redirect URI with `error=invalid_target`, the request's `state` and no code.
+If an authorization request names as `resource` anything other than this server's origin or one of its MCP endpoints, with a redirect URI the client registered or its client ID metadata document lists, then the server MUST send the browser to that redirect URI with `error=invalid_target`, the request's `state` and no code.
 
 **Tests:** `compliance/oauth-tokens.test.ts › is refused at authorization to the redirect URI the app registered, with the request's state`.
 
 ### `keys-and-oauth/resource-authorize-unregistered`
 
-If an authorization request names as `resource` anything other than this server's origin or one of its MCP endpoints, with a redirect URI the client did not register, then the server MUST answer `400 invalid_target` without a redirect.
+If an authorization request names as `resource` anything other than this server's origin or one of its MCP endpoints, with a redirect URI the client neither registered nor lists in its client ID metadata document, then the server MUST answer `400 invalid_target` without a redirect.
 
 **Reason:** RFC 6749 section 4.1.2.1: a redirect URI the client did not register is never sent an answer.
 

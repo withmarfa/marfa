@@ -220,11 +220,39 @@ describe("the resource parameter", () => {
     }
   });
 
+  it("is accepted when the scheme and host are in capitals", async () => {
+    const app = await registerApp(server, NOTES);
+    const capitals = origin.toUpperCase();
+    expect(capitals).not.toBe(origin);
+    for (const resource of [capitals, `${capitals}/mcp`]) {
+      const { code, verifier } = await codeFor(
+        server,
+        origin,
+        cookie,
+        app,
+        NOTES,
+      );
+      const issued = await token(server, {
+        grant_type: "authorization_code",
+        code,
+        redirect_uri: CALLBACK,
+        code_verifier: verifier,
+        client_id: app.clientId,
+        resource,
+      });
+      expect(issued.status, `${resource} ${JSON.stringify(issued.body)}`).toBe(
+        200,
+      );
+      expect(await itemsStatus(server, issued.body.access_token!)).toBe(200);
+    }
+  });
+
   it("is refused invalid_target when it names another server", async () => {
     const app = await registerApp(server, NOTES);
     for (const resource of [
       "https://elsewhere.example",
       `${origin}/mcp/`,
+      `${origin}/MCP`,
       `${origin}/mcp/other`,
       `${origin}/items`,
     ]) {
