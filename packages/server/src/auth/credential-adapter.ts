@@ -226,6 +226,32 @@ type Adapter = Record<string, unknown> & {
   transaction: <T>(body: (adapter: Adapter) => Promise<T>) => Promise<T>;
 };
 
+/**
+ * Assertion authentication needs a replay store the instance does not have,
+ * so no client is stored with it: not one that registers, and not one whose
+ * metadata document names it, which the provider stores without asking.
+ */
+export function refusePrivateKeyJwt(): never {
+  throw privateKeyJwtRefusal();
+}
+
+function privateKeyJwtRefusal(): APIError {
+  return new APIError("BAD_REQUEST", {
+    error: "invalid_client_metadata",
+    error_description:
+      "private_key_jwt is not supported; use none, client_secret_basic or client_secret_post.",
+  });
+}
+
+function storesPrivateKeyJwt(method: string, args: unknown[]): boolean {
+  if (method === "transaction") return false;
+  const first = args[0] as AdapterArgs | undefined;
+  return (
+    first?.model === "oauthClient" &&
+    (first.data ?? first.update)?.tokenEndpointAuthMethod === "private_key_jwt"
+  );
+}
+
 const mutations = [
   "create",
   "update",
@@ -687,6 +713,10 @@ export function withCredentialAudit<
         const request = credentialRequest.getStore();
         if (request && !request.active)
           return Promise.reject(new Error("Credential request is closed"));
+        // Refused before the write and kept out of the request's failure, so
+        // the caller answers with the refusal rather than a server error.
+        if (storesPrivateKeyJwt(method, args))
+          return Promise.reject(privateKeyJwtRefusal());
         const pending = Promise.resolve().then(() =>
           invoke.apply(wrapped, args),
         );

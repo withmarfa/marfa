@@ -1,5 +1,8 @@
 import { refuseProfileEmailWrite } from "./profile-scope.js";
-import { credentialRequest } from "./credential-adapter.js";
+import {
+  credentialRequest,
+  refusePrivateKeyJwt,
+} from "./credential-adapter.js";
 import { MAX_REGISTERED_REDIRECT_URIS } from "../middleware/body-cap.js";
 import { runAuditedTransaction } from "../storage/audited-transaction.js";
 /**
@@ -10,12 +13,11 @@ import { runAuditedTransaction } from "../storage/audited-transaction.js";
  * catch-all (basePath `/auth`).
  *
  * Three coupled pieces in this file:
- *   1. `buildAllowedScopes(...)` — enumerates the Marfa scope grammar at
- *      instance-construction time from the type / edge registries so the
- *      plugin's allowlist accepts every concrete typed scope
- *      (`core.note:read`, `edge.parent-of:write`, …). Custom types
- *      registered at runtime require a server restart to surface
- *      (acceptable tradeoff; documented).
+ *   1. `buildAllowedScopes(...)` and `liveAllowedScopes()` — enumerate the
+ *      Marfa scope grammar from the type / edge registries so the plugin's
+ *      allowlist accepts every concrete typed scope (`core.note:read`,
+ *      `edge.parent-of:write`, …). The live set is read per request, so a
+ *      type registered while the server runs is requestable at once.
  *   2. `buildOauthProviderPlugin(...)` — constructs the plugin with
  *      opaque tokens hashed via Marfa's `hashApiKey(t, salt)`, the
  *      `marfa_at_` / `marfa_rt_` prefixes, and OIDC custom claims for
@@ -29,6 +31,7 @@ import {
   DEVICE_CODE_GRANT_TYPE,
   oauthProvider,
 } from "@better-auth/oauth-provider";
+import { isCimdClientIdUrlCandidate } from "@better-auth/cimd";
 import {
   APIError,
   createAuthMiddleware,
@@ -49,6 +52,9 @@ import {
   EDGE_TYPE_REGISTRY,
   expandBundlesToScopes,
   isValidScope,
+  listTypes,
+  listEdgeTypes,
+  classifyNamespace,
 } from "@withmarfa/shared";
 import type { PermissionBundle } from "@withmarfa/shared";
 import type { Storage } from "../storage/interface.js";
@@ -60,6 +66,7 @@ import {
   bundlePublishedScopes,
   catchUpClientScopeCeiling,
   scopesAwaitingCatchUp,
+  scopesCoveredByCeiling,
 } from "./ceiling-catchup.js";
 import {
   isWithheldFromAllowlist,
@@ -69,6 +76,7 @@ import { matchesRegisteredRedirectUri } from "./redirect-uri-match.js";
 import { serverAddedResponseParam } from "./redirect-params.js";
 import { errorMessage } from "../error-text.js";
 import { ownerPictureAddress } from "../picture.js";
+import { isAcceptedResource } from "./mcp-resource.js";
 
 /**
  * Minimal context shape we read off the `hooks.before` and `hooks.after`
@@ -103,6 +111,8 @@ interface HookCtxLite {
    *  nothing this server would accept before the plugin ran. */
   revokedTokenWasDead?: boolean;
   context?: {
+    /** The authorization server's issuer. */
+    baseURL?: string;
     session?: { user?: { id?: string } } | null;
     /** What the endpoint produced. On a redirect this is the thrown
      *  `APIError`-shaped object, whose `headers` carry the `Location`. */
@@ -124,13 +134,12 @@ const METADATA_SUBRESOURCES = ["types", "edge_types"] as const;
 
 /**
  * Namespaces whose members the static registry never enumerates: an app's
- * own runtime types (`user.*`, `app.*`) and the publisher roots. A type or edge type in one of these is registered at
- * runtime, so it does not exist when the allowed-scope set is built and
- * cannot be named concretely in a grant. The namespace wildcard is the only
- * thing that can name it, which is why these stay requestable while
- * deliberately staying out of the default consent bundle: the default grant
- * is the per-type-narrowable content set, and these appear only when an
- * app opts into them.
+ * own runtime types (`user.*`, `app.*`) and the publisher roots. A type or
+ * edge type in one of these is registered at runtime, and the namespace
+ * wildcard names every one there is or will be, which is why these stay
+ * requestable while deliberately staying out of the default consent bundle:
+ * the default grant is the per-type-narrowable content set, and these appear
+ * only when an app opts into them.
  *
  * Derived from the registry (`user` + `app` + every publisher root it
  * holds) rather than enumerated by hand. The namespaces of types a caller registered
@@ -148,9 +157,9 @@ export function requestableNamespaceRoots(): readonly string[] {
 }
 
 /**
- * Registered namespace roots admitted into the scope allowlist,
- * installed once at boot (same restart-re-enumeration model as the rest
- * of the allowlist). Admission is not disclosure: the allowlist only decides
+ * Registered namespace roots admitted into the scope allowlist, installed
+ * at boot from the `types` table; {@link liveAllowedScopes} adds the roots of
+ * types registered since. Admission is not disclosure: the allowlist only decides
  * whether a requested literal can survive to consent, and what a granted
  * wildcard actually reaches is decided per-token by the data plane.
  */
@@ -177,12 +186,8 @@ export function setRuntimeNamespaceRoots(roots: readonly string[]): void {
  * This is the set of scopes that CAN be requested, which is wider than the
  * default consent bundle (the curated, per-type content set). Custom types
  * registered at runtime via `POST /types` are NOT picked up as concrete
- * scopes — a server restart re-enumerates from the (now-larger) registry.
- * The namespace wildcards are how an app reaches its own `user.*` types
- * without that restart: the wildcard is granted, and matches whatever
- * `user.*` types exist at check time. The same applies to the
- * publisher-handle namespaces registered here, whose roots boot installs via
- * {@link setRuntimeNamespaceRoots}.
+ * scopes here; {@link liveAllowedScopes} adds them, and the discovery
+ * document advertises this baseline so it names no instance's own types.
  */
 export function buildAllowedScopes(
   permissionBundles: PermissionBundle[] = getPermissionBundles(),
@@ -338,6 +343,37 @@ export function buildAllowedScopes(
 }
 
 /**
+ * The allowlist as the registries hold it now: {@link buildAllowedScopes}
+ * plus a concrete scope for every type and edge type the instance registered
+ * itself, and the namespace wildcards for the publisher roots they sit under.
+ * Read per request, so a type registered while the server runs can be
+ * requested and granted without a restart, and a deleted one stops being
+ * grantable at once.
+ */
+export function liveAllowedScopes(): string[] {
+  const roots = new Set(runtimeNamespaceRoots);
+  const typeIds = listTypes().map((schema) => schema.id);
+  const edgeTypeIds = listEdgeTypes().map((schema) => schema.id);
+  // A shipped edge type is one bare segment (`about`), which names no
+  // namespace.
+  for (const id of [...typeIds, ...edgeTypeIds]) {
+    const dot = id.indexOf(".");
+    if (dot > 0 && classifyNamespace(id) === "publisher")
+      roots.add(id.slice(0, dot));
+  }
+  const out = new Set(buildAllowedScopes(getPermissionBundles(), [...roots]));
+  for (const id of typeIds) {
+    out.add(`${id}:read`);
+    out.add(`${id}:write`);
+  }
+  for (const id of edgeTypeIds) {
+    out.add(`edge.${id}:read`);
+    out.add(`edge.${id}:write`);
+  }
+  return Array.from(out).sort();
+}
+
+/**
  * Literals already reported, so a permanently misconfigured bundle costs one
  * log line rather than one per call. This runs on the discovery path, which
  * is per-request; a silent drop would be the wrong trade on a permission
@@ -425,8 +461,9 @@ export function buildOauthProviderPlugin(
     // against `clientRegistrationAllowedScopes`; the registration adapter
     // stores the scope a request names, and this whole set for a request that
     // names none, less `offline_access` for a client that may not refresh
-    // (`settleRegistrationScope`). Custom types registered at runtime require
-    // a server restart to surface here.
+    // (`settleRegistrationScope`). The projection plugin replaces both with
+    // the live allowlist before every request that reads them
+    // (`refreshProviderAllowlist`), so these are the values only until then.
     scopes: allowedScopes,
     clientRegistrationAllowedScopes: allowedScopes,
     // The acceptance set above carries the runtime namespace roots, but the
@@ -606,28 +643,22 @@ export function buildOauthProviderPlugin(
 export function buildOauthProjectionPlugin(opts: {
   storage: Storage;
   apiKeySalt?: string;
-  /** Issuer base URL; when set, the token endpoint validates and strips the
-   *  RFC 8707 `resource` parameter so mints stay opaque. */
+  /** Issuer base URL; when set, the authorize and token endpoints validate
+   *  and strip the RFC 8707 `resource` parameter so mints stay opaque. */
   baseURL?: string;
+  /** The provider whose allowlist each request points at the live one. */
+  provider?: ProviderAllowlist;
 }) {
-  const { storage, apiKeySalt, baseURL } = opts;
+  const { storage, apiKeySalt, baseURL, provider } = opts;
   const refreshHasher = apiKeySalt ? makeTokenHasher(apiKeySalt) : undefined;
-  // The same enumeration `buildOauthProviderPlugin` hands the plugin as
-  // `scopes`. Both are built at instance construction from the same
-  // registries and the same configured bundles, so the narrowing hook and
-  // the validation it runs ahead of always agree on what exists.
-  const liveScopes = new Set(buildAllowedScopes());
   // What discovery advertises to every client, as opposed to everything a
-  // client may request. `liveScopes` is the wider set (wildcards, every
+  // client may request. The live allowlist is the wider set (wildcards, every
   // registered type); this is the curated bundle union the metadata document
   // publishes, and the distinction is what lets a stored ceiling stop
   // freezing without becoming no ceiling at all. Device initiation builds the
   // same set from the same helper, because a ceiling widened by two
   // differently-filtered sets is two ceilings.
   const bundleScopes = bundlePublishedScopes(getPermissionBundles());
-  const acceptedResources = baseURL
-    ? new Set([stripTrailingSlash(baseURL)].filter((v) => v.length > 0))
-    : undefined;
   return {
     id: "marfa-oauth-projection" as const,
     hooks: {
@@ -669,6 +700,21 @@ export function buildOauthProjectionPlugin(opts: {
           : []),
       ],
       before: [
+        ...(provider
+          ? [
+              {
+                // The provider holds its allowlist as an array fixed at
+                // construction. The narrowing below and the validation it
+                // runs ahead of must agree on what exists, so both read the
+                // registries as they stand for this request.
+                matcher: (ctx: HookCtxLite) => readsScopeAllowlist(ctx.path),
+                handler: createAuthMiddleware(() => {
+                  refreshProviderAllowlist(provider, liveAllowedScopes());
+                  return Promise.resolve();
+                }),
+              },
+            ]
+          : []),
         {
           matcher: (ctx: HookCtxLite) => ctx.path === "/oauth2/token",
           handler: createAuthMiddleware(async (ctx: HookCtxLite) => {
@@ -727,11 +773,7 @@ export function buildOauthProjectionPlugin(opts: {
               typeof method === "string" &&
               method.trim() === "private_key_jwt"
             )
-              throw new APIError("BAD_REQUEST", {
-                error: "invalid_client_metadata",
-                error_description:
-                  "private_key_jwt is not supported; use none, client_secret_basic or client_secret_post.",
-              });
+              refusePrivateKeyJwt();
             const redirects = ctx.body?.redirect_uris;
             if (
               Array.isArray(redirects) &&
@@ -741,10 +783,20 @@ export function buildOauthProjectionPlugin(opts: {
                 error: "invalid_redirect_uri",
                 error_description: `A registration names at most ${String(MAX_REGISTERED_REDIRECT_URIS)} redirect URIs.`,
               });
-            settleRegistrationScope(ctx, liveScopes);
+            settleRegistrationScope(ctx, new Set(liveAllowedScopes()));
             return Promise.resolve();
           }),
         },
+        ...(baseURL
+          ? [
+              {
+                matcher: (ctx: HookCtxLite) => ctx.path === "/oauth2/authorize",
+                handler: createAuthMiddleware((ctx: HookCtxLite) =>
+                  acceptAuthorizeResource(ctx, storage, baseURL),
+                ),
+              },
+            ]
+          : []),
         {
           // Narrows the requested scope set on the authorize endpoint so a
           // scope the server cannot grant costs the requester that scope
@@ -767,7 +819,12 @@ export function buildOauthProjectionPlugin(opts: {
           // URI with an error and no way forward.
           matcher: (ctx: HookCtxLite) => ctx.path === "/oauth2/authorize",
           handler: createAuthMiddleware((ctx: HookCtxLite) =>
-            narrowAuthorizeScopes(ctx, storage, liveScopes, bundleScopes),
+            narrowAuthorizeScopes(
+              ctx,
+              storage,
+              new Set(liveAllowedScopes()),
+              bundleScopes,
+            ),
           ),
         },
         {
@@ -787,27 +844,15 @@ export function buildOauthProjectionPlugin(opts: {
             guardDeviceCodeGrant(ctx, storage, bundleScopes, refreshHasher),
           ),
         },
-        ...(acceptedResources
+        ...(baseURL
           ? [
               {
-                // RFC 8707 `resource` on the token endpoint, made safe for
-                // opaque tokens. MCP clients MUST send the canonical URI of
-                // the endpoint they will use the token against; the plugin
-                // validates it against its audience list and then, whenever
-                // a resource survives, mints a JWT-format access token
-                // instead of the opaque one the bearer middleware resolves —
-                // a token that verifies nowhere. Every audience this
-                // deployment accepts is this same server, so restricting the
-                // token's audience adds nothing the issuer boundary does not
-                // already provide: no other resource server trusts this
-                // authorization server. Validate against the accepted set,
-                // refuse unknown resources up front with the RFC 8707 error,
-                // and strip the parameter so the mint stays opaque.
+                // RFC 8707 `resource` on the token endpoint. See
+                // `normalizeResourceParameter`.
                 matcher: (ctx: HookCtxLite) => ctx.path === "/oauth2/token",
-                handler: createAuthMiddleware((ctx: HookCtxLite) => {
-                  normalizeResourceParameter(ctx, acceptedResources);
-                  return Promise.resolve();
-                }),
+                handler: createAuthMiddleware((ctx: HookCtxLite) =>
+                  normalizeResourceParameter(ctx, baseURL),
+                ),
               },
             ]
           : []),
@@ -1209,62 +1254,173 @@ function answerPkceRefusal(ctx: HookCtxLite): Response | undefined {
 }
 
 // ---------------------------------------------------------------------------
-// Refresh-token grant guard (before-hook)
+// The resource parameter (RFC 8707)
 // ---------------------------------------------------------------------------
 
-/**
- * Before-hook for `/oauth2/token` with `grant_type=refresh_token`. One
- * lookup of the refresh-token row drives two behaviors:
- *
- *  1. **Unknown token → clean `invalid_grant` (400).** The
- *     @better-auth/oauth-provider plugin 500s when handed a refresh token
- *     with no matching row (e.g. orphaned by a data reset). A 500 is
- *     non-terminal to most OAuth clients, so they retry hard and the storm
- *     saturates the auth rate limit. We throw the RFC 6749 `invalid_grant`
- *     instead — terminal, so a well-behaved client stops. The throw
- *     propagates (it is NOT swallowed) to short-circuit the request.
- *
- *  2. **Revoked (replayed) token → zap the chain's access tokens.** The
- *     plugin marks the old refresh token `revoked` on rotation and returns
- *     `invalid_grant` on replay, but leaves the chain's access tokens valid
- *     until TTL. We pre-emptively delete them for (clientId, userId) so a
- *     parallel request can't slip through with one. Best-effort.
- *
- * Every other active token falls through to the plugin's rotation. Any
- * failure of the lookup itself fails open (logs, returns) so a transient DB
- * blip never turns a legitimate refresh into a hard error.
- */
-function stripTrailingSlash(s: string): string {
-  return s.replace(/\/+$/, "");
+const UNSERVED_RESOURCE =
+  "The requested resource is not served by this authorization server.";
+
+function invalidTarget(description: string): APIError {
+  return new APIError("BAD_REQUEST", {
+    error: "invalid_target",
+    error_description: description,
+  });
 }
 
-function normalizeResourceParameter(
+function resourceValues(resource: unknown): unknown[] {
+  if (Array.isArray(resource)) return resource as unknown[];
+  return [resource];
+}
+
+function namesOnlyThisServer(
+  values: readonly unknown[],
+  baseURL: string,
+): boolean {
+  return (
+    values.length > 0 &&
+    values.every((v) => typeof v === "string" && isAcceptedResource(baseURL, v))
+  );
+}
+
+/**
+ * Every `resource` value of a form-encoded request. The parsed body keeps
+ * only the last of a repeated field, and the provider's token handler reads
+ * the whole list back off the request after this hook has run.
+ */
+async function formResourceValues(
   ctx: HookCtxLite,
-  accepted: Set<string>,
-): void {
+): Promise<string[] | undefined> {
+  const request = ctx.request;
+  if (
+    !request?.headers
+      .get("content-type")
+      ?.toLowerCase()
+      .includes("application/x-www-form-urlencoded")
+  ) {
+    return undefined;
+  }
+  let text: string;
+  try {
+    text = await request.clone().text();
+  } catch {
+    return undefined;
+  }
+  const values = new URLSearchParams(text)
+    .getAll("resource")
+    .filter((value) => value.length > 0);
+  return values.length > 0 ? values : undefined;
+}
+
+/**
+ * Before-hook for `/oauth2/token`. Marfa mints opaque tokens that this server
+ * alone accepts, so a `resource` naming this server or one of its MCP
+ * endpoints adds nothing the issuer boundary does not, and is stripped so the
+ * mint stays opaque. Anything else is refused with the RFC 8707 error.
+ *
+ * More than one value is refused as well: the provider puts a repeated value
+ * back after this hook and then looks each one up in a resource registry
+ * Marfa does not keep.
+ */
+async function normalizeResourceParameter(
+  ctx: HookCtxLite,
+  baseURL: string,
+): Promise<void> {
   const body = ctx.body;
   if (!body || typeof body !== "object") return;
-  const resource = body.resource;
-  if (resource === undefined) return;
-  const values =
-    typeof resource === "string"
-      ? [resource]
-      : Array.isArray(resource)
-        ? resource
-        : null;
-  if (
-    !values ||
-    values.some(
-      (v) => typeof v !== "string" || !accepted.has(stripTrailingSlash(v)),
-    )
-  ) {
-    throw new APIError("BAD_REQUEST", {
-      error: "invalid_target",
-      error_description:
-        "The requested resource is not served by this authorization server.",
-    });
+  const fromForm = await formResourceValues(ctx);
+  if (body.resource === undefined && fromForm === undefined) return;
+  const values = fromForm ?? resourceValues(body.resource);
+  if (!namesOnlyThisServer(values, baseURL)) {
+    throw invalidTarget(UNSERVED_RESOURCE);
+  }
+  if (values.length > 1) {
+    throw invalidTarget("A token request names at most one resource.");
   }
   delete body.resource;
+}
+
+/**
+ * Before-hook for `/oauth2/authorize`, where an MCP client names the same
+ * resource it will name at the token endpoint. A resource this server serves
+ * is stripped, so the code carries none and the token request settles it.
+ *
+ * Anything else is refused here: the provider would look it up in a resource
+ * registry Marfa does not keep. The refusal goes back to the client's
+ * callback only when the request names one the stored client registered
+ * (RFC 6749 §4.1.2.1); otherwise it is answered here, as for an unknown
+ * client.
+ */
+async function acceptAuthorizeResource(
+  ctx: HookCtxLite,
+  storage: Storage,
+  baseURL: string,
+): Promise<{ redirect: true; url: string } | undefined> {
+  const request = findAuthorizeRequest(ctx);
+  if (request?.params.resource === undefined) return undefined;
+  const { params, clientId } = request;
+  if (namesOnlyThisServer(resourceValues(params.resource), baseURL)) {
+    delete params.resource;
+    return undefined;
+  }
+
+  const redirectUri = params.redirect_uri;
+  let registered: readonly string[] | null = null;
+  try {
+    registered =
+      (await storage.oauthProvider?.getClient(clientId))?.redirectUris ?? null;
+  } catch (err) {
+    log(
+      "warn",
+      "oauth authorize: client lookup for a resource refusal failed",
+      {
+        client_id: clientId,
+        error: errorMessage(err),
+      },
+    );
+  }
+  if (
+    typeof redirectUri !== "string" ||
+    registered === null ||
+    !matchesRegisteredRedirectUri(registered, redirectUri)
+  ) {
+    throw invalidTarget(UNSERVED_RESOURCE);
+  }
+
+  const callback = new URL(redirectUri);
+  callback.searchParams.set("error", "invalid_target");
+  callback.searchParams.set("error_description", UNSERVED_RESOURCE);
+  if (typeof params.state === "string") {
+    callback.searchParams.set("state", params.state);
+  }
+  const issuer = ctx.context?.baseURL;
+  if (issuer) callback.searchParams.set("iss", issuer);
+  return redirectFromAuthorize(ctx, callback.toString());
+}
+
+/** The slice of the provider plugin whose allowlist is kept live. */
+export interface ProviderAllowlist {
+  options: { scopes?: string[]; clientRegistrationAllowedScopes?: string[] };
+}
+
+/** The endpoints whose handling reads the provider's allowlist. */
+function readsScopeAllowlist(path: string | undefined): boolean {
+  return (
+    path !== undefined &&
+    (path.startsWith("/oauth2/") || path.startsWith("/device"))
+  );
+}
+
+/**
+ * Points the provider at the live allowlist. It validates a registration's
+ * scope, a client with no stored ceiling, and the ceiling a client created
+ * from its metadata document is stored with, against these two fields.
+ */
+function refreshProviderAllowlist(
+  provider: ProviderAllowlist,
+  live: string[],
+): void {
+  provider.options.scopes = live;
+  provider.options.clientRegistrationAllowedScopes = live;
 }
 
 /**
@@ -1390,14 +1546,23 @@ async function narrowAuthorizeScopes(
   let registeredRedirectUris: readonly string[];
   try {
     const client = await oauth.getClient(clientId);
-    if (!client) return;
-    // Mirrors the plugin's own `client.scopes ?? opts.scopes`: a null ceiling
-    // tracks the live set, and an empty array is a real, empty ceiling that
-    // narrows everything away — which case 2 below then declines to act on.
-    ceiling = client.scopes;
-    // Read off the same row, so the redirect-URI gate below costs no extra
-    // query.
-    registeredRedirectUris = client.redirectUris;
+    if (!client) {
+      // A client that identifies itself by its metadata document is stored
+      // by the provider during this request, with the live allowlist as its
+      // ceiling, so narrowing against that set now is what it will meet.
+      if (!isCimdClientIdUrlCandidate(clientId)) return;
+      ceiling = null;
+      registeredRedirectUris = [];
+    } else {
+      // Mirrors the plugin's own `client.scopes ?? opts.scopes`: a null
+      // ceiling tracks the live set, and an empty array is a real, empty
+      // ceiling that narrows everything away — which case 2 below then
+      // declines to act on.
+      ceiling = client.scopes;
+      // Read off the same row, so the redirect-URI gate below costs no extra
+      // query.
+      registeredRedirectUris = client.redirectUris;
+    }
   } catch (err) {
     log("warn", "oauth authorize scope-narrowing precheck failed", {
       client_id: clientId,
@@ -1552,15 +1717,25 @@ async function narrowAuthorizeScopes(
   // narrowed against it. Device initiation performs the same catch-up before
   // its own comparison; the helper carries the three bounds and why each one
   // is there.
-  if (scopesAwaitingCatchUp(ceiling, requested, bundleScopes).length > 0) {
+  //
+  // A scope the ceiling already covers is named in it too: a type registered
+  // after the client was, asked for by a client registered for every type.
+  // Only live ones, so a covering wildcard never writes a deleted type's
+  // scope into the row.
+  const live = requested.filter((scope) => liveScopes.has(scope));
+  if (
+    scopesAwaitingCatchUp(ceiling, requested, bundleScopes).length > 0 ||
+    scopesCoveredByCeiling(ceiling, live).length > 0
+  ) {
     if (await signedIn(ctx)) {
       ceiling = await catchUpClientScopeCeiling({
         storage,
         clientId,
-        requested,
+        requested: live,
         ceiling,
         bundleScopes,
         surface: "authorize",
+        covered: true,
       });
     } else if (!asksForNoPrompt(rawPrompt)) {
       // Narrowing now would drop the very scopes the catch-up exists to
@@ -1720,9 +1895,23 @@ function signInFirst(
   for (const [name, value] of Object.entries(params)) {
     if (typeof value === "string") query.append(name, value);
   }
-  const url = `${SIGN_IN_PAGE}?${new URLSearchParams({
-    return_to: `${AUTHORIZE_PATH}?${query.toString()}`,
-  }).toString()}`;
+  return redirectFromAuthorize(
+    ctx,
+    `${SIGN_IN_PAGE}?${new URLSearchParams({
+      return_to: `${AUTHORIZE_PATH}?${query.toString()}`,
+    }).toString()}`,
+  );
+}
+
+/**
+ * Redirects the way the provider's authorize endpoint does: a browser fetch
+ * or a caller asking for JSON is handed the URL to follow, anything else a
+ * `302`.
+ */
+function redirectFromAuthorize(
+  ctx: HookCtxLite,
+  url: string,
+): { redirect: true; url: string } {
   const headers = ctx.headers;
   if (
     headers?.get("sec-fetch-mode") === "cors" ||
@@ -1910,6 +2099,32 @@ function requestedGrantType(ctx: HookCtxLite): string | undefined {
   return typeof raw === "string" ? raw.trim() : undefined;
 }
 
+// ---------------------------------------------------------------------------
+// Refresh-token grant guard (before-hook)
+// ---------------------------------------------------------------------------
+
+/**
+ * Before-hook for `/oauth2/token` with `grant_type=refresh_token`. One
+ * lookup of the refresh-token row drives two behaviors:
+ *
+ *  1. **Unknown token → clean `invalid_grant` (400).** The
+ *     @better-auth/oauth-provider plugin 500s when handed a refresh token
+ *     with no matching row (e.g. orphaned by a data reset). A 500 is
+ *     non-terminal to most OAuth clients, so they retry hard and the storm
+ *     saturates the auth rate limit. We throw the RFC 6749 `invalid_grant`
+ *     instead — terminal, so a well-behaved client stops. The throw
+ *     propagates (it is NOT swallowed) to short-circuit the request.
+ *
+ *  2. **Revoked (replayed) token → zap the chain's access tokens.** The
+ *     plugin marks the old refresh token `revoked` on rotation and returns
+ *     `invalid_grant` on replay, but leaves the chain's access tokens valid
+ *     until TTL. We pre-emptively delete them for (clientId, userId) so a
+ *     parallel request can't slip through with one. Best-effort.
+ *
+ * Every other active token falls through to the plugin's rotation. Any
+ * failure of the lookup itself fails open (logs, returns) so a transient DB
+ * blip never turns a legitimate refresh into a hard error.
+ */
 async function guardRefreshTokenGrant(
   ctx: HookCtxLite,
   storage: Storage,

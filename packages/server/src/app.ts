@@ -34,7 +34,7 @@ import { authMiddleware, hashApiKey } from "./middleware/auth.js";
 import { createErrorHandler } from "./middleware/error-handler.js";
 import type { Storage } from "./storage/interface.js";
 import type { BlobLayer } from "./storage/blob-layer.js";
-import type { MarfaAuth } from "./auth/instance.js";
+import type { MarfaAuth, MarfaAuthOptions } from "./auth/instance.js";
 import { createMarfaAuth } from "./auth/instance.js";
 import { ownerTrashRoutes } from "./routes/owner-trash.js";
 import { overviewRoutes } from "./routes/overview.js";
@@ -168,6 +168,8 @@ export function createApp(
     localAuthority?: boolean;
     /** The pages Home lists. Defaults to the console's own; a test passes its own. */
     consolePages?: ConsolePages;
+    /** How a client's metadata document is fetched; see `MarfaAuthOptions`. */
+    fetchClientMetadataResource?: MarfaAuthOptions["fetchClientMetadataResource"];
   } = {},
 ) {
   // The empty string is the one wrong value the type cannot refuse, and it
@@ -202,6 +204,7 @@ export function createApp(
       // grants into system.connection).
       storage,
       apiKeySalt: config.apiKeySalt,
+      fetchClientMetadataResource: options.fetchClientMetadataResource,
     });
   }
 

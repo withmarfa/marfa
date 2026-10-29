@@ -1300,10 +1300,8 @@ async function resolvePriorScopes(
  * the claim that it did stood here while sixteen shipped types were the only
  * population reaching it.** `POST /types` writes to a runtime overlay, and
  * neither `TYPE_REGISTRY` nor `EDGE_TYPE_REGISTRY` exposes one — so a custom
- * type cannot reach either lookup. It does not reach a row of its own
- * either: `buildAllowedScopes` enumerates registry keys for the concrete
- * scopes, so a runtime-registered type is requestable only through its namespace
- * wildcard, which is curated.
+ * type cannot reach either lookup. Its concrete scope is requestable
+ * (`liveAllowedScopes` reads the overlay), and its row is left to its label.
  *
  * What the type fallback does reach is a platform row this build no longer
  * ships. `seedPlatformTypes` refills the registry at boot from the rows the

@@ -402,13 +402,20 @@ export const TEST_OWNER: TestOwnerDetails = {
   name: "Test Owner",
 };
 
+/** What a test may hand `createApp` beyond its configuration. */
+export type TestAppOptions = Pick<
+  NonNullable<Parameters<typeof createApp>[5]>,
+  "fetchClientMetadataResource"
+>;
+
 export async function createTestContext(
   overrides?: Partial<AppConfig>,
   ownerDetails: TestOwnerDetails = TEST_OWNER,
+  appOptions: TestAppOptions = {},
 ): Promise<TestContext> {
   const tmpDir = mkdtempSync(join(tmpdir(), "marfa-test-"));
   try {
-    return await buildTestContext(tmpDir, overrides, ownerDetails);
+    return await buildTestContext(tmpDir, overrides, ownerDetails, appOptions);
   } catch (error) {
     // The only thing that removes this directory on the happy path is the
     // `cleanup` closure, and that closure does not exist until the build
@@ -437,6 +444,7 @@ export interface UnclaimedTestApp {
 async function buildUnclaimedApp(
   tmpDir: string,
   overrides?: Partial<AppConfig>,
+  appOptions: TestAppOptions = {},
 ): Promise<UnclaimedTestApp> {
   const blobPath = join(tmpDir, "blobs");
 
@@ -490,6 +498,7 @@ async function buildUnclaimedApp(
     housekeeping,
     config,
     await ensureInstanceId(storage.settings),
+    appOptions,
   );
   if (!app.auth) {
     throw new Error("test-utils: createApp mounted no auth instance");
@@ -540,8 +549,9 @@ async function buildTestContext(
   tmpDir: string,
   overrides: Partial<AppConfig> | undefined,
   ownerDetails: TestOwnerDetails,
+  appOptions: TestAppOptions,
 ): Promise<TestContext> {
-  const fresh = await buildUnclaimedApp(tmpDir, overrides);
+  const fresh = await buildUnclaimedApp(tmpDir, overrides, appOptions);
   const { code } = await issueSetupCode(fresh.storage);
   const claimed = await claimOwner(fresh.storage, fresh.auth, {
     ...ownerDetails,

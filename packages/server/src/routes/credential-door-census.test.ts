@@ -191,6 +191,12 @@ const OPEN_DOORS: Record<string, string> = {
   "GET /auth/.well-known/openid-configuration": "and of the OIDC one",
   "GET /.well-known/oauth-protected-resource":
     "RFC 9728 resource metadata, which a bearer challenge points at",
+  "GET /.well-known/oauth-protected-resource/mcp":
+    "the same for the MCP endpoint at /mcp",
+  "GET /.well-known/oauth-protected-resource/mcp/schema":
+    "the same for the MCP endpoint at /mcp/schema",
+  "GET /.well-known/oauth-protected-resource/mcp/admin":
+    "the same for the MCP endpoint at /mcp/admin",
   "GET /auth/sign-in": "the sign-in page",
   "POST /auth/sign-in": "its form post, which is how a credential is got",
   "POST /auth/confirm":

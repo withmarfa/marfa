@@ -1,5 +1,5 @@
 /**
- * The `resource` parameter (RFC 8707) on the token endpoint.
+ * The `resource` parameter (RFC 8707) on the authorize and token endpoints.
  *
  * MCP clients MUST send `resource=<canonical MCP endpoint URI>` on both the
  * authorization and token requests, and MUST use the token only against that
@@ -89,14 +89,15 @@ async function registerClient(c: TestContext, cookie: string): Promise<string> {
 
 /**
  * Authorize, accept at the consent screen, exchange the code. `extra` is
- * merged into the token request, which is where the `resource` under test
- * goes.
+ * merged into the token request and `authorizeExtra` into the authorize
+ * request, which is where the `resource` under test goes.
  */
 async function authorizationCodeGrant(
   c: TestContext,
   clientId: string,
   cookie: string,
-  extra: Record<string, string>,
+  extra: Record<string, string | string[]>,
+  authorizeExtra: Record<string, string> = {},
 ): Promise<{ status: number; body: Record<string, unknown> }> {
   const verifier = randomBytes(32).toString("base64url");
   const challenge = createHash("sha256").update(verifier).digest("base64url");
@@ -108,6 +109,7 @@ async function authorizationCodeGrant(
     scope: SCOPE,
     code_challenge: challenge,
     code_challenge_method: "S256",
+    ...authorizeExtra,
   });
   const authorizeRes = await request(
     c.app,
@@ -229,4 +231,137 @@ describe("resource parameter on the token endpoint", () => {
     expect(token.status).toBe(400);
     expect(token.body.error).toBe("invalid_target");
   });
+});
+
+describe("MCP endpoints as the resource", () => {
+  const base = "http://localhost:0";
+
+  it.each(["/mcp", "/mcp/schema", "/mcp/admin"])(
+    "accepts %s on both requests and mints a resolvable token",
+    async (path) => {
+      const { context, clientId, cookie } = await signedInClient(
+        base,
+        `resource-mcp${path.replaceAll("/", "-")}@marfa.so`,
+      );
+      const token = await authorizationCodeGrant(
+        context,
+        clientId,
+        cookie,
+        { resource: `${base}${path}` },
+        { resource: `${base}${path}` },
+      );
+      expect(token.status, JSON.stringify(token.body)).toBe(200);
+      const accessToken = token.body.access_token as string;
+      expect(accessToken.startsWith("marfa_at_")).toBe(true);
+      const read = await request(context.app, "GET", "/items", {
+        key: accessToken,
+      });
+      expect(read.status).toBe(200);
+    },
+  );
+
+  it.each([
+    ["a trailing slash", `${base}/mcp/`],
+    ["another path under /mcp", `${base}/mcp/other`],
+    ["another host", "https://other.example/mcp"],
+    ["another port", "http://localhost:1/mcp"],
+  ])(
+    "refuses an MCP path with %s at the token endpoint",
+    async (_, resource) => {
+      const { context, clientId, cookie } = await signedInClient(
+        base,
+        `resource-refused-${String(resource.length)}@marfa.so`,
+      );
+      // The witness: the same grant with the canonical path is minted above.
+      const token = await authorizationCodeGrant(context, clientId, cookie, {
+        resource,
+      });
+      expect(token.status).toBe(400);
+      expect(token.body.error).toBe("invalid_target");
+    },
+  );
+
+  it("sends a resource it does not serve back from authorize with invalid_target", async () => {
+    const { context, clientId, cookie } = await signedInClient(
+      base,
+      "resource-authorize-refused@marfa.so",
+    );
+    const params = (resource: string) =>
+      new URLSearchParams({
+        response_type: "code",
+        client_id: clientId,
+        redirect_uri: CALLBACK,
+        state: "resource-state",
+        scope: SCOPE,
+        code_challenge: "x".repeat(43),
+        code_challenge_method: "S256",
+        resource,
+      }).toString();
+    const accepted = await request(
+      context.app,
+      "GET",
+      `/auth/oauth2/authorize?${params(`${base}/mcp`)}`,
+      { headers: { cookie } },
+    );
+    expect(accepted.headers.get("location")).toContain("/auth/authorize?");
+    for (const resource of [`${base}/mcp/`, "https://other.example/mcp"]) {
+      const refused = await request(
+        context.app,
+        "GET",
+        `/auth/oauth2/authorize?${params(resource)}`,
+        { headers: { cookie } },
+      );
+      expect(refused.status).toBe(302);
+      const location = new URL(refused.headers.get("location") ?? "", base);
+      expect(`${location.origin}${location.pathname}`).toBe(CALLBACK);
+      expect(location.searchParams.get("error")).toBe("invalid_target");
+      expect(location.searchParams.get("state")).toBe("resource-state");
+      expect(location.searchParams.get("iss")).toBe(`${base}/auth`);
+    }
+  });
+
+  it("answers a refused resource itself when the callback is not one the client registered", async () => {
+    const { context, clientId, cookie } = await signedInClient(
+      base,
+      "resource-authorize-unregistered@marfa.so",
+    );
+    const refused = await request(
+      context.app,
+      "GET",
+      `/auth/oauth2/authorize?${new URLSearchParams({
+        response_type: "code",
+        client_id: clientId,
+        redirect_uri: "http://localhost:0/elsewhere",
+        scope: SCOPE,
+        code_challenge: "x".repeat(43),
+        code_challenge_method: "S256",
+        resource: "https://other.example/mcp",
+      }).toString()}`,
+      { headers: { cookie } },
+    );
+    expect(refused.status).toBe(400);
+    expect(refused.headers.get("location")).toBeNull();
+    expect(((await refused.json()) as { error?: string }).error).toBe(
+      "invalid_target",
+    );
+  });
+
+  it.each([
+    ["two of its own", [`${base}/mcp`, `${base}/mcp/admin`]],
+    ["its own last", ["https://other.example/mcp", `${base}/mcp`]],
+    ["its own first", [`${base}/mcp`, "https://other.example/mcp"]],
+  ])(
+    "refuses a token request naming more than one resource, %s",
+    async (_, resources) => {
+      const { context, clientId, cookie } = await signedInClient(
+        base,
+        `resource-repeated-${String(resources[0]?.length)}-${String(resources[1]?.length)}@marfa.so`,
+      );
+      const token = await authorizationCodeGrant(context, clientId, cookie, {
+        resource: resources,
+      });
+      expect(token.status).toBe(400);
+      expect(token.body.error).toBe("invalid_target");
+    },
+  );
 });

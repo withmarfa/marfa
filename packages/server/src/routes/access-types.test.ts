@@ -36,7 +36,7 @@ describe("resolveChoosableTypes", () => {
     );
   });
 
-  it("offers a client with no registered list only the types the provider can issue", async () => {
+  it("offers a client with no registered list a type registered while the server runs", async () => {
     ctx = await createTestContext({});
     await ctx.storage.types.create({
       id: "app.inkwell.draft",
@@ -48,7 +48,7 @@ describe("resolveChoosableTypes", () => {
       (type) => type.id,
     );
     expect(ids).toContain("core.note");
-    expect(ids).not.toContain("app.inkwell.draft");
+    expect(ids).toContain("app.inkwell.draft");
   });
 });
 

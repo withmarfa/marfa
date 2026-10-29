@@ -27,7 +27,12 @@ import { runAuditedTransaction } from "../storage/audited-transaction.js";
 import type { AuditLogEntry } from "../storage/interface.js";
 import { betterAuth } from "better-auth";
 import { hashPassword, verifyPassword } from "better-auth/crypto";
-import { oauthDeviceAuthorization } from "@better-auth/oauth-provider";
+import {
+  oauthDeviceAuthorization,
+  type ClientMetadataResourceFetch,
+} from "@better-auth/oauth-provider";
+import { cimd } from "@better-auth/cimd";
+import { fetchClientMetadataResource as fetchOverPinnedAddress } from "@better-auth/cimd/node";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { jwt } from "better-auth/plugins";
 import { isAPIError } from "better-auth/api";
@@ -92,6 +97,10 @@ export interface MarfaAuthOptions {
    *  letting the middleware look up `auth_oauth_access_token.token`
    *  directly by computing the same hash. */
   apiKeySalt?: string;
+  /** Fetches a client's metadata document. Resolves the host once, refuses
+   *  any address that is not public, and follows no redirect; a test passes
+   *  one that answers in process. */
+  fetchClientMetadataResource?: ClientMetadataResourceFetch;
 }
 
 /**
@@ -644,6 +653,16 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
               storage: options.storage,
               apiKeySalt: options.apiKeySalt,
               baseURL: options.baseURL,
+              provider: oauthProvider,
+            }),
+            // A client may name the HTTPS address of its metadata document as
+            // its `client_id` instead of registering, as MCP clients do. The
+            // provider creates the client from the document the first time it
+            // meets one, with the same allowlist a registration gets.
+            cimd({
+              fetchClientMetadataResource:
+                options.fetchClientMetadataResource ?? fetchOverPinnedAddress,
+              metadataProfile: "mcp-2026-07-28",
             }),
             // The RFC 8628 device grant, as the provider's own extension: it
             // mints and claims the codes, approves or denies them, and hands
