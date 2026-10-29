@@ -58,9 +58,11 @@ While a credential's type map grants `read` on at least one type and `write` on 
 
 ### `mcp/tools-for-no-type`
 
-While a credential's type map grants no type, the server MUST NOT declare the `tools` capability to it.
+While a credential's type map grants no type, the server MUST NOT declare the `tools` capability to it at `/mcp`.
 
-**Tests:** `compliance/mcp.test.ts › offers no tools to a credential whose type map reaches no type`.
+**Reason:** every tool at `/mcp` reads or writes items, so a credential that reaches no type can use none of them. A group's tool may need only a permission, such as `webhooks.manage` for `marfa_webhooks`, so `/mcp/schema` and `/mcp/admin` offer what `mcp/tools-for-schema` and `mcp/tools-for-admin` say whatever the type map reaches.
+
+**Tests:** `compliance/mcp.test.ts › offers no tools at /mcp to a credential whose type map reaches no type`.
 
 ### `mcp/tools-for-schema`
 

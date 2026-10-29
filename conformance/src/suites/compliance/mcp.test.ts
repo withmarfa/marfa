@@ -255,12 +255,32 @@ describe("which tools a credential is offered", () => {
     }
   });
 
-  it("offers no tools to a credential whose type map reaches no type", async () => {
-    const none = await connectMcp(apiUrl, await keyWith("none", {}));
+  it("offers no tools at /mcp to a credential whose type map reaches no type", async () => {
+    const key = await keyWith("none", {}, { permissions: ["webhooks.manage"] });
+    const none = await connectMcp(apiUrl, key);
     try {
       expect(none.client.getServerCapabilities()?.tools).toBeUndefined();
     } finally {
       await none.close();
+    }
+    // The group endpoints offer the same credential the tools that need no
+    // type: the documentation search, and the webhook tools its permission
+    // allows, which work.
+    const schema = await connectMcp(apiUrl, key, "2026-07-28", "/mcp/schema");
+    try {
+      expect(await toolNames(schema)).toEqual(["marfa_search_docs"]);
+    } finally {
+      await schema.close();
+    }
+    const admin = await connectMcp(apiUrl, key, "2026-07-28", "/mcp/admin");
+    try {
+      expect(await toolNames(admin)).toEqual([
+        "marfa_manage_webhook",
+        "marfa_webhooks",
+      ]);
+      toolResult(await callTool(admin, "marfa_webhooks", {}));
+    } finally {
+      await admin.close();
     }
   });
 });
