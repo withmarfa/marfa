@@ -791,6 +791,198 @@ describe("marfa_revoke_key", () => {
   });
 });
 
+describe("marfa_manage_webhook", () => {
+  let key: string;
+  let owner: MarfaClient;
+  let admin: McpConnection;
+
+  beforeAll(async () => {
+    key = await keyWith("hooks", {}, { permissions: ["webhooks.manage"] });
+    owner = new MarfaClient({ baseUrl: apiUrl, apiKey: key });
+    admin = await connectMcp(apiUrl, key, "2026-07-28", "/mcp/admin");
+  });
+
+  afterAll(async () => {
+    await admin?.close();
+  });
+
+  /** A receiver address no test listens on; nothing here waits for a delivery. */
+  function address(path: string): string {
+    return `http://127.0.0.1:9/${ctx.runId}/${path}`;
+  }
+
+  async function hookIds(): Promise<string[]> {
+    const listed = await owner.listWebhooks();
+    expect(listed.ok, JSON.stringify(listed.error)).toBe(true);
+    return listed.data.data.map((hook) => hook.id);
+  }
+
+  async function made(path: string): Promise<string> {
+    const args = {
+      action: "make",
+      url: address(path),
+      events: ["item.created"],
+    };
+    const preview = toolResult(
+      await callTool(admin, "marfa_manage_webhook", args),
+    );
+    const done = toolResult(
+      await callTool(admin, "marfa_manage_webhook", {
+        ...args,
+        confirm: preview.confirm,
+      }),
+    );
+    const id = (done.webhook as { id: string }).id;
+    trackWebhook(ctx, id, owner);
+    return id;
+  }
+
+  it("makes and changes no webhook when called without a confirmation", async () => {
+    const id = await made("preview-change");
+    const before = await hookIds();
+    const make = toolResult(
+      await callTool(admin, "marfa_manage_webhook", {
+        action: "make",
+        url: address("preview-make"),
+        events: ["item.created", "edge.created"],
+        type_filter: "core.note",
+      }),
+    );
+    expect(make.preview).toMatchObject({
+      url: address("preview-make"),
+      host: "127.0.0.1:9",
+      events: ["item.created", "edge.created"],
+      type_filter: "core.note",
+    });
+    expect(typeof make.confirm).toBe("string");
+
+    const change = toolResult(
+      await callTool(admin, "marfa_manage_webhook", {
+        action: "change",
+        id,
+        events: ["item.updated"],
+      }),
+    );
+    expect(change.preview).toMatchObject({ id, events: ["item.updated"] });
+    expect(await hookIds()).toEqual(before);
+    const stored = await owner.getWebhook(id);
+    expect(stored.data.events).toEqual(["item.created"]);
+  });
+
+  it("makes a webhook with the confirmation the preview gave", async () => {
+    const before = await hookIds();
+    const id = await made("confirmed");
+    expect(await hookIds()).toEqual([...before, id]);
+    const stored = await owner.getWebhook(id);
+    expect(stored.data).toMatchObject({
+      url: address("confirmed"),
+      events: ["item.created"],
+      active: true,
+    });
+  });
+
+  it("refuses a webhook confirmation once where it posts or what it sends changed", async () => {
+    const before = await hookIds();
+    const args = {
+      action: "make",
+      url: address("previewed"),
+      events: ["item.created"],
+    };
+    const preview = toolResult(
+      await callTool(admin, "marfa_manage_webhook", args),
+    );
+    const moved = toolError(
+      await callTool(admin, "marfa_manage_webhook", {
+        ...args,
+        url: address("elsewhere"),
+        confirm: preview.confirm,
+      }),
+    );
+    expect(moved.code).toBe("confirmation_stale");
+    expect(moved.preview).toMatchObject({ url: address("elsewhere") });
+    expect(await hookIds()).toEqual(before);
+
+    const id = await made("changed-under");
+    const change = {
+      action: "change",
+      id,
+      url: address("changed-to"),
+    };
+    const changePreview = toolResult(
+      await callTool(admin, "marfa_manage_webhook", change),
+    );
+    const patched = await fetch(new URL(`/webhooks/${id}`, apiUrl), {
+      method: "PATCH",
+      headers: {
+        Authorization: `Bearer ${key}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ events: ["item.updated"] }),
+    });
+    expect(patched.status).toBe(200);
+    await patched.body?.cancel();
+    const stale = toolError(
+      await callTool(admin, "marfa_manage_webhook", {
+        ...change,
+        confirm: changePreview.confirm,
+      }),
+    );
+    expect(stale.code).toBe("confirmation_stale");
+    expect(stale.preview).toMatchObject({ events: ["item.updated"] });
+    const stored = await owner.getWebhook(id);
+    expect(stored.data.url).toBe(address("changed-under"));
+  });
+
+  it("refuses a webhook confirmation another credential got", async () => {
+    const before = await hookIds();
+    const args = {
+      action: "make",
+      url: address("replayed"),
+      events: ["item.created"],
+    };
+    const preview = toolResult(
+      await callTool(admin, "marfa_manage_webhook", args),
+    );
+    const management = process.env.MARFA_MANAGEMENT_KEY;
+    if (!management) throw new Error("MARFA_MANAGEMENT_KEY is required");
+    const other = await connectMcp(
+      apiUrl,
+      management,
+      "2026-07-28",
+      "/mcp/admin",
+    );
+    try {
+      const error = toolError(
+        await callTool(other, "marfa_manage_webhook", {
+          ...args,
+          confirm: preview.confirm,
+        }),
+      );
+      expect(error.code).toBe("confirmation_stale");
+    } finally {
+      await other.close();
+    }
+    expect(await hookIds()).toEqual(before);
+  });
+
+  it("pauses and deletes a webhook in one call", async () => {
+    const id = await made("one-step");
+    const paused = toolResult(
+      await callTool(admin, "marfa_manage_webhook", {
+        action: "change",
+        id,
+        active: false,
+      }),
+    );
+    expect(paused.webhook).toMatchObject({ id, active: false });
+    const deleted = toolResult(
+      await callTool(admin, "marfa_manage_webhook", { action: "delete", id }),
+    );
+    expect(deleted.deleted).toBe(id);
+    expect(await hookIds()).not.toContain(id);
+  });
+});
+
 describe("marfa_move_items", () => {
   let schema: McpConnection;
   let key: string;

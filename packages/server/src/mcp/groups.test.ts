@@ -18,6 +18,7 @@ import {
   seedOauthBearer,
   type TestContext,
 } from "../test-utils.js";
+import { WEBHOOK_EVENTS } from "../routes/webhooks.js";
 import { CONFIRMATION_TTL_MS } from "./confirm.js";
 import {
   callTool,
@@ -763,20 +764,190 @@ describe("marfa_revoke_key", () => {
 });
 
 describe("the webhook tools", () => {
-  it("makes, lists, changes and deletes a webhook", async () => {
+  async function webhookIds(): Promise<string[]> {
+    const listed = payloadOf(await callTool(admin, "marfa_webhooks", {}));
+    return (listed.webhooks as { id: string }[]).map((hook) => hook.id);
+  }
+
+  async function makeHook(url: string): Promise<{ id: string }> {
+    const preview = payloadOf(
+      await callTool(admin, "marfa_manage_webhook", {
+        action: "make",
+        url,
+        events: ["item.created"],
+      }),
+    );
+    const made = payloadOf(
+      await callTool(admin, "marfa_manage_webhook", {
+        action: "make",
+        url,
+        events: ["item.created"],
+        confirm: preview.confirm,
+      }),
+    );
+    return made.webhook as { id: string };
+  }
+
+  async function remove(id: string): Promise<void> {
+    payloadOf(
+      await callTool(admin, "marfa_manage_webhook", { action: "delete", id }),
+    );
+  }
+
+  it("offers the events webhooks send", async () => {
+    const { tools } = await admin.listTools();
+    const manage = tools.find((tool) => tool.name === "marfa_manage_webhook");
+    const events = manage?.inputSchema.properties?.events as
+      { items: { enum: string[] } } | undefined;
+    expect(events?.items.enum).toEqual([...WEBHOOK_EVENTS]);
+  });
+
+  it("makes a webhook only on the confirmation of its preview", async () => {
+    const before = await webhookIds();
+    const preview = payloadOf(
+      await callTool(admin, "marfa_manage_webhook", {
+        action: "make",
+        url: "https://example.com/marfa-hook",
+        events: ["item.created", "edge.created"],
+        type_filter: "core.note",
+      }),
+    );
+    expect(preview.preview).toMatchObject({
+      url: "https://example.com/marfa-hook",
+      host: "example.com",
+      events: ["item.created", "edge.created"],
+      type_filter: "core.note",
+    });
+    expect((preview.preview as { sends: string }).sends).toMatch(
+      /example\.com/,
+    );
+    expect(typeof preview.confirm).toBe("string");
+    expect(await webhookIds()).toEqual(before);
+
     const made = payloadOf(
       await callTool(admin, "marfa_manage_webhook", {
         action: "make",
         url: "https://example.com/marfa-hook",
-        events: ["item.created"],
+        events: ["edge.created", "item.created"],
+        type_filter: "core.note",
+        confirm: preview.confirm,
       }),
     );
     const webhook = made.webhook as { id: string; secret: string };
     expect(webhook.secret).toMatch(/^[0-9a-f]{64}$/);
-    const listed = payloadOf(await callTool(admin, "marfa_webhooks", {}));
-    expect(listed.webhooks).toMatchObject([
-      { id: webhook.id, url: "https://example.com/marfa-hook" },
-    ]);
+    expect(await webhookIds()).toEqual([...before, webhook.id]);
+    await remove(webhook.id);
+    expect(await webhookIds()).toEqual(before);
+  });
+
+  it("refuses a make confirmation for another url, another credential or after it expires", async () => {
+    const before = await webhookIds();
+    const args = {
+      action: "make",
+      url: "https://example.com/previewed",
+      events: ["item.created"],
+    };
+    const preview = payloadOf(
+      await callTool(admin, "marfa_manage_webhook", args),
+    );
+    const moved = errorOf(
+      await callTool(admin, "marfa_manage_webhook", {
+        ...args,
+        url: "https://example.org/elsewhere",
+        confirm: preview.confirm,
+      }),
+    );
+    expect(moved.code).toBe("confirmation_stale");
+    expect(moved.preview).toMatchObject({ host: "example.org" });
+
+    const other = await mintWorkingKey(ctx, { permissions: [...PERMISSIONS] });
+    const client = await connectMcp(ctx, other, { path: "/mcp/admin" });
+    try {
+      const replayed = errorOf(
+        await callTool(client, "marfa_manage_webhook", {
+          ...args,
+          confirm: preview.confirm,
+        }),
+      );
+      expect(replayed.code).toBe("confirmation_stale");
+    } finally {
+      await client.close();
+    }
+
+    advanceClock(CONFIRMATION_TTL_MS + 1_000);
+    const expired = errorOf(
+      await callTool(admin, "marfa_manage_webhook", {
+        ...args,
+        confirm: preview.confirm,
+      }),
+    );
+    expect(expired.code).toBe("confirmation_stale");
+    expect(expired.message).toMatch(/expired/);
+    expect(await webhookIds()).toEqual(before);
+  });
+
+  it("changes a webhook's url or events only on the confirmation of its preview", async () => {
+    const webhook = await makeHook("https://example.com/first");
+    try {
+      const preview = payloadOf(
+        await callTool(admin, "marfa_manage_webhook", {
+          action: "change",
+          id: webhook.id,
+          url: "https://example.org/second",
+        }),
+      );
+      expect(preview.preview).toMatchObject({
+        id: webhook.id,
+        url: "https://example.org/second",
+        host: "example.org",
+        events: ["item.created"],
+        type_filter: null,
+      });
+      const unchanged = await request(
+        ctx.app,
+        "GET",
+        `/webhooks/${webhook.id}`,
+        { key: adminKey },
+      );
+      expect(await unchanged.json()).toMatchObject({
+        url: "https://example.com/first",
+      });
+
+      // The webhook changes after the preview, so the preview is stale.
+      await request(ctx.app, "PATCH", `/webhooks/${webhook.id}`, {
+        key: adminKey,
+        body: { events: ["item.updated"] },
+      });
+      const stale = errorOf(
+        await callTool(admin, "marfa_manage_webhook", {
+          action: "change",
+          id: webhook.id,
+          url: "https://example.org/second",
+          confirm: preview.confirm,
+        }),
+      );
+      expect(stale.code).toBe("confirmation_stale");
+      expect(stale.preview).toMatchObject({ events: ["item.updated"] });
+
+      const changed = payloadOf(
+        await callTool(admin, "marfa_manage_webhook", {
+          action: "change",
+          id: webhook.id,
+          url: "https://example.org/second",
+          confirm: stale.confirm,
+        }),
+      );
+      expect(changed.webhook).toMatchObject({
+        url: "https://example.org/second",
+        events: ["item.updated"],
+      });
+    } finally {
+      await remove(webhook.id);
+    }
+  });
+
+  it("pauses and deletes a webhook in one step", async () => {
+    const webhook = await makeHook("https://example.com/paused");
     const paused = payloadOf(
       await callTool(admin, "marfa_manage_webhook", {
         action: "change",
@@ -785,13 +956,7 @@ describe("the webhook tools", () => {
       }),
     );
     expect(paused.webhook).toMatchObject({ active: false });
-    payloadOf(
-      await callTool(admin, "marfa_manage_webhook", {
-        action: "delete",
-        id: webhook.id,
-      }),
-    );
-    const gone = payloadOf(await callTool(admin, "marfa_webhooks", {}));
-    expect(gone.webhooks).toEqual([]);
+    await remove(webhook.id);
+    expect(await webhookIds()).not.toContain(webhook.id);
   });
 });

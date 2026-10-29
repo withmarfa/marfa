@@ -69,7 +69,12 @@ export const TOOL_OPERATIONS = {
   marfa_manage_key: ["createKey", "updateKey"],
   marfa_revoke_key: ["listKeys", "revokeKey"],
   marfa_webhooks: ["listWebhooks"],
-  marfa_manage_webhook: ["createWebhook", "updateWebhook", "deleteWebhook"],
+  marfa_manage_webhook: [
+    "createWebhook",
+    "getWebhook",
+    "updateWebhook",
+    "deleteWebhook",
+  ],
 } as const;
 
 export type ToolName = keyof typeof TOOL_OPERATIONS;

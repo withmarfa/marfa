@@ -268,6 +268,46 @@ If a `marfa_revoke_key` call carries a `confirm` token a preview gave another cr
 
 **Tests:** `compliance/mcp.test.ts › refuses a revoke confirmation another credential got`.
 
+## Managing a webhook
+
+`marfa_manage_webhook` makes, changes and deletes webhooks. Making a webhook, or changing its `url`, `events` or `type_filter`, takes two calls, as `marfa_delete` trashes: a preview of where the webhook would post and what it would send, with a `confirm` token, and a call with that token. A token is refused, as `marfa_delete`'s is, when five minutes have passed. Pausing, resuming or deleting a webhook takes one call.
+
+### `mcp/webhook-preview`
+
+When `marfa_manage_webhook` is called without `confirm` to make a webhook, or to change a webhook's `url`, `events` or `type_filter`, the server MUST NOT make or change any webhook.
+
+**Reason:** a webhook posts what it sends outside the instance, so the person agrees to where it posts and what it sends before the first event leaves.
+
+**Tests:** `compliance/mcp.test.ts › makes and changes no webhook when called without a confirmation`.
+
+### `mcp/webhook-confirmed`
+
+When `marfa_manage_webhook` is called with the `confirm` token its preview of the same arguments gave, by the same credential, within five minutes, while the webhook it would change is unchanged, the server MUST make or change the webhook as the preview showed.
+
+**Tests:** `compliance/mcp.test.ts › makes a webhook with the confirmation the preview gave`.
+
+### `mcp/webhook-changed`
+
+If the `url`, `events`, `type_filter` or active state a `marfa_manage_webhook` call would leave a webhook with differ from what the preview that gave its `confirm` token showed, then the server MUST refuse the call with the tool error code `confirmation_stale`.
+
+**Reason:** the person agreed to what the preview showed, not to what the call would do now.
+
+**Tests:** `compliance/mcp.test.ts › refuses a webhook confirmation once where it posts or what it sends changed`.
+
+### `mcp/webhook-other-credential`
+
+If a `marfa_manage_webhook` call carries a `confirm` token a preview gave another credential, then the server MUST refuse the call with the tool error code `confirmation_stale`.
+
+**Tests:** `compliance/mcp.test.ts › refuses a webhook confirmation another credential got`.
+
+### `mcp/webhook-one-step`
+
+When `marfa_manage_webhook` is called to delete a webhook, or to change only whether it is active, the server MUST make the change without a `confirm` token.
+
+**Reason:** neither sends anything to an address, or of a kind, that the person has not already agreed to.
+
+**Tests:** `compliance/mcp.test.ts › pauses and deletes a webhook in one call`.
+
 ## Saving a file
 
 `marfa_create` saves a file from a web address in `url`, or from the `download_url` of a file a chat attached in `file`.
