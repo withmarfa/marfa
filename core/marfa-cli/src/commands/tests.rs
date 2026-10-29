@@ -4,7 +4,7 @@ use serde_json::json;
 
 use super::*;
 use crate::remote::request::{Body, Method, Request};
-use crate::values::Tier;
+use crate::values::{SortDirection, Tier};
 
 fn query(request: &Request, key: &str) -> Option<String> {
     request
@@ -464,6 +464,11 @@ fn a_search_sends_its_query_and_its_narrowing() {
         query: "zebra crossing".into(),
         state: Some(StateFilter::Archived),
         tier: Some(TierFilter::All),
+        source: Some("import".into()),
+        updated_after: Some("2026-01-01T00:00:00Z".into()),
+        updated_before: Some("2026-02-01T00:00:00Z".into()),
+        sort: Some("updated_at".into()),
+        direction: Some(SortDirection::Asc),
         page: PageArgs {
             limit: Some(3),
             cursor: Some("c6".into()),
@@ -471,11 +476,54 @@ fn a_search_sends_its_query_and_its_narrowing() {
         ..Default::default()
     });
     assert_eq!(request.path(), "/search");
+    assert_eq!(query(&request, "source").as_deref(), Some("import"));
+    assert_eq!(
+        query(&request, "updated_after").as_deref(),
+        Some("2026-01-01T00:00:00Z")
+    );
+    assert_eq!(
+        query(&request, "updated_before").as_deref(),
+        Some("2026-02-01T00:00:00Z")
+    );
+    assert_eq!(query(&request, "sort").as_deref(), Some("updated_at"));
+    assert_eq!(query(&request, "direction").as_deref(), Some("asc"));
     assert_eq!(query(&request, "q").as_deref(), Some("zebra crossing"));
     assert_eq!(query(&request, "state").as_deref(), Some("archived"));
     assert_eq!(query(&request, "tier").as_deref(), Some("all"));
     assert_eq!(query(&request, "limit").as_deref(), Some("3"));
     assert_eq!(query(&request, "cursor").as_deref(), Some("c6"));
+}
+
+#[test]
+fn a_search_sort_is_sent_in_the_servers_spelling_or_refused_before_the_request() {
+    use clap::Parser;
+    #[derive(Debug, Parser)]
+    struct Cli {
+        #[command(flatten)]
+        search: search::SearchArgs,
+    }
+    let sort_of = |sort: &str| {
+        Cli::try_parse_from(["cli", "words", "--sort", sort])
+            .map(|cli| cli.search.sort.unwrap())
+            .map_err(|error| error.to_string())
+    };
+    for (typed, sent) in [
+        ("relevance", "relevance"),
+        ("created-at", "created_at"),
+        ("occurred_at", "occurred_at"),
+        ("properties.due_at", "properties.due_at"),
+    ] {
+        assert_eq!(sort_of(typed).as_deref(), Ok(sent), "{typed}");
+    }
+    for bad in [
+        "title",
+        "properties.",
+        "properties.Due",
+        "properties.a.b",
+        "",
+    ] {
+        assert!(sort_of(bad).is_err(), "{bad}");
+    }
 }
 
 #[test]
