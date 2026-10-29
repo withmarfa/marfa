@@ -317,6 +317,7 @@ interface Switched {
   file: string;
   binary?: string;
   log?: string;
+  launchd_log?: string;
   registry?: string;
   key_file?: string;
   running?: boolean | null;
