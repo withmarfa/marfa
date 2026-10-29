@@ -198,6 +198,37 @@ describe("Create key", () => {
   );
 
   inBrowser(
+    "creates the key when Enter is pressed in the name or a source field",
+    async () => {
+      const { page, context } = await open();
+      try {
+        for (const [field, name] of [
+          ["#key-name", "Enter in name"],
+          ["#key-source", "Enter in source"],
+          ["#key-sources", "Enter in other sources"],
+        ] as const) {
+          await page.goto(`${origin}/auth/owner/keys/new`);
+          await page.getByLabel("Name").fill(name);
+          await powers(page).click();
+          await page.locator('input[value="instance.read"]').check();
+          await page.locator(field).focus();
+          await page.keyboard.press("Enter");
+          await page
+            .locator("#key-secret")
+            .filter({ hasText: "marfa_k1_" })
+            .waitFor();
+          const listed = await ctx.ownerRequest("/keys");
+          const rows = ((await listed.json()) as { data: { label: string }[] })
+            .data;
+          expect(rows.some((row) => row.label === name)).toBe(true);
+        }
+      } finally {
+        await context.close();
+      }
+    },
+  );
+
+  inBrowser(
     "puts the focus on what is missing when the button is pressed anyway",
     async () => {
       const { page, context } = await open();

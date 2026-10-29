@@ -194,11 +194,14 @@ Render it as a child or an attribute value and it is escaped. Do not use
 ## Browser modules
 
 Each module in `client/` finds its own markup through a `data-` attribute and
-does nothing without it. `access.ts` finds an approval form (`data-access`),
+does nothing without it. `access.ts` finds a form with access rows
+(`data-access`: an approval form or a key's form),
 keeps the line under each of its rows (`data-access-group`) true as controls
 change, and hides "If everything is off, approving denies the request." while
 something is on. It calls the functions in `access-summary.ts`, which the
-server calls for the same lines, so the two cannot disagree. `client/confirm.ts` drives the dialog: `sendConfirmed` sends a change, and
+server calls for the same lines, so the two cannot disagree. On a form marked `data-approval` it also stops
+Enter in every field; on any of them, Enter in the types search sends nothing.
+`client/confirm.ts` drives the dialog: `sendConfirmed` sends a change, and
 when the answer is the refusal for an old sign-in it asks the person to
 confirm, posts the proof to `/auth/confirm`, and sends the change once more.
 A page's own script reaches it as `window.marfaConfirm.send`. An approval page

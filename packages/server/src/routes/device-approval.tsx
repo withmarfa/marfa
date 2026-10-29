@@ -95,6 +95,7 @@ export function renderDeviceConsentScreen(params: DeviceConsentParams): string {
           method="post"
           action="/auth/device/consent"
           data-access
+          data-approval
           novalidate
           {...gateAttributes(params.confirmGate)}
         >

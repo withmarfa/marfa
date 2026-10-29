@@ -105,6 +105,7 @@ export function renderConsentScreen(params: ConsentParams): string {
           method="post"
           action="/auth/authorize/decision"
           data-access
+          data-approval
           novalidate
           {...gateAttributes(params.confirmGate)}
         >

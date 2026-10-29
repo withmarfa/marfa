@@ -267,13 +267,22 @@ export function initAccess(): void {
       expanded.all = true;
       sync();
     });
-    // Enter in a field would send the form by a button the person did not
-    // press; the page's own `NoEnterSubmit` does the same with no script, and
-    // would put the form in its sending state with this one running.
-    form.addEventListener("keydown", (event) => {
-      if (event.key === "Enter" && event.target instanceof HTMLInputElement)
-        event.preventDefault();
-    });
+    // Enter in the search field would send the form by its first button.
+    form
+      .querySelector('[data-choose-types] input[type="search"]')
+      ?.addEventListener("keydown", (event) => {
+        if ((event as KeyboardEvent).key === "Enter") event.preventDefault();
+      });
+    // An approval form decides only by its buttons, so Enter in any of its
+    // fields sends nothing. The page's own `NoEnterSubmit` does the same with
+    // no script, but would put the form in its sending state with this one
+    // running. A key's form is not one: Enter in its name field creates or
+    // saves.
+    if (form.hasAttribute("data-approval"))
+      form.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" && event.target instanceof HTMLInputElement)
+          event.preventDefault();
+      });
     // A page restored from the back-forward cache keeps the controls as they
     // were left, which the lines must follow.
     window.addEventListener("pageshow", sync);
