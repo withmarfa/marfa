@@ -91,6 +91,14 @@ async function readItem(id: string): Promise<Record<string, unknown>> {
   return ((await response.json()) as { item: Record<string, unknown> }).item;
 }
 
+async function readTags(id: string): Promise<string[]> {
+  const response = await request(ctx.app, "GET", `/items/${id}/metadata`, {
+    key: ctx.workingKey,
+  });
+  return ((await response.json()) as { metadata: { tags: string[] } }).metadata
+    .tags;
+}
+
 /** A file host on loopback, reached through a public name by the resolve fault. */
 async function fileHost(
   respond: (req: IncomingMessage, res: ServerResponse) => void,
@@ -850,7 +858,7 @@ describe("marfa_update", () => {
       state: "active",
       properties: { title: "Plan", body: "two" },
     });
-    expect(item.tags ?? []).toEqual([]);
+    expect(await readTags(note.id)).toEqual([]);
     const edges = await request(ctx.app, "GET", `/items/${note.id}/edges`, {
       key: ctx.workingKey,
     });
@@ -905,6 +913,64 @@ describe("marfa_update", () => {
       key: ctx.workingKey,
     });
     expect(gone.status).toBe(404);
+  });
+
+  it("tags nothing when the item changes between its read and the tag write", async () => {
+    const note = await saveNote({ body: "one" });
+    setFault("hold:write", "item.tag");
+    const pending = callTool(client, "marfa_update", {
+      id: note.id,
+      version: note.version,
+      add_tags: ["late"],
+    });
+    await vi.waitFor(() => {
+      expect(activeFaults()[0]?.waiting).toBe(1);
+    });
+    const moved = await request(ctx.app, "PATCH", `/items/${note.id}`, {
+      key: ctx.workingKey,
+      body: { version: note.version, properties: { body: "two" } },
+    });
+    expect(moved.status).toBe(200);
+    clearFaults();
+    expect(errorOf(await pending)).toMatchObject({
+      code: "version_conflict",
+      failed_step: "add_tags",
+      applied: [],
+      current: { id: note.id, version: note.version + 1 },
+    });
+    expect(await readTags(note.id)).toEqual([]);
+  });
+
+  it("untags nothing when the item changes after an edge it added", async () => {
+    const note = await saveNote({ body: "one" });
+    const target = await saveNote({ body: "target" });
+    const tagged = await request(ctx.app, "POST", `/items/${note.id}/tags`, {
+      key: ctx.workingKey,
+      body: { tags: ["kept"] },
+    });
+    expect(tagged.status).toBe(200);
+    setFault("hold:write", "item.untag");
+    const pending = callTool(client, "marfa_update", {
+      id: note.id,
+      version: note.version,
+      add_edges: [{ edge_type: "references", target_id: target.id }],
+      remove_tags: ["kept"],
+    });
+    await vi.waitFor(() => {
+      expect(activeFaults()[0]?.waiting).toBe(1);
+    });
+    const moved = await request(ctx.app, "PATCH", `/items/${note.id}`, {
+      key: ctx.workingKey,
+      body: { version: note.version, properties: { body: "two" } },
+    });
+    expect(moved.status).toBe(200);
+    clearFaults();
+    expect(errorOf(await pending)).toMatchObject({
+      code: "version_conflict",
+      failed_step: "remove_tag kept",
+      applied: [`add_edge references ${target.id}`],
+    });
+    expect(await readTags(note.id)).toEqual(["kept"]);
   });
 
   it("adds and removes an edge", async () => {

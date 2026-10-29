@@ -826,7 +826,7 @@ When the revocation of a key commits after an earlier entry of a `POST /items/bu
 
 The server MUST honor an `Idempotency-Key` on `POST /items`, `PATCH /items/{id}`, `DELETE /items/{id}`, `POST /items/{id}/purge`, `POST /items/{id}/transition`, `POST /items/{id}/restore`, `POST /items/{id}/tags`, `DELETE /items/{id}/tags/{tag}`, `PUT /items/{id}/metadata`, `PUT /items/{id}/extensions/{namespace}`, `DELETE /items/{id}/extensions/{namespace}`, `POST /edges`, `PATCH /edges/{id}`, `DELETE /edges/{id}`, `POST /folders`, `PATCH /folders/{id}`, `POST /folders/{id}/revoke`, `POST /views`, `PATCH /views/{id}`, `DELETE /views/{id}` and `POST /items/bulk-actions`, and on no other operation.
 
-**Reason:** a client resends a write whose answer it lost. A tag, metadata or extension write checks no version, so one applied a second time would undo a change made between the two sends.
+**Reason:** a client resends a write whose answer it lost. A metadata or extension write checks no version, and a tag write checks one only when it names one, so one applied a second time would undo a change made between the two sends.
 
 **Tests:** `sync/idempotency-replay.test.ts › guards the replay on every idempotent write operation`, `› takes no Idempotency-Key on the operations that do not list it, and runs each repeat`, `› a metadata or extension write sent again under its key`, `compliance/edge-move.test.ts › answers a move repeated under one Idempotency-Key from its record`, `compliance/views.test.ts › answers a view create repeated under one Idempotency-Key once`.
 
@@ -1823,6 +1823,20 @@ When a key sends `PUT /items/{id}/metadata`, the server MUST make the tags it na
 When a key sends `DELETE /items/{id}/tags/{tag}`, the server MUST remove that tag and keep the item's other tags.
 
 **Tests:** `correctness/tags.test.ts › favorite can be removed via DELETE /items/:id/tags/favorite`.
+
+### `items/tags-version-stale`
+
+If `POST /items/{id}/tags` or `DELETE /items/{id}/tags/{tag}` names a `version` query parameter other than the item's current version, then the server MUST answer `409 version_conflict` with the item now in `current`, and change no tag.
+
+**Reason:** a tag write leaves the item's version as it is, so without this an agent that read the item could tag it after a change it has not seen.
+
+**Tests:** `compliance/metadata-routes.test.ts › changes tags only when the version named is the item's`.
+
+### `items/tags-version-current`
+
+When `POST /items/{id}/tags` or `DELETE /items/{id}/tags/{tag}` names the item's current version in its `version` query parameter, the server MUST apply the tag write.
+
+**Tests:** `compliance/metadata-routes.test.ts › changes tags only when the version named is the item's`.
 
 ### `items/tags-read`
 

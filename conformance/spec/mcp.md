@@ -134,6 +134,14 @@ If a `marfa_update` call names a version other than the item's current version, 
 
 **Tests:** `compliance/mcp.test.ts › leaves the item unchanged when called with a stale version`.
 
+### `mcp/update-changed-mid-call`
+
+If the item changes after a `marfa_update` call reads it and before one of the call's writes, then the server MUST refuse that write and every later one, and answer a tool error with code `version_conflict` that names the refused step in `failed_step` and the steps already written in `applied`.
+
+**Reason:** each write names the version the call read or the one its own previous write left, so the agent's change never lands on a change it has not seen.
+
+**Tests:** `compliance/mcp-scripted.test.ts › tags nothing when the item changes between the call's read and its tag write`.
+
 ## Deleting items
 
 `marfa_delete` moves items to the trash in two calls: a preview that names everything the trash would take, with a `confirm` token, and a call with that token.

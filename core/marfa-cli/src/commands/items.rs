@@ -99,6 +99,10 @@ pub enum ItemsCommand {
         /// One or more tags.
         #[arg(required = true)]
         tags: Vec<String>,
+        /// The item version you read. If the item has changed since, no tag
+        /// is added.
+        #[arg(long)]
+        version: Option<i64>,
         #[command(flatten)]
         idempotency: IdempotencyArgs,
     },
@@ -108,6 +112,10 @@ pub enum ItemsCommand {
         id: String,
         /// The tag to take off.
         tag: String,
+        /// The item version you read. If the item has changed since, the tag
+        /// stays.
+        #[arg(long)]
+        version: Option<i64>,
         #[command(flatten)]
         idempotency: IdempotencyArgs,
     },
@@ -746,12 +754,15 @@ pub fn versions_request(id: &str, page: &PageArgs) -> Request {
         .query_opt("cursor", page.cursor.clone())
 }
 
-pub fn tag_request(id: &str, tags: &[String]) -> Request {
-    Request::post(&["items", id, "tags"]).json(json!({ "tags": tags }))
+pub fn tag_request(id: &str, tags: &[String], version: Option<i64>) -> Request {
+    Request::post(&["items", id, "tags"])
+        .query_opt("version", version.map(|v| v.to_string()))
+        .json(json!({ "tags": tags }))
 }
 
-pub fn untag_request(id: &str, tag: &str) -> Request {
+pub fn untag_request(id: &str, tag: &str, version: Option<i64>) -> Request {
     Request::delete(&["items", id, "tags", tag])
+        .query_opt("version", version.map(|v| v.to_string()))
 }
 
 pub fn edges_request(args: &ItemEdgesArgs, inbound: bool) -> Request {
@@ -1060,13 +1071,15 @@ pub fn run(command: ItemsCommand, remote: &Remote, out: &Printer) -> Result<(), 
         ItemsCommand::Tag {
             id,
             tags,
+            version,
             idempotency,
-        } => idempotency.apply(tag_request(id, tags)),
+        } => idempotency.apply(tag_request(id, tags, *version)),
         ItemsCommand::Untag {
             id,
             tag,
+            version,
             idempotency,
-        } => idempotency.apply(untag_request(id, tag)),
+        } => idempotency.apply(untag_request(id, tag, *version)),
         ItemsCommand::Edges(args) => return edges(args, false, remote, out),
         ItemsCommand::Backrefs(args) => return edges(args, true, remote, out),
         ItemsCommand::Add(args) => return add(args, remote, out),

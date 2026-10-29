@@ -258,9 +258,9 @@ export function registerUpdate(server: McpServer, ctx: ToolContext): void {
       if (current.version !== args.version) {
         return staleAnswer(ctx, args, current);
       }
-      // The first write that names the version refuses it if the item moved
-      // since the read above; each later one names the version the one
-      // before it left. Tags are written last, since they carry no version.
+      // Every write names the version: the read's, or the one the write
+      // before it left. An edge write leaves the item's version as it was,
+      // so a change landing after one is refused by the next write.
       let { version, state } = current;
       const patching =
         args.properties !== undefined ||
@@ -277,14 +277,6 @@ export function registerUpdate(server: McpServer, ctx: ToolContext): void {
             note: "The steps in applied were written before this one failed.",
           }),
         });
-      const reread = async (): Promise<ApiRefusal | null> => {
-        const again = await api.answer(
-          api.client.GET("/items/{id}", { params: { path: { id } } }),
-        );
-        if (!again.ok) return again.refusal;
-        ({ version, state } = (again.data as unknown as ItemAnswer).item);
-        return null;
-      };
 
       if (patching) {
         const patched = await api.answer(
@@ -324,8 +316,6 @@ export function registerUpdate(server: McpServer, ctx: ToolContext): void {
         );
         if (!added.ok) return stop(`add_edge ${edge.edge_type}`, added.refusal);
         applied.push(`add_edge ${edge.edge_type} ${edge.target_id}`);
-        const failed = await reread();
-        if (failed !== null) return stop("read", failed);
       }
 
       for (const edge of args.remove_edges ?? []) {
@@ -352,8 +342,6 @@ export function registerUpdate(server: McpServer, ctx: ToolContext): void {
           return stop(`remove_edge ${edge.edge_type}`, removed.refusal);
         }
         applied.push(`remove_edge ${edge.edge_type} ${edge.target_id}`);
-        const failed = await reread();
-        if (failed !== null) return stop("read", failed);
       }
 
       if (args.state !== undefined && args.state !== state) {
@@ -371,7 +359,7 @@ export function registerUpdate(server: McpServer, ctx: ToolContext): void {
       if (args.add_tags !== undefined && args.add_tags.length > 0) {
         const tagged = await api.answer(
           api.client.POST("/items/{id}/tags", {
-            params: { path: { id } },
+            params: { path: { id }, query: { version } },
             body: { tags: args.add_tags },
           }),
         );
@@ -381,7 +369,7 @@ export function registerUpdate(server: McpServer, ctx: ToolContext): void {
       for (const tag of args.remove_tags ?? []) {
         const untagged = await api.answer(
           api.client.DELETE("/items/{id}/tags/{tag}", {
-            params: { path: { id, tag } },
+            params: { path: { id, tag }, query: { version } },
           }),
         );
         if (!untagged.ok) return stop(`remove_tag ${tag}`, untagged.refusal);

@@ -726,6 +726,7 @@ marfa items tag [OPTIONS] <ID> <TAGS>...
 
 | Option | Description |
 | --- | --- |
+| `--version <VERSION>` | The item version you read. If the item has changed since, no tag is added. |
 | `--idempotency-key <KEY>` | Sent as `Idempotency-Key`, so a repeat is answered from the record rather than written twice. |
 
 ### marfa items untag
@@ -743,6 +744,7 @@ marfa items untag [OPTIONS] <ID> <TAG>
 
 | Option | Description |
 | --- | --- |
+| `--version <VERSION>` | The item version you read. If the item has changed since, the tag stays. |
 | `--idempotency-key <KEY>` | Sent as `Idempotency-Key`, so a repeat is answered from the record rather than written twice. |
 
 ### marfa items edges

@@ -430,6 +430,37 @@ describe("marfa_create's fetches", () => {
   );
 });
 
+describe("marfa_update", () => {
+  it("tags nothing when the item changes between the call's read and its tag write", async () => {
+    const made = await owner().createItem({
+      type: "core.note",
+      properties: { body: "one" },
+    });
+    expect(made.status, JSON.stringify(made.error)).toBe(201);
+    const { id, version } = made.data.item;
+    await server.setFault("hold:write=item.tag@1");
+    const pending = callTool(mcp, "marfa_update", {
+      id,
+      version,
+      add_tags: ["late"],
+    });
+    await server.waitForHold("hold:write");
+    const moved = await owner().updateItem(id, {
+      version,
+      properties: { body: "two" },
+    });
+    expect(moved.status, JSON.stringify(moved.error)).toBe(200);
+    await server.clearFault("hold:write");
+    expect(toolError(await pending)).toMatchObject({
+      code: "version_conflict",
+      failed_step: "add_tags",
+      applied: [],
+      current: { id, version: version + 1 },
+    });
+    expect((await owner().getMetadata(id)).data.metadata.tags).toEqual([]);
+  });
+});
+
 describe("marfa_delete", () => {
   it("refuses a confirmation once five minutes have passed since the preview", async () => {
     const made = await owner().createItem({

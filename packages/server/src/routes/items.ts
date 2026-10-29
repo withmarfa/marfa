@@ -11,6 +11,7 @@ import {
   StaleVersionSchema,
 } from "./_item-conflict.js";
 import { runAuditedTransaction } from "../storage/audited-transaction.js";
+import { exactItemVersion } from "../storage/conflict.js";
 import { itemListed } from "../storage/reach.js";
 import { faultsArmed, holdAt } from "../control/faults.js";
 import { createRoute, z } from "@hono/zod-openapi";
@@ -1177,6 +1178,23 @@ const putMetadataRoute = createRoute({
   },
 });
 
+const tagVersionQuery = z.object({
+  version: z.coerce
+    .number()
+    .int()
+    .min(1)
+    .optional()
+    .describe(
+      "The item version you read. If it differs, no tag changes. Leave it out to change the tags of the item as it is.",
+    ),
+});
+
+const tagVersionConflict = {
+  content: { "application/json": { schema: StaleVersionSchema } },
+  description:
+    "`version_conflict`: `version` differs from the item. `current` is the item now; no tag changed.",
+};
+
 const addTagsRoute = createRoute({
   operationId: "addItemTags",
   method: "post",
@@ -1189,6 +1207,7 @@ const addTagsRoute = createRoute({
   middleware: readsSomeType,
   request: {
     params: IdParam,
+    query: tagVersionQuery,
     body: {
       content: {
         "application/json": {
@@ -1243,6 +1262,7 @@ const addTagsRoute = createRoute({
       },
       description: ITEM_NOT_FOUND_ON_WRITE,
     },
+    409: tagVersionConflict,
   },
 });
 
@@ -1261,6 +1281,7 @@ const removeTagRoute = createRoute({
       id: z.string().describe("The ID of the item."),
       tag: z.string().describe("The tag to remove, URL-encoded."),
     }),
+    query: tagVersionQuery,
   },
   responses: {
     200: {
@@ -1296,6 +1317,7 @@ const removeTagRoute = createRoute({
       },
       description: ITEM_NOT_FOUND_ON_WRITE,
     },
+    409: tagVersionConflict,
   },
 });
 
@@ -2254,9 +2276,10 @@ export function itemRoutes(storage: Storage) {
 
     const body = c.req.valid("json");
     const tags = body.tags;
-    // The row is read, gated and written in one transaction, so a
-    // change to it landing in between cannot slip past the gate.
-    const { metadata } = await runAuditedTransaction(
+    const { version } = c.req.valid("query");
+    // The row is read, gated, checked against the version and written in one
+    // transaction, so a change to it landing in between cannot slip past.
+    const outcome = await runAuditedTransaction(
       storage,
       async () => {
         const item = requireWritableRow(
@@ -2266,6 +2289,8 @@ export function itemRoutes(storage: Storage) {
             new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`),
         );
         requireTypeAccess(c, item, "write");
+        const conflict = exactItemVersion(item, version);
+        if (conflict) return { conflict };
         // The metadata layer reaches the same row the properties doors
         // guard, so it answers to the same row-level rule.
 
@@ -2293,18 +2318,29 @@ export function itemRoutes(storage: Storage) {
         });
         return { metadata: written };
       },
-      {
-        client_ip: c.get("clientIp") ?? null,
-        key_id: c.get("apiKey")?.id,
-        action: "item.tag",
-        resource_type: "item",
-        resource_id: id,
-        details: { tags },
-      },
+      (result) =>
+        result.conflict !== undefined
+          ? null
+          : {
+              client_ip: c.get("clientIp") ?? null,
+              key_id: c.get("apiKey")?.id,
+              action: "item.tag",
+              resource_type: "item",
+              resource_id: id,
+              details: { tags },
+            },
+      undefined,
+      "item.tag",
     );
+    if (outcome.conflict !== undefined) {
+      // Returned rather than thrown, so the error handler that sets this
+      // never runs.
+      c.header("X-Error-Code", outcome.conflict.error.code);
+      return c.json(outcome.conflict, 409);
+    }
 
     return c.json(
-      { metadata: readableMetadata(metadata, c.get("apiKey")) },
+      { metadata: readableMetadata(outcome.metadata, c.get("apiKey")) },
       200,
     );
   });
@@ -2364,9 +2400,10 @@ export function itemRoutes(storage: Storage) {
       throw new MarfaError(ErrorCode.INVALID_ID, "Invalid item ID");
     }
 
-    // The row is read, gated and written in one transaction, so a
-    // change to it landing in between cannot slip past the gate.
-    const { metadata } = await runAuditedTransaction(
+    const { version } = c.req.valid("query");
+    // The row is read, gated, checked against the version and written in one
+    // transaction, so a change to it landing in between cannot slip past.
+    const outcome = await runAuditedTransaction(
       storage,
       async () => {
         const item = requireWritableRow(
@@ -2376,6 +2413,8 @@ export function itemRoutes(storage: Storage) {
             new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`),
         );
         requireTypeAccess(c, item, "write");
+        const conflict = exactItemVersion(item, version);
+        if (conflict) return { conflict };
         // The metadata layer reaches the same row the properties doors
         // guard, so it answers to the same row-level rule.
         const written = await storage.metadata.removeTag(id, tag);
@@ -2387,18 +2426,27 @@ export function itemRoutes(storage: Storage) {
         });
         return { metadata: written };
       },
-      {
-        client_ip: c.get("clientIp") ?? null,
-        key_id: c.get("apiKey")?.id,
-        action: "item.untag",
-        resource_type: "item",
-        resource_id: id,
-        details: { tag },
-      },
+      (result) =>
+        result.conflict !== undefined
+          ? null
+          : {
+              client_ip: c.get("clientIp") ?? null,
+              key_id: c.get("apiKey")?.id,
+              action: "item.untag",
+              resource_type: "item",
+              resource_id: id,
+              details: { tag },
+            },
+      undefined,
+      "item.untag",
     );
+    if (outcome.conflict !== undefined) {
+      c.header("X-Error-Code", outcome.conflict.error.code);
+      return c.json(outcome.conflict, 409);
+    }
 
     return c.json(
-      { metadata: readableMetadata(metadata, c.get("apiKey")) },
+      { metadata: readableMetadata(outcome.metadata, c.get("apiKey")) },
       200,
     );
   });

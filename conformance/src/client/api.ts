@@ -456,9 +456,14 @@ export class MarfaClient {
   async removeTag(
     id: string,
     tag: string,
+    options?: { version?: number },
   ): Promise<ApiResponse<{ metadata: MarfaMetadata }>> {
+    const query =
+      options?.version === undefined
+        ? ""
+        : `?version=${String(options.version)}`;
     return this.request<{ metadata: MarfaMetadata }>(
-      `/items/${id}/tags/${encodeURIComponent(tag)}`,
+      `/items/${id}/tags/${encodeURIComponent(tag)}${query}`,
       { method: "DELETE" },
     );
   }
@@ -1245,11 +1250,16 @@ export class MarfaClient {
   async addTags(
     id: string,
     tags: string[],
+    options?: { version?: number },
   ): Promise<ApiResponse<{ metadata: MarfaMetadata }>> {
-    return this.request<{ metadata: MarfaMetadata }>(`/items/${id}/tags`, {
-      method: "POST",
-      body: { tags },
-    });
+    const query =
+      options?.version === undefined
+        ? ""
+        : `?version=${String(options.version)}`;
+    return this.request<{ metadata: MarfaMetadata }>(
+      `/items/${id}/tags${query}`,
+      { method: "POST", body: { tags } },
+    );
   }
 
   async getMetadata(

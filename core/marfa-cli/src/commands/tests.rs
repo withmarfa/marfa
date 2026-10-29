@@ -171,11 +171,11 @@ fn an_update_carries_the_version_and_asks_for_resolution_only_when_told() {
 
 #[test]
 fn tags_go_on_as_a_list_and_come_off_one_at_a_time() {
-    let on = items::tag_request("i", &["a".into(), "b".into()]);
+    let on = items::tag_request("i", &["a".into(), "b".into()], None);
     assert_eq!(on.method, Method::Post);
     assert_eq!(on.path(), "/items/i/tags");
     assert_eq!(body(&on), &json!({ "tags": ["a", "b"] }));
-    let off = items::untag_request("i", "a");
+    let off = items::untag_request("i", "a", None);
     assert_eq!(off.method, Method::Delete);
     assert_eq!(off.path(), "/items/i/tags/a");
 }
@@ -1742,6 +1742,30 @@ mod dispatch {
     }
 
     #[test]
+    fn a_tag_write_names_the_version_it_was_given() {
+        use clap::Parser;
+        let metadata = r#"{"metadata":{"item_id":"i","tags":[],"extensions":{}}}"#;
+        let door = Door::open(vec![
+            Answer::json("200 OK", metadata),
+            Answer::json("200 OK", metadata),
+        ]);
+        for args in [
+            ["marfa", "items", "tag", "i", "a", "--version", "3"].as_slice(),
+            ["marfa", "items", "untag", "i", "a", "--version", "3"].as_slice(),
+        ] {
+            let crate::Command::Items { command } =
+                crate::Cli::try_parse_from(args).unwrap().command
+            else {
+                panic!("not an items command");
+            };
+            items::run(command, &remote_at(&door), &QUIET).unwrap();
+        }
+        let received = door.received();
+        assert_eq!(received[0].path(), "/items/i/tags?version=3");
+        assert_eq!(received[1].path(), "/items/i/tags/a?version=3");
+    }
+
+    #[test]
     fn a_tag_metadata_or_extension_write_carries_the_idempotency_key_it_was_given() {
         let key = |value: &str| items::IdempotencyArgs {
             idempotency_key: Some(value.into()),
@@ -1759,6 +1783,7 @@ mod dispatch {
             items::ItemsCommand::Tag {
                 id: "i".into(),
                 tags: vec!["a".into()],
+                version: None,
                 idempotency: key("tag"),
             },
             &remote,
@@ -1769,6 +1794,7 @@ mod dispatch {
             items::ItemsCommand::Untag {
                 id: "i".into(),
                 tag: "a".into(),
+                version: None,
                 idempotency: key("untag"),
             },
             &remote,
