@@ -71,7 +71,7 @@ export const TOOL_OPERATIONS = {
     "restoreItem",
   ],
   marfa_delete: ["previewItemTrash", "bulkGetItems", "trashItems"],
-  marfa_save_type: ["registerType", "getType", "replaceType"],
+  marfa_save_type: ["registerType", "listTypes", "replaceType"],
   marfa_save_view: ["createView", "updateView"],
   marfa_move_items: ["moveType", "getBulkActionJob"],
   marfa_bulk_save: ["bulkUpsertItems"],

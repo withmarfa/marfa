@@ -14,6 +14,7 @@ import { compactType } from "./overview.js";
 type TypeDefinitionInput = components["schemas"]["TypeDefinitionInput"];
 type TypeDefinitionUpdate = components["schemas"]["TypeDefinitionUpdate"];
 type BulkActionJob = components["schemas"]["BulkActionJob"];
+type RegisteredType = components["schemas"]["RegisteredType"];
 
 const field = z
   .looseObject({
@@ -38,13 +39,60 @@ const typeOutput = z.object({
   next: z.string().optional(),
 });
 
+/**
+ * The definition `id` stores, from the list of types, and each field name it
+ * inherits with the nearest ancestor that defines it. The list gives a
+ * type's own fields but every role it plays, inherited ones included, so a
+ * role its parent plays is left to the parent.
+ */
+function ownDefinition(
+  types: readonly RegisteredType[],
+  id: string,
+):
+  | { definition: Record<string, unknown>; inherited: Map<string, string> }
+  | undefined {
+  const byId = new Map(types.map((type) => [type.id, type]));
+  const listed = byId.get(id);
+  if (listed === undefined) return undefined;
+  const inherited = new Map<string, string>();
+  const seen = new Set([id]);
+  let ancestor = listed.parent;
+  while (ancestor !== undefined && !seen.has(ancestor)) {
+    seen.add(ancestor);
+    const type = byId.get(ancestor);
+    if (type === undefined) break;
+    for (const name of Object.keys(type.fields)) {
+      if (!inherited.has(name)) inherited.set(name, ancestor);
+    }
+    ancestor = type.parent;
+  }
+  const parentRoles = new Set(
+    listed.parent === undefined ? [] : (byId.get(listed.parent)?.roles ?? []),
+  );
+  const definition = Object.fromEntries(
+    Object.entries(listed).filter(
+      ([name]) => name !== "provenance" && name !== "roles",
+    ),
+  );
+  const ownRoles = (listed.roles ?? []).filter(
+    (role) => !parentRoles.has(role),
+  );
+  return {
+    definition: {
+      ...definition,
+      ...(ownRoles.length > 0 && { roles: ownRoles }),
+    },
+    inherited,
+  };
+}
+
 export function registerSaveType(server: McpServer, ctx: ToolContext): void {
   server.registerTool(
     "marfa_save_type",
     {
       title: "Register or change a type",
       description:
-        "Use to add a type of item, or to change one's label, description or fields. Changing merges what you send into the stored type: a field set to null is removed, and items keep their values for it.",
+        "Use to add a type of item, or to change one's label, description or fields. Changing merges what you send into the type's own definition: a field set to null is removed, and items keep their values for it. A field the type inherits is changed or removed on the type it comes from.",
       inputSchema: z.strictObject({
         action: z.enum(["register", "change"]),
         id: pathSegment.describe(
@@ -112,21 +160,34 @@ export function registerSaveType(server: McpServer, ctx: ToolContext): void {
           message: "A type's parent is set when it is registered.",
         });
       }
-      const stored = await ctx.api.answer(
-        ctx.api.client.GET("/types/{id}", { params: { path: { id } } }),
-      );
-      if (!stored.ok) return refused(stored.refusal);
-      // The stored definition, whole, so what the change does not name is
-      // sent back as it was. `provenance` is Marfa's to set.
-      const definition = Object.fromEntries(
-        Object.entries(stored.data).filter(([name]) => name !== "provenance"),
-      );
+      // The type's own definition, as the list gives it, so a subtype goes
+      // on inheriting what its ancestors define rather than keeping a copy.
+      const listed = await ctx.api.answer(ctx.api.client.GET("/types"));
+      if (!listed.ok) return refused(listed.refusal);
+      const own = ownDefinition(listed.data.data, id);
+      if (own === undefined) {
+        return fail({
+          code: "type_not_found",
+          message: `Type "${id}" not found`,
+          hint: "No type has this identifier. Call marfa_overview to see the types, or register it with action register.",
+        });
+      }
+      const ownFields = own.definition.fields as Record<string, unknown>;
+      for (const [name, value] of Object.entries(fields ?? {})) {
+        const from = own.inherited.get(name);
+        if (value === null && !(name in ownFields) && from !== undefined) {
+          return fail({
+            code: "validation_error",
+            message: `${id} inherits ${name} from ${from}, so it cannot remove it. Removing ${name} from ${from} removes it from every type that inherits it.`,
+          });
+        }
+      }
       const merged = Object.fromEntries(
-        Object.entries({
-          ...(definition.fields as Record<string, unknown>),
-          ...fields,
-        }).filter(([, value]) => value !== null),
+        Object.entries({ ...ownFields, ...fields }).filter(
+          ([, value]) => value !== null,
+        ),
       );
+      const definition = own.definition;
       const body = {
         ...definition,
         fields: merged,

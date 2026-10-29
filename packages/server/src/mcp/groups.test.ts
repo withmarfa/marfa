@@ -256,6 +256,81 @@ describe("marfa_save_type", () => {
       fields: { servings: { type: "integer" }, notes: { type: "string" } },
     });
   });
+
+  it("changes a subtype's own definition, so it goes on inheriting from its parent", async () => {
+    const parent = await request(ctx.app, "POST", "/types", {
+      key: adminKey,
+      body: {
+        id: "user.shelf",
+        roles: ["container"],
+        fields: { title: { type: "string" }, rating: { type: "integer" } },
+      },
+    });
+    expect(parent.status).toBe(201);
+    payloadOf(
+      await callTool(schema, "marfa_save_type", {
+        action: "register",
+        id: "user.bookshelf",
+        parent: "user.shelf",
+        fields: { room: { type: "string" } },
+      }),
+    );
+    // A key that may only add optional fields: a change that copied the
+    // parent's roles or fields into the subtype would need schema.write.
+    const registersOnly = await mintWorkingKey(ctx, {
+      permissions: [],
+      metadata_permissions: { types: "write" },
+    });
+    const narrow = await connectMcp(ctx, registersOnly, {
+      path: "/mcp/schema",
+    });
+    try {
+      payloadOf(
+        await callTool(narrow, "marfa_save_type", {
+          action: "change",
+          id: "user.bookshelf",
+          fields: { shelves: { type: "integer" } },
+        }),
+      );
+    } finally {
+      await narrow.close();
+    }
+    const listed = await request(ctx.app, "GET", "/types", { key: adminKey });
+    const own = (
+      (await listed.json()) as {
+        data: { id: string; fields: object; roles?: string[] }[];
+      }
+    ).data.find((type) => type.id === "user.bookshelf");
+    expect(Object.keys(own?.fields ?? {}).sort()).toEqual(["room", "shelves"]);
+
+    const inherited = errorOf(
+      await callTool(schema, "marfa_save_type", {
+        action: "change",
+        id: "user.bookshelf",
+        fields: { rating: null },
+      }),
+    );
+    expect(inherited.code).toBe("validation_error");
+    expect(inherited.message).toMatch(/rating/);
+    expect(inherited.message).toMatch(/user\.shelf/);
+
+    payloadOf(
+      await callTool(schema, "marfa_save_type", {
+        action: "change",
+        id: "user.shelf",
+        fields: { rating: null },
+      }),
+    );
+    const child = await request(ctx.app, "GET", "/types/user.bookshelf", {
+      key: adminKey,
+    });
+    const resolved = (await child.json()) as { fields: object };
+    expect(Object.keys(resolved.fields).sort()).toEqual([
+      "room",
+      "shelves",
+      "title",
+    ]);
+  });
 });
 
 describe("marfa_save_view", () => {
