@@ -13,6 +13,7 @@ import {
   trackEdge,
   trackEdgeType,
   trackItem,
+  trackView,
   trackWebhook,
 } from "../../utils/setup.js";
 import { createNote } from "../../generators/items.js";
@@ -279,6 +280,29 @@ const seeds: Record<string, () => Promise<Read>> = {
     await notes(LIMIT, token);
     return async (page) => answered(await client.search(token, page)) as Page;
   },
+  "GET /views/{id}/items": async () => {
+    const tag = `fulllastpageview${ctx.runId.replace(/[^a-z0-9]/gi, "")}`;
+    const created = answered(
+      await client.bulkItems({
+        items: Array.from({ length: LIMIT }, (_, i) =>
+          createNote({
+            source: ctx.source,
+            tags: [tag],
+            properties: { title: `full-last-page view ${String(i)}` },
+          }),
+        ),
+      }),
+    );
+    for (const entry of created.results) trackItem(ctx, String(entry.id));
+    const view = await client.createView({
+      title: "Full last page",
+      query: { filter: `tags contains "${tag}"` },
+    });
+    expect(view.status, JSON.stringify(view.error)).toBe(201);
+    trackView(ctx, view.data.item.id);
+    return async (page) =>
+      answered(await client.listViewItems(view.data.item.id, page)) as Page;
+  },
   "GET /webhooks/{id}/deliveries": async () => {
     const itemType = `mock.lastpage.${ctx.runId}`;
     answered(await client.registerType({ id: itemType, fields: {} }));
@@ -394,7 +418,7 @@ describe("a full last page answers a null cursor", () => {
         (parameter) => parameter.in === "query" && parameter.name === "cursor",
       );
     });
-    expect(cursorDoors).toHaveLength(14);
+    expect(cursorDoors).toHaveLength(15);
     expect(Object.keys(seeds).sort()).toEqual(cursorDoors.sort());
   });
 
