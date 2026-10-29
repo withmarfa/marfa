@@ -459,6 +459,18 @@ const CARRYING_NONE: Record<string, { why: string; drive: Driver }> = {
       );
     },
   },
+  "GET /views/{id}/items": {
+    why: "answers rows without hydrating their metadata",
+    drive: async (key) => {
+      const { id } = await seedNote();
+      const view = await seedView();
+      const listed = await answer(
+        await request(ctx.app, "GET", `/views/${view}/items`, { key }),
+      );
+      expect(listed.text, "the note the view lists").toContain(id);
+      return listed;
+    },
+  },
   "GET /occurrences": {
     why: "answers occurrences of events, whose rows it does not hydrate with metadata",
     drive: async (key) => {
