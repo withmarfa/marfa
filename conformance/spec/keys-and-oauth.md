@@ -1033,6 +1033,22 @@ The server MUST serve `/.well-known/oauth-protected-resource` without a credenti
 
 **Tests:** `compliance/oauth.test.ts › serves the protected resource metadata, naming this server as the resource and its issuer as the authorization server`.
 
+### `keys-and-oauth/protected-resource-mcp`
+
+The server MUST serve `/.well-known/oauth-protected-resource/mcp`, `/.well-known/oauth-protected-resource/mcp/schema` and `/.well-known/oauth-protected-resource/mcp/admin` without a credential, each naming its MCP endpoint's URI, the server's origin followed by `/mcp`, `/mcp/schema` or `/mcp/admin`, as `resource` and its issuer as the only authorization server.
+
+**Reason:** RFC 9728 places a resource's metadata at the well-known path followed by the resource's own path, which is where an MCP client looks for it.
+
+**Tests:** `compliance/oauth.test.ts › serves protected resource metadata for each MCP endpoint, naming the endpoint as the resource`.
+
+### `keys-and-oauth/discovery-metadata-documents`
+
+The server MUST advertise `client_id_metadata_document_supported` as `true` in both its OAuth authorization server metadata and its OpenID configuration.
+
+**Reason:** An MCP client names itself by a client ID metadata document only when the server advertises it beside the `none` authentication method, and otherwise falls back to registration.
+
+**Tests:** `compliance/oauth.test.ts › advertises client ID metadata documents beside public clients in both discovery documents`.
+
 ### `keys-and-oauth/no-backchannel-advertised`
 
 The server MUST advertise `backchannel_logout_supported` and `backchannel_logout_session_supported` as `false` in its discovery documents.
@@ -1195,6 +1211,14 @@ When a registration names a `backchannel_logout_uri` or `backchannel_logout_sess
 
 **Tests:** `compliance/browser-sessions.test.ts › registers an app without a back-channel logout address and does not echo one`.
 
+### `keys-and-oauth/metadata-document-private-host`
+
+If an authorization request names as `client_id` an `https` URL whose host is `localhost` or a loopback, private or link-local IP address, then the server MUST answer `400 invalid_client`.
+
+**Reason:** The server fetches the document a `client_id` URL names, so a host on its own network would let any page make the server read from that network.
+
+**Tests:** `compliance/oauth-authorize.test.ts › is refused 400 invalid_client at %s`.
+
 ## Authorization with consent
 
 A signed-in person approves an app on the consent screen, and the decision ends at the app's redirect URI. Every request here carries a PKCE challenge unless the rule says otherwise.
@@ -1260,6 +1284,14 @@ When an authorization request names a scope the instance cannot grant beside sco
 **Reason:** A client that cached an older list of scopes is given what can still be granted, and the token answer's `scope` tells it what it got.
 
 **Tests:** `compliance/oauth-authorize.test.ts › drops a requested scope the instance cannot grant, and authorizes the rest`.
+
+### `keys-and-oauth/authorize-type-registered`
+
+When an authorization request names `<type>:read` or `<type>:write` for a type registered while the server runs, from a client whose registration covers the scope, the server MUST offer the scope on the consent screen and grant it when the person accepts it, without a restart.
+
+**Reason:** An app that registers its own types asks for them at once, so the scopes the server can grant follow the type registry, not the registry at boot.
+
+**Tests:** `compliance/oauth-authorize.test.ts › is offered and granted at once, to an app registered before it`.
 
 ### `keys-and-oauth/authorize-narrowed-types`
 
@@ -1701,17 +1733,67 @@ If an app exchanges a refresh token the server never issued, then the server MUS
 
 **Tests:** `compliance/oauth-tokens.test.ts › refuse a refresh token the server never issued invalid_grant`.
 
+## The resource parameter
+
+An app names as `resource` (RFC 8707) the server it will call: this server's origin, or one of its MCP endpoints, the origin followed by exactly `/mcp`, `/mcp/schema` or `/mcp/admin`.
+
 ### `keys-and-oauth/resource-this-server`
 
 When a token request names this server's origin as `resource`, with or without a trailing slash, the server MUST issue an access token this server accepts.
 
 **Tests:** `compliance/oauth-tokens.test.ts › is accepted when it names this server, and the token works here`.
 
+### `keys-and-oauth/resource-mcp`
+
+When an authorization request and the token request that redeems its code each name one of this server's MCP endpoints as `resource`, the server MUST issue an access token this server accepts.
+
+**Tests:** `compliance/oauth-tokens.test.ts › is accepted at authorization and at the token request when it names an MCP endpoint, and the token works here`.
+
 ### `keys-and-oauth/resource-other-server`
 
-If a token request names as `resource` anything other than this server's origin, then the server MUST answer `400 invalid_target`.
+If a token request names as `resource` anything other than this server's origin or one of its MCP endpoints, such as another server, `/mcp/` or `/mcp/other`, then the server MUST answer `400 invalid_target`.
 
 **Tests:** `compliance/oauth-tokens.test.ts › is refused invalid_target when it names another server`.
+
+### `keys-and-oauth/resource-one-value`
+
+If a token request names `resource` more than once, then the server MUST answer `400 invalid_target`.
+
+**Reason:** Every token the server issues is accepted by this server alone, so a token for two resources would promise an audience it does not have.
+
+**Tests:** `compliance/oauth-tokens.test.ts › is refused invalid_target when a token request names more than one`.
+
+### `keys-and-oauth/resource-authorize-refused`
+
+If an authorization request names as `resource` anything other than this server's origin or one of its MCP endpoints, with a redirect URI the client registered, then the server MUST send the browser to that redirect URI with `error=invalid_target`, the request's `state` and no code.
+
+**Tests:** `compliance/oauth-tokens.test.ts › is refused at authorization to the redirect URI the app registered, with the request's state`.
+
+### `keys-and-oauth/resource-authorize-unregistered`
+
+If an authorization request names as `resource` anything other than this server's origin or one of its MCP endpoints, with a redirect URI the client did not register, then the server MUST answer `400 invalid_target` without a redirect.
+
+**Reason:** RFC 6749 section 4.1.2.1: a redirect URI the client did not register is never sent an answer.
+
+**Tests:** `compliance/oauth-tokens.test.ts › is refused at authorization 400 invalid_target when the redirect URI is not one the app registered`.
+
+## The MCP endpoints' challenges
+
+### `keys-and-oauth/mcp-challenge-credential`
+
+If a request to `/mcp`, `/mcp/schema` or `/mcp/admin` carries no credential the server accepts, then the server MUST answer `401` with `WWW-Authenticate: Bearer resource_metadata="<url>"`, naming the URL of that endpoint's protected resource metadata.
+
+**Reason:** RFC 9728 section 5.1: the challenge is how an MCP client finds where to sign in.
+
+**Tests:** waiting on #2445.
+
+### `keys-and-oauth/mcp-challenge-scope`
+
+If a request to `/mcp`, `/mcp/schema` or `/mcp/admin` carries a credential that lacks a scope the call needs, then the server MUST answer `403` with a `WWW-Authenticate` Bearer challenge holding `error="insufficient_scope"`, the scopes the call needs as `scope` and the endpoint's `resource_metadata`.
+
+**Reason:** RFC 6750 section 3.1: the challenge names what to ask for, so an MCP client can ask the person for more without starting over.
+
+**Tests:** waiting on #2445.
 
 ## Revocation and introspection
 
@@ -1961,7 +2043,7 @@ The server MUST NOT answer any request with `Access-Control-Allow-Credentials`.
 
 ### `keys-and-oauth/discovery-every-origin`
 
-When a request carries an `Origin`, the server MUST answer `GET /.well-known/oauth-authorization-server/auth`, `GET /.well-known/openid-configuration/auth`, `GET /auth/.well-known/oauth-authorization-server`, `GET /auth/.well-known/openid-configuration` and `GET /.well-known/oauth-protected-resource` with `Access-Control-Allow-Origin: *`.
+When a request carries an `Origin`, the server MUST answer `GET /.well-known/oauth-authorization-server/auth`, `GET /.well-known/openid-configuration/auth`, `GET /auth/.well-known/oauth-authorization-server`, `GET /auth/.well-known/openid-configuration`, `GET /.well-known/oauth-protected-resource` and the protected resource metadata of each MCP endpoint, `GET /.well-known/oauth-protected-resource/mcp`, `/mcp/schema` and `/mcp/admin`, with `Access-Control-Allow-Origin: *`.
 
 **Reason:** A page that is not yet approved has to find the endpoints before it can ask for approval, and these documents take no credential and say nothing that belongs to the owner.
 

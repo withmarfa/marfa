@@ -105,6 +105,37 @@ describe("OAuth provider", () => {
     expect(doc.bearer_methods_supported).toEqual(["header"]);
   });
 
+  it("serves protected resource metadata for each MCP endpoint, naming the endpoint as the resource", async () => {
+    const metadata = (await (
+      await fetch(`${apiUrl}/.well-known/oauth-authorization-server/auth`)
+    ).json()) as { issuer: string };
+    const origin = new URL(metadata.issuer).origin;
+    for (const path of ["/mcp", "/mcp/schema", "/mcp/admin"]) {
+      const r = await fetch(
+        `${apiUrl}/.well-known/oauth-protected-resource${path}`,
+      );
+      expect(r.status, path).toBe(200);
+      const doc = (await r.json()) as Record<string, unknown>;
+      expect(doc.resource).toBe(`${origin}${path}`);
+      expect(doc.authorization_servers).toEqual([metadata.issuer]);
+      expect(doc.bearer_methods_supported).toEqual(["header"]);
+    }
+  });
+
+  it("advertises client ID metadata documents beside public clients in both discovery documents", async () => {
+    for (const path of [
+      "/.well-known/oauth-authorization-server/auth",
+      "/.well-known/openid-configuration/auth",
+    ]) {
+      const doc = (await (await fetch(`${apiUrl}${path}`)).json()) as {
+        client_id_metadata_document_supported?: unknown;
+        token_endpoint_auth_methods_supported?: unknown;
+      };
+      expect(doc.client_id_metadata_document_supported, path).toBe(true);
+      expect(doc.token_endpoint_auth_methods_supported, path).toContain("none");
+    }
+  });
+
   it("registers a native client dynamically and issues a client_id", async () => {
     const r = await client.registerOAuthClient({
       client_name: `conformance-${ctx.runId}`,
