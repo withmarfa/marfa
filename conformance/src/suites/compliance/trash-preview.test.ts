@@ -10,6 +10,7 @@ import {
   cleanup,
 } from "../../utils/setup.js";
 import { createBookmark, createNote } from "../../generators/items.js";
+import { expectMatchesSchema } from "../../utils/openapi.js";
 
 let client: MarfaClient;
 let ctx: TestContext;
@@ -75,6 +76,12 @@ describe("GET /items/{id}/trash-preview", () => {
 
     const preview = await client.previewItemTrash(parent);
     expect(preview.status).toBe(200);
+    await expectMatchesSchema(
+      "GET",
+      "/items/{id}/trash-preview",
+      200,
+      preview.data,
+    );
     const read = await client.getItem(parent);
     expect(preview.data.id).toBe(parent);
     expect(preview.data.type).toBe("core.note");
