@@ -56,9 +56,13 @@ export function refusalFromBody(status: number, body: unknown): ApiRefusal {
 
 /**
  * Requests that change nothing a person would lose by sending them again:
- * a read sent as POST, and a blob, which is stored by its hash.
+ * reads sent as POST, and a blob, which is stored by its hash.
  */
-const SAFE_TO_REPEAT = new Set(["/items/bulk-get", "/blobs"]);
+const SAFE_TO_REPEAT = new Set([
+  "/items/bulk-get",
+  "/items/trash-preview",
+  "/blobs",
+]);
 
 /** The API, for one MCP request. */
 export class McpApi {
