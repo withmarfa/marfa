@@ -1,4 +1,12 @@
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 import type { Client } from "@modelcontextprotocol/client";
 import { PERMISSIONS } from "@withmarfa/shared";
 import { BulkActionWorker } from "../bulk-actions/index.js";
@@ -547,6 +555,35 @@ describe("marfa_health and marfa_audit", () => {
       (answer.metrics as { items: { total: unknown } }).items.total,
     ).toBeTypeOf("number");
     expect(answer.connectors).toEqual([]);
+  });
+
+  it("keeps the health it read when the connectors cannot be read, and says so", async () => {
+    // A failed database read takes the health down; /metrics may answer from
+    // its cache or fail on the same read, and /connectors fails on its own.
+    const count = vi
+      .spyOn(ctx.storage.keys, "count")
+      .mockRejectedValue(new Error("SQLITE_IOERR: disk I/O error"));
+    const list = vi
+      .spyOn(ctx.storage.connectors, "list")
+      .mockRejectedValue(new Error("SQLITE_IOERR: disk I/O error"));
+    try {
+      const answer = payloadOf(await callTool(admin, "marfa_health", {}));
+      expect(answer.health).toMatchObject({
+        status: "down",
+        components: { database: { status: "down" } },
+      });
+      const unread = answer.unread as { read: string; code: string }[];
+      expect(unread).toContainEqual(
+        expect.objectContaining({ read: "connectors", code: "internal_error" }),
+      );
+      expect(answer).not.toHaveProperty("connectors");
+      expect(
+        "metrics" in answer || unread.some((part) => part.read === "metrics"),
+      ).toBe(true);
+    } finally {
+      count.mockRestore();
+      list.mockRestore();
+    }
   });
 
   it("reads the audit log, narrowed and paged", async () => {

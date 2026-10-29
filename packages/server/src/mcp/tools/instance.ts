@@ -1,6 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/server";
 import type { components } from "@withmarfa/client";
 import * as z from "zod";
+import type { ApiRefusal } from "../api.js";
 import { holdsAny, type ToolContext } from "../context.js";
 import { ANSWER_BUDGET_CHARS, fitList, ok, refused } from "../results.js";
 
@@ -14,7 +15,17 @@ const healthOutput = z.object({
     .boolean()
     .optional()
     .describe("`true` when there are more connectors than this answer holds."),
+  unread: z
+    .array(
+      z.object({ read: z.string(), code: z.string(), message: z.string() }),
+    )
+    .optional()
+    .describe("Each part that could not be read, with the API's error."),
 });
+
+function unreadOf(read: string, refusal: ApiRefusal) {
+  return { read, code: refusal.code, message: refusal.message };
+}
 
 function connectorState(connector: Connector) {
   return {
@@ -54,28 +65,36 @@ export function registerHealth(server: McpServer, ctx: ToolContext): void {
         return refused(healthAnswer.refusal);
       }
 
+      // A read that is refused leaves the others standing: a down
+      // instance is when the health matters most.
+      const unread: { read: string; code: string; message: string }[] = [];
       let metrics: Record<string, unknown> | undefined;
       if (holdsAny(ctx, "instance.read")) {
         const answer = await ctx.api.answer(ctx.api.client.GET("/metrics"));
-        if (!answer.ok) return refused(answer.refusal);
-        metrics = answer.data;
+        if (answer.ok) metrics = answer.data;
+        else unread.push(unreadOf("metrics", answer.refusal));
       }
 
       const connectors = await ctx.api.answer(
         ctx.api.client.GET("/connectors"),
       );
-      if (!connectors.ok) return refused(connectors.refusal);
+      if (!connectors.ok)
+        unread.push(unreadOf("connectors", connectors.refusal));
       const fitted = fitList(
-        connectors.data.data.map(connectorState),
-        ANSWER_BUDGET_CHARS - JSON.stringify({ health, metrics }).length - 200,
+        connectors.ok ? connectors.data.data.map(connectorState) : [],
+        ANSWER_BUDGET_CHARS -
+          JSON.stringify({ health, metrics, unread }).length -
+          200,
       );
       const more =
-        fitted.left_out > 0 || typeof connectors.data.next_cursor === "string";
+        fitted.left_out > 0 ||
+        (connectors.ok && typeof connectors.data.next_cursor === "string");
       return ok({
         health,
         ...(metrics !== undefined && { metrics }),
-        connectors: fitted.kept,
+        ...(connectors.ok && { connectors: fitted.kept }),
         ...(more && { connectors_left_out: true }),
+        ...(unread.length > 0 && { unread }),
       });
     },
   );
