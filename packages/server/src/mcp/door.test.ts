@@ -114,6 +114,27 @@ describe("/mcp", () => {
     }
   });
 
+  it("marks only marfa_create as reaching outside the instance", async () => {
+    const client = await connectMcp(ctx, ctx.workingKey);
+    try {
+      const { tools } = await client.listTools();
+      expect(
+        Object.fromEntries(
+          tools.map((tool) => [tool.name, tool.annotations?.openWorldHint]),
+        ),
+      ).toEqual({
+        marfa_overview: false,
+        marfa_find: false,
+        marfa_get: false,
+        marfa_create: true,
+        marfa_update: false,
+        marfa_delete: false,
+      });
+    } finally {
+      await client.close();
+    }
+  });
+
   it("lists only the read tools to a credential that only reads", async () => {
     const key = await mintWorkingKey(ctx, {
       type_permissions: { "*": "read" },

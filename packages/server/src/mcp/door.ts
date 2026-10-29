@@ -19,13 +19,17 @@
 import { createMcpHandler } from "@modelcontextprotocol/server";
 import { Hono } from "hono";
 import { ErrorCode, MarfaError } from "@withmarfa/shared";
-import type { PublicFetcher } from "../net/public-fetch.js";
-import { type AppEnv, credentialHandle } from "../middleware/auth.js";
+import {
+  type AppEnv,
+  authorityId,
+  credentialHandle,
+} from "../middleware/auth.js";
 import { refuseUndeclaredKeysOf } from "../middleware/undeclared-query-keys.js";
 import { McpApi } from "./api.js";
 import { nowMs } from "../clock.js";
 import { mcpUnauthorized } from "./challenge.js";
 import type { ToolContext } from "./context.js";
+import { type ToolFetchOptions, toolFetchFor } from "./file-fetch.js";
 import { createMarfaMcpServer } from "./server.js";
 
 export interface McpDoorOptions {
@@ -35,7 +39,8 @@ export interface McpDoorOptions {
   version: string;
   /** The key a delete's confirmation token is signed with. */
   confirmKey: Buffer;
-  fetchFile: PublicFetcher;
+  /** How a tool fetches a file from a web address. */
+  fetch: ToolFetchOptions;
   /** Whether a browser page on `origin` may call the endpoint. */
   originAllowed: (origin: string) => Promise<boolean>;
   /** Sends a request into the app in process, with the outer request's bindings. */
@@ -101,6 +106,7 @@ export function mcpRoutes(options: McpDoorOptions): Hono<AppEnv> {
     refuseUndeclaredKeysOf(c.req.url, []);
     const credential = header.slice("Bearer ".length);
     const env: unknown = c.env;
+    const handle = credentialHandle(c);
     const ctx: ToolContext = {
       api: new McpApi({
         baseUrl: options.baseUrl,
@@ -108,9 +114,13 @@ export function mcpRoutes(options: McpDoorOptions): Hono<AppEnv> {
         dispatch: (request) => options.dispatch(request, env),
       }),
       typePermissions: apiKey.type_permissions,
-      credentialHandle: credentialHandle(c),
+      credentialHandle: handle,
       confirmKey: options.confirmKey,
-      fetchFile: options.fetchFile,
+      fetchFile: toolFetchFor(options.fetch, {
+        handle,
+        keyId: authorityId(c),
+        clientIp: c.get("clientIp") ?? null,
+      }),
       now: options.now ?? nowMs,
     };
     const parsedBody = await parsedBodyOf(c.req.raw);

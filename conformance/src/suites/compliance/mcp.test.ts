@@ -220,6 +220,17 @@ describe("which tools a credential is offered", () => {
     }
   });
 
+  it("marks marfa_create as reaching outside the instance and no other tool", async () => {
+    const { tools } = await mcp.client.listTools();
+    const hints = Object.fromEntries(
+      tools.map((tool) => [tool.name, tool.annotations?.openWorldHint]),
+    );
+    expect(Object.keys(hints).sort()).toEqual(ALL_TOOLS);
+    for (const name of ALL_TOOLS) {
+      expect(hints[name], name).toBe(name === "marfa_create");
+    }
+  });
+
   it("lists only marfa_overview, marfa_find and marfa_get to a credential that only reads", async () => {
     const reader = await connectMcp(
       apiUrl,

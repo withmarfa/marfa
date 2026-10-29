@@ -16,6 +16,7 @@ import {
 } from "../test-utils.js";
 import { ANSWER_BUDGET_CHARS } from "./results.js";
 import { CONFIRMATION_TTL_MS } from "./confirm.js";
+import { MCP_FETCH_CONCURRENCY, MCP_FETCH_RATE_LIMIT } from "./file-fetch.js";
 import { callTool, connectMcp, errorOf, payloadOf } from "./test-client.js";
 
 const FETCH_MAX_BYTES = 4096;
@@ -396,6 +397,174 @@ describe("marfa_create", () => {
       key: ctx.workingKey,
     });
     expect(((await saved.json()) as { data: unknown[] }).data).toHaveLength(0);
+  });
+
+  it("records each fetch in the audit log with its address and outcome, but not its query", async () => {
+    const host = await fileHost((req, res) => {
+      if (req.url?.startsWith("/gone") === true) {
+        res.writeHead(404);
+        res.end();
+        return;
+      }
+      res.writeHead(200, { "Content-Type": "text/plain" });
+      res.end("minutes");
+    });
+    payloadOf(
+      await callTool(client, "marfa_create", {
+        url: host.url("/notes/minutes.txt?sig=hidden-signature"),
+      }),
+    );
+    errorOf(await callTool(client, "marfa_create", { url: host.url("/gone") }));
+    errorOf(
+      await callTool(client, "marfa_create", {
+        url: "http://127.0.0.1:9/private",
+      }),
+    );
+    const response = await request(
+      ctx.app,
+      "GET",
+      "/audit?action=mcp.file_fetch&limit=3",
+      { key: ctx.workingKey },
+    );
+    expect(response.status).toBe(200);
+    const { data } = (await response.json()) as {
+      data: { key_id: string | null; details: Record<string, unknown> }[];
+    };
+    const details = data.map((entry) => entry.details).reverse();
+    expect(details).toEqual([
+      {
+        scheme: "http",
+        host: `files.test:${String(host.port)}`,
+        path: "/notes/minutes.txt",
+        query_length: "sig=hidden-signature".length,
+        outcome: "fetched",
+        size_bytes: 7,
+      },
+      {
+        scheme: "http",
+        host: `files.test:${String(host.port)}`,
+        path: "/gone",
+        query_length: 0,
+        outcome: "status",
+        status: 404,
+      },
+      {
+        scheme: "http",
+        host: "127.0.0.1:9",
+        path: "/private",
+        query_length: 0,
+        outcome: "not_public",
+      },
+    ]);
+    expect(JSON.stringify(data)).not.toContain("hidden-signature");
+    expect(new Set(data.map((entry) => entry.key_id)).size).toBe(1);
+  });
+
+  it("refuses a fetch past the number the instance makes at once", async () => {
+    const finish: (() => void)[] = [];
+    const host = await fileHost((_req, res) => {
+      res.writeHead(200, { "Content-Type": "text/plain" });
+      res.write("a");
+      finish.push(() => res.end("b"));
+    });
+    const held = Array.from({ length: MCP_FETCH_CONCURRENCY }, (_, i) =>
+      callTool(client, "marfa_create", { url: host.url(`/held-${String(i)}`) }),
+    );
+    await expect.poll(() => finish.length).toBe(MCP_FETCH_CONCURRENCY);
+    const error = errorOf(
+      await callTool(client, "marfa_create", { url: host.url("/one-more") }),
+    );
+    expect(error).toMatchObject({ code: "file_not_fetched", reason: "busy" });
+    expect(host.hits()).toBe(MCP_FETCH_CONCURRENCY);
+    for (const end of finish.splice(0)) end();
+    // The witness: the held fetches were made and saved.
+    for (const answer of await Promise.all(held)) {
+      expect(payloadOf(answer)).toMatchObject({ type: "core.file" });
+    }
+  });
+});
+
+describe("marfa_create where the owner turned fetching off", () => {
+  let off: TestContext;
+  let offClient: Client;
+
+  beforeAll(async () => {
+    off = await createTestContext({ mcpFetchEnabled: false });
+    offClient = await connectMcp(off, off.workingKey);
+  });
+
+  afterAll(async () => {
+    await offClient.close();
+    await off.cleanup();
+  });
+
+  it("refuses url and file without connecting, and still saves an item", async () => {
+    const host = await fileHost((_req, res) => {
+      res.writeHead(200, { "Content-Type": "text/plain" });
+      res.end("minutes");
+    });
+    // The witness: an instance with fetching on reaches the host.
+    payloadOf(
+      await callTool(client, "marfa_create", { url: host.url("/on.txt") }),
+    );
+    expect(host.hits()).toBe(1);
+    for (const args of [
+      { url: host.url("/off.txt") },
+      { file: { download_url: host.url("/off"), file_id: "file_off" } },
+    ]) {
+      expect(
+        errorOf(await callTool(offClient, "marfa_create", args)),
+      ).toMatchObject({ code: "file_not_fetched", reason: "disabled" });
+    }
+    expect(host.hits()).toBe(1);
+    expect(
+      payloadOf(
+        await callTool(offClient, "marfa_create", {
+          type: "core.note",
+          properties: { title: "Still saved" },
+        }),
+      ),
+    ).toMatchObject({ created: true });
+  });
+});
+
+describe("marfa_create's fetches per credential", () => {
+  let limited: TestContext;
+
+  beforeAll(async () => {
+    limited = await createTestContext({ rateLimitEnabled: true });
+  });
+
+  afterAll(async () => {
+    await limited.cleanup();
+  });
+
+  it("refuses a credential's fetch past the window's allowance, and no other credential's", async () => {
+    const first = await connectMcp(limited, limited.workingKey);
+    const second = await connectMcp(
+      limited,
+      await mintWorkingKey(limited, { type_permissions: { "*": "write" } }),
+    );
+    try {
+      const url = "http://127.0.0.1:9/private";
+      for (let i = 0; i < MCP_FETCH_RATE_LIMIT; i++) {
+        expect(
+          errorOf(await callTool(first, "marfa_create", { url })),
+        ).toMatchObject({ reason: "not_public" });
+      }
+      const refused = errorOf(await callTool(first, "marfa_create", { url }));
+      expect(refused).toMatchObject({
+        code: "file_not_fetched",
+        reason: "rate_limited",
+      });
+      expect(refused.retry_after_seconds).toBeGreaterThan(0);
+      expect(
+        errorOf(await callTool(second, "marfa_create", { url })),
+      ).toMatchObject({ reason: "not_public" });
+    } finally {
+      await first.close();
+      await second.close();
+    }
   });
 });
 

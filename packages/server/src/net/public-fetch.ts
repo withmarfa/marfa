@@ -5,11 +5,12 @@
  *
  * The rules are the webhook delivery's (`public-address.ts`): the address
  * checked is the address connected to, and a redirect is not followed,
- * since following one would connect to an address nobody checked. A body is
- * read only up to the size cap, so a file larger than the instance takes is
- * refused without being held in memory.
+ * since following one would connect to an address nobody checked. The body
+ * is handed on as it arrives and counted on the way, so no file is held in
+ * memory and one larger than the cap is stopped at the cap.
  */
 import { Agent, fetch } from "undici";
+import { ErrorCode, MarfaError } from "@withmarfa/shared";
 import {
   AddressNotPublicError,
   connectionLookup,
@@ -30,36 +31,60 @@ export const FETCH_FAILURE = {
   unreachable: "The file's address could not be reached.",
   too_large: "The file is larger than this instance accepts.",
   status: "The file's address did not answer with the file.",
+  busy: "The server is fetching as many files as it fetches at once. Try again in a moment.",
 } as const;
 
-export type PublicFetchOutcome =
+export type FetchFailureReason = keyof typeof FETCH_FAILURE;
+
+export interface PublicFetchFailure {
+  kind: "failed";
+  reason: FetchFailureReason;
+  message: string;
+  /** The HTTP status, where the address answered. */
+  status?: number;
+}
+
+/** A file on its way, for the caller to save. */
+export interface FetchedFile {
+  /** The bytes as they arrive; it errors once they pass the cap. */
+  body: ReadableStream<Uint8Array>;
+  /** The type the answer named, without its parameters, or null. */
+  mimeType: string | null;
+  /** The name a `Content-Disposition` answer gave, or null. */
+  fileName: string | null;
+}
+
+export type PublicFetchOutcome<T> =
   | {
       kind: "fetched";
-      bytes: Uint8Array;
-      /** The type the answer named, without its parameters, or null. */
-      mimeType: string | null;
-      /** The name a `Content-Disposition` answer gave, or null. */
-      fileName: string | null;
+      /** What the caller's `save` answered. */
+      value: T;
+      /** How many bytes arrived. */
+      size: number;
     }
-  | {
-      kind: "failed";
-      reason: keyof typeof FETCH_FAILURE;
-      message: string;
-      /** The HTTP status, where the address answered. */
-      status?: number;
-    };
+  | PublicFetchFailure;
 
 export interface PublicFetchOptions {
   maxBytes: number;
   timeoutMs: number;
+  /** How many fetches the fetcher makes at once; one more is refused. */
+  maxConcurrent: number;
 }
 
-export type PublicFetcher = (url: string) => Promise<PublicFetchOutcome>;
+/**
+ * Fetches `url` and hands the file to `save` as it arrives. When the body
+ * stops short (past the cap, out of time, cut off), the outcome is that
+ * failure, whatever `save` answered.
+ */
+export type PublicFetcher = <T>(
+  url: string,
+  save: (file: FetchedFile) => Promise<T>,
+) => Promise<PublicFetchOutcome<T>>;
 
 function failed(
-  reason: keyof typeof FETCH_FAILURE,
+  reason: FetchFailureReason,
   status?: number,
-): PublicFetchOutcome {
+): PublicFetchFailure {
   return {
     kind: "failed",
     reason,
@@ -68,7 +93,28 @@ function failed(
   };
 }
 
-class TooLargeError extends Error {}
+function isAbort(err: unknown): boolean {
+  return hasCause(
+    err,
+    (e) =>
+      e instanceof Error &&
+      (e.name === "AbortError" || e.name === "TimeoutError"),
+  );
+}
+
+/**
+ * The error a body that stopped short ends with. It reaches the upload the
+ * body was handed to, which answers it as a refusal rather than a fault.
+ */
+function stoppedShort(reason: FetchFailureReason): MarfaError {
+  const code =
+    reason === "too_large"
+      ? ErrorCode.REQUEST_TOO_LARGE
+      : reason === "timeout"
+        ? ErrorCode.REQUEST_TIMEOUT
+        : ErrorCode.VALIDATION_ERROR;
+  return new MarfaError(code, FETCH_FAILURE[reason]);
+}
 
 /** The `filename` a `Content-Disposition` header names, if any. */
 function dispositionName(header: string | null): string | null {
@@ -98,7 +144,11 @@ export function createPublicFetcher(
       }),
     },
   });
-  return async (raw) => {
+  let active = 0;
+  return async <T>(
+    raw: string,
+    save: (file: FetchedFile) => Promise<T>,
+  ): Promise<PublicFetchOutcome<T>> => {
     let url: URL;
     try {
       url = new URL(raw);
@@ -116,67 +166,91 @@ export function createPublicFetcher(
     if (literal !== null && !isPublicAddress(literal)) {
       return failed("not_public");
     }
-    const signal = AbortSignal.timeout(options.timeoutMs);
+    if (active >= options.maxConcurrent) return failed("busy");
+    active += 1;
+    const timeout = AbortSignal.timeout(options.timeoutMs);
+    const stop = new AbortController();
+    const stopped: { reason: FetchFailureReason | null } = { reason: null };
     try {
       const response = await fetch(url, {
         method: "GET",
         redirect: "manual",
-        signal,
+        signal: AbortSignal.any([timeout, stop.signal]),
         dispatcher,
       });
       if (response.status >= 300 && response.status < 400) {
-        await response.body?.cancel().catch(() => undefined);
         return failed("redirect", response.status);
       }
       if (response.status !== 200) {
-        await response.body?.cancel().catch(() => undefined);
         return failed("status", response.status);
       }
       const declared = Number(response.headers.get("content-length"));
       if (Number.isFinite(declared) && declared > options.maxBytes) {
-        await response.body?.cancel().catch(() => undefined);
         return failed("too_large");
       }
-      const chunks: Uint8Array[] = [];
+      const reader = (
+        response.body as ReadableStream<Uint8Array> | null
+      )?.getReader();
       let size = 0;
-      if (response.body !== null) {
-        for await (const chunk of response.body as AsyncIterable<Uint8Array>) {
-          size += chunk.byteLength;
-          if (size > options.maxBytes) throw new TooLargeError();
-          chunks.push(chunk);
-        }
-      }
-      const bytes = new Uint8Array(size);
-      let at = 0;
-      for (const chunk of chunks) {
-        bytes.set(chunk, at);
-        at += chunk.byteLength;
-      }
+      const stopWith = (
+        controller: ReadableStreamDefaultController<Uint8Array>,
+        reason: FetchFailureReason,
+      ): void => {
+        stopped.reason = reason;
+        controller.error(stoppedShort(reason));
+        stop.abort();
+      };
+      const body = new ReadableStream<Uint8Array>({
+        async pull(controller) {
+          if (reader === undefined) {
+            controller.close();
+            return;
+          }
+          let next: Awaited<ReturnType<typeof reader.read>>;
+          try {
+            next = await reader.read();
+          } catch (err) {
+            stopWith(
+              controller,
+              timeout.aborted && isAbort(err) ? "timeout" : "unreachable",
+            );
+            return;
+          }
+          if (next.done) {
+            controller.close();
+            return;
+          }
+          size += next.value.byteLength;
+          if (size > options.maxBytes) {
+            stopWith(controller, "too_large");
+            return;
+          }
+          controller.enqueue(next.value);
+        },
+        cancel() {
+          stop.abort();
+        },
+      });
       const type = response.headers.get("content-type");
       const named = type?.split(";")[0]?.trim().toLowerCase() ?? "";
-      const mimeType = named === "" ? null : named;
-      return {
-        kind: "fetched",
-        bytes,
-        mimeType,
+      const value = await save({
+        body,
+        mimeType: named === "" ? null : named,
         fileName: dispositionName(response.headers.get("content-disposition")),
-      };
+      });
+      if (stopped.reason !== null) return failed(stopped.reason);
+      return { kind: "fetched", value, size };
     } catch (err) {
-      if (err instanceof TooLargeError) return failed("too_large");
+      if (stopped.reason !== null) return failed(stopped.reason);
       if (hasCause(err, (e) => e instanceof AddressNotPublicError)) {
         return failed("not_public");
       }
-      if (
-        hasCause(
-          err,
-          (e) =>
-            e instanceof Error &&
-            (e.name === "AbortError" || e.name === "TimeoutError"),
-        )
-      ) {
-        return failed("timeout");
-      }
+      if (isAbort(err)) return failed("timeout");
       return failed("unreachable");
+    } finally {
+      // Ends the connection of a body the caller left unread.
+      stop.abort();
+      active -= 1;
     }
   };
 }

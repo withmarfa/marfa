@@ -137,6 +137,10 @@ import { readAttention } from "./attention.js";
 import { attentionRoutes } from "./routes/attention.js";
 import { mcpRoutes } from "./mcp/door.js";
 import { createPublicFetcher } from "./net/public-fetch.js";
+import {
+  MCP_FETCH_CONCURRENCY,
+  MCP_FETCH_RATE_LIMIT,
+} from "./mcp/file-fetch.js";
 import { consoleHealth } from "./routes/console-health.js";
 import {
   refuseUndeclaredKeysOf,
@@ -993,10 +997,22 @@ export function createApp(
       baseUrl: config.authBaseUrl,
       version: deployedVersion,
       confirmKey: deriveKey(config.authSecret, SECRET_INFO.mcpDelete),
-      fetchFile: createPublicFetcher({
-        maxBytes: config.mcpFetchMaxBytes ?? 50 * 1024 * 1024,
-        timeoutMs: config.mcpFetchTimeoutMs ?? 60_000,
-      }),
+      fetch: {
+        fetcher: createPublicFetcher({
+          maxBytes: config.mcpFetchMaxBytes ?? 50 * 1024 * 1024,
+          timeoutMs: config.mcpFetchTimeoutMs ?? 60_000,
+          maxConcurrent: MCP_FETCH_CONCURRENCY,
+        }),
+        enabled: config.mcpFetchEnabled ?? true,
+        audit: storage.audit,
+        rateLimit: config.rateLimitEnabled
+          ? {
+              store: storage.rateLimits,
+              limit: MCP_FETCH_RATE_LIMIT,
+              windowMs: config.rateLimitWindowMs,
+            }
+          : null,
+      },
       originAllowed: async (origin) =>
         origin === issuerOrigin || (await allowedOrigin(origin)) !== null,
       dispatch: async (request, env) => app.fetch(request, env),

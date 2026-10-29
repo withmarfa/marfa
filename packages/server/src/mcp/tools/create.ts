@@ -146,7 +146,8 @@ export function registerCreate(server: McpServer, ctx: ToolContext): void {
         readOnlyHint: false,
         destructiveHint: false,
         idempotentHint: false,
-        openWorldHint: false,
+        // It fetches a file from any public web address it is given.
+        openWorldHint: true,
       },
       _meta: { "openai/fileParams": ["file"] },
     },
@@ -175,35 +176,43 @@ export function registerCreate(server: McpServer, ctx: ToolContext): void {
       let properties = args.properties ?? {};
       let file: z.infer<typeof outputSchema>["file"];
       if (bytesFrom !== undefined) {
-        const fetched = await ctx.fetchFile(bytesFrom);
+        // The file goes straight into the upload as it arrives.
+        const fetched = await ctx.fetchFile(bytesFrom, async (incoming) => ({
+          fileName: incoming.fileName,
+          upload: await ctx.api.answer(
+            ctx.api.client.POST("/blobs", {
+              body: incoming.body,
+              headers: {
+                "Content-Type":
+                  incoming.mimeType ??
+                  args.file?.mime_type?.toLowerCase() ??
+                  "application/octet-stream",
+              },
+            }),
+          ),
+        }));
         if (fetched.kind === "failed") {
           return fail({
             code: "file_not_fetched",
             message: fetched.message,
             reason: fetched.reason,
             ...(fetched.status !== undefined && { status: fetched.status }),
+            ...(fetched.retryAfterSeconds !== undefined && {
+              retry_after_seconds: fetched.retryAfterSeconds,
+            }),
             ...(args.file !== undefined &&
               fetched.reason === "status" && {
                 hint: "The chat's link to the file may have expired. Ask the person to attach the file again.",
               }),
           });
         }
-        const mimeType =
-          fetched.mimeType ??
-          args.file?.mime_type?.toLowerCase() ??
-          "application/octet-stream";
-        const upload = await ctx.api.answer(
-          ctx.api.client.POST("/blobs", {
-            body: fetched.bytes,
-            headers: { "Content-Type": mimeType },
-          }),
-        );
+        const { upload } = fetched.value;
         if (!upload.ok) return refused(upload.refusal);
         file = upload.data;
         type ??= fileTypeFor(upload.data.mime_type);
         const title =
           args.file?.file_name ??
-          fetched.fileName ??
+          fetched.value.fileName ??
           (args.url !== undefined ? nameFromUrl(args.url) : null) ??
           "file";
         properties = {

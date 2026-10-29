@@ -66,6 +66,14 @@ While a credential's type map grants no type, the server MUST NOT declare the `t
 
 **Tests:** `compliance/mcp.test.ts › offers no tools to a credential whose type map reaches no type`.
 
+### `mcp/open-world-hint`
+
+When the server lists its tools, the server MUST annotate `marfa_create` with `openWorldHint` `true` and every other tool with `openWorldHint` `false`.
+
+**Reason:** `marfa_create` fetches a file from a web address the agent gives it, and a client asks the person differently before a tool that reaches outside the instance.
+
+**Tests:** `compliance/mcp.test.ts › marks marfa_create as reaching outside the instance and no other tool`.
+
 ## Calling a tool
 
 ### `mcp/unknown-argument`
@@ -175,3 +183,39 @@ If the address `marfa_create` names answers with a status other than a success, 
 **Reason:** a chat's link to an attached file works for a short time, and the agent asks the person to attach the file again.
 
 **Tests:** `compliance/mcp-scripted.test.ts › answers a chat file whose link has gone with file_not_fetched and the status`.
+
+### `mcp/file-audited`
+
+When `marfa_create` is asked to fetch a file, whether the fetch succeeds or is refused, the server MUST record an `mcp.file_fetch` audit entry naming the credential as `key_id`, whose `details` carry the address's `scheme`, `host` and `path`, the length of its query as `query_length`, and the outcome as `outcome`: `fetched`, or the reason the tool error names.
+
+**Reason:** the instance connects to an address the agent chose, so the owner can see each address it was asked to reach.
+
+**Tests:** `compliance/mcp-scripted.test.ts › records each fetch with its address and outcome, and its query only as a length`.
+
+### `mcp/file-audit-query`
+
+When the server records an `mcp.file_fetch` audit entry, the server MUST NOT record the address's query.
+
+**Reason:** a link to a file can carry a signature in its query that grants access to the file.
+
+**Tests:** `compliance/mcp-scripted.test.ts › records each fetch with its address and outcome, and its query only as a length`.
+
+### `mcp/file-busy`
+
+If `marfa_create` is asked to fetch a file while the server is fetching four files for tools, then the server MUST answer a tool error with code `file_not_fetched` and reason `busy` without connecting to the address.
+
+**Reason:** a fetch holds a connection and a file being written, so the instance bounds how many run at once.
+
+**Tests:** `compliance/mcp-scripted.test.ts › refuses a fifth fetch at once with reason busy, without connecting`.
+
+### `mcp/file-rate-limited`
+
+Where rate limiting is on, if one credential's tool calls ask to fetch more than 30 files within `RATE_LIMIT_WINDOW_MS`, then the server MUST answer each further request in that window with a tool error with code `file_not_fetched`, reason `rate_limited` and `retry_after_seconds`, without connecting to the address.
+
+**Tests:** `compliance/mcp-scripted.test.ts › refuses a credential's 31st fetch in a window with reason rate_limited, and not another credential's`.
+
+### `mcp/file-disabled`
+
+While `MARFA_MCP_FETCH_ENABLED` is off, if `marfa_create` is asked to save a file from `url` or `file`, then the server MUST answer a tool error with code `file_not_fetched` and reason `disabled` without connecting to the address.
+
+**Tests:** `compliance/mcp-scripted.test.ts › refuses url and file with reason disabled while MARFA_MCP_FETCH_ENABLED is off, without connecting`.

@@ -1,5 +1,5 @@
 import type { TypePermission } from "@withmarfa/shared";
-import type { PublicFetcher } from "../net/public-fetch.js";
+import type { ToolFetch } from "./file-fetch.js";
 import type { McpApi } from "./api.js";
 
 /** What every tool of one MCP request works with. */
@@ -11,8 +11,8 @@ export interface ToolContext {
   credentialHandle: string;
   /** The key a delete's confirmation token is signed with. */
   confirmKey: Buffer;
-  /** Fetches a file from a public web address. */
-  fetchFile: PublicFetcher;
+  /** Fetches a file from a public web address for this caller. */
+  fetchFile: ToolFetch;
   now: () => number;
 }
 

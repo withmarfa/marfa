@@ -6,7 +6,11 @@ import {
   type ServerResponse,
 } from "node:http";
 import { clearFaults, setFault } from "../control/faults.js";
-import { createPublicFetcher } from "./public-fetch.js";
+import {
+  createPublicFetcher,
+  type FetchedFile,
+  type PublicFetchOutcome,
+} from "./public-fetch.js";
 
 const servers: Server[] = [];
 
@@ -55,8 +59,19 @@ function publicName(name: string): string {
   return name;
 }
 
-const fetcher = (maxBytes = 1024, timeoutMs = 5_000) =>
-  createPublicFetcher({ maxBytes, timeoutMs });
+/** Reads the whole body, as the blob upload a tool hands it to does. */
+async function readAll(file: FetchedFile): Promise<Uint8Array> {
+  return new Uint8Array(await new Response(file.body).arrayBuffer());
+}
+
+/** A fetcher whose saved value is the file's bytes. */
+const fetcher =
+  (maxBytes = 1024, timeoutMs = 5_000) =>
+  (url: string): Promise<PublicFetchOutcome<Uint8Array>> =>
+    createPublicFetcher({ maxBytes, timeoutMs, maxConcurrent: 4 })(
+      url,
+      readAll,
+    );
 
 describe("createPublicFetcher", () => {
   it("fetches a file from a public address with its type and name", async () => {
@@ -67,16 +82,27 @@ describe("createPublicFetcher", () => {
       });
       res.end("%PDF-1.7");
     });
-    const outcome = await fetcher()(
+    const outcome = await createPublicFetcher({
+      maxBytes: 1024,
+      timeoutMs: 5_000,
+      maxConcurrent: 4,
+    })(
       `http://${publicName("files.test")}:${String(files.port)}/report`,
+      async (file) => ({
+        text: new TextDecoder().decode(await readAll(file)),
+        mimeType: file.mimeType,
+        fileName: file.fileName,
+      }),
     );
-    expect(outcome).toMatchObject({
+    expect(outcome).toEqual({
       kind: "fetched",
-      mimeType: "application/pdf",
-      fileName: "report.pdf",
+      value: {
+        text: "%PDF-1.7",
+        mimeType: "application/pdf",
+        fileName: "report.pdf",
+      },
+      size: 8,
     });
-    if (outcome.kind !== "fetched") throw new Error("not fetched");
-    expect(new TextDecoder().decode(outcome.bytes)).toBe("%PDF-1.7");
   });
 
   it("refuses an address written out that is not public, without connecting", async () => {
@@ -172,7 +198,79 @@ describe("createPublicFetcher", () => {
     const fits = await fetcher(4096)(
       `http://${name}:${String(streamed.port)}/`,
     );
-    expect(fits.kind === "fetched" ? fits.bytes.byteLength : -1).toBe(2048);
+    expect(fits.kind === "fetched" ? fits.value.byteLength : -1).toBe(2048);
+  });
+
+  it("hands the body on as it arrives and stops it past the cap", async () => {
+    let release = (): void => undefined;
+    const files = await host((_req, res) => {
+      res.writeHead(200, { "Transfer-Encoding": "chunked" });
+      res.write(Buffer.alloc(512));
+      release = () => {
+        res.write(Buffer.alloc(1024));
+        res.end();
+      };
+    });
+    const seen: number[] = [];
+    let saveError: unknown;
+    const outcome = await createPublicFetcher({
+      maxBytes: 1024,
+      timeoutMs: 5_000,
+      maxConcurrent: 4,
+    })(
+      `http://${publicName("big.test")}:${String(files.port)}/`,
+      async (file) => {
+        const reader = file.body.getReader();
+        try {
+          for (;;) {
+            const next = await reader.read();
+            if (next.done) return "read";
+            seen.push(next.value.byteLength);
+            // The first chunk reaches the save before the rest is sent.
+            if (seen.length === 1) release();
+          }
+        } catch (err) {
+          saveError = err;
+          return "stopped";
+        }
+      },
+    );
+    expect(seen[0]).toBe(512);
+    expect(seen.reduce((sum, n) => sum + n, 0)).toBeLessThanOrEqual(1024);
+    expect(saveError).toBeDefined();
+    expect(outcome).toMatchObject({ kind: "failed", reason: "too_large" });
+  });
+
+  it("refuses a fetch past the number it makes at once, and takes one again once a fetch ends", async () => {
+    const finish: (() => void)[] = [];
+    const files = await host((_req, res) => {
+      res.writeHead(200);
+      res.write("a");
+      finish.push(() => res.end("b"));
+    });
+    const fetchOne = createPublicFetcher({
+      maxBytes: 1024,
+      timeoutMs: 5_000,
+      maxConcurrent: 2,
+    });
+    const url = `http://${publicName("busy.test")}:${String(files.port)}/`;
+    const save = (file: FetchedFile) => readAll(file);
+    const first = fetchOne(url, save);
+    const second = fetchOne(url, save);
+    await expect.poll(() => finish.length).toBe(2);
+    expect(await fetchOne(url, save)).toMatchObject({
+      kind: "failed",
+      reason: "busy",
+    });
+    expect(files.hits()).toBe(2);
+    for (const end of finish.splice(0)) end();
+    expect((await first).kind).toBe("fetched");
+    expect((await second).kind).toBe("fetched");
+    // The witness: with the two ended, the same fetch is made.
+    const third = fetchOne(url, save);
+    await expect.poll(() => finish.length).toBe(1);
+    finish[0]?.();
+    expect((await third).kind).toBe("fetched");
   });
 
   it("reports an address that answers without the file", async () => {
