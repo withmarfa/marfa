@@ -486,7 +486,7 @@ describe("folder syncing from login", () => {
     expect(report.running).toBe(true);
   });
 
-  it.runIf(macOS)(
+  it.runIf(process.platform === "darwin")(
     "keeps an error the watch makes before it opens its log in the file launchd was given beside the log",
     async () => {
       const root = standIn("launchd-output");
