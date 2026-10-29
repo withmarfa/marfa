@@ -1312,6 +1312,21 @@ fn a_view_takes_its_settings_from_json_and_flags_and_refuses_one_given_twice() {
     assert_eq!(read.method, Method::Get);
     assert_eq!(read.path(), "/items/v1");
 
+    let listed = views::items_request("v1", &PageArgs::default());
+    assert_eq!(listed.method, Method::Get);
+    assert_eq!(listed.path(), "/views/v1/items");
+    assert_eq!(query(&listed, "limit"), None);
+    assert_eq!(query(&listed, "cursor"), None);
+    let paged = views::items_request(
+        "v1",
+        &PageArgs {
+            limit: Some(5),
+            cursor: Some("next".into()),
+        },
+    );
+    assert_eq!(query(&paged, "limit").as_deref(), Some("5"));
+    assert_eq!(query(&paged, "cursor").as_deref(), Some("next"));
+
     let twice = views::create_request(&views::CreateArgs {
         settings: views::SettingsArgs {
             body: Some(r#"{"title":"a"}"#.into()),

@@ -146,6 +146,7 @@ beforeAll(async () => {
     atLeast = 10,
   ) => {
     const query = {
+      types: ["core.note", "core.entity", "core.media.book"],
       filter,
       ...((settings.query as Record<string, unknown> | undefined) ?? {}),
     };
@@ -187,7 +188,7 @@ beforeAll(async () => {
   add(
     "two types with subtypes",
     {
-      query: { types: ["core.entity", "core.media"] },
+      query: { types: ["core.entity", "core.media.book"] },
       sort: [asc("title"), desc("type")],
     },
     4,

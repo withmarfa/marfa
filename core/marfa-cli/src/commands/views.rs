@@ -4,7 +4,7 @@ use clap::{Args, Subcommand};
 use serde_json::{Map, Value, json};
 
 use super::items::IdempotencyArgs;
-use super::{object, read_text};
+use super::{PageArgs, object, read_text};
 use crate::error::CliError;
 use crate::output::Printer;
 use crate::remote::Remote;
@@ -30,6 +30,14 @@ pub enum ViewsCommand {
     Get {
         /// The view's `system.view` id.
         id: String,
+    },
+    /// The items a view lists on the server, in the view's sort order, a page
+    /// at a time. Items of types the key cannot read are left out.
+    Items {
+        /// The view's `system.view` id.
+        id: String,
+        #[command(flatten)]
+        page: PageArgs,
     },
 }
 
@@ -150,11 +158,18 @@ pub fn get_request(id: &str) -> Request {
     Request::get(&["items", id])
 }
 
+pub fn items_request(id: &str, page: &PageArgs) -> Request {
+    Request::get(&["views", id, "items"])
+        .query_opt("limit", page.limit.map(|limit| limit.to_string()))
+        .query_opt("cursor", page.cursor.clone())
+}
+
 pub fn run(command: ViewsCommand, remote: &Remote, out: &Printer) -> Result<(), CliError> {
     let request = match &command {
         ViewsCommand::Create(args) => create_request(args)?,
         ViewsCommand::Change(args) => change_request(args)?,
         ViewsCommand::Delete { id, idempotency } => delete_request(id, idempotency),
+        ViewsCommand::Items { id, page } => items_request(id, page),
         ViewsCommand::Get { id } => get_request(id),
     };
     let answer = remote.json(&request)?;

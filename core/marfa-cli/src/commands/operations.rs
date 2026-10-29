@@ -85,6 +85,7 @@ pub const OPERATIONS: &[Operation] = &[
     reached("exportArchive", "export"),
     reached("restoreArchive", "restore"),
     reached("createView", "views create"),
+    reached("listViewItems", "views items"),
     reached("updateView", "views change"),
     reached("deleteView", "views delete"),
     reached("createWebhook", "webhooks create"),

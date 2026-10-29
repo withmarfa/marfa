@@ -1704,6 +1704,14 @@ When a local list or a local search names `beneath` an item, a device MUST answe
 
 **Tests:** `device/working-copy.test.ts › narrows a local list to an item and everything beneath it`, `› narrows a local search by the listing grammar and beneath, as a list does`.
 
+### `device/view-items-parity`
+
+When a caller lists a saved view's items from a copy that holds the view, the view's types and its `parent-of` edges, a device MUST answer the same IDs in the same order as `GET /views/{id}/items` answers.
+
+**Reason:** a view that lists one thing on the server and another on a device would give a person two lists under one name.
+
+**Tests:** `device/views-items-live.test.ts › lists a view's items in the order the server does, for each sort and query`.
+
 ### `device/beneath-references`
 
 When a local list names `beneath` an item, a device MUST NOT take a `references` edge as making a child.

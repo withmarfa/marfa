@@ -1938,6 +1938,23 @@ marfa views get [OPTIONS] <ID>
 | --- | --- |
 | `<ID>` | The view's `system.view` id. |
 
+### marfa views items
+
+The items a view lists on the server, in the view's sort order, a page at a time. Items of types the key cannot read are left out.
+
+```text
+marfa views items [OPTIONS] <ID>
+```
+
+| Argument | Description |
+| --- | --- |
+| `<ID>` | The view's `system.view` id. |
+
+| Option | Description |
+| --- | --- |
+| `--limit <LIMIT>` | How many at most. |
+| `--cursor <CURSOR>` | The cursor the previous page answered with. |
+
 ## webhooks
 
 Outbound subscriptions that send events out. Every command needs `webhooks.manage`.
