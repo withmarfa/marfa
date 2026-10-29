@@ -5,6 +5,7 @@ import {
   type Server,
   type ServerResponse,
 } from "node:http";
+import { v7 as uuidv7 } from "uuid";
 import { MarfaClient } from "../../client/api.js";
 import {
   bootFreshServer,
@@ -214,6 +215,71 @@ describe("marfa_create with a file", () => {
       reason: "status",
       status: 404,
     });
+  });
+
+  it("answers a repeated save naming attach_to as attached, with one edge", async () => {
+    const agent = await connectWithNewKey("attach-repeat");
+    try {
+      const note = await owner().createItem({
+        type: "core.note",
+        properties: { title: "Receipts" },
+      });
+      expect(note.status).toBe(201);
+      const host = await fileHost((_req, res) => {
+        res.writeHead(200, { "Content-Type": "application/pdf" });
+        res.end("%PDF-1.7 receipt");
+      });
+      const args = {
+        id: uuidv7(),
+        url: await host.at("receipts.test", "/receipt.pdf"),
+        attach_to: note.data.item.id,
+      };
+      const first = toolResult(await callTool(agent, "marfa_create", args));
+      expect(first).toMatchObject({
+        created: true,
+        attached_to: note.data.item.id,
+      });
+
+      const again = toolResult(await callTool(agent, "marfa_create", args));
+      expect(again).toMatchObject({
+        id: args.id,
+        created: false,
+        attached_to: note.data.item.id,
+      });
+      const edges = await owner().listItemEdges(args.id, {
+        edge_type: "attached-to",
+      });
+      expect(edges.data.data.map((edge) => edge.target_id)).toEqual([
+        note.data.item.id,
+      ]);
+    } finally {
+      await agent.close();
+    }
+  });
+
+  it("leaves file out of a repeated save whose stored item holds other bytes", async () => {
+    const agent = await connectWithNewKey("other-bytes");
+    try {
+      let body = "first bytes";
+      const host = await fileHost((_req, res) => {
+        res.writeHead(200, { "Content-Type": "text/plain" });
+        res.end(body);
+      });
+      const args = {
+        id: uuidv7(),
+        url: await host.at("notes.test", "/a.txt"),
+      };
+      const first = toolResult(await callTool(agent, "marfa_create", args));
+      // The witness: a save that wrote the item describes its file.
+      expect(first).toHaveProperty("file.size_bytes", 11);
+
+      body = "other bytes, longer";
+      const again = toolResult(await callTool(agent, "marfa_create", args));
+      expect(again).toMatchObject({ id: args.id, created: false });
+      expect(again).not.toHaveProperty("file");
+    } finally {
+      await agent.close();
+    }
   });
 });
 

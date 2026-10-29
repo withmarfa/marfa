@@ -38,7 +38,8 @@ const outputSchema = z.object({
       mime_type: z.string(),
       size_bytes: z.number(),
     })
-    .optional(),
+    .optional()
+    .describe("Left out if the stored item holds other bytes."),
   attached_to: z.string().optional(),
 });
 
@@ -257,7 +258,12 @@ export function registerCreate(server: McpServer, ctx: ToolContext): void {
             },
           }),
         );
-        if (!edge.ok) {
+        // A repeat of a call that attached the file finds the edge it wrote.
+        const alreadyAttached =
+          !edge.ok &&
+          edge.refusal.code === "edge_constraint_violation" &&
+          edge.refusal.details?.constraint === "duplicate";
+        if (!edge.ok && !alreadyAttached) {
           return refused(edge.refusal, {
             saved: { id: item.id, type: item.type, version: item.version },
             hint: "The file was saved, but attaching it failed. Attach it with marfa_update on the saved item, adding an attached-to edge.",
@@ -273,7 +279,10 @@ export function registerCreate(server: McpServer, ctx: ToolContext): void {
         title: itemName(item.properties),
         tags: metadata.tags,
         created: acknowledged !== true,
-        ...(file !== undefined && { file }),
+        ...(file !== undefined &&
+          (acknowledged !== true || item.properties.blob_ref === file.hash) && {
+            file,
+          }),
         ...(attachedTo !== undefined && { attached_to: attachedTo }),
       });
     },

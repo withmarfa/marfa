@@ -6,6 +6,7 @@ import {
   type ServerResponse,
 } from "node:http";
 import type { Client } from "@modelcontextprotocol/client";
+import { generateId } from "@withmarfa/shared";
 import { advanceClock, resetClockForTests } from "../clock.js";
 import { clearFaults, setFault } from "../control/faults.js";
 import {
@@ -321,6 +322,85 @@ describe("marfa_create", () => {
       title: "boarding-pass.png",
       attached_to: note.id,
     });
+  });
+
+  it("answers a repeated save with attach_to as attached, without a second edge", async () => {
+    const note = await saveNote({ body: "receipts" });
+    const host = await fileHost((_req, res) => {
+      res.writeHead(200, { "Content-Type": "application/pdf" });
+      res.end("%PDF-1.7 receipt");
+    });
+    const args = {
+      id: generateId(),
+      url: host.url("/receipt.pdf"),
+      attach_to: note.id,
+    };
+    const first = payloadOf(await callTool(client, "marfa_create", args));
+    expect(first).toMatchObject({ created: true, attached_to: note.id });
+
+    const again = payloadOf(await callTool(client, "marfa_create", args));
+    expect(again).toMatchObject({
+      id: args.id,
+      created: false,
+      attached_to: note.id,
+    });
+    const edges = await request(
+      ctx.app,
+      "GET",
+      `/items/${args.id}/edges?edge_type=attached-to`,
+      { key: ctx.workingKey },
+    );
+    const { data: held } = (await edges.json()) as {
+      data: { target_id: string }[];
+    };
+    expect(held.map((edge) => edge.target_id)).toEqual([note.id]);
+  });
+
+  it("attaches a repeated save whose first attach did not happen", async () => {
+    const note = await saveNote({ body: "tickets" });
+    const host = await fileHost((_req, res) => {
+      res.writeHead(200, { "Content-Type": "application/pdf" });
+      res.end("%PDF-1.7 ticket");
+    });
+    const id = generateId();
+    const first = payloadOf(
+      await callTool(client, "marfa_create", {
+        id,
+        url: host.url("/ticket.pdf"),
+      }),
+    );
+    expect(first).toMatchObject({ created: true });
+    expect(first).not.toHaveProperty("attached_to");
+
+    const again = payloadOf(
+      await callTool(client, "marfa_create", {
+        id,
+        url: host.url("/ticket.pdf"),
+        attach_to: note.id,
+      }),
+    );
+    expect(again).toMatchObject({ created: false, attached_to: note.id });
+  });
+
+  it("describes no file on a repeated save whose stored item holds other bytes", async () => {
+    let body = "first bytes";
+    const host = await fileHost((_req, res) => {
+      res.writeHead(200, { "Content-Type": "text/plain" });
+      res.end(body);
+    });
+    const id = generateId();
+    const first = payloadOf(
+      await callTool(client, "marfa_create", { id, url: host.url("/a.txt") }),
+    );
+    // The witness: a save that wrote the item describes its file.
+    expect(first).toHaveProperty("file.size_bytes", 11);
+
+    body = "other bytes, longer";
+    const again = payloadOf(
+      await callTool(client, "marfa_create", { id, url: host.url("/a.txt") }),
+    );
+    expect(again).toMatchObject({ id, created: false });
+    expect(again).not.toHaveProperty("file");
   });
 
   it("tells the agent to ask again when a chat's file link has gone", async () => {

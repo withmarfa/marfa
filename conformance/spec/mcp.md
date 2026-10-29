@@ -184,6 +184,22 @@ If the address `marfa_create` names answers with a status other than a success, 
 
 **Tests:** `compliance/mcp-scripted.test.ts › answers a chat file whose link has gone with file_not_fetched and the status`.
 
+### `mcp/file-attach-repeat`
+
+When `marfa_create` names an `attach_to` item that the item it saved, or the item it answers with `created: false`, already has an `attached-to` edge to, the server MUST answer the item with `attached_to` naming that item.
+
+**Reason:** an agent repeats a call whose answer it lost, and the repeat finds the edge the first call wrote.
+
+**Tests:** `compliance/mcp-scripted.test.ts › answers a repeated save naming attach_to as attached, with one edge`.
+
+### `mcp/file-repeat-other-bytes`
+
+When `marfa_create` answers with `created: false` and the stored item's `blob_ref` is not the hash of the file the call fetched, the server MUST leave `file` out of the answer.
+
+**Reason:** `file` describes the file the item holds, and a repeat writes nothing to the item.
+
+**Tests:** `compliance/mcp-scripted.test.ts › leaves file out of a repeated save whose stored item holds other bytes`.
+
 ### `mcp/file-audited`
 
 When `marfa_create` is asked to fetch a file, whether the fetch succeeds or is refused, the server MUST record an `mcp.file_fetch` audit entry naming the credential as `key_id`, whose `details` carry the address's `scheme`, `host` and `path`, the length of its query as `query_length`, and the outcome as `outcome`: `fetched`, or the reason the tool error names.
