@@ -881,6 +881,35 @@ describe("marfa_manage_webhook", () => {
     });
   });
 
+  it("makes one webhook for a confirmation, however often it is sent", async () => {
+    const before = await hookIds();
+    const args = {
+      action: "make",
+      url: address("once"),
+      events: ["item.created"],
+    };
+    const preview = toolResult(
+      await callTool(admin, "marfa_manage_webhook", args),
+    );
+    expect(preview.preview).toMatchObject({ active: true });
+    const done = toolResult(
+      await callTool(admin, "marfa_manage_webhook", {
+        ...args,
+        confirm: preview.confirm,
+      }),
+    );
+    const id = (done.webhook as { id: string }).id;
+    trackWebhook(ctx, id, owner);
+    const again = toolError(
+      await callTool(admin, "marfa_manage_webhook", {
+        ...args,
+        confirm: preview.confirm,
+      }),
+    );
+    expect(again.code).toBe("confirmation_stale");
+    expect(await hookIds()).toEqual([...before, id]);
+  });
+
   it("refuses a webhook confirmation once where it posts or what it sends changed", async () => {
     const before = await hookIds();
     const args = {

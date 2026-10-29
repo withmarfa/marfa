@@ -19,7 +19,7 @@ interface WebhookPlan {
   url: string;
   events: string[];
   type_filter: string | null;
-  active: boolean | null;
+  active: boolean;
 }
 
 const SENDS =
@@ -32,7 +32,7 @@ function previewOf(plan: WebhookPlan, host: string) {
     host,
     events: plan.events,
     type_filter: plan.type_filter,
-    ...(plan.active !== null && { active: plan.active }),
+    active: plan.active,
     sends: `${SENDS} Everything is posted to ${host}, outside Marfa.`,
   };
 }
@@ -88,6 +88,7 @@ export function registerManageWebhook(
           .describe("The events to send. Required to make one."),
         type_filter: z
           .string()
+          .trim()
           .min(1)
           .nullable()
           .optional()
@@ -128,7 +129,7 @@ export function registerManageWebhook(
       };
       // A preview, or the write it previewed once the token is this
       // preview's: what leaves Marfa, and where to, is agreed to first.
-      const confirmed = (plan: WebhookPlan) => {
+      const confirmed = (plan: WebhookPlan, existing: string[] | null) => {
         let host: string;
         try {
           host = new URL(plan.url).host;
@@ -138,7 +139,11 @@ export function registerManageWebhook(
             message: "url is not a web address.",
           });
         }
-        const subject = { ...plan, events: [...plan.events].sort() };
+        const subject = {
+          ...plan,
+          events: [...plan.events].sort(),
+          existing: existing === null ? null : [...existing].sort(),
+        };
         const previewAnswer = (
           extra: { code: string; message: string } | null,
         ) => {
@@ -180,14 +185,28 @@ export function registerManageWebhook(
             message: "A new webhook needs a url and events.",
           });
         }
-        const held = confirmed({
-          action,
-          id: null,
-          url,
-          events,
-          type_filter: type_filter ?? null,
-          active: null,
-        });
+        if (active !== undefined || id !== undefined) {
+          return fail({
+            code: "validation_error",
+            message:
+              "A new webhook starts active and gets its own id; leave out active and id.",
+          });
+        }
+        // The webhooks there are now: once the make lands, the list differs
+        // and the token goes stale, so a retried confirmation makes no second.
+        const listed = await ctx.api.answer(ctx.api.client.GET("/webhooks"));
+        if (!listed.ok) return refused(listed.refusal);
+        const held = confirmed(
+          {
+            action,
+            id: null,
+            url,
+            events,
+            type_filter: type_filter ?? null,
+            active: true,
+          },
+          listed.data.data.map((hook) => hook.id),
+        );
         if (held !== null) return held;
         const answer = await ctx.api.answer(
           ctx.api.client.POST("/webhooks", {
@@ -248,7 +267,7 @@ export function registerManageWebhook(
             : (current.data.type_filter ?? null),
         active: active ?? current.data.active,
       };
-      const held = confirmed(plan);
+      const held = confirmed(plan, null);
       if (held !== null) return held;
       const answer = await ctx.api.answer(
         ctx.api.client.PATCH("/webhooks/{id}", {
@@ -257,7 +276,7 @@ export function registerManageWebhook(
             url: plan.url,
             events: plan.events as (typeof WEBHOOK_EVENTS)[number][],
             type_filter: plan.type_filter,
-            active: plan.active ?? undefined,
+            active: plan.active,
           },
         }),
       );

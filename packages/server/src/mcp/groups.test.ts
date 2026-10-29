@@ -952,6 +952,101 @@ describe("the webhook tools", () => {
     expect(await webhookIds()).toEqual(before);
   });
 
+  it("refuses a second confirmation of one make, so a retry makes nothing more", async () => {
+    const before = await webhookIds();
+    const args = {
+      action: "make",
+      url: "https://example.com/once",
+      events: ["item.created"],
+    };
+    const preview = payloadOf(
+      await callTool(admin, "marfa_manage_webhook", args),
+    );
+    const made = payloadOf(
+      await callTool(admin, "marfa_manage_webhook", {
+        ...args,
+        confirm: preview.confirm,
+      }),
+    );
+    const webhook = made.webhook as { id: string };
+    try {
+      const again = errorOf(
+        await callTool(admin, "marfa_manage_webhook", {
+          ...args,
+          confirm: preview.confirm,
+        }),
+      );
+      expect(again.code).toBe("confirmation_stale");
+      expect(await webhookIds()).toEqual([...before, webhook.id]);
+    } finally {
+      await remove(webhook.id);
+    }
+  });
+
+  it("shows and stores a type_filter trimmed, and refuses a blank one", async () => {
+    const before = await webhookIds();
+    const args = {
+      action: "make",
+      url: "https://example.com/trimmed",
+      events: ["item.created"],
+    };
+    const blank = await callTool(admin, "marfa_manage_webhook", {
+      ...args,
+      type_filter: "   ",
+    });
+    expect(blank.isError).toBe(true);
+    expect(blank.text).toMatch(/type_filter/);
+    expect(await webhookIds()).toEqual(before);
+
+    const preview = payloadOf(
+      await callTool(admin, "marfa_manage_webhook", {
+        ...args,
+        type_filter: " core.note",
+      }),
+    );
+    expect(preview.preview).toMatchObject({ type_filter: "core.note" });
+    const made = payloadOf(
+      await callTool(admin, "marfa_manage_webhook", {
+        ...args,
+        type_filter: " core.note",
+        confirm: preview.confirm,
+      }),
+    );
+    const webhook = made.webhook as { id: string };
+    try {
+      const stored = await request(ctx.app, "GET", `/webhooks/${webhook.id}`, {
+        key: adminKey,
+      });
+      expect(await stored.json()).toMatchObject({ type_filter: "core.note" });
+    } finally {
+      await remove(webhook.id);
+    }
+  });
+
+  it("refuses active or id on a make, and previews a new webhook as active", async () => {
+    const before = await webhookIds();
+    const args = {
+      action: "make",
+      url: "https://example.com/new",
+      events: ["item.created"],
+    };
+    const someId = "01900000-0000-7000-8000-000000000000";
+    for (const extra of [{ active: false }, { active: true }, { id: someId }]) {
+      const refused = errorOf(
+        await callTool(admin, "marfa_manage_webhook", { ...args, ...extra }),
+      );
+      expect(refused.code).toBe("validation_error");
+      expect(refused.message).toBe(
+        "A new webhook starts active and gets its own id; leave out active and id.",
+      );
+    }
+    const preview = payloadOf(
+      await callTool(admin, "marfa_manage_webhook", args),
+    );
+    expect(preview.preview).toMatchObject({ active: true });
+    expect(await webhookIds()).toEqual(before);
+  });
+
   it("changes a webhook's url or events only on the confirmation of its preview", async () => {
     const webhook = await makeHook("https://example.com/first");
     try {
