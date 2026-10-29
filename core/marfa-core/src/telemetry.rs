@@ -40,6 +40,15 @@ pub(crate) mod live {
         tracing::warn!(code = error.code(), "a request to the server failed");
     }
 
+    /// A folder holding fetched bytes that could not be synced, which the
+    /// fetch carried on past.
+    pub(crate) fn unsynced(error: &CoreError) {
+        tracing::warn!(
+            code = error.code(),
+            "a folder holding fetched bytes could not be synced"
+        );
+    }
+
     /// Ends the span of one request that got no answer. An error that ends
     /// the operation is recorded by the operation, once; one it carries on
     /// past is a warning here.
@@ -147,7 +156,23 @@ macro_rules! degraded {
     }};
 }
 
-pub(crate) use {degraded, ended, operation, record};
+/// A folder holding fetched bytes that could not be synced, given as a
+/// `&CoreError`.
+#[cfg(feature = "telemetry")]
+macro_rules! unsynced {
+    ($error:expr) => {
+        $crate::telemetry::live::unsynced($error)
+    };
+}
+
+#[cfg(not(feature = "telemetry"))]
+macro_rules! unsynced {
+    ($error:expr) => {{
+        let _ = $error;
+    }};
+}
+
+pub(crate) use {degraded, ended, operation, record, unsynced};
 
 /// The subscriber of the thread that made it, for work it hands to a thread
 /// of its own: a host that installed one for that thread alone would

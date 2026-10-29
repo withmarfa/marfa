@@ -547,6 +547,20 @@ impl Cache {
             )));
         }
         self.settle(&incoming, &hash)?;
+        // An upload is queued once its bytes have their name, and a rename
+        // that a power loss undoes leaves them in an `.incoming-` file the
+        // startup sweep takes by its age.
+        self.sync_folder().map_err(|error| {
+            let message = format!(
+                "the bytes are held in {}, but the folder holding them cannot be synced, so the upload is not queued: {error}",
+                self.dir.display()
+            );
+            if error.kind() == io::ErrorKind::StorageFull {
+                CoreError::StorageFull(message)
+            } else {
+                CoreError::Store(message)
+            }
+        })?;
         Ok(Taken { hash, size })
     }
 
@@ -662,7 +676,7 @@ impl Cache {
                 })
             }
             Naming::Rename => Ok(Fetched {
-                path: self.settle(incoming, hash)?,
+                path: self.settle_fetched(incoming, hash)?,
                 mark: Mark::Kept,
             }),
             Naming::Exclude => {
@@ -674,7 +688,7 @@ impl Cache {
                     Err(error) => Mark::Refused(error.to_string()),
                 };
                 Ok(Fetched {
-                    path: self.settle(incoming, hash)?,
+                    path: self.settle_fetched(incoming, hash)?,
                     mark,
                 })
             }
@@ -683,7 +697,7 @@ impl Cache {
                 let copy = self
                     .copy_unmarked(incoming)
                     .map_err(|error| self.unwritable(error))?;
-                let path = self.settle(&copy, hash)?;
+                let path = self.settle_fetched(&copy, hash)?;
                 let _ = self.unlink_label(incoming);
                 Ok(Fetched {
                     path,
@@ -971,8 +985,7 @@ impl Cache {
         fetched
     }
 
-    /// A rename, so a second reader sees the whole file or none of it, and on
-    /// Unix a sync of the folder, so the name outlasts a power loss.
+    /// A rename, so a second reader sees the whole file or none of it.
     fn settle(&self, incoming: &Path, hash: &str) -> Result<PathBuf> {
         let path = self.dir.join(hex_of(hash)?);
         #[cfg(unix)]
@@ -992,25 +1005,35 @@ impl Cache {
             let _ = self.unlink_label(incoming);
             self.unwritable(error)
         })?;
-        // An upload is queued once its bytes have their name, and a rename
-        // that a power loss undoes leaves them in an `.incoming-` file the
-        // startup sweep takes by its age.
+        Ok(path)
+    }
+
+    /// `settle` for fetched bytes. A power loss that undoes the name leaves
+    /// bytes that can be fetched again, so the fetch still gives the file it
+    /// holds when the folder cannot be synced.
+    fn settle_fetched(&self, incoming: &Path, hash: &str) -> Result<PathBuf> {
+        let path = self.settle(incoming, hash)?;
+        if let Err(error) = self.sync_folder() {
+            crate::telemetry::unsynced!(&self.unwritable(error));
+        }
+        Ok(path)
+    }
+
+    /// On Unix, syncs the folder, so a name `settle` gave outlasts a power
+    /// loss.
+    fn sync_folder(&self) -> io::Result<()> {
         #[cfg(unix)]
         {
             #[cfg(debug_assertions)]
             if crate::fault::fails(|| "blob-folder-sync") {
-                return Err(self.unwritable(io::Error::other("the folder sync failed")));
+                return Err(io::Error::other("the folder sync failed"));
             }
-            match self
-                .capability(false)
-                .map_err(|error| self.unwritable(error))?
-            {
-                Some(directory) => directory.sync(),
-                None => File::open(&self.dir).and_then(|folder| folder.sync_all()),
+            match self.capability(false)? {
+                Some(directory) => directory.sync()?,
+                None => File::open(&self.dir)?.sync_all()?,
             }
-            .map_err(|error| self.unwritable(error))?;
         }
-        Ok(path)
+        Ok(())
     }
 
     fn unwritable(&self, error: io::Error) -> CoreError {
@@ -1681,8 +1704,10 @@ pub(crate) mod tests {
                 let _failing = crate::fault::fail_on_this_thread("blob-folder-sync");
                 let refused = cache.take_reader(&source, File::open(&source).unwrap());
                 assert!(
-                    matches!(refused, Err(CoreError::Store(_))),
-                    "bytes were taken without a sync of their folder"
+                    matches!(&refused, Err(CoreError::Store(message))
+                        if message.contains("cannot be synced, so the upload is not queued")),
+                    "bytes were taken without a sync of their folder: {:?}",
+                    refused.err()
                 );
             }
             // The witness: the same bytes are taken once the sync succeeds.
@@ -1690,6 +1715,28 @@ pub(crate) mod tests {
                 .take_reader(&source, File::open(&source).unwrap())
                 .unwrap();
             assert!(cache.held(&taken.hash).unwrap().is_some());
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn fetched_bytes_are_given_although_the_folder_holding_them_is_not_synced() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap().join("owned");
+        fs::create_dir(&root).unwrap();
+        let directory = crate::directory::Directory::open(&root).unwrap();
+        let bytes = b"fetched from the server";
+        let hash = format!("{PREFIX}{}", hex::encode(Sha256::digest(bytes)));
+        for cache in [
+            Cache::beside(&temp.path().join("core.sqlite")),
+            Cache::anchored(&directory, &root.join("core.sqlite"), true).unwrap(),
+        ] {
+            let _failing = crate::fault::fail_on_this_thread("blob-folder-sync");
+            let fetched = cache
+                .keep(&hash, &bytes[..], || Some(HashSet::new()))
+                .expect("a fetch failed over a folder sync");
+            assert_eq!(fs::read(&fetched.path).unwrap(), bytes);
+            assert_eq!(cache.held(&hash).unwrap(), Some(fetched.path));
         }
     }
 
