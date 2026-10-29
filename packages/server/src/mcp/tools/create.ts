@@ -1,5 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/server";
 import { itemName } from "@withmarfa/shared";
+import { itemId } from "../args.js";
 import * as z from "zod";
 import type { ToolContext } from "../context.js";
 import { fail, ok, refused } from "../results.js";
@@ -119,9 +120,7 @@ export function registerCreate(server: McpServer, ctx: ToolContext): void {
           .describe(
             "The item's own time, such as a meeting's date (RFC 3339).",
           ),
-        id: z
-          .string()
-          .min(1)
+        id: itemId
           .optional()
           .describe(
             "An ID you choose (a UUIDv7), so that calling again after a lost answer saves nothing twice.",
@@ -136,9 +135,7 @@ export function registerCreate(server: McpServer, ctx: ToolContext): void {
         file: chatFile
           .optional()
           .describe("A file the person attached in the chat, to save."),
-        attach_to: z
-          .string()
-          .min(1)
+        attach_to: itemId
           .optional()
           .describe(
             "With url or file: the ID of an item to attach the saved file to.",

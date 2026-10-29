@@ -1,6 +1,7 @@
 import { isDeepStrictEqual } from "node:util";
 import type { CallToolResult, McpServer } from "@modelcontextprotocol/server";
 import type { components } from "@withmarfa/client";
+import { itemId, pathSegment } from "../args.js";
 import * as z from "zod";
 import type { ApiAnswer, ApiRefusal } from "../api.js";
 import type { ToolContext } from "../context.js";
@@ -8,7 +9,7 @@ import { fail, ok, refused } from "../results.js";
 
 const edgeRef = z.strictObject({
   edge_type: z.string().min(1),
-  target_id: z.string().min(1),
+  target_id: itemId,
 });
 
 const outputSchema = z.object({
@@ -171,7 +172,7 @@ export function registerUpdate(server: McpServer, ctx: ToolContext): void {
       description:
         "Use to change an existing note, task, record or other item: its fields, tags, edges, or whether it is archived, or to restore it from the trash. Send the version you read with marfa_get; if the item is at any other version, nothing is written and you get the item as it is now and which of your fields were changed since.",
       inputSchema: z.strictObject({
-        id: z.string().min(1).describe("The item's ID."),
+        id: itemId.describe("The item's ID."),
         version: z
           .number()
           .int()
@@ -197,7 +198,7 @@ export function registerUpdate(server: McpServer, ctx: ToolContext): void {
           .optional()
           .describe("The item's own time (RFC 3339)."),
         add_tags: z.array(z.string().min(1)).optional(),
-        remove_tags: z.array(z.string().min(1)).optional(),
+        remove_tags: z.array(pathSegment).optional(),
         add_edges: z
           .array(edgeRef)
           .optional()

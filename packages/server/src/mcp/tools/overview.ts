@@ -1,4 +1,5 @@
 import type { McpServer } from "@modelcontextprotocol/server";
+import { pathSegment } from "../args.js";
 import * as z from "zod";
 import type { ToolContext } from "../context.js";
 import { ok, refused } from "../results.js";
@@ -93,9 +94,7 @@ export function registerOverview(server: McpServer, ctx: ToolContext): void {
       description:
         "Call first, before finding or saving anything. Without arguments, returns what this Marfa holds and what you may do: the types of items (notes, tasks, records, files and more) with counts, edge types, the most used tags, views and folders. With `type`, returns that type's fields, which you need to save or update an item of it.",
       inputSchema: z.strictObject({
-        type: z
-          .string()
-          .min(1)
+        type: pathSegment
           .optional()
           .describe(
             "A type's identifier from the overview, such as `core.note`, to see its fields.",

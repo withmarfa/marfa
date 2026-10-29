@@ -211,6 +211,28 @@ describe("marfa_find and marfa_get", () => {
     ).toBe(false);
   });
 
+  it("refuses a dot segment where a path names an item, a view, a type or a tag", async () => {
+    const note = await saveNote({ body: "kept" });
+    const calls: [string, Record<string, unknown>][] = [
+      ["marfa_find", { view: ".." }],
+      ["marfa_find", { view: "." }],
+      ["marfa_get", { ids: [".."] }],
+      ["marfa_overview", { type: ".." }],
+      ["marfa_update", { id: "..", version: 1, add_tags: ["x"] }],
+      [
+        "marfa_update",
+        { id: note.id, version: note.version, remove_tags: [".."] },
+      ],
+      ["marfa_delete", { ids: [".."] }],
+    ];
+    for (const [tool, args] of calls) {
+      const answer = await callTool(client, tool, args);
+      expect(answer.isError, `${tool} ${JSON.stringify(args)}`).toBe(true);
+    }
+    const kept = await readItem(note.id);
+    expect(kept).toMatchObject({ state: "active", version: note.version });
+  });
+
   it("answers what the instance holds and what the credential may do", async () => {
     const answer = payloadOf(await callTool(client, "marfa_overview", {}));
     const instance = answer.instance as { name: unknown; version: unknown };

@@ -1,6 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/server";
 import type { components } from "@withmarfa/client";
 import { itemName } from "@withmarfa/shared";
+import { itemId } from "../args.js";
 import * as z from "zod";
 import type { ApiRefusal } from "../api.js";
 import {
@@ -104,7 +105,7 @@ export function registerDelete(server: McpServer, ctx: ToolContext): void {
         "Use to delete notes, tasks, records, files or other items, which moves them to the trash. The first call only previews what would go, including items that go with them; show that to the person, and call again with the same ids and confirm to trash them. Restore with marfa_update.",
       inputSchema: z.strictObject({
         ids: z
-          .array(z.string().min(1))
+          .array(itemId)
           .min(1)
           .max(DELETE_MAX_IDS)
           .describe(`The items' IDs, at most ${String(DELETE_MAX_IDS)}.`),
