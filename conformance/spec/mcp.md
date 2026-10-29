@@ -70,17 +70,25 @@ If a tool call names an argument the tool does not take, then the server MUST an
 
 ## Changing an item
 
-A change to an item's fields through `marfa_update` follows the API's own version rules in `versions.md`.
+`marfa_update` changes an item only from the version the agent read: unlike `PATCH /items/{id}`, it never merges a stale write (`versions.md`).
 
 ### `mcp/update-stale-answer`
 
-If a `marfa_update` call that changes an item's tags, edges or state and none of its fields names a version other than the item's current version, then the server MUST answer a tool error with code `version_conflict` that carries the item as it is now in `current`.
+If a `marfa_update` call names a version other than the item's current version, then the server MUST answer a tool error with code `version_conflict` that carries the item as it is now in `current`.
 
-**Tests:** `compliance/mcp.test.ts › answers a stale version with version_conflict and the item as it is now`.
+**Tests:** `compliance/mcp.test.ts › answers a stale version with version_conflict, the item as it is now and the fields changed since`.
+
+### `mcp/update-stale-fields`
+
+If a `marfa_update` call names a version other than the item's current version, and the credential can read the item's snapshot of the version named, then the server MUST answer under `conflicting_fields` each field the call would set that a write since that version also changed, and no other.
+
+**Reason:** the agent decides from these whether its change still applies.
+
+**Tests:** `compliance/mcp.test.ts › answers a stale version with version_conflict, the item as it is now and the fields changed since`.
 
 ### `mcp/update-stale-unchanged`
 
-If a `marfa_update` call that changes an item's tags, edges or state and none of its fields names a version other than the item's current version, then the server MUST NOT change the item.
+If a `marfa_update` call names a version other than the item's current version, then the server MUST NOT change the item's fields, tags, edges or state, whether or not the fields it would set collide with a change made since.
 
 **Reason:** the agent decided on the item it read, so a change made since may make its own wrong.
 

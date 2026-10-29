@@ -1,4 +1,6 @@
-import type { McpServer } from "@modelcontextprotocol/server";
+import { isDeepStrictEqual } from "node:util";
+import type { CallToolResult, McpServer } from "@modelcontextprotocol/server";
+import type { components } from "@withmarfa/client";
 import * as z from "zod";
 import type { ApiAnswer, ApiRefusal } from "../api.js";
 import type { ToolContext } from "../context.js";
@@ -17,7 +19,139 @@ const outputSchema = z.object({
 });
 
 interface ItemAnswer {
-  item: { id: string; version: number; state: string };
+  item: CurrentItem;
+}
+
+interface CurrentItem {
+  id: string;
+  version: number;
+  state: string;
+  properties?: Record<string, unknown>;
+  tier?: string;
+  occurred_at?: string;
+}
+
+/** The arguments a stale answer weighs: the fields the call would set. */
+interface FieldArgs {
+  version: number;
+  properties?: Record<string, unknown> | undefined;
+  properties_mode?: "merge" | "replace" | undefined;
+  tier?: string | undefined;
+  occurred_at?: string | undefined;
+}
+
+/** How many pages of an item's history a stale answer reads for its base. */
+const HISTORY_PAGES = 10;
+const HISTORY_PAGE_SIZE = 200;
+
+/**
+ * The refusal of a call whose version is not the item's: the item now, and
+ * which of the fields the call would set were also changed by a write since
+ * the version it read. Nothing is written.
+ */
+async function staleAnswer(
+  ctx: ToolContext,
+  args: FieldArgs,
+  current: CurrentItem,
+): Promise<CallToolResult> {
+  const base = await snapshotAt(ctx, current.id, args.version);
+  const answer = {
+    code: "version_conflict",
+    message: `The item is at version ${String(current.version)}, not ${String(args.version)}. Nothing was changed.`,
+    hint: "Read the item again with marfa_get, decide whether your change still applies, and send the version you read.",
+    current,
+  };
+  if (base === null) {
+    return fail({
+      ...answer,
+      note: `Marfa holds no snapshot of version ${String(args.version)} that this credential can read, so which fields changed since is not known.`,
+    });
+  }
+  return fail({
+    ...answer,
+    conflicting_fields: conflictingFields(args, base, current),
+  });
+}
+
+/** The item as it was at `version`, from its history, or null. */
+async function snapshotAt(
+  ctx: ToolContext,
+  id: string,
+  version: number,
+): Promise<Snapshot | null> {
+  let cursor: string | undefined;
+  for (let page = 0; page < HISTORY_PAGES; page++) {
+    const answer = await ctx.api.answer(
+      ctx.api.client.GET("/items/{id}/versions", {
+        params: {
+          path: { id },
+          query: { limit: HISTORY_PAGE_SIZE, ...(cursor && { cursor }) },
+        },
+      }),
+    );
+    if (!answer.ok) return null;
+    const found = answer.data.data.find((v) => v.version === version);
+    if (found !== undefined) return found;
+    if (answer.data.data.some((v) => v.version > version)) return null;
+    if (answer.data.next_cursor === null) return null;
+    cursor = answer.data.next_cursor;
+  }
+  return null;
+}
+
+type Snapshot = Pick<
+  components["schemas"]["Version"],
+  "properties" | "tier" | "occurred_at"
+>;
+
+/**
+ * The fields the call would change that a write since `base` changed too,
+ * on the API's own rule: a field sent at the value it had at `base` is not
+ * a change, and a field `replace` leaves out is cleared, which is.
+ */
+function conflictingFields(
+  args: FieldArgs,
+  base: Snapshot,
+  current: CurrentItem,
+): string[] {
+  const before = base.properties;
+  const now = current.properties ?? {};
+  const sent = args.properties ?? {};
+  const changed = new Set(
+    Object.keys(sent).filter(
+      (key) => !isDeepStrictEqual(sent[key], before[key]),
+    ),
+  );
+  if (args.properties_mode === "replace") {
+    for (const key of Object.keys(before)) {
+      if (!Object.hasOwn(sent, key)) changed.add(key);
+    }
+  }
+  const fields = [...changed].filter(
+    (key) => !isDeepStrictEqual(now[key], before[key]),
+  );
+  if (
+    args.tier !== undefined &&
+    args.tier !== base.tier &&
+    current.tier !== base.tier
+  ) {
+    fields.push("tier");
+  }
+  if (
+    args.occurred_at !== undefined &&
+    !sameTime(args.occurred_at, base.occurred_at) &&
+    !sameTime(current.occurred_at, base.occurred_at)
+  ) {
+    fields.push("occurred_at");
+  }
+  return fields.sort();
+}
+
+function sameTime(a: string | undefined, b: string | undefined): boolean {
+  if (a === b) return true;
+  if (a === undefined || b === undefined) return false;
+  const left = Date.parse(a);
+  return !Number.isNaN(left) && left === Date.parse(b);
 }
 
 /** What a stale or colliding write carries, kept for the agent to decide on. */
@@ -35,7 +169,7 @@ export function registerUpdate(server: McpServer, ctx: ToolContext): void {
     {
       title: "Change an item",
       description:
-        "Use to change an existing note, task, record or other item: its fields, tags, edges, or whether it is archived, or to restore it from the trash. Send the version you read with marfa_get; if the item changed since, nothing is written and you get the item as it is now.",
+        "Use to change an existing note, task, record or other item: its fields, tags, edges, or whether it is archived, or to restore it from the trash. Send the version you read with marfa_get; if the item is at any other version, nothing is written and you get the item as it is now and which of your fields were changed since.",
       inputSchema: z.strictObject({
         id: z.string().min(1).describe("The item's ID."),
         version: z
@@ -43,7 +177,7 @@ export function registerUpdate(server: McpServer, ctx: ToolContext): void {
           .int()
           .min(1)
           .describe(
-            "The item's version, as you last read it. Not checked when restoring an item from the trash.",
+            "The item's version, as you last read it. Moving an item to the trash keeps its version.",
           ),
         properties: z
           .record(z.string(), z.unknown())
@@ -96,15 +230,19 @@ export function registerUpdate(server: McpServer, ctx: ToolContext): void {
         api.client.GET("/items/{id}", { params: { path: { id } } }),
       );
       if (!read.ok) {
-        // The API reads no trashed item by ID, so a trashed item is
-        // restored without a read; a restore carries no version.
+        // The API reads no trashed item by ID, so a trashed item is restored
+        // by a transition that names the version: a move to the trash keeps
+        // the version, and the transition moves nothing if it differs.
         if (read.refusal.status === 404 && restoreOnly(args)) {
           const restored = await api.answer(
-            api.client.POST("/items/{id}/restore", {
-              params: { path: { id } },
+            api.client.POST("/items/{id}/transition", {
+              params: { path: { id }, query: { version: args.version } },
+              body: { state: "active" },
             }),
           );
-          if (!restored.ok) return refused(restored.refusal);
+          if (!restored.ok) {
+            return refused(restored.refusal, conflictExtra(restored.refusal));
+          }
           const item = (restored.data as unknown as ItemAnswer).item;
           return ok({
             id,
@@ -115,25 +253,18 @@ export function registerUpdate(server: McpServer, ctx: ToolContext): void {
         }
         return refused(read.refusal);
       }
-      let { version, state } = (read.data as unknown as ItemAnswer).item;
+      const current = (read.data as unknown as ItemAnswer).item;
+      if (current.version !== args.version) {
+        return staleAnswer(ctx, args, current);
+      }
+      // The first write that names the version refuses it if the item moved
+      // since the read above; each later one names the version the one
+      // before it left. Tags are written last, since they carry no version.
+      let { version, state } = current;
       const patching =
         args.properties !== undefined ||
         args.tier !== undefined ||
         args.occurred_at !== undefined;
-      // A field change sends the version read and the API decides: a change
-      // that collides with one made since is refused with both sides, one
-      // that does not is merged. Tags and a restore carry no version, so
-      // without a field change first the version is checked here.
-      if (patching) {
-        version = args.version;
-      } else if (version !== args.version) {
-        return fail({
-          code: "version_conflict",
-          message: `The item is at version ${String(version)}, not ${String(args.version)}. Nothing was changed.`,
-          hint: "Read the item again with marfa_get, decide whether your change still applies, and send the version you read.",
-          current: (read.data as unknown as ItemAnswer).item,
-        });
-      }
 
       /** Stop at a failed step, saying what was already applied. */
       const stop = (step: string, refusal: ApiRefusal) =>
@@ -160,6 +291,7 @@ export function registerUpdate(server: McpServer, ctx: ToolContext): void {
             params: { path: { id } },
             body: {
               version,
+              version_match: "exact",
               ...(args.properties !== undefined && {
                 properties: args.properties,
               }),
@@ -223,6 +355,18 @@ export function registerUpdate(server: McpServer, ctx: ToolContext): void {
         if (failed !== null) return stop("read", failed);
       }
 
+      if (args.state !== undefined && args.state !== state) {
+        const moved = await api.answer(
+          api.client.POST("/items/{id}/transition", {
+            params: { path: { id }, query: { version } },
+            body: { state: args.state },
+          }),
+        );
+        if (!moved.ok) return stop(`state ${args.state}`, moved.refusal);
+        ({ version, state } = (moved.data as unknown as ItemAnswer).item);
+        applied.push(`state ${args.state}`);
+      }
+
       if (args.add_tags !== undefined && args.add_tags.length > 0) {
         const tagged = await api.answer(
           api.client.POST("/items/{id}/tags", {
@@ -241,18 +385,6 @@ export function registerUpdate(server: McpServer, ctx: ToolContext): void {
         );
         if (!untagged.ok) return stop(`remove_tag ${tag}`, untagged.refusal);
         applied.push(`remove_tag ${tag}`);
-      }
-
-      if (args.state !== undefined && args.state !== state) {
-        const moved = await api.answer(
-          api.client.POST("/items/{id}/transition", {
-            params: { path: { id }, query: { version } },
-            body: { state: args.state },
-          }),
-        );
-        if (!moved.ok) return stop(`state ${args.state}`, moved.refusal);
-        ({ version, state } = (moved.data as unknown as ItemAnswer).item);
-        applied.push(`state ${args.state}`);
       }
 
       if (applied.length === 0) {

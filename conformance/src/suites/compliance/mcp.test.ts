@@ -208,7 +208,7 @@ describe("calling a tool", () => {
 });
 
 describe("marfa_update", () => {
-  it("answers a stale version with version_conflict and the item as it is now", async () => {
+  it("answers a stale version with version_conflict, the item as it is now and the fields changed since", async () => {
     const made = await note("one");
     const moved = await client.updateItem(made.id, {
       version: made.version,
@@ -220,6 +220,7 @@ describe("marfa_update", () => {
       await callTool(mcp, "marfa_update", {
         id: made.id,
         version: made.version,
+        properties: { title: "Renamed", body: "three" },
         add_tags: ["late"],
       }),
     );
@@ -228,35 +229,48 @@ describe("marfa_update", () => {
       id: made.id,
       version: moved.data.item.version,
     });
+    expect(error.conflicting_fields).toEqual(["body"]);
   });
 
   it("leaves the item unchanged when called with a stale version", async () => {
     const made = await note("one");
+    const target = await note("target");
     const moved = await client.updateItem(made.id, {
       version: made.version,
       properties: { body: "two" },
     });
     expect(moved.ok, JSON.stringify(moved.error)).toBe(true);
 
-    await callTool(mcp, "marfa_update", {
+    // A field change that collides with nothing made since is refused too.
+    const change = {
       id: made.id,
-      version: made.version,
+      properties: { title: "Renamed" },
       add_tags: ["late"],
-    });
+      add_edges: [{ edge_type: "references", target_id: target.id }],
+      state: "archived",
+    };
+    const error = toolError(
+      await callTool(mcp, "marfa_update", { ...change, version: made.version }),
+    );
+    expect(error.conflicting_fields).toEqual([]);
     const after = await client.getItem(made.id);
     expect(after.data.item.version).toBe(moved.data.item.version);
+    expect(after.data.item.state).toBe("active");
+    expect(after.data.item.properties).not.toHaveProperty("title");
     expect(after.data.metadata.tags).not.toContain("late");
-    // The witness: the same call at the current version tags the item.
+    expect(after.data.item.edges?.references?.data ?? []).toEqual([]);
+    // The witness: the same call at the current version makes every change.
     toolResult(
       await callTool(mcp, "marfa_update", {
-        id: made.id,
+        ...change,
         version: moved.data.item.version,
-        add_tags: ["late"],
       }),
     );
-    expect((await client.getItem(made.id)).data.metadata.tags).toContain(
-      "late",
-    );
+    const changed = await client.getItem(made.id);
+    expect(changed.data.item.state).toBe("archived");
+    expect(changed.data.item.properties).toMatchObject({ title: "Renamed" });
+    expect(changed.data.metadata.tags).toContain("late");
+    expect(changed.data.item.edges?.references?.data).toHaveLength(1);
   });
 });
 

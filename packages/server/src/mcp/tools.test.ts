@@ -392,7 +392,7 @@ describe("marfa_update", () => {
     expect(changed).toMatchObject({
       id: note.id,
       state: "archived",
-      applied: ["properties", "add_tags", "state archived"],
+      applied: ["properties", "state archived", "add_tags"],
     });
     const item = await readItem(note.id);
     expect(item).toMatchObject({
@@ -432,6 +432,58 @@ describe("marfa_update", () => {
     expect(tagsOnly).toHaveProperty("current");
   });
 
+  it("writes nothing on a stale version even when its field changes do not collide", async () => {
+    const note = await saveNote({ title: "Plan", body: "one" });
+    const target = await saveNote({ body: "target" });
+    const moved = await request(ctx.app, "PATCH", `/items/${note.id}`, {
+      key: ctx.workingKey,
+      body: { version: note.version, properties: { body: "two" } },
+    });
+    expect(moved.status).toBe(200);
+
+    const stale = errorOf(
+      await callTool(client, "marfa_update", {
+        id: note.id,
+        version: note.version,
+        properties: { title: "Plan B", body: "three" },
+        add_tags: ["late"],
+        add_edges: [{ edge_type: "references", target_id: target.id }],
+        state: "archived",
+      }),
+    );
+    expect(stale).toMatchObject({
+      code: "version_conflict",
+      conflicting_fields: ["body"],
+      current: { id: note.id, version: note.version + 1 },
+    });
+    expect(stale).not.toHaveProperty("applied");
+
+    const nonColliding = errorOf(
+      await callTool(client, "marfa_update", {
+        id: note.id,
+        version: note.version,
+        properties: { title: "Plan B" },
+        add_tags: ["late"],
+      }),
+    );
+    expect(nonColliding).toMatchObject({
+      code: "version_conflict",
+      conflicting_fields: [],
+    });
+
+    const item = await readItem(note.id);
+    expect(item).toMatchObject({
+      version: note.version + 1,
+      state: "active",
+      properties: { title: "Plan", body: "two" },
+    });
+    expect(item.tags ?? []).toEqual([]);
+    const edges = await request(ctx.app, "GET", `/items/${note.id}/edges`, {
+      key: ctx.workingKey,
+    });
+    expect(((await edges.json()) as { data: unknown[] }).data).toEqual([]);
+  });
+
   it("restores an item from the trash", async () => {
     const note = await saveNote({ body: "oops" });
     await request(ctx.app, "DELETE", `/items/${note.id}`, {
@@ -453,6 +505,33 @@ describe("marfa_update", () => {
       applied: ["state active"],
     });
     expect((await readItem(note.id)).state).toBe("active");
+  });
+
+  it("restores nothing from the trash on a stale version", async () => {
+    const note = await saveNote({ body: "one" });
+    const moved = await request(ctx.app, "PATCH", `/items/${note.id}`, {
+      key: ctx.workingKey,
+      body: { version: note.version, properties: { body: "two" } },
+    });
+    expect(moved.status).toBe(200);
+    await request(ctx.app, "DELETE", `/items/${note.id}`, {
+      key: ctx.workingKey,
+    });
+    const stale = errorOf(
+      await callTool(client, "marfa_update", {
+        id: note.id,
+        version: note.version,
+        state: "active",
+      }),
+    );
+    expect(stale).toMatchObject({
+      code: "version_conflict",
+      current: { version: note.version + 1 },
+    });
+    const gone = await request(ctx.app, "GET", `/items/${note.id}`, {
+      key: ctx.workingKey,
+    });
+    expect(gone.status).toBe(404);
   });
 
   it("adds and removes an edge", async () => {
