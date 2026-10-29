@@ -123,7 +123,7 @@ export function registerCreate(server: McpServer, ctx: ToolContext): void {
         id: itemId
           .optional()
           .describe(
-            "An ID you choose (a UUIDv7), so that calling again after a lost answer saves nothing twice.",
+            "Leave out unless a retry must not save twice. Then send a new random UUIDv7 you generate, never a made-up or patterned one.",
           ),
         url: z
           .string()

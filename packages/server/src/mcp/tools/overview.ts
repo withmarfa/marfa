@@ -92,13 +92,11 @@ export function registerOverview(server: McpServer, ctx: ToolContext): void {
     {
       title: "Overview of this Marfa",
       description:
-        "Call first, before finding or saving anything. Without arguments, returns what this Marfa holds and what you may do: the types of items (notes, tasks, records, files and more) with counts, edge types, the most used tags, views and folders. With `type`, returns that type's fields, which you need to save or update an item of it.",
+        "Call first, before finding or saving anything. Without arguments, returns what this Marfa holds and what you may do: the item types with counts, edge types, the most used tags, views and folders. With `type`, returns that type's fields, which you need to save or update an item of it.",
       inputSchema: z.strictObject({
         type: pathSegment
           .optional()
-          .describe(
-            "A type's identifier from the overview, such as `core.note`, to see its fields.",
-          ),
+          .describe("A type's ID, such as `core.note`, to see its fields."),
       }),
       outputSchema,
       annotations: { readOnlyHint: true, openWorldHint: false },

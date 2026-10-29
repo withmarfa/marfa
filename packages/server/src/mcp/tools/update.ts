@@ -170,7 +170,7 @@ export function registerUpdate(server: McpServer, ctx: ToolContext): void {
     {
       title: "Change an item",
       description:
-        "Use to change an existing note, task, record or other item: its fields, tags, edges, or whether it is archived, or to restore it from the trash. Send the version you read with marfa_get; if the item is at any other version, nothing is written and you get the item as it is now and which of your fields were changed since.",
+        "Use to change an existing note, task, record or other item: its fields, tags, edges, or whether it is archived, or to restore it from the trash. Send the version you read with marfa_get; if the item has changed since, nothing is written and you get it as it is now and which of your fields changed.",
       inputSchema: z.strictObject({
         id: itemId.describe("The item's ID."),
         version: z
@@ -211,7 +211,7 @@ export function registerUpdate(server: McpServer, ctx: ToolContext): void {
           .enum(["active", "archived"])
           .optional()
           .describe(
-            "`archived` to archive the item; `active` to bring it back from the archive or the trash. An item in the trash takes no other change until it is restored. Delete with marfa_delete.",
+            "`archived` to archive the item; `active` to bring it back from the archive or the trash. An item in the trash takes no other change until it is restored.",
           ),
       }),
       outputSchema,

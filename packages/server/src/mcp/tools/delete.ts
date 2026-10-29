@@ -102,7 +102,7 @@ export function registerDelete(server: McpServer, ctx: ToolContext): void {
     {
       title: "Move items to the trash",
       description:
-        "Use to delete notes, tasks, records, files or other items, which moves them to the trash. The first call only previews what would go, including items that go with them; show that to the person, and call again with the same ids and confirm to trash them. Restore with marfa_update.",
+        "Use to delete notes, tasks, records, files or other items, which moves them to the trash. The first call only previews what would go, including items that go with them. Show the person and ask; only if they agree, call again with the same ids and confirm. Restore with marfa_update.",
       inputSchema: z.strictObject({
         ids: z
           .array(itemId)
@@ -160,7 +160,7 @@ export function registerDelete(server: McpServer, ctx: ToolContext): void {
           total: totalOf(planned.plan),
           confirm: token.token,
           expires_at: token.expires_at,
-          next: "Nothing has been deleted. Show the person what would go to the trash, and call marfa_delete again with the same ids and confirm to trash it.",
+          next: "Nothing has been deleted. Show the person what would go to the trash and ask them; only if they agree, call marfa_delete again with the same ids and confirm.",
         };
         return extra === null ? ok(body) : fail({ ...extra, ...body });
       };
