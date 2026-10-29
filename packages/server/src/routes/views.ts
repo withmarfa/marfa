@@ -499,7 +499,7 @@ const listViewItemsRoute = createRoute({
         },
       },
       description:
-        "- `validation_error`: `cursor` came from another view or ordering, or the view holds a setting that can't be listed.\n- `invalid_id`: the ID is invalid.\n- `invalid_transition`: the view is revoked.",
+        "- `validation_error`: `limit` is out of range, `cursor` came from another view or ordering, or the view holds a setting that can't be listed.\n- `invalid_id`: the ID is invalid.\n- `invalid_transition`: the view is revoked.",
     },
     ...unauthorized,
     403: {

@@ -20178,7 +20178,7 @@ export interface operations {
                 };
             };
             /**
-             * @description - `validation_error`: `cursor` came from another view or ordering, or the view holds a setting that can't be listed.
+             * @description - `validation_error`: `limit` is out of range, `cursor` came from another view or ordering, or the view holds a setting that can't be listed.
              *     - `invalid_id`: the ID is invalid.
              *     - `invalid_transition`: the view is revoked.
              */
