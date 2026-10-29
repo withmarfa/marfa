@@ -618,15 +618,17 @@ impl Cache {
             },
             Copy::Cache(error) => self.unwritable(error),
         })?;
-        self.finish(hash, &found, &incoming, kept)
+        self.finish(hash, &found, &incoming, false, kept)
     }
 
     /// Gives bytes that hashed to `found` the name `hash`, if it is theirs.
+    /// `marked` says whether `incoming` may carry a backup mark.
     fn finish(
         &self,
         hash: &str,
         found: &str,
         incoming: &Path,
+        marked: bool,
         kept: impl FnOnce() -> Option<HashSet<String>>,
     ) -> Result<Fetched> {
         let hex = hex_of(hash)?;
@@ -640,29 +642,77 @@ impl Cache {
         crate::fault::hold(|| format!("blob-arrived:{hash}"));
         // Fetched bytes can be fetched again, so no backup needs them. But an
         // upload of the same bytes may have been queued while they arrived,
-        // and its file, the only copy until the server has it, is the one
-        // this replaces; the queue is read under the hold that queuing takes,
-        // and a queue that cannot be read counts as naming them.
+        // and its file is the only copy until the server has it; the queue is
+        // read under the hold that queuing takes, and a queue that cannot be
+        // read counts as naming them.
         let _held = self.hold();
-        let upload_named = kept().is_none_or(|kept| kept.contains(hex));
-        // A partial file was marked when it was made, so the mark is taken
-        // off where an upload names the bytes.
-        let marked = self
-            .open_label(incoming, false, false)
-            .and_then(|file| crate::file_cache::set_backup_exclusion(&file, !upload_named));
-        let mark = match (upload_named, marked) {
-            (true, Ok(())) => Mark::Kept,
-            (true, Err(error)) => {
+        let kept = kept().map(|kept| kept.contains(hex));
+        // Queuing an upload gives its bytes their name under the same hold,
+        // and no trim or let-go takes bytes the queue names.
+        let upload_held = kept == Some(true)
+            && self
+                .open_held(hash)
+                .is_ok_and(|file| file.metadata().is_ok_and(|held| held.is_file()));
+        match naming(kept, upload_held, marked) {
+            Naming::Reuse => {
                 let _ = self.unlink_label(incoming);
-                return Err(self.unwritable(error));
+                Ok(Fetched {
+                    path: self.dir.join(hex),
+                    mark: Mark::Kept,
+                })
             }
-            (false, Ok(())) => Mark::Excluded,
-            (false, Err(error)) => Mark::Refused(error.to_string()),
-        };
-        Ok(Fetched {
-            path: self.settle(incoming, hash)?,
-            mark,
-        })
+            Naming::Rename => Ok(Fetched {
+                path: self.settle(incoming, hash)?,
+                mark: Mark::Kept,
+            }),
+            Naming::Exclude => {
+                let mark = match self
+                    .open_label(incoming, false, false)
+                    .and_then(|file| crate::file_cache::exclude_from_backups(&file))
+                {
+                    Ok(()) => Mark::Excluded,
+                    Err(error) => Mark::Refused(error.to_string()),
+                };
+                Ok(Fetched {
+                    path: self.settle(incoming, hash)?,
+                    mark,
+                })
+            }
+            // A failed copy leaves the fetched file whole, for a resume.
+            Naming::Copy => {
+                let copy = self
+                    .copy_unmarked(incoming)
+                    .map_err(|error| self.unwritable(error))?;
+                let path = self.settle(&copy, hash)?;
+                let _ = self.unlink_label(incoming);
+                Ok(Fetched {
+                    path,
+                    mark: Mark::Kept,
+                })
+            }
+        }
+    }
+
+    /// Copies the file at `from` to a new file that carries no backup mark.
+    fn copy_unmarked(&self, from: &Path) -> io::Result<PathBuf> {
+        let copy = self.dir.join(format!(".incoming-{}", uuid::Uuid::now_v7()));
+        let copied = (|| {
+            #[cfg(debug_assertions)]
+            if crate::fault::fails(|| "blob-copy-full") {
+                return Err(io::Error::from(io::ErrorKind::StorageFull));
+            }
+            let mut source = self.open_label(from, false, false)?;
+            let mut to = self.open_label(&copy, true, true)?;
+            io::copy(&mut source, &mut to)?;
+            to.sync_all()
+        })();
+        match copied {
+            Ok(()) => Ok(copy),
+            Err(error) => {
+                let _ = self.unlink_label(&copy);
+                Err(error)
+            }
+        }
     }
 
     /// Makes the folder the bytes are written to, if it is not made yet.
@@ -776,7 +826,7 @@ impl Cache {
                         .len();
                     // Marked as soon as it is made, since a fetch that stops
                     // leaves it behind for a resume.
-                    let mark = match crate::file_cache::set_backup_exclusion(&file, true) {
+                    let mark = match crate::file_cache::exclude_from_backups(&file) {
                         Ok(()) => Mark::Excluded,
                         Err(error) => Mark::Refused(error.to_string()),
                     };
@@ -911,9 +961,12 @@ impl Cache {
         }
         let found = format!("{PREFIX}{}", hex::encode(hasher.finalize()));
         let label = staging.label.clone();
-        // The file is renamed to its name while this fetch still holds its
-        // lock, so no other fetch locks a file that is no longer a partial.
-        let fetched = self.finish(hash, &found, &label, kept);
+        // Only a partial file another fetch could resume is marked.
+        let marked = cfg!(any(target_os = "macos", target_os = "ios")) && staging.shared;
+        // The bytes are given their name while this fetch still holds the
+        // partial file's lock, so no other fetch locks a partial that has
+        // become the blob.
+        let fetched = self.finish(hash, &found, &label, marked, kept);
         drop(staging);
         fetched
     }
@@ -958,6 +1011,34 @@ impl Cache {
         } else {
             CoreError::Store(message)
         }
+    }
+}
+
+/// How fetched bytes take their name.
+#[derive(Debug, PartialEq, Eq)]
+enum Naming {
+    /// No upload names them, so they are marked out of backups.
+    Exclude,
+    /// An upload names them and its own file holds them, so the fetched
+    /// file goes.
+    Reuse,
+    /// An upload may name them, and their file never had a mark.
+    Rename,
+    /// An upload may name them, and their file may carry a mark, which can
+    /// come back when cleared soon after it was set, so they are copied to a
+    /// file that never had one.
+    Copy,
+}
+
+/// `kept` says whether the queue names the bytes (`None` where it cannot be
+/// read), `upload_held` whether the upload's file holds them, and `marked`
+/// whether the fetched file may carry a backup mark.
+fn naming(kept: Option<bool>, upload_held: bool, marked: bool) -> Naming {
+    match kept {
+        Some(false) => Naming::Exclude,
+        Some(true) if upload_held => Naming::Reuse,
+        _ if marked => Naming::Copy,
+        _ => Naming::Rename,
     }
 }
 
@@ -1130,12 +1211,32 @@ fn pull<G>(
         reason,
     };
     let mut staging = cache.stage(hash)?;
-    // Bytes held that the file is not longer than can be a start of it.
-    if stated.is_some_and(|stated| staging.held >= stated) {
+    // Bytes held past the stated size cannot be a start of the file.
+    if stated.is_some_and(|stated| staging.held > stated) {
         cache.restart(&mut staging)?;
+    }
+    // Bytes held to the stated size leave the link nothing to send, and
+    // their hash says whether they are the file.
+    if staging.held > 0 && stated == Some(staging.held) {
+        let held = staging.held;
+        return cache.receive(hash, staging, io::empty(), held, kept);
     }
     let opened = match open(link, staging.held) {
         Ok(opened) => opened,
+        // A link answers `416` to a range from the end of the whole file, so
+        // where no size is stated the bytes held may be all of it.
+        Err(Refusal::Unsatisfiable) if stated.is_none() && staging.held > 0 => {
+            let held = staging.held;
+            return cache
+                .receive(hash, staging, io::empty(), held, kept)
+                .map_err(|error| match error {
+                    CoreError::Decoding(_) => absent(
+                        "the link cannot serve the range asked for, so the bytes held were dropped"
+                            .into(),
+                    ),
+                    other => other,
+                });
+        }
         Err(Refusal::Unsatisfiable) => {
             cache.drop_staging(staging);
             return Err(absent(
@@ -1760,6 +1861,15 @@ pub(crate) mod tests {
                     .and_then(|from| from.parse::<usize>().ok())
                     .filter(|_| ranges)
                     .unwrap_or(0);
+                if start >= body.len() && start > 0 {
+                    let _ = write!(
+                        socket,
+                        "HTTP/1.1 416 Range Not Satisfiable\r\nContent-Range: bytes */{}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                        body.len()
+                    );
+                    first = false;
+                    continue;
+                }
                 let rest = &body[start..];
                 let head = if start > 0 {
                     format!(
@@ -2206,10 +2316,247 @@ pub(crate) mod tests {
         assert!(!whole.exists() && !partial.exists());
     }
 
+    #[test]
+    fn fetched_bytes_are_copied_only_where_an_upload_may_need_them_and_their_file_may_be_marked() {
+        use Naming::*;
+        for marked in [false, true] {
+            for upload_held in [false, true] {
+                assert_eq!(naming(Some(false), upload_held, marked), Exclude);
+            }
+            assert_eq!(naming(Some(true), true, marked), Reuse);
+        }
+        for kept in [Some(true), None] {
+            assert_eq!(naming(kept, false, false), Rename);
+            assert_eq!(naming(kept, false, true), Copy);
+        }
+        // An unread queue does not say whose file holds the bytes.
+        assert_eq!(naming(None, true, true), Copy);
+        assert_eq!(naming(None, true, false), Rename);
+    }
+
+    #[cfg(unix)]
+    fn inode(path: &Path) -> u64 {
+        std::os::unix::fs::MetadataExt::ino(&fs::metadata(path).unwrap())
+    }
+
+    /// The entries of the cache folder other than the blob `hex`.
+    #[cfg(unix)]
+    fn others(cache: &Cache, hex: &str) -> Vec<PathBuf> {
+        let mut found = cache.entries().unwrap();
+        found.retain(|entry| entry.file_name().unwrap() != hex);
+        found
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn fetched_bytes_a_queued_upload_already_holds_leave_the_upload_file_in_place() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = Cache::beside(&dir.path().join("core.sqlite"));
+        let bytes = payload(64);
+        let source = dir.path().join("source.bin");
+        fs::write(&source, &bytes).unwrap();
+        let taken = cache
+            .take_reader(&source, File::open(&source).unwrap())
+            .unwrap();
+        let upload = cache.held(&taken.hash).unwrap().unwrap();
+        let before = inode(&upload);
+        let hex = hex_of(&taken.hash).unwrap().to_string();
+
+        let mut staging = cache.stage(&taken.hash).unwrap();
+        assert!(staging.shared);
+        let label = staging.label.clone();
+        staging.file.write_all(&bytes[..4]).unwrap();
+        std::io::Seek::rewind(&mut staging.file).unwrap();
+        staging.held = 4;
+        let named = HashSet::from([hex.clone()]);
+        let fetched = cache
+            .receive(&taken.hash, staging, &bytes[4..], 64, || Some(named))
+            .unwrap();
+        assert_eq!(fetched.mark, Mark::Kept);
+        assert_eq!(fetched.path, upload);
+        assert_eq!(
+            inode(&fetched.path),
+            before,
+            "the upload's file was replaced"
+        );
+        assert_eq!(fs::read(&fetched.path).unwrap(), bytes);
+        assert!(!label.exists(), "the partial file was left behind");
+        assert!(others(&cache, &hex).is_empty(), "a copy was left behind");
+
+        // The witness: where no upload names the bytes, the fetched file
+        // takes the name.
+        let mut staging = cache.stage(&taken.hash).unwrap();
+        let fetched_inode = std::os::unix::fs::MetadataExt::ino(&staging.file.metadata().unwrap());
+        staging.file.write_all(&bytes[..4]).unwrap();
+        std::io::Seek::rewind(&mut staging.file).unwrap();
+        staging.held = 4;
+        let fetched = cache
+            .receive(&taken.hash, staging, &bytes[4..], 64, no_uploads)
+            .unwrap();
+        assert_eq!(fetched.mark, Mark::Excluded);
+        assert_eq!(inode(&fetched.path), fetched_inode);
+    }
+
     #[cfg(target_os = "macos")]
     #[test]
-    fn a_partial_file_is_kept_out_of_backups_from_the_start_and_an_upload_naming_it_takes_the_mark_off()
-     {
+    fn bytes_a_fetch_of_its_own_received_take_their_name_without_a_copy() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = Cache::beside(&dir.path().join("core.sqlite"));
+        let bytes = payload(64);
+        let hash = name_of(&bytes);
+        let named = HashSet::from([hex_of(&hash).unwrap().to_string()]);
+        let receive = |staging: Staging| {
+            let staged = std::os::unix::fs::MetadataExt::ino(&staging.file.metadata().unwrap());
+            let fetched = cache
+                .receive(&hash, staging, &bytes[..], 64, || Some(named.clone()))
+                .unwrap();
+            assert_eq!(fetched.mark, Mark::Kept);
+            (staged, inode(&fetched.path))
+        };
+        // Another fetch holds the partial file, so this one writes a file of
+        // its own, which is never marked and is renamed as it is.
+        let holder = cache.stage(&hash).unwrap();
+        let own = cache.stage(&hash).unwrap();
+        assert!(!own.shared);
+        let (staged, held) = receive(own);
+        assert_eq!(staged, held, "bytes in a file with no mark were copied");
+        cache.drop_staging(holder);
+        fs::remove_file(cache.held(&hash).unwrap().unwrap()).unwrap();
+
+        // The witness: the marked partial file is copied.
+        let shared = cache.stage(&hash).unwrap();
+        assert!(shared.shared);
+        let (staged, held) = receive(shared);
+        assert_ne!(staged, held, "bytes in a marked file were not copied");
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_copy_the_volume_has_no_room_for_keeps_the_fetched_bytes_for_a_resume() {
+        for stated in [Some(5000), None] {
+            let dir = tempfile::tempdir().unwrap();
+            let cache = Cache::beside(&dir.path().join("store.sqlite"));
+            let bytes = payload(5000);
+            let hash = name_of(&bytes);
+            let named = HashSet::from([hex_of(&hash).unwrap().to_string()]);
+            let link = ranged(bytes.clone(), true, None);
+            let label = cache
+                .dir
+                .join(format!(".partial-{}", hex_of(&hash).unwrap()));
+            {
+                let _full = crate::fault::fail_on_this_thread("blob-copy-full");
+                let refused = pull(
+                    &cache,
+                    &hash,
+                    &link.url,
+                    stated,
+                    WITHIN,
+                    || None,
+                    || Some(named.clone()),
+                    no_attachments,
+                )
+                .unwrap_err();
+                assert!(
+                    matches!(refused, CoreError::StorageFull(_)),
+                    "{stated:?}: refused with {refused:?}"
+                );
+            }
+            assert_eq!(fs::read(&label).unwrap(), bytes, "the fetched bytes went");
+            assert!(cache.held(&hash).unwrap().is_none());
+            assert_eq!(
+                others(&cache, "").len(),
+                1,
+                "the failed copy was left behind"
+            );
+
+            drop(lock_when_free(&cache, &label));
+            let fetched = pull(
+                &cache,
+                &hash,
+                &link.url,
+                stated,
+                WITHIN,
+                || None,
+                || Some(named.clone()),
+                no_attachments,
+            )
+            .unwrap();
+            assert_eq!(fs::read(&fetched.path).unwrap(), bytes);
+            assert!(!label.exists());
+            // With a size stated the link is not asked again; without one it
+            // is asked from the end and answers that it has nothing more.
+            let asked_again = stated.is_none().then(|| Some("5000".to_string()));
+            let expected: Vec<_> = std::iter::once(None).chain(asked_again).collect();
+            assert_eq!(*link.asked.lock().unwrap(), expected, "{stated:?}");
+        }
+    }
+
+    #[test]
+    fn a_whole_partial_file_of_the_wrong_bytes_is_dropped_without_asking_the_link() {
+        let bytes = payload(5000);
+        let hash = name_of(&bytes);
+        for (stated, held, keeps) in [
+            (Some(5000), vec![0u8; 5000], false),
+            (None, vec![0u8; 5000], false),
+            // The witness: the right bytes held are kept.
+            (Some(5000), bytes.clone(), true),
+            (None, bytes.clone(), true),
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let cache = Cache::beside(&dir.path().join("store.sqlite"));
+            let link = ranged(bytes.clone(), true, None);
+            fs::create_dir_all(&cache.dir).unwrap();
+            let partial = cache
+                .dir
+                .join(format!(".partial-{}", hex_of(&hash).unwrap()));
+            fs::write(&partial, &held).unwrap();
+            let fetched = pull(
+                &cache,
+                &hash,
+                &link.url,
+                stated,
+                WITHIN,
+                || None,
+                no_uploads,
+                no_attachments,
+            );
+            let case = format!("stated {stated:?}, right bytes {keeps}");
+            if keeps {
+                let fetched = fetched.unwrap_or_else(|error| panic!("{case}: {error:?}"));
+                assert_eq!(fs::read(fetched.path).unwrap(), bytes, "{case}");
+            } else {
+                let refused = fetched.unwrap_err();
+                match stated {
+                    Some(_) => {
+                        assert!(
+                            matches!(refused, CoreError::Decoding(_)),
+                            "{case}: {refused:?}"
+                        )
+                    }
+                    None => assert!(
+                        matches!(&refused, CoreError::BytesAbsent { reason, .. } if reason.contains("dropped")),
+                        "{case}: {refused:?}"
+                    ),
+                }
+                assert!(
+                    left_behind(&cache).is_empty(),
+                    "{case}: {:?}",
+                    left_behind(&cache)
+                );
+            }
+            let asked = stated.is_none().then(|| Some("5000".to_string()));
+            assert_eq!(
+                *link.asked.lock().unwrap(),
+                asked.into_iter().collect::<Vec<_>>(),
+                "{case}"
+            );
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_partial_file_is_kept_out_of_backups_from_the_start_and_the_bytes_an_upload_names_are_not()
+    {
         use crate::file_cache::tests::excluded;
         // The system excludes its own temporary folders, so the witness has to
         // sit under the home folder.
@@ -2228,20 +2575,48 @@ pub(crate) mod tests {
         cache.leave_staging(staging);
 
         // Finished where a queued upload names the bytes, the file is the
-        // upload's and goes into backups.
-        let mut staging = cache.stage(&hash).unwrap();
-        staging.file.write_all(&bytes[..4]).unwrap();
-        std::io::Seek::rewind(&mut staging.file).unwrap();
-        staging.held = 4;
+        // upload's and goes into backups. A mark cleared soon after it was set
+        // can come back a few milliseconds later, so the file is read again
+        // after a pause, over several rounds.
         let named = HashSet::from([hex_of(&hash).unwrap().to_string()]);
-        let fetched = cache
-            .receive(&hash, staging, &bytes[4..], 64, || Some(named))
-            .unwrap();
-        assert_eq!(fetched.mark, Mark::Kept);
-        assert!(
-            !excluded(&fetched.path),
-            "the mark on a partial file stayed on the bytes of an upload"
-        );
+        for round in 0..20 {
+            let area = tempfile::Builder::new()
+                .prefix(".marfa-backup-test-")
+                .tempdir_in(std::env::var_os("HOME").expect("HOME"))
+                .unwrap();
+            let cache = Cache::beside(&area.path().join("core.sqlite"));
+            cache.leave_staging(cache.stage(&hash).unwrap());
+            let mut staging = cache.stage(&hash).unwrap();
+            let label = staging.label.clone();
+            staging.file.write_all(&bytes[..4]).unwrap();
+            std::io::Seek::rewind(&mut staging.file).unwrap();
+            staging.held = 4;
+            let fetched = cache
+                .receive(&hash, staging, &bytes[4..], 64, || Some(named.clone()))
+                .unwrap();
+            assert_eq!(fetched.mark, Mark::Kept);
+            assert!(!label.exists(), "the partial file was left behind");
+            std::thread::sleep(Duration::from_millis(60));
+            assert!(
+                !has_backup_mark(&fetched.path),
+                "the mark on a partial file stayed on the bytes of an upload (round {round})"
+            );
+            if round == 0 {
+                assert!(!excluded(&fetched.path));
+            }
+        }
+    }
+
+    /// Whether the file at `path` carries the backup exclusion mark itself,
+    /// read without starting a process.
+    #[cfg(target_os = "macos")]
+    fn has_backup_mark(path: &Path) -> bool {
+        use std::os::unix::ffi::OsStrExt;
+        let path = std::ffi::CString::new(path.as_os_str().as_bytes()).unwrap();
+        let name = c"com.apple.metadata:com_apple_backup_excludeItem";
+        // SAFETY: both names are NUL-terminated and a null buffer of size 0
+        // asks only for the attribute's size.
+        unsafe { libc::getxattr(path.as_ptr(), name.as_ptr(), std::ptr::null_mut(), 0, 0, 0) >= 0 }
     }
 
     #[cfg(unix)]
@@ -2256,7 +2631,28 @@ pub(crate) mod tests {
             .set_modified(SystemTime::now() - Duration::from_secs(ago))
             .unwrap();
         cache.leave_staging(staging);
+        drop(lock_when_free(cache, &label));
         label
+    }
+
+    /// Locks the partial file at `label`, waiting for a hold that is not a
+    /// fetch's. A process another test thread starts holds a copy of every
+    /// descriptor open at that moment until it executes, and an advisory lock
+    /// lasts as long as any copy does, so a lock a fetch dropped can stay
+    /// taken for a moment where tests share a process.
+    #[cfg(unix)]
+    fn lock_when_free(cache: &Cache, label: &Path) -> File {
+        let until = std::time::Instant::now() + Duration::from_secs(10);
+        loop {
+            if let Some(lock) = cache.lock_partial(label) {
+                return lock;
+            }
+            assert!(
+                std::time::Instant::now() < until,
+                "the partial file never unlocked"
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        }
     }
 
     #[cfg(unix)]
@@ -2289,7 +2685,7 @@ pub(crate) mod tests {
         let cache = Cache::beside(&dir.path().join("store.sqlite"));
         let label = partial_of(&cache, b"old", 10);
         // The witness: a partial that is still the one at its path locks.
-        assert!(cache.lock_partial(&label).is_some());
+        drop(lock_when_free(&cache, &label));
         let opened = cache.open_label(&label, false, false).unwrap();
         fs::remove_file(&label).unwrap();
         fs::write(&label, b"replacement").unwrap();
