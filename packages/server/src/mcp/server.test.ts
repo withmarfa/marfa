@@ -22,11 +22,7 @@ afterAll(async () => {
  * `McpApi.raw`. When one is published this test fails: call it through the
  * typed client and take it off this list.
  */
-const UNPUBLISHED_OPERATIONS = new Set([
-  "getOverview",
-  "listViewItems",
-  "previewItemTrash",
-]);
+const UNPUBLISHED_OPERATIONS = new Set(["getOverview", "listViewItems"]);
 
 function publishedOperationIds(): Set<string> {
   const document = finalizeOpenAPISpec(

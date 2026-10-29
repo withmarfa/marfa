@@ -1,4 +1,5 @@
 import type { McpServer } from "@modelcontextprotocol/server";
+import type { components } from "@withmarfa/client";
 import { itemName } from "@withmarfa/shared";
 import * as z from "zod";
 import type { ApiRefusal } from "../api.js";
@@ -35,15 +36,7 @@ const outputSchema = z.object({
   trashed: z.array(z.string()).optional(),
 });
 
-/** What `GET /items/{id}/trash-preview` answers. */
-interface TrashPreview {
-  id: string;
-  type: string;
-  version: number;
-  items: { id: string; type: string; version: number }[];
-  count: number;
-  truncated?: boolean;
-}
+type TrashPreview = components["schemas"]["TrashPreview"];
 
 async function previewAll(
   ctx: ToolContext,
@@ -54,10 +47,10 @@ async function previewAll(
 > {
   const previews: TrashPreview[] = [];
   for (const id of ids) {
-    // `GET /items/{id}/trash-preview` is not in the generated client yet.
-    const answer = await ctx.api.raw<TrashPreview>(
-      "GET",
-      `/items/${encodeURIComponent(id)}/trash-preview`,
+    const answer = await ctx.api.answer(
+      ctx.api.client.GET("/items/{id}/trash-preview", {
+        params: { path: { id } },
+      }),
     );
     if (!answer.ok) return { ok: false, refusal: answer.refusal, id };
     previews.push(answer.data);

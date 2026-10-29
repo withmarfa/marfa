@@ -485,8 +485,12 @@ describe("marfa_delete", () => {
       }),
     );
     expect(done).toMatchObject({ trashed: [parent.id], total: 3 });
+    // A trashed item is not served by `GET /items/{id}`.
     for (const item of [parent, ...kids]) {
-      expect((await readItem(item.id)).state).toBe("trashed");
+      const read = await request(ctx.app, "GET", `/items/${item.id}`, {
+        key: ctx.workingKey,
+      });
+      expect(read.status).toBe(404);
     }
   });
 
