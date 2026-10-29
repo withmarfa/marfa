@@ -8,6 +8,7 @@ import {
 import { Icon } from "../pages/icons.js";
 import {
   DisclosureRow,
+  Radio,
   Row,
   RowGroup,
   RowNote,
@@ -22,6 +23,7 @@ import {
   type LevelRow,
   type SwitchRow,
 } from "./access-model.js";
+import { EverythingOffNote } from "./access-notes.js";
 
 const EDIT_NOTE = "Edit includes adding and deleting items.";
 
@@ -189,8 +191,47 @@ export function offersChoice(model: AccessModel): boolean {
   return model.data.length + model.profile.length + model.powers.length > 0;
 }
 
+/**
+ * The first choice on an approval screen: everything the app asked for, or
+ * the controls below to narrow it. The server reads `access` and, for `full`,
+ * grants the request itself and ignores the controls. With no script the
+ * stylesheet shows the controls once "Choose access" is selected.
+ */
+function AccessMode(props: { app: string; full: readonly string[] }) {
+  return (
+    <div class="group" role="radiogroup" aria-label="Access">
+      <Row
+        title="Full access"
+        for="access-full"
+        description={
+          <>
+            {props.full.map((line, index) => (
+              <>
+                {index > 0 && <br />}
+                {line}
+              </>
+            ))}
+          </>
+        }
+        control={<Radio id="access-full" name="access" value="full" checked />}
+      />
+      <Row
+        title="Choose access"
+        for="access-choose"
+        description={`Decide what ${props.app} can do.`}
+        control={<Radio id="access-choose" name="access" value="choose" />}
+      />
+    </div>
+  );
+}
+
 export interface AccessChoicesProps {
   model: AccessModel;
+  /**
+   * Set on an approval screen: the person first picks full access, which
+   * `full` describes line by line, or the controls, named for the app asking.
+   */
+  approving?: { app: string; full: readonly string[] };
 }
 
 /**
@@ -201,6 +242,9 @@ export interface AccessChoicesProps {
  * literal the request named, except the controls for types chosen in place of
  * all data, which are named `types`. The form posts the same way with or
  * without a script. What the app holds is never posted: the server adds it.
+ *
+ * On an approval screen (`approving`) the controls sit behind a choice of
+ * full access or choosing access, which posts as `access`.
  */
 export function AccessChoices(props: AccessChoicesProps) {
   const { model } = props;
@@ -239,65 +283,71 @@ export function AccessChoices(props: AccessChoicesProps) {
           </DisclosureRow>
         </RowGroup>
       )}
+      {offersChoice(model) && props.approving && (
+        <AccessMode {...props.approving} />
+      )}
       {offersChoice(model) && (
-        <RowGroup>
-          {model.data.length > 0 && (
-            <DisclosureRow
-              title="Your data"
-              badge={isNew}
-              description={model.summaries.data}
-              live
-              data={{
-                "access-group": "data",
-                "access-empty": model.summaries.empty.data,
-              }}
-            >
-              {model.data.map((row) => (
-                <>
-                  <LevelControl row={row} all={row.choose !== undefined} />
-                  {row.choose && <TypeList choose={row.choose} />}
-                </>
-              ))}
-              {model.offersEdit && <RowNote>{EDIT_NOTE}</RowNote>}
-            </DisclosureRow>
-          )}
-          {model.profile.length > 0 && (
-            <DisclosureRow
-              title="Your profile"
-              badge={isNew}
-              description={model.summaries.profile}
-              live
-              data={{
-                "access-group": "profile",
-                "access-empty": model.summaries.empty.profile,
-              }}
-            >
-              {model.profile.map((row) =>
-                row.kind === "level" ? (
-                  <LevelControl row={row} />
-                ) : (
-                  <SwitchControl row={row} />
-                ),
-              )}
-            </DisclosureRow>
-          )}
-          {model.powers.length > 0 && (
-            <DisclosureRow
-              title="More control over Marfa"
-              badge={isNew}
-              description={model.summaries.powers}
-              live
-              data={{
-                "access-group": "powers",
-                ...(model.counted ? { "access-counted": "" } : {}),
-              }}
-            >
-              {model.powers.map((row) => (
-                <SwitchControl row={row} badge={isNew} />
-              ))}
-            </DisclosureRow>
-          )}
-        </RowGroup>
+        <div class={props.approving ? "access-panel" : undefined}>
+          <RowGroup>
+            {model.data.length > 0 && (
+              <DisclosureRow
+                title="Your data"
+                badge={isNew}
+                description={model.summaries.data}
+                live
+                data={{
+                  "access-group": "data",
+                  "access-empty": model.summaries.empty.data,
+                }}
+              >
+                {model.data.map((row) => (
+                  <>
+                    <LevelControl row={row} all={row.choose !== undefined} />
+                    {row.choose && <TypeList choose={row.choose} />}
+                  </>
+                ))}
+                {model.offersEdit && <RowNote>{EDIT_NOTE}</RowNote>}
+              </DisclosureRow>
+            )}
+            {model.profile.length > 0 && (
+              <DisclosureRow
+                title="Your profile"
+                badge={isNew}
+                description={model.summaries.profile}
+                live
+                data={{
+                  "access-group": "profile",
+                  "access-empty": model.summaries.empty.profile,
+                }}
+              >
+                {model.profile.map((row) =>
+                  row.kind === "level" ? (
+                    <LevelControl row={row} />
+                  ) : (
+                    <SwitchControl row={row} />
+                  ),
+                )}
+              </DisclosureRow>
+            )}
+            {model.powers.length > 0 && (
+              <DisclosureRow
+                title="More control over Marfa"
+                badge={isNew}
+                description={model.summaries.powers}
+                live
+                data={{
+                  "access-group": "powers",
+                  ...(model.counted ? { "access-counted": "" } : {}),
+                }}
+              >
+                {model.powers.map((row) => (
+                  <SwitchControl row={row} badge={isNew} />
+                ))}
+              </DisclosureRow>
+            )}
+          </RowGroup>
+          {props.approving && <EverythingOffNote />}
+        </div>
       )}
     </>
   );

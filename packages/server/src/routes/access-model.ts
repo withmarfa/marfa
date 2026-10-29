@@ -206,14 +206,15 @@ export interface AccessInput {
   chooseTypes?: readonly ChoosableType[];
   bundles: readonly PermissionBundle[];
   /**
-   * Where every control starts, for a page that is not answering an app's
-   * request. `off` is a key being made: nothing is on until the person turns
-   * it on. `held` is a key being narrowed: every control starts at the most
-   * it offers, which is what the key holds now. Without it, a control starts
-   * on unless it is a power, and `powers` then read "N of M turned on" only
+   * Where every control starts. `off` is a key being made: nothing is on
+   * until the person turns it on. `held` is a key being narrowed, and
+   * `requested` is an approval screen the person narrows by choosing access:
+   * both start every control at the most it offers, which is what the key
+   * holds now or what the app asked for. Without it, a control starts on
+   * unless it is a power, and `powers` then read "N of M turned on" only
    * once one is on.
    */
-  start?: "off" | "held";
+  start?: "off" | "held" | "requested";
   /** Saved app scopes whose overlapping access must stay explicit while narrowing. */
   narrowing?: readonly string[];
 }
@@ -352,7 +353,7 @@ export function buildAccess(given: AccessInput): AccessModel {
   const startsOn = (literal: string): boolean =>
     input.start === "off"
       ? false
-      : input.start === "held"
+      : input.start === "held" || input.start === "requested"
         ? true
         : !requiresExplicitConsent(literal) &&
           !withheld.some((w) => grantCoversScope([literal], w));
@@ -633,6 +634,22 @@ export function buildAccess(given: AccessInput): AccessModel {
   };
 }
 
+/**
+ * What full access to a request gives, one line for each group the request
+ * names: the lines the controls would read with everything on. The controls
+ * themselves start at their own defaults, so this builds the model again.
+ */
+export function describeFullAccess(given: AccessInput): string[] {
+  const model = buildAccess({ ...given, start: "requested" });
+  return [
+    model.data.length > 0 ? model.summaries.data : "",
+    model.profile.length > 0 ? model.summaries.profile : "",
+    model.powers.length > 0
+      ? `Control over Marfa: ${model.powers.map((row) => lowerFirst(row.title)).join("; ")}`
+      : "",
+  ].filter((line) => line !== "");
+}
+
 /** A power a credential holds, by its title. */
 export interface HeldPower {
   title: string;
@@ -875,6 +892,19 @@ export function describeHeld(
 export type Selection =
   { ok: true; scopes: string[]; chosen: boolean } | { ok: false };
 
+/**
+ * How a person answered an approval screen: `full` grants everything the
+ * request names, and `choose` grants what the controls posted. The form posts
+ * it as `access`; anything but `full`, including a missing field, means
+ * `choose`, which can only narrow.
+ */
+export type AccessMode = "full" | "choose";
+
+/** Read the `access` field of a submission. */
+export function accessModeOf(value: unknown): AccessMode {
+  return value === "full" ? "full" : "choose";
+}
+
 /** The type controls of a submission: what they posted, and what the page offered. */
 export interface TypeChoices {
   /** Every value the type controls posted, a scope literal or empty. */
@@ -898,6 +928,11 @@ const isAllDataScope = (literal: string): boolean => {
  * granted. A write that the request also named the read of brings that
  * read, so "Read and edit" is the same grant a person had before a level was
  * one control.
+ *
+ * With {@link AccessMode} `full` the controls are not read at all: the
+ * submission is the request itself, so full access is exactly what the
+ * request names and never more, and the server decides it rather than the
+ * form. A missing or unknown mode reads the controls, which can only narrow.
  *
  * Where the request names all data, the person may choose types instead: the
  * all-data control then posts {@link CHOOSE_TYPES} and the type controls
@@ -924,10 +959,13 @@ const isAllDataScope = (literal: string): boolean => {
  */
 export function resolveSelection(
   requested: readonly string[],
-  submitted: readonly string[],
+  controls: readonly string[],
   held: readonly string[],
-  types?: TypeChoices,
+  typeControls?: TypeChoices,
+  mode: AccessMode = "choose",
 ): Selection {
+  const submitted = mode === "full" ? requested : controls;
+  const types = mode === "full" ? undefined : typeControls;
   const named = new Set(requested);
   const choosing = submitted.includes(CHOOSE_TYPES);
   const picked = [

@@ -265,7 +265,9 @@ async function openRow(page: Page, title: string): Promise<void> {
     await row.locator("summary").click();
 }
 
+/** Picks Choose access, which shows the controls, and opens the data row. */
 const openChoices = async (page: Page): Promise<void> => {
+  await page.locator('label[for="access-choose"]').click();
   await openRow(page, "Your data");
 };
 
@@ -339,7 +341,9 @@ describe("Approve access in a browser", () => {
         }));
         expect(widths.page).toBeLessThanOrEqual(widths.viewport);
         expect(await illegible(b.page)).toEqual([]);
-        // With every row open the page is at its widest and tallest.
+        // With the controls shown and every row open the page is at its
+        // widest and tallest.
+        await b.page.locator('label[for="access-choose"]').click();
         for (const title of [
           "Your data",
           "Your profile",
@@ -368,6 +372,18 @@ describe("Approve access in a browser", () => {
     try {
       const { app, proof } = await openConsent(b, "Keyboard App");
       const summary = b.page.locator("summary", { hasText: "Your data" });
+      // The choice of access comes first: Tab reaches it, and an arrow key
+      // moves it to Choose access, which shows the rows below.
+      const full = b.page.locator("#access-full");
+      for (let i = 0; i < 12; i++) {
+        await b.page.keyboard.press("Tab");
+        if (await full.evaluate((el) => el === document.activeElement)) break;
+      }
+      expect(await full.evaluate((el) => el === document.activeElement)).toBe(
+        true,
+      );
+      await b.page.keyboard.press("ArrowDown");
+      expect(await b.page.locator("#access-choose").isChecked()).toBe(true);
       await summary.waitFor();
       // Tab to the row: nothing before it needs a mouse.
       for (let i = 0; i < 12; i++) {
@@ -419,6 +435,56 @@ describe("Approve access in a browser", () => {
       await b.context.close();
     }
   });
+
+  inBrowser(
+    "starts on full access with the controls out of sight, and approving grants the whole request",
+    async () => {
+      const b = await openSignedIn();
+      try {
+        const { app, proof } = await openConsent(
+          b,
+          "Full App",
+          `${REQUEST} keys.mint`,
+        );
+        expect(await b.page.locator("#access-full").isChecked()).toBe(true);
+        expect(await b.page.locator("#access-choose").isChecked()).toBe(false);
+        expect(await b.page.locator(".access-panel").isVisible()).toBe(false);
+        await b.page.getByText("Control over Marfa:").waitFor();
+        expect(await illegible(b.page)).toEqual([]);
+
+        // Choosing access shows the controls, with a permission off.
+        await b.page.locator('label[for="access-choose"]').click();
+        await b.page.locator(".access-panel").waitFor();
+        await openRow(b.page, "More control over Marfa");
+        expect(
+          await b.page
+            .getByRole("switch", { name: /Make, see, edit and revoke keys/ })
+            .isChecked(),
+        ).toBe(false);
+        expect(await illegible(b.page)).toEqual([]);
+
+        // Going back to full access ignores what the controls say.
+        await openRow(b.page, "Your data");
+        await b.page
+          .getByRole("combobox", { name: "Note" })
+          .selectOption({ label: "Read only" });
+        await b.page.locator('label[for="access-full"]').click();
+        const sent = await arrival(b, () =>
+          b.page.getByRole("button", { name: "Approve" }).click(),
+        );
+        expect(await scopesOf(app, sent, proof)).toEqual([
+          "core.note:read",
+          "core.note:write",
+          "core.task:read",
+          "keys.mint",
+          "offline_access",
+          "openid",
+        ]);
+      } finally {
+        await b.context.close();
+      }
+    },
+  );
 
   inBrowser(
     "approves what the page offered, chosen by mouse, and denies on Cancel",
@@ -1086,6 +1152,9 @@ describe("Approve access in a browser, choosing types in place of all data", () 
       const b = await openSignedIn({ js: false });
       try {
         const { app, proof } = await openConsent(b, "No Script Types App", ALL);
+        // With no script the stylesheet shows the rows once Choose access is
+        // selected; approving then still posts all data.
+        await b.page.locator('label[for="access-choose"]').click();
         await b.page
           .locator("details.disclosure-row")
           .first()

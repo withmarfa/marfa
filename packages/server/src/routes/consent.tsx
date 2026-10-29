@@ -23,12 +23,9 @@ import {
 import type { ConfirmGate } from "../pages/parts/index.js";
 import { renderDocument } from "../pages/render.js";
 import { AccessChoices, offersChoice } from "./access-choices.js";
-import {
-  ApprovalFoot,
-  EverythingOffNote,
-  WebOriginNote,
-} from "./access-notes.js";
-import { buildAccess } from "./access-model.js";
+import { ApprovalFoot, WebOriginNote } from "./access-notes.js";
+import { buildAccess, describeFullAccess } from "./access-model.js";
+import type { AccessInput } from "./access-model.js";
 import type { ChoosableType } from "./access-types.js";
 
 export interface ConsentParams {
@@ -61,7 +58,7 @@ export interface ConsentParams {
 
 /** Renders the Approve access screen as an HTML document. */
 export function renderConsentScreen(params: ConsentParams): string {
-  const model = buildAccess({
+  const input: AccessInput = {
     scopes: params.scopes,
     held: params.priorScopes,
     descriptions: params.descriptions,
@@ -69,7 +66,8 @@ export function renderConsentScreen(params: ConsentParams): string {
     typeLabels: params.typeLabels,
     chooseTypes: params.chooseTypes,
     bundles: params.bundles ?? getPermissionBundles(),
-  });
+  };
+  const model = buildAccess(input);
   const instance = params.instanceName ?? DEFAULT_INSTANCE_NAME;
   const asksForMore = offersChoice(model);
   const title = !model.returning
@@ -111,9 +109,14 @@ export function renderConsentScreen(params: ConsentParams): string {
         >
           <input type="hidden" name="client_id" value={params.clientId} />
           <input type="hidden" name="oauth_query" value={params.oauthQuery} />
-          <AccessChoices model={model} />
+          <AccessChoices
+            model={model}
+            approving={{
+              app: params.clientName,
+              full: describeFullAccess(input),
+            }}
+          />
           <WebOriginNote origins={params.webOrigins ?? []} />
-          {offersChoice(model) && <EverythingOffNote />}
           <ButtonPair>
             <Button type="submit" kind="outline" name="accept" value="false">
               Cancel

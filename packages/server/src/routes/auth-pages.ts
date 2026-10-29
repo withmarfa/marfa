@@ -68,7 +68,7 @@ import {
   renderDeviceConsentScreen,
   renderDeviceDecisionPage,
 } from "./device-approval.js";
-import { resolveSelection } from "./access-model.js";
+import { accessModeOf, resolveSelection } from "./access-model.js";
 import { chooseTypesFor } from "./access-types.js";
 import { setNoStore } from "./no-store.js";
 import { confirmGateFor } from "./confirm-gate.js";
@@ -1007,6 +1007,7 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth) {
     const typeValues = formData
       .getAll("types")
       .filter((v): v is string => typeof v === "string");
+    const mode = accessModeOf(formData.get("access"));
 
     // Approve: upsert the system.connection projection, narrow the code to
     // the chosen set, and approve it through the plugin.
@@ -1065,6 +1066,7 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth) {
                   await chooseTypesFor(storage, clientId, requestedScopes)
                 ).map((type) => type.id),
               },
+              mode,
             );
             if (!selection.ok) return { kind: "refused" } as const;
             if (!selection.chosen) return { kind: "nothing" } as const;

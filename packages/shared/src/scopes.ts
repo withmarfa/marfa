@@ -248,6 +248,10 @@ export function isPermission(scope: string): scope is Permission {
  * decide what they handed over; stating the rule once, here, keeps them to
  * one, including for the next scope family that needs it.
  *
+ * **It governs the controls a person opens with Choose access.** Full
+ * access is a deliberate yes to the whole request, so it grants these
+ * scopes without a switch.
+ *
  * **Distinct from `default_on`, which is a bundle's opinion about its own
  * contents.** This is the platform's opinion about a scope, so it holds
  * whether or not any bundle names the literal — which is the case the

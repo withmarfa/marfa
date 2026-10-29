@@ -106,7 +106,7 @@ import type { MarfaAuth } from "../auth/instance.js";
 import { getPermissionBundles } from "../config.js";
 import { readInstanceName } from "../instance-name.js";
 import { renderConsentScreen } from "./consent.js";
-import { resolveSelection, typeLabel } from "./access-model.js";
+import { accessModeOf, resolveSelection, typeLabel } from "./access-model.js";
 import { chooseTypesFor } from "./access-types.js";
 import {
   canonicalizeOAuthQueryParams,
@@ -664,6 +664,7 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
     const typeValues = form
       .getAll("types")
       .filter((v): v is string => typeof v === "string");
+    const mode = accessModeOf(form.get("access"));
 
     // The proxy and the record it produces are one operation on the same
     // (client, user) grant the silent path also writes, so they share its
@@ -694,10 +695,13 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
             await chooseTypesFor(deps.storage, clientId, [...signedScopes])
           ).map((type) => type.id);
           const selection = accept
-            ? resolveSelection([...signedScopes], submitted, prior, {
-                values: typeValues,
-                offered,
-              })
+            ? resolveSelection(
+                [...signedScopes],
+                submitted,
+                prior,
+                { values: typeValues, offered },
+                mode,
+              )
             : null;
           if (selection && !selection.ok)
             return c.text(

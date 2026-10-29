@@ -179,6 +179,28 @@ export function Switch(props: SwitchProps) {
   );
 }
 
+export interface RadioProps {
+  id: string;
+  /** The field the choice posts under. */
+  name: string;
+  value: string;
+  checked?: boolean;
+}
+
+/** One choice of several that share a name; a row's title labels it. */
+export function Radio(props: RadioProps) {
+  return (
+    <input
+      class="radio"
+      type="radio"
+      id={props.id}
+      name={props.name}
+      value={props.value}
+      checked={props.checked}
+    />
+  );
+}
+
 /**
  * Two buttons of equal width side by side, the main one last: how a moment
  * ends where the person decides between two things.

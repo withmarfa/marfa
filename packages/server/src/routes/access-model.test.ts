@@ -1,7 +1,9 @@
 import { describe, it, expect } from "vitest";
 import {
+  accessModeOf,
   buildAccess,
   CHOOSE_TYPES,
+  describeFullAccess,
   describeHeld,
   resolveSelection,
 } from "./access-model.js";
@@ -277,6 +279,106 @@ describe("resolveSelection", () => {
         ).toMatchObject({ ok: true, chosen: controls === 0 });
       }
     });
+  });
+});
+
+describe("resolveSelection with full access", () => {
+  const REQUESTED = [
+    "openid",
+    "offline_access",
+    "core.note:read",
+    "core.note:write",
+    "core.task:read",
+    "keys.mint",
+  ];
+
+  it("grants exactly the request, whatever the controls posted", () => {
+    const expected = { ok: true, scopes: REQUESTED, chosen: true };
+    expect(resolveSelection(REQUESTED, [], [], undefined, "full")).toEqual(
+      expected,
+    );
+    expect(
+      resolveSelection(REQUESTED, ["core.task:read"], [], undefined, "full"),
+    ).toEqual(expected);
+  });
+
+  it("witness: the same empty submission grants nothing when the controls decide", () => {
+    expect(resolveSelection(REQUESTED, [], [], undefined, "choose")).toEqual({
+      ok: true,
+      scopes: [],
+      chosen: false,
+    });
+  });
+
+  it("never grants more than the request, even when the form names more", () => {
+    const result = resolveSelection(
+      REQUESTED,
+      ["core.task:write", "webhooks.manage", "*:write"],
+      [],
+      undefined,
+      "full",
+    );
+    expect(result.ok && result.scopes).toEqual(REQUESTED);
+    expect(
+      resolveSelection(REQUESTED, ["core.task:write"], [], undefined, "choose"),
+    ).toEqual({ ok: false });
+  });
+
+  it("grants an all-data request as all data, not as types", () => {
+    const result = resolveSelection(
+      ["*:write"],
+      [CHOOSE_TYPES],
+      [],
+      { values: ["core.note:read"], offered: ["core.note"] },
+      "full",
+    );
+    expect(result).toEqual({ ok: true, scopes: ["*:write"], chosen: true });
+  });
+
+  it("is a yes for an app confirming what it holds", () => {
+    expect(
+      resolveSelection(
+        ["core.note:read"],
+        [],
+        ["core.note:read"],
+        undefined,
+        "full",
+      ),
+    ).toMatchObject({ ok: true, scopes: ["core.note:read"], chosen: true });
+  });
+
+  it("reads only the literal full as full access", () => {
+    expect(accessModeOf("full")).toBe("full");
+    for (const other of ["choose", "", "FULL", null, undefined])
+      expect(accessModeOf(other)).toBe("choose");
+  });
+});
+
+describe("describeFullAccess", () => {
+  const bundles: PermissionBundle[] = [];
+
+  it("reads every group of the request as turned on, though the controls start off", () => {
+    const input = {
+      scopes: ["core.note:write", "core.note:read", "keys.mint"].map(scope),
+      held: undefined,
+      bundles,
+    };
+    const lines = describeFullAccess(input);
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).toMatch(/^Read and edit /);
+    expect(lines[1]).toMatch(/^Control over Marfa: /);
+    // The controls the person narrows start as they always have: a power off.
+    expect(buildAccess(input).powers[0]?.checked).toBe(false);
+  });
+
+  it("names nothing for a request that asks for no data, profile or power", () => {
+    expect(
+      describeFullAccess({
+        scopes: [scope("openid")],
+        held: undefined,
+        bundles,
+      }),
+    ).toEqual([]);
   });
 });
 

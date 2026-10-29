@@ -115,6 +115,7 @@ inBrowser("owner and delegated profile flows", () => {
         code_challenge_method: "S256",
       });
       await page.goto(origin + "/auth/oauth2/authorize?" + query.toString());
+      await page.locator('label[for="access-choose"]').click();
       await page.locator("details").evaluateAll((nodes) => {
         for (const node of nodes) node.setAttribute("open", "");
       });
@@ -138,6 +139,7 @@ inBrowser("owner and delegated profile flows", () => {
           "/auth/device/consent?user_code=" +
           encodeURIComponent(device.user_code),
       );
+      await page.locator('label[for="access-choose"]').click();
       await page.locator("details").evaluateAll((nodes) => {
         for (const node of nodes) node.setAttribute("open", "");
       });

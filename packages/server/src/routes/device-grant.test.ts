@@ -141,9 +141,15 @@ async function decide(
   cookie: string,
   decision: "approve" | "deny",
   scopes: string[],
+  access?: string,
 ): Promise<Response> {
   return request(c.app, "POST", "/auth/device/consent", {
-    form: { user_code: userCode, decision, scopes },
+    form: {
+      user_code: userCode,
+      decision,
+      scopes,
+      ...(access === undefined ? {} : { access }),
+    },
     headers: { origin: ORIGIN, cookie },
   });
 }
@@ -583,6 +589,60 @@ describe("the device authorization grant through the provider plugin", () => {
     const projected = await grants(c);
     expect(projected).toHaveLength(1);
     expect(projected[0]!.properties.scopes).toEqual(["core.note:read"]);
+  });
+
+  it("full access grants everything the device asked for, whatever the controls posted", async () => {
+    ctx = await createTestContext({});
+    const c = ctx;
+    const clientId = await registerClient(c, [DEVICE_CODE_GRANT_TYPE]);
+    const init = await initiate(c, clientId, "core.note:read core.note:write");
+    const cookie = await signInUser(c);
+    const screen = await openConsent(c, init.user_code, cookie);
+    expect(screen.status).toBe(200);
+    expect(visibleText(await screen.text())).toContain("Full access");
+
+    const approved = await decide(
+      c,
+      init.user_code,
+      cookie,
+      "approve",
+      ["core.note:read"],
+      "full",
+    );
+    expect(approved.status).toBe(200);
+
+    const minted = await poll(c, init.device_code, clientId);
+    expect(minted.status).toBe(200);
+    expect(new Set(minted.body.scope?.split(" "))).toEqual(
+      new Set(["core.note:read", "core.note:write"]),
+    );
+    const projected = await grants(c);
+    expect(projected).toHaveLength(1);
+    expect(new Set(projected[0]!.properties.scopes as string[])).toEqual(
+      new Set(["core.note:read", "core.note:write"]),
+    );
+  });
+
+  it("full access never grants a scope the device did not ask for", async () => {
+    ctx = await createTestContext({});
+    const c = ctx;
+    const clientId = await registerClient(c, [DEVICE_CODE_GRANT_TYPE]);
+    const init = await initiate(c, clientId, "core.note:read");
+    const cookie = await signInUser(c);
+    expect((await openConsent(c, init.user_code, cookie)).status).toBe(200);
+
+    const approved = await decide(
+      c,
+      init.user_code,
+      cookie,
+      "approve",
+      ["core.note:read", "core.file:read"],
+      "full",
+    );
+    expect(approved.status).toBe(200);
+    const minted = await poll(c, init.device_code, clientId);
+    expect(minted.body.scope).toBe("core.note:read");
+    expect((await grants(c))[0]!.properties.scopes).toEqual(["core.note:read"]);
   });
 
   it("refuses an approval that names a scope the device never asked for, and leaves the code pending", async () => {

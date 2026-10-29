@@ -435,10 +435,12 @@ function gate(view: View, form: HTMLFormElement): void {
       )
         return;
       if (Date.now() - rendered < left - EARLY) return;
-      // Types chosen in place of all data post under their own name.
+      // Types chosen in place of all data post under their own name. Full
+      // access grants the whole request, whatever the controls say.
       const posted = new FormData(form);
       const chosen = [...posted.getAll("scopes"), ...posted.getAll("types")];
       if (
+        posted.get("access") !== "full" &&
         !chosen.some((scope) => typeof scope === "string" && needing.has(scope))
       )
         return;

@@ -12,6 +12,7 @@ import { pageAssetUrl } from "../pages/assets.js";
 import {
   decodeEntities,
   defaultSubmission,
+  offeredValues,
   readControls,
   visibleText,
 } from "../test-html.js";
@@ -753,5 +754,24 @@ describe("renderConsentScreen: what starts on", () => {
   it("starts a scope on that no bundle claims", () => {
     const html = render(["core.bookmark:read"], { bundles: [OFF] });
     expect(defaultSubmission(html, "scopes")).toEqual(["core.bookmark:read"]);
+  });
+});
+
+describe("renderConsentScreen: full access", () => {
+  it("posts full access unless the person chooses access, and says what it gives", () => {
+    const html = render(["core.note:write", "core.note:read", "keys.mint"]);
+    expect(defaultSubmission(html, "access")).toEqual(["full"]);
+    expect(offeredValues(html, "access")).toEqual(["full", "choose"]);
+    const text = visibleText(html);
+    expect(text).toContain("Full access");
+    expect(text).toContain("Choose access");
+    expect(text).toContain("Control over Marfa");
+    // The controls to narrow are still on the page, as they always were.
+    expect(switches(html).map((c) => c.value)).toEqual(["keys.mint"]);
+  });
+
+  it("offers no choice of access to a request with nothing to choose", () => {
+    const html = render(["openid"]);
+    expect(offeredValues(html, "access")).toEqual([]);
   });
 });
