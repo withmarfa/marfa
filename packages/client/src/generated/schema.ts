@@ -4217,7 +4217,7 @@ export interface components {
             /** @description How many active items of the type you can read. */
             count: number;
         };
-        /** @description An edge type you can use, and what you can do with it. */
+        /** @description An edge type your edge permissions cover, and at which level. */
         OverviewEdgeType: {
             /**
              * @description The edge type's identifier.

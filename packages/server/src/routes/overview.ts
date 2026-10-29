@@ -91,10 +91,10 @@ const EdgeTypeEntrySchema = z
         `What the edge type means, cut at ${String(OVERVIEW_TEXT_CAP)} characters. Absent when it has none.`,
       ),
     access: PermissionLevelEnum.describe(
-      "Whether you can `read` edges of the type or `write` them.",
+      "`write` where your edge permissions cover writing edges of the type, otherwise `read`. Creating an edge also needs write access to the type of its source item.",
     ),
   })
-  .describe("An edge type you can use, and what you can do with it.")
+  .describe("An edge type your edge permissions cover, and at which level.")
   .openapi("OverviewEdgeType");
 
 const NamedEntrySchema = (name: string, noun: string) =>

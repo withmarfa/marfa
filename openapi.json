@@ -5324,7 +5324,7 @@
                 "$ref": "#/components/schemas/PermissionLevel"
               },
               {
-                "description": "Whether you can `read` edges of the type or `write` them."
+                "description": "`write` where your edge permissions cover writing edges of the type, otherwise `read`. Creating an edge also needs write access to the type of its source item."
               }
             ]
           }
@@ -5333,7 +5333,7 @@
           "id",
           "access"
         ],
-        "description": "An edge type you can use, and what you can do with it."
+        "description": "An edge type your edge permissions cover, and at which level."
       },
       "OverviewView": {
         "type": "object",
