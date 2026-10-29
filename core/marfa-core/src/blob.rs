@@ -971,7 +971,8 @@ impl Cache {
         fetched
     }
 
-    /// A rename, so a second reader sees the whole file or none of it.
+    /// A rename, so a second reader sees the whole file or none of it, and on
+    /// Unix a sync of the folder, so the name outlasts a power loss.
     fn settle(&self, incoming: &Path, hash: &str) -> Result<PathBuf> {
         let path = self.dir.join(hex_of(hash)?);
         #[cfg(unix)]
@@ -992,26 +993,22 @@ impl Cache {
             self.unwritable(error)
         })?;
         // An upload is queued once its bytes have their name, and a rename
-        // that a power loss undoes leaves them in a file the startup sweep
-        // takes by its age.
+        // that a power loss undoes leaves them in an `.incoming-` file the
+        // startup sweep takes by its age.
         #[cfg(unix)]
         {
-            let opened;
-            let folder = match self
-                .capability(false)
-                .map_err(|error| self.unwritable(error))?
-            {
-                Some(directory) => directory.file(),
-                None => {
-                    opened = File::open(&self.dir).map_err(|error| self.unwritable(error))?;
-                    &opened
-                }
-            };
             #[cfg(debug_assertions)]
             if crate::fault::fails(|| "blob-folder-sync") {
                 return Err(self.unwritable(io::Error::other("the folder sync failed")));
             }
-            folder.sync_all().map_err(|error| self.unwritable(error))?;
+            match self
+                .capability(false)
+                .map_err(|error| self.unwritable(error))?
+            {
+                Some(directory) => directory.sync(),
+                None => File::open(&self.dir).and_then(|folder| folder.sync_all()),
+            }
+            .map_err(|error| self.unwritable(error))?;
         }
         Ok(path)
     }
