@@ -250,6 +250,7 @@ const NOT_AN_IDEMPOTENT_DOOR: Record<string, string> = {
   "POST /items/bulk":
     "resolves an existing row by id or natural key and updates it, so a retry converges rather than colliding",
   "POST /items/bulk-get": "read-only batch fetch",
+  "POST /items/trash-preview": "read-only preview of a trash",
   "POST /items/lookup": "read-only lookup by link, natural key or id",
   "POST /items/tombstones":
     "moves a time only ever later, so a repeat is already a no-op",

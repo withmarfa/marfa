@@ -1,4 +1,5 @@
 import { auditActor } from "../../auth/audit-actor.js";
+import { inProcessCaller } from "../../middleware/in-process-caller.js";
 import { archivedWriter } from "../../auth/version-writer.js";
 import {
   eq,
@@ -124,6 +125,10 @@ export class SqliteAuditStore implements AuditStore {
     entry: AuditLogEntry,
     id = generateId(),
   ): typeof auditLog.$inferInsert {
+    // A row the server writes for itself, from work a request set off, is
+    // not the caller's.
+    const via =
+      entry.actor?.kind === "server" ? undefined : inProcessCaller()?.via;
     return {
       id,
       created_at: clock.now().toISOString(),
@@ -134,6 +139,7 @@ export class SqliteAuditStore implements AuditStore {
       client_ip: entry.client_ip ?? null,
       details: JSON.stringify({
         ...entry.details,
+        ...(via !== undefined && { via }),
         _actor: entry.actor ?? null,
       }),
     };

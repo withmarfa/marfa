@@ -96,6 +96,8 @@ const UNPUBLISHED_WRITES: Record<string, string> = {
     "JSON is closed: refused here by the handler (tested below); a form submission is read by field name and is not a JSON body",
   "POST /inbound/{token}":
     "a sender's delivery, whatever bytes it sent, recorded as it arrived",
+  "POST /mcp":
+    "a JSON-RPC message of the MCP transport, whose envelope the MCP SDK reads; each tool's arguments are a closed object that refuses a key it does not take (mcp/tools.test.ts)",
   "POST /auth/sign-in": "a form post, not a JSON body",
   "POST /auth/confirm":
     "JSON is closed: refused here by the handler, which takes exactly one of two keys (tested in routes/auth-confirm.test.ts)",

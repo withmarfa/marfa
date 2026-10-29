@@ -204,6 +204,39 @@ describe("type registry", () => {
     }
   });
 
+  it("names the namespace wildcard an app can be granted when a key may not register a new identifier", async () => {
+    const id = testTypeId("needs-namespace");
+    const fields = { name: { type: "string" as const } };
+    const keyResp = await client.createKey({
+      label: "type-reg-namespace",
+      source: `${ctx.source}-type-reg-namespace`,
+      type_permissions: { "core.note": "write" },
+      metadata_permissions: { types: "write" },
+    });
+    expect(keyResp.ok).toBe(true);
+    trackKey(ctx, keyResp.data.id);
+    const scopedClient = new MarfaClient({
+      baseUrl: apiUrl,
+      apiKey: keyResp.data.key,
+    });
+
+    const refused = await scopedClient.registerType({ id, fields });
+    expect(refused.status).toBe(403);
+    expect(refused.error?.error.code).toBe("type_not_permitted");
+    expect(refused.error?.error.details).toMatchObject({
+      required_scope: "user.*:write",
+      grant: { kind: "type", name: id, level: "write" },
+    });
+
+    // Once the identifier is registered it has a scope of its own, which the
+    // grant names.
+    expect((await client.registerType({ id, fields })).status).toBe(201);
+    trackType(ctx, id, client);
+    const held = await scopedClient.registerType({ id, fields });
+    expect(held.status).toBe(403);
+    expect(held.error?.error.details?.required_scope).toBeUndefined();
+  });
+
   it("replaces and deletes only the types the key's own type map grants write on", async () => {
     const own = testTypeId("own-change");
     const other = testTypeId("other-change");

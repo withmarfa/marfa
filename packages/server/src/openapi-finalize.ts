@@ -116,6 +116,8 @@ export const PUBLIC_TAGS: readonly PublicTag[] = [
       "listItems",
       "updateItem",
       "deleteItem",
+      "previewItemTrash",
+      "trashItems",
       "restoreItem",
       "purgeItem",
       "transitionItem",

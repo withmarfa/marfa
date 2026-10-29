@@ -335,6 +335,40 @@ export class MarfaClient {
     });
   }
 
+  async previewItemTrash(ids: string[]): Promise<
+    ApiResponse<{
+      items: {
+        id: string;
+        type: string;
+        version: number;
+        takes: { id: string; type: string; version: number }[];
+        count: number;
+        truncated?: true;
+      }[];
+      count: number;
+      digest: string;
+    }>
+  > {
+    return this.request("/items/trash-preview", {
+      method: "POST",
+      body: { ids },
+    });
+  }
+
+  async trashItems(
+    ids: string[],
+    digest?: string,
+    options?: { idempotencyKey?: string },
+  ): Promise<ApiResponse<{ ok: boolean }>> {
+    return this.request<{ ok: boolean }>("/items/trash", {
+      method: "POST",
+      body: { ids, ...(digest !== undefined && { digest }) },
+      ...(options?.idempotencyKey && {
+        headers: { "Idempotency-Key": options.idempotencyKey },
+      }),
+    });
+  }
+
   /**
    * Hard delete. `deleteItem` is a soft delete, so a suite that only calls it
    * leaves its fixtures in the database.
@@ -432,9 +466,14 @@ export class MarfaClient {
   async removeTag(
     id: string,
     tag: string,
+    options?: { version?: number },
   ): Promise<ApiResponse<{ metadata: MarfaMetadata }>> {
+    const query =
+      options?.version === undefined
+        ? ""
+        : `?version=${String(options.version)}`;
     return this.request<{ metadata: MarfaMetadata }>(
-      `/items/${id}/tags/${encodeURIComponent(tag)}`,
+      `/items/${id}/tags/${encodeURIComponent(tag)}${query}`,
       { method: "DELETE" },
     );
   }
@@ -1221,11 +1260,16 @@ export class MarfaClient {
   async addTags(
     id: string,
     tags: string[],
+    options?: { version?: number },
   ): Promise<ApiResponse<{ metadata: MarfaMetadata }>> {
-    return this.request<{ metadata: MarfaMetadata }>(`/items/${id}/tags`, {
-      method: "POST",
-      body: { tags },
-    });
+    const query =
+      options?.version === undefined
+        ? ""
+        : `?version=${String(options.version)}`;
+    return this.request<{ metadata: MarfaMetadata }>(
+      `/items/${id}/tags${query}`,
+      { method: "POST", body: { tags } },
+    );
   }
 
   async getMetadata(

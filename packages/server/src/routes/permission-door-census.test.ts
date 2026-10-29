@@ -93,6 +93,8 @@ const DATA_PLANE = [
   "POST /items/bulk-get",
   "POST /items/lookup",
   "POST /items/tombstones",
+  "POST /items/trash",
+  "POST /items/trash-preview",
   "PUT /items/:id/extensions/:namespace",
   "PUT /items/:id/metadata",
 ];
@@ -288,6 +290,16 @@ const NO_CREDENTIAL: Record<string, readonly string[]> = {
     "GET /blobs/:hash/fetch",
     "POST /inbound/:token",
   ],
+};
+
+/**
+ * Doors that admit every credential the API accepts and offer it only what
+ * its own grants reach, by why. A tool call there is a call to the API with
+ * the same credential, so the API's doors ask what they ask.
+ */
+const OFFERS_WHAT_IT_HOLDS: Record<string, readonly string[]> = {
+  "the MCP endpoint, which lists only the tools the credential's type map can use":
+    ["POST /mcp", "GET /mcp", "DELETE /mcp"],
 };
 
 /**
@@ -615,10 +627,22 @@ describe("every door asks what it asks of every caller before anything else", ()
       ...Object.keys(STANDING),
       ...Object.keys(OPEN_BY_ROW),
       ...Object.values(NO_CREDENTIAL).flat(),
+      ...Object.values(OFFERS_WHAT_IT_HOLDS).flat(),
     ];
     expect(new Set(named).size).toBe(named.length);
     expect(servedDoors().length).toBeGreaterThan(100);
     expect(servedDoors()).toEqual([...named].sort());
+  });
+
+  it("admits a credential holding nothing at a door that offers what it holds", async () => {
+    const wrong: string[] = [];
+    for (const door of Object.values(OFFERS_WHAT_IT_HOLDS).flat()) {
+      const got = await answer(await malformed(door, holdsNothing));
+      if (got.startsWith("401") || got.startsWith("403")) {
+        wrong.push(`${door} answered ${got}`);
+      }
+    }
+    expect(wrong).toEqual([]);
   });
 
   it("reads each standing rule off the route table", () => {

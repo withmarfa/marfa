@@ -342,6 +342,14 @@ export interface AppConfig {
    *  network. Optional on the type so test contexts constructing
    *  `AppConfig` literals keep the default, off. */
   webhookAllowPrivateAddresses?: boolean;
+  /** Whether MCP tools fetch files from web addresses. Optional on the
+   *  type so a test context's `AppConfig` literal takes the default, on. */
+  mcpFetchEnabled?: boolean;
+  /** The largest file an MCP tool fetches from a web address. Optional on
+   *  the type so a test context's `AppConfig` literal takes the default. */
+  mcpFetchMaxBytes?: number;
+  /** How long an MCP tool's fetch from a web address may take. */
+  mcpFetchTimeoutMs?: number;
   /** The environment exported telemetry and an error notification name:
    *  `deployment.environment.name` or `deployment.environment` of
    *  `OTEL_RESOURCE_ATTRIBUTES`, else `production`. Optional on the type so
@@ -1839,6 +1847,29 @@ const settingsShape = {
       "Whether outbound webhooks may reach loopback, private and other non-public addresses.",
     ),
   ),
+  MARFA_MCP_FETCH_ENABLED: grouped(
+    { group: "Connectors and webhooks", label: "Let agents fetch files" },
+    on(
+      true,
+      "Whether MCP tools fetch a file from a web address, or a file a chat attached, to save it. When off, a tool asked to fetch one is refused.",
+    ),
+  ),
+  MARFA_MCP_FETCH_MAX_BYTES: grouped(
+    { group: "Limits", label: "Largest file an agent fetches" },
+    count(
+      50 * 1024 * 1024,
+      "The largest file an MCP tool fetches from a web address to save. A larger file is refused and nothing is stored.",
+      { unit: "bytes" },
+    ),
+  ),
+  MARFA_MCP_FETCH_TIMEOUT_MS: grouped(
+    { group: "Limits", label: "Time an agent's fetch may take" },
+    count(
+      60_000,
+      "How long an MCP tool's fetch of a file from a web address may take, from connecting to the last byte.",
+      { max: MAX_TIMER_DELAY_MS, unit: "ms" },
+    ),
+  ),
   MARFA_ERROR_REPORTING_ENABLED: grouped(
     {
       group: "Alerts and monitoring",
@@ -2434,6 +2465,9 @@ export function loadConfig(
     bulkActionPollBackoffMultiplier:
       s.MARFA_BULK_ACTION_POLL_BACKOFF_MULTIPLIER,
     webhookAllowPrivateAddresses: s.MARFA_WEBHOOK_ALLOW_PRIVATE_ADDRESSES,
+    mcpFetchEnabled: s.MARFA_MCP_FETCH_ENABLED,
+    mcpFetchMaxBytes: s.MARFA_MCP_FETCH_MAX_BYTES,
+    mcpFetchTimeoutMs: s.MARFA_MCP_FETCH_TIMEOUT_MS,
     deploymentEnvironment:
       firstNamed(
         s.OTEL_RESOURCE_ATTRIBUTES["deployment.environment.name"],

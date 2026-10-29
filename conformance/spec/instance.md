@@ -320,7 +320,7 @@ When `GET /overview` is answered `200`, the server MUST give `instance` with the
 
 ### `instance/overview-no-reach`
 
-When the credential may read no type, the server MUST answer `GET /overview` with `200`, `instance` and `credential`, and no list, whatever its edge permissions.
+When the credential may read no type, the server MUST answer `GET /overview` with `200`, `instance` and `credential`, and no list and no `total`, whatever its edge permissions.
 
 **Tests:** `compliance/overview.test.ts › answers a key that reaches no type with the instance and itself only`.
 
@@ -335,6 +335,14 @@ The server MUST leave an empty list or an absent field out of the `GET /overview
 When `GET /overview` is answered `200`, the server MUST list in `types` each type outside the `system` namespace that the credential may read, including a type registered while the server runs, with its `id`, its `description` when it has one and the `count` of its active items that the credential may read.
 
 **Tests:** `compliance/overview.test.ts › answers the instance, the key, and what it reads with counts, tags, edge types, views and folders`.
+
+### `instance/overview-total`
+
+When `GET /overview` is answered `200` with `types`, the server MUST give in `total` the number of active items the credential may read across every type `types` would list before its cut.
+
+**Reason:** `types` is cut at its cap, so a caller cannot add up the counts it was sent to learn how much it can reach.
+
+**Tests:** `compliance/overview.test.ts › answers the instance, the key, and what it reads with counts, tags, edge types, views and folders`, `› leaves out a type the key cannot read and everything counted from it`.
 
 ### `instance/overview-types-order`
 
@@ -1646,6 +1654,9 @@ The server reads each of these environment variables once, when it starts, and a
 | `MARFA_BULK_ACTION_POLL_BACKOFF_MULTIPLIER` | `2`                           | Decimal number, 1 to 100                                           | The factor by which the bulk-action worker's wait grows after each look that finds no work.                                                                                                                                                                                                                                                   |
 | `MARFA_SSE_MAX_VIEWERS`                     | `0`                           | Whole number, 0 or more                                            | The most event-stream viewers one server instance serves at once. At 0 there is no limit.                                                                                                                                                                                                                                                     |
 | `MARFA_WEBHOOK_ALLOW_PRIVATE_ADDRESSES`     | `false`                       | `true`, `1`, `yes`, `on`, `false`, `0`, `no` or `off`, in any case | Whether outbound webhooks may reach loopback, private and other non-public addresses.                                                                                                                                                                                                                                                         |
+| `MARFA_MCP_FETCH_ENABLED`                   | `true`                        | `true`, `1`, `yes`, `on`, `false`, `0`, `no` or `off`, in any case | Whether MCP tools fetch a file from a web address, or a file a chat attached, to save it. When off, a tool asked to fetch one is refused.                                                                                                                                                                                                     |
+| `MARFA_MCP_FETCH_MAX_BYTES`                 | `52428800` bytes              | Whole number of bytes, 1 or more                                   | The largest file an MCP tool fetches from a web address to save. A larger file is refused and nothing is stored.                                                                                                                                                                                                                              |
+| `MARFA_MCP_FETCH_TIMEOUT_MS`                | `60000` ms                    | Whole number of milliseconds, 1 to 2147483647                      | How long an MCP tool's fetch of a file from a web address may take, from connecting to the last byte.                                                                                                                                                                                                                                         |
 | `MARFA_ERROR_REPORTING_ENABLED`             | `true`                        | `true`, `1`, `yes`, `on`, `false`, `0`, `no` or `off`, in any case | Send error alerts and exception reports to configured receivers. `/config` overrides it; receiver addresses and credentials stay machine settings.                                                                                                                                                                                            |
 | `MARFA_HEARTBEAT_ENABLED`                   | `true`                        | `true`, `1`, `yes`, `on`, `false`, `0`, `no` or `off`, in any case | Send scheduled requests to the configured heartbeat receiver. `/config` overrides it; its address stays a machine setting.                                                                                                                                                                                                                    |
 | `ERROR_WEBHOOK_URL`                         | None                          | Absolute `http` or `https` URL                                     | The URL the server posts a notice to when a request fails with a 500 error. When blank, no notice is sent.                                                                                                                                                                                                                                    |

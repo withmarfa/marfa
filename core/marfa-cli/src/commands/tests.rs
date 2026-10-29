@@ -171,11 +171,11 @@ fn an_update_carries_the_version_and_asks_for_resolution_only_when_told() {
 
 #[test]
 fn tags_go_on_as_a_list_and_come_off_one_at_a_time() {
-    let on = items::tag_request("i", &["a".into(), "b".into()]);
+    let on = items::tag_request("i", &["a".into(), "b".into()], None);
     assert_eq!(on.method, Method::Post);
     assert_eq!(on.path(), "/items/i/tags");
     assert_eq!(body(&on), &json!({ "tags": ["a", "b"] }));
-    let off = items::untag_request("i", "a");
+    let off = items::untag_request("i", "a", None);
     assert_eq!(off.method, Method::Delete);
     assert_eq!(off.path(), "/items/i/tags/a");
 }
@@ -1653,7 +1653,9 @@ mod dispatch {
         let door = Door::open(vec![Answer::json("200 OK", r#"{"item":{"id":"i"}}"#)]);
         items::run(
             items::ItemsCommand::Delete {
-                id: "i".into(),
+                ids: vec!["i".into()],
+                dry_run: false,
+                digest: None,
                 idempotency: items::IdempotencyArgs {
                     idempotency_key: Some("once".into()),
                 },
@@ -1666,6 +1668,111 @@ mod dispatch {
         assert_eq!(received[0].method(), "DELETE");
         assert_eq!(received[0].path(), "/items/i");
         assert_eq!(received[0].header("idempotency-key"), Some("once"));
+    }
+
+    #[test]
+    fn a_dry_run_delete_asks_for_the_trash_preview_of_every_id_and_moves_nothing() {
+        let door = Door::open(vec![Answer::json(
+            "200 OK",
+            r#"{"items":[],"count":2,"digest":"d"}"#,
+        )]);
+        items::run(
+            items::ItemsCommand::Delete {
+                ids: vec!["i".into(), "j".into()],
+                dry_run: true,
+                digest: None,
+                idempotency: items::IdempotencyArgs {
+                    idempotency_key: None,
+                },
+            },
+            &remote_at(&door),
+            &QUIET,
+        )
+        .unwrap();
+        let received = door.received();
+        assert_eq!(received.len(), 1);
+        assert_eq!(received[0].method(), "POST");
+        assert_eq!(received[0].path(), "/items/trash-preview");
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&received[0].body).unwrap(),
+            serde_json::json!({ "ids": ["i", "j"] })
+        );
+    }
+
+    #[test]
+    fn a_delete_of_several_ids_trashes_them_in_one_request_with_the_digest() {
+        use clap::Parser;
+        let digest = "a".repeat(64);
+        let cli =
+            crate::Cli::try_parse_from(["marfa", "items", "delete", "i", "j", "--digest", &digest])
+                .unwrap();
+        let crate::Command::Items { command } = cli.command else {
+            panic!("not an items command");
+        };
+        let door = Door::open(vec![Answer::json("200 OK", r#"{"ok":true}"#)]);
+        items::run(command, &remote_at(&door), &QUIET).unwrap();
+        let received = door.received();
+        assert_eq!(received.len(), 1);
+        assert_eq!(received[0].method(), "POST");
+        assert_eq!(received[0].path(), "/items/trash");
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&received[0].body).unwrap(),
+            serde_json::json!({ "ids": ["i", "j"], "digest": digest })
+        );
+        assert!(
+            crate::Cli::try_parse_from([
+                "marfa",
+                "items",
+                "delete",
+                "i",
+                "--dry-run",
+                "--digest",
+                "abc"
+            ])
+            .is_err()
+        );
+        assert!(crate::Cli::try_parse_from(["marfa", "items", "delete"]).is_err());
+    }
+
+    #[test]
+    fn a_dry_run_delete_refuses_an_idempotency_key() {
+        use clap::Parser;
+        assert!(
+            crate::Cli::try_parse_from([
+                "marfa",
+                "items",
+                "delete",
+                "i",
+                "--dry-run",
+                "--idempotency-key",
+                "once",
+            ])
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn a_tag_write_names_the_version_it_was_given() {
+        use clap::Parser;
+        let metadata = r#"{"metadata":{"item_id":"i","tags":[],"extensions":{}}}"#;
+        let door = Door::open(vec![
+            Answer::json("200 OK", metadata),
+            Answer::json("200 OK", metadata),
+        ]);
+        for args in [
+            ["marfa", "items", "tag", "i", "a", "--version", "3"].as_slice(),
+            ["marfa", "items", "untag", "i", "a", "--version", "3"].as_slice(),
+        ] {
+            let crate::Command::Items { command } =
+                crate::Cli::try_parse_from(args).unwrap().command
+            else {
+                panic!("not an items command");
+            };
+            items::run(command, &remote_at(&door), &QUIET).unwrap();
+        }
+        let received = door.received();
+        assert_eq!(received[0].path(), "/items/i/tags?version=3");
+        assert_eq!(received[1].path(), "/items/i/tags/a?version=3");
     }
 
     #[test]
@@ -1686,6 +1793,7 @@ mod dispatch {
             items::ItemsCommand::Tag {
                 id: "i".into(),
                 tags: vec!["a".into()],
+                version: None,
                 idempotency: key("tag"),
             },
             &remote,
@@ -1696,6 +1804,7 @@ mod dispatch {
             items::ItemsCommand::Untag {
                 id: "i".into(),
                 tag: "a".into(),
+                version: None,
                 idempotency: key("untag"),
             },
             &remote,
@@ -2013,6 +2122,7 @@ fn the_overview_reads_as_sections_with_what_was_cut() {
             "permissions": ["audit.read"]
         },
         "types": [{ "id": "core.note", "description": "Writing.", "count": 3 }],
+        "total": 3,
         "edge_types": [{ "id": "references", "access": "write" }],
         "tags": [{ "tag": "work", "count": 2 }],
         "views": [{ "id": "v1", "title": "Reading list" }],
@@ -2027,7 +2137,7 @@ fn the_overview_reads_as_sections_with_what_was_cut() {
             "  can read * (and others, 31 in all)",
             "  permissions audit.read",
             "",
-            "types",
+            "types, 3 items in all",
             "  core.note (3)  Writing.",
             "",
             "edge types",

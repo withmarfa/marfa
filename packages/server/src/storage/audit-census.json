@@ -159,6 +159,13 @@
       "HousekeepingStore.wake": 1
     }
   },
+  "mcp/file-fetch.ts": {
+    "boundary": "Standalone observation audit of each MCP file fetch after its outcome, fetched or refused; operational exemption for the per-credential fetch rate counters. mcp/tools.test.ts.",
+    "calls": {
+      "AuditStore.log": 1,
+      "RateLimitStore.incrementWindows": 1
+    }
+  },
   "middleware/auth.ts": {
     "boundary": "Existing operational exemption: credential last-used stamps only; credential lifecycle changes use the audited provider boundary.",
     "calls": {
@@ -334,9 +341,9 @@
     }
   },
   "routes/items-lifecycle.ts": {
-    "boundary": "Audited restore/transition with cascades and events; audit-atomicity.test.ts.",
+    "boundary": "Audited restore/transition and the trash of several items, with cascades and events; audit-atomicity.test.ts.",
     "calls": {
-      "runAuditedTransaction": 2,
+      "runAuditedTransaction": 3,
       "writeItem": 2
     }
   },
@@ -474,7 +481,8 @@
       "ItemStore.update": 1,
       "MetadataStore.set": 1,
       "ItemStore.restoreDates": 1,
-      "VersionStore.restore": 1
+      "VersionStore.restore": 1,
+      "writeItem": 1
     }
   },
   "storage/retention.ts": {

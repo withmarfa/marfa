@@ -80,6 +80,8 @@ const UNPUBLISHED_WRITES: Record<string, string> = {
     "first-party exchange of setup proof for a browser session, accepting its form or JSON submission",
   "POST /setup/name": "a same-origin form post that names the instance",
   "POST /inbound/{token}": "a sender's delivery, whatever bytes it sent",
+  "POST /mcp":
+    "a JSON-RPC message of the MCP transport, which the MCP SDK parses and answers in its own shapes",
   "POST /auth/sign-in": "a form post",
   "POST /auth/confirm":
     "the owner's proof from the confirmation dialog, which takes exactly one of two keys and refuses any other body (routes/auth-confirm.test.ts)",

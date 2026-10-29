@@ -107,6 +107,14 @@ If a key whose type map does not grant write on an identifier sends `POST /types
 
 **Tests:** `compliance/type-registry.test.ts › registers only the ids the key's own type map grants write on`, `› refuses an identifier another key registered with 403 to a key whose map does not reach it`.
 
+### `types/register-reach-scope`
+
+When the server refuses `POST /types` under `types/register-reach` for an identifier whose own write scope an app cannot be granted, because nothing registered the identifier, the server MUST name in `details.required_scope` the narrowest namespace wildcard covering the identifier that an app can be granted, where there is one.
+
+**Reason:** an unregistered identifier has no scope of its own, so without the wildcard an app signed in through OAuth could not be asked for what lets it register the identifier.
+
+**Tests:** `compliance/type-registry.test.ts › names the namespace wildcard an app can be granted when a key may not register a new identifier`.
+
 ### `types/register-duplicate`
 
 If `POST /types` names a valid schema under an identifier already registered, then the server MUST answer `409 type_already_exists`.

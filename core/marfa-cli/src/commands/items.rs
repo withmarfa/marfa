@@ -45,10 +45,19 @@ pub enum ItemsCommand {
     Create(CreateArgs),
     /// Change an item's properties or fields, conditional on the version read.
     Update(UpdateArgs),
-    /// Move an item to the bin.
+    /// Move one or more items to the bin, all of them or none.
     Delete {
-        /// The item id.
-        id: String,
+        /// One or more item ids, up to 20.
+        #[arg(required = true)]
+        ids: Vec<String>,
+        /// Show what the delete would move to the bin, the items beneath
+        /// included, and move nothing.
+        #[arg(long, conflicts_with = "idempotency_key")]
+        dry_run: bool,
+        /// The digest `--dry-run` gave for the same ids. If what the delete
+        /// would move to the bin has changed since, nothing is moved.
+        #[arg(long, conflicts_with = "dry_run")]
+        digest: Option<String>,
         #[command(flatten)]
         idempotency: IdempotencyArgs,
     },
@@ -91,6 +100,10 @@ pub enum ItemsCommand {
         /// One or more tags.
         #[arg(required = true)]
         tags: Vec<String>,
+        /// The item version you read. If the item has changed since, no tag
+        /// is added.
+        #[arg(long)]
+        version: Option<i64>,
         #[command(flatten)]
         idempotency: IdempotencyArgs,
     },
@@ -100,6 +113,10 @@ pub enum ItemsCommand {
         id: String,
         /// The tag to take off.
         tag: String,
+        /// The item version you read. If the item has changed since, the tag
+        /// stays.
+        #[arg(long)]
+        version: Option<i64>,
         #[command(flatten)]
         idempotency: IdempotencyArgs,
     },
@@ -712,8 +729,25 @@ pub fn update_request(args: &UpdateArgs) -> Result<Request, CliError> {
     ))
 }
 
-pub fn delete_request(id: &str) -> Request {
-    Request::delete(&["items", id])
+/// One id with no digest is a plain delete; several, or a digest, go through
+/// the trash door, which moves them all in one step or none.
+pub fn delete_request(ids: &[String], digest: Option<&str>) -> Request {
+    match (ids, digest) {
+        ([id], None) => Request::delete(&["items", id]),
+        _ => {
+            let mut body = json!({ "ids": ids });
+            if let Some(digest) = digest {
+                body["digest"] = json!(digest);
+            }
+            Request::post(&["items", "trash"]).json(body)
+        }
+    }
+}
+
+pub fn trash_preview_request(ids: &[String]) -> Request {
+    Request::post(&["items", "trash-preview"])
+        .json(json!({ "ids": ids }))
+        .reading()
 }
 
 pub fn restore_request(id: &str) -> Request {
@@ -734,12 +768,15 @@ pub fn versions_request(id: &str, page: &PageArgs) -> Request {
         .query_opt("cursor", page.cursor.clone())
 }
 
-pub fn tag_request(id: &str, tags: &[String]) -> Request {
-    Request::post(&["items", id, "tags"]).json(json!({ "tags": tags }))
+pub fn tag_request(id: &str, tags: &[String], version: Option<i64>) -> Request {
+    Request::post(&["items", id, "tags"])
+        .query_opt("version", version.map(|v| v.to_string()))
+        .json(json!({ "tags": tags }))
 }
 
-pub fn untag_request(id: &str, tag: &str) -> Request {
+pub fn untag_request(id: &str, tag: &str, version: Option<i64>) -> Request {
     Request::delete(&["items", id, "tags", tag])
+        .query_opt("version", version.map(|v| v.to_string()))
 }
 
 pub fn edges_request(args: &ItemEdgesArgs, inbound: bool) -> Request {
@@ -1013,7 +1050,11 @@ pub fn attached_to_request(file_item_id: &str, target_id: &str) -> Request {
 
 pub fn run(command: ItemsCommand, remote: &Remote, out: &Printer) -> Result<(), CliError> {
     let done = match &command {
-        ItemsCommand::Delete { id, .. } => Some(format!("trashed {id}")),
+        ItemsCommand::Delete {
+            ids,
+            dry_run: false,
+            ..
+        } => Some(format!("trashed {}", ids.join(", "))),
         ItemsCommand::Purge { id, .. } => Some(format!("purged {id}")),
         _ => None,
     };
@@ -1026,7 +1067,15 @@ pub fn run(command: ItemsCommand, remote: &Remote, out: &Printer) -> Result<(), 
         ItemsCommand::Get { id, include } => get_request(id, include.as_deref()),
         ItemsCommand::Create(args) => create_request(args)?,
         ItemsCommand::Update(args) => update_request(args)?,
-        ItemsCommand::Delete { id, idempotency } => idempotency.apply(delete_request(id)),
+        ItemsCommand::Delete {
+            ids, dry_run: true, ..
+        } => trash_preview_request(ids),
+        ItemsCommand::Delete {
+            ids,
+            digest,
+            idempotency,
+            ..
+        } => idempotency.apply(delete_request(ids, digest.as_deref())),
         ItemsCommand::Restore { id, idempotency } => idempotency.apply(restore_request(id)),
         ItemsCommand::Transition {
             id,
@@ -1038,13 +1087,15 @@ pub fn run(command: ItemsCommand, remote: &Remote, out: &Printer) -> Result<(), 
         ItemsCommand::Tag {
             id,
             tags,
+            version,
             idempotency,
-        } => idempotency.apply(tag_request(id, tags)),
+        } => idempotency.apply(tag_request(id, tags, *version)),
         ItemsCommand::Untag {
             id,
             tag,
+            version,
             idempotency,
-        } => idempotency.apply(untag_request(id, tag)),
+        } => idempotency.apply(untag_request(id, tag, *version)),
         ItemsCommand::Edges(args) => return edges(args, false, remote, out),
         ItemsCommand::Backrefs(args) => return edges(args, true, remote, out),
         ItemsCommand::Add(args) => return add(args, remote, out),

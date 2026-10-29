@@ -11,6 +11,7 @@ pub const KEYED_WRITES: &[(&str, &str)] = &[
     ("POST", "/items"),
     ("PATCH", "/items/{id}"),
     ("DELETE", "/items/{id}"),
+    ("POST", "/items/trash"),
     ("POST", "/items/{id}/restore"),
     ("POST", "/items/{id}/purge"),
     ("POST", "/items/{id}/transition"),

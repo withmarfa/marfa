@@ -40,6 +40,7 @@ interface Overview {
     permissions?: string[];
   };
   types?: { id: string; description?: string; count: number }[];
+  total?: number;
   edge_types?: { id: string; description?: string; access: string }[];
   tags?: { tag: string; count: number }[];
   views?: { id: string; title: string }[];
@@ -167,6 +168,55 @@ describe("GET /overview", () => {
     });
     const witness = await overview(ctx.workingKey);
     expect(witness.types?.some((t) => t.id === "core.bookmark")).toBe(true);
+  });
+
+  it("counts in total every active item of the types it would list, past the cut", async () => {
+    const ids = Array.from(
+      { length: OVERVIEW_CAPS.types + 2 },
+      (_, i) => `demo.total_${String(i).padStart(2, "0")}`,
+    );
+    for (const id of ids) {
+      registerTypeSchema({
+        id,
+        label: id,
+        version: 1,
+        fields: { name: { type: "string" } },
+      });
+      const res = await request(ctx.app, "POST", "/items", {
+        key: ctx.workingKey,
+        body: { type: id, properties: { name: id } },
+      });
+      expect(res.status).toBe(201);
+    }
+    const trashed = await request(ctx.app, "POST", "/items", {
+      key: ctx.workingKey,
+      body: { type: ids[0], properties: { name: "trashed" } },
+    });
+    const { item } = (await trashed.json()) as { item: { id: string } };
+    expect(
+      (
+        await request(ctx.app, "DELETE", `/items/${item.id}`, {
+          key: ctx.workingKey,
+        })
+      ).status,
+    ).toBe(200);
+    const view = await request(ctx.app, "POST", "/views", {
+      key: ctx.workingKey,
+      body: { title: "Not counted" },
+    });
+    expect(view.status).toBe(201);
+    const key = await mintWorkingKey(ctx, {
+      type_permissions: { "demo.*": "read", "system.*": "read" },
+      permissions: [],
+    });
+    try {
+      const answer = await overview(key);
+      expect(answer.types).toHaveLength(OVERVIEW_CAPS.types);
+      expect(answer.views?.length).toBeGreaterThan(0);
+      expect(answer.total).toBe(ids.length);
+    } finally {
+      for (const id of ids) unregisterTypeSchema(id);
+    }
   });
 
   it("answers a credential that reaches no type with the instance and itself only", async () => {

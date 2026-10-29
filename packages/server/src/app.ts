@@ -135,6 +135,12 @@ import { healthRoutes, instanceReadCaller } from "./routes/health.js";
 import { storageProbes } from "./routes/health-probes.js";
 import { readAttention } from "./attention.js";
 import { attentionRoutes } from "./routes/attention.js";
+import { mcpRoutes } from "./mcp/door.js";
+import { createPublicFetcher } from "./net/public-fetch.js";
+import {
+  MCP_FETCH_CONCURRENCY,
+  MCP_FETCH_RATE_LIMIT,
+} from "./mcp/file-fetch.js";
 import { consoleHealth } from "./routes/console-health.js";
 import {
   refuseUndeclaredKeysOf,
@@ -682,6 +688,9 @@ export function createApp(
         "/auth/oauth2/authorize": 30,
         "/auth/authorize/decision": 30,
         "/auth/authorize": 60,
+        // One MCP call makes several API calls in process, each counted
+        // under its own door, so the endpoint's own window is narrower.
+        "/mcp": 300,
       },
       storage,
       // Aggregate per-identifier cap (defaultLimit × multiplier),
@@ -982,6 +991,33 @@ export function createApp(
   );
   app.route("/audit", auditRoutes(storage));
   app.route("/metrics", metricsRoutes(storage));
+  app.route(
+    "/mcp",
+    mcpRoutes({
+      baseUrl: config.authBaseUrl,
+      version: deployedVersion,
+      confirmKey: deriveKey(config.authSecret, SECRET_INFO.mcpDelete),
+      fetch: {
+        fetcher: createPublicFetcher({
+          maxBytes: config.mcpFetchMaxBytes ?? 50 * 1024 * 1024,
+          timeoutMs: config.mcpFetchTimeoutMs ?? 60_000,
+          maxConcurrent: MCP_FETCH_CONCURRENCY,
+        }),
+        enabled: config.mcpFetchEnabled ?? true,
+        audit: storage.audit,
+        rateLimit: config.rateLimitEnabled
+          ? {
+              store: storage.rateLimits,
+              limit: MCP_FETCH_RATE_LIMIT,
+              windowMs: config.rateLimitWindowMs,
+            }
+          : null,
+      },
+      originAllowed: async (origin) =>
+        origin === issuerOrigin || (await allowedOrigin(origin)) !== null,
+      dispatch: async (request, env) => app.fetch(request, env),
+    }),
+  );
   // OpenAPI spec — generated from route definitions
   for (const [name, schema] of Object.entries({
     ...DESCRIBED_ONLY_BY_REFERENCE,

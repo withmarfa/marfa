@@ -214,4 +214,39 @@ describe("metadata doors", () => {
     expect((await anonymous.replaceMetadata(unknown, {})).status).toBe(401);
     expect((await anonymous.listTags()).status).toBe(401);
   });
+
+  it("changes tags only when the version named is the item's", async () => {
+    const id = await seed();
+    const read = await client.getItem(id);
+    const version = read.data.item.version;
+    const moved = await client.updateItem(id, {
+      version,
+      properties: { body: "changed since the read" },
+    });
+    expect(moved.status, JSON.stringify(moved.error)).toBe(200);
+
+    const added = await client.addTags(id, ["kept"], { version: version + 1 });
+    expect(added.status, JSON.stringify(added.error)).toBe(200);
+
+    const staleAdd = await client.addTags(id, ["late"], { version });
+    expect(staleAdd.status).toBe(409);
+    expect(staleAdd.headers.get("X-Error-Code")).toBe("version_conflict");
+    expect(staleAdd.error).toMatchObject({
+      error: { code: "version_conflict" },
+      current: { id, version: version + 1 },
+    });
+    const staleRemove = await client.removeTag(id, "kept", { version });
+    expect(staleRemove.status).toBe(409);
+    expect(staleRemove.error).toMatchObject({
+      error: { code: "version_conflict" },
+      current: { id, version: version + 1 },
+    });
+    expect((await client.getMetadata(id)).data.metadata.tags).toEqual(["kept"]);
+
+    const removed = await client.removeTag(id, "kept", {
+      version: version + 1,
+    });
+    expect(removed.status, JSON.stringify(removed.error)).toBe(200);
+    expect((await client.getMetadata(id)).data.metadata.tags).toEqual([]);
+  });
 });

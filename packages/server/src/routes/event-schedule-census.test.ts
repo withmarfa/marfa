@@ -52,6 +52,8 @@ const NOT_WRITING: Record<string, string> = {
     "restores a row without editing properties",
   "POST /items/summaries/:id/purge": "removes a trashed row",
   "DELETE /items/:id": "moves a row to the bin",
+  "POST /items/trash": "moves rows to the bin",
+  "POST /items/trash-preview": "a read",
   "POST /items/:id/purge": "removes a row",
   "DELETE /items/:id/extensions/:namespace": "an extension, not a property",
   "DELETE /items/:id/tags/:tag": "a tag",

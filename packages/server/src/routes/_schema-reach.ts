@@ -26,6 +26,7 @@ import {
 } from "@withmarfa/shared";
 import type { TypeSchema } from "@withmarfa/shared";
 import type { Context } from "hono";
+import { liveAllowedScopes } from "../auth/oauth-provider.js";
 import type { AppEnv } from "../middleware/auth.js";
 import {
   holdsMetadataPermission,
@@ -104,6 +105,38 @@ function requireDoorPermission(
   else requirePermission(c, "schema.write");
 }
 
+/**
+ * Run `check`, and where it refuses the grant on `name`, name in
+ * `required_scope` the narrowest namespace wildcard covering `name` that an
+ * app can be granted. A name nothing registered has no scope of its own to
+ * ask for, so without this an app could not be asked for what lets it
+ * register one. `prefix` is `edge.` for an edge type's names.
+ */
+function askingForNamespace(
+  name: string,
+  prefix: "" | "edge.",
+  check: () => void,
+): void {
+  try {
+    check();
+  } catch (error) {
+    if (!(error instanceof MarfaError) || error.details?.grant === undefined)
+      throw error;
+    const allowed = new Set(liveAllowedScopes());
+    if (allowed.has(`${prefix}${name}:write`)) throw error;
+    const segments = name.split(".");
+    for (let depth = segments.length - 1; depth >= 1; depth--) {
+      const scope = `${prefix}${segments.slice(0, depth).join(".")}.*:write`;
+      if (allowed.has(scope))
+        throw new MarfaError(error.code, error.message, {
+          ...error.details,
+          required_scope: scope,
+        });
+    }
+    throw error;
+  }
+}
+
 /** Admit a change to the type `id` names, or refuse it `403`. */
 export function requireTypeSchemaWrite(
   c: Context<AppEnv>,
@@ -111,7 +144,9 @@ export function requireTypeSchemaWrite(
   id: string,
 ): void {
   requireDoorPermission(c, "types", door);
-  requireTypeAccess(c, id, "write");
+  askingForNamespace(id, "", () => {
+    requireTypeAccess(c, id, "write");
+  });
 }
 
 /**
@@ -203,6 +238,9 @@ export function requireEdgeTypeSchemaWrite(
 ): void {
   requireDoorPermission(c, "edge_types", door);
   for (const name of names) {
-    if (name !== undefined) requireEdgePermission(c, name, "write");
+    if (name !== undefined)
+      askingForNamespace(name, "edge.", () => {
+        requireEdgePermission(c, name, "write");
+      });
   }
 }

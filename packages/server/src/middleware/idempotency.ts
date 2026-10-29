@@ -79,6 +79,7 @@ export const IDEMPOTENT_WRITE_DOORS: readonly string[] = [
   "POST /items",
   "PATCH /items/:id",
   "DELETE /items/:id",
+  "POST /items/trash",
   "POST /items/:id/purge",
   "POST /items/:id/transition",
   "POST /items/:id/restore",
@@ -264,9 +265,10 @@ async function fingerprint(
     String(contract),
     c.req.method,
     canonicalPath(url.pathname),
-    // These doors accept only a closed enum or whole-number version query
-    // values. A free-text query parameter would need canonicalization to
-    // let retries re-encode it, including a decision about parameter order.
+    // These doors accept only closed enums and whole-number versions in the
+    // query. A free-text query parameter would
+    // need canonicalization to let retries re-encode it, and a retry that
+    // reorders the parameters is read as another request.
     url.search,
     // Whether a body is read as JSON decides whether the write happens at
     // all, so the same text under another type is another request; two

@@ -52,6 +52,7 @@ const CONFORMANCE_JOBS = [
   "conformance-offline",
   SHARD_JOB,
   "conformance-statuses",
+  "mcp-conformance",
 ];
 
 describe("the Conformance check", () => {
@@ -81,9 +82,9 @@ describe("the Conformance check", () => {
     const step = jobs.conformance?.steps[0];
     const verdict = (
       results: string,
-      owed: { shards?: boolean; offline?: boolean } = {},
+      owed: { shards?: boolean; offline?: boolean; mcp?: boolean } = {},
     ): number => {
-      const [offline = "", shards = ""] = results.split(" ");
+      const [offline = "", shards = "", , mcp = ""] = results.split(" ");
       try {
         execFileSync("sh", ["-c", step?.run ?? "exit 99"], {
           env: {
@@ -93,6 +94,8 @@ describe("the Conformance check", () => {
             SHARDS_OWED: String(owed.shards ?? false),
             OFFLINE: offline,
             OFFLINE_OWED: String(owed.offline ?? false),
+            MCP: mcp,
+            MCP_OWED: String(owed.mcp ?? false),
           },
           stdio: "pipe",
         });
@@ -107,36 +110,51 @@ describe("the Conformance check", () => {
     });
 
     it.each([
-      ["every job passed", "success success success"],
-      ["the classifier skipped every job", "skipped skipped skipped"],
-      ["only the offline lane ran", "success skipped skipped"],
+      ["every job passed", "success success success success"],
+      ["the classifier skipped every job", "skipped skipped skipped skipped"],
+      ["only the offline lane ran", "success skipped skipped skipped"],
+      ["only MCP conformance ran", "skipped skipped skipped success"],
       [
         "the shards ran and the statuses job did not",
-        "success success skipped",
+        "success success skipped skipped",
       ],
     ])("passes when %s", (_, results) => {
       expect(verdict(results)).toBe(0);
     });
 
     it("fails when the shards were owed a run and were skipped", () => {
-      expect(verdict("success skipped skipped", { shards: true })).toBe(1);
+      expect(verdict("success skipped skipped skipped", { shards: true })).toBe(
+        1,
+      );
     });
 
     it("fails when the offline lane was owed a run and was skipped", () => {
-      expect(verdict("skipped success skipped", { offline: true })).toBe(1);
+      expect(
+        verdict("skipped success skipped skipped", { offline: true }),
+      ).toBe(1);
+    });
+
+    it("fails when MCP conformance was owed a run and was skipped", () => {
+      expect(verdict("success success success skipped", { mcp: true })).toBe(1);
     });
 
     it("passes when the jobs owed a run ran", () => {
       expect(
-        verdict("success success success", { shards: true, offline: true }),
+        verdict("success success success success", {
+          shards: true,
+          offline: true,
+          mcp: true,
+        }),
       ).toBe(0);
     });
 
     it.each([
-      ["a shard failed", "success failure skipped"],
-      ["a shard was cancelled", "success cancelled skipped"],
-      ["the statuses job failed", "success success failure"],
-      ["the offline lane failed", "failure skipped skipped"],
+      ["a shard failed", "success failure skipped skipped"],
+      ["a shard was cancelled", "success cancelled skipped skipped"],
+      ["the statuses job failed", "success success failure skipped"],
+      ["the offline lane failed", "failure skipped skipped skipped"],
+      ["MCP conformance failed", "skipped skipped skipped failure"],
+      ["MCP conformance was cancelled", "skipped skipped skipped cancelled"],
     ])("fails when %s", (_, results) => {
       expect(verdict(results)).toBe(1);
     });

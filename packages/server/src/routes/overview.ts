@@ -165,6 +165,14 @@ const OverviewSchema = z
       .describe(
         `The types you can read, most items first, then by identifier, at most ${String(OVERVIEW_CAPS.types)}. Types in the \`system\` namespace are left out. Absent when you can read none.`,
       ),
+    total: z
+      .number()
+      .int()
+      .optional()
+      .describe(
+        "How many active items you can read across every type `types` would list before its cut. Absent when `types` is.",
+      )
+      .openapi({ example: 128 }),
     edge_types: z
       .array(EdgeTypeEntrySchema)
       .optional()
@@ -215,6 +223,7 @@ const OverviewSchema = z
           count: 128,
         },
       ],
+      total: 128,
       edge_types: [{ id: "references", access: "write" }],
       tags: [{ tag: "work", count: 40 }],
       views: [
@@ -441,6 +450,7 @@ export function overviewRoutes(storage: Storage, build: DeployedBuild) {
 
     const { counts } = reads;
     const typeList = capped(types, OVERVIEW_CAPS.types, "types", truncated);
+    const total = types.reduce((sum, type) => sum + type.count, 0);
     const edgeList = capped(
       edgeEntries,
       OVERVIEW_CAPS.edge_types,
@@ -477,7 +487,7 @@ export function overviewRoutes(storage: Storage, build: DeployedBuild) {
           ...(build.release !== undefined && { release: build.release }),
         },
         credential,
-        ...(typeList.length > 0 && { types: typeList }),
+        ...(typeList.length > 0 && { types: typeList, total }),
         ...(edgeList.length > 0 && { edge_types: edgeList }),
         ...(tagList.length > 0 && { tags: tagList }),
         ...(viewList.length > 0 && { views: viewList }),

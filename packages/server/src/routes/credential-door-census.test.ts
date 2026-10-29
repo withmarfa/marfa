@@ -234,6 +234,10 @@ const OPEN_DOORS: Record<string, string> = {
 const CREDENTIAL_IN_HANDLER: Record<string, string> = {
   "GET /events":
     "the event stream registers a schema but retains its credential and type-read checks in the plain handler",
+  "POST /mcp":
+    "the MCP endpoint, which answers its own Bearer challenge naming the endpoint's resource metadata",
+  "GET /mcp": "the same endpoint, by the transport's other methods",
+  "DELETE /mcp": "the same endpoint, by the transport's other methods",
 };
 
 function concrete(path: string): string {

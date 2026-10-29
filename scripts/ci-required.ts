@@ -62,6 +62,9 @@ export const JOBS = [
   // declares. A declared status no request drew can be told only from the
   // whole selection, so this runs only when every group does.
   "conformance-statuses",
+  // The MCP project's conformance tool, against `/mcp` on a server booted
+  // from this checkout.
+  "mcp-conformance",
   "cli-scenarios",
   "restore-drill",
   // The shipped image, built and booted through its entrypoint.
@@ -138,6 +141,7 @@ const CONFORMANCE: readonly Job[] = [
 const SERVER: readonly Job[] = [
   "workspace",
   ...CONFORMANCE,
+  "mcp-conformance",
   "cli-scenarios",
   "restore-drill",
   "image",
@@ -181,6 +185,7 @@ const WORKSPACE: readonly Job[] = [
   "workspace",
   "control-socket",
   ...CONFORMANCE,
+  "mcp-conformance",
   "cli-scenarios",
   "restore-drill",
   "image",
@@ -309,9 +314,24 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
     PAGE_ASSETS_AND_TESTS,
   ],
   [/^packages\/server\//, SERVER],
-  [/^packages\/client\//, ["workspace", "clients-freshness"]],
+  // The server imports the client at runtime: the MCP tools call the API
+  // through it.
+  [
+    /^packages\/client\//,
+    [
+      "workspace",
+      "clients-freshness",
+      ...CONFORMANCE,
+      "mcp-conformance",
+      "image",
+    ],
+  ],
 
   [/^conformance\/scripts\/restore-drill\.ts$/, ["workspace", "restore-drill"]],
+  [
+    /^conformance\/scripts\/mcp-conformance\.ts$/,
+    ["workspace", "mcp-conformance"],
+  ],
   // Spec citations name fixture files anywhere under `src/`, so every
   // change there reaches the offline lane. A device fixture imports the CLI
   // harness, and a fixture reaches only the group its folder runs in.
@@ -352,16 +372,34 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
   [/^conformance\/src\/suites\//, ["workspace", ...CONFORMANCE]],
   [
     /^conformance\/src\/utils\//,
-    ["workspace", ...CONFORMANCE, "cli-scenarios", "restore-drill"],
+    [
+      "workspace",
+      ...CONFORMANCE,
+      "cli-scenarios",
+      "restore-drill",
+      "mcp-conformance",
+    ],
   ],
   [
     /^conformance\/src\/client\/owner-session\.ts$/,
-    ["workspace", ...CONFORMANCE, "cli-scenarios", "restore-drill"],
+    [
+      "workspace",
+      ...CONFORMANCE,
+      "cli-scenarios",
+      "restore-drill",
+      "mcp-conformance",
+    ],
   ],
   [/^conformance\/src\//, ["workspace", ...CONFORMANCE, "cli-scenarios"]],
   [
     /^conformance\//,
-    ["workspace", ...CONFORMANCE, "cli-scenarios", "restore-drill"],
+    [
+      "workspace",
+      ...CONFORMANCE,
+      "cli-scenarios",
+      "restore-drill",
+      "mcp-conformance",
+    ],
   ],
 
   // `ci/` tests read the contract version the core is generated with, the
@@ -459,6 +497,7 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
       ...CONFORMANCE,
       "cli-scenarios",
       "restore-drill",
+      "mcp-conformance",
     ],
   ],
   // Prettier skips what Git ignores, and a freshness check that asks

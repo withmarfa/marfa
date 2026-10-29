@@ -50,6 +50,7 @@ const SERVER: Job[] = [
   "ci-sqlite",
   "workspace",
   ...CONFORMANCE,
+  "mcp-conformance",
   "cli-scenarios",
   "restore-drill",
   "image",
@@ -239,9 +240,16 @@ describe("what a change runs", () => {
       [...RUST, "clients-freshness", "workspace", "ci-sqlite"],
     ],
     [
-      "a client-only change",
+      "a client-only change, which the server imports at runtime",
       ["packages/client/src/client.ts"],
-      ["ci-sqlite", "workspace", "clients-freshness"],
+      [
+        "ci-sqlite",
+        "workspace",
+        "clients-freshness",
+        ...CONFORMANCE,
+        "mcp-conformance",
+        "image",
+      ],
     ],
     [
       "a Rust-only change",
@@ -414,6 +422,7 @@ describe("what a change runs", () => {
         ...CONFORMANCE,
         "cli-scenarios",
         "restore-drill",
+        "mcp-conformance",
       ],
     ],
     [
@@ -428,6 +437,7 @@ describe("what a change runs", () => {
         ...CONFORMANCE,
         "cli-scenarios",
         "restore-drill",
+        "mcp-conformance",
       ],
     ],
     [
@@ -439,12 +449,26 @@ describe("what a change runs", () => {
         ...CONFORMANCE,
         "cli-scenarios",
         "restore-drill",
+        "mcp-conformance",
       ],
     ],
     [
       "the restore drill",
       ["conformance/scripts/restore-drill.ts"],
       ["ci-sqlite", "workspace", "restore-drill"],
+    ],
+    [
+      "the script that runs the MCP conformance tool",
+      ["conformance/scripts/mcp-conformance.ts"],
+      ["ci-sqlite", "workspace", "mcp-conformance"],
+    ],
+    [
+      "the MCP endpoint and the fetching its tools do",
+      [
+        "packages/server/src/mcp/door.ts",
+        "packages/server/src/net/public-fetch.ts",
+      ],
+      SERVER,
     ],
     [
       "the image's Litestream, and the image itself",
@@ -499,6 +523,7 @@ describe("what a change runs", () => {
         "ci-sqlite",
         "workspace",
         ...CONFORMANCE,
+        "mcp-conformance",
         "cli-scenarios",
         "restore-drill",
         "image",
@@ -574,6 +599,10 @@ describe("what a change runs", () => {
         "conformance-device",
         "cli-scenarios",
         "clients-freshness",
+        ...SHARDS,
+        "conformance-statuses",
+        "mcp-conformance",
+        "image",
         "core",
       ],
     ],
@@ -1358,6 +1387,16 @@ describe("what a job reads reaches it", () => {
     expect(files).toContain("conformance/src/utils/drill.ts");
     const read = [...files, "deploy/Dockerfile", "deploy/litestream.yml"];
     expect(read.filter((f) => !affected(f).has("restore-drill"))).toEqual([]);
+  });
+
+  it("every file the MCP conformance job loads runs it", () => {
+    const files = closure([
+      "conformance/scripts/mcp-conformance.ts",
+      "conformance/scripts/marfa-server.ts",
+    ]);
+    expect(files).toContain("conformance/src/utils/target.ts");
+    const read = [...files, "conformance/package.json", "pnpm-lock.yaml"];
+    expect(read.filter((f) => !affected(f).has("mcp-conformance"))).toEqual([]);
   });
 
   it("the cached device binary is keyed on every crate it is built from", () => {

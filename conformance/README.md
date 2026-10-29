@@ -70,6 +70,9 @@ pnpm test:cli
 # `marfa:down`, which clears the log it reads.
 pnpm check:statuses
 
+# The MCP project's conformance tool against `/mcp`
+pnpm mcp:conformance
+
 pnpm marfa:down
 pnpm garage:down
 ```
@@ -88,6 +91,15 @@ plus `litestream` and `sqlite3` on the path: it boots an instance under
 to it, restores a second instance from the bucket alone and compares the two
 to the byte, then removes what it wrote to the bucket. The report goes to
 `reports/restore-drill.md`, and `deploy/README.md` is what it proves.
+
+`pnpm mcp:conformance` runs the MCP project's conformance tool, at the version
+`package.json` pins, against `/mcp` on the server `marfa:up` booted. The tool
+sends no credential, so the script starts a proxy on loopback that adds the
+key from the env file. Every check of the `server-initialize`, `ping` and
+`tools-list` scenarios must pass. Two more scenarios run with the checks that
+fail by design pinned in `scripts/mcp-conformance.ts`, each with its reason.
+Any other failing check fails the run, and so does a pinned check that passes,
+until its pin is removed.
 
 `pnpm marfa:up` builds the workspace packages if they are not built, starts
 the server as a direct Node child with the tsx loader (never watch mode), waits for `/health`, claims the owner through the private socket using the
@@ -324,7 +336,7 @@ Write holds act before admission because SQLite admits only one writer at a time
 | `hold:read-snapshot`           | A conditional read, one that names `X-Marfa-Reach`, waits inside the snapshot it reads from, after the target has judged the reach and before the door reads. The snapshot's own bound, five seconds, still runs.                                                                                                                                                                                                                                                                                                                                                                                                 |
 | `unfold-deadline=<ms>`         | Shortens the 1,000 ms one series may take to unfold, so a fixture shows that a series past the time bound is left out without needing a rule that is slow enough. It tests the bound, not the 1,000 ms.                                                                                                                                                                                                                                                                                                                                                                                                           |
 | `hold:webhook-schedule:queued` | The `webhook-schedule` job waits inside its transaction after queuing deliveries and before recording its position in the event log.                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| `resolve:<hostname>=<answers>` | Supplies scripted answers for an outbound webhook's name lookups.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `resolve:<hostname>=<answers>` | Supplies scripted answers for the name lookups of an outbound webhook and of a file the MCP tools fetch.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 | `hold:read-hydration`          | An item, metadata, extension, history, lookup, list, occurrence or export read waits after selecting or authorizing rows and before hydrating related data; an edge list waits between reading its edges and checking their sources. The five-second snapshot bound applies except to archive export pages, whose snapshots end with their page or on cancellation.                                                                                                                                                                                                                                               |
 | `hold:export-validation`       | An archive export waits after it has staged its selection's type registrations for the restore checks and before it checks the selection's rows. It holds no read snapshot and no write lock. A client that leaves, or a server that stops, ends the wait.                                                                                                                                                                                                                                                                                                                                                        |
 | `hold:write=<action>@<n>`      | The nth attempted write for that audit action waits before it acquires the writer lock or checks mutable state. Later writes can commit while it waits. A bare action means its first attempt; a bare number counts all outer audited transactions. Fixed audit entries name their action directly; result-dependent entries declare it in advance for `item.create`, `item.update`, `item.delete`, `item.purge`, `item.transition`, `items.bulk`, `type.register`, `edge.create`, `edge.update`, and `edge.delete`. `POST /items` declares `item.create` even when it updates a row. Refused attempts count too. |

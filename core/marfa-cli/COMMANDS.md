@@ -629,18 +629,20 @@ marfa items update [OPTIONS] --version <VERSION> <ID>
 
 ### marfa items delete
 
-Move an item to the bin.
+Move one or more items to the bin, all of them or none.
 
 ```text
-marfa items delete [OPTIONS] <ID>
+marfa items delete [OPTIONS] <IDS>...
 ```
 
 | Argument | Description |
 | --- | --- |
-| `<ID>` | The item id. |
+| `<IDS>...` | One or more item ids, up to 20. |
 
 | Option | Description |
 | --- | --- |
+| `--dry-run` | Show what the delete would move to the bin, the items beneath included, and move nothing. |
+| `--digest <DIGEST>` | The digest `--dry-run` gave for the same ids. If what the delete would move to the bin has changed since, nothing is moved. |
 | `--idempotency-key <KEY>` | Sent as `Idempotency-Key`, so a repeat is answered from the record rather than written twice. |
 
 ### marfa items restore
@@ -724,6 +726,7 @@ marfa items tag [OPTIONS] <ID> <TAGS>...
 
 | Option | Description |
 | --- | --- |
+| `--version <VERSION>` | The item version you read. If the item has changed since, no tag is added. |
 | `--idempotency-key <KEY>` | Sent as `Idempotency-Key`, so a repeat is answered from the record rather than written twice. |
 
 ### marfa items untag
@@ -741,6 +744,7 @@ marfa items untag [OPTIONS] <ID> <TAG>
 
 | Option | Description |
 | --- | --- |
+| `--version <VERSION>` | The item version you read. If the item has changed since, the tag stays. |
 | `--idempotency-key <KEY>` | Sent as `Idempotency-Key`, so a repeat is answered from the record rather than written twice. |
 
 ### marfa items edges
