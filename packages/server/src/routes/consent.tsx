@@ -32,6 +32,9 @@ import type { ChoosableType } from "./access-types.js";
 export interface ConsentParams {
   instanceName?: string;
   clientName: string;
+  /** The host that publishes the app's metadata document, from
+   *  `metadataDocumentHost`. */
+  clientSource?: string;
   /** The addresses approving lets reach the server, from `webOriginsOf`. */
   webOrigins?: readonly string[];
   /** The nonce the response's content security policy names. */
@@ -98,6 +101,7 @@ export function renderConsentScreen(params: ConsentParams): string {
         title={title}
         lede={lede}
         app={params.clientName}
+        source={params.clientSource}
         foot={<ApprovalFoot />}
       >
         <form

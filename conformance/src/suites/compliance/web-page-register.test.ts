@@ -42,6 +42,9 @@ const DISCOVERY = [
   "/auth/.well-known/oauth-authorization-server",
   "/auth/.well-known/openid-configuration",
   "/.well-known/oauth-protected-resource",
+  "/.well-known/oauth-protected-resource/mcp",
+  "/.well-known/oauth-protected-resource/mcp/schema",
+  "/.well-known/oauth-protected-resource/mcp/admin",
 ];
 
 beforeAll(async () => {

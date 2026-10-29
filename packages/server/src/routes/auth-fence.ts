@@ -111,6 +111,9 @@ export const FENCED_PLUGIN_ENDPOINTS: readonly string[] = [
   "/oauth2/get-clients",
   "/oauth2/update-client",
   "/oauth2/client/rotate-secret",
+  // Self-service key rotation for a `private_key_jwt` client, a method this
+  // server refuses at registration.
+  "/oauth2/client/rotate-keys",
   "/oauth2/delete-client",
   // Read-only client lookups with no reader in this tree. The plugin refuses
   // the pre-login one itself while `allowPublicClientPrelogin` is unset.

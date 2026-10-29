@@ -27,10 +27,13 @@ import { runAuditedTransaction } from "../storage/audited-transaction.js";
 import type { AuditLogEntry } from "../storage/interface.js";
 import { betterAuth } from "better-auth";
 import { hashPassword, verifyPassword } from "better-auth/crypto";
-import { oauthDeviceAuthorization } from "@better-auth/oauth-provider";
+import {
+  oauthDeviceAuthorization,
+  type ClientMetadataResourceFetch,
+} from "@better-auth/oauth-provider";
+import { fetchClientMetadataResource as fetchOverPinnedAddress } from "@better-auth/cimd/node";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { jwt } from "better-auth/plugins";
-import { isAPIError } from "better-auth/api";
 import { ErrorCode, MarfaError } from "@withmarfa/shared";
 import * as sqliteSchema from "../storage/sqlite/schema.js";
 import { log } from "../middleware/logger.js";
@@ -41,6 +44,7 @@ import {
   makeTokenHasher,
   validateDeviceScope,
 } from "./oauth-provider.js";
+import { clientMetadataDiscoveryPlugin } from "./client-metadata-discovery.js";
 import { withIdempotentConsent } from "./consent-idempotent-adapter.js";
 import { withHashedDeviceCodes } from "./hashed-device-code-adapter.js";
 import { CLIENT_ADDRESS_HEADER } from "../middleware/client-ip.js";
@@ -92,6 +96,10 @@ export interface MarfaAuthOptions {
    *  letting the middleware look up `auth_oauth_access_token.token`
    *  directly by computing the same hash. */
   apiKeySalt?: string;
+  /** Fetches a client's metadata document. Resolves the host once, refuses
+   *  any address that is not public, and follows no redirect; a test passes
+   *  one that answers in process. */
+  fetchClientMetadataResource?: ClientMetadataResourceFetch;
 }
 
 /**
@@ -454,23 +462,6 @@ export interface MarfaAuth {
 }
 
 /**
- * Whether the storage layer's write-lock refusal is somewhere in this
- * error's `cause` chain. The adapter's statements reach the database through
- * Drizzle, which wraps what the driver threw, so the refusal does not arrive
- * at the top. Bounded because a chain is data and may cycle.
- */
-function carriesWriteContention(err: unknown): boolean {
-  for (let step: unknown = err, depth = 0; depth < 8; depth++) {
-    if (step instanceof MarfaError) {
-      return step.code === ErrorCode.WRITE_CONTENTION;
-    }
-    if (step === null || typeof step !== "object") return false;
-    step = (step as { cause?: unknown }).cause;
-  }
-  return false;
-}
-
-/**
  * Whether the storage turned a write away for want of room, the write lock or
  * permission to write, wherever in the `cause` chain: the faults that leave a
  * read answerable. Bounded because a chain is data and may cycle.
@@ -554,19 +545,12 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
       ? withCredentialAudit(credentialAdapter, options.storage)
       : credentialAdapter,
     onAPIError: {
-      // Write contention, wherever it is wrapped, and anything else Better
-      // Auth's handler throws that is not one of its own errors are rethrown
-      // out of the handler to the server's error handler, which answers them
-      // as `503 write_contention` and `500 internal_error` and is the one
-      // place a fault is reported. Throwing is the only way out, since this
-      // hook's return is ignored, and left alone the library prints the error
-      // whole to stderr. Its own errors are logged as it logs them when no
-      // hook is set: only when they are a `500`.
-      onError: (error, ctx) => {
-        if (carriesWriteContention(error) || !isAPIError(error)) throw error;
-        if (error.status !== "INTERNAL_SERVER_ERROR") return;
-        ctx.logger.error(error.name, error);
-      },
+      // Anything Better Auth's handler throws that is not one of its own
+      // errors leaves the handler for the server's error handler, which
+      // answers it and is the one place a fault is reported. Without this the
+      // library prints the error whole, statement parameters included, to
+      // stderr, and a hook that throws is only logged.
+      throw: true,
     },
     // The provider renews a session only once its last renewal is a day old,
     // so a session used within that day still ends a week after the renewal.
@@ -644,7 +628,15 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
               storage: options.storage,
               apiKeySalt: options.apiKeySalt,
               baseURL: options.baseURL,
+              provider: oauthProvider,
             }),
+            // A client may name the HTTPS address of its metadata document as
+            // its `client_id` instead of registering, as MCP clients do. The
+            // provider creates the client from the document the first time it
+            // meets one, with the same allowlist a registration gets.
+            clientMetadataDiscoveryPlugin(
+              options.fetchClientMetadataResource ?? fetchOverPinnedAddress,
+            ),
             // The RFC 8628 device grant, as the provider's own extension: it
             // mints and claims the codes, approves or denies them, and hands
             // the exchange to the provider's shared issuance at

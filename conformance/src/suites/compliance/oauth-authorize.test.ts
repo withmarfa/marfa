@@ -356,3 +356,66 @@ describe("the code exchange", () => {
     expect(again.body.error).toBe("invalid_grant");
   });
 });
+
+describe("a type registered while the server runs", () => {
+  it("is offered and granted at once, to an app registered before it", async () => {
+    const type = "user.recipe_while_running";
+    const scope = `${type}:read`;
+    // Registered with no scope, so for every scope the instance allows.
+    const app = await registerApp(server, NOTES, { scope: undefined });
+
+    // The witness: before the type exists, its scope is dropped.
+    const before = await consentScreen(
+      authorizeQuery(app.clientId, `${scope} ${NOTES}`, pkce()),
+    );
+    expect(before.searchParams.get("scope")).toBe(NOTES);
+
+    const registered = await fetch(`${server.apiUrl}/types`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${server.workingKey}`,
+      },
+      body: JSON.stringify({
+        id: type,
+        version: 1,
+        fields: { title: { type: "string" } },
+      }),
+    });
+    expect(registered.status).toBe(201);
+
+    const proof = pkce();
+    const consent = await consentScreen(
+      authorizeQuery(app.clientId, scope, proof),
+    );
+    const page = await (await fetch(consent, { headers: { cookie } })).text();
+    expect(offeredValues(page, "scopes")).toContain(scope);
+    const sent = await decide(server, origin, cookie, consent, true, [scope]);
+    const exchanged = await token(server, {
+      grant_type: "authorization_code",
+      code: sent?.searchParams.get("code") ?? "",
+      redirect_uri: CALLBACK,
+      code_verifier: proof.verifier,
+      client_id: app.clientId,
+    });
+    expect(exchanged.status, JSON.stringify(exchanged.body)).toBe(200);
+    expect(exchanged.body.scope).toBe(scope);
+  });
+});
+
+describe("a client_id that is a metadata document URL", () => {
+  it.each([
+    "https://127.0.0.1/client.json",
+    "https://10.0.0.1/client.json",
+    "https://169.254.169.254/client.json",
+    "https://[::1]/client.json",
+    "https://localhost/client.json",
+  ])("is refused 400 invalid_client at %s", async (clientId) => {
+    const query = authorizeQuery(clientId, NOTES, pkce());
+    query.set("redirect_uri", "https://app.example.test/callback");
+    const response = await authorize(server, query, cookie);
+    expect(response.status).toBe(400);
+    const body = (await response.json()) as { error?: string };
+    expect(body.error).toBe("invalid_client");
+  });
+});

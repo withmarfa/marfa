@@ -11,6 +11,7 @@ import {
   CALLBACK,
   codeFor,
   connect,
+  decide,
   issuerOrigin,
   itemsStatus,
   pkce,
@@ -19,6 +20,7 @@ import {
   signIn,
   token,
   type App,
+  type TokenAnswer,
 } from "../../utils/signed-in.js";
 
 /**
@@ -32,6 +34,7 @@ let origin: string;
 let cookie: string;
 
 const NOTES = "core.note:read";
+const MCP_PATHS = ["/mcp", "/mcp/schema", "/mcp/admin"];
 
 beforeAll(async () => {
   server = await bootFreshServer("oauth-tokens");
@@ -183,7 +186,98 @@ describe("the resource parameter", () => {
     }
   });
 
+  it("is accepted at authorization and at the token request when it names an MCP endpoint, and the token works here", async () => {
+    const app = await registerApp(server, NOTES);
+    for (const path of MCP_PATHS) {
+      const resource = `${origin}${path}`;
+      const proof = pkce();
+      const consent = await sentTo(
+        server,
+        await authorize(
+          server,
+          authorizeQuery(app.clientId, NOTES, proof, {
+            prompt: "consent",
+            resource,
+          }),
+          cookie,
+        ),
+      );
+      expect(consent?.pathname, String(consent)).toBe("/auth/authorize");
+      const sent = await decide(server, origin, cookie, consent!, true, [
+        NOTES,
+      ]);
+      const issued = await token(server, {
+        grant_type: "authorization_code",
+        code: sent?.searchParams.get("code") ?? "",
+        redirect_uri: CALLBACK,
+        code_verifier: proof.verifier,
+        client_id: app.clientId,
+        resource,
+      });
+      expect(issued.status, JSON.stringify(issued.body)).toBe(200);
+      expect(issued.body.access_token).toMatch(/^marfa_at_/);
+      expect(await itemsStatus(server, issued.body.access_token!)).toBe(200);
+    }
+  });
+
+  it("is accepted when the scheme and host are in capitals", async () => {
+    const app = await registerApp(server, NOTES);
+    const capitals = origin.toUpperCase();
+    expect(capitals).not.toBe(origin);
+    for (const resource of [capitals, `${capitals}/mcp`]) {
+      const { code, verifier } = await codeFor(
+        server,
+        origin,
+        cookie,
+        app,
+        NOTES,
+      );
+      const issued = await token(server, {
+        grant_type: "authorization_code",
+        code,
+        redirect_uri: CALLBACK,
+        code_verifier: verifier,
+        client_id: app.clientId,
+        resource,
+      });
+      expect(issued.status, `${resource} ${JSON.stringify(issued.body)}`).toBe(
+        200,
+      );
+      expect(await itemsStatus(server, issued.body.access_token!)).toBe(200);
+    }
+  });
+
   it("is refused invalid_target when it names another server", async () => {
+    const app = await registerApp(server, NOTES);
+    for (const resource of [
+      "https://elsewhere.example",
+      `${origin}/mcp/`,
+      `${origin}/MCP`,
+      `${origin}/mcp/other`,
+      `${origin}/items`,
+    ]) {
+      const { code, verifier } = await codeFor(
+        server,
+        origin,
+        cookie,
+        app,
+        NOTES,
+      );
+      const refused = await token(server, {
+        grant_type: "authorization_code",
+        code,
+        redirect_uri: CALLBACK,
+        code_verifier: verifier,
+        client_id: app.clientId,
+        resource,
+      });
+      expect(refused.status, resource).toBe(400);
+      expect(refused.body.error).toBe("invalid_target");
+      expect(refused.body.access_token).toBeUndefined();
+    }
+  });
+
+  it("is refused invalid_target when a token request names more than one", async () => {
     const app = await registerApp(server, NOTES);
     const { code, verifier } = await codeFor(
       server,
@@ -192,17 +286,54 @@ describe("the resource parameter", () => {
       app,
       NOTES,
     );
-    const refused = await token(server, {
-      grant_type: "authorization_code",
-      code,
-      redirect_uri: CALLBACK,
-      code_verifier: verifier,
-      client_id: app.clientId,
+    const response = await fetch(`${server.apiUrl}/auth/oauth2/token`, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams([
+        ["grant_type", "authorization_code"],
+        ["code", code],
+        ["redirect_uri", CALLBACK],
+        ["code_verifier", verifier],
+        ["client_id", app.clientId],
+        ["resource", `${origin}/mcp`],
+        ["resource", `${origin}/mcp/schema`],
+      ]),
+    });
+    expect(response.status).toBe(400);
+    const body = (await response.json()) as TokenAnswer;
+    expect(body.error).toBe("invalid_target");
+    expect(body.access_token).toBeUndefined();
+  });
+
+  it("is refused at authorization to the redirect URI the app registered, with the request's state", async () => {
+    const app = await registerApp(server, NOTES);
+    const sent = await sentTo(
+      server,
+      await authorize(
+        server,
+        authorizeQuery(app.clientId, NOTES, pkce(), {
+          resource: "https://elsewhere.example",
+        }),
+        cookie,
+      ),
+    );
+    expect(sent?.href.startsWith(CALLBACK), String(sent)).toBe(true);
+    expect(sent?.searchParams.get("error")).toBe("invalid_target");
+    expect(sent?.searchParams.get("state")).toBe("signed-in-fixture");
+    expect(sent?.searchParams.get("code")).toBeNull();
+  });
+
+  it("is refused at authorization 400 invalid_target when the redirect URI is not one the app registered", async () => {
+    const app = await registerApp(server, NOTES);
+    const query = authorizeQuery(app.clientId, NOTES, pkce(), {
       resource: "https://elsewhere.example",
     });
-    expect(refused.status).toBe(400);
-    expect(refused.body.error).toBe("invalid_target");
-    expect(refused.body.access_token).toBeUndefined();
+    query.set("redirect_uri", "http://127.0.0.1:9/elsewhere");
+    const response = await authorize(server, query, cookie);
+    expect(response.status).toBe(400);
+    expect(response.headers.get("location")).toBeNull();
+    const body = (await response.json()) as TokenAnswer;
+    expect(body.error).toBe("invalid_target");
   });
 });
 

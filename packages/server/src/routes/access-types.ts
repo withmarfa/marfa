@@ -1,6 +1,6 @@
 import { parseScope } from "@withmarfa/shared";
 import type { Storage } from "../storage/interface.js";
-import { buildAllowedScopes } from "../auth/oauth-provider.js";
+import { liveAllowedScopes } from "../auth/oauth-provider.js";
 
 /** One item type a person may choose when an app asks for all data. */
 export interface ChoosableType {
@@ -19,15 +19,14 @@ const NOT_DATA = new Set(["system", "marfa"]);
  * platform's own (`system.*`, which "all your data" would reach but a person does not keep).
  *
  * `ceiling` is the client's registered scope list. A client with none tracks
- * the provider's allowlist, which names only the types it was built with, so
- * for that client a type outside it is not offered: the provider would
- * refuse the scope.
+ * the live allowlist, so for that client a type outside it is not offered:
+ * the provider would refuse the scope.
  */
 export async function resolveChoosableTypes(
   storage: Storage,
   ceiling: readonly string[] | null,
 ): Promise<ChoosableType[]> {
-  const allowed = ceiling === null ? new Set(buildAllowedScopes()) : undefined;
+  const allowed = ceiling === null ? new Set(liveAllowedScopes()) : undefined;
   return (await storage.types.list())
     .filter(
       (type) =>

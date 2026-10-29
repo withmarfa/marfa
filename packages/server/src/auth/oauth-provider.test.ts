@@ -5,13 +5,17 @@ import {
   TYPE_REGISTRY,
   EDGE_TYPE_REGISTRY,
   parseScope,
+  registerTypeSchema,
+  unregisterTypeSchema,
 } from "@withmarfa/shared";
 import {
   buildAllowedScopes,
+  liveAllowedScopes,
   requestableNamespaceRoots,
 } from "./oauth-provider.js";
 import type { PermissionBundle } from "@withmarfa/shared";
 import { DEFAULT_PERMISSION_BUNDLES, loadConfig } from "../config.js";
+import { withCredentialRequest } from "./credential-adapter.js";
 
 describe("buildAllowedScopes", () => {
   it("includes the global type wildcards (Customize full-access path)", () => {
@@ -101,6 +105,42 @@ describe("buildAllowedScopes", () => {
     const scopes = new Set(buildAllowedScopes(DEFAULT_PERMISSION_BUNDLES, []));
     expect(scopes.has("acme.*:read")).toBe(false);
     expect(scopes.has("edge.acme.*:read")).toBe(false);
+  });
+});
+
+describe("liveAllowedScopes", () => {
+  it("names a type registered since boot and the publisher root it sits under", () => {
+    const id = "rtlive.recipe";
+    expect(liveAllowedScopes()).not.toContain(`${id}:read`);
+    registerTypeSchema({ id, version: 1, fields: {} });
+    try {
+      const live = liveAllowedScopes();
+      expect(live).toContain(`${id}:read`);
+      expect(live).toContain(`${id}:write`);
+      expect(live).toContain("rtlive.*:read");
+    } finally {
+      unregisterTypeSchema(id);
+    }
+    expect(liveAllowedScopes()).not.toContain("rtlive.*:read");
+  });
+
+  it("is read once for a request and again for the next", async () => {
+    const read = () =>
+      withCredentialRequest({ path: "/oauth2/authorize", clientIp: null }, () =>
+        Promise.resolve([liveAllowedScopes(), liveAllowedScopes()] as const),
+      );
+    const [first, second] = await read();
+    expect(second).toBe(first);
+    const [next] = await read();
+    expect(next).not.toBe(first);
+    expect(next).toEqual(first);
+  });
+
+  it("takes no namespace from a shipped edge type's bare identifier", () => {
+    expect(EDGE_TYPE_REGISTRY.has("about")).toBe(true);
+    const live = liveAllowedScopes();
+    expect(live).toContain("edge.about:read");
+    expect(live).not.toContain("about.*:read");
   });
 });
 

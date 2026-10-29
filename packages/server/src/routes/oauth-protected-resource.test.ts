@@ -53,6 +53,29 @@ describe("protected resource metadata (RFC 9728)", () => {
   });
 });
 
+describe("protected resource metadata for the MCP endpoints", () => {
+  it.each(["/mcp", "/mcp/schema", "/mcp/admin"])(
+    "serves %s's document, naming the endpoint, to every origin",
+    async (path) => {
+      const base = "https://example.test";
+      ctx = await createTestContext({ authBaseUrl: base });
+      const res = await ctx.app.request(
+        `/.well-known/oauth-protected-resource${path}`,
+        { headers: { origin: "https://elsewhere.example" } },
+      );
+      expect(res.status).toBe(200);
+      expect(res.headers.get("access-control-allow-origin")).toBe("*");
+      const body = (await res.json()) as PrmDoc;
+      expect(body.resource).toBe(`${base}${path}`);
+      expect(body.authorization_servers).toEqual([`${base}/auth`]);
+      expect(body.bearer_methods_supported).toEqual(["header"]);
+      expect(body.scopes_supported).toEqual(
+        expandBundlesToScopes(getPermissionBundles()),
+      );
+    },
+  );
+});
+
 describe("authorization-server discovery at spec-formed URLs", () => {
   const FORMED_PATHS = [
     // RFC 8414 §3.1: well-known segment inserted between host and issuer path.

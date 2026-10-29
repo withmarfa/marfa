@@ -167,8 +167,8 @@ export async function catchUpClientScopeCeiling(opts: {
   strict?: boolean;
   /**
    * Also name the requested scopes a scope in the ceiling covers
-   * (`scopesCoveredByCeiling`). Only for a decision a signed-in person has
-   * just made.
+   * (`scopesCoveredByCeiling`). Only where a signed-in person is asking or
+   * deciding: the authorize request they make and the approval they give.
    */
   covered?: boolean;
 }): Promise<readonly string[] | null> {

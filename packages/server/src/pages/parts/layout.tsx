@@ -9,6 +9,8 @@ export interface MomentCardProps {
   steps?: { current: number; total: number };
   /** The app that is asking, named here for its first letter. It sits beside Marfa's mark. */
   app?: string;
+  /** Where the app is published, said under the title when it is known. */
+  source?: string;
   lede?: Child;
   /** Announces the lede to a screen reader when the page loads. */
   ledeRole?: "status" | "alert";
@@ -57,6 +59,9 @@ export function MomentCard(props: MomentCardProps) {
           </div>
           <div>
             <h1 class="ctitle">{props.title}</h1>
+            {props.source !== undefined && (
+              <p class="small muted">From {props.source}</p>
+            )}
             {props.lede !== undefined && (
               <p class="lede" role={props.ledeRole}>
                 {props.lede}

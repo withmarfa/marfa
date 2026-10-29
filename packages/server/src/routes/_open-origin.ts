@@ -17,6 +17,9 @@ export const OPEN_TO_EVERY_ORIGIN: ReadonlyMap<string, readonly string[]> =
     ["/auth/.well-known/oauth-authorization-server", ["GET"]],
     ["/auth/.well-known/openid-configuration", ["GET"]],
     ["/.well-known/oauth-protected-resource", ["GET"]],
+    ["/.well-known/oauth-protected-resource/mcp", ["GET"]],
+    ["/.well-known/oauth-protected-resource/mcp/schema", ["GET"]],
+    ["/.well-known/oauth-protected-resource/mcp/admin", ["GET"]],
     ["/auth/oauth2/register", ["POST"]],
   ]);
 
