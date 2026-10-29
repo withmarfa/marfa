@@ -9,7 +9,9 @@
 import { createHash, randomBytes } from "node:crypto";
 import { createRequire, syncBuiltinESMExports } from "node:module";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { createApp } from "../app.js";
 import { FIRST_FETCH_BUDGET } from "../auth/client-metadata-discovery.js";
+import { ensureInstanceId } from "../storage/instance-id.js";
 import { transactionControl } from "../storage/sqlite/transaction-control.js";
 import type { TestAppOptions, TestContext } from "../test-utils.js";
 import { createTestContext, request, TEST_OWNER } from "../test-utils.js";
@@ -85,6 +87,7 @@ function pkce(): { verifier: string; challenge: string } {
 function authorize(
   c: TestContext,
   params: Record<string, string>,
+  peer?: string,
 ): Promise<Response> {
   return request(
     c.app,
@@ -97,14 +100,40 @@ function authorize(
       code_challenge: pkce().challenge,
       ...params,
     }).toString()}`,
-    { headers: { cookie: c.owner.cookie } },
+    { headers: { cookie: c.owner.cookie }, ...(peer ? { peer } : {}) },
   );
+}
+
+/** The same database behind a server started again with `fetch`. */
+async function restart(c: TestContext, fetch: Fetch): Promise<TestContext> {
+  return {
+    ...c,
+    app: createApp(
+      c.storage,
+      c.blobs,
+      c.housekeeping,
+      c.config,
+      await ensureInstanceId(c.storage.settings),
+      { fetchClientMetadataResource: fetch },
+    ),
+  };
 }
 
 function reachedConsent(response: Response): boolean {
   return (
     response.status === 302 &&
     (response.headers.get("location") ?? "").includes("/auth/authorize?")
+  );
+}
+
+/** Whether an authorization of a client that holds consent went through. */
+function authorized(response: Response): boolean {
+  if (reachedConsent(response)) return true;
+  const location = new URL(response.headers.get("location") ?? "", BASE);
+  return (
+    response.status === 302 &&
+    location.searchParams.get("error") === null &&
+    location.searchParams.get("code") !== null
   );
 }
 
@@ -453,6 +482,183 @@ describe("a stored metadata document client", () => {
     expect(String(body.access_token).startsWith("marfa_at_")).toBe(true);
   });
 
+  it("keeps authorizing and refreshing once unknown clients on its own host spend the host's fetches", async () => {
+    const fetched: string[] = [];
+    const fetch: Fetch = (input, init) => {
+      const url = new Request(input, init).url;
+      fetched.push(url);
+      return uncached(metadata({ client_id: url }));
+    };
+    const c = await contextServing(fetch);
+    const refreshToken = await connect(c);
+
+    const refusals: string[] = [];
+    for (let i = 0; i < 30; i++) {
+      const response = await authorize(
+        c,
+        {
+          client_id: `https://app.example.test/unknown/${String(i)}.json`,
+          redirect_uri: CALLBACK,
+        },
+        `203.0.113.${String(1 + (i % 4))}`,
+      );
+      if (!reachedConsent(response)) refusals.push(await response.text());
+    }
+    // The witness: the host's fetches for this minute are spent.
+    expect(refusals.join("\n")).toContain("temporarily_unavailable");
+
+    const fetchedBefore = fetched.length;
+    const again = await authorize(c, {
+      client_id: CLIENT_ID,
+      redirect_uri: CALLBACK,
+    });
+    expect(fetched.slice(fetchedBefore)).toEqual([]);
+    expect(authorized(again), await again.clone().text()).toBe(true);
+    const refreshed = await refresh(c, refreshToken);
+    expect(refreshed.status, await refreshed.clone().text()).toBe(200);
+  });
+
+  it("stays refused within a second of its document answering 404", async () => {
+    let status = 200;
+    const server = documentServer(() =>
+      status === 200 ? uncached(metadata()) : new Response("gone", { status }),
+    );
+    const c = await contextServing(server.fetch);
+    const refreshToken = await connect(c);
+
+    status = 404;
+    const calls = server.calls.length;
+    const first = await authorize(c, {
+      client_id: CLIENT_ID,
+      redirect_uri: CALLBACK,
+    });
+    expect(server.calls.length).toBe(calls + 1);
+    expect(authorized(first)).toBe(false);
+
+    const second = await authorize(c, {
+      client_id: CLIENT_ID,
+      redirect_uri: CALLBACK,
+    });
+    // The witness: the second request did not fetch the document.
+    expect(server.calls.length).toBe(calls + 1);
+    expect(authorized(second)).toBe(false);
+    expect(second.status).toBe(400);
+    expect(((await second.json()) as { error?: string }).error).toBe(
+      "invalid_client",
+    );
+    const refused = await refresh(c, refreshToken);
+    expect(refused.status).toBe(400);
+  });
+
+  it("stays refused after a restart while its host cannot be reached", async () => {
+    let status = 200;
+    const server = documentServer(() =>
+      status === 200 ? uncached(metadata()) : new Response("gone", { status }),
+    );
+    const c = await contextServing(server.fetch);
+    const refreshToken = await connect(c);
+
+    status = 404;
+    expect(
+      authorized(
+        await authorize(c, { client_id: CLIENT_ID, redirect_uri: CALLBACK }),
+      ),
+    ).toBe(false);
+
+    const unreachable = documentServer(() => {
+      throw new TypeError("fetch failed");
+    });
+    const restarted = await restart(c, unreachable.fetch);
+    const refused = await refresh(restarted, refreshToken);
+    // The witness: the restarted server did try the document.
+    expect(unreachable.calls).toEqual([CLIENT_ID]);
+    expect(refused.status, await refused.clone().text()).toBe(400);
+    expect(
+      authorized(
+        await authorize(restarted, {
+          client_id: CLIENT_ID,
+          redirect_uri: CALLBACK,
+        }),
+      ),
+    ).toBe(false);
+  });
+
+  it("is accepted again once its document answers 200 after a 404", async () => {
+    let status = 200;
+    const server = documentServer(() =>
+      status === 200 ? uncached(metadata()) : new Response("gone", { status }),
+    );
+    const c = await contextServing(server.fetch);
+    const refreshToken = await connect(c);
+
+    status = 404;
+    expect(
+      authorized(
+        await authorize(c, { client_id: CLIENT_ID, redirect_uri: CALLBACK }),
+      ),
+    ).toBe(false);
+
+    status = 200;
+    // Past the library's least interval between fetches of one client.
+    await new Promise((resolve) => setTimeout(resolve, 1100));
+    const consent = await authorize(c, {
+      client_id: CLIENT_ID,
+      redirect_uri: CALLBACK,
+    });
+    expect(authorized(consent), await consent.clone().text()).toBe(true);
+    const refreshed = await refresh(c, refreshToken);
+    const body = (await refreshed.json()) as Record<string, unknown>;
+    expect(refreshed.status, JSON.stringify(body)).toBe(200);
+
+    // The acceptance is stored: after a restart the client is usable while
+    // its host cannot be reached.
+    const unreachable = documentServer(() => {
+      throw new TypeError("fetch failed");
+    });
+    const restarted = await restart(c, unreachable.fetch);
+    const again = await refresh(restarted, String(body.refresh_token));
+    expect(unreachable.calls).toEqual([CLIENT_ID]);
+    expect(again.status, await again.clone().text()).toBe(200);
+  });
+
+  it.each([
+    [
+      "breaks off",
+      () =>
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode("not fo"));
+            controller.error(new Error("connection reset"));
+          },
+        }),
+    ],
+    [
+      "stalls",
+      () =>
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode("not fo"));
+          },
+        }),
+    ],
+  ])(
+    "is refused when its document answers 404 with a body that %s",
+    async (_, body) => {
+      let gone = false;
+      const server = documentServer(() =>
+        gone ? new Response(body(), { status: 404 }) : uncached(metadata()),
+      );
+      const c = await contextServing(server.fetch);
+      const refreshToken = await connect(c);
+
+      gone = true;
+      const calls = server.calls.length;
+      const refused = await refresh(c, refreshToken);
+      expect(server.calls.length).toBeGreaterThan(calls);
+      expect(refused.status, await refused.clone().text()).toBe(400);
+    },
+  );
+
   it("is refused once its document no longer validates", async () => {
     let valid = true;
     const server = documentServer(() =>
@@ -471,6 +677,54 @@ describe("a stored metadata document client", () => {
     expect(((await refused.json()) as { error?: string }).error).toBe(
       "invalid_client",
     );
+  });
+});
+
+describe("the first fetches of metadata document clients", () => {
+  it("count an IPv6 /64 as one address", async () => {
+    const fetch: Fetch = (input, init) =>
+      Response.json(metadata({ client_id: new Request(input, init).url }));
+    const c = await contextServing(fetch);
+    const first = (i: number, peer: string) =>
+      authorize(
+        c,
+        {
+          client_id: `https://app.example.test/clients/${String(i)}.json`,
+          redirect_uri: CALLBACK,
+        },
+        peer,
+      );
+
+    for (let i = 0; i < FIRST_FETCH_BUDGET.perAddressPerMinute; i++) {
+      const consent = await first(i, `2001:db8:1:2::${(i + 1).toString(16)}`);
+      expect(reachedConsent(consent), await consent.clone().text()).toBe(true);
+    }
+    const sameNetwork = await first(100, "2001:db8:1:2:ffff:ffff:ffff:ffff");
+    expect(reachedConsent(sameNetwork)).toBe(false);
+    expect(await sameNetwork.text()).toContain("temporarily_unavailable");
+    // The witness: another /64 is still served.
+    const otherNetwork = await first(101, "2001:db8:1:3::1");
+    expect(
+      reachedConsent(otherNetwork),
+      await otherNetwork.clone().text(),
+    ).toBe(true);
+  });
+
+  it("are spent once by parallel first authorizations of one client", async () => {
+    let fetches = 0;
+    const server = documentServer(() => {
+      fetches += 1;
+      return Response.json(metadata());
+    });
+    const c = await contextServing(server.fetch);
+    const answers = await Promise.all(
+      Array.from({ length: 6 }, () =>
+        authorize(c, { client_id: CLIENT_ID, redirect_uri: CALLBACK }),
+      ),
+    );
+    for (const answer of answers)
+      expect(reachedConsent(answer), await answer.clone().text()).toBe(true);
+    expect(fetches).toBe(1);
   });
 });
 
