@@ -86,9 +86,10 @@ pub enum AutostartCommand {
     Off,
     /// Say whether folders sync from login: whether the agent is installed
     /// and running, whether it differs from what `on` would write now, the
-    /// binary it runs, where it logs (on macOS, also where launchd keeps what the
-    /// watch prints before it opens its log), and what the watch's record says
-    /// of each folder. Asks no server and needs no credential.
+    /// binary it runs, where it logs (on macOS, also the file the installed
+    /// agent names for what the watch prints before it opens its log, or that
+    /// it names none), and what the watch's record says of each folder. Asks
+    /// no server and needs no credential.
     Status,
 }
 
@@ -363,6 +364,21 @@ fn outdated(manager: Manager, written: &str) -> bool {
     Agent::read(manager, written)
         .and_then(|agent| agent.render(manager).ok())
         .is_some_and(|wanted| wanted != written)
+}
+
+/// The one file an installed property list gives the watch's standard output
+/// and standard error, which an agent written before the output was named
+/// does not have. Not the file `on` would name now, so `status` does not
+/// promise output to a file the agent will not write.
+fn launchd_log_of(written: &str) -> Option<PathBuf> {
+    let named = |key: &str| {
+        let value = after(written, &format!("<key>{key}</key>"))?
+            .trim_start()
+            .strip_prefix("<string>")?;
+        Some(PathBuf::from(unxml(&value[..value.find("</string>")?])))
+    };
+    let out = named("StandardOutPath")?;
+    (named("StandardErrorPath")? == out).then_some(out)
 }
 
 /// The path the binary was run by, where it leads to the binary running:
@@ -1006,8 +1022,9 @@ struct Status {
     /// What the installed file runs; `None` where it is not one `on` writes.
     binary: Option<Binary>,
     log: Option<PathBuf>,
-    /// Where launchd writes what the watch prints before it opens its log;
-    /// none for a systemd user unit, whose journal keeps it.
+    /// The file the installed launchd agent names for what the watch prints
+    /// before it opens its log; none for a systemd user unit, whose journal
+    /// keeps it, and for an agent written before the output was named.
     launchd_log: Option<PathBuf>,
     registry: Option<PathBuf>,
     /// The file the watch takes its server and key from, or none where it
@@ -1135,10 +1152,10 @@ fn status(place: &Place, json: bool) -> Result<(), CliError> {
             .is_some_and(|written| outdated(place.manager, written)),
         binary,
         log: agent.as_ref().map(|agent| agent.log.clone()),
-        launchd_log: agent
-            .as_ref()
-            .filter(|_| place.manager == Manager::Launchd)
-            .map(Agent::launchd_log),
+        launchd_log: installed
+            .as_deref()
+            .filter(|_| agent.is_some() && place.manager == Manager::Launchd)
+            .and_then(launchd_log_of),
         registry: agent.as_ref().map(|agent| agent.registry.clone()),
         key_file: agent.as_ref().and_then(|agent| agent.key_file.clone()),
         record,
@@ -1224,6 +1241,10 @@ fn describe_status(place: &Place, report: &Status) -> String {
             "what it prints before it opens that log goes to {}",
             launchd_log.display()
         ));
+    } else if place.manager == Manager::Launchd && report.log.is_some() {
+        lines.push(
+            "it names no file for what it prints before it opens that log; `marfa folders autostart on` again replaces it with an agent that does".into(),
+        );
     }
     if let Some(key_file) = &report.key_file {
         lines.push(if key_file.is_file() {
@@ -1361,6 +1382,27 @@ mod tests {
         let unit = agent("/bin/marfa").unit().unwrap();
         assert!(!unit.contains("StandardOutput") && !unit.contains("StandardError"));
         assert!(!unit.contains("launchd"));
+    }
+
+    #[test]
+    fn the_output_file_an_installed_agent_names_is_read_from_its_property_list() {
+        let plist = agent("/bin/marfa").plist().unwrap();
+        assert_eq!(
+            launchd_log_of(&plist),
+            Some(PathBuf::from("/data/marfa/folder-watch.launchd.log"))
+        );
+        // Witnesses: an agent from before the output was named, or one that
+        // sends the two streams to different files, names no one file.
+        let earlier = plist
+            .replace(
+                "\t<key>StandardOutPath</key>\n\t<string>/data/marfa/folder-watch.launchd.log</string>\n\t<key>StandardErrorPath</key>\n\t<string>/data/marfa/folder-watch.launchd.log</string>\n",
+                "",
+            );
+        assert_ne!(earlier, plist);
+        assert_eq!(launchd_log_of(&earlier), None);
+        let split = plist.replacen("launchd.log", "launchd-err.log", 1);
+        assert_ne!(split, plist);
+        assert_eq!(launchd_log_of(&split), None);
     }
 
     #[test]

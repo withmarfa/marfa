@@ -3889,7 +3889,7 @@ marfa folders autostart off [OPTIONS]
 
 ### marfa folders autostart status
 
-Say whether folders sync from login: whether the agent is installed and running, whether it differs from what `on` would write now, the binary it runs, where it logs (on macOS, also where launchd keeps what the watch prints before it opens its log), and what the watch's record says of each folder. Asks no server and needs no credential.
+Say whether folders sync from login: whether the agent is installed and running, whether it differs from what `on` would write now, the binary it runs, where it logs (on macOS, also the file the installed agent names for what the watch prints before it opens its log, or that it names none), and what the watch's record says of each folder. Asks no server and needs no credential.
 
 ```text
 marfa folders autostart status [OPTIONS]
