@@ -37,6 +37,7 @@ import type { BlobLayer } from "./storage/blob-layer.js";
 import type { MarfaAuth } from "./auth/instance.js";
 import { createMarfaAuth } from "./auth/instance.js";
 import { ownerTrashRoutes } from "./routes/owner-trash.js";
+import { overviewRoutes } from "./routes/overview.js";
 import { itemSummaryRoutes } from "./routes/item-summaries.js";
 import { itemRoutes } from "./routes/items.js";
 import { readInstanceName } from "./instance-name.js";
@@ -858,6 +859,13 @@ export function createApp(
   app.route("/search", searchRoutes(storage));
   app.route("/occurrences", occurrenceRoutes(storage));
   app.route("/metadata", metadataRoutes(storage));
+  app.route(
+    "/overview",
+    overviewRoutes(storage, {
+      version: deployedVersion,
+      release: config.releaseVersion,
+    }),
+  );
   app.route("/blobs", blobRoutes(storage, blobs, housekeeping, config));
   app.route("/housekeeping", housekeepingRoutes(housekeeping));
   app.route("/connectors", connectorRoutes(storage));

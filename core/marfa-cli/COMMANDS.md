@@ -89,6 +89,16 @@ Instance-wide counters and process uptime. Needs `instance.read`.
 marfa metrics [OPTIONS]
 ```
 
+## overview
+
+What the credential can reach: types with counts, edge types, top tags, views, folders and what the credential may do.
+
+### marfa overview
+
+```text
+marfa overview [OPTIONS]
+```
+
 ## whoami
 
 Which server, instance and credential a bare command would use.

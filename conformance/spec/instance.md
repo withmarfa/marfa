@@ -300,6 +300,106 @@ When `GET /openapi.json` is answered, the server MUST write `paths` in the order
 
 **Tests:** `compliance/instance.test.ts › lists every operation once, under its own tag, in each tag's x-operation-order`.
 
+## What a credential can reach
+
+`GET /overview` answers a key or an app's token with a short summary of what the instance holds that the credential can reach, so a caller learns the instance before it lists anything.
+
+### `instance/overview-credential-only`
+
+When a request to `GET /overview` carries no key or app token, including one made with the owner's browser session or on the private local command, the server MUST answer `401 unauthorized`.
+
+**Reason:** the answer describes one credential's reach, and the owner's session and the private command are not a credential.
+
+**Tests:** `compliance/overview.test.ts › refuses a request with no credential, the owner's browser session and the private command, and answers a key`.
+
+### `instance/overview-fields`
+
+When `GET /overview` is answered `200`, the server MUST give `instance` with the `name` and `build` and give `credential` with its `kind`.
+
+**Tests:** `compliance/overview.test.ts › answers the instance, the key, and what it reads with counts, tags, edge types, views and folders`.
+
+### `instance/overview-no-reach`
+
+When the credential may read no type, the server MUST answer `GET /overview` with `200`, `instance` and `credential`, and no list.
+
+**Tests:** `compliance/overview.test.ts › answers a key that reaches no type with the instance and itself only`.
+
+### `instance/overview-omit-empty`
+
+The server MUST leave an empty list or an absent field out of the `GET /overview` answer, rather than send an empty list or `null`.
+
+**Tests:** `compliance/overview.test.ts › answers the instance, the key, and what it reads with counts, tags, edge types, views and folders`, `› answers a key that reaches no type with the instance and itself only`.
+
+### `instance/overview-types`
+
+When `GET /overview` is answered `200`, the server MUST list in `types` each type outside the `system` namespace that the credential may read, including a type registered while the server runs, with its `id`, its `description` when it has one and the `count` of its active items that the credential may read.
+
+**Tests:** `compliance/overview.test.ts › answers the instance, the key, and what it reads with counts, tags, edge types, views and folders`.
+
+### `instance/overview-types-order`
+
+The server MUST order `types` in the `GET /overview` answer from the type with the most active items to the type with the fewest.
+
+**Tests:** `compliance/overview.test.ts › answers the instance, the key, and what it reads with counts, tags, edge types, views and folders`.
+
+### `instance/overview-unreadable`
+
+The server MUST NOT include in the `GET /overview` answer a type the credential may not read, an item of such a type in any count, or a tag that only such items carry.
+
+**Reason:** a summary that named an unreadable type or tag would disclose what the credential is kept from.
+
+**Tests:** `compliance/overview.test.ts › leaves out a type the key cannot read and everything counted from it`.
+
+### `instance/overview-tags`
+
+When `GET /overview` is answered `200`, the server MUST list in `tags` the tags that active items the credential may read carry, the most used first, each with its `count`.
+
+**Tests:** `compliance/overview.test.ts › answers the instance, the key, and what it reads with counts, tags, edge types, views and folders`.
+
+### `instance/overview-edge-types`
+
+When `GET /overview` is answered `200`, the server MUST list in `edge_types`, sorted by `id`, each edge type the credential's edge permissions let it read, with `access` set to `write` where they let it write and to `read` otherwise.
+
+**Tests:** `compliance/overview.test.ts › answers the instance, the key, and what it reads with counts, tags, edge types, views and folders`, `› holds each list to its cap, says what was cut and keeps the answer small`.
+
+### `instance/overview-views-folders`
+
+When `GET /overview` is answered `200`, the server MUST list in `views` and in `folders` each view and folder the credential may read, as its `id` and `title`, sorted by title.
+
+**Tests:** `compliance/overview.test.ts › answers the instance, the key, and what it reads with counts, tags, edge types, views and folders`.
+
+### `instance/overview-key`
+
+Where the credential is a key, the server MUST answer `credential` in the `GET /overview` answer with `kind` set to `key`, the key's `label`, its type permissions grouped under `write`, `read` and `none`, and the permissions it holds.
+
+**Tests:** `compliance/overview.test.ts › answers the instance, the key, and what it reads with counts, tags, edge types, views and folders`, `› leaves out a type the key cannot read and everything counted from it`.
+
+### `instance/overview-app`
+
+Where the credential is the token of a signed-in app, the server MUST answer `credential` in the `GET /overview` answer with `kind` set to `app`, no `label`, and the type permissions and permissions its granted scopes give.
+
+**Tests:** `compliance/overview.test.ts › reports a signed-in app as an app with the scopes it was granted`.
+
+### `instance/overview-list-caps`
+
+The server MUST hold `types` and `edge_types` to 50 entries, `tags`, `views` and `folders` to 30 entries, and each level of `credential.type_permissions` to 30 patterns in the `GET /overview` answer.
+
+**Reason:** a caller reads the answer into its context, and an instance can hold hundreds of types and tags.
+
+**Tests:** `compliance/overview.test.ts › holds each list to its cap, says what was cut and keeps the answer small`.
+
+### `instance/overview-truncated`
+
+When the server cuts a list of the `GET /overview` answer at its cap, the server MUST give in `truncated`, under the list's name, how many entries the list held before the cut.
+
+**Tests:** `compliance/overview.test.ts › holds each list to its cap, says what was cut and keeps the answer small`.
+
+### `instance/overview-text-cap`
+
+The server MUST cut each description and title in the `GET /overview` answer at 100 characters.
+
+**Tests:** `compliance/overview.test.ts › holds each list to its cap, says what was cut and keeps the answer small`.
+
 ## Backing up
 
 An owner backs up an instance by backing up the machine it runs on. The data directory is the one thing the instance keeps: the database file, the log beside it that holds the writes not yet moved into the file, and the folder of blob files. The setting `API_KEY_SALT` is not in it. In the image `deploy/Dockerfile` builds, with `S3_BUCKET` set, Litestream also streams the database to the bucket, and a volume that holds no database is first restored from it.

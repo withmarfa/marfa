@@ -7,14 +7,19 @@ export interface FolderSummary {
   created_at: string;
 }
 
-export function folderSummary(item: Item): FolderSummary {
+/** An item's `title` property with surrounding and repeated whitespace
+ *  removed, or `fallback` when it holds no text. */
+export function displayTitle(item: Item, fallback: string): string {
   const title = item.properties.title;
+  return typeof title === "string" && title.trim()
+    ? title.trim().replace(/\s+/g, " ")
+    : fallback;
+}
+
+export function folderSummary(item: Item): FolderSummary {
   return {
     id: item.id,
-    title:
-      typeof title === "string" && title.trim()
-        ? title.trim().replace(/\s+/g, " ")
-        : "Untitled folder",
+    title: displayTitle(item, "Untitled folder"),
     created_at: item.created_at,
   };
 }

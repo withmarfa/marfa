@@ -18,6 +18,7 @@ pub mod logout;
 pub mod metadata;
 pub mod metrics;
 pub mod operations;
+pub mod overview;
 pub mod owner;
 pub mod owner_passkeys;
 pub mod profile;
