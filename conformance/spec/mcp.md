@@ -256,7 +256,7 @@ When `marfa_revoke_key` is called without `confirm`, the server MUST NOT revoke 
 
 ### `mcp/revoke-confirmed`
 
-When `marfa_revoke_key` is called with the `confirm` token its preview of the same key gave, by the same credential, within five minutes, while the key's grant is unchanged, the server MUST revoke the key.
+When `marfa_revoke_key` is called with the `confirm` token its preview of the same key gave, by the same credential, within five minutes, while the key is unchanged apart from when it was last used, the server MUST revoke the key.
 
 **Tests:** `compliance/mcp.test.ts › revokes the key with the confirmation the preview gave`.
 
