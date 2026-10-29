@@ -38,6 +38,9 @@ export interface DeviceConsentParams {
   /** The nonce the response's content security policy names. */
   nonce: string;
   clientName: string;
+  /** The host that publishes the app's metadata document, from
+   *  `metadataDocumentHost`. */
+  clientSource?: string;
   /** The addresses approving lets reach the server, from `webOriginsOf`. */
   webOrigins?: readonly string[];
   scopes: ParsedScope[];
@@ -85,6 +88,7 @@ export function renderDeviceConsentScreen(params: DeviceConsentParams): string {
             : undefined
         }
         app={params.clientName}
+        source={params.clientSource}
         foot={<ApprovalFoot />}
       >
         <CodeCells

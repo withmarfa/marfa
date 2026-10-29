@@ -114,6 +114,7 @@ import {
 } from "../auth/narrow-signed-query.js";
 import { isExactTypeScope, profileWriteDescription } from "./scope-copy.js";
 import { webOriginsOf } from "../auth/web-origins.js";
+import { metadataDocumentHost } from "../auth/client-metadata-discovery.js";
 import { deriveWildcardDescription } from "./wildcard-copy.js";
 import { renderAuthorizeExpiredPage } from "./authorize-expired-page.js";
 import type { AuthorizeFailure } from "./authorize-expired-page.js";
@@ -526,6 +527,7 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
       instanceName: await readInstanceName(deps.storage.settings),
       nonce: c.var.cspNonce,
       clientName,
+      clientSource: metadataDocumentHost(clientId),
       webOrigins: webOriginsOf(client),
       scopes: parsed,
       clientId,

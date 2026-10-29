@@ -55,6 +55,7 @@ import {
 import { addressBucket } from "../middleware/client-ip.js";
 import { withConsentLock } from "../auth/consent-lock.js";
 import { webOriginsOf } from "../auth/web-origins.js";
+import { metadataDocumentHost } from "../auth/client-metadata-discovery.js";
 import {
   listActiveAppGrants,
   revokeProjectedGrant,
@@ -909,6 +910,7 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth) {
         instanceName: await readInstanceName(storage.settings),
         nonce: c.var.cspNonce,
         clientName: client.name ?? client.clientId,
+        clientSource: metadataDocumentHost(client.clientId),
         webOrigins: webOriginsOf(client),
         scopes: parsedScopes,
         userCode,

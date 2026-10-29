@@ -56,6 +56,19 @@ describe("renderDeviceConsentScreen", () => {
     expect(text).not.toContain("ABCD1234");
   });
 
+  it("says where an app named by its metadata document is published", () => {
+    const text = visibleText(
+      renderDeviceConsentScreen({
+        ...PARAMS,
+        clientSource: "app.example.test",
+      }),
+    );
+    expect(text).toContain("From app.example.test");
+    expect(visibleText(renderDeviceConsentScreen(PARAMS))).not.toContain(
+      "From ",
+    );
+  });
+
   it("posts the code and the decision to the device handler, with cancel first", () => {
     const html = renderDeviceConsentScreen(PARAMS);
     expect(html).toMatch(

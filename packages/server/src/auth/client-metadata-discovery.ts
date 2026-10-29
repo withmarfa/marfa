@@ -251,6 +251,17 @@ export function buildClientMetadataDiscovery(
   return { ...inner, resolve, fetchClientMetadataResource: fetchResource };
 }
 
+/**
+ * The host that publishes a client's metadata document, for a client whose
+ * `client_id` is one. Only such a client's identifier is a URL: every other
+ * client's is generated here.
+ */
+export function metadataDocumentHost(clientId: string): string | undefined {
+  return isCimdClientIdUrlCandidate(clientId)
+    ? new URL(clientId).host
+    : undefined;
+}
+
 /** Installs {@link buildClientMetadataDiscovery} into the provider. */
 export function clientMetadataDiscoveryPlugin(
   fetchResource: ClientMetadataResourceFetch,
