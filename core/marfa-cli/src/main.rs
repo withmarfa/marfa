@@ -204,7 +204,7 @@ enum Command {
         #[command(subcommand)]
         command: types::TypesCommand,
     },
-    /// Full-text search on the server, best match first.
+    /// Full-text search on the server, best match first unless a sort is given.
     Search(search::SearchArgs),
     /// An item's tags and the namespaces it carries, and every tag in use.
     Metadata {

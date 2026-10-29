@@ -7,7 +7,7 @@ use crate::remote::Remote;
 use crate::remote::request::Request;
 use crate::values::SortDirection;
 
-/// Full-text search on the server, best match first.
+/// Full-text search on the server, best match first unless a sort is given.
 #[derive(Debug, Default, Args)]
 pub struct SearchArgs {
     /// What to look for.
@@ -50,7 +50,8 @@ pub struct SearchArgs {
     /// `asc` or `desc`; the server's default is best match or newest first.
     #[arg(long)]
     pub direction: Option<SortDirection>,
-    /// Extra to hydrate onto each hit: `edges`, `metadata`.
+    /// Extra to include: `system` also returns `system.*` items, which are left
+    /// out by default.
     #[arg(long, value_name = "NAME")]
     pub include: Vec<String>,
     #[command(flatten)]
