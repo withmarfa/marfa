@@ -79,6 +79,7 @@ const DATA_PLANE = [
   "GET /metadata/tags",
   "GET /occurrences",
   "GET /search",
+  "GET /views/:id/items",
   "PATCH /edges/:id",
   "PATCH /items/:id",
   "POST /edges",

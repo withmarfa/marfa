@@ -44,11 +44,13 @@ export function propertySortBound(encoded: string): string | number {
 /** SQLite preserves exact int64 JSON integers, while the API and cursor read
  * JavaScript doubles. Normalize numbers to REAL so ordering and cursor bounds
  * agree even outside the safe integer range. Objects and arrays share the
- * null tail with missing and null fields, matching propertySortValue. */
+ * null tail with missing and null fields, matching propertySortValue.
+ * The field is one key, quoted in the path, so a dot in it is part of the
+ * name and never a step into a nested object. */
 export function buildPropertySortExpr(
   propertiesCol: unknown,
   field: string,
 ): SQL {
-  const path = "$." + field;
+  const path = `$.${JSON.stringify(field)}`;
   return sql`CASE WHEN json_type(${propertiesCol}, ${path}) IN ('integer', 'real') THEN CAST(json_extract(${propertiesCol}, ${path}) AS REAL) WHEN json_type(${propertiesCol}, ${path}) IN ('text', 'true', 'false') THEN json_extract(${propertiesCol}, ${path}) ELSE NULL END`;
 }

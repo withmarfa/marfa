@@ -1700,9 +1700,17 @@ When a filter names an `edge[<type>]` condition, a device MUST answer it from th
 
 When a local list or a local search names `beneath` an item, a device MUST answer that item and every item it reaches along `parent-of` edges from parent to child at any depth, as far as the copy holds those edges.
 
-**Reason:** `beneath` is the device's own and has no server counterpart.
+**Reason:** a view's `query.beneath` makes the same walk on the server (`views/items-beneath`), and `device/view-items-parity` holds the two to one answer.
 
 **Tests:** `device/working-copy.test.ts › narrows a local list to an item and everything beneath it`, `› narrows a local search by the listing grammar and beneath, as a list does`.
+
+### `device/view-items-parity`
+
+When a caller lists a saved view's items from a copy that holds the view, the view's types and its `parent-of` edges, a device MUST answer the same IDs in the same order as `GET /views/{id}/items` answers.
+
+**Reason:** a view that lists one thing on the server and another on a device would give a person two lists under one name.
+
+**Tests:** `device/views-items-live.test.ts › lists a view's items in the order the server does, for each sort and query`.
 
 ### `device/beneath-references`
 
