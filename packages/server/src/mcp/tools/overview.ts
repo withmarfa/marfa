@@ -116,11 +116,7 @@ export function registerOverview(server: McpServer, ctx: ToolContext): void {
           type: compactType(answer.data as unknown as Record<string, unknown>),
         });
       }
-      // `GET /overview` is not in the generated client until it merges.
-      const answer = await ctx.api.raw<Record<string, unknown>>(
-        "GET",
-        "/overview",
-      );
+      const answer = await ctx.api.answer(ctx.api.client.GET("/overview"));
       if (!answer.ok) return refused(answer.refusal);
       return ok(answer.data);
     },

@@ -198,6 +198,19 @@ describe("marfa_find and marfa_get", () => {
     );
     expect(JSON.stringify(answer)).toContain("body");
   });
+
+  it("answers what the instance holds and what the credential may do", async () => {
+    const answer = payloadOf(await callTool(client, "marfa_overview", {}));
+    const instance = answer.instance as { name: unknown; version: unknown };
+    expect(typeof instance.name).toBe("string");
+    expect(typeof instance.version).toBe("string");
+    expect(answer.credential).toMatchObject({ kind: "key" });
+    const types = answer.types as { id: string; count: number }[];
+    expect(types.find((t) => t.id === "core.note")?.count).toBeGreaterThan(0);
+    expect(answer.edge_types).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: "references" })]),
+    );
+  });
 });
 
 describe("marfa_create", () => {
