@@ -5022,6 +5022,36 @@ When `folders autostart on` writes the agent, the CLI MUST make it run `folders 
 
 **Tests:** `device/folders-autostart.test.ts › records the binary by the path it was run as, through a link`, `device/folders-autostart.test.ts › writes an agent in the person's account that runs the watch of every folder by this binary's path, holding no credential, and starts it`, `device/folders-autostart.test.ts › says when the binary the agent runs is not this one or is gone, and on replaces the agent with this binary`.
 
+### `folders/autostart-launchd-output`
+
+Where the platform is macOS, when `folders autostart on` writes the agent, the CLI MUST set `StandardOutPath` and `StandardErrorPath` in the property list to a file named `folder-watch.launchd.log` in the directory of the log.
+
+**Reason:** The watch redirects its own output to the log only once it has opened it, so an error before that, such as a log that cannot be opened, goes where launchd sends the process's output, and is lost if the agent names no file.
+
+**Tests:** `device/folders-autostart.test.ts › writes an agent in the person's account that runs the watch of every folder by this binary's path, holding no credential, and starts it`, `› keeps an error the watch makes before it opens its log in the file launchd was given beside the log`.
+
+### `folders/autostart-launchd-output-private`
+
+Where the platform is macOS, when `folders autostart on` writes the agent, the CLI MUST make the file `folders/autostart-launchd-output` names, if it does not exist, readable and writable by its owner alone before launchd starts the watch.
+
+**Reason:** The output names folders’ directories, as the log does (`folders/watch-log-private`). launchd would make the file readable by others, and does not make the directory it lies in.
+
+**Tests:** `device/folders-autostart.test.ts › writes an agent in the person's account that runs the watch of every folder by this binary's path, holding no credential, and starts it`, `› keeps an error the watch makes before it opens its log in the file launchd was given beside the log`.
+
+### `folders/autostart-systemd-output`
+
+Where the platform is Linux, when `folders autostart on` writes the unit, the CLI MUST NOT set `StandardOutput` or `StandardError` in it.
+
+**Reason:** systemd sends a service’s standard output to the journal and its standard error to the same place, unless the unit says otherwise, so an error before the watch opens its log is kept there (`journalctl --user -u marfa-folder-watch.service`).
+
+**Tests:** `device/folders-autostart.test.ts › writes an agent in the person's account that runs the watch of every folder by this binary's path, holding no credential, and starts it`.
+
+### `folders/autostart-status-launchd-output`
+
+Where the platform is macOS, when `folders autostart status` finds an agent the command wrote, the CLI MUST report the file the agent gives the watch’s own output.
+
+**Tests:** `device/folders-autostart.test.ts › says whether the watch runs, where it logs, and from the record which folders it has no credential for, with no server or credential of its own`.
+
 ### `folders/autostart-registry`
 
 When `folders autostart on` writes the agent, the CLI MUST set `MARFA_FOLDER_REGISTRY` in the agent’s environment to the absolute path of the folder registry the command resolved.
@@ -5276,7 +5306,7 @@ When `folders watch` receives `SIGTERM`, the CLI MUST end within three seconds w
 
 Where telemetry is on, when `folders watch` receives `SIGTERM`, the CLI MUST end with exit status 0.
 
-**Reason:** The thread that sends telemetry starts before the watch, and `SIGTERM` reaching it would end the process at once, which a service manager reads as a failure.
+**Reason:** The thread that sends telemetry starts before the watch and may be the one that takes `SIGTERM`. The watch stops from whichever thread that is, and a signal lost there would leave the watch running until the service manager sends `SIGKILL`, which it reads as a failure.
 
 **Tests:** `device/folders-autostart.test.ts › ends on SIGTERM with exit status 0 while it sends telemetry, too`.
 
@@ -5313,6 +5343,44 @@ When `folders watch` starts with `--log` naming a file that holds 1 MiB or more,
 While `folders watch` runs with `--log`, when its file reaches 1 MiB, the CLI MUST move that file to the same name with `.1` added within 30 seconds and go on writing to a new file of the first name.
 
 **Tests:** `device/folders-autostart.test.ts › moves the log aside once it reaches 1 MiB while the watch runs`.
+
+### `folders/watch-launchd-log-start-full`
+
+When `folders watch` starts with `--log` naming a file, and a file named `folder-watch.launchd.log` in the same directory holds 1 MiB or more, the CLI MUST move that file to the same name with `.1` added, replacing any file there, and leave an empty file at the name, readable and writable by its owner alone, before it opens the log.
+
+**Reason:** A watch that cannot open its log is started again by the service manager, and each start adds its error to the file launchd gives the watch's output (`folders/autostart-launchd-output`). launchd makes a file it finds missing readable by others (`folders/autostart-launchd-output-private`), and the output names folders' directories. The start that moves the file aside already holds the file it opened, so what that start printed before the watch attached lands in the `.1` file, not the new one.
+
+**Tests:** `device/folders-autostart.test.ts › moves the file launchd gave the watch aside as the watch starts when it holds 1 MiB or more`.
+
+### `folders/watch-log-stopped`
+
+When `folders watch` with `--log` naming a file is stopped by an interrupt or by `SIGTERM`, the CLI MUST write as the last line of that file a line that names the signal and the time the watch stopped, in UTC in ISO 8601 form to the second.
+
+**Reason:** A watch stopped by `SIGTERM` exits with status 0 (`folders/watch-terminate`), so the service manager does not start it again and nothing else shows that it ended. The person finds out only when edits stop reaching the server.
+
+**Tests:** `device/folders-autostart.test.ts › writes the signal, its sender and the time as the last line of its log`.
+
+### `folders/watch-log-stopped-sender`
+
+Where the platform reports the process that sent the signal that stopped `folders watch` with `--log`, the CLI MUST name that process’s id in the line `folders/watch-log-stopped` writes.
+
+**Reason:** A signal sent by another process, such as a service manager or a script, is told from one the person sent. Where the platform reports none, the line names no process, since a guess would send the person to the wrong one.
+
+**Tests:** `device/folders-autostart.test.ts › writes the signal, its sender and the time as the last line of its log`.
+
+### `folders/watch-log-stopped-in-pass`
+
+While a sync pass waits on the server, when `SIGTERM` stops `folders watch` with `--log`, the CLI MUST write the line `folders/watch-log-stopped` describes before it ends.
+
+**Reason:** A request to the server that has not answered holds the pass, and a watch that ends while it waits would end before it wrote the line. The time it has to end in is `folders/watch-terminate`'s.
+
+**Tests:** `device/folders-autostart.test.ts › writes the stop line, and ends within three seconds with exit status 0, when SIGTERM comes during a pass that waits on the server`.
+
+### `folders/watch-log-stopped-moved`
+
+When a signal stops `folders watch` after it moved the log aside while it ran (`folders/watch-log-running-full`), the CLI MUST write the line `folders/watch-log-stopped` describes to the file at the log’s name.
+
+**Tests:** `device/folders-autostart.test.ts › writes the stop line to the fresh log after the file reached 1 MiB while the watch ran`.
 
 ## Taking in another folder’s file
 

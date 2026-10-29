@@ -3852,7 +3852,7 @@ marfa folders watch [OPTIONS] [DIR]
 | Option | Description |
 | --- | --- |
 | `--for <SECONDS>` | Stop after this long. Unset, it runs until interrupted. |
-| `--log <FILE>` | Write what the watch prints, and its errors, to this file in place of the terminal. A file of 1 MiB or more is moved to the same name with `.1` added, replacing the one there, when the watch starts and as it runs. `folders autostart` runs the watch with it. |
+| `--log <FILE>` | Write what the watch prints, and its errors, to this file in place of the terminal. A file of 1 MiB or more is moved to the same name with `.1` added, replacing the one there, when the watch starts and as it runs. `folders autostart` runs the watch with it. When Ctrl-C or `SIGTERM` stops the watch, the last line written names the signal and the time, and the process that sent it where the system reports one. |
 | `--key-file <FILE>` | A file that holds `MARFA_API_URL` and `MARFA_API_KEY` lines, which only you can read (mode 600), for a watch that runs with nobody signed in to unlock the keychain. The watch uses it for the folders that name that server and reads the keychain for none, so a folder of another server is reported as having no credential. Keep the file outside every folder. `folders autostart on --key-file` runs the watch with it. |
 
 ### marfa folders autostart
@@ -3866,6 +3866,8 @@ marfa folders autostart [OPTIONS] <COMMAND>
 ### marfa folders autostart on
 
 Sync every folder from login, and start now: writes a launchd agent on macOS or a systemd user unit on Linux, in your own account, that runs `folders watch` with no directory by this binary's path. It holds no credential and no server: each folder uses the server its copy came from and the credential the keychain keeps for it. Run again, it changes nothing unless the agent would differ, as one written by an earlier build does. The watch runs at a lower CPU and I/O priority, so it gives way to foreground work but keeps working when every core is busy.
+
+The watch writes to its log, `folder-watch.log` beside the folder registry. An error it makes before it opens the log goes, on macOS, to `folder-watch.launchd.log` beside it, which the agent names for the watch's output, and on Linux to the user journal (`journalctl --user -u marfa-folder-watch.service`).
 
 With `--key-file` the agent runs the watch with that file in place of the keychain, for a machine where nobody signs in to unlock it. The agent holds the file's path and never what is in it.
 
@@ -3887,7 +3889,7 @@ marfa folders autostart off [OPTIONS]
 
 ### marfa folders autostart status
 
-Say whether folders sync from login: whether the agent is installed and running, whether it differs from what `on` would write now, the binary it runs, where it logs, and what the watch's record says of each folder. Asks no server and needs no credential.
+Say whether folders sync from login: whether the agent is installed and running, whether it differs from what `on` would write now, the binary it runs, where it logs (on macOS, also the file the installed agent names for what the watch prints before it opens its log, or that it names none), and what the watch's record says of each folder. Asks no server and needs no credential.
 
 ```text
 marfa folders autostart status [OPTIONS]

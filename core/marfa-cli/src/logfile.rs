@@ -14,6 +14,10 @@ use crate::interrupt;
 /// The size at which the file is moved aside and started afresh.
 pub const LIMIT: u64 = 1024 * 1024;
 
+/// The name, beside the log, of the file the launchd agent names for the
+/// watch's own standard output and standard error.
+pub const LAUNCHD_NAME: &str = "folder-watch.launchd.log";
+
 /// How often a running watch looks at the file's size.
 const LOOK: Duration = Duration::from_secs(10);
 
@@ -23,7 +27,13 @@ const LOOK: Duration = Duration::from_secs(10);
 /// `interrupt::spawn_apart`.
 pub fn redirect(path: &Path) -> Result<(), CliError> {
     let path = std::path::absolute(path)?;
-    if std::fs::metadata(&path).is_ok_and(|file| file.len() >= LIMIT) {
+    // A watch that cannot open its log fails and is started again, and each
+    // start adds to this file; the one before it is not the log's to keep.
+    let launchd = path.with_file_name(LAUNCHD_NAME);
+    if is_full(&launchd) {
+        let _ = set_aside_and_remake(&launchd);
+    }
+    if is_full(&path) {
         set_aside(&path)?;
     }
     attach(&path)?;
@@ -45,6 +55,27 @@ pub fn redirect(path: &Path) -> Result<(), CliError> {
     Ok(())
 }
 
+fn is_full(path: &Path) -> bool {
+    std::fs::metadata(path).is_ok_and(|file| file.len() >= LIMIT)
+}
+
+/// Writes the last line of a watch that Ctrl-C or `SIGTERM` stopped, to the
+/// log standard error now is. A line that cannot be written changes nothing:
+/// the watch has stopped either way.
+pub fn note_stop() {
+    if let Some(stop) = interrupt::stopped_by() {
+        write_stop(&mut io::stderr(), &now(), &stop);
+    }
+}
+
+fn write_stop(out: &mut impl Write, at: &str, stop: &interrupt::Stop) {
+    let _ = out.write_all(stop_line(at, stop).as_bytes());
+}
+
+fn stop_line(at: &str, stop: &interrupt::Stop) -> String {
+    format!("{at} folders watch stopped by {}\n", stop.describe())
+}
+
 /// The name a full file is moved to, replacing the one before it.
 pub fn older(path: &Path) -> PathBuf {
     let mut name = path.as_os_str().to_owned();
@@ -58,6 +89,19 @@ fn set_aside(path: &Path) -> io::Result<()> {
         Err(error) if error.kind() != io::ErrorKind::NotFound => Err(error),
         _ => Ok(()),
     }
+}
+
+/// Moves the file aside and leaves an empty one for its owner alone at the
+/// name, since launchd opens the file it names as the job starts and would
+/// make a missing one readable by others.
+fn set_aside_and_remake(path: &Path) -> io::Result<()> {
+    set_aside(path)?;
+    OpenOptions::new()
+        .create(true)
+        .append(true)
+        .mode(0o600)
+        .open(path)
+        .map(drop)
 }
 
 fn attach(path: &Path) -> io::Result<()> {
@@ -122,6 +166,68 @@ mod tests {
         set_aside(&path).unwrap();
         assert_eq!(std::fs::read_to_string(older(&path)).unwrap(), "older");
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_launchd_file_moved_aside_is_made_again_for_its_owner_alone() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("marfa-cli-remake-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(LAUNCHD_NAME);
+        std::fs::write(&path, "full").unwrap();
+        let mode = |path: &Path| std::fs::metadata(path).unwrap().permissions().mode() & 0o777;
+        // Witness: moved aside alone, nothing is left at the name for launchd's
+        // own, world-readable file to replace.
+        set_aside(&path).unwrap();
+        assert!(!path.exists());
+        std::fs::rename(older(&path), &path).unwrap();
+        set_aside_and_remake(&path).unwrap();
+        assert_eq!(std::fs::read_to_string(older(&path)).unwrap(), "full");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "");
+        assert_eq!(mode(&path), 0o600);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn the_stop_line_names_the_signal_and_the_sender_where_there_is_one() {
+        let stop = |sender| interrupt::Stop {
+            signal: "SIGTERM",
+            sender,
+        };
+        assert_eq!(
+            stop_line("2026-10-29T12:00:00Z", &stop(Some(4821))),
+            "2026-10-29T12:00:00Z folders watch stopped by SIGTERM, sent by process 4821\n"
+        );
+        assert_eq!(
+            stop_line("2026-10-29T12:00:00Z", &stop(None)),
+            "2026-10-29T12:00:00Z folders watch stopped by SIGTERM\n"
+        );
+    }
+
+    #[test]
+    fn a_stop_line_that_cannot_be_written_is_no_failure() {
+        struct Full;
+        impl Write for Full {
+            fn write(&mut self, _: &[u8]) -> io::Result<usize> {
+                Err(io::Error::from_raw_os_error(libc::ENOSPC))
+            }
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+        let stop = interrupt::Stop {
+            signal: "SIGINT",
+            sender: None,
+        };
+        // Witness: the same line is written where the file takes it.
+        let mut kept = Vec::new();
+        write_stop(&mut kept, "2026-10-29T12:00:00Z", &stop);
+        assert_eq!(
+            String::from_utf8(kept).unwrap(),
+            "2026-10-29T12:00:00Z folders watch stopped by SIGINT\n"
+        );
+        write_stop(&mut Full, "2026-10-29T12:00:00Z", &stop);
     }
 
     #[test]

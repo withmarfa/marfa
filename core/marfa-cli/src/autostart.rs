@@ -3,7 +3,7 @@
 //! every folder.
 
 use std::io::Write as _;
-use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, Instant, SystemTime};
@@ -62,6 +62,12 @@ pub enum AutostartCommand {
     /// it gives way to foreground work but keeps working when every core is
     /// busy.
     ///
+    /// The watch writes to its log, `folder-watch.log` beside the folder
+    /// registry. An error it makes before it opens the log goes, on macOS, to
+    /// `folder-watch.launchd.log` beside it, which the agent names for the
+    /// watch's output, and on Linux to the user journal
+    /// (`journalctl --user -u marfa-folder-watch.service`).
+    ///
     /// With `--key-file` the agent runs the watch with that file in place of
     /// the keychain, for a machine where nobody signs in to unlock it. The
     /// agent holds the file's path and never what is in it.
@@ -80,8 +86,10 @@ pub enum AutostartCommand {
     Off,
     /// Say whether folders sync from login: whether the agent is installed
     /// and running, whether it differs from what `on` would write now, the
-    /// binary it runs, where it logs, and what the watch's record says of each
-    /// folder. Asks no server and needs no credential.
+    /// binary it runs, where it logs (on macOS, also the file the installed
+    /// agent names for what the watch prints before it opens its log, or that
+    /// it names none), and what the watch's record says of each folder. Asks
+    /// no server and needs no credential.
     Status,
 }
 
@@ -168,6 +176,38 @@ impl Agent {
         })
     }
 
+    /// The file launchd gives the watch for standard output and standard
+    /// error, which holds what the watch prints before it opens its log.
+    fn launchd_log(&self) -> PathBuf {
+        self.log.with_file_name(crate::logfile::LAUNCHD_NAME)
+    }
+
+    /// Made before launchd starts the watch, which would make it readable by
+    /// others, in a directory launchd does not make.
+    fn make_launchd_log(&self) -> Result<(), CliError> {
+        let path = self.launchd_log();
+        let failed = |error: std::io::Error| {
+            CliError::Io(std::io::Error::new(
+                error.kind(),
+                format!("cannot make {}: {error}", path.display()),
+            ))
+        };
+        if let Some(parent) = path.parent() {
+            std::fs::DirBuilder::new()
+                .recursive(true)
+                .mode(0o700)
+                .create(parent)
+                .map_err(failed)?;
+        }
+        std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .mode(0o600)
+            .open(&path)
+            .map(drop)
+            .map_err(failed)
+    }
+
     fn arguments(&self) -> Result<Vec<&str>, CliError> {
         let mut arguments = vec![text(&self.binary)?, "folders", "watch"];
         if let Some(key_file) = &self.key_file {
@@ -207,6 +247,10 @@ impl Agent {
 \t\t<key>{registry_env}</key>
 \t\t<string>{registry}</string>
 \t</dict>
+\t<key>StandardOutPath</key>
+\t<string>{launchd_log}</string>
+\t<key>StandardErrorPath</key>
+\t<string>{launchd_log}</string>
 \t<key>RunAtLoad</key>
 \t<true/>
 \t<key>KeepAlive</key>
@@ -225,6 +269,7 @@ impl Agent {
 ",
             registry_env = marfa_core::folder::REGISTRY_ENV,
             registry = xml(text(&self.registry)?),
+            launchd_log = xml(text(&self.launchd_log())?),
         ))
     }
 
@@ -319,6 +364,21 @@ fn outdated(manager: Manager, written: &str) -> bool {
     Agent::read(manager, written)
         .and_then(|agent| agent.render(manager).ok())
         .is_some_and(|wanted| wanted != written)
+}
+
+/// The one file an installed property list gives the watch's standard output
+/// and standard error, which an agent written before the output was named
+/// does not have. Not the file `on` would name now, so `status` does not
+/// promise output to a file the agent will not write.
+fn launchd_log_of(written: &str) -> Option<PathBuf> {
+    let named = |key: &str| {
+        let value = after(written, &format!("<key>{key}</key>"))?
+            .trim_start()
+            .strip_prefix("<string>")?;
+        Some(PathBuf::from(unxml(&value[..value.find("</string>")?])))
+    };
+    let out = named("StandardOutPath")?;
+    (named("StandardErrorPath")? == out).then_some(out)
 }
 
 /// The path the binary was run by, where it leads to the binary running:
@@ -741,6 +801,10 @@ struct Switched {
     binary: Option<PathBuf>,
     #[serde(skip_serializing_if = "Option::is_none")]
     log: Option<PathBuf>,
+    /// Where launchd writes the watch's own output, which a systemd user unit
+    /// has none of: the journal keeps it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    launchd_log: Option<PathBuf>,
     #[serde(skip_serializing_if = "Option::is_none")]
     registry: Option<PathBuf>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -766,6 +830,7 @@ fn on(place: &Place, key_file: Option<&Path>, json: bool) -> Result<(), CliError
     let started = match place.manager {
         Manager::Launchd => {
             let loaded = state.loaded;
+            agent.make_launchd_log()?;
             // Let go of the old agent before the file changes, so a failure
             // leaves the file differing and the next `on` tries again.
             if changed {
@@ -804,6 +869,7 @@ fn on(place: &Place, key_file: Option<&Path>, json: bool) -> Result<(), CliError
         file: place.file.clone(),
         binary: Some(agent.binary.clone()),
         log: Some(agent.log.clone()),
+        launchd_log: (place.manager == Manager::Launchd).then(|| agent.launchd_log()),
         registry: Some(agent.registry.clone()),
         key_file: agent.key_file.clone(),
         running,
@@ -828,6 +894,12 @@ fn on(place: &Place, key_file: Option<&Path>, json: bool) -> Result<(), CliError
             agent.registry.display()
         ));
         lines.push(format!("it logs to {}", agent.log.display()));
+        if let Some(launchd_log) = &report.launchd_log {
+            lines.push(format!(
+                "what it prints before it opens that log goes to {}",
+                launchd_log.display()
+            ));
+        }
         if let Some(key_file) = &agent.key_file {
             lines.push(format!(
                 "it takes its server and key from {}, and reads the keychain for no folder",
@@ -900,6 +972,7 @@ fn off(place: &Place, json: bool) -> Result<(), CliError> {
         file: place.file.clone(),
         binary: None,
         log: None,
+        launchd_log: None,
         registry: None,
         key_file: None,
         running: None,
@@ -949,6 +1022,10 @@ struct Status {
     /// What the installed file runs; `None` where it is not one `on` writes.
     binary: Option<Binary>,
     log: Option<PathBuf>,
+    /// The file the installed launchd agent names for what the watch prints
+    /// before it opens its log; none for a systemd user unit, whose journal
+    /// keeps it, and for an agent written before the output was named.
+    launchd_log: Option<PathBuf>,
     registry: Option<PathBuf>,
     /// The file the watch takes its server and key from, or none where it
     /// uses the keychain.
@@ -1075,6 +1152,10 @@ fn status(place: &Place, json: bool) -> Result<(), CliError> {
             .is_some_and(|written| outdated(place.manager, written)),
         binary,
         log: agent.as_ref().map(|agent| agent.log.clone()),
+        launchd_log: installed
+            .as_deref()
+            .filter(|_| agent.is_some() && place.manager == Manager::Launchd)
+            .and_then(launchd_log_of),
         registry: agent.as_ref().map(|agent| agent.registry.clone()),
         key_file: agent.as_ref().and_then(|agent| agent.key_file.clone()),
         record,
@@ -1154,6 +1235,16 @@ fn describe_status(place: &Place, report: &Status) -> String {
     });
     if let Some(log) = &report.log {
         lines.push(format!("it logs to {}", log.display()));
+    }
+    if let Some(launchd_log) = &report.launchd_log {
+        lines.push(format!(
+            "what it prints before it opens that log goes to {}",
+            launchd_log.display()
+        ));
+    } else if place.manager == Manager::Launchd && report.log.is_some() {
+        lines.push(
+            "it names no file for what it prints before it opens that log; `marfa folders autostart on` again replaces it with an agent that does".into(),
+        );
     }
     if let Some(key_file) = &report.key_file {
         lines.push(if key_file.is_file() {
@@ -1277,6 +1368,60 @@ mod tests {
         assert!(plist.contains("<key>RunAtLoad</key>\n\t<true/>"));
         assert!(plist.contains("<key>SuccessfulExit</key>\n\t\t<false/>"));
         assert!(plist.contains("<key>ThrottleInterval</key>\n\t<integer>30</integer>"));
+    }
+
+    #[test]
+    fn the_launchd_agent_names_a_file_beside_the_log_for_the_output_the_log_does_not_hold() {
+        let plist = agent("/bin/marfa").plist().unwrap();
+        for key in ["StandardOutPath", "StandardErrorPath"] {
+            assert!(plist.contains(&format!(
+                "<key>{key}</key>\n\t<string>/data/marfa/folder-watch.launchd.log</string>"
+            )));
+        }
+        // Witness: the systemd unit names none, since its journal keeps the output.
+        let unit = agent("/bin/marfa").unit().unwrap();
+        assert!(!unit.contains("StandardOutput") && !unit.contains("StandardError"));
+        assert!(!unit.contains("launchd"));
+    }
+
+    #[test]
+    fn the_output_file_an_installed_agent_names_is_read_from_its_property_list() {
+        let plist = agent("/bin/marfa").plist().unwrap();
+        assert_eq!(
+            launchd_log_of(&plist),
+            Some(PathBuf::from("/data/marfa/folder-watch.launchd.log"))
+        );
+        // Witnesses: an agent from before the output was named, or one that
+        // sends the two streams to different files, names no one file.
+        let earlier = plist
+            .replace(
+                "\t<key>StandardOutPath</key>\n\t<string>/data/marfa/folder-watch.launchd.log</string>\n\t<key>StandardErrorPath</key>\n\t<string>/data/marfa/folder-watch.launchd.log</string>\n",
+                "",
+            );
+        assert_ne!(earlier, plist);
+        assert_eq!(launchd_log_of(&earlier), None);
+        let split = plist.replacen("launchd.log", "launchd-err.log", 1);
+        assert_ne!(split, plist);
+        assert_eq!(launchd_log_of(&split), None);
+    }
+
+    #[test]
+    fn the_launchd_output_file_is_made_for_its_owner_alone_in_a_directory_that_may_not_exist() {
+        let root =
+            std::env::temp_dir().join(format!("marfa-cli-launchd-log-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let mut made = agent("/bin/marfa");
+        made.log = root.join("new").join("folder-watch.log");
+        made.make_launchd_log().unwrap();
+        let file = made.launchd_log();
+        assert_eq!(file, root.join("new").join("folder-watch.launchd.log"));
+        let mode = |path: &Path| std::fs::metadata(path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode(&file), 0o600);
+        // Made again, it keeps what the first run wrote.
+        std::fs::write(&file, "kept\n").unwrap();
+        made.make_launchd_log().unwrap();
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "kept\n");
+        std::fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]

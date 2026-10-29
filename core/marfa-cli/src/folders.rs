@@ -181,7 +181,10 @@ pub enum FoldersCommand {
         /// Write what the watch prints, and its errors, to this file in place
         /// of the terminal. A file of 1 MiB or more is moved to the same name
         /// with `.1` added, replacing the one there, when the watch starts and
-        /// as it runs. `folders autostart` runs the watch with it.
+        /// as it runs. `folders autostart` runs the watch with it. When Ctrl-C
+        /// or `SIGTERM` stops the watch, the last line written names the
+        /// signal and the time, and the process that sent it where the system
+        /// reports one.
         #[arg(long, value_name = "FILE")]
         log: Option<PathBuf>,
         /// A file that holds `MARFA_API_URL` and `MARFA_API_KEY` lines, which
@@ -563,10 +566,14 @@ pub fn run(
                 }
                 None => named,
             };
-            match dir {
+            let ended = match dir {
                 Some(dir) => watch::watch(&dir, named, r#for.map(Duration::from_secs), json),
                 None => watch::watch_every(named, r#for, json),
+            };
+            if log.is_some() {
+                logfile::note_stop();
             }
+            ended
         }
         FoldersCommand::Autostart { command } => autostart::run(command, named, json),
         FoldersCommand::Create(args) => send(folder_settings::create_request(&args)?, named, json),
