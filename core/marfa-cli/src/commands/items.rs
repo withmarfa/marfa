@@ -45,16 +45,17 @@ pub enum ItemsCommand {
     Create(CreateArgs),
     /// Change an item's properties or fields, conditional on the version read.
     Update(UpdateArgs),
-    /// Move an item to the bin.
+    /// Move one or more items to the bin, all of them or none.
     Delete {
-        /// The item id.
-        id: String,
-        /// Show what the delete would move to the bin, the items beneath it
+        /// One or more item ids, up to 20.
+        #[arg(required = true)]
+        ids: Vec<String>,
+        /// Show what the delete would move to the bin, the items beneath
         /// included, and move nothing.
         #[arg(long, conflicts_with = "idempotency_key")]
         dry_run: bool,
-        /// The digest `--dry-run` gave. If what the delete would move to the
-        /// bin has changed since, nothing is moved.
+        /// The digest `--dry-run` gave for the same ids. If what the delete
+        /// would move to the bin has changed since, nothing is moved.
         #[arg(long, conflicts_with = "dry_run")]
         digest: Option<String>,
         #[command(flatten)]
@@ -728,12 +729,25 @@ pub fn update_request(args: &UpdateArgs) -> Result<Request, CliError> {
     ))
 }
 
-pub fn delete_request(id: &str, digest: Option<&str>) -> Request {
-    Request::delete(&["items", id]).query_opt("digest", digest)
+/// One id with no digest is a plain delete; several, or a digest, go through
+/// the trash door, which moves them all in one step or none.
+pub fn delete_request(ids: &[String], digest: Option<&str>) -> Request {
+    match (ids, digest) {
+        ([id], None) => Request::delete(&["items", id]),
+        _ => {
+            let mut body = json!({ "ids": ids });
+            if let Some(digest) = digest {
+                body["digest"] = json!(digest);
+            }
+            Request::post(&["items", "trash"]).json(body)
+        }
+    }
 }
 
-pub fn trash_preview_request(id: &str) -> Request {
-    Request::get(&["items", id, "trash-preview"])
+pub fn trash_preview_request(ids: &[String]) -> Request {
+    Request::post(&["items", "trash-preview"])
+        .json(json!({ "ids": ids }))
+        .reading()
 }
 
 pub fn restore_request(id: &str) -> Request {
@@ -1037,8 +1051,10 @@ pub fn attached_to_request(file_item_id: &str, target_id: &str) -> Request {
 pub fn run(command: ItemsCommand, remote: &Remote, out: &Printer) -> Result<(), CliError> {
     let done = match &command {
         ItemsCommand::Delete {
-            id, dry_run: false, ..
-        } => Some(format!("trashed {id}")),
+            ids,
+            dry_run: false,
+            ..
+        } => Some(format!("trashed {}", ids.join(", "))),
         ItemsCommand::Purge { id, .. } => Some(format!("purged {id}")),
         _ => None,
     };
@@ -1052,14 +1068,14 @@ pub fn run(command: ItemsCommand, remote: &Remote, out: &Printer) -> Result<(), 
         ItemsCommand::Create(args) => create_request(args)?,
         ItemsCommand::Update(args) => update_request(args)?,
         ItemsCommand::Delete {
-            id, dry_run: true, ..
-        } => trash_preview_request(id),
+            ids, dry_run: true, ..
+        } => trash_preview_request(ids),
         ItemsCommand::Delete {
-            id,
+            ids,
             digest,
             idempotency,
             ..
-        } => idempotency.apply(delete_request(id, digest.as_deref())),
+        } => idempotency.apply(delete_request(ids, digest.as_deref())),
         ItemsCommand::Restore { id, idempotency } => idempotency.apply(restore_request(id)),
         ItemsCommand::Transition {
             id,

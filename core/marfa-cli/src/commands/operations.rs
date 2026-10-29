@@ -29,6 +29,7 @@ pub const OPERATIONS: &[Operation] = &[
     reached("updateItem", "items update"),
     reached("deleteItem", "items delete"),
     reached("previewItemTrash", "items delete"),
+    reached("trashItems", "items delete"),
     reached("restoreItem", "items restore"),
     reached("transitionItem", "items transition"),
     reached("listItemVersions", "items versions"),

@@ -1653,7 +1653,7 @@ mod dispatch {
         let door = Door::open(vec![Answer::json("200 OK", r#"{"item":{"id":"i"}}"#)]);
         items::run(
             items::ItemsCommand::Delete {
-                id: "i".into(),
+                ids: vec!["i".into()],
                 dry_run: false,
                 digest: None,
                 idempotency: items::IdempotencyArgs {
@@ -1671,14 +1671,14 @@ mod dispatch {
     }
 
     #[test]
-    fn a_dry_run_delete_asks_for_the_trash_preview_and_moves_nothing() {
+    fn a_dry_run_delete_asks_for_the_trash_preview_of_every_id_and_moves_nothing() {
         let door = Door::open(vec![Answer::json(
             "200 OK",
-            r#"{"id":"i","type":"core.note","version":1,"items":[],"count":1}"#,
+            r#"{"items":[],"count":2,"digest":"d"}"#,
         )]);
         items::run(
             items::ItemsCommand::Delete {
-                id: "i".into(),
+                ids: vec!["i".into(), "j".into()],
                 dry_run: true,
                 digest: None,
                 idempotency: items::IdempotencyArgs {
@@ -1691,25 +1691,34 @@ mod dispatch {
         .unwrap();
         let received = door.received();
         assert_eq!(received.len(), 1);
-        assert_eq!(received[0].method(), "GET");
-        assert_eq!(received[0].path(), "/items/i/trash-preview");
+        assert_eq!(received[0].method(), "POST");
+        assert_eq!(received[0].path(), "/items/trash-preview");
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&received[0].body).unwrap(),
+            serde_json::json!({ "ids": ["i", "j"] })
+        );
     }
 
     #[test]
-    fn a_delete_names_the_digest_its_preview_gave() {
+    fn a_delete_of_several_ids_trashes_them_in_one_request_with_the_digest() {
         use clap::Parser;
         let digest = "a".repeat(64);
         let cli =
-            crate::Cli::try_parse_from(["marfa", "items", "delete", "i", "--digest", &digest])
+            crate::Cli::try_parse_from(["marfa", "items", "delete", "i", "j", "--digest", &digest])
                 .unwrap();
         let crate::Command::Items { command } = cli.command else {
             panic!("not an items command");
         };
-        let door = Door::open(vec![Answer::json("200 OK", r#"{"item":{"id":"i"}}"#)]);
+        let door = Door::open(vec![Answer::json("200 OK", r#"{"ok":true}"#)]);
         items::run(command, &remote_at(&door), &QUIET).unwrap();
         let received = door.received();
-        assert_eq!(received[0].method(), "DELETE");
-        assert_eq!(received[0].path(), format!("/items/i?digest={digest}"));
+        assert_eq!(received.len(), 1);
+        assert_eq!(received[0].method(), "POST");
+        assert_eq!(received[0].path(), "/items/trash");
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&received[0].body).unwrap(),
+            serde_json::json!({ "ids": ["i", "j"], "digest": digest })
+        );
         assert!(
             crate::Cli::try_parse_from([
                 "marfa",
@@ -1722,6 +1731,7 @@ mod dispatch {
             ])
             .is_err()
         );
+        assert!(crate::Cli::try_parse_from(["marfa", "items", "delete"]).is_err());
     }
 
     #[test]
