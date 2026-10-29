@@ -335,6 +335,19 @@ export class MarfaClient {
     });
   }
 
+  async previewItemTrash(id: string): Promise<
+    ApiResponse<{
+      id: string;
+      type: string;
+      version: number;
+      items: { id: string; type: string; version: number }[];
+      count: number;
+      truncated?: true;
+    }>
+  > {
+    return this.request(`/items/${id}/trash-preview`);
+  }
+
   /**
    * Hard delete. `deleteItem` is a soft delete, so a suite that only calls it
    * leaves its fixtures in the database.
