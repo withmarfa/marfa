@@ -204,7 +204,8 @@ export function registerFind(server: McpServer, ctx: ToolContext): void {
             message: `A view lists the items it defines; leave out ${others.map(([key]) => key).join(", ")}.`,
           });
         }
-        // `GET /views/{id}/items` is not in the generated client until it merges.
+        // `GET /views/{id}/items` is not published, so the generated client
+        // lacks it; `server.test.ts` fails once it is.
         const answer = await ctx.api.raw<{
           data: ListedItem[];
           next_cursor: string | null;
