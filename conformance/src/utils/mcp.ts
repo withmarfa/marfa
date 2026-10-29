@@ -52,7 +52,9 @@ export async function toolNames(connection: McpConnection): Promise<string[]> {
 
 export interface ToolAnswer {
   isError: boolean;
+  /** The JSON the text carries, or `{}` when it is plain text. */
   body: Record<string, unknown>;
+  text: string;
 }
 
 /** Calls a tool and reads the JSON its one text block carries. */
@@ -66,11 +68,14 @@ export async function callTool(
     arguments: args,
   })) as CallToolResult;
   const block = result.content[0];
-  const text = block?.type === "text" ? block.text : "{}";
-  return {
-    isError: result.isError === true,
-    body: JSON.parse(text) as Record<string, unknown>,
-  };
+  const text = block?.type === "text" ? block.text : "";
+  let body: Record<string, unknown> = {};
+  try {
+    body = JSON.parse(text) as Record<string, unknown>;
+  } catch {
+    // An answer the protocol gives, such as refused arguments, is plain text.
+  }
+  return { isError: result.isError === true, body, text };
 }
 
 /** The error a tool answered with; fails when the tool succeeded. */

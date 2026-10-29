@@ -58,6 +58,16 @@ While a credential's type map grants no type, the server MUST NOT declare the `t
 
 **Tests:** `compliance/mcp.test.ts › offers no tools to a credential whose type map reaches no type`.
 
+## Calling a tool
+
+### `mcp/unknown-argument`
+
+If a tool call names an argument the tool does not take, then the server MUST answer the call with a tool error that names the argument.
+
+**Reason:** a misspelled filter that is dropped answers the whole set.
+
+**Tests:** `compliance/mcp.test.ts › refuses a tool call naming an argument the tool does not take`.
+
 ## Changing an item
 
 A change to an item's fields through `marfa_update` follows the API's own version rules in `versions.md`.

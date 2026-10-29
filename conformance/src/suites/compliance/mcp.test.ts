@@ -197,6 +197,16 @@ describe("which tools a credential is offered", () => {
   });
 });
 
+describe("calling a tool", () => {
+  it("refuses a tool call naming an argument the tool does not take", async () => {
+    const misspelled = await callTool(mcp, "marfa_find", { typ: "core.note" });
+    expect(misspelled.isError).toBe(true);
+    expect(misspelled.text).toMatch(/typ/);
+    // The witness: the argument spelled right is taken.
+    toolResult(await callTool(mcp, "marfa_find", { type: "core.note" }));
+  });
+});
+
 describe("marfa_update", () => {
   it("answers a stale version with version_conflict and the item as it is now", async () => {
     const made = await note("one");
