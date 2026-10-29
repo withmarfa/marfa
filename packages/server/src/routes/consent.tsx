@@ -15,6 +15,7 @@ import { DEFAULT_INSTANCE_NAME } from "../instance-name.js";
 import {
   Button,
   ButtonPair,
+  NoEnterSubmit,
   ConfirmDialog,
   gateAttributes,
   MomentCard,
@@ -109,6 +110,7 @@ export function renderConsentScreen(params: ConsentParams): string {
         >
           <input type="hidden" name="client_id" value={params.clientId} />
           <input type="hidden" name="oauth_query" value={params.oauthQuery} />
+          <NoEnterSubmit />
           <AccessChoices
             model={model}
             approving={{

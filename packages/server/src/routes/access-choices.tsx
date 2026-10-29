@@ -20,6 +20,7 @@ import {
   LEVEL_LABELS,
   type AccessModel,
   type ChooseTypes,
+  type FullAccessLine,
   type LevelRow,
   type SwitchRow,
 } from "./access-model.js";
@@ -197,7 +198,7 @@ export function offersChoice(model: AccessModel): boolean {
  * grants the request itself and ignores the controls. With no script the
  * stylesheet shows the controls once "Choose access" is selected.
  */
-function AccessMode(props: { app: string; full: readonly string[] }) {
+function AccessMode(props: { app: string; full: readonly FullAccessLine[] }) {
   return (
     <div class="group" role="radiogroup" aria-label="Access">
       <Row
@@ -208,7 +209,11 @@ function AccessMode(props: { app: string; full: readonly string[] }) {
             {props.full.map((line, index) => (
               <>
                 {index > 0 && <br />}
-                {line}
+                {line.danger ? (
+                  <span class="undone">{line.text}</span>
+                ) : (
+                  line.text
+                )}
               </>
             ))}
           </>
@@ -231,7 +236,7 @@ export interface AccessChoicesProps {
    * Set on an approval screen: the person first picks full access, which
    * `full` describes line by line, or the controls, named for the app asking.
    */
-  approving?: { app: string; full: readonly string[] };
+  approving?: { app: string; full: readonly FullAccessLine[] };
 }
 
 /**

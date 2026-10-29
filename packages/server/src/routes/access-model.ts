@@ -634,20 +634,35 @@ export function buildAccess(given: AccessInput): AccessModel {
   };
 }
 
+/** One line of what full access gives; `danger` marks what cannot be undone. */
+export interface FullAccessLine {
+  text: string;
+  danger?: boolean;
+}
+
 /**
  * What full access to a request gives, one line for each group the request
- * names: the lines the controls would read with everything on. The controls
- * themselves start at their own defaults, so this builds the model again.
+ * names: the lines the controls would read with everything on, and a last
+ * line, marked, naming the powers that cannot be undone, as the controls mark
+ * them. The controls themselves start at their own defaults, so this builds
+ * the model again.
  */
-export function describeFullAccess(given: AccessInput): string[] {
+export function describeFullAccess(given: AccessInput): FullAccessLine[] {
   const model = buildAccess({ ...given, start: "requested" });
-  return [
-    model.data.length > 0 ? model.summaries.data : "",
-    model.profile.length > 0 ? model.summaries.profile : "",
-    model.powers.length > 0
-      ? `Control over Marfa: ${model.powers.map((row) => lowerFirst(row.title)).join("; ")}`
-      : "",
-  ].filter((line) => line !== "");
+  const lines: FullAccessLine[] = [];
+  if (model.data.length > 0) lines.push({ text: model.summaries.data });
+  if (model.profile.length > 0) lines.push({ text: model.summaries.profile });
+  if (model.powers.length > 0)
+    lines.push({
+      text: `Control over Marfa: ${model.powers.map((row) => lowerFirst(row.title)).join("; ")}`,
+    });
+  const undone = model.powers.filter((row) => row.destructive);
+  if (undone.length > 0)
+    lines.push({
+      text: `Can't be undone: ${undone.map((row) => lowerFirst(row.title)).join("; ")}`,
+      danger: true,
+    });
+  return lines.filter((line) => line.text !== "");
 }
 
 /** A power a credential holds, by its title. */

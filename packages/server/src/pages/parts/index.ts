@@ -4,7 +4,14 @@ export { ConsolePage, HOME_HREF } from "./console-page.js";
 export type { ConsolePageProps } from "./console-page.js";
 export { CommandSearch } from "./command-search.js";
 export type { CommandSearchProps } from "./command-search.js";
-export { Button, ButtonPair, Radio, Select, Switch } from "./controls.js";
+export {
+  Button,
+  ButtonPair,
+  NoEnterSubmit,
+  Radio,
+  Select,
+  Switch,
+} from "./controls.js";
 export type {
   ButtonKind,
   ButtonProps,

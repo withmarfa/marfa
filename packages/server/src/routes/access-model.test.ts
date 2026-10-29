@@ -365,10 +365,29 @@ describe("describeFullAccess", () => {
     };
     const lines = describeFullAccess(input);
     expect(lines).toHaveLength(2);
-    expect(lines[0]).toMatch(/^Read and edit /);
-    expect(lines[1]).toMatch(/^Control over Marfa: /);
+    expect(lines[0]?.text).toMatch(/^Read and edit /);
+    expect(lines[1]?.text).toMatch(/^Control over Marfa: /);
+    expect(lines.some((line) => line.danger)).toBe(false);
     // The controls the person narrows start as they always have: a power off.
     expect(buildAccess(input).powers[0]?.checked).toBe(false);
+  });
+
+  it("marks the powers that cannot be undone on a line of their own, and no other", () => {
+    const lines = describeFullAccess({
+      scopes: [
+        "core.note:read",
+        "keys.mint",
+        "items.purge",
+        "schema.write",
+      ].map(scope),
+      held: undefined,
+      bundles,
+    });
+    const marked = lines.filter((line) => line.danger);
+    expect(marked).toHaveLength(1);
+    expect(marked[0]?.text).toMatch(/^Can't be undone: /);
+    expect(marked[0]?.text).toContain("delete items in the trash for good");
+    expect(marked[0]?.text).not.toMatch(/mint/i);
   });
 
   it("names nothing for a request that asks for no data, profile or power", () => {

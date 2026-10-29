@@ -617,6 +617,9 @@ button.row {
 .row .rd.danger {
   color: var(--danger);
 }
+.row .rd .undone {
+  color: var(--danger);
+}
 .row .rd.warn {
   color: var(--warn);
 }

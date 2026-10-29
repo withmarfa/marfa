@@ -41,11 +41,13 @@ There is no client framework and no client-side rendering.
   that says what they give; the browser opens it, with no script, and `live`
   marks the line for the browser module that rewrites it as they change. A
   `RowNote` is small print at the end of what a row opens to.
-- **Controls and fields:** `Button`, `ButtonPair`, `Radio`, `Select`, `Switch`,
+- **Controls and fields:** `Button`, `ButtonPair`, `NoEnterSubmit`, `Radio`, `Select`, `Switch`,
   `TextField`, `PasswordField`, `SearchField`, `FormFoot` and `SaveBar`. A
   `Select` and a `Switch` take `data`, which becomes `data-*` attributes for a
   browser module. A `ButtonPair` is two buttons of equal width, the main one
-  last.
+  last. A form that decides between them starts with `NoEnterSubmit`, a
+  hidden first submit button that does nothing, so Enter in one of its fields
+  sends nothing instead of pressing the first real button.
 - **Codes:** `CodeCells` shows a code for a person to compare with the one on
   their device, one cell for each character, as one picture named by the code.
 - **Feedback:** `Notice`, `EmptyState` and `Dialog`.

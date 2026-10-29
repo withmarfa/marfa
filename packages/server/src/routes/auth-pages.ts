@@ -977,9 +977,12 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth) {
     }
     const clientId = verdict.clientId;
     const requestedScopes = scopeList(verdict.scope);
+    // Full access reads only what the device asked for, so what the form
+    // carries beside it is not read and cannot refuse it.
+    const mode = accessModeOf(formData.get("access"));
     if (
       containsProfileEmailWrite(requestedScopes) ||
-      containsProfileEmailWrite(formData.getAll("scopes"))
+      (mode !== "full" && containsProfileEmailWrite(formData.getAll("scopes")))
     )
       return c.text("Invalid scope: profile.email:write", 400);
 
@@ -1007,7 +1010,6 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth) {
     const typeValues = formData
       .getAll("types")
       .filter((v): v is string => typeof v === "string");
-    const mode = accessModeOf(formData.get("access"));
 
     // Approve: upsert the system.connection projection, narrow the code to
     // the chosen set, and approve it through the plugin.

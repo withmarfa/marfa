@@ -1359,11 +1359,11 @@ The consent screen at `/auth/authorize` and the device approval page at `/auth/d
 
 ### `keys-and-oauth/approval-full-access`
 
-Where a request names a scope other than `openid` and `offline_access`, the server MUST offer, on the consent screen and the device approval page, the access choices Full access and Choose access as a form field named `access` with the values `full` and `choose`, with Full access selected.
+Where a request names a scope other than `openid` and `offline_access` that the app's standing consent does not cover, the server MUST offer, on the consent screen and the device approval page, the access choices Full access and Choose access as a form field named `access` with the values `full` and `choose`, with Full access selected.
 
-**Reason:** Most people want to give an app what it asked for. Full access says so in one choice, and Choose access keeps every control for the person who wants less. A request that names nothing else offers nothing to choose, so it carries no `access` field.
+**Reason:** Most people want to give an app what it asked for. Full access says so in one choice, and Choose access keeps every control for the person who wants less. A request that names nothing else offers nothing to choose, so it carries no `access` field. A request whose every scope is carried offers nothing to choose.
 
-**Tests:** `compliance/approval-screens.test.ts › offers full access selected, and choosing access, on both pages`, `› offers no choice of access where the request names nothing to choose`.
+**Tests:** `compliance/approval-screens.test.ts › offers full access selected, and choosing access, on both pages`, `› offers no choice of access where the request names nothing to choose`, `› offers no choice of access where the app's standing consent covers every scope, on both pages`.
 
 ### `keys-and-oauth/approval-full-grants-request`
 
@@ -1383,11 +1383,11 @@ When a person approves with `access` posted as `full`, the server MUST NOT grant
 
 ### `keys-and-oauth/approval-access-unstated`
 
-Where an approval post carries no `access` field or a value other than `full`, the server MUST grant only what the chosen scopes and types say.
+Where an approval post carries no `access` field or a value other than `full`, the server MUST read the decision from the scopes and types the post carries, as `keys-and-oauth/consent-ticked`, `keys-and-oauth/consent-nothing-denies` and `keys-and-oauth/device-nothing-denies` state.
 
 **Reason:** A post that does not say Full access can only narrow, so a script written before the choice existed keeps its meaning.
 
-**Tests:** `compliance/approval-screens.test.ts › witness: the same post without full access is a denial`.
+**Tests:** `compliance/approval-screens.test.ts › witness: the same post without full access is a denial`, `› reads the scopes a post carries when access is a value other than full, on both pages`.
 
 ### `keys-and-oauth/approval-one-control`
 
@@ -1427,19 +1427,19 @@ Where a request names a scope that reaches types registered later, the server MU
 
 ### `keys-and-oauth/approval-powers-off`
 
-The server MUST offer each permission a request names, on the consent screen or the device approval page, turned off.
+The server MUST offer each permission a request names, among the Choose access controls on the consent screen or the device approval page, turned off.
 
-**Reason:** A permission is authority over the instance itself, handed over only by turning it on.
+**Reason:** A person who narrows hands a permission over only by turning it on. Full access (`keys-and-oauth/approval-full-grants-request`) hands over the whole request in one choice.
 
 **Tests:** `compliance/approval-screens.test.ts › offers every permission turned off, on both pages`.
 
 ### `keys-and-oauth/approval-powers-marked`
 
-Where a request names `instance.maintain`, `schema.write` or `items.purge`, the server MUST mark each on the consent screen and the device approval page as unable to be undone.
+Where a request names `instance.maintain`, `schema.write` or `items.purge`, the server MUST mark each on the consent screen and the device approval page as unable to be undone, among the Choose access controls and in the words of the Full access choice.
 
-**Reason:** These delete data or definitions with no way back.
+**Reason:** These delete data or definitions with no way back, and a person who chooses Full access hands them over without opening the controls.
 
-**Tests:** `compliance/approval-screens.test.ts › marks the permissions that delete for good, and no other, on both pages`.
+**Tests:** `compliance/approval-screens.test.ts › marks the permissions that delete for good, and no other, on both pages`, `› says under Full access that a power can't be undone only where the request names one, on both pages`.
 
 ### `keys-and-oauth/approval-powers-words`
 

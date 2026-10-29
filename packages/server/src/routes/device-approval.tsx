@@ -16,6 +16,7 @@ import { DEFAULT_INSTANCE_NAME } from "../instance-name.js";
 import {
   Button,
   ButtonPair,
+  NoEnterSubmit,
   CodeCells,
   ConfirmDialog,
   gateAttributes,
@@ -98,6 +99,7 @@ export function renderDeviceConsentScreen(params: DeviceConsentParams): string {
           {...gateAttributes(params.confirmGate)}
         >
           <input type="hidden" name="user_code" value={params.userCode} />
+          <NoEnterSubmit />
           <AccessChoices
             model={model}
             approving={{

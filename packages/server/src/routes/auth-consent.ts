@@ -640,9 +640,12 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
     const requestedRedirectUri = signedParams.get("redirect_uri");
     const signedScopeStr = signedParams.get("scope") ?? "";
     const signedScopes = new Set(signedScopeStr.split(/\s+/).filter(Boolean));
+    // Full access reads only the signed request, so what the form carries
+    // beside it is not read and cannot refuse it.
+    const mode = accessModeOf(form.get("access"));
     if (
       containsProfileEmailWrite(signedScopeStr) ||
-      containsProfileEmailWrite(form.getAll("scopes"))
+      (mode !== "full" && containsProfileEmailWrite(form.getAll("scopes")))
     )
       return c.text("Invalid scope: profile.email:write", 400);
     if (!clientId) {
@@ -664,7 +667,6 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
     const typeValues = form
       .getAll("types")
       .filter((v): v is string => typeof v === "string");
-    const mode = accessModeOf(form.get("access"));
 
     // The proxy and the record it produces are one operation on the same
     // (client, user) grant the silent path also writes, so they share its

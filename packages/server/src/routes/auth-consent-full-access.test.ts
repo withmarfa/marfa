@@ -156,6 +156,47 @@ describe("full access on the consent screen", () => {
   });
 });
 
+describe("a profile.email:write scope in the form", () => {
+  it("does not refuse full access, which reads the signed request alone", async () => {
+    ctx = await createTestContext({});
+    const clientId = await seedClient(ctx);
+    const res = await decide(ctx, clientId, {
+      access: "full",
+      scopes: ["profile.email:write"],
+    });
+    expect(res.headers.get("location") ?? "").toContain("code=");
+    expect(await grantedFor(ctx, clientId)).toEqual(
+      new Set(REQUESTED.split(" ")),
+    );
+  });
+
+  it("witness: choosing access with the same scope is refused", async () => {
+    ctx = await createTestContext({});
+    const clientId = await seedClient(ctx);
+    const res = await decide(ctx, clientId, {
+      access: "choose",
+      scopes: ["profile.email:write"],
+    });
+    expect(res.status).toBe(400);
+    expect(await res.text()).toBe("Invalid scope: profile.email:write");
+  });
+
+  it("still refuses a request that names it, under full access", async () => {
+    ctx = await createTestContext({});
+    const clientId = await seedClient(ctx);
+    const res = await request(ctx.app, "POST", "/auth/authorize/decision", {
+      form: {
+        accept: "true",
+        access: "full",
+        oauth_query: await signedQuery(clientId, "openid profile.email:write"),
+        client_id: clientId,
+      },
+      headers: { cookie: ctx.owner.cookie, origin: ORIGIN },
+    });
+    expect(res.status).toBe(400);
+  });
+});
+
 describe("choosing access on the consent screen", () => {
   it("grants only what the controls posted", async () => {
     ctx = await createTestContext({});

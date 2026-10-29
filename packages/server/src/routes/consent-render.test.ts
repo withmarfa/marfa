@@ -770,6 +770,33 @@ describe("renderConsentScreen: full access", () => {
     expect(switches(html).map((c) => c.value)).toEqual(["keys.mint"]);
   });
 
+  it("says in the Full access words that a power cannot be undone, and only when one is asked", () => {
+    const full = (html: string): string =>
+      /Full access(.*?)Choose access/.exec(visibleText(html))?.[1] ?? "";
+    const marked = full(render(["core.note:read", "items.purge", "keys.mint"]));
+    expect(marked).toMatch(/Can't be undone: delete items in the trash/);
+    expect(marked).not.toMatch(/Can't be undone:.*keys/i);
+    // The witness: the same words are absent where no such power is asked.
+    expect(full(render(["core.note:read", "keys.mint"]))).not.toMatch(
+      /can't be undone/i,
+    );
+  });
+
+  it("puts a submit button that does nothing before the others, so Enter in a field sends nothing", () => {
+    const html = render(["core.note:read"]);
+    const form = html.slice(html.indexOf("<form"));
+    const first = /<button\b[^>]*>/.exec(form)?.[0] ?? "";
+    expect(first).toContain('type="submit"');
+    expect(first).toContain('formmethod="dialog"');
+    expect(first).not.toContain("name=");
+    // Cancel and Approve follow it.
+    expect(
+      readControls(html)
+        .filter((c) => c.tag === "button")
+        .map((c) => c.name),
+    ).toEqual(["", "accept", "accept"]);
+  });
+
   it("offers no choice of access to a request with nothing to choose", () => {
     const html = render(["openid"]);
     expect(offeredValues(html, "access")).toEqual([]);

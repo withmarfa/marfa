@@ -645,6 +645,37 @@ describe("the device authorization grant through the provider plugin", () => {
     expect((await grants(c))[0]!.properties.scopes).toEqual(["core.note:read"]);
   });
 
+  it("full access ignores a profile.email:write the form adds, and choosing access refuses it", async () => {
+    ctx = await createTestContext({});
+    const c = ctx;
+    const clientId = await registerClient(c, [DEVICE_CODE_GRANT_TYPE]);
+    const init = await initiate(c, clientId, "core.note:read");
+    const cookie = await signInUser(c);
+    expect((await openConsent(c, init.user_code, cookie)).status).toBe(200);
+
+    const refused = await decide(
+      c,
+      init.user_code,
+      cookie,
+      "approve",
+      ["profile.email:write"],
+      "choose",
+    );
+    expect(refused.status).toBe(400);
+
+    const approved = await decide(
+      c,
+      init.user_code,
+      cookie,
+      "approve",
+      ["profile.email:write"],
+      "full",
+    );
+    expect(approved.status).toBe(200);
+    const minted = await poll(c, init.device_code, clientId);
+    expect(minted.body.scope).toBe("core.note:read");
+  });
+
   it("refuses an approval that names a scope the device never asked for, and leaves the code pending", async () => {
     ctx = await createTestContext({});
     const c = ctx;

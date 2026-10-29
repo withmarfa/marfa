@@ -263,16 +263,16 @@ export function initAccess(): void {
     form
       .querySelector('[data-choose-types] input[type="search"]')
       ?.addEventListener("input", sync);
-    // Enter in the search field would send the form by its first button,
-    // which cancels.
-    form
-      .querySelector('[data-choose-types] input[type="search"]')
-      ?.addEventListener("keydown", (event) => {
-        if ((event as KeyboardEvent).key === "Enter") event.preventDefault();
-      });
     form.querySelector("[data-types-more]")?.addEventListener("click", () => {
       expanded.all = true;
       sync();
+    });
+    // Enter in a field would send the form by a button the person did not
+    // press; the page's own `NoEnterSubmit` does the same with no script, and
+    // would put the form in its sending state with this one running.
+    form.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" && event.target instanceof HTMLInputElement)
+        event.preventDefault();
     });
     // A page restored from the back-forward cache keeps the controls as they
     // were left, which the lines must follow.
