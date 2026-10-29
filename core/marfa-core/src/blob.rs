@@ -1211,12 +1211,32 @@ fn pull<G>(
         reason,
     };
     let mut staging = cache.stage(hash)?;
-    // Bytes held that the file is not longer than can be a start of it.
-    if stated.is_some_and(|stated| staging.held >= stated) {
+    // Bytes held past the stated size cannot be a start of the file.
+    if stated.is_some_and(|stated| staging.held > stated) {
         cache.restart(&mut staging)?;
+    }
+    // Bytes held to the stated size leave the link nothing to send, and
+    // their hash says whether they are the file.
+    if staging.held > 0 && stated == Some(staging.held) {
+        let held = staging.held;
+        return cache.receive(hash, staging, io::empty(), held, kept);
     }
     let opened = match open(link, staging.held) {
         Ok(opened) => opened,
+        // A link answers `416` to a range from the end of the whole file, so
+        // where no size is stated the bytes held may be all of it.
+        Err(Refusal::Unsatisfiable) if stated.is_none() && staging.held > 0 => {
+            let held = staging.held;
+            return cache
+                .receive(hash, staging, io::empty(), held, kept)
+                .map_err(|error| match error {
+                    CoreError::Decoding(_) => absent(
+                        "the link cannot serve the range asked for, so the bytes held were dropped"
+                            .into(),
+                    ),
+                    other => other,
+                });
+        }
         Err(Refusal::Unsatisfiable) => {
             cache.drop_staging(staging);
             return Err(absent(
@@ -1841,6 +1861,15 @@ pub(crate) mod tests {
                     .and_then(|from| from.parse::<usize>().ok())
                     .filter(|_| ranges)
                     .unwrap_or(0);
+                if start >= body.len() && start > 0 {
+                    let _ = write!(
+                        socket,
+                        "HTTP/1.1 416 Range Not Satisfiable\r\nContent-Range: bytes */{}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                        body.len()
+                    );
+                    first = false;
+                    continue;
+                }
                 let rest = &body[start..];
                 let head = if start > 0 {
                     format!(
@@ -2404,40 +2433,124 @@ pub(crate) mod tests {
     #[cfg(target_os = "macos")]
     #[test]
     fn a_copy_the_volume_has_no_room_for_keeps_the_fetched_bytes_for_a_resume() {
-        let dir = tempfile::tempdir().unwrap();
-        let cache = Cache::beside(&dir.path().join("core.sqlite"));
-        let bytes = payload(64);
-        let hash = name_of(&bytes);
-        let named = HashSet::from([hex_of(&hash).unwrap().to_string()]);
-        let staging = cache.stage(&hash).unwrap();
-        let label = staging.label.clone();
-        {
-            let _full = crate::fault::fail_on_this_thread("blob-copy-full");
-            let refused = cache
-                .receive(&hash, staging, &bytes[..], 64, || Some(named.clone()))
+        for stated in [Some(5000), None] {
+            let dir = tempfile::tempdir().unwrap();
+            let cache = Cache::beside(&dir.path().join("store.sqlite"));
+            let bytes = payload(5000);
+            let hash = name_of(&bytes);
+            let named = HashSet::from([hex_of(&hash).unwrap().to_string()]);
+            let link = ranged(bytes.clone(), true, None);
+            let label = cache
+                .dir
+                .join(format!(".partial-{}", hex_of(&hash).unwrap()));
+            {
+                let _full = crate::fault::fail_on_this_thread("blob-copy-full");
+                let refused = pull(
+                    &cache,
+                    &hash,
+                    &link.url,
+                    stated,
+                    WITHIN,
+                    || None,
+                    || Some(named.clone()),
+                    no_attachments,
+                )
                 .unwrap_err();
-            assert!(
-                matches!(refused, CoreError::StorageFull(_)),
-                "refused with {refused:?}"
+                assert!(
+                    matches!(refused, CoreError::StorageFull(_)),
+                    "{stated:?}: refused with {refused:?}"
+                );
+            }
+            assert_eq!(fs::read(&label).unwrap(), bytes, "the fetched bytes went");
+            assert!(cache.held(&hash).unwrap().is_none());
+            assert_eq!(
+                others(&cache, "").len(),
+                1,
+                "the failed copy was left behind"
+            );
+
+            drop(lock_when_free(&cache, &label));
+            let fetched = pull(
+                &cache,
+                &hash,
+                &link.url,
+                stated,
+                WITHIN,
+                || None,
+                || Some(named.clone()),
+                no_attachments,
+            )
+            .unwrap();
+            assert_eq!(fs::read(&fetched.path).unwrap(), bytes);
+            assert!(!label.exists());
+            // With a size stated the link is not asked again; without one it
+            // is asked from the end and answers that it has nothing more.
+            let asked_again = stated.is_none().then(|| Some("5000".to_string()));
+            let expected: Vec<_> = std::iter::once(None).chain(asked_again).collect();
+            assert_eq!(*link.asked.lock().unwrap(), expected, "{stated:?}");
+        }
+    }
+
+    #[test]
+    fn a_whole_partial_file_of_the_wrong_bytes_is_dropped_without_asking_the_link() {
+        let bytes = payload(5000);
+        let hash = name_of(&bytes);
+        for (stated, held, keeps) in [
+            (Some(5000), vec![0u8; 5000], false),
+            (None, vec![0u8; 5000], false),
+            // The witness: the right bytes held are kept.
+            (Some(5000), bytes.clone(), true),
+            (None, bytes.clone(), true),
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let cache = Cache::beside(&dir.path().join("store.sqlite"));
+            let link = ranged(bytes.clone(), true, None);
+            fs::create_dir_all(&cache.dir).unwrap();
+            let partial = cache
+                .dir
+                .join(format!(".partial-{}", hex_of(&hash).unwrap()));
+            fs::write(&partial, &held).unwrap();
+            let fetched = pull(
+                &cache,
+                &hash,
+                &link.url,
+                stated,
+                WITHIN,
+                || None,
+                no_uploads,
+                no_attachments,
+            );
+            let case = format!("stated {stated:?}, right bytes {keeps}");
+            if keeps {
+                let fetched = fetched.unwrap_or_else(|error| panic!("{case}: {error:?}"));
+                assert_eq!(fs::read(fetched.path).unwrap(), bytes, "{case}");
+            } else {
+                let refused = fetched.unwrap_err();
+                match stated {
+                    Some(_) => {
+                        assert!(
+                            matches!(refused, CoreError::Decoding(_)),
+                            "{case}: {refused:?}"
+                        )
+                    }
+                    None => assert!(
+                        matches!(&refused, CoreError::BytesAbsent { reason, .. } if reason.contains("dropped")),
+                        "{case}: {refused:?}"
+                    ),
+                }
+                assert!(
+                    left_behind(&cache).is_empty(),
+                    "{case}: {:?}",
+                    left_behind(&cache)
+                );
+            }
+            let asked = stated.is_none().then(|| Some("5000".to_string()));
+            assert_eq!(
+                *link.asked.lock().unwrap(),
+                asked.into_iter().collect::<Vec<_>>(),
+                "{case}"
             );
         }
-        assert_eq!(fs::read(&label).unwrap(), bytes, "the fetched bytes went");
-        assert!(cache.held(&hash).unwrap().is_none());
-        assert_eq!(
-            others(&cache, "").len(),
-            1,
-            "the failed copy was left behind"
-        );
-
-        // The resume has every byte, so it asks for none.
-        drop(lock_when_free(&cache, &label));
-        let staging = cache.stage(&hash).unwrap();
-        assert_eq!(staging.held, 64);
-        let fetched = cache
-            .receive(&hash, staging, &b""[..], 64, || Some(named))
-            .unwrap();
-        assert_eq!(fs::read(&fetched.path).unwrap(), bytes);
-        assert!(!label.exists());
     }
 
     #[cfg(target_os = "macos")]
