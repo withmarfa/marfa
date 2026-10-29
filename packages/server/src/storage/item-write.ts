@@ -190,9 +190,6 @@ export interface ItemDelete {
   id: string;
   /** The version the caller read; absent deletes whatever stands. */
   version?: number;
-  /** The digest a preview of the trash gave; absent trashes whatever the
-   *  trash takes now. */
-  digest?: string;
 }
 
 /** A move along the type's lifecycle. Into the bin it is a delete; out of
@@ -1265,10 +1262,9 @@ async function trash(
   storage: Storage,
   writer: ItemWriter,
   row: Item,
-  plan?: { toTrash: string[]; taken: Item[] },
 ): Promise<Item[]> {
   const root: CascadeRoot = { id: row.id, type: row.type };
-  const { toTrash, taken } = plan ?? (await planTrash(storage, writer, row));
+  const { toTrash, taken } = await planTrash(storage, writer, row);
   const by = await versionWriter(storage, writer);
   for (const id of toTrash) {
     await itemWrites(storage).delete(id, id === row.id ? undefined : root, by);
@@ -1306,27 +1302,119 @@ async function planTrash(
   };
 }
 
+/** One named item of a trash and what its own trash takes. */
+export interface TrashPreviewRoot {
+  row: Item;
+  /** The rows its trash takes that the writer may read, leaves first. */
+  taken: Item[];
+}
+
+interface TrashPlan {
+  roots: (TrashPreviewRoot & { toTrash: string[] })[];
+  /** How many rows the writer may read the whole trash takes, each once. */
+  count: number;
+  digest: string;
+}
+
 /**
- * What `DELETE /items/{id}` would trash for this credential, refused as the
- * delete would refuse it: the row, and the rows a cascading edge takes with
- * it that the credential may read, leaves first. Rows it may not read are
- * trashed too and are left out here, as a refusal leaves out a hidden
- * blocker. Writes nothing.
+ * What trashing every one of `ids` takes, judged together, and refused as
+ * trashing any one of them alone would be refused.
+ */
+async function planTrashOf(
+  storage: Storage,
+  writer: ItemWriter,
+  ids: readonly string[],
+): Promise<TrashPlan> {
+  const roots: TrashPlan["roots"] = [];
+  for (const id of ids) {
+    const row = await lifecycleRow(storage, writer, id, {
+      includeTrashed: false,
+      message: `Item ${id} not found`,
+    });
+    assertTypeWrite(writer, row);
+    const { toTrash, taken } = await planTrash(storage, writer, row);
+    roots.push({
+      row,
+      taken: taken.filter((snap) => mayRead(writer, snap.type)),
+      toTrash,
+    });
+  }
+  const shown = new Map<string, Item>();
+  for (const { row, taken } of roots) {
+    for (const item of [row, ...taken]) shown.set(item.id, item);
+  }
+  return {
+    roots,
+    count: shown.size,
+    digest: trashDigest([...shown.values()]),
+  };
+}
+
+/**
+ * What `POST /items/trash` would trash for this credential, refused as the
+ * trash would refuse it: each named row with the rows a cascading edge takes
+ * with it that the credential may read, and the whole trash counted and
+ * digested with each row once. Rows it may not read are trashed too and are
+ * left out here, as a refusal leaves out a hidden blocker. Writes nothing.
  */
 export async function previewTrash(
   storage: Storage,
   key: ApiKey,
-  id: string,
-): Promise<{ row: Item; taken: Item[]; digest: string }> {
+  ids: readonly string[],
+): Promise<{ roots: TrashPreviewRoot[]; count: number; digest: string }> {
+  const plan = await planTrashOf(storage, { kind: "credential", key }, ids);
+  return {
+    roots: plan.roots.map(({ row, taken }) => ({ row, taken })),
+    count: plan.count,
+    digest: plan.digest,
+  };
+}
+
+/**
+ * Every one of `ids` into the trash, with what its cascading edges take, in
+ * one transaction or not at all. With `digest`, only if it is the digest
+ * `previewTrash` answers for the same IDs as the trash commits.
+ */
+export async function trashItems(
+  storage: Storage,
+  key: ApiKey,
+  ids: readonly string[],
+  digest?: string,
+): Promise<ItemMoved[]> {
   const writer: ItemWriter = { kind: "credential", key };
-  const row = await lifecycleRow(storage, writer, id, {
-    includeTrashed: false,
-    message: `Item ${id} not found`,
+  return storage.runInTransaction(async () => {
+    const plan = await planTrashOf(storage, writer, ids);
+    if (digest !== undefined && plan.digest !== digest) {
+      throw new MarfaError(
+        ErrorCode.TRASH_PLAN_CHANGED,
+        "What trashing these items would take changed since their preview",
+        { digest: plan.digest },
+      );
+    }
+    // A named row another named row takes goes with that row, so it is
+    // recorded as taken with it and comes back when that row is restored.
+    const carried = new Set(
+      plan.roots.flatMap(({ row, toTrash }) =>
+        toTrash.filter((id) => id !== row.id),
+      ),
+    );
+    const order = [
+      ...plan.roots.filter(({ row }) => !carried.has(row.id)),
+      ...plan.roots.filter(({ row }) => carried.has(row.id)),
+    ];
+    const gone = new Set<string>();
+    const moves: ItemMoved[] = [];
+    for (const { row, toTrash } of order) {
+      if (gone.has(row.id)) continue;
+      const move = await writeItem(storage, writer, {
+        op: "delete",
+        id: row.id,
+      });
+      if (move.outcome === "moved") moves.push(move);
+      for (const id of toTrash) gone.add(id);
+    }
+    return moves;
   });
-  assertTypeWrite(writer, row);
-  const { taken } = await planTrash(storage, writer, row);
-  const shown = taken.filter((snap) => mayRead(writer, snap.type));
-  return { row, taken: shown, digest: trashDigest([row, ...shown]) };
 }
 
 /**
@@ -1381,21 +1469,7 @@ async function deleteRow(
   assertTypeWrite(writer, row);
   const stale = staleAgainst(row, write.version);
   if (stale) return stale;
-  const plan = await planTrash(storage, writer, row);
-  if (write.digest !== undefined) {
-    const now = trashDigest([
-      row,
-      ...plan.taken.filter((snap) => mayRead(writer, snap.type)),
-    ]);
-    if (now !== write.digest) {
-      throw new MarfaError(
-        ErrorCode.TRASH_PLAN_CHANGED,
-        `What trashing item ${row.id} would take changed since its preview`,
-        { digest: now },
-      );
-    }
-  }
-  const trashed = await trash(storage, writer, row, plan);
+  const trashed = await trash(storage, writer, row);
   return moved(row, row.state, { trashed });
 }
 

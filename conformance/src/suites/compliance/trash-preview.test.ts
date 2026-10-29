@@ -64,8 +64,48 @@ async function mint(
   return new MarfaClient({ baseUrl: apiUrl, apiKey: minted.data.key });
 }
 
-describe("GET /items/{id}/trash-preview", () => {
-  it("names the item and everything a cascade would take with it, leaves first, and the delete then takes exactly that", async () => {
+/** The preview of one item, with that item's entry beside the whole. */
+async function previewOne(id: string, by: MarfaClient = client) {
+  const r = await by.previewItemTrash([id]);
+  return { ...r, item: r.data?.items?.[0] };
+}
+
+async function state(id: string): Promise<number> {
+  return (await client.getItem(id)).status;
+}
+
+let sharesType: string | undefined;
+
+/** A cascading edge type that lets a child hang from several items, which
+ *  `parent-of` does not. */
+async function shares(): Promise<string> {
+  if (sharesType) return sharesType;
+  const id = `mock.shares.${ctx.runId}`;
+  const r = await client.registerEdgeType({
+    id,
+    label: "Shares",
+    cardinality: "many-to-many",
+    cascade_on_delete: "cascade",
+  });
+  expect(r.ok, JSON.stringify(r.error)).toBe(true);
+  trackEdgeType(ctx, id);
+  sharesType = id;
+  return id;
+}
+
+/** Two items whose trash each takes one shared child. */
+async function sharing(): Promise<{ a: string; b: string; shared: string }> {
+  const a = await note();
+  const b = await note();
+  const shared = await note();
+  const edgeType = await shares();
+  await link(a, shared, edgeType);
+  await link(b, shared, edgeType);
+  return { a, b, shared };
+}
+
+describe("POST /items/trash-preview", () => {
+  it("names the item and everything a cascade would take with it, leaves first, and the trash then takes exactly that", async () => {
     const parent = await note();
     const first = await note();
     const second = await note();
@@ -74,24 +114,27 @@ describe("GET /items/{id}/trash-preview", () => {
     await link(parent, second);
     await link(first, grandchild);
 
-    const preview = await client.previewItemTrash(parent);
+    const preview = await previewOne(parent);
     expect(preview.status).toBe(200);
     await expectMatchesSchema(
-      "GET",
-      "/items/{id}/trash-preview",
+      "POST",
+      "/items/trash-preview",
       200,
       preview.data,
     );
     const read = await client.getItem(parent);
-    expect(preview.data.id).toBe(parent);
-    expect(preview.data.type).toBe("core.note");
-    expect(preview.data.version).toBe(read.data.item.version);
+    const item = preview.item;
+    if (item === undefined) throw new Error("the preview names no item");
+    expect(item.id).toBe(parent);
+    expect(item.type).toBe("core.note");
+    expect(item.version).toBe(read.data.item.version);
+    expect(item.count).toBe(4);
     expect(preview.data.count).toBe(4);
-    expect(preview.data.truncated).toBeUndefined();
-    const listed = preview.data.items.map((i) => i.id);
+    expect(item.truncated).toBeUndefined();
+    const listed = item.takes.map((i) => i.id);
     expect([...listed].sort()).toEqual([first, second, grandchild].sort());
     expect(listed.indexOf(grandchild)).toBeLessThan(listed.indexOf(first));
-    for (const entry of preview.data.items) {
+    for (const entry of item.takes) {
       const now = await client.getItem(entry.id);
       expect(entry).toEqual({
         id: entry.id,
@@ -100,9 +143,7 @@ describe("GET /items/{id}/trash-preview", () => {
       });
     }
 
-    const deleted = await client.deleteItem(parent, {
-      version: preview.data.version,
-    });
+    const deleted = await client.trashItems([parent], preview.data.digest);
     expect(deleted.status).toBe(200);
     const trashed = await client.listItems({
       state: "trashed",
@@ -122,15 +163,13 @@ describe("GET /items/{id}/trash-preview", () => {
       children.push(child);
       await link(parent, child);
     }
-    const first = await client.previewItemTrash(parent);
+    const first = await previewOne(parent);
     expect(first.status).toBe(200);
-    expect(first.data.truncated).toBe(true);
+    expect(first.item?.truncated).toBe(true);
     expect(first.data.digest).toMatch(/^[0-9a-f]{64}$/);
-    expect((await client.previewItemTrash(parent)).data.digest).toBe(
-      first.data.digest,
-    );
+    expect((await previewOne(parent)).data.digest).toBe(first.data.digest);
 
-    const listed = new Set(first.data.items.map((i) => i.id));
+    const listed = new Set(first.item?.takes.map((i) => i.id));
     const unlisted = children.find((child) => !listed.has(child));
     if (unlisted === undefined) throw new Error("every child is listed");
     const read = await client.getItem(unlisted);
@@ -140,29 +179,22 @@ describe("GET /items/{id}/trash-preview", () => {
     });
     expect(edited.ok, JSON.stringify(edited.error)).toBe(true);
 
-    const after = await client.previewItemTrash(parent);
-    expect(after.data.items).toEqual(first.data.items);
+    const after = await previewOne(parent);
+    expect(after.item?.takes).toEqual(first.item?.takes);
     expect(after.data.count).toBe(first.data.count);
     expect(after.data.digest).not.toBe(first.data.digest);
   });
 
-  it("answers which of check_ids the trash would take, listed or not", async () => {
-    const parent = await note();
-    const child = await note();
-    const outside = await note();
-    await link(parent, child);
-
-    const plain = await client.previewItemTrash(parent);
-    expect(plain.data).not.toHaveProperty("taken_ids");
-    const checked = await client.previewItemTrash(parent, [outside, child]);
-    expect(checked.status).toBe(200);
-    await expectMatchesSchema(
-      "GET",
-      "/items/{id}/trash-preview",
-      200,
-      checked.data,
-    );
-    expect(checked.data.taken_ids).toEqual([child]);
+  it("counts an item two named items would both take once in the whole", async () => {
+    const { a, b, shared } = await sharing();
+    const preview = await client.previewItemTrash([a, b, a]);
+    expect(preview.status).toBe(200);
+    expect(preview.data.items.map((i) => i.id)).toEqual([a, b]);
+    for (const item of preview.data.items) {
+      expect(item.takes.map((i) => i.id)).toEqual([shared]);
+      expect(item.count).toBe(2);
+    }
+    expect(preview.data.count).toBe(3);
   });
 
   it("writes nothing", async () => {
@@ -171,7 +203,7 @@ describe("GET /items/{id}/trash-preview", () => {
     await link(parent, child);
     const before = await client.getItem(parent);
 
-    expect((await client.previewItemTrash(parent)).status).toBe(200);
+    expect((await client.previewItemTrash([parent])).status).toBe(200);
 
     for (const id of [parent, child]) {
       const after = await client.getItem(id);
@@ -194,14 +226,15 @@ describe("GET /items/{id}/trash-preview", () => {
     await link(parent, hidden.data.item.id);
 
     // The witness: a key that reads bookmarks is told of it.
-    const seen = await client.previewItemTrash(parent);
+    const seen = await previewOne(parent);
     expect(seen.status).toBe(200);
-    expect(seen.data.items.map((i) => i.id)).toEqual([hidden.data.item.id]);
+    expect(seen.item?.takes.map((i) => i.id)).toEqual([hidden.data.item.id]);
     expect(seen.data.count).toBe(2);
 
-    const preview = await writer.previewItemTrash(parent);
+    const preview = await previewOne(parent, writer);
     expect(preview.status).toBe(200);
-    expect(preview.data.items).toEqual([]);
+    expect(preview.item?.takes).toEqual([]);
+    expect(preview.item?.count).toBe(1);
     expect(preview.data.count).toBe(1);
     expect(JSON.stringify(preview.data)).not.toContain(hidden.data.item.id);
   });
@@ -221,7 +254,7 @@ describe("GET /items/{id}/trash-preview", () => {
     await link(parent, child);
     const blocker = await link(child, await note(), edgeType);
 
-    const preview = await client.previewItemTrash(parent);
+    const preview = await client.previewItemTrash([parent]);
     const deleted = await client.deleteItem(parent);
     expect(preview.status).toBe(400);
     expect(deleted.status).toBe(400);
@@ -238,81 +271,86 @@ describe("GET /items/{id}/trash-preview", () => {
     const reader = await mint({ "core.note": "read" });
     const parent = await note();
 
-    const refused = await reader.previewItemTrash(parent);
+    const refused = await reader.previewItemTrash([parent]);
     expect(refused.status).toBe(403);
     expect(refused.error?.error.code).toBe("type_not_permitted");
 
     // The witness: the key that may write the type is answered.
-    expect((await client.previewItemTrash(parent)).status).toBe(200);
+    expect((await client.previewItemTrash([parent])).status).toBe(200);
   });
 
   it("answers 404 item_not_found for an item in the trash, and 400 invalid_id for an ID that is not one", async () => {
     const id = await note();
-    expect((await client.previewItemTrash(id)).status).toBe(200);
+    expect((await client.previewItemTrash([id])).status).toBe(200);
     expect((await client.deleteItem(id)).status).toBe(200);
 
-    const trashed = await client.previewItemTrash(id);
+    const trashed = await client.previewItemTrash([id]);
     expect(trashed.status).toBe(404);
     expect(trashed.error?.error.code).toBe("item_not_found");
 
-    const invalid = await client.previewItemTrash("not-an-id");
+    const invalid = await client.previewItemTrash(["not-an-id"]);
     expect(invalid.status).toBe(400);
     expect(invalid.error?.error.code).toBe("invalid_id");
   });
 });
 
-describe("DELETE /items/{id} with digest", () => {
-  it("trashes the item when what the trash would take is what the preview showed", async () => {
-    const parent = await note();
-    const child = await note();
-    await link(parent, child);
-    const preview = await client.previewItemTrash(parent);
+describe("POST /items/trash", () => {
+  it("trashes every named item and an item they share when what the trash would take is what the preview showed", async () => {
+    const { a, b, shared } = await sharing();
+    const preview = await client.previewItemTrash([a, b]);
     expect(preview.status).toBe(200);
-    const deleted = await client.deleteItem(parent, {
-      digest: preview.data.digest,
-    });
-    expect(deleted.status).toBe(200);
-    expect((await client.getItem(child)).status).toBe(404);
+    const trashed = await client.trashItems([a, b], preview.data.digest);
+    expect(trashed.status).toBe(200);
+    await expectMatchesSchema("POST", "/items/trash", 200, trashed.data);
+    for (const id of [a, b, shared]) expect(await state(id)).toBe(404);
   });
 
   it("refuses with 409 trash_plan_changed and trashes nothing when a child was attached or edited since the preview", async () => {
-    const parent = await note();
-    const child = await note();
-    await link(parent, child);
-    const attachedBefore = await client.previewItemTrash(parent);
+    const { a, b, shared } = await sharing();
+    const attachedBefore = await client.previewItemTrash([a, b]);
     const late = await note();
-    await link(parent, late);
-    const attached = await client.deleteItem(parent, {
-      digest: attachedBefore.data.digest,
-    });
+    await link(b, late);
+    const attached = await client.trashItems(
+      [a, b],
+      attachedBefore.data.digest,
+    );
     expect(attached.status).toBe(409);
     expect(attached.error?.error.code).toBe("trash_plan_changed");
-    await expectMatchesSchema("DELETE", "/items/{id}", 409, attached.error);
-    const now = await client.previewItemTrash(parent);
+    await expectMatchesSchema("POST", "/items/trash", 409, attached.error);
+    const now = await client.previewItemTrash([a, b]);
     expect(attached.error?.error.details).toEqual({ digest: now.data.digest });
 
-    const read = await client.getItem(child);
-    const edited = await client.updateItem(child, {
+    const read = await client.getItem(shared);
+    const edited = await client.updateItem(shared, {
       version: read.data.item.version,
       properties: { title: "Edited after the preview" },
     });
     expect(edited.status).toBe(200);
-    const editedRefusal = await client.deleteItem(parent, {
-      digest: now.data.digest,
-    });
+    const editedRefusal = await client.trashItems([a, b], now.data.digest);
     expect(editedRefusal.status).toBe(409);
     expect(editedRefusal.error?.error.code).toBe("trash_plan_changed");
 
-    for (const id of [parent, child, late]) {
-      expect((await client.getItem(id)).status).toBe(200);
-    }
+    for (const id of [a, b, shared, late]) expect(await state(id)).toBe(200);
+  });
+
+  it("trashes none of the named items when one of them is refused", async () => {
+    const kept = await note();
+    const gone = await note();
+    expect((await client.deleteItem(gone)).status).toBe(200);
+    const refused = await client.trashItems([kept, gone]);
+    expect(refused.status).toBe(404);
+    expect(refused.error?.error.code).toBe("item_not_found");
+    expect(await state(kept)).toBe(200);
+    // The witness: the same item alone is trashed.
+    expect((await client.trashItems([kept])).status).toBe(200);
+    expect(await state(kept)).toBe(404);
   });
 
   it("refuses a digest that is not a SHA-256 hash in hex with 400 validation_error", async () => {
     const parent = await note();
-    const refused = await client.deleteItem(parent, { digest: "not-a-digest" });
+    const refused = await client.trashItems([parent], "not-a-digest");
     expect(refused.status).toBe(400);
     expect(refused.error?.error.code).toBe("validation_error");
-    expect((await client.getItem(parent)).status).toBe(200);
+    expect(await state(parent)).toBe(200);
   });
 });

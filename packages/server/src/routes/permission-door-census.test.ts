@@ -75,7 +75,6 @@ const DATA_PLANE = [
   "GET /items/:id/extensions",
   "GET /items/:id/extensions/:namespace",
   "GET /items/:id/metadata",
-  "GET /items/:id/trash-preview",
   "GET /items/:id/versions",
   "GET /metadata/tags",
   "GET /occurrences",
@@ -94,6 +93,8 @@ const DATA_PLANE = [
   "POST /items/bulk-get",
   "POST /items/lookup",
   "POST /items/tombstones",
+  "POST /items/trash",
+  "POST /items/trash-preview",
   "PUT /items/:id/extensions/:namespace",
   "PUT /items/:id/metadata",
 ];

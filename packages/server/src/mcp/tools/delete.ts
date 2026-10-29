@@ -39,46 +39,18 @@ const outputSchema = z.object({
 
 type TrashPreview = components["schemas"]["TrashPreview"];
 
-async function previewAll(
+async function previewOf(
   ctx: ToolContext,
   ids: string[],
 ): Promise<
-  | { ok: true; plan: PlannedDelete[]; previews: TrashPreview[] }
-  | { ok: false; refusal: ApiRefusal; id: string }
+  { ok: true; preview: TrashPreview } | { ok: false; refusal: ApiRefusal }
 > {
-  const previews: TrashPreview[] = [];
-  for (const id of ids) {
-    const others = ids.filter((other) => other !== id);
-    const answer = await ctx.api.answer(
-      ctx.api.client.GET("/items/{id}/trash-preview", {
-        params: {
-          path: { id },
-          query: others.length > 0 ? { check_ids: others.join(",") } : {},
-        },
-      }),
-    );
-    if (!answer.ok) return { ok: false, refusal: answer.refusal, id };
-    previews.push(answer.data);
-  }
-  const plan = previews.map((preview) => ({
-    id: preview.id,
-    version: preview.version,
-    count: preview.count,
-    digest: preview.digest,
-    takes: preview.taken_ids ?? [],
-  }));
-  return { ok: true, plan, previews };
-}
-
-/**
- * How many items the plan trashes. A named item that goes with another
- * named item is counted once, in the other's count.
- */
-function totalOf(plan: readonly PlannedDelete[]): number {
-  const carried = new Set(plan.flatMap((root) => root.takes));
-  return plan
-    .filter((root) => !carried.has(root.id))
-    .reduce((sum, root) => sum + root.count, 0);
+  const answer = await ctx.api.answer(
+    ctx.api.client.POST("/items/trash-preview", { body: { ids } }),
+  );
+  return answer.ok
+    ? { ok: true, preview: answer.data }
+    : { ok: false, refusal: answer.refusal };
 }
 
 async function titles(
@@ -127,8 +99,10 @@ export function registerDelete(server: McpServer, ctx: ToolContext): void {
     },
     async ({ ids, confirm }) => {
       const unique = [...new Set(ids)];
-      const planned = await previewAll(ctx, unique);
-      if (!planned.ok) return refused(planned.refusal, { id: planned.id });
+      const previewed = await previewOf(ctx, unique);
+      if (!previewed.ok) return refused(previewed.refusal);
+      const { preview } = previewed;
+      const plan: PlannedDelete = { ids: unique, digest: preview.digest };
 
       const previewAnswer = async (
         extra: { code: string; message: string } | null,
@@ -137,27 +111,26 @@ export function registerDelete(server: McpServer, ctx: ToolContext): void {
         const token = confirmationToken(
           ctx.confirmKey,
           ctx.credentialHandle,
-          planned.plan,
+          plan,
           ctx.now(),
         );
-        const preview = planned.previews.map((p) => {
-          const title = names.get(p.id);
-          return {
-            id: p.id,
-            type: p.type,
-            ...(title !== undefined && { title }),
-            version: p.version,
-            also_trashes: p.items.map((item) => ({
-              id: item.id,
-              type: item.type,
-            })),
-            count: p.count,
-            ...(p.truncated === true && { truncated: true }),
-          };
-        });
         const body = {
-          preview,
-          total: totalOf(planned.plan),
+          preview: preview.items.map((p) => {
+            const title = names.get(p.id);
+            return {
+              id: p.id,
+              type: p.type,
+              ...(title !== undefined && { title }),
+              version: p.version,
+              also_trashes: p.takes.map((item) => ({
+                id: item.id,
+                type: item.type,
+              })),
+              count: p.count,
+              ...(p.truncated === true && { truncated: true }),
+            };
+          }),
+          total: preview.count,
           confirm: token.token,
           expires_at: token.expires_at,
           next: "Nothing has been deleted. Show the person what would go to the trash and ask them; only if they agree, call marfa_delete again with the same ids and confirm.",
@@ -170,7 +143,7 @@ export function registerDelete(server: McpServer, ctx: ToolContext): void {
       const check = checkConfirmation(
         ctx.confirmKey,
         ctx.credentialHandle,
-        planned.plan,
+        plan,
         confirm,
         ctx.now(),
       );
@@ -184,45 +157,17 @@ export function registerDelete(server: McpServer, ctx: ToolContext): void {
         });
       }
 
-      // An item another named item takes goes last, with that item: trashed
-      // on its own first, it would change what the other takes, and each
-      // trash goes ahead only on the digest its preview gave.
-      const carried = new Set(planned.plan.flatMap((root) => root.takes));
-      const order = [
-        ...planned.plan.filter((root) => !carried.has(root.id)),
-        ...planned.plan.filter((root) => carried.has(root.id)),
-      ];
-      const trashed: string[] = [];
-      const gone = new Set<string>();
-      for (const root of order) {
-        // Trashed already, with another named item.
-        if (gone.has(root.id)) {
-          trashed.push(root.id);
-          continue;
-        }
-        const answer = await ctx.api.answer(
-          ctx.api.client.DELETE("/items/{id}", {
-            params: {
-              path: { id: root.id },
-              query: { version: root.version, digest: root.digest },
-            },
-          }),
-        );
-        if (!answer.ok) {
-          return refused(answer.refusal, {
-            id: root.id,
-            trashed,
-            ...(trashed.length > 0 && {
-              note: "The items in trashed went to the trash before this one failed.",
-            }),
-          });
-        }
-        trashed.push(root.id);
-        for (const id of root.takes) gone.add(id);
-      }
+      // One trash of every named item, on the digest the check just passed,
+      // so a change landing after the check trashes nothing.
+      const answer = await ctx.api.answer(
+        ctx.api.client.POST("/items/trash", {
+          body: { ids: unique, digest: preview.digest },
+        }),
+      );
+      if (!answer.ok) return refused(answer.refusal);
       return ok({
-        trashed,
-        total: totalOf(planned.plan),
+        trashed: unique,
+        total: preview.count,
         next: "Moved to the trash. Restore an item with marfa_update and state active.",
       });
     },

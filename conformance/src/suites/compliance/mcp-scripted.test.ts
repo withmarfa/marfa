@@ -520,7 +520,7 @@ describe("marfa_delete", () => {
     expect(error.code).toBe("confirmation_stale");
     expect((await owner().getItem(id)).data.item.state).toBe("active");
   });
-  it("trashes nothing when a child joins between the confirmation's check and the trash", async () => {
+  it("trashes none of the items when a child joins one of them between the confirmation's check and the trash", async () => {
     const save = async (body: string): Promise<string> => {
       const made = await owner().createItem({
         type: "core.note",
@@ -529,27 +529,27 @@ describe("marfa_delete", () => {
       expect(made.status, JSON.stringify(made.error)).toBe(201);
       return made.data.item.id;
     };
-    const parent = await save("parent");
+    const first = await save("first parent");
+    const second = await save("second parent");
     const late = await save("joins after the check");
-    const preview = toolResult(
-      await callTool(mcp, "marfa_delete", { ids: [parent] }),
-    );
-    await server.setFault("hold:write=item.delete@1");
+    const ids = [first, second];
+    const preview = toolResult(await callTool(mcp, "marfa_delete", { ids }));
+    await server.setFault("hold:write=items.trash@1");
     const pending = callTool(mcp, "marfa_delete", {
-      ids: [parent],
+      ids,
       confirm: preview.confirm,
     });
     await server.waitForHold("hold:write");
     const linked = await owner().createEdge({
-      source_id: parent,
+      source_id: second,
       target_id: late,
       edge_type: "parent-of",
     });
     expect(linked.status, JSON.stringify(linked.error)).toBe(201);
     await server.clearFault("hold:write");
-    const error = toolError(await pending);
-    expect(error).toMatchObject({ code: "trash_plan_changed", trashed: [] });
-    expect((await owner().getItem(parent)).data.item.state).toBe("active");
-    expect((await owner().getItem(late)).data.item.state).toBe("active");
+    expect(toolError(await pending).code).toBe("trash_plan_changed");
+    for (const id of [first, second, late]) {
+      expect((await owner().getItem(id)).data.item.state).toBe("active");
+    }
   });
 });

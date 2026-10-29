@@ -324,39 +324,45 @@ export class MarfaClient {
 
   async deleteItem(
     id: string,
-    options?: { version?: number; digest?: string },
+    options?: { version?: number },
   ): Promise<ApiResponse<{ ok: boolean }>> {
-    const params = new URLSearchParams();
-    if (options?.version !== undefined) {
-      params.set("version", String(options.version));
-    }
-    if (options?.digest !== undefined) params.set("digest", options.digest);
-    const query = params.size > 0 ? `?${params.toString()}` : "";
+    const query =
+      options?.version !== undefined
+        ? `?version=${String(options.version)}`
+        : "";
     return this.request<{ ok: boolean }>(`/items/${id}${query}`, {
       method: "DELETE",
     });
   }
 
-  async previewItemTrash(
-    id: string,
-    checkIds?: string[],
-  ): Promise<
+  async previewItemTrash(ids: string[]): Promise<
     ApiResponse<{
-      id: string;
-      type: string;
-      version: number;
-      items: { id: string; type: string; version: number }[];
+      items: {
+        id: string;
+        type: string;
+        version: number;
+        takes: { id: string; type: string; version: number }[];
+        count: number;
+        truncated?: true;
+      }[];
       count: number;
-      truncated?: true;
       digest: string;
-      taken_ids?: string[];
     }>
   > {
-    const query =
-      checkIds === undefined
-        ? ""
-        : `?check_ids=${encodeURIComponent(checkIds.join(","))}`;
-    return this.request(`/items/${id}/trash-preview${query}`);
+    return this.request("/items/trash-preview", {
+      method: "POST",
+      body: { ids },
+    });
+  }
+
+  async trashItems(
+    ids: string[],
+    digest?: string,
+  ): Promise<ApiResponse<{ ok: boolean }>> {
+    return this.request<{ ok: boolean }>("/items/trash", {
+      method: "POST",
+      body: { ids, ...(digest !== undefined && { digest }) },
+    });
   }
 
   /**

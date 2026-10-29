@@ -43,7 +43,7 @@ export const TOOL_OPERATIONS = {
     "transitionItem",
     "restoreItem",
   ],
-  marfa_delete: ["previewItemTrash", "bulkGetItems", "deleteItem"],
+  marfa_delete: ["previewItemTrash", "bulkGetItems", "trashItems"],
 } as const;
 
 export type ToolName = keyof typeof TOOL_OPERATIONS;

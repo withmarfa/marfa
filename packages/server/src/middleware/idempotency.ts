@@ -79,6 +79,7 @@ export const IDEMPOTENT_WRITE_DOORS: readonly string[] = [
   "POST /items",
   "PATCH /items/:id",
   "DELETE /items/:id",
+  "POST /items/trash",
   "POST /items/:id/purge",
   "POST /items/:id/transition",
   "POST /items/:id/restore",

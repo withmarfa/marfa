@@ -166,6 +166,14 @@ const doors: [string, () => Door | Promise<Door>][] = [
     async () => ({ method: "DELETE", path: `/items/${(await item()).id}` }),
   ],
   [
+    "items.trash",
+    async () => ({
+      method: "POST",
+      path: "/items/trash",
+      body: { ids: [(await item()).id, (await item()).id] },
+    }),
+  ],
+  [
     "item.purge",
     async () => {
       const row = await item();

@@ -5,6 +5,7 @@ import {
   cleanup,
   createTestContext,
   trackEdge,
+  trackEdgeType,
   trackItem,
   trackKey,
 } from "../../utils/setup.js";
@@ -441,6 +442,40 @@ describe("marfa_delete", () => {
     );
     expect(done.trashed).toEqual([parent]);
     expect(await stateOf(parent)).toBeNull();
+  });
+
+  it("trashes every named item and an item they share, counting it once", async () => {
+    // `parent-of` gives a child one parent, so the shared item hangs from a
+    // cascading edge type that allows several.
+    const edgeType = `mock.shares.${ctx.runId}`;
+    const registered = await client.registerEdgeType({
+      id: edgeType,
+      label: "Shares",
+      cardinality: "many-to-many",
+      cascade_on_delete: "cascade",
+    });
+    expect(registered.ok, JSON.stringify(registered.error)).toBe(true);
+    trackEdgeType(ctx, edgeType);
+    const a = await note("first parent");
+    const b = await note("second parent");
+    const shared = (await note("shared")).id;
+    for (const parent of [a, b]) {
+      const edge = await client.createEdge({
+        source_id: parent.id,
+        target_id: shared,
+        edge_type: edgeType,
+      });
+      expect(edge.ok, JSON.stringify(edge.error)).toBe(true);
+      trackEdge(ctx, edge.data.edge.id);
+    }
+    const ids = [a.id, b.id];
+    const preview = toolResult(await callTool(mcp, "marfa_delete", { ids }));
+    expect(preview.total).toBe(3);
+    const done = toolResult(
+      await callTool(mcp, "marfa_delete", { ids, confirm: preview.confirm }),
+    );
+    expect(done).toMatchObject({ trashed: ids, total: 3 });
+    for (const id of [...ids, shared]) expect(await stateOf(id)).toBeNull();
   });
 
   it("refuses a confirmation when what would be trashed changed since the preview", async () => {

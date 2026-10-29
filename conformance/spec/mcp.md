@@ -162,9 +162,17 @@ When `marfa_delete` is called without `confirm`, the server MUST NOT move any it
 
 ### `mcp/delete-confirmed`
 
-When `marfa_delete` is called with the `confirm` token its preview of the same IDs gave, by the same credential, within five minutes, while the items the key can read that it would trash and their versions are unchanged, the server MUST move the named items to the trash.
+When `marfa_delete` is called with the `confirm` token its preview of the same IDs gave, by the same credential, within five minutes, while the items the key can read that it would trash and their versions are unchanged, the server MUST move the named items, and what their trash takes, to the trash in one transaction.
 
 **Tests:** `compliance/mcp.test.ts › trashes the items with the confirmation the preview gave`.
+
+### `mcp/delete-total`
+
+When `marfa_delete` answers, the server MUST answer under `total` how many items the key can read the trash moves, counting once an item that more than one named item would take.
+
+**Reason:** the person agrees to a number, and two named items can share an item beneath them.
+
+**Tests:** `compliance/mcp.test.ts › trashes every named item and an item they share, counting it once`.
 
 ### `mcp/delete-plan-changed`
 
@@ -176,11 +184,11 @@ If the items the key can read that a `marfa_delete` call would trash, or their v
 
 ### `mcp/delete-plan-changed-after-check`
 
-If the items the key can read that trashing a named item would take, or their versions, change after a `marfa_delete` call checks its `confirm` token and before that item is trashed, then the server MUST leave that item out of the trash and answer the tool error code `trash_plan_changed`, naming in `trashed` the items already trashed.
+If the items the key can read that trashing the named items would take, or their versions, change after a `marfa_delete` call checks its `confirm` token and before the trash commits, then the server MUST move no item to the trash and answer the tool error code `trash_plan_changed`.
 
-**Reason:** the token is checked against a fresh preview, and each trash then names that preview's digest (`items/trash-digest-changed`), so the check and the trash are one step.
+**Reason:** the token is checked against a fresh preview, and the trash then names that preview's digest (`items/trash-digest-changed`), so the check and the trash are one step.
 
-**Tests:** `compliance/mcp-scripted.test.ts › trashes nothing when a child joins between the confirmation's check and the trash`.
+**Tests:** `compliance/mcp-scripted.test.ts › trashes none of the items when a child joins one of them between the confirmation's check and the trash`.
 
 ### `mcp/delete-other-credential`
 

@@ -824,7 +824,7 @@ When the revocation of a key commits after an earlier entry of a `POST /items/bu
 
 ### `items/idempotency-operations`
 
-The server MUST honor an `Idempotency-Key` on `POST /items`, `PATCH /items/{id}`, `DELETE /items/{id}`, `POST /items/{id}/purge`, `POST /items/{id}/transition`, `POST /items/{id}/restore`, `POST /items/{id}/tags`, `DELETE /items/{id}/tags/{tag}`, `PUT /items/{id}/metadata`, `PUT /items/{id}/extensions/{namespace}`, `DELETE /items/{id}/extensions/{namespace}`, `POST /edges`, `PATCH /edges/{id}`, `DELETE /edges/{id}`, `POST /folders`, `PATCH /folders/{id}`, `POST /folders/{id}/revoke`, `POST /views`, `PATCH /views/{id}`, `DELETE /views/{id}` and `POST /items/bulk-actions`, and on no other operation.
+The server MUST honor an `Idempotency-Key` on `POST /items`, `PATCH /items/{id}`, `DELETE /items/{id}`, `POST /items/trash`, `POST /items/{id}/purge`, `POST /items/{id}/transition`, `POST /items/{id}/restore`, `POST /items/{id}/tags`, `DELETE /items/{id}/tags/{tag}`, `PUT /items/{id}/metadata`, `PUT /items/{id}/extensions/{namespace}`, `DELETE /items/{id}/extensions/{namespace}`, `POST /edges`, `PATCH /edges/{id}`, `DELETE /edges/{id}`, `POST /folders`, `PATCH /folders/{id}`, `POST /folders/{id}/revoke`, `POST /views`, `PATCH /views/{id}`, `DELETE /views/{id}` and `POST /items/bulk-actions`, and on no other operation.
 
 **Reason:** a client resends a write whose answer it lost. A metadata or extension write checks no version, and a tag write checks one only when it names one, so one applied a second time would undo a change made between the two sends.
 
@@ -1132,29 +1132,51 @@ When the server refuses a delete for a live `system.connection` the key may not 
 
 ### `items/trash-preview`
 
-When `GET /items/{id}/trash-preview` names an item that `DELETE /items/{id}` would move to the bin, the server MUST answer `200` with the item's `id`, `type` and `version`, under `items` each other item the key may read that the delete would move with it (`items/trash-cascade`), leaves first and at most 100 with `truncated: true` where more were left out, and under `count` how many items the key may read the delete would move, the named item included.
+When `POST /items/trash-preview` names items that `POST /items/trash` would move to the bin, the server MUST answer `200` with, under `items`, each named item once in the order named, with its `id`, `type` and `version`, under `takes` each other item the key may read that its trash would move with it (`items/trash-cascade`), leaves first and at most 100 with `truncated: true` where more were left out, and under `count` how many items the key may read its trash would move, the item included.
 
-**Reason:** an agent or a person confirms a delete against what it takes, so the preview and the delete must agree.
+**Reason:** an agent or a person confirms a trash against what it takes, so the preview and the trash must agree.
 
-**Tests:** `compliance/trash-preview.test.ts › names the item and everything a cascade would take with it, leaves first, and the delete then takes exactly that`.
+**Tests:** `compliance/trash-preview.test.ts › names the item and everything a cascade would take with it, leaves first, and the trash then takes exactly that`.
+
+### `items/trash-preview-count`
+
+When the server answers `POST /items/trash-preview`, the server MUST answer under `count` how many items the key may read that trashing all the named items would move to the bin, counting once an item that more than one named item would take.
+
+**Reason:** a person told how many items go needs the number that goes, not the sum of what each item would take on its own.
+
+**Tests:** `compliance/trash-preview.test.ts › counts an item two named items would both take once in the whole`.
 
 ### `items/trash-preview-digest`
 
-When the server answers `GET /items/{id}/trash-preview`, the server MUST answer under `digest` a SHA-256 hash, in lowercase hex, of every item `count` counts, each with its version, that differs between two previews of the same item whenever an item joins or leaves those items or one of them changes version.
+When the server answers `POST /items/trash-preview`, the server MUST answer under `digest` a SHA-256 hash, in lowercase hex, of every item `count` counts, each with its version, that differs between two previews of the same IDs whenever an item joins or leaves those items or one of them changes version.
 
-**Reason:** `items` lists at most 100 items, and a confirmation given against a preview must still cover the items it does not list.
+**Reason:** `takes` lists at most 100 items, and a confirmation given against a preview must still cover the items it does not list.
 
 **Tests:** `compliance/trash-preview.test.ts › changes its digest when an item past its list changes, and not otherwise`.
 
+### `items/trash-several`
+
+When `POST /items/trash` names items, the server MUST move every named item, and every item the trash of each would take (`items/trash-cascade`), to the bin in one transaction.
+
+**Reason:** two named items can share an item beneath them, and trashing them one at a time would change what the second takes once the first has gone.
+
+**Tests:** `compliance/trash-preview.test.ts › trashes every named item and an item they share when what the trash would take is what the preview showed`.
+
+### `items/trash-several-refused`
+
+If `DELETE /items/{id}` would be refused for any one of the items `POST /items/trash` names, then the server MUST answer the trash with that refusal and move no item to the bin.
+
+**Tests:** `compliance/trash-preview.test.ts › trashes none of the named items when one of them is refused`.
+
 ### `items/trash-digest-match`
 
-When `DELETE /items/{id}` names a `digest` equal to the one `GET /items/{id}/trash-preview` answers for the item at the moment the trash commits, the server MUST move the item and what its trash takes to the trash.
+When `POST /items/trash` names a `digest` equal to the one `POST /items/trash-preview` answers for the same IDs at the moment the trash commits, the server MUST move the named items and what their trash takes to the bin.
 
-**Tests:** `compliance/trash-preview.test.ts › trashes the item when what the trash would take is what the preview showed`.
+**Tests:** `compliance/trash-preview.test.ts › trashes every named item and an item they share when what the trash would take is what the preview showed`.
 
 ### `items/trash-digest-changed`
 
-If `DELETE /items/{id}` names a `digest` other than the one `GET /items/{id}/trash-preview` answers for the item at the moment the trash would commit, then the server MUST answer `409 trash_plan_changed` with the digest now as `details.digest` and move no item to the trash.
+If `POST /items/trash` names a `digest` other than the one `POST /items/trash-preview` answers for the same IDs at the moment the trash would commit, then the server MUST answer `409 trash_plan_changed` with the digest now as `details.digest` and move no item to the bin.
 
 **Reason:** a preview and the trash are two requests, so what was shown is compared inside the trash's own transaction, and a change landing between the two cannot slip past.
 
@@ -1162,33 +1184,25 @@ If `DELETE /items/{id}` names a `digest` other than the one `GET /items/{id}/tra
 
 ### `items/trash-digest-malformed`
 
-If `DELETE /items/{id}` names a `digest` that is not 64 lowercase hex characters, then the server MUST answer `400 validation_error` and move no item to the trash.
+If `POST /items/trash` names a `digest` that is not 64 lowercase hex characters, then the server MUST answer `400 validation_error` and move no item to the bin.
 
 **Tests:** `compliance/trash-preview.test.ts › refuses a digest that is not a SHA-256 hash in hex with 400 validation_error`.
 
-### `items/trash-preview-check`
-
-When `GET /items/{id}/trash-preview` names `check_ids`, the server MUST answer under `taken_ids` each of those IDs that names an item the key may read that the delete would move with the item, in the order named.
-
-**Reason:** a caller deleting several items at once learns which of them go with another, whether or not `items` lists them.
-
-**Tests:** `compliance/trash-preview.test.ts › answers which of check_ids the trash would take, listed or not`.
-
 ### `items/trash-preview-writes-nothing`
 
-When the server answers `GET /items/{id}/trash-preview`, the server MUST NOT change the item or any item beneath it.
+When the server answers `POST /items/trash-preview`, the server MUST NOT change the named items or any item beneath them.
 
 **Tests:** `compliance/trash-preview.test.ts › writes nothing`.
 
 ### `items/trash-preview-hidden`
 
-When the delete an item's trash preview describes would move an item whose type the key may not read, the server MUST NOT list that item or count it.
+When the trash a preview describes would move an item whose type the key may not read, the server MUST NOT list that item or count it.
 
 **Tests:** `compliance/trash-preview.test.ts › neither lists nor counts an item beneath that the key cannot read`.
 
 ### `items/trash-preview-refusals`
 
-If `DELETE /items/{id}` would be refused with `400 edge_constraint_violation`, `400 validation_error`, `403 type_not_permitted` or `404 item_not_found`, then the server MUST answer `GET /items/{id}/trash-preview` with the same refusal.
+If `DELETE /items/{id}` would be refused with `400 edge_constraint_violation`, `400 validation_error`, `403 type_not_permitted` or `404 item_not_found` for an item `POST /items/trash-preview` names, then the server MUST answer the preview with the same refusal.
 
 **Tests:** `compliance/trash-preview.test.ts › refuses with the same edge_constraint_violation a delete is refused with, where a block edge holds the item`, `› refuses a key that may only read the item's type with 403 type_not_permitted`, `› answers 404 item_not_found for an item in the trash, and 400 invalid_id for an ID that is not one`.
 

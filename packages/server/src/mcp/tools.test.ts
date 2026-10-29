@@ -1063,7 +1063,7 @@ describe("marfa_delete", () => {
     const preview = payloadOf(
       await callTool(client, "marfa_delete", { ids: [parent.id] }),
     );
-    setFault("hold:write", "item.delete");
+    setFault("hold:write", "items.trash");
     const pending = callTool(client, "marfa_delete", {
       ids: [parent.id],
       confirm: preview.confirm,
@@ -1079,11 +1079,7 @@ describe("marfa_delete", () => {
     });
     clearFaults();
     const refused = errorOf(await pending);
-    expect(refused).toMatchObject({
-      code: "trash_plan_changed",
-      id: parent.id,
-      trashed: [],
-    });
+    expect(refused.code).toBe("trash_plan_changed");
     expect((await readItem(parent.id)).state).toBe("active");
     expect((await readItem(late.id)).state).toBe("active");
   });
@@ -1168,6 +1164,75 @@ describe("marfa_delete", () => {
         key: ctx.workingKey,
       });
       expect(read.status).toBe(404);
+    }
+  });
+
+  async function sharing(): Promise<{ a: Saved; b: Saved; shared: Saved }> {
+    const a = await saveNote({ title: "First project" });
+    const b = await saveNote({ title: "Second project" });
+    const shared = await saveNote({ title: "Shared step" });
+    // `parent-of` gives a child one parent, so a shared child hangs from a
+    // cascading edge type that allows several.
+    const edgeType = `example.shares.${shared.id}`;
+    await ctx.storage.edgeTypes.create({
+      id: edgeType,
+      label: "Shares",
+      cardinality: "many-to-many",
+      cascade_on_delete: "cascade",
+      property_schema: {},
+      written_at: "source",
+      source_type_constraints: ["*"],
+      target_type_constraints: ["*"],
+    });
+    for (const parent of [a, b]) {
+      await ctx.storage.edges.createRaw({
+        source_id: parent.id,
+        target_id: shared.id,
+        edge_type: edgeType,
+      });
+    }
+    return { a, b, shared };
+  }
+
+  it("trashes every named item and a child they share, counted once", async () => {
+    const { a, b, shared } = await sharing();
+    const ids = [a.id, b.id];
+    const preview = payloadOf(await callTool(client, "marfa_delete", { ids }));
+    expect(preview.total).toBe(3);
+    const done = payloadOf(
+      await callTool(client, "marfa_delete", { ids, confirm: preview.confirm }),
+    );
+    expect(done).toMatchObject({ trashed: ids, total: 3 });
+    for (const item of [a, b, shared]) {
+      const read = await request(ctx.app, "GET", `/items/${item.id}`, {
+        key: ctx.workingKey,
+      });
+      expect(read.status).toBe(404);
+    }
+  });
+
+  it("trashes none of several items when a child joins one of them after the check", async () => {
+    const { a, b, shared } = await sharing();
+    const ids = [a.id, b.id];
+    const preview = payloadOf(await callTool(client, "marfa_delete", { ids }));
+    setFault("hold:write", "items.trash");
+    const pending = callTool(client, "marfa_delete", {
+      ids,
+      confirm: preview.confirm,
+    });
+    await vi.waitFor(() => {
+      expect(activeFaults()[0]?.waiting).toBe(1);
+    });
+    const late = await saveNote({ title: "Added after the check" });
+    await ctx.storage.edges.createRaw({
+      source_id: b.id,
+      target_id: late.id,
+      edge_type: "parent-of",
+    });
+    clearFaults();
+    expect(errorOf(await pending).code).toBe("trash_plan_changed");
+    for (const item of [a, b, shared, late]) {
+      expect((await readItem(item.id)).state).toBe("active");
     }
   });
 

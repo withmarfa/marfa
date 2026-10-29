@@ -887,6 +887,7 @@ const DOORS = [
   "POST /items",
   "PATCH /items/{id}",
   "DELETE /items/{id}",
+  "POST /items/trash",
   "POST /items/{id}/purge",
   "POST /items/{id}/transition",
   "POST /items/{id}/restore",
@@ -952,6 +953,12 @@ async function prepare(door: string): Promise<Prepared> {
     }
     case "DELETE /items/{id}":
       return { method, path: `/items/${(await note()).id}` };
+    case "POST /items/trash":
+      return {
+        method,
+        path: template,
+        body: { ids: [(await note()).id, (await note()).id] },
+      };
     case "POST /items/{id}/purge":
       return { method, path: `/items/${(await trashed()).id}/purge` };
     case "POST /items/{id}/transition":
