@@ -400,6 +400,10 @@ const createItemRoute = createRoute({
   },
 });
 
+/** The `sort` fields of a listing, as a pattern alternative. Search takes the same ones beside `relevance`. */
+export const LISTING_SORT_FIELDS =
+  "created_at|updated_at|occurred_at|properties\\.[a-z0-9_]+";
+
 /**
  * The query keys that decide which items a listing answers, apart from how
  * it orders and pages them. The stats door takes the same keys, so a count
@@ -443,7 +447,7 @@ export const listingNarrowingKeys = {
     ),
 };
 
-const listingBoundKeys = {
+export const listingBoundKeys = {
   occurred_after: z
     .string()
     .min(1)
@@ -577,7 +581,7 @@ const listItemsRoute = createRoute({
       sort: z
         .string()
         .regex(
-          /^(created_at|updated_at|occurred_at|properties\.[a-z0-9_]+)$/,
+          new RegExp(`^(${LISTING_SORT_FIELDS})$`),
           "sort must be created_at, updated_at, occurred_at, or properties.<field>",
         )
         .optional()

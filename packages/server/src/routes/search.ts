@@ -13,6 +13,7 @@ import {
   SEARCH_CURSOR_KEY,
   decodeKeyedCursor,
   encodeKeyedCursor,
+  type SearchSortField,
   type Storage,
 } from "../storage/interface.js";
 import { readInstanceConfig } from "../storage/instance-config.js";
@@ -25,7 +26,11 @@ import {
   resolveStateFilter,
 } from "./_schemas.js";
 import { readableMetadata } from "./_extension-reach.js";
-import { listingNarrowingKeys } from "./items.js";
+import {
+  LISTING_SORT_FIELDS,
+  listingBoundKeys,
+  listingNarrowingKeys,
+} from "./items.js";
 import { excludesSystemTypes } from "./_system-type-visibility.js";
 import { pageLimit, pageCursor } from "../page-limits.js";
 
@@ -58,9 +63,17 @@ function searchOffset(cursor: string | undefined, query: string): number {
   return offset;
 }
 
-/** Everything that decides a search's ranking, as one short string. */
+/**
+ * Everything that decides a search's ranking, as one short string. The order
+ * is read as it resolves, so a request that leaves out the default `sort` or
+ * `direction` continues the cursor of one that spells it.
+ */
 function searchFingerprint(query: Record<string, unknown>): string {
-  const ranking = { ...query };
+  const ranking: Record<string, unknown> = {
+    ...query,
+    sort: query.sort ?? "relevance",
+    direction: query.direction ?? "desc",
+  };
   delete ranking.cursor;
   delete ranking.limit;
   return createHash("sha256")
@@ -104,7 +117,7 @@ const searchRoute = createRoute({
   tags: ["Search"],
   summary: "Search items",
   description:
-    "Returns a page of the items you can read whose text properties or tags match `q`, ranked by BM25 relevance, with ties ordered by item ID.",
+    "Returns a page of the items you can read whose text properties or tags match `q`, best match first unless you give a `sort`. Items that tie come in ID order.",
   security: [{ bearerAuth: [] }],
   middleware: readsSomeType,
   request: {
@@ -123,6 +136,7 @@ const searchRoute = createRoute({
           `Only return items in this lifecycle state. Without it, you get \`active\` items. \`${ALL_STATES}\` searches every state, but trashed items are never searchable.`,
         )
         .optional(),
+      source: listingNarrowingKeys.source,
       tier: listingNarrowingKeys.tier,
       /** The rule deciding whether `system` applies, and why, is in
        *  `_system-type-visibility.ts`, shared by every door that takes it. */
@@ -141,20 +155,30 @@ const searchRoute = createRoute({
           "A filter expression, as on `GET /items`. A term naming an edge type, `edge[<type>]` or `backref[<type>]`, matches by relationship and needs read on that edge type.",
         )
         .optional(),
-      occurred_after: z
+      sort: z
         .string()
-        .min(1)
+        .regex(
+          new RegExp(`^(relevance|${LISTING_SORT_FIELDS})$`),
+          "sort must be relevance, created_at, updated_at, occurred_at, or properties.<field>",
+        )
         .optional()
         .describe(
-          "Only return items whose own time (`occurred_at`, else `created_at`) is after this RFC 3339 time.",
+          "How to order the results: `relevance` (the default), `created_at`, `updated_at`, `occurred_at` or `properties.<field>`, such as `properties.due_at`. Items without a value for a property come last.",
         ),
-      occurred_before: z
-        .string()
-        .min(1)
+      direction: z
+        .enum(["asc", "desc"])
         .optional()
         .describe(
-          "Only return items whose own time (`occurred_at`, else `created_at`) is before this RFC 3339 time.",
+          "Sort direction. Defaults to `desc`: best match first under `relevance`, newest or largest first otherwise. Under `relevance`, `asc` puts the worst match first.",
         ),
+      occurred_after: listingBoundKeys.occurred_after,
+      occurred_before: listingBoundKeys.occurred_before,
+      // A search pages by offset into its ranking, so unlike the listing it
+      // has no catch-up order for the bound to imply.
+      updated_after: listingBoundKeys.updated_after.describe(
+        "Only return items changed at or after this time. Items can share an instant, so the bound includes it. It doesn't change the ordering, so it works with any `sort`.",
+      ),
+      updated_before: listingBoundKeys.updated_before,
     }),
   },
   responses: {
@@ -163,7 +187,7 @@ const searchRoute = createRoute({
         "application/json": {
           schema: pageOf(SearchResultSchema, "SearchResultPage", {
             page: "One page of search results.",
-            data: "The results, best match first.",
+            data: "The results, in the order of `sort`.",
           }),
         },
       },
@@ -181,7 +205,7 @@ const searchRoute = createRoute({
         },
       },
       description:
-        "- `missing_required_field`: `q` is missing.\n- `validation_error`: a parameter is unknown or invalid, such as a `state` that isn't a lifecycle state or `any`, a time that isn't an instant, or a `cursor` from another search.\n- `unknown_type`: `type` is a concrete type that nothing registers.",
+        "- `missing_required_field`: `q` is missing.\n- `validation_error`: a parameter is unknown or invalid, such as a `state` that isn't a lifecycle state or `any`, a time that isn't an instant, or a `cursor` from another search or sort.\n- `unknown_type`: `type` is a concrete type that nothing registers.",
     },
     401: {
       content: {
@@ -216,14 +240,19 @@ export function searchRoutes(storage: Storage) {
       q,
       type,
       state,
+      source,
       tier,
       tags,
       limit,
       cursor,
       filter,
       include,
+      sort,
+      direction,
       occurred_after: occurredAfter,
       occurred_before: occurredBefore,
+      updated_after: updatedAfter,
+      updated_before: updatedBefore,
     } = c.req.valid("query");
 
     // Grammar, the global wildcard and an unknown concrete type, decided once
@@ -277,6 +306,7 @@ export function searchRoutes(storage: Storage) {
       type,
       state: resolvedState,
       all_states: allStates,
+      source,
       tier: tierFilter,
       // Per row, from the row's own type — see the note on `ItemFilters`.
       source_filter: enforcementForSearch.source_filter,
@@ -286,6 +316,10 @@ export function searchRoutes(storage: Storage) {
       readable_sources: { allowed: allowed_types, excluded: excluded_types },
       occurred_after: occurredAfter,
       occurred_before: occurredBefore,
+      updated_after: updatedAfter,
+      updated_before: updatedBefore,
+      sort: sort as SearchSortField | undefined,
+      direction,
       allowed_types,
       excluded_types,
       // One past the page, so the answer knows whether another follows.

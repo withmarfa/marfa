@@ -264,12 +264,29 @@ export interface SearchFilters {
   occurred_after?: string;
   /** Exclusive upper bound on the same expression. */
   occurred_before?: string;
+  /** Mirrors `ItemFilters.source`. */
+  source?: string;
+  /** Inclusive lower bound on `updated_at`, as {@link ItemFilters.updated_after}
+   *  reads it, except that here it orders nothing: a search pages by offset
+   *  into its ranking, so it has no catch-up order to imply. */
+  updated_after?: string;
+  /** Exclusive upper bound on `updated_at`, as {@link ItemFilters.updated_before}. */
+  updated_before?: string;
+  /** The ranking: BM25 relevance, or an item column or property as on
+   *  {@link ItemFilters.sort}. Defaults to relevance. */
+  sort?: SearchSortField;
+  /** Descending by default. Under `relevance`, descending is best match
+   *  first and ascending is worst first. */
+  direction?: SortDirection;
   allowed_types?: string[];
   /** Mirrors `ItemFilters.excluded_types`. */
   excluded_types?: string[];
   limit?: number;
   offset?: number;
 }
+
+/** What a search ranks by: its own relevance, or any field a listing sorts by. */
+export type SearchSortField = "relevance" | ItemSortField;
 
 // ---------------------------------------------------------------------------
 // Timestamp normalization

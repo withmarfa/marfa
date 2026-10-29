@@ -262,17 +262,9 @@ If `GET /items`, `GET /items/stats`, `GET /search` or `GET /export` names a `sta
 
 ### `search-and-filters/source-narrows`
 
-When `GET /items`, `GET /items/stats`, `GET /export` or `POST /items/bulk-actions` names a `source`, the server MUST select only the rows stamped with that source.
+When `GET /items`, `GET /items/stats`, `GET /search`, `GET /export` or `POST /items/bulk-actions` names a `source`, the server MUST select only the rows stamped with that source.
 
-**Tests:** `compliance/source-narrowing.test.ts › GET /items answers only the rows stamped with the source named`, `› GET /items/stats counts only the rows stamped with the source named`, `› GET /export carries only the rows stamped with the source named`, `› POST /items/bulk-actions selects only the rows stamped with the source named`.
-
-### `search-and-filters/source-not-in-search`
-
-If `GET /search` carries `source`, then the server MUST answer `400 validation_error` naming `source` in `details.unknown_parameters`.
-
-**Reason:** a search declares no `source`, so the key is refused rather than dropped, which would answer every source.
-
-**Tests:** `compliance/source-narrowing.test.ts › GET /search refuses a source, which it does not declare, rather than answering every source`.
+**Tests:** `compliance/source-narrowing.test.ts › GET /items answers only the rows stamped with the source named`, `› GET /items/stats counts only the rows stamped with the source named`, `› GET /search answers only the rows stamped with the source named`, `› GET /export carries only the rows stamped with the source named`, `› POST /items/bulk-actions selects only the rows stamped with the source named`.
 
 ### `search-and-filters/tags-every`
 
@@ -330,19 +322,19 @@ The server MUST NOT let an item's `occurred_at` change the order of a `GET /item
 
 ### `search-and-filters/bound-not-instant`
 
-If `GET /items` or `GET /items/stats` names `occurred_after`, `occurred_before`, `updated_after` or `updated_before`, or `GET /export` names `occurred_after` or `occurred_before`, with a value that is not an instant, then the server MUST answer `400 validation_error`.
+If `GET /items`, `GET /items/stats` or `GET /search` names `occurred_after`, `occurred_before`, `updated_after` or `updated_before`, or `GET /export` names `occurred_after` or `occurred_before`, with a value that is not an instant, then the server MUST answer `400 validation_error`.
 
 **Reason:** the export streams, so a bound refused after the response began would hand the caller an empty body under a success status.
 
-**Tests:** `compliance/item-stats.test.ts › refuses what the listing refuses in a filter: a state outside the enum, a bound that is not an instant and a number no double holds`, `compliance/export.test.ts › refuses a bound that is not an instant, on both output formats`.
+**Tests:** `compliance/item-stats.test.ts › refuses what the listing refuses in a filter: a state outside the enum, a bound that is not an instant and a number no double holds`, `compliance/export.test.ts › refuses a bound that is not an instant, on both output formats`, `compliance/search-ordering.test.ts › refuses an update bound that is not an instant`.
 
 ### `search-and-filters/updated-after`
 
-When `GET /items` names `updated_after`, the server MUST list only the items whose `updated_at` is at or after it.
+When `GET /items` or `GET /search` names `updated_after`, the server MUST select only the items whose `updated_at` is at or after it.
 
 **Reason:** the bound is inclusive because `updated_at` ties across a bulk write, so a strict bound would drop every row sharing the instant of a resuming client's cursor. A tag moves `updated_at` as a property does (`items/tag-updated-at`).
 
-**Tests:** `sync/time-filters.test.ts › keeps updated_after inclusive, which the catch-up depends on`, `sync/catchup.test.ts › sees a tag written after the boundary, not just a property change`.
+**Tests:** `sync/time-filters.test.ts › keeps updated_after inclusive, which the catch-up depends on`, `sync/catchup.test.ts › sees a tag written after the boundary, not just a property change`, `compliance/search-ordering.test.ts › bounds a search by updated_at, inclusive below and exclusive above`.
 
 ### `search-and-filters/updated-after-order`
 
@@ -354,9 +346,23 @@ If `GET /items` names `updated_after` with a `sort` other than `updated_at` or a
 
 ### `search-and-filters/updated-before`
 
-When `GET /items` names `updated_before`, the server MUST list only the items whose `updated_at` is before it.
+When `GET /items` or `GET /search` names `updated_before`, the server MUST select only the items whose `updated_at` is before it.
 
-**Tests:** `sync/time-filters.test.ts › bounds an item listing by updated_before, exclusively`.
+**Tests:** `sync/time-filters.test.ts › bounds an item listing by updated_before, exclusively`, `compliance/search-ordering.test.ts › bounds a search by updated_at, inclusive below and exclusive above`.
+
+### `search-and-filters/search-updated-instant`
+
+When `GET /search` names `updated_after` or `updated_before`, the server MUST bound the items by the instant the value names, whatever offset it is spelled in.
+
+**Tests:** `compliance/search-ordering.test.ts › reads an update bound as the instant it names, in any offset`.
+
+### `search-and-filters/search-updated-after-order`
+
+When `GET /search` names `updated_after`, the server MUST order the hits as it would without it, by `sort` and `direction`.
+
+**Reason:** the listing orders a catch-up by `updated_at` because its cursor can advance through no other order (`search-and-filters/updated-after-order`). A search pages by offset into its ranking, so the bound implies no order.
+
+**Tests:** `compliance/search-ordering.test.ts › leaves the order to sort and direction when updated_after is named`.
 
 ## What a listing adds and what it leaves out
 
@@ -662,6 +668,26 @@ If a `GET /search` request sends a `cursor` that another listing issued, that an
 
 **Tests:** `compliance/envelope.test.ts › refuses a cursor another listing issued, and one it cannot read`, `› refuses a cursor minted for another search`.
 
+### `search-and-filters/search-cursor-parameters`
+
+If a `GET /search` request sends a `cursor` that a search issued under a different `source`, `updated_after`, `updated_before`, `sort` or `direction`, then the server MUST answer `400 validation_error`.
+
+**Reason:** a position is meaningful only in the ranking it came from, so a cursor continued under another order or another set of hits would skip or repeat hits with no signal.
+
+**Tests:** `compliance/search-ordering.test.ts › refuses a cursor issued under another sort, direction or filter`.
+
+### `search-and-filters/search-cursor-default-order`
+
+When a `GET /search` request sends a `cursor` issued under the default `sort` and `direction`, the server MUST continue it whether the request leaves `sort` and `direction` out or names `relevance` and `desc`.
+
+**Tests:** `compliance/search-ordering.test.ts › continues a cursor whether the default order is spelled out or left out`.
+
+### `search-and-filters/search-cursor-sorted`
+
+When a client sends back the `next_cursor` of each page of a `GET /search` that names a `sort`, the server MUST continue that ordering, so that walking to `null` delivers every hit once.
+
+**Tests:** `compliance/search-ordering.test.ts › walks a sorted search to the end, delivering every hit once`.
+
 ### `search-and-filters/search-depth`
 
 When a page of `GET /search` holds the 10,000th row of the ranking, the server MUST answer `next_cursor` of `null`.
@@ -669,6 +695,44 @@ When a page of `GET /search` holds the 10,000th row of the ranking, the server M
 **Reason:** the server reads the ranking at most 10,000 rows deep, so a search is narrowed rather than paged past that depth.
 
 **Tests:** `compliance/search-depth.test.ts › stops paging a search at its 10,000th row`.
+
+### `search-and-filters/search-sort-relevance`
+
+When `GET /search` names no `sort`, or `sort=relevance`, the server MUST order the hits by relevance, the best match first.
+
+**Tests:** `compliance/search-ordering.test.ts › orders a search by relevance, best match first, and worst first when ascending`.
+
+### `search-and-filters/search-sort-relevance-ascending`
+
+When `GET /search` names `direction=asc` and no `sort` or `sort=relevance`, the server MUST order the hits by relevance, the worst match first.
+
+**Reason:** a direction is honored rather than refused, because every ordering a search takes has two directions and this one is well defined.
+
+**Tests:** `compliance/search-ordering.test.ts › orders a search by relevance, best match first, and worst first when ascending`.
+
+### `search-and-filters/search-sort-column`
+
+When `GET /search` names `sort=created_at`, `sort=updated_at` or `sort=occurred_at`, the server MUST order the hits by that column, newest first unless `direction=asc`.
+
+**Tests:** `compliance/search-ordering.test.ts › orders a search by a time column, newest first unless told otherwise`.
+
+### `search-and-filters/search-sort-property`
+
+When `GET /search` names `sort=properties.<field>`, the server MUST order the hits by the scalar value each stores in that property, in the order `search-and-filters/sort-property-ascending` and `search-and-filters/sort-property-descending` give a listing, and put the hits whose property is missing, null, an object or an array after every scalar in either direction.
+
+**Tests:** `compliance/search-ordering.test.ts › orders a search by a property with the rows that lack one last in both directions`.
+
+### `search-and-filters/search-sort-ties`
+
+When `GET /search` orders hits that tie on relevance or on a property, the server MUST order them by item ID ascending in both directions.
+
+**Tests:** `compliance/search-ordering.test.ts › breaks a tie by item ID, ascending`.
+
+### `search-and-filters/search-sort-invalid`
+
+If `GET /search` names a `sort` that is not `relevance`, `created_at`, `updated_at`, `occurred_at` or `properties.<field>` with a field of lowercase letters, digits and underscores, or a `direction` that is not `asc` or `desc`, then the server MUST answer `400 validation_error`.
+
+**Tests:** `compliance/search-ordering.test.ts › refuses a sort or direction it does not take`.
 
 ### `search-and-filters/search-stem`
 

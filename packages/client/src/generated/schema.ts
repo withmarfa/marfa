@@ -689,7 +689,7 @@ export interface paths {
         };
         /**
          * Search items
-         * @description Returns a page of the items you can read whose text properties or tags match `q`, ranked by BM25 relevance, with ties ordered by item ID.
+         * @description Returns a page of the items you can read whose text properties or tags match `q`, best match first unless you give a `sort`. Items that tie come in ID order.
          */
         get: operations["searchItems"];
         put?: never;
@@ -4001,7 +4001,7 @@ export interface components {
         };
         /** @description One page of search results. */
         SearchResultPage: {
-            /** @description The results, best match first. */
+            /** @description The results, in the order of `sort`. */
             data: components["schemas"]["SearchResult"][];
             /** @description Pass as `cursor` for the next page; `null` on the last. A page can be short, or empty, with a cursor still to follow, so a walk stops on `null` and never on a short page. */
             next_cursor: string | null;
@@ -13929,6 +13929,8 @@ export interface operations {
                 type?: string;
                 /** @description Only return items in this lifecycle state. Without it, you get `active` items. `any` searches every state, but trashed items are never searchable. */
                 state?: string;
+                /** @description Only return items stamped with this source. */
+                source?: string;
                 /** @description Only return items in this tier. Omit it or send `all` for both tiers. */
                 tier?: "library" | "feed" | "all";
                 /** @description Comma-separated extras. `system` also returns `system.*` items, which are left out by default. A `system.` type filter does the same. */
@@ -13941,10 +13943,18 @@ export interface operations {
                 cursor?: string;
                 /** @description A filter expression, as on `GET /items`. A term naming an edge type, `edge[<type>]` or `backref[<type>]`, matches by relationship and needs read on that edge type. */
                 filter?: string;
-                /** @description Only return items whose own time (`occurred_at`, else `created_at`) is after this RFC 3339 time. */
+                /** @description How to order the results: `relevance` (the default), `created_at`, `updated_at`, `occurred_at` or `properties.<field>`, such as `properties.due_at`. Items without a value for a property come last. */
+                sort?: string;
+                /** @description Sort direction. Defaults to `desc`: best match first under `relevance`, newest or largest first otherwise. Under `relevance`, `asc` puts the worst match first. */
+                direction?: "asc" | "desc";
+                /** @description Only return items whose own time (`occurred_at`, else `created_at`) is after this time. For the modification time, use `updated_after`. */
                 occurred_after?: string;
-                /** @description Only return items whose own time (`occurred_at`, else `created_at`) is before this RFC 3339 time. */
+                /** @description Only return items whose own time (`occurred_at`, else `created_at`) is before this time. */
                 occurred_before?: string;
+                /** @description Only return items changed at or after this time. Items can share an instant, so the bound includes it. It doesn't change the ordering, so it works with any `sort`. */
+                updated_after?: string;
+                /** @description Only return items changed before this time. It doesn't change the ordering, so it works with any `sort`. */
+                updated_before?: string;
             };
             header?: never;
             path?: never;
@@ -13968,7 +13978,7 @@ export interface operations {
             };
             /**
              * @description - `missing_required_field`: `q` is missing.
-             *     - `validation_error`: a parameter is unknown or invalid, such as a `state` that isn't a lifecycle state or `any`, a time that isn't an instant, or a `cursor` from another search.
+             *     - `validation_error`: a parameter is unknown or invalid, such as a `state` that isn't a lifecycle state or `any`, a time that isn't an instant, or a `cursor` from another search or sort.
              *     - `unknown_type`: `type` is a concrete type that nothing registers.
              */
             400: {
