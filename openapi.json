@@ -58006,7 +58006,7 @@
           "Health and maintenance"
         ],
         "summary": "List audit log entries",
-        "description": "Returns audit log entries, newest first. Marfa records changes, sign-ins and exports here, not other reads. Requires `audit.read`.",
+        "description": "Returns audit log entries, newest first. Marfa records changes, sign-ins, exports and the files MCP tools fetch from the web here, not other reads. Requires `audit.read`.",
         "security": [
           {
             "bearerAuth": []
