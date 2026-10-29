@@ -155,6 +155,7 @@ export function decideResponse(
   accept: boolean,
   scopes: readonly string[],
   types: readonly string[] = [],
+  access?: string,
 ): Promise<Response> {
   return fetch(`${server.apiUrl}/auth/authorize/decision`, {
     method: "POST",
@@ -167,6 +168,7 @@ export function decideResponse(
     body: new URLSearchParams([
       ["accept", String(accept)],
       ["oauth_query", consent.search.slice(1)],
+      ...(access === undefined ? [] : [["access", access] as [string, string]]),
       ...scopes.map((s): [string, string] => ["scopes", s]),
       ...types.map((t): [string, string] => ["types", t]),
     ]),
@@ -185,6 +187,7 @@ export async function decide(
   accept: boolean,
   scopes: readonly string[],
   types: readonly string[] = [],
+  access?: string,
 ): Promise<URL | undefined> {
   return sentTo(
     server,
@@ -196,6 +199,7 @@ export async function decide(
       accept,
       scopes,
       types,
+      access,
     ),
   );
 }

@@ -1221,7 +1221,7 @@ When a person declines on the consent screen, the server MUST send the browser t
 
 ### `keys-and-oauth/consent-nothing-denies`
 
-Where a request names a scope other than `openid` and `offline_access` that the app's standing consent does not cover, when a person approves on the consent screen with none of those scopes chosen, or with types chosen in place of all data and none of them turned on, the server MUST send the browser to the request's redirect URI with `error=access_denied`, the request's `state` and no code.
+Where a request names a scope other than `openid` and `offline_access` that the app's standing consent does not cover, when a person approves on the consent screen with none of those scopes chosen, or with types chosen in place of all data and none of them turned on, and the post does not name `access` as `full` (`keys-and-oauth/approval-full-grants-request`), the server MUST send the browser to the request's redirect URI with `error=access_denied`, the request's `state` and no code.
 
 **Reason:** Approving with everything turned off is declining, so the app is told what declining tells it, and no consent is recorded for an app that can do nothing with it. What a post carries without a choice is not a choice: `openid` and `offline_access`, and every scope the app holds when the approval commits. An app that comes back and has everything newly asked turned off is denied, and keeps what it holds. A request that names nothing else offers nothing to turn off, and approving it is a yes.
 
@@ -1229,7 +1229,7 @@ Where a request names a scope other than `openid` and `offline_access` that the 
 
 ### `keys-and-oauth/consent-ticked`
 
-When a person approves on the consent screen with only some of the scopes the request names chosen, the server MUST issue a token for exactly the scopes chosen, plus the reads `keys-and-oauth/approval-write-read` adds and the held scopes `keys-and-oauth/approval-held-now` adds.
+When a person approves on the consent screen with only some of the scopes the request names chosen, and the post does not name `access` as `full`, the server MUST issue a token for exactly the scopes chosen, plus the reads `keys-and-oauth/approval-write-read` adds and the held scopes `keys-and-oauth/approval-held-now` adds.
 
 **Reason:** Types chosen in place of all data are a narrowing of the all-data scope, and `keys-and-oauth/authorize-narrowed-types` states them.
 
@@ -1355,7 +1355,39 @@ When a browser session that signed in more than five minutes ago opens `/auth/au
 
 ## What the approval pages offer
 
-The consent screen at `/auth/authorize` and the device approval page at `/auth/device/consent` are the two pages a person approves an app on. Their choices come from the request's scopes and from the consent the app already holds. Every choice is a form field named `scopes` whose value is a scope the request names, except the types chosen in place of all data, which are fields named `types` whose values are scopes that an all-data scope the request names covers. So what a form posts is the request narrowed.
+The consent screen at `/auth/authorize` and the device approval page at `/auth/device/consent` are the two pages a person approves an app on. Their choices come from the request's scopes and from the consent the app already holds. Every choice is a form field named `scopes` whose value is a scope the request names, except the types chosen in place of all data, which are fields named `types` whose values are scopes that an all-data scope the request names covers. So what a form posts is the request narrowed. Where a request names something to choose, a form also posts a field named `access`, whose value is `full` or `choose`.
+
+### `keys-and-oauth/approval-full-access`
+
+Where a request names a scope other than `openid` and `offline_access`, the server MUST offer, on the consent screen and the device approval page, the access choices Full access and Choose access as a form field named `access` with the values `full` and `choose`, with Full access selected.
+
+**Reason:** Most people want to give an app what it asked for. Full access says so in one choice, and Choose access keeps every control for the person who wants less. A request that names nothing else offers nothing to choose, so it carries no `access` field.
+
+**Tests:** `compliance/approval-screens.test.ts › offers full access selected, and choosing access, on both pages`, `› offers no choice of access where the request names nothing to choose`.
+
+### `keys-and-oauth/approval-full-grants-request`
+
+When a person approves with `access` posted as `full`, the server MUST grant every scope the request names, whatever scopes and types the form carries.
+
+**Reason:** Full access is a decision about the request, not about the form, so a form that carries stale or extra fields cannot narrow it. The rule for a recent sign-in (`keys-and-oauth/consent-recent-needed`, `keys-and-oauth/device-recent-needed`) applies to the scopes that result.
+
+**Tests:** `compliance/approval-screens.test.ts › issues a token for the whole request when the person approves with full access and posts no scope`, `› approves a device code for the whole request with full access and no scope`.
+
+### `keys-and-oauth/approval-full-never-wider`
+
+When a person approves with `access` posted as `full`, the server MUST NOT grant a scope the request does not name.
+
+**Reason:** A form can carry any scope, so full access is read against the signed request and never against the form.
+
+**Tests:** `compliance/approval-screens.test.ts › never grants a scope the request did not name, whatever the form adds`, `› never grants a scope the device code did not carry, whatever the form adds`.
+
+### `keys-and-oauth/approval-access-unstated`
+
+Where an approval post carries no `access` field or a value other than `full`, the server MUST grant only what the chosen scopes and types say.
+
+**Reason:** A post that does not say Full access can only narrow, so a script written before the choice existed keeps its meaning.
+
+**Tests:** `compliance/approval-screens.test.ts › witness: the same post without full access is a denial`.
 
 ### `keys-and-oauth/approval-one-control`
 
@@ -2067,7 +2099,7 @@ When a client polls with a device code the person denied, the server MUST answer
 
 ### `keys-and-oauth/device-nothing-denies`
 
-Where a device code names a scope other than `openid` and `offline_access` that the app's standing consent does not cover, when a person approves it with none of those scopes chosen, the server MUST deny the code, so that the next poll of it is answered `400 access_denied`.
+Where a device code names a scope other than `openid` and `offline_access` that the app's standing consent does not cover, when a person approves it with none of those scopes chosen and the post does not name `access` as `full`, the server MUST deny the code, so that the next poll of it is answered `400 access_denied`.
 
 **Reason:** The same rule as `keys-and-oauth/consent-nothing-denies`, so a request is answered the same way on either page.
 
