@@ -645,10 +645,9 @@ impl Cache {
         // and a queue that cannot be read counts as naming them.
         let _held = self.hold();
         let upload_named = kept().is_none_or(|kept| kept.contains(hex));
-        // A partial file was marked when it was made. The system can put a
-        // mark back on a file soon after it was taken off, so the bytes an
-        // upload names go to a file that never had one, and not into a
-        // partial file that has its mark cleared.
+        // A partial file was marked when it was made, and a mark cleared
+        // soon after it was set can come back, so the bytes an upload names
+        // are copied to a file that never had one.
         let (ready, mark) = if upload_named {
             match self.copy_unmarked(incoming) {
                 Ok(copy) => (copy, Mark::Kept),
@@ -2259,9 +2258,9 @@ pub(crate) mod tests {
         cache.leave_staging(staging);
 
         // Finished where a queued upload names the bytes, the file is the
-        // upload's and goes into backups. The system can put a mark back on a
-        // file a few milliseconds after it was cleared, so the file is read
-        // again after a pause, over several rounds.
+        // upload's and goes into backups. A mark cleared soon after it was set
+        // can come back a few milliseconds later, so the file is read again
+        // after a pause, over several rounds.
         let named = HashSet::from([hex_of(&hash).unwrap().to_string()]);
         for round in 0..20 {
             let area = tempfile::Builder::new()

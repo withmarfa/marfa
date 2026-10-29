@@ -407,8 +407,8 @@ fn volume_from(blocks: u64, available: u64, unit: u64) -> Option<Volume> {
 /// (`kCFURLIsExcludedFromBackupKey`). Does nothing off Apple platforms,
 /// where no backup reads the mark.
 ///
-/// The mark is never taken off: the system can put a mark back on a file
-/// soon after it was cleared, so a file that has to be in backups is made
+/// The mark is never taken off: a mark cleared soon after it was set can
+/// come back moments later, so a file that has to be in backups is made
 /// without one.
 ///
 /// A debug build refuses the exclusion where `MARFA_TEST_FAULT` names
