@@ -1130,6 +1130,32 @@ When the server refuses a delete for a live `system.connection` the key may not 
 
 **Tests:** `compliance/edge-hidden-limits.test.ts › names nothing of a grant the key cannot read`.
 
+### `items/trash-preview`
+
+When `GET /items/{id}/trash-preview` names an item that `DELETE /items/{id}` would move to the bin, the server MUST answer `200` with the item's `id`, `type` and `version`, under `items` each other item the key may read that the delete would move with it (`items/trash-cascade`), leaves first and at most 100 with `truncated: true` where more were left out, and under `count` how many items the key may read the delete would move, the named item included.
+
+**Reason:** an agent or a person confirms a delete against what it takes, so the preview and the delete must agree.
+
+**Tests:** `compliance/trash-preview.test.ts › names the item and everything a cascade would take with it, leaves first, and the delete then takes exactly that`.
+
+### `items/trash-preview-writes-nothing`
+
+When the server answers `GET /items/{id}/trash-preview`, the server MUST NOT change the item or any item beneath it.
+
+**Tests:** `compliance/trash-preview.test.ts › writes nothing`.
+
+### `items/trash-preview-hidden`
+
+When the delete an item's trash preview describes would move an item whose type the key may not read, the server MUST NOT list that item or count it.
+
+**Tests:** `compliance/trash-preview.test.ts › neither lists nor counts an item beneath that the key cannot read`.
+
+### `items/trash-preview-refusals`
+
+If `DELETE /items/{id}` would be refused with `400 edge_constraint_violation`, `400 validation_error`, `403 type_not_permitted` or `404 item_not_found`, then the server MUST answer `GET /items/{id}/trash-preview` with the same refusal.
+
+**Tests:** `compliance/trash-preview.test.ts › refuses with the same edge_constraint_violation a delete is refused with, where a block edge holds the item`, `› refuses a key that may only read the item's type with 403 type_not_permitted`, `› answers 404 item_not_found for an item in the trash, and 400 invalid_id for an ID that is not one`.
+
 ### `items/cascade-mark`
 
 While an item a cascade moved into the bin stays there, the server MUST answer it with `trashed_by_cascade: true` on every operation and event that answers it.
