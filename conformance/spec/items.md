@@ -208,7 +208,7 @@ When the natural key or the `id` of `POST /items`, without `mode: create_only`, 
 
 ### `items/create-only-source`
 
-When `POST /items` names `mode: create_only` and a `source_id` that an item holds under the create's source, live or in the bin, and the key may read the item's type, the server MUST answer `409 item_exists` with `details.existing_id` naming that item and `details.matched_by` `source_id`, and MUST NOT write.
+When `POST /items` names `mode: create_only` and a `source_id` that an item holds under the create's source, live or in the bin, and the key may read the item's type, the server MUST answer `409 item_exists` with `details.existing_id` naming that item and `details.matched_by` `source_id`.
 
 **Reason:** a caller that must never change an item silently, such as an agent repeating a create, learns that the key is taken and which item holds it. The bulk door reports the same case `skipped` with `reason: "duplicate_source"` (`items/bulk-create-only`).
 
@@ -216,11 +216,17 @@ When `POST /items` names `mode: create_only` and a `source_id` that an item hold
 
 ### `items/create-only-id`
 
-When `POST /items` names `mode: create_only` and an `id` that an item holds, live or in the bin, and names no natural key that resolves an item, and the key may read the item's type, the server MUST answer `409 item_exists` with `details.existing_id` naming that item and `details.matched_by` `id`, and MUST NOT write.
+When `POST /items` names `mode: create_only` and an `id` that an item holds, live or in the bin, and names no natural key that resolves an item, and the key may read the item's type, the server MUST answer `409 item_exists` with `details.existing_id` naming that item and `details.matched_by` `id`.
 
 **Reason:** `create_only` asks for no change, so the repeat of a create under the id the caller minted is a refusal naming the item, not the acknowledgment the same request gets without the mode (`items/create-repeat`). The bulk door reports the same case `skipped` with `reason: "duplicate_id"` (`items/bulk-create-only-id`).
 
 **Tests:** `compliance/create-only.test.ts › refuses an id an item holds, of any type, and leaves the item as it was`, `› refuses one that an item in the bin holds, and leaves it in the bin`.
+
+### `items/create-only-no-write`
+
+When the server answers a `POST /items` `409 item_exists`, the server MUST NOT write.
+
+**Tests:** `compliance/create-only.test.ts › refuses a source and source id an item holds, and leaves the item as it was`, `› refuses one that an item in the bin holds, and leaves it in the bin`, `› refuses an id an item holds, of any type, and leaves the item as it was`.
 
 ### `items/create-only-natural-key-first`
 
