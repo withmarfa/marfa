@@ -75,6 +75,7 @@ const DATA_PLANE = [
   "GET /items/:id/extensions",
   "GET /items/:id/extensions/:namespace",
   "GET /items/:id/metadata",
+  "GET /items/:id/trash-preview",
   "GET /items/:id/versions",
   "GET /metadata/tags",
   "GET /occurrences",

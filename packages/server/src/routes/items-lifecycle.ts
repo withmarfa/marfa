@@ -1,4 +1,5 @@
 import { runAuditedTransaction } from "../storage/audited-transaction.js";
+import { snapshotReadRoute } from "../middleware/read-snapshot.js";
 import { createRoute, z } from "@hono/zod-openapi";
 import { MarfaError, ErrorCode, isValidId } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
@@ -14,8 +15,12 @@ import { ItemWithMetadataSchema } from "./_schemas.js";
 import { readableMetadata } from "./_extension-reach.js";
 import { StaleVersionSchema } from "./_item-conflict.js";
 import { exactItemVersion } from "../storage/conflict.js";
-import { writeItem } from "../storage/item-write.js";
-import { ITEM_NOT_FOUND, WRITE_REFUSED } from "./_item-refusals.js";
+import { previewTrash, writeItem } from "../storage/item-write.js";
+import {
+  ITEM_NOT_FOUND,
+  ITEM_NOT_FOUND_ON_WRITE,
+  WRITE_REFUSED,
+} from "./_item-refusals.js";
 
 // ---------------------------------------------------------------------------
 // Local schemas
@@ -28,6 +33,138 @@ const IdParam = z.object({
 // ---------------------------------------------------------------------------
 // Route definitions
 // ---------------------------------------------------------------------------
+
+/** The most items a trash preview lists beside the item itself. */
+export const TRASH_PREVIEW_LIMIT = 100;
+
+const TrashPreviewEntrySchema = z
+  .object({
+    id: z
+      .string()
+      .describe("Unique identifier for the item.")
+      .openapi({ example: "019537a0-7b80-7000-8000-000000000002" }),
+    type: z
+      .string()
+      .describe("The item's type.")
+      .openapi({ example: "core.task" }),
+    version: z.number().int().min(1).describe("The item's version."),
+  })
+  .describe("An item that trashing another item would take with it.")
+  .openapi("TrashPreviewEntry");
+
+const TrashPreviewSchema = z
+  .object({
+    id: z
+      .string()
+      .describe("The ID of the item you would trash.")
+      .openapi({ example: "019537a0-7b80-7000-8000-000000000001" }),
+    type: z
+      .string()
+      .describe("The item's type.")
+      .openapi({ example: "core.project" }),
+    version: z
+      .number()
+      .int()
+      .min(1)
+      .describe(
+        "The item's version. Pass it as `version` to `DELETE /items/{id}` to trash the item only if it is unchanged.",
+      ),
+    items: z
+      .array(TrashPreviewEntrySchema)
+      .describe(
+        `The other items you can read that a cascading edge such as \`parent-of\` would take into the trash, leaves first, at most ${String(TRASH_PREVIEW_LIMIT)}.`,
+      ),
+    count: z
+      .number()
+      .int()
+      .describe(
+        "How many items you can read that trashing the item would move to the trash, the item itself included.",
+      ),
+    truncated: z
+      .literal(true)
+      .optional()
+      .describe(
+        "`true` if `items` was cut at its limit. Absent when it lists every item.",
+      ),
+  })
+  .describe(
+    "What trashing an item would move to the trash. Items you can't read are taken too and aren't listed or counted.",
+  )
+  .openapi("TrashPreview", {
+    example: {
+      id: "019537a0-7b80-7000-8000-000000000001",
+      type: "core.project",
+      version: 4,
+      items: [
+        {
+          id: "019537a0-7b80-7000-8000-000000000002",
+          type: "core.task",
+          version: 2,
+        },
+      ],
+      count: 2,
+    },
+  });
+
+const previewItemTrashRoute = createRoute({
+  operationId: "previewItemTrash",
+  method: "get",
+  path: "/{id}/trash-preview",
+  tags: ["Items"],
+  summary: "Preview trashing an item",
+  description:
+    "Returns what `DELETE /items/{id}` would move to the trash: the item and every item you can read that a cascading edge such as `parent-of` would take with it. Nothing changes.",
+  security: [{ bearerAuth: [] }],
+  middleware: readsSomeType,
+  request: {
+    params: IdParam,
+  },
+  responses: {
+    200: {
+      content: {
+        "application/json": { schema: TrashPreviewSchema },
+      },
+      description: "Returns the item and what its trash would take.",
+    },
+    400: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema([
+            "edge_constraint_violation",
+            "invalid_id",
+            "validation_error",
+          ]),
+        },
+      },
+      description:
+        "- `invalid_id`: the ID is not a valid item ID.\n- `edge_constraint_violation`: an edge type on the item has `cascade_on_delete: block`, and such an edge exists, so a delete would be refused.\n- `validation_error`: the item is a live `system.connection`.",
+    },
+    401: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["unauthorized"]),
+        },
+      },
+      description: "Unauthorized",
+    },
+    403: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["type_not_permitted"]),
+        },
+      },
+      description: WRITE_REFUSED,
+    },
+    404: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["item_not_found"]),
+        },
+      },
+      description: ITEM_NOT_FOUND_ON_WRITE,
+    },
+  },
+});
 
 const restoreItemRoute = createRoute({
   operationId: "restoreItem",
@@ -183,6 +320,34 @@ const transitionItemRoute = createRoute({
 
 export function itemsLifecycleRoutes(storage: Storage) {
   const router = createOpenAPIRouter<AppEnv>();
+
+  // GET /items/:id/trash-preview
+  router.openapi(
+    snapshotReadRoute(storage, previewItemTrashRoute),
+    async (c) => {
+      const { id } = c.req.valid("param");
+      if (!isValidId(id)) {
+        throw new MarfaError(ErrorCode.INVALID_ID, "Invalid item ID");
+      }
+      const { row, taken } = await previewTrash(storage, requireAuth(c), id);
+      const items = taken.slice(0, TRASH_PREVIEW_LIMIT).map((item) => ({
+        id: item.id,
+        type: item.type,
+        version: item.version,
+      }));
+      return c.json(
+        {
+          id: row.id,
+          type: row.type,
+          version: row.version,
+          items,
+          count: taken.length + 1,
+          ...(taken.length > items.length && { truncated: true as const }),
+        },
+        200,
+      );
+    },
+  );
 
   // POST /items/:id/restore
   router.openapi(restoreItemRoute, async (c) => {
