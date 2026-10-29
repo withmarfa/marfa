@@ -5,6 +5,7 @@ import {
   type Server,
   type ServerResponse,
 } from "node:http";
+import { createHash } from "node:crypto";
 import { v7 as uuidv7 } from "uuid";
 import { MarfaClient } from "../../client/api.js";
 import {
@@ -20,6 +21,9 @@ import {
   toolResult,
   type McpConnection,
 } from "../../utils/mcp.js";
+
+const sha256 = (text: string): string =>
+  createHash("sha256").update(text).digest("hex");
 
 /**
  * The MCP tools where a fixture must script what the server meets: a file
@@ -282,7 +286,7 @@ describe("marfa_create with a file", () => {
 });
 
 describe("marfa_create's fetches", () => {
-  it("records each fetch with its address and outcome, and its query only as a length", async () => {
+  it("records each fetch with its scheme, host and outcome, and its path and query only as lengths and a hash", async () => {
     const host = await fileHost((req, res) => {
       if (req.url?.startsWith("/gone") === true) {
         res.writeHead(404);
@@ -312,14 +316,16 @@ describe("marfa_create's fetches", () => {
       {
         scheme: "http",
         host: `audit.test:${String(host.port)}`,
-        path: "/agenda.txt",
+        path_length: "/agenda.txt".length,
+        path_sha256: sha256("/agenda.txt"),
         query_length: query.length,
         outcome: "fetched",
       },
       {
         scheme: "http",
         host: `audit.test:${String(host.port)}`,
-        path: "/gone",
+        path_length: "/gone".length,
+        path_sha256: sha256("/gone"),
         query_length: 0,
         outcome: "status",
       },
@@ -328,6 +334,7 @@ describe("marfa_create's fetches", () => {
     expect(first?.key_id).not.toBeNull();
     expect(second?.key_id).toBe(first?.key_id);
     expect(JSON.stringify(entries)).not.toContain("kept-out-of-the-log");
+    expect(JSON.stringify(entries)).not.toContain("agenda.txt");
   });
 
   it("refuses a fifth fetch at once with reason busy, without connecting", async () => {

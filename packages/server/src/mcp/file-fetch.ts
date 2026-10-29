@@ -3,6 +3,7 @@
  * behind the owner's switch and the caller's allowance, with every attempt
  * written to the audit log.
  */
+import { createHash } from "node:crypto";
 import { nowMs } from "../clock.js";
 import type {
   FetchedFile,
@@ -16,9 +17,6 @@ export const MCP_FETCH_CONCURRENCY = 4;
 
 /** How many fetches one credential's tool calls make in a rate-limit window. */
 export const MCP_FETCH_RATE_LIMIT = 30;
-
-/** The longest path an audit entry keeps. */
-const AUDITED_PATH_MAX = 2048;
 
 const TOOL_FAILURE = {
   disabled:
@@ -65,7 +63,11 @@ export interface FetchCaller {
   clientIp: string | null;
 }
 
-/** The address as the audit log keeps it: its query only as a length. */
+/**
+ * The address as the audit log keeps it: its scheme and host, and its path
+ * and query only as lengths, the path with a hash to match it by. A path can
+ * carry a token as well as a query can.
+ */
 function auditedAddress(raw: string): Record<string, unknown> {
   let url: URL;
   try {
@@ -73,15 +75,11 @@ function auditedAddress(raw: string): Record<string, unknown> {
   } catch {
     return { address_length: raw.length };
   }
-  const path =
-    url.pathname.length > AUDITED_PATH_MAX
-      ? url.pathname.slice(0, AUDITED_PATH_MAX)
-      : url.pathname;
   return {
     scheme: url.protocol.replace(/:$/, ""),
     host: url.host,
-    path,
-    ...(path.length < url.pathname.length && { path_cut: true }),
+    path_length: url.pathname.length,
+    path_sha256: createHash("sha256").update(url.pathname).digest("hex"),
     query_length: url.search.length === 0 ? 0 : url.search.length - 1,
   };
 }

@@ -226,19 +226,19 @@ When `marfa_create` answers with `created: false` and the stored item's `blob_re
 
 ### `mcp/file-audited`
 
-When `marfa_create` is asked to fetch a file, whether the fetch succeeds or is refused, the server MUST record an `mcp.file_fetch` audit entry naming the credential as `key_id`, whose `details` carry the address's `scheme`, `host` and `path`, the length of its query as `query_length`, and the outcome as `outcome`: `fetched`, or the reason the tool error names.
+When `marfa_create` is asked to fetch a file, whether the fetch succeeds or is refused, the server MUST record an `mcp.file_fetch` audit entry naming the credential as `key_id`, whose `details` carry the address's `scheme` and `host`, the length of its path as `path_length`, the SHA-256 hash of its path in hex as `path_sha256`, the length of its query as `query_length`, and the outcome as `outcome`: `fetched`, or the reason the tool error names.
 
-**Reason:** the instance connects to an address the agent chose, so the owner can see each address it was asked to reach.
+**Reason:** the instance connects to an address the agent chose, so the owner can see each host it was asked to reach, and match a path they know against its hash.
 
-**Tests:** `compliance/mcp-scripted.test.ts › records each fetch with its address and outcome, and its query only as a length`.
+**Tests:** `compliance/mcp-scripted.test.ts › records each fetch with its scheme, host and outcome, and its path and query only as lengths and a hash`.
 
 ### `mcp/file-audit-query`
 
-When the server records an `mcp.file_fetch` audit entry, the server MUST NOT record the address's query.
+When the server records an `mcp.file_fetch` audit entry, the server MUST NOT record the text of the address's path or query, or its user information.
 
-**Reason:** a link to a file can carry a signature in its query that grants access to the file.
+**Reason:** a link to a file can carry a token that grants access to the file, in its query or in its path.
 
-**Tests:** `compliance/mcp-scripted.test.ts › records each fetch with its address and outcome, and its query only as a length`.
+**Tests:** `compliance/mcp-scripted.test.ts › records each fetch with its scheme, host and outcome, and its path and query only as lengths and a hash`.
 
 ### `mcp/file-busy`
 

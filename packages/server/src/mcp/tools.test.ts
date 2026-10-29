@@ -1,4 +1,5 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { createHash } from "node:crypto";
 import {
   createServer,
   type IncomingMessage,
@@ -21,6 +22,9 @@ import { MCP_FETCH_CONCURRENCY, MCP_FETCH_RATE_LIMIT } from "./file-fetch.js";
 import { callTool, connectMcp, errorOf, payloadOf } from "./test-client.js";
 
 const FETCH_MAX_BYTES = 4096;
+
+const sha256 = (text: string): string =>
+  createHash("sha256").update(text).digest("hex");
 
 let ctx: TestContext;
 let client: Client;
@@ -551,7 +555,7 @@ describe("marfa_create", () => {
     expect(((await saved.json()) as { data: unknown[] }).data).toHaveLength(0);
   });
 
-  it("records each fetch in the audit log with its address and outcome, but not its query", async () => {
+  it("records each fetch in the audit log with its scheme, host and outcome, and its path and query only as lengths and hashes", async () => {
     const host = await fileHost((req, res) => {
       if (req.url?.startsWith("/gone") === true) {
         res.writeHead(404);
@@ -572,10 +576,15 @@ describe("marfa_create", () => {
         url: "http://127.0.0.1:9/private",
       }),
     );
+    errorOf(
+      await callTool(client, "marfa_create", {
+        url: "http://reader:userinfo-secret@127.0.0.1:9/private",
+      }),
+    );
     const response = await request(
       ctx.app,
       "GET",
-      "/audit?action=mcp.file_fetch&limit=3",
+      "/audit?action=mcp.file_fetch&limit=4",
       { key: ctx.workingKey },
     );
     expect(response.status).toBe(200);
@@ -587,7 +596,8 @@ describe("marfa_create", () => {
       {
         scheme: "http",
         host: `files.test:${String(host.port)}`,
-        path: "/notes/minutes.txt",
+        path_length: "/notes/minutes.txt".length,
+        path_sha256: sha256("/notes/minutes.txt"),
         query_length: "sig=hidden-signature".length,
         outcome: "fetched",
         size_bytes: 7,
@@ -595,7 +605,8 @@ describe("marfa_create", () => {
       {
         scheme: "http",
         host: `files.test:${String(host.port)}`,
-        path: "/gone",
+        path_length: "/gone".length,
+        path_sha256: sha256("/gone"),
         query_length: 0,
         outcome: "status",
         status: 404,
@@ -603,12 +614,23 @@ describe("marfa_create", () => {
       {
         scheme: "http",
         host: "127.0.0.1:9",
-        path: "/private",
+        path_length: "/private".length,
+        path_sha256: sha256("/private"),
         query_length: 0,
         outcome: "not_public",
       },
+      {
+        scheme: "http",
+        host: "127.0.0.1:9",
+        path_length: "/private".length,
+        path_sha256: sha256("/private"),
+        query_length: 0,
+        outcome: "bad_url",
+      },
     ]);
     expect(JSON.stringify(data)).not.toContain("hidden-signature");
+    expect(JSON.stringify(data)).not.toContain("minutes.txt");
+    expect(JSON.stringify(data)).not.toContain("userinfo-secret");
     expect(new Set(data.map((entry) => entry.key_id)).size).toBe(1);
   });
 
