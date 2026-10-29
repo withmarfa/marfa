@@ -199,6 +199,18 @@ describe("marfa_find and marfa_get", () => {
     expect(JSON.stringify(answer)).toContain("body");
   });
 
+  it("refuses an argument a tool does not take, rather than finding everything", async () => {
+    const misspelled = await callTool(client, "marfa_find", {
+      typ: "core.note",
+    });
+    expect(misspelled.isError).toBe(true);
+    expect(misspelled.text).toMatch(/typ/);
+    // The witness: the argument spelled right is taken.
+    expect(
+      (await callTool(client, "marfa_find", { type: "core.note" })).isError,
+    ).toBe(false);
+  });
+
   it("answers what the instance holds and what the credential may do", async () => {
     const answer = payloadOf(await callTool(client, "marfa_overview", {}));
     const instance = answer.instance as { name: unknown; version: unknown };

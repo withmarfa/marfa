@@ -106,7 +106,7 @@ export function registerFind(server: McpServer, ctx: ToolContext): void {
       title: "Find items",
       description:
         "Use to find notes, tasks, records, files and other items: search by words, list by type, tags, source or dates, or list a view's items. Returns short rows (id, type, title, snippet); read the full items with marfa_get.",
-      inputSchema: z.object({
+      inputSchema: z.strictObject({
         query: z
           .string()
           .min(1)

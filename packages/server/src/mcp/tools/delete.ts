@@ -97,7 +97,7 @@ export function registerDelete(server: McpServer, ctx: ToolContext): void {
       title: "Move items to the trash",
       description:
         "Use to delete notes, tasks, records, files or other items, which moves them to the trash. The first call only previews what would go, including items that go with them; show that to the person, and call again with the same ids and confirm to trash them. Restore with marfa_update.",
-      inputSchema: z.object({
+      inputSchema: z.strictObject({
         ids: z
           .array(z.string().min(1))
           .min(1)

@@ -88,7 +88,7 @@ export function registerCreate(server: McpServer, ctx: ToolContext): void {
       title: "Save a new item",
       description:
         "Use to save something new: a note, task, record or other item, or a file from a web address or the chat. Check the type's fields with marfa_overview first. To change an existing item, use marfa_update instead.",
-      inputSchema: z.object({
+      inputSchema: z.strictObject({
         type: z
           .string()
           .min(1)

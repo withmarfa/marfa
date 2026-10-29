@@ -4,7 +4,7 @@ import type { ApiAnswer, ApiRefusal } from "../api.js";
 import type { ToolContext } from "../context.js";
 import { fail, ok, refused } from "../results.js";
 
-const edgeRef = z.object({
+const edgeRef = z.strictObject({
   edge_type: z.string().min(1),
   target_id: z.string().min(1),
 });
@@ -36,7 +36,7 @@ export function registerUpdate(server: McpServer, ctx: ToolContext): void {
       title: "Change an item",
       description:
         "Use to change an existing note, task, record or other item: its fields, tags, edges, or whether it is archived, or to restore it from the trash. Send the version you read with marfa_get; if the item changed since, nothing is written and you get the item as it is now.",
-      inputSchema: z.object({
+      inputSchema: z.strictObject({
         id: z.string().min(1).describe("The item's ID."),
         version: z
           .number()
