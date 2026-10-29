@@ -8,7 +8,13 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import type { Edge, Item } from "@withmarfa/shared";
-import { createTestContext, request, readSse, settle } from "../test-utils.js";
+import {
+  createTestContext,
+  request,
+  readSse,
+  settle,
+  cleanupTestContext,
+} from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { initEventLog, publish, publishEdge } from "../pubsub.js";
 import type { PersistedEvent } from "../storage/interface.js";
@@ -23,7 +29,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await ctx.cleanup();
+  await cleanupTestContext(ctx);
 });
 
 interface Deferred<T> {

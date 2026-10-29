@@ -10,7 +10,11 @@ import type { AppConfig } from "../config.js";
 import { startControlSocket } from "../control/socket.js";
 import { reservePublicListener } from "../public-listener.js";
 import { ensureInstanceId } from "../storage/instance-id.js";
-import { createTestContext, type TestContext } from "../test-utils.js";
+import {
+  cleanupTestContext,
+  createTestContext,
+  type TestContext,
+} from "../test-utils.js";
 
 /** What a restore or an upload may take to arrive whole, for these tests. */
 const DEADLINE_MS = 500;
@@ -21,10 +25,10 @@ const GAP_MS = 200;
 
 let ctx: TestContext;
 let archive: Uint8Array;
-let scratch: string;
-let publicServer: Server;
+let scratch: string | undefined;
+let publicServer: Server | undefined;
 let publicPort: number;
-let controlServer: Server;
+let controlServer: Server | undefined;
 let controlPath: string;
 
 beforeAll(async () => {
@@ -73,6 +77,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   for (const server of [publicServer, controlServer]) {
+    if (!server) continue;
     server.closeAllConnections();
     await new Promise<void>((resolve) => {
       server.close(() => {
@@ -80,8 +85,8 @@ afterAll(async () => {
       });
     });
   }
-  await rm(scratch, { recursive: true, force: true });
-  await ctx.cleanup();
+  if (scratch) await rm(scratch, { recursive: true, force: true });
+  await cleanupTestContext(ctx);
 });
 
 interface Door {
@@ -190,6 +195,24 @@ async function spooled(): Promise<string[]> {
   return readdir(ctx.blobs.disk.spoolDir);
 }
 
+/**
+ * Whether the spool held a file at any moment before `outcome` settled. It
+ * polls until it sees one or the request is over, never for a fixed number of
+ * tries, because the server ends a stalled upload on its own clock and a
+ * slow runner can leave the check fewer turns than any fixed count.
+ */
+async function spoolHeldBefore(outcome: Promise<Outcome>): Promise<boolean> {
+  const request = { over: false };
+  void outcome.then(() => {
+    request.over = true;
+  });
+  for (;;) {
+    if ((await spooled()).length > 0) return true;
+    if (request.over) return false;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+}
+
 async function blobCount(): Promise<number> {
   const rows = await (
     ctx.storage as typeof ctx.storage & {
@@ -217,9 +240,9 @@ describe.each(["public listener", "control socket"])(
         finish: true,
         contentType: "application/gzip",
       });
-      expect(outcome.ms).toBeGreaterThan(DEADLINE_MS * 2);
+      expect(outcome.status, outcome.text).toBe(200);
       expect(outcome.text).toContain("imported");
-      expect(outcome.status).toBe(200);
+      expect(outcome.ms).toBeGreaterThan(DEADLINE_MS * 2);
     });
 
     it("stores a blob whose body takes longer than the request deadline", async () => {
@@ -230,9 +253,9 @@ describe.each(["public listener", "control socket"])(
         finish: true,
         contentType: "application/octet-stream",
       });
-      expect(outcome.ms).toBeGreaterThan(DEADLINE_MS * 2);
-      expect(outcome.status).toBe(201);
+      expect(outcome.status, outcome.text).toBe(201);
       expect(JSON.parse(outcome.text)).toMatchObject({ hash });
+      expect(outcome.ms).toBeGreaterThan(DEADLINE_MS * 2);
     });
 
     it("ends a restore that stops arriving with 408 request_timeout and removes what it spooled", async () => {
@@ -243,15 +266,10 @@ describe.each(["public listener", "control socket"])(
         finish: false,
         contentType: "application/gzip",
       });
-      // The witness for the absence below: the spool holds the part that arrived.
-      let held: string[] = [];
-      for (let i = 0; i < 20 && held.length === 0; i++) {
-        await new Promise((resolve) => setTimeout(resolve, 50));
-        held = await spooled();
-      }
-      expect(held.length).toBeGreaterThan(0);
+      // The witness for the absence below: the spool held the part that arrived.
+      expect(await spoolHeldBefore(pending)).toBe(true);
       const outcome = await pending;
-      expect(outcome.status).toBe(408);
+      expect(outcome.status, outcome.text).toBe(408);
       expect(JSON.parse(outcome.text).error.code).toBe("request_timeout");
       expect(outcome.ms).toBeGreaterThanOrEqual(IDLE_MS);
       expect(await spooled()).toEqual([]);
@@ -266,14 +284,9 @@ describe.each(["public listener", "control socket"])(
         finish: false,
         contentType: "application/octet-stream",
       });
-      let held: string[] = [];
-      for (let i = 0; i < 20 && held.length === 0; i++) {
-        await new Promise((resolve) => setTimeout(resolve, 50));
-        held = await spooled();
-      }
-      expect(held.length).toBeGreaterThan(0);
+      expect(await spoolHeldBefore(pending)).toBe(true);
       const outcome = await pending;
-      expect(outcome.status).toBe(408);
+      expect(outcome.status, outcome.text).toBe(408);
       expect(JSON.parse(outcome.text).error.code).toBe("request_timeout");
       expect(await spooled()).toEqual([]);
       expect(await blobCount()).toBe(before);
@@ -293,7 +306,7 @@ describe.each(["public listener", "control socket"])(
         contentType: "application/json",
       });
       expect(outcome.status).not.toBe(201);
-      expect(outcome.ms).toBeLessThan(DEADLINE_MS * 2);
+      expect(outcome.ms).toBeGreaterThanOrEqual(DEADLINE_MS);
     });
   },
 );

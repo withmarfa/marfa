@@ -4,6 +4,7 @@ import {
   request,
   seedOauthBearer,
   type TestContext,
+  cleanupTestContext,
 } from "../test-utils.js";
 import { readAttention } from "../attention.js";
 import type { ConsoleHealth } from "./console-health.js";
@@ -13,7 +14,7 @@ beforeAll(async () => {
   ctx = await createTestContext();
 });
 afterAll(async () => {
-  await ctx.cleanup();
+  await cleanupTestContext(ctx);
 });
 afterEach(() => {
   vi.restoreAllMocks();

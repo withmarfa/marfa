@@ -20,6 +20,7 @@ import {
   seedOauthBearer,
   TEST_API_KEY_SALT,
   type TestContext,
+  cleanupTestContext,
 } from "../test-utils.js";
 import {
   buildSignatureHeader,
@@ -108,7 +109,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   __resetEventLogForTests();
-  await ctx.cleanup();
+  await cleanupTestContext(ctx);
 });
 
 afterEach(async () => {

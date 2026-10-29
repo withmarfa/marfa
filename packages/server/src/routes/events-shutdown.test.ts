@@ -5,7 +5,12 @@
  * then the end of the body.
  */
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
-import { createTestContext, readSse, request } from "../test-utils.js";
+import {
+  createTestContext,
+  readSse,
+  request,
+  cleanupTestContext,
+} from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { initEventLog } from "../pubsub.js";
 import {
@@ -28,7 +33,7 @@ afterEach(() => {
 });
 
 afterAll(async () => {
-  await ctx.cleanup();
+  await cleanupTestContext(ctx);
 });
 
 async function open(path = "/events"): Promise<Response> {

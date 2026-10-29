@@ -1,6 +1,11 @@
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { registerHousekeepingJobs } from "../housekeeping/registrations.js";
-import { createTestContext, request, type TestContext } from "../test-utils.js";
+import {
+  createTestContext,
+  request,
+  type TestContext,
+  cleanupTestContext,
+} from "../test-utils.js";
 
 let ctx: TestContext;
 beforeAll(async () => {
@@ -15,7 +20,7 @@ beforeAll(async () => {
 });
 afterAll(async () => {
   await ctx.housekeeping.stop();
-  await ctx.cleanup();
+  await cleanupTestContext(ctx);
 });
 
 it.each([

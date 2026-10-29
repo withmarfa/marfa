@@ -1,4 +1,3 @@
-import { request as httpRequest } from "node:http";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { v7 as uuidv7 } from "uuid";
 import { MarfaClient } from "../../client/api.js";
@@ -10,6 +9,7 @@ import {
   type FreshServer,
 } from "../../utils/fresh-server.js";
 import { servedDocument } from "../../utils/openapi.js";
+import { declareOversizeBody } from "../../utils/oversize.js";
 import {
   cleanup,
   createTestContext,
@@ -74,49 +74,6 @@ async function expectCodeHeader(
   expect(res.status, JSON.stringify(seen)).toBe(status);
   expect(seen.code).toBe(code);
   expect(seen.header).toBe(code);
-}
-
-/**
- * A request sent on a connection of its own, which the server closes after
- * it. A body the server refuses unread, as the cap does, leaves a pooled
- * connection unusable for the request after.
- */
-function sentAlone(
-  url: string,
-  headers: Record<string, string>,
-  body: string,
-): Promise<{
-  status: number;
-  headers: Record<string, string | string[] | undefined>;
-  body: string;
-}> {
-  const target = new URL(url);
-  return new Promise((resolve, reject) => {
-    const req = httpRequest(
-      {
-        method: "POST",
-        hostname: target.hostname,
-        port: target.port,
-        path: target.pathname,
-        agent: false,
-        headers: { ...headers, "Content-Length": Buffer.byteLength(body) },
-      },
-      (res) => {
-        const chunks: Buffer[] = [];
-        res.on("data", (chunk: Buffer) => chunks.push(chunk));
-        res.on("end", () =>
-          resolve({
-            status: res.statusCode ?? 0,
-            headers: res.headers,
-            body: Buffer.concat(chunks).toString("utf8"),
-          }),
-        );
-      },
-    );
-    // The server may answer and close before it has read the body.
-    req.on("error", reject);
-    req.end(body);
-  });
 }
 
 describe("X-Error-Code", () => {
@@ -194,17 +151,14 @@ describe("X-Error-Code", () => {
       "type_already_exists",
     );
 
-    const big = await sentAlone(
-      `${apiUrl}/items`,
-      {
+    const big = await declareOversizeBody(`${apiUrl}/items`, {
+      method: "POST",
+      headers: {
         Authorization: `Bearer ${apiKey}`,
         "Content-Type": "application/json",
       },
-      JSON.stringify({
-        type: "core.note",
-        properties: { body: "x".repeat(1_100_000) },
-      }),
-    );
+      bytes: 1_048_577,
+    });
     expect(big.status).toBe(413);
     expect(big.headers["x-error-code"]).toBe("request_too_large");
     expect(

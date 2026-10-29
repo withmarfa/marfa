@@ -23,6 +23,7 @@ import {
   request,
   collectItemEvents,
   settle,
+  cleanupTestContext,
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 
@@ -33,7 +34,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await ctx.cleanup();
+  await cleanupTestContext(ctx);
 });
 
 /** An item carrying one tag, so the event can be checked for the whole

@@ -11,7 +11,11 @@ import { __resetEventLogForTests, initEventLog } from "../pubsub.js";
 import { GrantInactivityRetirer } from "../storage/retention.js";
 import { VersionThinner } from "../storage/version-thinner.js";
 import type { TestContext } from "../test-utils.js";
-import { createTestContext, request } from "../test-utils.js";
+import {
+  createTestContext,
+  request,
+  cleanupTestContext,
+} from "../test-utils.js";
 import { storageProbes } from "./health-probes.js";
 import { healthRoutes } from "./health.js";
 
@@ -286,7 +290,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   __resetEventLogForTests();
-  await source.cleanup();
+  await cleanupTestContext(source);
 });
 
 describe("GET /health while a long job runs", () => {

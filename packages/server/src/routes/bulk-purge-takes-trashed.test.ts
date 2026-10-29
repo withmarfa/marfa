@@ -10,6 +10,7 @@ import {
   createTestContext,
   request,
   runBulkActionAsync,
+  cleanupTestContext,
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { BulkActionWorker, runChunk } from "../bulk-actions/index.js";
@@ -23,7 +24,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await ctx.cleanup();
+  await cleanupTestContext(ctx);
 });
 
 async function createNote(tag: string): Promise<string> {

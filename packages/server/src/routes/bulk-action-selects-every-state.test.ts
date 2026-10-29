@@ -21,6 +21,7 @@ import {
   createTestContext,
   request,
   runBulkActionAsync,
+  cleanupTestContext,
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { BulkActionFilterShape } from "../bulk-actions/types.js";
@@ -32,7 +33,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await ctx.cleanup();
+  await cleanupTestContext(ctx);
 });
 
 describe("POST /items/bulk-actions — the filter reaches every state", () => {

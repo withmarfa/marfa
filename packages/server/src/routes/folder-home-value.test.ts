@@ -1,5 +1,10 @@
 import { afterAll, beforeAll, expect, it, vi } from "vitest";
-import { createTestContext, request, type TestContext } from "../test-utils.js";
+import {
+  createTestContext,
+  request,
+  type TestContext,
+  cleanupTestContext,
+} from "../test-utils.js";
 import { pageLinks } from "../pages/reading.js";
 import * as logger from "../middleware/logger.js";
 
@@ -8,7 +13,7 @@ beforeAll(async () => {
   ctx = await createTestContext();
 });
 afterAll(async () => {
-  await ctx.cleanup();
+  await cleanupTestContext(ctx);
 });
 
 async function ownerHome(): Promise<string> {

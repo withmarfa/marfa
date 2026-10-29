@@ -14,6 +14,7 @@ import {
   mintWorkingKey,
   TEST_CONTENT_PERMISSIONS,
   TEST_API_KEY_SALT,
+  cleanupTestContext,
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import type { StoredApiKey } from "../storage/interface.js";
@@ -27,7 +28,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await ctx.cleanup();
+  await cleanupTestContext(ctx);
 });
 
 const DAY = 86_400_000;

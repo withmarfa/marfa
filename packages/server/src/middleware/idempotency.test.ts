@@ -18,7 +18,11 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { __resetEventLogForTests, initEventLog } from "../pubsub.js";
 import type { IdempotencyClaim, Storage } from "../storage/interface.js";
 import type { TestContext } from "../test-utils.js";
-import { createTestContext, request } from "../test-utils.js";
+import {
+  createTestContext,
+  request,
+  cleanupTestContext,
+} from "../test-utils.js";
 import type { AppEnv } from "./auth.js";
 import { createErrorHandler } from "./error-handler.js";
 import { idempotencyMiddleware } from "./idempotency.js";
@@ -38,7 +42,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   __resetEventLogForTests();
-  await ctx.cleanup();
+  await cleanupTestContext(ctx);
 });
 
 let seq = 0;

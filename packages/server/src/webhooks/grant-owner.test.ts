@@ -20,6 +20,7 @@ import {
   seedOauthBearer,
   TEST_API_KEY_SALT,
   type TestContext,
+  cleanupTestContext,
 } from "../test-utils.js";
 import { WebhookPoller, WebhookScheduler } from "./delivery.js";
 import type { WebhookHttpClient, WebhookPost } from "./outbound-http.js";
@@ -36,7 +37,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   __resetEventLogForTests();
-  await ctx.cleanup();
+  await cleanupTestContext(ctx);
 });
 
 afterEach(async () => {

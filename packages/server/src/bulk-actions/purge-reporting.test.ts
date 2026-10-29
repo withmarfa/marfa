@@ -21,6 +21,7 @@ import {
   createTestContext,
   request,
   runBulkActionAsync,
+  cleanupTestContext,
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 
@@ -31,7 +32,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await ctx.cleanup();
+  await cleanupTestContext(ctx);
 });
 
 async function createTrashedNote(title: string): Promise<string> {

@@ -5,6 +5,7 @@ import {
   mintWorkingKey,
   request,
   runBulkActionAsync,
+  cleanupTestContext,
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import type { Item, ItemState } from "@withmarfa/shared";
@@ -41,7 +42,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await ctx.cleanup();
+  await cleanupTestContext(ctx);
 });
 
 /** A platform-owned row, seeded below the public reserved-namespace fence. */

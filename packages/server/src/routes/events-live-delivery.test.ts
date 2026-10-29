@@ -12,7 +12,12 @@
  */
 import { describe, expect, it, beforeAll, afterAll, vi } from "vitest";
 import { Hono } from "hono";
-import { createTestContext, readSse, storedViewerKey } from "../test-utils.js";
+import {
+  createTestContext,
+  readSse,
+  storedViewerKey,
+  cleanupTestContext,
+} from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { eventRoutes } from "./events.js";
 import type { AppEnv } from "../middleware/auth.js";
@@ -41,7 +46,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await ctx.cleanup();
+  await cleanupTestContext(ctx);
 });
 
 describe("a non-abort failure in the subscription", () => {

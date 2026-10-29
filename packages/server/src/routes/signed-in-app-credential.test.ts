@@ -13,6 +13,7 @@ import {
   request,
   seedOauthBearer,
   TEST_API_KEY_SALT,
+  cleanupTestContext,
 } from "../test-utils.js";
 
 let ctx: TestContext;
@@ -22,7 +23,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await ctx.cleanup();
+  await cleanupTestContext(ctx);
 });
 
 const SCOPES = ["core.note:write"];

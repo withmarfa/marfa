@@ -14,6 +14,7 @@ import {
   seedOauthBearer,
   settle,
   sweepTrashBefore,
+  cleanupTestContext,
 } from "../test-utils.js";
 
 let ctx: TestContext;
@@ -26,7 +27,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   __resetEventLogForTests();
-  await ctx.cleanup();
+  await cleanupTestContext(ctx);
 });
 
 async function json<T>(res: Response): Promise<T> {

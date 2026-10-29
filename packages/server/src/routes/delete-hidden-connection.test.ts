@@ -1,6 +1,11 @@
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
 import { itemWrites } from "../storage/item-writes.js";
-import { createTestContext, mintWorkingKey, request } from "../test-utils.js";
+import {
+  createTestContext,
+  mintWorkingKey,
+  request,
+  cleanupTestContext,
+} from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 
 let ctx: TestContext;
@@ -10,7 +15,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await ctx.cleanup();
+  await cleanupTestContext(ctx);
 });
 
 /** A note that is `parent-of` a live connection, seeded through storage. */

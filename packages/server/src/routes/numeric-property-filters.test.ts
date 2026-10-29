@@ -1,5 +1,10 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { createTestContext, request, type TestContext } from "../test-utils.js";
+import {
+  createTestContext,
+  request,
+  type TestContext,
+  cleanupTestContext,
+} from "../test-utils.js";
 
 let ctx: TestContext;
 const token = "numericpropertyfilterprobe";
@@ -28,7 +33,7 @@ beforeAll(async () => {
   }
 });
 afterAll(async () => {
-  await ctx.cleanup();
+  await cleanupTestContext(ctx);
 });
 
 const comparisons = {

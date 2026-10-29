@@ -1,5 +1,9 @@
 import { afterAll, beforeAll, expect, it, vi } from "vitest";
-import { createTestContext, type TestContext } from "../test-utils.js";
+import {
+  createTestContext,
+  type TestContext,
+  cleanupTestContext,
+} from "../test-utils.js";
 import { itemWrites } from "../storage/item-writes.js";
 
 let ctx: TestContext;
@@ -16,7 +20,7 @@ beforeAll(async () => {
     });
 });
 afterAll(async () => {
-  await ctx.cleanup();
+  await cleanupTestContext(ctx);
 });
 
 it.each([

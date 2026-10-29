@@ -3,7 +3,7 @@ import { createGzip } from "node:zlib";
 import * as tar from "tar-stream";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { TestContext } from "../test-utils.js";
-import { createTestContext } from "../test-utils.js";
+import { createTestContext, cleanupTestContext } from "../test-utils.js";
 
 // Global request-body cap is small here so an oversized JSON write is cheap
 // to construct, and so a blob well over it is cheap too: a blob upload has
@@ -20,7 +20,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await ctx.cleanup();
+  await cleanupTestContext(ctx);
 });
 
 describe("global request-body size cap", () => {

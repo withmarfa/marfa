@@ -1,12 +1,17 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { createTestContext, request, type TestContext } from "../test-utils.js";
+import {
+  createTestContext,
+  request,
+  type TestContext,
+  cleanupTestContext,
+} from "../test-utils.js";
 
 let ctx: TestContext;
 beforeAll(async () => {
   ctx = await createTestContext();
 });
 afterAll(async () => {
-  await ctx.cleanup();
+  await cleanupTestContext(ctx);
 });
 
 interface Row {

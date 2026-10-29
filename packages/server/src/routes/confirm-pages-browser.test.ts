@@ -13,6 +13,7 @@ import {
   createTestContext,
   seedOauthBearer,
   type TestContext,
+  cleanupTestContext,
 } from "../test-utils.js";
 
 const launched = await launchTestBrowser();
@@ -37,7 +38,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await server.close();
-  await ctx.cleanup();
+  await cleanupTestContext(ctx);
   await browser?.close();
 });
 

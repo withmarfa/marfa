@@ -20,6 +20,7 @@ import {
   mintWorkingKey,
   request,
   type TestContext,
+  cleanupTestContext,
 } from "../test-utils.js";
 import { HYDRATE_PER_TYPE_CAP } from "./_edges-hydrate.js";
 
@@ -138,7 +139,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await ctx.cleanup();
+  await cleanupTestContext(ctx);
 });
 
 describe("GET /items/:id — base shape is unchanged without include", () => {

@@ -15,7 +15,11 @@ import {
   withRealTime,
 } from "../clock.js";
 import { ensureInstanceId } from "../storage/instance-id.js";
-import { createTestContext, type TestContext } from "../test-utils.js";
+import {
+  createTestContext,
+  type TestContext,
+  cleanupTestContext,
+} from "../test-utils.js";
 import {
   activeFaults,
   clearFaults,
@@ -39,7 +43,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await ctx.cleanup();
+  await cleanupTestContext(ctx);
 });
 
 afterEach(() => {

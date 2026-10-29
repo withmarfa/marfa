@@ -1,6 +1,10 @@
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
 import { itemWrites } from "../storage/item-writes.js";
-import { createTestContext, request } from "../test-utils.js";
+import {
+  createTestContext,
+  request,
+  cleanupTestContext,
+} from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { MAX_TAGS_PER_ITEM } from "../tag-limits.js";
 
@@ -27,7 +31,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await ctx.cleanup();
+  await cleanupTestContext(ctx);
 });
 
 async function createNote(body: string): Promise<string> {

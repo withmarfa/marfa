@@ -30,6 +30,7 @@ import {
   request,
   readSse,
   settle,
+  cleanupTestContext,
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import {
@@ -47,7 +48,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await ctx.cleanup();
+  await cleanupTestContext(ctx);
 });
 
 async function latestEventId(): Promise<bigint> {

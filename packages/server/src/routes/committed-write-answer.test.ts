@@ -10,7 +10,11 @@
  * undoes the write, and the retry is the only write there is.
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { createTestContext, request } from "../test-utils.js";
+import {
+  createTestContext,
+  request,
+  cleanupTestContext,
+} from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { __resetEventLogForTests, initEventLog } from "../pubsub.js";
 
@@ -23,7 +27,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   __resetEventLogForTests();
-  await ctx.cleanup();
+  await cleanupTestContext(ctx);
 });
 
 /** Make the next call of a store method throw, and report whether it did. */

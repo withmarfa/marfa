@@ -9,6 +9,7 @@ import {
   createTestContext,
   request,
   type TestContext,
+  cleanupTestContext,
 } from "../../test-utils.js";
 const launched = await launchTestBrowser();
 if (launched instanceof Error && process.env.CI) throw launched;
@@ -44,7 +45,7 @@ afterAll(async () => {
   if (launched instanceof Error) return;
   await browser.close();
   await server.close();
-  await ctx.cleanup();
+  await cleanupTestContext(ctx);
 });
 inBrowser(
   "stops an uncertain batch without following a continuation or reporting the item kept",

@@ -42,6 +42,7 @@ import {
   readSse,
   request,
   settle,
+  cleanupTestContext,
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { initEventLog } from "../pubsub.js";
@@ -57,7 +58,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await ctx.cleanup();
+  await cleanupTestContext(ctx);
 });
 
 /** The newest id in the event log, or 0 when it is empty. Taken from the

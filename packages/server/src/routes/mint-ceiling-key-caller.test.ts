@@ -20,7 +20,12 @@ import {
 } from "@withmarfa/shared";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { TestContext } from "../test-utils.js";
-import { createTestContext, mintWorkingKey, request } from "../test-utils.js";
+import {
+  createTestContext,
+  mintWorkingKey,
+  request,
+  cleanupTestContext,
+} from "../test-utils.js";
 
 let ctx: TestContext;
 let narrowKey: string;
@@ -47,7 +52,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await ctx.cleanup();
+  await cleanupTestContext(ctx);
 });
 
 describe("a creator whose own map carries denials", () => {

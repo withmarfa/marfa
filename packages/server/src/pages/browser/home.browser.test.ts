@@ -13,7 +13,7 @@ import {
   listen,
   reserveOrigin,
 } from "../../test-browser.js";
-import { createTestContext } from "../../test-utils.js";
+import { createTestContext, cleanupTestContext } from "../../test-utils.js";
 import type { TestContext } from "../../test-utils.js";
 import { HOME_GROUPS, createPageRegistry } from "../registry.js";
 import { HOSTILE, LONG_UNBROKEN } from "../test-fixture.js";
@@ -70,7 +70,7 @@ afterAll(async () => {
   if (launched instanceof Error) return;
   await browser.close();
   await server.close();
-  await ctx.cleanup();
+  await cleanupTestContext(ctx);
 });
 
 interface Opened {

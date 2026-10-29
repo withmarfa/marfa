@@ -16,7 +16,11 @@ import {
   finalizeOpenAPISpec,
   OPENAPI_DOCUMENT_INFO,
 } from "../openapi-finalize.js";
-import { createTestContext, createUnclaimedTestApp } from "../test-utils.js";
+import {
+  createTestContext,
+  createUnclaimedTestApp,
+  cleanupTestContext,
+} from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 
 let ctx: TestContext;
@@ -26,7 +30,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await ctx.cleanup();
+  await cleanupTestContext(ctx);
 });
 
 /** Well-formed, so a door reaches its row lookup rather than refusing the id. */

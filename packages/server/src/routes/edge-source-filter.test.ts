@@ -19,6 +19,7 @@ import {
   mintWorkingKey,
   request,
   type TestContext,
+  cleanupTestContext,
 } from "../test-utils.js";
 
 let ctx: TestContext;
@@ -158,7 +159,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await ctx.cleanup();
+  await cleanupTestContext(ctx);
 });
 
 describe("GET /edges", () => {

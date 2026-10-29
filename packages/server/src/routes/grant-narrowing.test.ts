@@ -7,13 +7,14 @@ import {
   seedOauthBearer,
   request,
   type TestContext,
+  cleanupTestContext,
 } from "../test-utils.js";
 let ctx: TestContext;
 beforeAll(async () => {
   ctx = await createTestContext();
 });
 afterAll(async () => {
-  await ctx.cleanup();
+  await cleanupTestContext(ctx);
 });
 const narrow = (id: string, expected: string[], scopes: string[]) =>
   ctx.ownerRequest(`/auth/grants/${id}`, {

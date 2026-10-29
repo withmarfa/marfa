@@ -24,7 +24,11 @@
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
 import { Hono } from "hono";
 import { MarfaError } from "@withmarfa/shared";
-import { createTestContext, storedViewerKey } from "../test-utils.js";
+import {
+  createTestContext,
+  storedViewerKey,
+  cleanupTestContext,
+} from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { emitWake, type ItemEventWithId } from "../pubsub.js";
 import { eventRoutes, type EventRoutesOptions } from "./events.js";
@@ -38,7 +42,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await ctx.cleanup();
+  await cleanupTestContext(ctx);
 });
 
 /**

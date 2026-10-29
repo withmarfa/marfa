@@ -1,5 +1,10 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { createTestContext, mintWorkingKey, request } from "../test-utils.js";
+import {
+  createTestContext,
+  mintWorkingKey,
+  request,
+  cleanupTestContext,
+} from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 
 /**
@@ -89,7 +94,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await ctx.cleanup();
+  await cleanupTestContext(ctx);
 });
 
 describe("moving a corpus through the bulk door", () => {

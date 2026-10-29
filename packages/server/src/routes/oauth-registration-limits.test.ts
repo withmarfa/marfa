@@ -3,7 +3,11 @@ import {
   MAX_REGISTERED_REDIRECT_URIS,
   REGISTRATION_BODY_CAP,
 } from "../middleware/body-cap.js";
-import { createTestContext, type TestContext } from "../test-utils.js";
+import {
+  createTestContext,
+  type TestContext,
+  cleanupTestContext,
+} from "../test-utils.js";
 
 let ctx: TestContext;
 
@@ -12,7 +16,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await ctx.cleanup();
+  await cleanupTestContext(ctx);
 });
 
 function registration(redirects: number, padding = 0): string {

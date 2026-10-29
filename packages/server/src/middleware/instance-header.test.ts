@@ -1,6 +1,10 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { generateId } from "@withmarfa/shared";
-import { createTestContext, type TestContext } from "../test-utils.js";
+import {
+  createTestContext,
+  type TestContext,
+  cleanupTestContext,
+} from "../test-utils.js";
 
 let ctx: TestContext;
 let own: string;
@@ -17,7 +21,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await ctx.cleanup();
+  await cleanupTestContext(ctx);
 });
 
 async function write(

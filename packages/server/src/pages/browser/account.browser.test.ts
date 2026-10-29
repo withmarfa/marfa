@@ -12,7 +12,7 @@ import {
   listen,
   reserveOrigin,
 } from "../../test-browser.js";
-import { createTestContext } from "../../test-utils.js";
+import { createTestContext, cleanupTestContext } from "../../test-utils.js";
 import type { TestContext } from "../../test-utils.js";
 import { PICTURE_MAX_BYTES } from "../../picture.js";
 import { gif, png } from "../../test-pictures.js";
@@ -54,7 +54,7 @@ afterAll(async () => {
   if (launched instanceof Error) return;
   await browser.close();
   await server.close();
-  await ctx.cleanup();
+  await cleanupTestContext(ctx);
 });
 
 let nextAddress = 1;

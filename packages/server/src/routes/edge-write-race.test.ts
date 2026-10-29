@@ -12,6 +12,7 @@ import {
   mintWorkingKey,
   raceTheNextTransaction,
   request,
+  cleanupTestContext,
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { __resetEventLogForTests, initEventLog } from "../pubsub.js";
@@ -30,7 +31,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   __resetEventLogForTests();
-  await ctx.cleanup();
+  await cleanupTestContext(ctx);
 });
 
 const raw = () =>

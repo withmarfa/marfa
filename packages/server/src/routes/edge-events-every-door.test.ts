@@ -30,6 +30,7 @@ import {
   nextEdgeEvent,
   settle,
   runBulkActionAsync,
+  cleanupTestContext,
 } from "../test-utils.js";
 import type { EdgeEventWithId } from "../pubsub.js";
 import { generateId } from "@withmarfa/shared";
@@ -48,7 +49,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   everyAnnouncement.abort();
-  await ctx.cleanup();
+  await cleanupTestContext(ctx);
 });
 
 async function note(body: string): Promise<string> {

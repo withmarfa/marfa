@@ -30,6 +30,7 @@ import {
   collectEdgeEvents,
   raceTheNextTransaction,
   settle,
+  cleanupTestContext,
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 
@@ -40,7 +41,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await ctx.cleanup();
+  await cleanupTestContext(ctx);
 });
 
 interface ItemBody {

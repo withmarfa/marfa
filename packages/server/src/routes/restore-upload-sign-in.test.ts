@@ -1,6 +1,10 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import * as clock from "../clock.js";
-import { createTestContext, type TestContext } from "../test-utils.js";
+import {
+  createTestContext,
+  type TestContext,
+  cleanupTestContext,
+} from "../test-utils.js";
 
 const MINUTE = 60_000;
 
@@ -29,7 +33,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await source.cleanup();
+  await cleanupTestContext(source);
 });
 
 /** An instance that does not hold the note, with its owner signed in `minutes` ago. */

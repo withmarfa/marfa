@@ -2,7 +2,11 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { SETTING_NAMES, loadConfig } from "../config.js";
 import { pageLinks, visibleText } from "../pages/reading.js";
 import { writeInstanceConfig } from "../storage/instance-config.js";
-import { createTestContext, type TestContext } from "../test-utils.js";
+import {
+  createTestContext,
+  type TestContext,
+  cleanupTestContext,
+} from "../test-utils.js";
 
 const SECRET = "sentinel-credential-value-0123456789";
 
@@ -20,7 +24,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await ctx.cleanup();
+  await cleanupTestContext(ctx);
 });
 
 async function page(path: string): Promise<{ status: number; html: string }> {

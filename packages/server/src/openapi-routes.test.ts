@@ -13,7 +13,7 @@ import {
   finalizeOpenAPISpec,
   OPENAPI_DOCUMENT_INFO,
 } from "./openapi-finalize.js";
-import { createTestContext } from "./test-utils.js";
+import { createTestContext, cleanupTestContext } from "./test-utils.js";
 import type { TestContext } from "./test-utils.js";
 
 let ctx: TestContext;
@@ -23,7 +23,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await ctx.cleanup();
+  await cleanupTestContext(ctx);
 });
 
 const HTTP_METHODS = ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"];

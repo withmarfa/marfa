@@ -192,6 +192,19 @@ export async function closeTestContexts(
   }
 }
 
+/**
+ * Close the context of a file's `afterAll`, which Vitest runs even when the
+ * `beforeAll` that makes the context failed or timed out before it returned
+ * one. A cleanup that throws on that missing context hides the setup's own
+ * error. A build that throws has already removed what it made
+ * (`createTestContext`), so a missing context leaves nothing to close.
+ */
+export async function cleanupTestContext(
+  ctx: TestContext | undefined,
+): Promise<void> {
+  await ctx?.cleanup();
+}
+
 /** Approve a real registered app through the browser PKCE flow. */
 export async function seedOauthBearer(
   ctx: TestContext,

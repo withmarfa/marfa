@@ -26,7 +26,7 @@ import {
 import { createErrorHandler } from "../middleware/error-handler.js";
 import type { AppEnv } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
-import { createTestContext } from "../test-utils.js";
+import { createTestContext, cleanupTestContext } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 
 let ctx: TestContext;
@@ -36,7 +36,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await ctx.cleanup();
+  await cleanupTestContext(ctx);
 });
 
 const SERVER_SRC = resolve(dirname(fileURLToPath(import.meta.url)), "..");

@@ -10,6 +10,7 @@ import {
   request,
   seedOauthBearer,
   type TestContext,
+  cleanupTestContext,
 } from "../../test-utils.js";
 import { initEventLog, __resetEventLogForTests } from "../../pubsub.js";
 import { WebhookPoller, WebhookScheduler } from "../../webhooks/delivery.js";
@@ -62,7 +63,7 @@ afterAll(async () => {
   __resetEventLogForTests();
   await browser.close();
   await server.close();
-  await ctx.cleanup();
+  await cleanupTestContext(ctx);
 });
 inBrowser(
   "keeps unsaved key changes and retry usable after cancelled confirmation, then queues once",

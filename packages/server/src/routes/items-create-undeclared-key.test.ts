@@ -8,7 +8,12 @@
  * a property no schema names still lands.
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { createTestContext, request, seedOauthBearer } from "../test-utils.js";
+import {
+  createTestContext,
+  request,
+  seedOauthBearer,
+  cleanupTestContext,
+} from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 
 let ctx: TestContext;
@@ -23,7 +28,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await ctx.cleanup();
+  await cleanupTestContext(ctx);
 });
 
 type Caller = "key" | "app";

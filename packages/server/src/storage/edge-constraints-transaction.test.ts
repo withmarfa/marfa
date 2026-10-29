@@ -4,7 +4,11 @@
  * can change before the write lands.
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { createTestContext, request } from "../test-utils.js";
+import {
+  createTestContext,
+  request,
+  cleanupTestContext,
+} from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { assertEdgesCanBeCreated } from "./edge-constraints.js";
 
@@ -28,7 +32,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await ctx.cleanup();
+  await cleanupTestContext(ctx);
 });
 
 const check = () =>

@@ -3,7 +3,7 @@
  * rolls back, and a savepoint that rolls back takes its own work with it.
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { createTestContext } from "../test-utils.js";
+import { createTestContext, cleanupTestContext } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { afterCommit } from "./commit-hooks.js";
 
@@ -14,7 +14,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await ctx.cleanup();
+  await cleanupTestContext(ctx);
 });
 
 describe("work after a commit", () => {

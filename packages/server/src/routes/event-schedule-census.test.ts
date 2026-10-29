@@ -23,6 +23,7 @@ import {
   createTestContext,
   request,
   runBulkActionAsync,
+  cleanupTestContext,
 } from "../test-utils.js";
 
 let ctx: TestContext;
@@ -32,7 +33,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await ctx.cleanup();
+  await cleanupTestContext(ctx);
 });
 
 /** Doors that write an item's properties, each driven below. */

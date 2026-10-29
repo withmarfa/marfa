@@ -24,6 +24,7 @@ import {
   request,
   TEST_API_KEY_SALT,
   type TestContext,
+  cleanupTestContext,
 } from "../test-utils.js";
 
 /**
@@ -48,7 +49,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await ctx.cleanup();
+  await cleanupTestContext(ctx);
 });
 
 function fakeKey(overrides: Partial<ApiKey> = {}): ApiKey {

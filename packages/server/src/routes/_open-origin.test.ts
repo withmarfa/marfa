@@ -1,5 +1,9 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { createTestContext, type TestContext } from "../test-utils.js";
+import {
+  createTestContext,
+  type TestContext,
+  cleanupTestContext,
+} from "../test-utils.js";
 import { OPEN_TO_EVERY_ORIGIN } from "./_open-origin.js";
 
 const FOREIGN = "https://foreign.example";
@@ -11,7 +15,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await ctx.cleanup();
+  await cleanupTestContext(ctx);
 });
 
 describe("the operations open to every origin", () => {

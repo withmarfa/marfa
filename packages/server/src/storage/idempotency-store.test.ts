@@ -14,7 +14,7 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { generateId } from "@withmarfa/shared";
-import { createTestContext } from "../test-utils.js";
+import { createTestContext, cleanupTestContext } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import type { IdempotencyClaim, IdempotencyRecord } from "./interface.js";
 
@@ -25,7 +25,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await ctx.cleanup();
+  await cleanupTestContext(ctx);
 });
 
 const HOUR = 3_600_000;

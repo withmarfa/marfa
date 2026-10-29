@@ -13,7 +13,11 @@
  * land in an earlier deploy than the tightening.
  */
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
-import { createTestContext, request } from "../test-utils.js";
+import {
+  createTestContext,
+  request,
+  cleanupTestContext,
+} from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 
 let ctx: TestContext;
@@ -23,7 +27,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await ctx.cleanup();
+  await cleanupTestContext(ctx);
 });
 
 /** Register `demo.tightened` with `body` optional, then create one item without it. */

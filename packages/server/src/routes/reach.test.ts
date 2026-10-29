@@ -1,7 +1,12 @@
 import { serve } from "@hono/node-server";
 import type { Server } from "node:http";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { createTestContext, readSse, type TestContext } from "../test-utils.js";
+import {
+  createTestContext,
+  readSse,
+  type TestContext,
+  cleanupTestContext,
+} from "../test-utils.js";
 import { initEventLog } from "../pubsub.js";
 
 let ctx: TestContext;
@@ -31,7 +36,7 @@ afterAll(async () => {
       resolve();
     });
   });
-  await ctx.cleanup();
+  await cleanupTestContext(ctx);
 });
 async function tcp(path: string, proof?: string): Promise<Response> {
   return fetch(`${origin}${path}`, {

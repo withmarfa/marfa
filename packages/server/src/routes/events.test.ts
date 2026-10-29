@@ -1,6 +1,11 @@
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
 import { eq } from "drizzle-orm";
-import { createTestContext, readSse, request } from "../test-utils.js";
+import {
+  createTestContext,
+  readSse,
+  request,
+  cleanupTestContext,
+} from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { initEventLog } from "../pubsub.js";
 import { eventLog } from "../storage/sqlite/schema.js";
@@ -16,7 +21,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await ctx.cleanup();
+  await cleanupTestContext(ctx);
 });
 
 interface CreatedItem {

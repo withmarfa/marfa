@@ -1,5 +1,9 @@
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
-import { createTestContext, request } from "../test-utils.js";
+import {
+  createTestContext,
+  request,
+  cleanupTestContext,
+} from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { parseTrustedProxyCidrs } from "../middleware/client-ip.js";
 
@@ -10,7 +14,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await ctx.cleanup();
+  await cleanupTestContext(ctx);
 });
 
 interface AuditRow {

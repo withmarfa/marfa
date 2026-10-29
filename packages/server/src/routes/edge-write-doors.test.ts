@@ -20,7 +20,11 @@
  * wipe edges it was never permitted to touch.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { createTestContext, request } from "../test-utils.js";
+import {
+  createTestContext,
+  request,
+  cleanupTestContext,
+} from "../test-utils.js";
 import { generateId } from "@withmarfa/shared";
 import type { TestContext } from "../test-utils.js";
 
@@ -31,7 +35,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await ctx.cleanup();
+  await cleanupTestContext(ctx);
 });
 
 // ---------------------------------------------------------------------------

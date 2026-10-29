@@ -9,7 +9,11 @@
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { EDGE_PROPERTY_KEYS, EDGE_TYPE_SCHEMA_KEYS } from "@withmarfa/shared";
-import { createTestContext, request } from "../test-utils.js";
+import {
+  createTestContext,
+  request,
+  cleanupTestContext,
+} from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import {
   EdgePropertyDefinitionSchema,
@@ -24,7 +28,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await ctx.cleanup();
+  await cleanupTestContext(ctx);
 });
 
 const unique = (stem: string): string =>

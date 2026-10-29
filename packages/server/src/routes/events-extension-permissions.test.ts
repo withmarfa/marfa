@@ -20,6 +20,7 @@ import {
   seedOauthBearer,
   settle,
   TEST_API_KEY_SALT,
+  cleanupTestContext,
 } from "../test-utils.js";
 
 let ctx: TestContext;
@@ -49,7 +50,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await ctx.cleanup();
+  await cleanupTestContext(ctx);
 });
 
 /** An item carrying two namespaces, one the scoped key may read. */
