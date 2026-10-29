@@ -275,6 +275,12 @@ const createItemRoute = createRoute({
               .describe(
                 "The item's identifier at its source, such as a vendor's row ID. With `source`, it is the item's natural key: creating with a key that exists updates that item.",
               ),
+            mode: z
+              .enum(["upsert", "create_only"])
+              .optional()
+              .describe(
+                "`upsert` (the default) updates the item `source_id` matches. `create_only` writes nothing when an item already holds the `source_id` under the source, or the `id`, in any state, and answers `item_exists` (409) with `details.existing_id`.",
+              ),
             version: z
               .number()
               .int()
@@ -388,6 +394,7 @@ const createItemRoute = createRoute({
             makeErrorResponseSchema([
               "conflict",
               "id_reused",
+              "item_exists",
               "link_taken",
               "type_mismatch",
             ]),
@@ -395,7 +402,7 @@ const createItemRoute = createRoute({
         },
       },
       description:
-        "- `id_reused`: `id` names an item of another type.\n- `conflict`: `id` names an item you can't read.\n- `link_taken`: another item of the type holds this link. `details.existing_id` names it.\n- `type_mismatch`: `source_id` matches an item of another type.\n- `version_conflict`, `ancestor_unavailable`: `version` is stale.",
+        "- `item_exists`: `create_only` found an item holding the `source_id` or `id`.\n- `id_reused`: `id` names an item of another type.\n- `conflict`: `id` names an item you can't read.\n- `link_taken`: another item of the type holds this link. `details.existing_id` names it.\n- `type_mismatch`: `source_id` matches an item of another type.\n- `version_conflict`, `ancestor_unavailable`: `version` is stale.",
     },
   },
 });
@@ -1430,7 +1437,7 @@ export function itemRoutes(storage: Storage) {
           { kind: "credential", key },
           {
             op: "put",
-            door: "item",
+            door: body.mode === "create_only" ? "item_create_only" : "item",
             type,
             properties: body.properties,
             ...(body.id !== undefined && { id: body.id }),

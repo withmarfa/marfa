@@ -1994,7 +1994,7 @@
         ],
         "description": "A write Marfa can't merge, because it holds no snapshot you can read of the `version` you sent: the error and the item now."
       },
-      "ConflictOrIdReusedOrLinkTakenOrTypeMismatchRefusal": {
+      "ConflictOrIdReusedOrItemExistsOrLinkTakenOrTypeMismatchRefusal": {
         "type": "object",
         "properties": {
           "error": {
@@ -2005,6 +2005,7 @@
                 "enum": [
                   "conflict",
                   "id_reused",
+                  "item_exists",
                   "link_taken",
                   "type_mismatch"
                 ],
@@ -9773,6 +9774,14 @@
                     "type": "string",
                     "description": "The item's identifier at its source, such as a vendor's row ID. With `source`, it is the item's natural key: creating with a key that exists updates that item."
                   },
+                  "mode": {
+                    "type": "string",
+                    "enum": [
+                      "upsert",
+                      "create_only"
+                    ],
+                    "description": "`upsert` (the default) updates the item `source_id` matches. `create_only` writes nothing when an item already holds the `source_id` under the source, or the `id`, in any state, and answers `item_exists` (409) with `details.existing_id`."
+                  },
                   "version": {
                     "type": "integer",
                     "minimum": 0,
@@ -10012,7 +10021,7 @@
             }
           },
           "409": {
-            "description": "- `id_reused`: `id` names an item of another type.\n- `conflict`: `id` names an item you can't read.\n- `link_taken`: another item of the type holds this link. `details.existing_id` names it.\n- `type_mismatch`: `source_id` matches an item of another type.\n- `version_conflict`, `ancestor_unavailable`: `version` is stale.",
+            "description": "- `item_exists`: `create_only` found an item holding the `source_id` or `id`.\n- `id_reused`: `id` names an item of another type.\n- `conflict`: `id` names an item you can't read.\n- `link_taken`: another item of the type holds this link. `details.existing_id` names it.\n- `type_mismatch`: `source_id` matches an item of another type.\n- `version_conflict`, `ancestor_unavailable`: `version` is stale.",
             "content": {
               "application/json": {
                 "schema": {
@@ -10024,7 +10033,7 @@
                       "$ref": "#/components/schemas/ItemAncestorUnavailable"
                     },
                     {
-                      "$ref": "#/components/schemas/ConflictOrIdReusedOrLinkTakenOrTypeMismatchRefusal"
+                      "$ref": "#/components/schemas/ConflictOrIdReusedOrItemExistsOrLinkTakenOrTypeMismatchRefusal"
                     },
                     {
                       "$ref": "#/components/schemas/InstanceChangedRefusal"

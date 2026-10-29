@@ -50,7 +50,7 @@ If `POST /items` names an `id` that is not a lowercase UUIDv7, then the server M
 
 ### `items/create-repeat`
 
-When `POST /items` names an `id` that an item of the same type, which the key may read, holds and names no natural key that resolves an item, the server MUST answer `200` with the stored item as it stands and `acknowledged: true`.
+When `POST /items`, without `mode: create_only`, names an `id` that an item of the same type, which the key may read, holds and names no natural key that resolves an item, the server MUST answer `200` with the stored item as it stands and `acknowledged: true`.
 
 **Reason:** a client that lost the answer to its create sends it again, and must get the row it made without overwriting an edit made since.
 
@@ -64,7 +64,7 @@ When the server answers a create with `acknowledged: true`, the server MUST NOT 
 
 ### `items/create-id-other-type`
 
-If `POST /items` names an `id` that an item of another type holds, and the key may read that type, then the server MUST answer `409 id_reused` with `details.differs` naming `type`.
+If `POST /items`, without `mode: create_only`, names an `id` that an item of another type holds, and the key may read that type, then the server MUST answer `409 id_reused` with `details.differs` naming `type`.
 
 **Tests:** `sync/acknowledged.test.ts › refuses an item repeat whose body names a different type`.
 
@@ -78,7 +78,7 @@ If `POST /items` names an `id` that an item of a type the key may not read holds
 
 ### `items/create-id-and-natural-key`
 
-When `POST /items` names both the `id` and the natural key of one item, the server MUST apply it as a natural-key upsert onto that item, as `items/natural-key-upsert` states.
+When `POST /items`, without `mode: create_only`, names both the `id` and the natural key of one item, the server MUST apply it as a natural-key upsert onto that item, as `items/natural-key-upsert` states.
 
 **Reason:** the natural key decides before the id, so a connector that sends each row under its own id and its vendor's key updates the row on every sync.
 
@@ -146,11 +146,11 @@ When `PATCH /items/{id}` names a `source`, the server MUST answer `400 validatio
 
 ### `items/natural-key-upsert`
 
-When `POST /items`, or a `POST /items/bulk` entry under `mode: upsert`, names a `source_id` that, under the source it resolves to, a live item of the declared type holds, the server MUST apply it as an update to that item, answered `200` at the item's next version, whichever credential sends it.
+When `POST /items` without `mode: create_only`, or a `POST /items/bulk` entry under `mode: upsert`, names a `source_id` that, under the source it resolves to, a live item of the declared type holds, the server MUST apply it as an update to that item, answered `200` at the item's next version, whichever credential sends it.
 
 **Reason:** two keys that claim one source share its natural keys, so a connector's row is one row whichever of its keys writes it.
 
-**Tests:** `correctness/dedup.test.ts › duplicate (source, source_id) upserts onto the existing item (natural-key upsert)`, `compliance/claimed-sources.test.ts › upserts onto one row from two keys claiming one source`, `› lands a bulk entry naming a claim on the claim's row, not on its own source's`.
+**Tests:** `correctness/dedup.test.ts › duplicate (source, source_id) upserts onto the existing item (natural-key upsert)`, `compliance/claimed-sources.test.ts › upserts onto one row from two keys claiming one source`, `› lands a bulk entry naming a claim on the claim's row, not on its own source's`, `compliance/create-only.test.ts › updates the item as before under mode upsert and under no mode`.
 
 ### `items/natural-key-merge`
 
@@ -166,25 +166,25 @@ When a create applied as a natural-key upsert names no `tags`, the server MUST l
 
 ### `items/natural-key-concurrent`
 
-When two `POST /items` naming one natural key that no item holds arrive together, the server MUST create one item and apply every other as the natural-key upsert onto it.
+When two `POST /items` without `mode: create_only` naming one natural key that no item holds arrive together, the server MUST create one item and apply every other as the natural-key upsert onto it.
 
 **Tests:** `correctness/dedup.test.ts › lands concurrent creates of one natural key on one row`.
 
 ### `items/natural-key-other-type`
 
-If the natural key of `POST /items` resolves an item of a type other than the one the create declares, then the server MUST answer `409 type_mismatch`.
+If the natural key of `POST /items`, without `mode: create_only`, resolves an item of a type other than the one the create declares, then the server MUST answer `409 type_mismatch`.
 
 **Tests:** `correctness/dedup.test.ts › refuses an upsert whose natural key lands on a row of another type`.
 
 ### `items/natural-key-new`
 
-When a create names a `source_id` no item holds under its source, or names neither a `source_id` nor an `id` an item holds, the server MUST create a new item.
+When a create names neither a `source_id` that an item holds under its source nor an `id` that an item holds, the server MUST create a new item.
 
 **Tests:** `correctness/dedup.test.ts › same source but different source_id is not a duplicate`, `› items without source/source_id are never duplicates`.
 
 ### `items/natural-key-id-mismatch`
 
-If `POST /items` names a natural key that resolves an item and an `id` that is not that item's, then the server MUST answer `400 validation_error` with `details.field` `id`, `details.requested_id`, `details.existing_id`, `details.source` and `details.source_id`.
+If `POST /items`, without `mode: create_only`, names a natural key that resolves an item and an `id` that is not that item's, then the server MUST answer `400 validation_error` with `details.field` `id`, `details.requested_id`, `details.existing_id`, `details.source` and `details.source_id`.
 
 **Reason:** the natural key and the id each name a row, and writing onto either would ignore the other.
 
@@ -200,11 +200,85 @@ If the natural key of `POST /items`, or of a `POST /items/bulk` entry under `mod
 
 ### `items/natural-key-trashed`
 
-When the natural key or the `id` of `POST /items` resolves an item in the bin, of the type the create declares, that the key may read, the server MUST answer `200` with that item, still in the bin, and `acknowledged: true`.
+When the natural key or the `id` of `POST /items`, without `mode: create_only`, resolves an item in the bin, of the type the create declares, that the key may read, the server MUST answer `200` with that item, still in the bin, and `acknowledged: true`.
 
 **Reason:** a connector re-syncing a row the person trashed must neither bring it back nor fail.
 
 **Tests:** `compliance/cascade-marks.test.ts › marks a row a cascade trashed on the acknowledgement of a create naming its source and source id, and names the row trashed only to a key that may read its type`, `› marks a row a cascade trashed on the answer to a create repeated under its id, and names the row trashed only to a key that may read its type`.
+
+### `items/create-only-source`
+
+When `POST /items` names `mode: create_only` and a `source_id` that an item holds under the create's source, live or in the bin, and the key may read the item's type, the server MUST answer `409 item_exists` with `details.existing_id` naming that item and `details.matched_by` `source_id`.
+
+**Reason:** a caller that must never change an item silently, such as an agent repeating a create, learns that the key is taken and which item holds it. The bulk door reports the same case `skipped` with `reason: "duplicate_source"` (`items/bulk-create-only`).
+
+**Tests:** `compliance/create-only.test.ts › refuses a source and source id an item holds, and leaves the item as it was`, `› refuses one that an item in the bin holds, and leaves it in the bin`.
+
+### `items/create-only-id`
+
+When `POST /items` names `mode: create_only` and an `id` that an item holds, live or in the bin, and names no natural key that resolves an item, and the key may read the item's type, the server MUST answer `409 item_exists` with `details.existing_id` naming that item and `details.matched_by` `id`.
+
+**Reason:** `create_only` asks for no change, so the repeat of a create under the id the caller minted is a refusal naming the item, not the acknowledgment the same request gets without the mode (`items/create-repeat`). The bulk door reports the same case `skipped` with `reason: "duplicate_id"` (`items/bulk-create-only-id`).
+
+**Tests:** `compliance/create-only.test.ts › refuses an id an item holds, of any type, and leaves the item as it was`, `› refuses one that an item in the bin holds, and leaves it in the bin`.
+
+### `items/create-only-no-write`
+
+When the server answers a `POST /items` `409 item_exists`, the server MUST NOT write.
+
+**Tests:** `compliance/create-only.test.ts › refuses a source and source id an item holds, and leaves the item as it was`, `› refuses one that an item in the bin holds, and leaves it in the bin`, `› refuses an id an item holds, of any type, and leaves the item as it was`.
+
+### `items/create-only-natural-key-first`
+
+When `POST /items` names `mode: create_only`, a natural key that resolves an item and an `id` that another item holds, the server MUST answer `409 item_exists` naming the item the natural key resolves, with `details.matched_by` `source_id`.
+
+**Reason:** the natural key decides before the id, as it does without the mode (`items/create-id-and-natural-key`) and on the bulk door (`items/bulk-create-only-id`).
+
+**Tests:** `compliance/create-only.test.ts › names the item its natural key resolves before the one its id names`.
+
+### `items/create-only-new`
+
+When `POST /items` names `mode: create_only` and no item holds its natural key or its `id`, the server MUST create the item and answer `201` as it does without the mode.
+
+**Tests:** `compliance/create-only.test.ts › creates an item no one holds the keys of`.
+
+### `items/create-only-concurrent`
+
+When two `POST /items` naming `mode: create_only` and one natural key that no item holds arrive together, the server MUST create one item and answer every other `409 item_exists` naming it.
+
+**Reason:** the check and the write are one step, so two sends of one key cannot both find nothing.
+
+**Tests:** `compliance/create-only.test.ts › creates one item when sends of one natural key arrive together`.
+
+### `items/create-only-source-unreadable`
+
+If the natural key of `POST /items` naming `mode: create_only` resolves an item of a type the key may not read, then the server MUST answer `403 type_not_permitted` naming neither that item nor its type.
+
+**Reason:** the key learns only that its natural key is taken, as it does without the mode (`items/natural-key-unreadable`).
+
+**Tests:** `compliance/create-only.test.ts › tells a key whose natural key an unreadable item holds nothing of the item`.
+
+### `items/create-only-id-unreadable`
+
+If `POST /items` naming `mode: create_only` names an `id` that an item of a type the key may not read holds, and a natural key that resolves no item, then the server MUST answer `409 conflict` naming neither that item's type nor any of its properties.
+
+**Reason:** the answer is the one the create gets without the mode (`items/create-id-unreadable`).
+
+**Tests:** `compliance/create-only.test.ts › tells a key whose id an unreadable item holds nothing of the item`.
+
+### `items/create-only-replay`
+
+When a credential repeats a `POST /items` naming `mode: create_only` under one `Idempotency-Key`, the server MUST answer with the first answer's status and body, whichever it was, as `items/idempotency-replay` states.
+
+**Reason:** a caller whose answer was lost learns whether its create wrote the item or an earlier one held the key, and does not mistake the item its own first send created for one that was already there.
+
+**Tests:** `compliance/create-only.test.ts › answers a create repeated under one Idempotency-Key with its first answer, the item it created included`, `› replays the refusal of a create that found an item`.
+
+### `items/create-only-mode`
+
+If `POST /items` names a `mode` other than `upsert` or `create_only`, then the server MUST answer `400 validation_error`.
+
+**Tests:** `compliance/create-only.test.ts › refuses a mode the door does not take`.
 
 ## Own time, tier and initial state
 

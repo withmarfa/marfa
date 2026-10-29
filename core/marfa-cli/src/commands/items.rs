@@ -387,6 +387,10 @@ pub struct CreateArgs {
     /// The id to mint it under. Omitted, the server mints one.
     #[arg(long)]
     pub id: Option<String>,
+    /// Create only: where an item already holds the source and source id, or
+    /// the id, the server writes nothing and answers `item_exists`.
+    #[arg(long)]
+    pub create_only: bool,
     /// The version this create is conditional on, where its natural key
     /// resolves a row the server already holds.
     #[arg(long)]
@@ -665,6 +669,9 @@ pub fn create_request(args: &CreateArgs) -> Result<Request, CliError> {
     insert_opt(&mut body, "source_id", args.source_id.clone());
     insert_opt(&mut body, "id", args.id.clone());
     insert_opt(&mut body, "version", args.version);
+    if args.create_only {
+        body.insert("mode".into(), Value::String("create_only".into()));
+    }
     if let Some(edges) = &args.edges {
         body.insert("edges".into(), Value::Object(object(edges, "--edges")?));
     }

@@ -585,6 +585,7 @@ marfa items create [OPTIONS] --type <TYPE>
 | `--source <SOURCE>` | The source to key and stamp it with: the key's own, or one it claims. Any other is refused. |
 | `--source-id <SOURCE_ID>` | The id this row has in the system it came from: the natural key. |
 | `--id <ID>` | The id to mint it under. Omitted, the server mints one. |
+| `--create-only` | Create only: where an item already holds the source and source id, or the id, the server writes nothing and answers `item_exists`. |
 | `--version <VERSION>` | The version this create is conditional on, where its natural key resolves a row the server already holds. |
 | `--edges <JSON>` | Edges to write with it, as the JSON object the operation takes. |
 | `--idempotency-key <KEY>` | Sent as `Idempotency-Key`, so a repeat is answered from the record rather than written twice. |

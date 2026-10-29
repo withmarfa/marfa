@@ -2882,14 +2882,14 @@ export interface components {
             requested_version: number;
         };
         /** @description An error response. */
-        ConflictOrIdReusedOrLinkTakenOrTypeMismatchRefusal: {
+        ConflictOrIdReusedOrItemExistsOrLinkTakenOrTypeMismatchRefusal: {
             /** @description What went wrong. */
             error: {
                 /**
                  * @description A machine-readable code for the error. Use it in your logic.
                  * @enum {string}
                  */
-                code: "conflict" | "id_reused" | "link_taken" | "type_mismatch";
+                code: "conflict" | "id_reused" | "item_exists" | "link_taken" | "type_mismatch";
                 /** @description A description of the error for a person to read. It can change, so don't match on it. */
                 message: string;
                 /** @description More about the error, such as the field it concerns. Each code defines its own details. */
@@ -6149,6 +6149,11 @@ export interface operations {
                     source?: string;
                     /** @description The item's identifier at its source, such as a vendor's row ID. With `source`, it is the item's natural key: creating with a key that exists updates that item. */
                     source_id?: string;
+                    /**
+                     * @description `upsert` (the default) updates the item `source_id` matches. `create_only` writes nothing when an item already holds the `source_id` under the source, or the `id`, in any state, and answers `item_exists` (409) with `details.existing_id`.
+                     * @enum {string}
+                     */
+                    mode?: "upsert" | "create_only";
                     /** @description The version you read. Used only when `source_id` matches a live item: the update then applies only if the item is still at this version. Ignored otherwise. */
                     version?: number;
                     tier?: components["schemas"]["Tier"] & unknown;
@@ -6279,7 +6284,8 @@ export interface operations {
                 };
             };
             /**
-             * @description - `id_reused`: `id` names an item of another type.
+             * @description - `item_exists`: `create_only` found an item holding the `source_id` or `id`.
+             *     - `id_reused`: `id` names an item of another type.
              *     - `conflict`: `id` names an item you can't read.
              *     - `link_taken`: another item of the type holds this link. `details.existing_id` names it.
              *     - `type_mismatch`: `source_id` matches an item of another type.
@@ -6297,7 +6303,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ItemVersionConflict"] | components["schemas"]["ItemAncestorUnavailable"] | components["schemas"]["ConflictOrIdReusedOrLinkTakenOrTypeMismatchRefusal"] | components["schemas"]["InstanceChangedRefusal"] | components["schemas"]["IdempotencyKeyInFlightRefusal"];
+                    "application/json": components["schemas"]["ItemVersionConflict"] | components["schemas"]["ItemAncestorUnavailable"] | components["schemas"]["ConflictOrIdReusedOrItemExistsOrLinkTakenOrTypeMismatchRefusal"] | components["schemas"]["InstanceChangedRefusal"] | components["schemas"]["IdempotencyKeyInFlightRefusal"];
                 };
             };
             /** @description `request_too_large`: the request body is larger than this instance accepts. */
