@@ -238,8 +238,8 @@ describe("the status checker", () => {
         [
           logLine({
             method: "GET",
-            path: "/health",
-            route: "/health",
+            path: "/openapi.json",
+            route: "/openapi.json",
             status: 200,
           }),
           logLine({
@@ -255,7 +255,7 @@ describe("the status checker", () => {
 
     expect(report.undeclared).toEqual([]);
     expect([...report.unpublished.keys()].sort()).toEqual([
-      "GET /health",
+      "GET /openapi.json",
       "GET /unlisted",
     ]);
     expect(report.unexplained).toEqual(["GET /unlisted"]);

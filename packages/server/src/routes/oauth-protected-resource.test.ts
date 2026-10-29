@@ -54,9 +54,25 @@ describe("protected resource metadata (RFC 9728)", () => {
 });
 
 describe("protected resource metadata for the MCP endpoints", () => {
-  it.each(["/mcp", "/mcp/schema", "/mcp/admin"])(
-    "serves %s's document, naming the endpoint, to every origin",
-    async (path) => {
+  it.each([
+    ["/mcp", []],
+    [
+      "/mcp/schema",
+      ["metadata.types:write", "schema.write", "system.view:write"],
+    ],
+    [
+      "/mcp/admin",
+      [
+        "audit.read",
+        "connectors.manage",
+        "instance.read",
+        "keys.mint",
+        "webhooks.manage",
+      ],
+    ],
+  ])(
+    "serves %s's document, naming the endpoint and the scopes its tools need, to every origin",
+    async (path, groupScopes) => {
       const base = "https://example.test";
       ctx = await createTestContext({ authBaseUrl: base });
       const res = await ctx.app.request(
@@ -69,8 +85,10 @@ describe("protected resource metadata for the MCP endpoints", () => {
       expect(body.resource).toBe(`${base}${path}`);
       expect(body.authorization_servers).toEqual([`${base}/auth`]);
       expect(body.bearer_methods_supported).toEqual(["header"]);
+      const defaults = expandBundlesToScopes(getPermissionBundles());
+      for (const scope of groupScopes) expect(defaults).not.toContain(scope);
       expect(body.scopes_supported).toEqual(
-        expandBundlesToScopes(getPermissionBundles()),
+        [...defaults, ...groupScopes].sort(),
       );
     },
   );

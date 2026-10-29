@@ -367,8 +367,9 @@ export const PUBLIC_TAGS: readonly PublicTag[] = [
   {
     name: "Health and maintenance",
     description:
-      "How the instance is doing: what needs attention, its metrics and audit log, its housekeeping jobs and its retired platform types, which this build no longer ships.",
+      "How the instance is doing: its health, what needs attention, its metrics and audit log, its housekeeping jobs and its retired platform types, which this build no longer ships.",
     operations: [
+      "getHealth",
       "listAttention",
       "getInstanceMetrics",
       "listAuditLog",
@@ -517,7 +518,7 @@ const RATE_LIMIT_HEADERS = [
  * Operations that bypass the general request limiter carry none of its
  * headers. Claim declares its own durable code-guessing limit separately.
  */
-const AHEAD_OF_THE_LIMITER = new Set(["get /", "post /owner"]);
+const AHEAD_OF_THE_LIMITER = new Set(["get /", "get /health", "post /owner"]);
 
 /**
  * Statuses answered ahead of the rate limiter and the idempotency claim: the

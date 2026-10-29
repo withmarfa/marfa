@@ -109,6 +109,7 @@ describe("the instance", () => {
       status: string;
       components: Record<string, { status: string; error?: string }>;
     };
+    await expectMatchesSchema("GET", "/health", 200, body);
     expect(body.status).toBe("ok");
     expect(Object.keys(body.components).sort()).toEqual([
       "blob_storage",

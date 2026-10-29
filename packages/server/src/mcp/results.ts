@@ -43,6 +43,16 @@ const HINTS: Record<string, string> = {
   validation_error:
     "Check the arguments against the tool's input schema and the type's fields from marfa_overview.",
   rate_limited: "Wait before calling again.",
+  type_already_exists:
+    "A type has this identifier. Change it with action change, or pick another identifier.",
+  type_not_found:
+    "No type has this identifier. Call marfa_overview to see the types.",
+  type_move_blocked:
+    "Change each setting in details.settings so it no longer names the type, then move again.",
+  api_key_not_found:
+    "No key this credential can reach has this ID. Call marfa_keys to see the keys.",
+  webhook_not_found:
+    "No webhook of this credential's has this ID. Call marfa_webhooks to see them.",
 };
 
 /** A refusal from the API, as a tool error. */
@@ -92,4 +102,23 @@ export function cutText(
     next_offset: end < points.length ? end : null,
     total_chars: points.length,
   };
+}
+
+/**
+ * As many of `entries` as fit in `room` characters of JSON, in order, and
+ * how many were left out.
+ */
+export function fitList<T>(
+  entries: readonly T[],
+  room: number,
+): { kept: T[]; left_out: number } {
+  const kept: T[] = [];
+  let used = 2;
+  for (const entry of entries) {
+    const width = JSON.stringify(entry).length + 1;
+    if (used + width > room) break;
+    used += width;
+    kept.push(entry);
+  }
+  return { kept, left_out: entries.length - kept.length };
 }

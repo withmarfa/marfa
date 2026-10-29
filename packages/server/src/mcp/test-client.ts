@@ -1,6 +1,6 @@
 /**
- * An MCP client connected to a test app's `/mcp` in process, for the
- * endpoint's tests.
+ * An MCP client connected to a test app's `/mcp`, or one of its groups, in
+ * process, for the endpoint's tests.
  */
 import {
   Client,
@@ -20,6 +20,8 @@ export async function connectMcp(
     headers?: Record<string, string>;
     /** The address the connection comes from, as `request`'s `peer`. */
     peer?: string;
+    /** The endpoint, such as `/mcp/admin`; `/mcp` when left out. */
+    path?: string;
   } = {},
 ): Promise<Client> {
   const env =
@@ -30,7 +32,8 @@ export async function connectMcp(
     { name: "marfa-test", version: "0.0.0" },
     { versionNegotiation: { mode: options.negotiation ?? "auto" } },
   );
-  const transport = new StreamableHTTPClientTransport(new URL(MCP_URL), {
+  const url = new URL(options.path ?? "/mcp", MCP_URL);
+  const transport = new StreamableHTTPClientTransport(url, {
     fetch: (url, init) =>
       Promise.resolve(ctx.app.request(String(url), init, env)),
     requestInit: {

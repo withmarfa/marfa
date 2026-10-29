@@ -102,6 +102,8 @@ const OPEN_OPERATIONS: Record<string, string> = {
     "claims the owner with setup proof carried in the body or setup session",
   "GET /":
     "the instance's description, where a caller with no credential yet reads which instance answers and which contract it speaks",
+  "GET /health":
+    "the instance's health, read by whatever watches it before any credential exists",
   "POST /auth/oauth2/register":
     "dynamic client registration, which is how a client comes to hold anything",
 };
@@ -238,6 +240,12 @@ const CREDENTIAL_IN_HANDLER: Record<string, string> = {
     "the MCP endpoint, which answers its own Bearer challenge naming the endpoint's resource metadata",
   "GET /mcp": "the same endpoint, by the transport's other methods",
   "DELETE /mcp": "the same endpoint, by the transport's other methods",
+  "POST /mcp/schema": "the MCP endpoint with the schema tools, likewise",
+  "GET /mcp/schema": "the same endpoint, by the transport's other methods",
+  "DELETE /mcp/schema": "the same endpoint, by the transport's other methods",
+  "POST /mcp/admin": "the MCP endpoint with the admin tools, likewise",
+  "GET /mcp/admin": "the same endpoint, by the transport's other methods",
+  "DELETE /mcp/admin": "the same endpoint, by the transport's other methods",
 };
 
 function concrete(path: string): string {

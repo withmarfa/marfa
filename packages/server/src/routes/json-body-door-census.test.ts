@@ -82,6 +82,8 @@ const UNPUBLISHED_WRITES: Record<string, string> = {
   "POST /inbound/{token}": "a sender's delivery, whatever bytes it sent",
   "POST /mcp":
     "a JSON-RPC message of the MCP transport, which the MCP SDK parses and answers in its own shapes",
+  "POST /mcp/schema": "the same, at the endpoint with the schema tools",
+  "POST /mcp/admin": "the same, at the endpoint with the admin tools",
   "POST /auth/sign-in": "a form post",
   "POST /auth/confirm":
     "the owner's proof from the confirmation dialog, which takes exactly one of two keys and refuses any other body (routes/auth-confirm.test.ts)",

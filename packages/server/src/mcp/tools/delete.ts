@@ -7,7 +7,7 @@ import type { ApiRefusal } from "../api.js";
 import {
   checkConfirmation,
   confirmationToken,
-  type PlannedDelete,
+  staleConfirmation,
 } from "../confirm.js";
 import type { ToolContext } from "../context.js";
 import { fail, ok, refused } from "../results.js";
@@ -98,11 +98,15 @@ export function registerDelete(server: McpServer, ctx: ToolContext): void {
       },
     },
     async ({ ids, confirm }) => {
+      const scope = { tool: "marfa_delete", credential: ctx.credentialHandle };
       const unique = [...new Set(ids)];
       const previewed = await previewOf(ctx, unique);
       if (!previewed.ok) return refused(previewed.refusal);
       const { preview } = previewed;
-      const plan: PlannedDelete = { ids: unique, digest: preview.digest };
+      // The named items and the preview's digest of everything their trash
+      // takes, with versions, so an edit or a change in what goes with them
+      // refuses the token.
+      const subject = { ids: [...unique].sort(), digest: preview.digest };
 
       const previewAnswer = async (
         extra: { code: string; message: string } | null,
@@ -110,8 +114,8 @@ export function registerDelete(server: McpServer, ctx: ToolContext): void {
         const names = await titles(ctx, unique);
         const token = confirmationToken(
           ctx.confirmKey,
-          ctx.credentialHandle,
-          plan,
+          scope,
+          subject,
           ctx.now(),
         );
         const body = {
@@ -142,19 +146,13 @@ export function registerDelete(server: McpServer, ctx: ToolContext): void {
 
       const check = checkConfirmation(
         ctx.confirmKey,
-        ctx.credentialHandle,
-        plan,
+        scope,
+        subject,
         confirm,
         ctx.now(),
       );
       if (check !== "valid") {
-        return previewAnswer({
-          code: "confirmation_stale",
-          message:
-            check === "expired"
-              ? "The confirmation expired. Nothing was deleted; here is a new preview."
-              : "What would be deleted changed since the preview, or the confirmation is not this preview's. Nothing was deleted; here is a new preview.",
-        });
+        return previewAnswer(staleConfirmation(check, "Nothing was deleted"));
       }
 
       // One trash of every named item, on the digest the check just passed,

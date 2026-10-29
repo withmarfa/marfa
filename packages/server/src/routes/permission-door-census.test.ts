@@ -298,8 +298,18 @@ const NO_CREDENTIAL: Record<string, readonly string[]> = {
  * the same credential, so the API's doors ask what they ask.
  */
 const OFFERS_WHAT_IT_HOLDS: Record<string, readonly string[]> = {
-  "the MCP endpoint, which lists only the tools the credential's type map can use":
-    ["POST /mcp", "GET /mcp", "DELETE /mcp"],
+  "the MCP endpoints, which list only the tools the credential's grant can use":
+    [
+      "POST /mcp",
+      "GET /mcp",
+      "DELETE /mcp",
+      "POST /mcp/schema",
+      "GET /mcp/schema",
+      "DELETE /mcp/schema",
+      "POST /mcp/admin",
+      "GET /mcp/admin",
+      "DELETE /mcp/admin",
+    ],
 };
 
 /**

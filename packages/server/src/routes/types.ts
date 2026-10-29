@@ -551,6 +551,18 @@ const RegisteredTypeResponse = TypeSchemaResponse.extend({
   ),
 }).openapi("RegisteredType");
 
+const ListedTypeResponse = RegisteredTypeResponse.extend({
+  own_roles: TypeSchemaResponse.shape.roles
+    .unwrap()
+    .describe(
+      "The structural roles the type declares itself, without those it only inherits. Empty if it declares none.",
+    ),
+})
+  .describe(
+    "A type in the list of types: its own definition, with the roles it declares and the roles it plays.",
+  )
+  .openapi("ListedType");
+
 const TypeResponseSchema = z
   .object({ type: RegisteredTypeResponse.describe("The type.") })
   .describe("One type.")
@@ -676,11 +688,7 @@ const listTypesRoute = createRoute({
     200: {
       content: {
         "application/json": {
-          schema: wholeListOf(
-            RegisteredTypeResponse,
-            "TypeDefinitionPage",
-            "type",
-          ),
+          schema: wholeListOf(ListedTypeResponse, "TypeDefinitionPage", "type"),
         },
       },
       description:
@@ -1206,6 +1214,7 @@ export function typeRoutes(storage: Storage) {
             return {
               ...schema,
               ...(roles ? { roles } : {}),
+              own_roles: [...(schema.roles ?? [])].sort(),
               provenance: {
                 origin: row?.origin ?? ("unknown" as const),
                 created_by: row?.created_by ?? null,

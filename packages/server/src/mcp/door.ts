@@ -1,6 +1,7 @@
 /**
- * The MCP endpoint, `/mcp`: Marfa's tools over Streamable HTTP, for an
- * agent holding an API key or a signed-in app's token.
+ * The MCP endpoints, `/mcp` and its groups `/mcp/schema` and `/mcp/admin`:
+ * Marfa's tools over Streamable HTTP, for an agent holding an API key or a
+ * signed-in app's token.
  *
  * Every tool calls the public API in process with the caller's own bearer,
  * so the API's checks decide what a tool may do and the endpoint decides
@@ -22,12 +23,14 @@
  * refused, as the transport asks of a server.
  */
 import { createMcpHandler } from "@modelcontextprotocol/server";
-import { Hono } from "hono";
-import { ErrorCode, MarfaError } from "@withmarfa/shared";
+import { type Context, Hono } from "hono";
+import { ErrorCode, MarfaError, PERMISSIONS } from "@withmarfa/shared";
 import {
   type AppEnv,
   authorityId,
   credentialHandle,
+  holdsMetadataPermission,
+  holdsPermission,
 } from "../middleware/auth.js";
 import { refuseUndeclaredKeysOf } from "../middleware/undeclared-query-keys.js";
 import { McpApi } from "./api.js";
@@ -36,6 +39,7 @@ import { mcpInsufficientScope, mcpUnauthorized } from "../auth/mcp-resource.js";
 import type { ToolContext } from "./context.js";
 import { type ToolFetchOptions, toolFetchFor } from "./file-fetch.js";
 import { asInProcessCaller } from "../middleware/in-process-caller.js";
+import { GROUP_PATHS, type McpGroup } from "./groups.js";
 import { createMarfaMcpServer } from "./server.js";
 import { isToolCall, scopeTheCallLacked } from "./step-up.js";
 
@@ -44,7 +48,7 @@ export interface McpDoorOptions {
   baseUrl: string;
   /** The build the instance runs, as the server's version. */
   version: string;
-  /** The key a delete's confirmation token is signed with. */
+  /** The key a confirmation token is signed with. */
   confirmKey: Buffer;
   /** How a tool fetches a file from a web address. */
   fetch: ToolFetchOptions;
@@ -90,7 +94,8 @@ export function mcpRoutes(options: McpDoorOptions): Hono<AppEnv> {
     { legacy: "stateless" },
   );
 
-  router.on(["POST", "GET", "DELETE"], "/", async (c) => {
+  const serve = async (c: Context<AppEnv>, group: McpGroup) => {
+    const path = GROUP_PATHS[group];
     const origin = c.req.header("origin");
     if (origin !== undefined && !(await options.originAllowed(origin))) {
       return c.json(
@@ -108,7 +113,7 @@ export function mcpRoutes(options: McpDoorOptions): Hono<AppEnv> {
       c.get("authType") === undefined ||
       header?.startsWith("Bearer ") !== true
     ) {
-      return mcpUnauthorized(options.baseUrl, "/mcp");
+      return mcpUnauthorized(options.baseUrl, path);
     }
     refuseUndeclaredKeysOf(c.req.url, []);
     const credential = header.slice("Bearer ".length);
@@ -124,7 +129,13 @@ export function mcpRoutes(options: McpDoorOptions): Hono<AppEnv> {
             options.dispatch(request, env),
           ),
       }),
+      group,
       typePermissions: apiKey.type_permissions,
+      permissions: new Set(
+        PERMISSIONS.filter((permission) => holdsPermission(c, permission)),
+      ),
+      registersTypes: holdsMetadataPermission(c, "types", "write"),
+      callerKeyId: c.get("authType") === "oauth" ? null : apiKey.id,
       credentialHandle: handle,
       confirmKey: options.confirmKey,
       fetchFile: toolFetchFor(options.fetch, {
@@ -163,13 +174,18 @@ export function mcpRoutes(options: McpDoorOptions): Hono<AppEnv> {
           response.headers.get("content-type"),
         );
     if (lacked !== undefined) {
-      return mcpInsufficientScope(options.baseUrl, "/mcp", [lacked]);
+      return mcpInsufficientScope(options.baseUrl, path, [lacked]);
     }
     return new Response(body, {
       status: response.status,
       headers: response.headers,
     });
-  });
+  };
+
+  for (const group of Object.keys(GROUP_PATHS) as McpGroup[]) {
+    const route = GROUP_PATHS[group].slice("/mcp".length) || "/";
+    router.on(["POST", "GET", "DELETE"], route, (c) => serve(c, group));
+  }
 
   return router;
 }

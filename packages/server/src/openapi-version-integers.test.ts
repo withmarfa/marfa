@@ -66,10 +66,11 @@ function versionPositions(node: unknown, path: string[] = []): Position[] {
 describe("the committed API description", () => {
   const document: unknown = JSON.parse(readFileSync(COMMITTED, "utf8"));
   const positions = versionPositions(document).filter(
-    // The build the instance runs, as `GET /` and `GET /overview` answer it,
-    // not a version of a row.
+    // The build the instance runs, as `GET /`, `GET /health` and
+    // `GET /overview` answer it, not a version of a row.
     (p) =>
       p.where !== "components/schemas/InstanceDescription/properties/version" &&
+      p.where !== "components/schemas/Health/properties/version" &&
       p.where !==
         "components/schemas/Overview/properties/instance/properties/version",
   );

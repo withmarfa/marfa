@@ -10,7 +10,8 @@
  *
  * `scopes_supported` carries the default consent bundles' expansion: the
  * minimal useful grant, matching what the consent screen offers by default.
- * Step-up beyond it rides scope challenges, not this document.
+ * An MCP group's document adds the scopes its own tools need. Step-up beyond
+ * that rides scope challenges, not this document.
  */
 
 import { Hono } from "hono";
@@ -25,6 +26,7 @@ import {
   mcpResourceUri,
   protectedResourceMetadataPath,
 } from "../auth/mcp-resource.js";
+import { GROUP_SCOPES, groupAt } from "../mcp/groups.js";
 
 interface ProtectedResourceConfig {
   authBaseUrl: string;
@@ -35,11 +37,14 @@ function metadataFor(
   resource: string,
   authBaseUrl: string,
   bundles: PermissionBundle[],
+  extraScopes: readonly string[] = [],
 ) {
   return {
     resource,
     authorization_servers: [`${authBaseUrl}/auth`],
-    scopes_supported: expandBundlesToScopes(bundles),
+    scopes_supported: [
+      ...new Set([...expandBundlesToScopes(bundles), ...extraScopes]),
+    ].sort(),
     bearer_methods_supported: ["header"],
   };
 }
@@ -56,7 +61,14 @@ export function oauthProtectedResourceRoutes(
   );
   for (const path of MCP_RESOURCE_PATHS) {
     app.get(protectedResourceMetadataPath(path), (c) =>
-      c.json(metadataFor(mcpResourceUri(base, path), base, bundles)),
+      c.json(
+        metadataFor(
+          mcpResourceUri(base, path),
+          base,
+          bundles,
+          GROUP_SCOPES[groupAt(path)],
+        ),
+      ),
     );
   }
 

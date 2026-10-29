@@ -47,7 +47,7 @@ const RATE_LIMIT = [
  * Operations that bypass the general request limiter. Claim has its own
  * durable guessing allowance, without the general limiter's headers.
  */
-const AHEAD_OF_THE_LIMITER = new Set(["GET /", "POST /owner"]);
+const AHEAD_OF_THE_LIMITER = new Set(["GET /", "GET /health", "POST /owner"]);
 
 /**
  * The body cap's refusal, answered before the limiter and the idempotency

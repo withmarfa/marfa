@@ -1041,6 +1041,14 @@ The server MUST serve `/.well-known/oauth-protected-resource/mcp`, `/.well-known
 
 **Tests:** `compliance/oauth.test.ts › serves protected resource metadata for each MCP endpoint, naming the endpoint as the resource`.
 
+### `keys-and-oauth/protected-resource-mcp-scopes`
+
+When the server serves the protected resource metadata of `/mcp/schema` or `/mcp/admin`, the server MUST name in its `scopes_supported` every scope the metadata of `/mcp` names and the scopes that endpoint's own tools need: `metadata.types:write`, `schema.write` and `system.view:write` for `/mcp/schema`, and `instance.read`, `connectors.manage`, `audit.read`, `keys.mint` and `webhooks.manage` for `/mcp/admin`.
+
+**Reason:** an MCP client asks for the scopes the metadata names, so an endpoint that does not name its tools' scopes is signed into without them.
+
+**Tests:** `compliance/oauth.test.ts › advertises each MCP tool group's scopes in its endpoint's metadata, and not at /mcp`.
+
 ### `keys-and-oauth/discovery-metadata-documents`
 
 The server MUST advertise `client_id_metadata_document_supported` as `true` in both its OAuth authorization server metadata and its OpenID configuration.
@@ -1841,7 +1849,7 @@ If a tool call to an MCP endpoint the server serves carries an app's access toke
 
 **Reason:** RFC 6750 section 3.1: the challenge names what to ask for, so an MCP client can ask the person for more without starting over. A call that already changed something is answered with the tool's error instead, since calling it again would repeat that change. An API key is not issued through sign-in, so it has no sign-in to step up, and a refusal to one stays the tool's error.
 
-**Tests:** `compliance/oauth-tokens.test.ts › challenges a tool call the token lacks a scope for with 403 insufficient_scope, naming the scope and the endpoint's metadata`.
+**Tests:** `compliance/oauth-tokens.test.ts › challenges a tool call the token lacks a scope for with 403 insufficient_scope, naming the scope and the endpoint's metadata`, `compliance/oauth-tokens.test.ts › asks an app holding metadata.types:write alone for the namespace wildcard covering the new name, and registers it for an app holding both`.
 
 ### `keys-and-oauth/mcp-challenge-unregistered`
 
@@ -1849,7 +1857,7 @@ If a tool call to an MCP endpoint the server serves carries an app's access toke
 
 **Reason:** the API asks for the grant before it looks the name up, so a misspelled type would otherwise ask the person to approve access to a name no write can use, and the call would fail again once they did.
 
-**Tests:** `compliance/oauth-tokens.test.ts › answers a tool call naming a type nothing registered with the tool's error, not a challenge`.
+**Tests:** `compliance/oauth-tokens.test.ts › answers a tool call naming a type nothing registered with the tool's error, not a challenge`, `compliance/oauth-tokens.test.ts › answers a name in a namespace nothing grants with the tool's error, not a challenge`.
 
 ## Revocation and introspection
 
