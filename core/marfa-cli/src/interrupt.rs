@@ -49,7 +49,7 @@ pub fn stop_after(seconds: Option<u64>) -> &'static AtomicBool {
 
 /// Whether Ctrl-C has arrived, which a `--for` limit never does.
 pub fn signaled() -> bool {
-    SIGNALED.load(Ordering::Relaxed)
+    SIGNALED.load(Ordering::Acquire)
 }
 
 /// For a command that a service manager runs and stops: `SIGTERM` raises
@@ -63,7 +63,7 @@ pub fn stop_on_terminate_too() {
 
 /// Whether Ctrl-C or, for a command that takes it, `SIGTERM` has arrived.
 pub fn asked_to_stop() -> bool {
-    signaled() || TERMINATED.load(Ordering::Relaxed)
+    signaled() || TERMINATED.load(Ordering::Acquire)
 }
 
 /// For a command that runs until the person stops it: call when it returns.
@@ -114,7 +114,8 @@ fn block_in_this_thread() {
 /// blocked around the start, so neither can reach the thread before the
 /// thread has them blocked. `SIGTERM` is blocked whether or not the command
 /// takes it, since such a thread, as telemetry's, starts before the command
-/// says; a thread that does not block it still ends the process on it.
+/// says. A thread that does not block a signal the command takes still raises
+/// the stop (`arrived`), but takes the signal in the middle of what it does.
 pub fn spawn_apart(
     name: &str,
     work: impl FnOnce() + Send + 'static,
@@ -167,9 +168,11 @@ pub fn stopped_by() -> Option<Stop> {
     })
 }
 
-/// Runs in whichever thread has the signal unblocked, which is only the one
-/// that waits in `stop_on_interrupt`, and so does only what a handler may:
-/// store to atomics and end the process.
+/// Runs in whichever thread has the signal unblocked, which is the one that
+/// waits in `stop_on_interrupt` unless a thread made without `spawn_apart`
+/// left it unblocked; the handler raises the stop itself, so that such a
+/// thread's taking the signal does not lose it. It does only what a handler
+/// may: store to atomics and end the process.
 extern "C" fn arrived(signal: libc::c_int, info: *mut libc::siginfo_t, _: *mut libc::c_void) {
     if ARRIVED
         .compare_exchange(0, signal, Ordering::AcqRel, Ordering::Acquire)
@@ -180,6 +183,11 @@ extern "C" fn arrived(signal: libc::c_int, info: *mut libc::siginfo_t, _: *mut l
             // a `siginfo_t` that is valid for the call.
             SENDER.store(unsafe { sender_of(&*info) }, Ordering::Release);
         }
+        match signal {
+            libc::SIGTERM => TERMINATED.store(true, Ordering::Release),
+            _ => SIGNALED.store(true, Ordering::Release),
+        }
+        STOP.store(true, Ordering::Release);
     } else if signal == libc::SIGINT {
         // SAFETY: ends the process without running anything else.
         unsafe { libc::_exit(i32::from(INTERRUPTED)) };
@@ -243,11 +251,6 @@ pub fn stop_on_interrupt() {
         while ARRIVED.load(Ordering::Acquire) == 0 {
             wait();
         }
-        match ARRIVED.load(Ordering::Acquire) {
-            libc::SIGTERM => TERMINATED.store(true, Ordering::Relaxed),
-            _ => SIGNALED.store(true, Ordering::Relaxed),
-        }
-        STOP.store(true, Ordering::Relaxed);
         if marfa_core::fault::named("stop-notice").is_some() {
             use std::io::Write;
             let _ = std::io::stderr().write_all(format!("{STOP_NOTICE}\n").as_bytes());
@@ -257,4 +260,66 @@ pub fn stop_on_interrupt() {
             wait();
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const CHILD: &str = "MARFA_TEST_INTERRUPT_CHILD";
+
+    /// Runs in a process of its own, since the stop it raises stays raised.
+    /// A thread made before the stop is armed has the signal unblocked, and
+    /// the signal is sent to that thread alone, so the waiter is never woken.
+    fn signal_to_a_thread_that_does_not_block_it() {
+        stop_on_terminate_too();
+        let (ready, started) = std::sync::mpsc::channel();
+        let (done, finish) = std::sync::mpsc::channel::<()>();
+        let bystander = std::thread::spawn(move || {
+            ready.send(unsafe { libc::pthread_self() }).unwrap();
+            let _ = finish.recv();
+        });
+        let target = started.recv().unwrap();
+        stop_on_interrupt();
+        assert!(!stop().load(Ordering::Relaxed));
+        // SAFETY: `target` is a thread that is still running.
+        assert_eq!(unsafe { libc::pthread_kill(target, libc::SIGTERM) }, 0);
+        let waited = std::time::Instant::now();
+        while !stop().load(Ordering::Relaxed) {
+            assert!(
+                waited.elapsed() < std::time::Duration::from_secs(5),
+                "the stop was never raised"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(asked_to_stop());
+        assert!(!signaled());
+        let stop = stopped_by().unwrap();
+        assert_eq!(stop.signal, "SIGTERM");
+        done.send(()).unwrap();
+        bystander.join().unwrap();
+    }
+
+    #[test]
+    fn a_signal_that_reaches_a_thread_that_does_not_block_it_still_raises_the_stop() {
+        if std::env::var_os(CHILD).is_some() {
+            signal_to_a_thread_that_does_not_block_it();
+            return;
+        }
+        let ran = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "interrupt::tests::a_signal_that_reaches_a_thread_that_does_not_block_it_still_raises_the_stop",
+                "--nocapture",
+            ])
+            .env(CHILD, "1")
+            .output()
+            .unwrap();
+        assert!(
+            ran.status.success(),
+            "{}{}",
+            String::from_utf8_lossy(&ran.stdout),
+            String::from_utf8_lossy(&ran.stderr)
+        );
+    }
 }
