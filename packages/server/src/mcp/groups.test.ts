@@ -179,6 +179,72 @@ describe("the MCP groups' endpoints", () => {
   });
 });
 
+describe("registering a new type through a signed-in app", () => {
+  const register = (id: string) => ({
+    jsonrpc: "2.0",
+    id: 3,
+    method: "tools/call",
+    params: {
+      name: "marfa_save_type",
+      arguments: {
+        action: "register",
+        id,
+        label: "Recipe",
+        fields: { title: { type: "string" } },
+      },
+    },
+  });
+
+  it("asks an app with metadata.types:write alone for the namespace wildcard that covers the new name", async () => {
+    const { token } = await seedOauthBearer(ctx, [
+      "metadata.types:write",
+      "core.note:read",
+    ]);
+    const response = await post(
+      "/mcp/schema",
+      { Authorization: `Bearer ${token}` },
+      register("user.fresh"),
+    );
+    expect(response.status).toBe(403);
+    const base = ctx.config.authBaseUrl.replace(/\/+$/, "");
+    const challenge = response.headers.get("www-authenticate") ?? "";
+    expect(challenge).toMatch(/^Bearer error="insufficient_scope"/);
+    expect(challenge).toContain('scope="user.*:write"');
+    expect(challenge).toContain(
+      `resource_metadata="${base}/.well-known/oauth-protected-resource/mcp/schema"`,
+    );
+  });
+
+  it("registers the type for an app that also holds that namespace", async () => {
+    const { token } = await seedOauthBearer(ctx, [
+      "metadata.types:write",
+      "user.*:write",
+    ]);
+    const response = await post(
+      "/mcp/schema",
+      { Authorization: `Bearer ${token}` },
+      register("user.granted"),
+    );
+    expect(response.status).toBe(200);
+    expect(await response.text()).toContain("user.granted");
+  });
+
+  it("answers a name the instance would grant no namespace for with the tool's error, not a challenge", async () => {
+    const { token } = await seedOauthBearer(ctx, [
+      "metadata.types:write",
+      "core.note:read",
+    ]);
+    const response = await post(
+      "/mcp/schema",
+      { Authorization: `Bearer ${token}` },
+      register("unheard.fresh"),
+    );
+    expect(response.status).toBe(200);
+    expect(response.headers.get("www-authenticate")).toBeNull();
+    expect(await response.text()).toContain('"isError":true');
+  });
+});
+
 describe("marfa_save_type", () => {
   it("registers a type, then merges a change into it", async () => {
     const registered = payloadOf(

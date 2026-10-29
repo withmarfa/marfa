@@ -1849,7 +1849,7 @@ If a tool call to an MCP endpoint the server serves carries an app's access toke
 
 **Reason:** RFC 6750 section 3.1: the challenge names what to ask for, so an MCP client can ask the person for more without starting over. A call that already changed something is answered with the tool's error instead, since calling it again would repeat that change. An API key is not issued through sign-in, so it has no sign-in to step up, and a refusal to one stays the tool's error.
 
-**Tests:** `compliance/oauth-tokens.test.ts › challenges a tool call the token lacks a scope for with 403 insufficient_scope, naming the scope and the endpoint's metadata`.
+**Tests:** `compliance/oauth-tokens.test.ts › challenges a tool call the token lacks a scope for with 403 insufficient_scope, naming the scope and the endpoint's metadata`, `compliance/oauth-tokens.test.ts › asks an app holding metadata.types:write alone for the namespace wildcard covering the new name, and registers it for an app holding both`.
 
 ### `keys-and-oauth/mcp-challenge-unregistered`
 
@@ -1857,7 +1857,7 @@ If a tool call to an MCP endpoint the server serves carries an app's access toke
 
 **Reason:** the API asks for the grant before it looks the name up, so a misspelled type would otherwise ask the person to approve access to a name no write can use, and the call would fail again once they did.
 
-**Tests:** `compliance/oauth-tokens.test.ts › answers a tool call naming a type nothing registered with the tool's error, not a challenge`.
+**Tests:** `compliance/oauth-tokens.test.ts › answers a tool call naming a type nothing registered with the tool's error, not a challenge`, `compliance/oauth-tokens.test.ts › answers a name in a namespace nothing grants with the tool's error, not a challenge`.
 
 ## Revocation and introspection
 

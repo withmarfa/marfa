@@ -450,6 +450,95 @@ describe("the MCP endpoint", () => {
   });
 });
 
+describe("registering a type from /mcp/schema", () => {
+  const SCHEMA_APP = "metadata.types:write core.note:read";
+
+  /** A token for `scope` issued for the schema endpoint. */
+  async function schemaToken(scope: string): Promise<string> {
+    const app = await registerApp(server, scope);
+    const proof = pkce();
+    const resource = `${origin}/mcp/schema`;
+    const consent = await sentTo(
+      server,
+      await authorize(
+        server,
+        authorizeQuery(app.clientId, scope, proof, {
+          prompt: "consent",
+          resource,
+        }),
+        cookie,
+      ),
+    );
+    const sent = await decide(server, origin, cookie, consent!, true, [
+      ...scope.split(" "),
+    ]);
+    const issued = await token(server, {
+      grant_type: "authorization_code",
+      code: sent?.searchParams.get("code") ?? "",
+      redirect_uri: CALLBACK,
+      code_verifier: proof.verifier,
+      client_id: app.clientId,
+      resource,
+    });
+    expect(issued.status, JSON.stringify(issued.body)).toBe(200);
+    return issued.body.access_token!;
+  }
+
+  function register(accessToken: string, id: string): Promise<Response> {
+    return fetch(`${server.apiUrl}/mcp/schema`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${accessToken}`,
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 4,
+        method: "tools/call",
+        params: {
+          name: "marfa_save_type",
+          arguments: {
+            action: "register",
+            id,
+            label: "Recipe",
+            fields: { title: { type: "string" } },
+          },
+        },
+      }),
+    });
+  }
+
+  it("asks an app holding metadata.types:write alone for the namespace wildcard covering the new name, and registers it for an app holding both", async () => {
+    const narrow = await register(await schemaToken(SCHEMA_APP), "user.recipe");
+    expect(narrow.status).toBe(403);
+    const header = narrow.headers.get("www-authenticate") ?? "";
+    expect(header).toContain('error="insufficient_scope"');
+    expect(header).toContain('scope="user.*:write"');
+    expect(header).toContain(
+      `resource_metadata="${origin}/.well-known/oauth-protected-resource/mcp/schema"`,
+    );
+    await narrow.body?.cancel();
+    // The witness: the namespace the challenge named registers the type.
+    const granted = await register(
+      await schemaToken(`${SCHEMA_APP} user.*:write`),
+      "user.recipe",
+    );
+    expect(granted.status).toBe(200);
+    expect(await granted.text()).toContain("user.recipe");
+  });
+
+  it("answers a name in a namespace nothing grants with the tool's error, not a challenge", async () => {
+    const answer = await register(
+      await schemaToken(SCHEMA_APP),
+      "unheard.recipe",
+    );
+    expect(answer.status).toBe(200);
+    expect(answer.headers.get("www-authenticate")).toBeNull();
+    expect(await answer.text()).toContain('"isError":true');
+  });
+});
+
 describe("revocation", () => {
   it("of an access token ends it at once", async () => {
     const app = await registerApp(server, NOTES);
