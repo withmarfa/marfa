@@ -205,6 +205,14 @@ When `GET /types` lists a type, the server MUST answer the `display_hints` the t
 
 **Tests:** `compliance/type-icons.test.ts › lists the hints a type declares and not those it inherits`.
 
+### `types/list-own-roles`
+
+When `GET /types` lists a type, the server MUST answer in `own_roles` the roles the type itself declares, an empty list when it declares none, beside the `roles` it plays with those its ancestors give it.
+
+**Reason:** a client that changes a type through `PUT /types/{id}` sends the roles the type declares, and `roles` alone cannot tell a role a subtype declares from one its parent also plays; the subtype keeps a role it declares when its parent stops playing it.
+
+**Tests:** `compliance/type-inheritance.test.ts › lists the roles a type declares apart from the roles it plays`.
+
 ### `types/body-markdown`
 
 The server MUST keep the field a type names in `display_hints.body_field` as Markdown text, storing its value as sent and never refusing it as malformed Markdown.

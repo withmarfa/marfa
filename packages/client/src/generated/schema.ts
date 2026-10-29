@@ -3936,13 +3936,14 @@ export interface components {
         /** @description A page holding every type. */
         TypeDefinitionPage: {
             /** @description Every type. */
-            data: components["schemas"]["RegisteredType"][];
+            data: components["schemas"]["ListedType"][];
             /** @description Always `null`: Marfa returns every type in one page. */
             next_cursor: string | null;
         };
-        /** @description A type says which fields the items of that type hold, and what else Marfa does for them. */
-        RegisteredType: components["schemas"]["TypeDefinition"] & {
-            provenance: components["schemas"]["TypeProvenance"] & unknown;
+        /** @description A type in the list of types: its own definition, with the roles it declares and the roles it plays. */
+        ListedType: components["schemas"]["RegisteredType"] & {
+            /** @description The structural roles the type declares itself, without those it only inherits. Empty if it declares none. */
+            own_roles: components["schemas"]["TypeRole"][];
         };
         /**
          * @description A structural role a type plays. `container`: the type can be the target of an `in-collection` edge.
@@ -3977,6 +3978,10 @@ export interface components {
             maxItems?: number;
         } & {
             [key: string]: unknown;
+        };
+        /** @description A type says which fields the items of that type hold, and what else Marfa does for them. */
+        RegisteredType: components["schemas"]["TypeDefinition"] & {
+            provenance: components["schemas"]["TypeProvenance"] & unknown;
         };
         /** @description A type says which fields the items of that type hold, and what else Marfa does for them. */
         TypeDefinition: {

@@ -14,7 +14,7 @@ import { compactType } from "./overview.js";
 type TypeDefinitionInput = components["schemas"]["TypeDefinitionInput"];
 type TypeDefinitionUpdate = components["schemas"]["TypeDefinitionUpdate"];
 type BulkActionJob = components["schemas"]["BulkActionJob"];
-type RegisteredType = components["schemas"]["RegisteredType"];
+type ListedType = components["schemas"]["ListedType"];
 
 const field = z
   .looseObject({
@@ -41,12 +41,10 @@ const typeOutput = z.object({
 
 /**
  * The definition `id` stores, from the list of types, and each field name it
- * inherits with the nearest ancestor that defines it. The list gives a
- * type's own fields but every role it plays, inherited ones included, so a
- * role its parent plays is left to the parent.
+ * inherits with the nearest ancestor that defines it.
  */
 function ownDefinition(
-  types: readonly RegisteredType[],
+  types: readonly ListedType[],
   id: string,
 ):
   | { definition: Record<string, unknown>; inherited: Map<string, string> }
@@ -66,21 +64,16 @@ function ownDefinition(
     }
     ancestor = type.parent;
   }
-  const parentRoles = new Set(
-    listed.parent === undefined ? [] : (byId.get(listed.parent)?.roles ?? []),
-  );
   const definition = Object.fromEntries(
     Object.entries(listed).filter(
-      ([name]) => name !== "provenance" && name !== "roles",
+      ([name]) =>
+        name !== "provenance" && name !== "roles" && name !== "own_roles",
     ),
-  );
-  const ownRoles = (listed.roles ?? []).filter(
-    (role) => !parentRoles.has(role),
   );
   return {
     definition: {
       ...definition,
-      ...(ownRoles.length > 0 && { roles: ownRoles }),
+      ...(listed.own_roles.length > 0 && { roles: listed.own_roles }),
     },
     inherited,
   };

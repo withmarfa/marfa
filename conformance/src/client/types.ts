@@ -151,6 +151,9 @@ export interface TypeSchema {
   /** Structural roles the type plays, its ancestors' included; absent when
    *  it plays none. */
   roles?: string[];
+  /** On `GET /types` only: the roles the type declares itself, empty when
+   *  it declares none. */
+  own_roles?: string[];
   display_hints?: {
     title_field?: string;
     body_field?: string;

@@ -406,6 +406,77 @@ describe("marfa_save_type", () => {
       "title",
     ]);
   });
+
+  it("keeps a role a subtype declares that its parent also plays", async () => {
+    const box = await request(ctx.app, "POST", "/types", {
+      key: adminKey,
+      body: {
+        id: "user.box",
+        roles: ["container"],
+        fields: { title: { type: "string" } },
+      },
+    });
+    expect(box.status).toBe(201);
+    const crate = await request(ctx.app, "POST", "/types", {
+      key: adminKey,
+      body: {
+        id: "user.crate",
+        parent: "user.box",
+        roles: ["container"],
+        fields: { slats: { type: "integer" } },
+      },
+    });
+    expect(crate.status).toBe(201);
+    // A key that may change a label but not roles: a change that dropped
+    // crate's own role would need schema.write.
+    const registersOnly = await mintWorkingKey(ctx, {
+      permissions: [],
+      metadata_permissions: { types: "write" },
+    });
+    const narrow = await connectMcp(ctx, registersOnly, {
+      path: "/mcp/schema",
+    });
+    try {
+      const relabeled = payloadOf(
+        await callTool(narrow, "marfa_save_type", {
+          action: "change",
+          id: "user.crate",
+          label: "Crate",
+        }),
+      );
+      expect(relabeled.type).toMatchObject({ label: "Crate" });
+    } finally {
+      await narrow.close();
+    }
+    const unrolled = await request(ctx.app, "PUT", "/types/user.box", {
+      key: adminKey,
+      body: { fields: { title: { type: "string" } } },
+    });
+    expect(unrolled.status).toBe(200);
+    const read = await request(ctx.app, "GET", "/types/user.crate", {
+      key: adminKey,
+    });
+    expect(await read.json()).toMatchObject({
+      label: "Crate",
+      roles: ["container"],
+    });
+    const listed = await request(ctx.app, "GET", "/types", { key: adminKey });
+    const types = (
+      (await listed.json()) as {
+        data: { id: string; roles?: string[]; own_roles?: string[] }[];
+      }
+    ).data;
+    expect(types.find((type) => type.id === "user.box")).toMatchObject({
+      own_roles: [],
+    });
+    expect(types.find((type) => type.id === "user.box")).not.toHaveProperty(
+      "roles",
+    );
+    expect(types.find((type) => type.id === "user.crate")).toMatchObject({
+      roles: ["container"],
+      own_roles: ["container"],
+    });
+  });
 });
 
 describe("marfa_save_view", () => {

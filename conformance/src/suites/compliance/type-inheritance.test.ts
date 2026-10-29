@@ -465,6 +465,72 @@ describe("type inheritance rule", () => {
     });
   });
 
+  it("lists the roles a type declares apart from the roles it plays", async () => {
+    const parentId = `user.roles-parent-${ctx.runId}`;
+    const declares = `${parentId}.declares`;
+    const inherits = `${parentId}.inherits`;
+    expect(
+      (
+        await client.registerType({
+          id: parentId,
+          roles: ["container"],
+          fields: { title: { type: "string" } },
+        })
+      ).ok,
+    ).toBe(true);
+    expect(
+      (
+        await client.registerType({
+          id: declares,
+          parent: parentId,
+          roles: ["container"],
+          fields: {},
+        })
+      ).ok,
+    ).toBe(true);
+    expect(
+      (
+        await client.registerType({
+          id: inherits,
+          parent: parentId,
+          fields: {},
+        })
+      ).ok,
+    ).toBe(true);
+
+    const listed = async (id: string) => {
+      const answer = await client.listTypes();
+      expect(answer.ok).toBe(true);
+      return answer.data.data.find((type) => type.id === id);
+    };
+    expect(await listed(parentId)).toMatchObject({
+      roles: ["container"],
+      own_roles: ["container"],
+    });
+    expect(await listed(declares)).toMatchObject({
+      roles: ["container"],
+      own_roles: ["container"],
+    });
+    expect(await listed(inherits)).toMatchObject({
+      roles: ["container"],
+      own_roles: [],
+    });
+
+    // The parent stops playing the role: the subtype that declares it keeps
+    // it, and the one that only inherited it plays none.
+    const replaced = await client.replaceType(parentId, {
+      fields: { title: { type: "string" } },
+    });
+    expect(replaced.ok).toBe(true);
+    expect(await listed(declares)).toMatchObject({
+      roles: ["container"],
+      own_roles: ["container"],
+    });
+    const plain = await listed(inherits);
+    expect(plain).toMatchObject({ own_roles: [] });
+    expect(plain).not.toHaveProperty("roles");
+  });
+
   it("core entity/file/media subtypes resolve", async () => {
     const r = await client.listTypes();
     expect(r.ok).toBe(true);

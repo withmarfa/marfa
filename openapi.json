@@ -4202,7 +4202,7 @@
           "data": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/RegisteredType"
+              "$ref": "#/components/schemas/ListedType"
             },
             "description": "Every type."
           },
@@ -4220,31 +4220,28 @@
         ],
         "description": "A page holding every type."
       },
-      "RegisteredType": {
+      "ListedType": {
         "allOf": [
           {
-            "$ref": "#/components/schemas/TypeDefinition"
+            "$ref": "#/components/schemas/RegisteredType"
           },
           {
             "type": "object",
             "properties": {
-              "provenance": {
-                "allOf": [
-                  {
-                    "$ref": "#/components/schemas/TypeProvenance"
-                  },
-                  {
-                    "description": "The type's recorded origin and creator."
-                  }
-                ]
+              "own_roles": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/TypeRole"
+                },
+                "description": "The structural roles the type declares itself, without those it only inherits. Empty if it declares none."
               }
             },
             "required": [
-              "provenance"
+              "own_roles"
             ]
           }
         ],
-        "description": "A type says which fields the items of that type hold, and what else Marfa does for them."
+        "description": "A type in the list of types: its own definition, with the roles it declares and the roles it plays."
       },
       "TypeRole": {
         "type": "string",
@@ -4324,6 +4321,32 @@
         ],
         "additionalProperties": {},
         "description": "One field of a type: its type, and how items may fill it."
+      },
+      "RegisteredType": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/TypeDefinition"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "provenance": {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/TypeProvenance"
+                  },
+                  {
+                    "description": "The type's recorded origin and creator."
+                  }
+                ]
+              }
+            },
+            "required": [
+              "provenance"
+            ]
+          }
+        ],
+        "description": "A type says which fields the items of that type hold, and what else Marfa does for them."
       },
       "TypeDefinition": {
         "type": "object",
