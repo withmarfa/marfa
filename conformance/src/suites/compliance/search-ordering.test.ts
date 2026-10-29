@@ -41,7 +41,10 @@ async function seed(
   });
   expect(made.status, JSON.stringify(made.error)).toBe(201);
   trackItem(ctx, made.data.item.id);
-  return { id: made.data.item.id, updated_at: made.data.item.updated_at };
+  const updatedAt = made.data.item.updated_at;
+  if (updatedAt === null)
+    throw new Error("a created item answered no updated_at");
+  return { id: made.data.item.id, updated_at: updatedAt };
 }
 
 beforeAll(async () => {
