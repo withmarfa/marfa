@@ -70,6 +70,9 @@ pnpm test:cli
 # `marfa:down`, which clears the log it reads.
 pnpm check:statuses
 
+# The MCP project's conformance tool against `/mcp`
+pnpm mcp:conformance
+
 pnpm marfa:down
 pnpm garage:down
 ```
@@ -88,6 +91,15 @@ plus `litestream` and `sqlite3` on the path: it boots an instance under
 to it, restores a second instance from the bucket alone and compares the two
 to the byte, then removes what it wrote to the bucket. The report goes to
 `reports/restore-drill.md`, and `deploy/README.md` is what it proves.
+
+`pnpm mcp:conformance` runs the MCP project's conformance tool, at the version
+`package.json` pins, against `/mcp` on the server `marfa:up` booted. The tool
+sends no credential, so the script starts a proxy on loopback that adds the
+key from the env file. Every check of the `server-initialize`, `ping` and
+`tools-list` scenarios must pass. Two more scenarios run with the checks that
+fail by design pinned in `scripts/mcp-conformance.ts`, each with its reason.
+Any other failing check fails the run, and so does a pinned check that passes,
+until its pin is removed.
 
 `pnpm marfa:up` builds the workspace packages if they are not built, starts
 the server as a direct Node child with the tsx loader (never watch mode), waits for `/health`, claims the owner through the private socket using the
