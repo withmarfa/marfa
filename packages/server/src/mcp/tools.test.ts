@@ -163,7 +163,7 @@ describe("marfa_find and marfa_get", () => {
     const long = "abcdefghij".repeat(10_000);
     const note = await saveNote({ body: long });
     const answer = await callTool(client, "marfa_get", { ids: [note.id] });
-    expect(answer.text.length).toBeLessThanOrEqual(ANSWER_BUDGET_CHARS + 2_000);
+    expect(answer.text.length).toBeLessThanOrEqual(ANSWER_BUDGET_CHARS);
     const got = payloadOf(answer);
     const [cut] = got.cut as {
       field: string;
@@ -192,6 +192,78 @@ describe("marfa_find and marfa_get", () => {
       offset = part.next_offset as number | null;
     }
     expect(text).toBe(long);
+  });
+
+  it("reads every chunk of a field within the budget, whatever its characters", async () => {
+    const quoted = '"\\\u0001'.repeat(20_000);
+    const note = await saveNote({ body: quoted });
+    let text = "";
+    let offset: number | null = 0;
+    while (offset !== null) {
+      const answer = await callTool(client, "marfa_get", {
+        ids: [note.id],
+        field: "body",
+        offset,
+      });
+      expect(answer.text.length).toBeLessThanOrEqual(ANSWER_BUDGET_CHARS);
+      const part = payloadOf(answer);
+      text += part.text as string;
+      offset = part.next_offset as number | null;
+    }
+    expect(text).toBe(quoted);
+  });
+
+  it("cuts a large list field to keep the answer in budget and reads it back as JSON", async () => {
+    const steps = Array.from({ length: 4_000 }, (_, i) => ({
+      step: i,
+      done: false,
+    }));
+    const note = await saveNote({ body: "plan", steps });
+    const answer = await callTool(client, "marfa_get", { ids: [note.id] });
+    expect(answer.text.length).toBeLessThanOrEqual(ANSWER_BUDGET_CHARS);
+    const got = payloadOf(answer);
+    const [item] = got.items as { properties: Record<string, unknown> }[];
+    expect(item?.properties.body).toBe("plan");
+    expect(item?.properties).not.toHaveProperty("steps");
+    const [cut] = got.cut as { field: string; next_offset: number }[];
+    expect(cut).toMatchObject({ id: note.id, field: "steps", json: true });
+
+    let text = "";
+    let offset: number | null = cut?.next_offset ?? null;
+    while (offset !== null) {
+      const part = payloadOf(
+        await callTool(client, "marfa_get", {
+          ids: [note.id],
+          field: "steps",
+          offset,
+        }),
+      );
+      text += part.text as string;
+      offset = part.next_offset as number | null;
+    }
+    expect(JSON.parse(text)).toEqual(steps);
+  });
+
+  it("leaves out the items that do not fit and names them", async () => {
+    const tags = Array.from(
+      { length: 100 },
+      (_, i) => `${String(i).padStart(3, "0")}-${"t".repeat(120)}`,
+    );
+    const notes = await Promise.all(
+      Array.from({ length: 5 }, (_, i) =>
+        saveNote({ body: `tagged ${String(i)}` }, { tags }),
+      ),
+    );
+    const ids = notes.map((note) => note.id);
+    const answer = await callTool(client, "marfa_get", { ids });
+    expect(answer.text.length).toBeLessThanOrEqual(ANSWER_BUDGET_CHARS);
+    const got = payloadOf(answer);
+    const returned = (got.items as { id: string }[]).map((item) => item.id);
+    const left = got.not_returned as string[];
+    expect(returned.length).toBeGreaterThan(0);
+    expect(left.length).toBeGreaterThan(0);
+    expect([...returned, ...left]).toEqual(ids);
+    expect(got.hint).toMatch(/not_returned/);
   });
 
   it("describes a type's fields", async () => {

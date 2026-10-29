@@ -84,6 +84,36 @@ If a tool call names an argument the tool does not take, then the server MUST an
 
 **Tests:** `compliance/mcp.test.ts › refuses a tool call naming an argument the tool does not take`.
 
+## Reading items
+
+`marfa_get` keeps its answer short enough for a client to hand to the model whole, and says where to read what it left out.
+
+### `mcp/get-budget`
+
+When `marfa_get` answers, the server MUST keep the answer's text within 40,000 characters.
+
+**Reason:** a client cuts or drops a tool answer past its own limit, and the agent loses what the answer held.
+
+**Tests:** `compliance/mcp.test.ts › cuts a long text field to fit the answer and reads the rest by offset`, `› leaves out a large list field, names it as cut and reads it back as JSON text`, `› leaves out the items that do not fit and names them`.
+
+### `mcp/get-cut`
+
+If the items `marfa_get` reads do not fit within 40,000 characters, then the server MUST cut the longest fields, and name each cut field in `cut` with the item's `id`, the `field` and the `next_offset` to read from.
+
+**Tests:** `compliance/mcp.test.ts › cuts a long text field to fit the answer and reads the rest by offset`, `› leaves out a large list field, names it as cut and reads it back as JSON text`.
+
+### `mcp/get-field-part`
+
+When `marfa_get` names one ID, a `field` and an `offset`, the server MUST answer the field's text from that offset, or the JSON text of a value that is not text, with the `next_offset` to read from, or `null` when nothing is left.
+
+**Tests:** `compliance/mcp.test.ts › cuts a long text field to fit the answer and reads the rest by offset`, `› leaves out a large list field, names it as cut and reads it back as JSON text`.
+
+### `mcp/get-not-returned`
+
+If the items `marfa_get` reads do not fit within 40,000 characters with every field cut, then the server MUST leave out the last items and name them in `not_returned`.
+
+**Tests:** `compliance/mcp.test.ts › leaves out the items that do not fit and names them`.
+
 ## Changing an item
 
 `marfa_update` changes an item only from the version the agent read: unlike `PATCH /items/{id}`, it never merges a stale write (`versions.md`).

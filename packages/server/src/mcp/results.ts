@@ -61,22 +61,32 @@ export function refused(
 }
 
 /**
- * How long a string field may be in one answer. A client caps what one tool
+ * How long one tool answer may be, as JSON text. A client caps what one tool
  * answer may hold (Claude Code warns past about 10,000 tokens and cuts at
  * 25,000 by default), and an answer past the cap is lost to the agent, so
  * every tool keeps its answer under `ANSWER_BUDGET_CHARS`.
  */
 export const ANSWER_BUDGET_CHARS = 40_000;
 
-/** Text cut to `limit` characters, at a code point, with what was left. */
+/**
+ * Text from `offset`, in code points, as much as takes at most `room`
+ * characters once written as a JSON string, with what was left.
+ */
 export function cutText(
   text: string,
   offset: number,
-  limit: number,
+  room: number,
 ): { text: string; next_offset: number | null; total_chars: number } {
   const points = Array.from(text);
   const start = Math.min(Math.max(0, offset), points.length);
-  const end = Math.min(points.length, start + Math.max(0, limit));
+  let end = start;
+  let used = 0;
+  while (end < points.length) {
+    const width = JSON.stringify(points[end]).length - 2;
+    if (used + width > room) break;
+    used += width;
+    end += 1;
+  }
   return {
     text: points.slice(start, end).join(""),
     next_offset: end < points.length ? end : null,

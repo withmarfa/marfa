@@ -38,8 +38,7 @@ const outputSchema = z.object({
       mime_type: z.string(),
       size_bytes: z.number(),
     })
-    .optional()
-    .describe("Left out if the stored item holds other bytes."),
+    .optional(),
   attached_to: z.string().optional(),
 });
 
@@ -96,7 +95,7 @@ export function registerCreate(server: McpServer, ctx: ToolContext): void {
           .min(1)
           .optional()
           .describe(
-            "The item's type, such as `core.note`. Required unless saving a file, whose type follows its MIME type.",
+            "The item's type, such as `core.note`. Required unless saving a file.",
           ),
         properties: z
           .record(z.string(), z.unknown())
@@ -131,7 +130,7 @@ export function registerCreate(server: McpServer, ctx: ToolContext): void {
           .min(1)
           .optional()
           .describe(
-            "A public http or https address of a file to save. Marfa downloads it; redirects are not followed.",
+            "A public http or https address of a file to save. Redirects are not followed.",
           ),
         file: chatFile
           .optional()

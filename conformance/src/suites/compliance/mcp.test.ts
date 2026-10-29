@@ -263,6 +263,93 @@ describe("calling a tool", () => {
   });
 });
 
+describe("marfa_get", () => {
+  /** How long a tool answer's text may be. */
+  const ANSWER_BUDGET = 40_000;
+
+  async function readByParts(id: string, field: string, from: number) {
+    let text = "";
+    let offset: number | null = from;
+    while (offset !== null) {
+      const answer = await callTool(mcp, "marfa_get", {
+        ids: [id],
+        field,
+        offset,
+      });
+      expect(answer.text.length).toBeLessThanOrEqual(ANSWER_BUDGET);
+      const part = toolResult(answer);
+      text += part.text as string;
+      offset = part.next_offset as number | null;
+    }
+    return text;
+  }
+
+  it("cuts a long text field to fit the answer and reads the rest by offset", async () => {
+    const long = 'a "quoted" line\n'.repeat(8_000);
+    const { id } = await note(long);
+    const answer = await callTool(mcp, "marfa_get", { ids: [id] });
+    expect(answer.text.length).toBeLessThanOrEqual(ANSWER_BUDGET);
+    const got = toolResult(answer);
+    const [cut] = got.cut as { field: string; next_offset: number }[];
+    expect(cut).toMatchObject({ id, field: "body" });
+    const [item] = got.items as { properties: { body: string } }[];
+    const rest = await readByParts(id, "body", cut?.next_offset ?? 0);
+    expect((item?.properties.body ?? "") + rest).toBe(long);
+  });
+
+  it("leaves out a large list field, names it as cut and reads it back as JSON text", async () => {
+    const steps = Array.from({ length: 4_000 }, (_, i) => ({
+      step: i,
+      done: false,
+    }));
+    const made = await client.createItem({
+      type: "core.note",
+      properties: { body: "plan", steps },
+    });
+    expect(made.status, JSON.stringify(made.error)).toBe(201);
+    trackItem(ctx, made.data.item.id);
+    const id = made.data.item.id;
+
+    const answer = await callTool(mcp, "marfa_get", { ids: [id] });
+    expect(answer.text.length).toBeLessThanOrEqual(ANSWER_BUDGET);
+    const got = toolResult(answer);
+    const [item] = got.items as { properties: Record<string, unknown> }[];
+    expect(item?.properties.body).toBe("plan");
+    expect(item?.properties).not.toHaveProperty("steps");
+    const [cut] = got.cut as { field: string; next_offset: number }[];
+    expect(cut).toMatchObject({ id, field: "steps", json: true });
+    expect(
+      JSON.parse(await readByParts(id, "steps", cut?.next_offset ?? 0)),
+    ).toEqual(steps);
+  });
+
+  it("leaves out the items that do not fit and names them", async () => {
+    const tags = Array.from(
+      { length: 100 },
+      (_, i) => `${String(i).padStart(3, "0")}-${"t".repeat(120)}`,
+    );
+    const ids: string[] = [];
+    for (let i = 0; i < 5; i++) {
+      const made = await client.createItem({
+        type: "core.note",
+        properties: { body: `tagged ${String(i)}` },
+        tags,
+      });
+      expect(made.status, JSON.stringify(made.error)).toBe(201);
+      trackItem(ctx, made.data.item.id);
+      ids.push(made.data.item.id);
+    }
+    const answer = await callTool(mcp, "marfa_get", { ids });
+    expect(answer.text.length).toBeLessThanOrEqual(ANSWER_BUDGET);
+    const got = toolResult(answer);
+    const returned = (got.items as { id: string }[]).map((item) => item.id);
+    const left = got.not_returned as string[];
+    expect(returned.length).toBeGreaterThan(0);
+    expect(left.length).toBeGreaterThan(0);
+    expect([...returned, ...left]).toEqual(ids);
+  });
+});
+
 describe("marfa_update", () => {
   it("answers a stale version with version_conflict, the item as it is now and the fields changed since", async () => {
     const made = await note("one");

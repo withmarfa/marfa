@@ -16,6 +16,7 @@ const cutSchema = z.object({
   returned_chars: z.number(),
   total_chars: z.number(),
   next_offset: z.number(),
+  json: z.literal(true).optional(),
 });
 
 const itemSchema = z.object({
@@ -43,6 +44,7 @@ const outputSchema = z.object({
   items: z.array(itemSchema).optional(),
   not_found: z.array(z.string()).optional(),
   cut: z.array(cutSchema).optional(),
+  not_returned: z.array(z.string()).optional(),
   hint: z.string().optional(),
   id: z.string().optional(),
   field: z.string().optional(),
@@ -72,54 +74,122 @@ interface ApiItem {
   >;
 }
 
-/**
- * Cut the longest text fields of `items` to one length, as long as lets the
- * answer fit `budget`, and say what was cut.
- */
-export function fitToBudget(
+const CUT_HINT =
+  "Some fields were cut. Read the rest with marfa_get, one ID, field and offset set to next_offset. A cut marked json is the field's value as JSON text.";
+const NOT_RETURNED_HINT =
+  "The items in not_returned did not fit. Read them with marfa_get a few at a time, without edges, or one field at a time.";
+
+/** A field's value as JSON text, or undefined for one JSON leaves out. */
+function jsonOf(value: unknown): string | undefined {
+  const text: string | undefined = JSON.stringify(value);
+  return text;
+}
+
+function jsonLength(value: unknown): number {
+  return jsonOf(value)?.length ?? 0;
+}
+
+function answerOf(
   items: GotItem[],
-  budget: number,
+  notFound: string[],
+  cut: Cut[],
+  notReturned: string[],
+) {
+  const hints = [
+    ...(cut.length > 0 ? [CUT_HINT] : []),
+    ...(notReturned.length > 0 ? [NOT_RETURNED_HINT] : []),
+  ];
+  return {
+    items,
+    ...(notFound.length > 0 && { not_found: notFound }),
+    ...(cut.length > 0 && { cut }),
+    ...(notReturned.length > 0 && { not_returned: notReturned }),
+    ...(hints.length > 0 && { hint: hints.join(" ") }),
+  };
+}
+
+/**
+ * Every field of `items` longer than `limit` characters as JSON cut: text to
+ * its first part, and any other value left out.
+ */
+function cutFields(
+  items: GotItem[],
+  limit: number,
 ): { items: GotItem[]; cut: Cut[] } {
-  const size = (list: GotItem[]) => JSON.stringify(list).length;
-  if (size(items) <= budget) return { items, cut: [] };
-  let longest = 0;
-  for (const item of items) {
-    for (const value of Object.values(item.properties)) {
-      if (typeof value === "string") longest = Math.max(longest, value.length);
-    }
-  }
-  let limit = longest;
-  let fitted = items;
-  let cut: Cut[] = [];
-  while (limit > MIN_FIELD_CHARS) {
-    limit = Math.max(MIN_FIELD_CHARS, Math.floor(limit * 0.7));
-    cut = [];
-    fitted = items.map((item) => {
-      const properties: Record<string, unknown> = {};
-      for (const [field, value] of Object.entries(item.properties)) {
-        if (typeof value !== "string" || value.length <= limit) {
-          properties[field] = value;
-          continue;
-        }
+  const cut: Cut[] = [];
+  const fitted = items.map((item) => {
+    const properties: Record<string, unknown> = {};
+    for (const [field, value] of Object.entries(item.properties)) {
+      const length = jsonLength(value);
+      if (length <= limit) {
+        properties[field] = value;
+      } else if (typeof value === "string") {
         const part = cutText(value, 0, limit);
-        if (part.next_offset === null) {
-          properties[field] = value;
-          continue;
-        }
         properties[field] = part.text;
         cut.push({
           id: item.id,
           field,
           returned_chars: Array.from(part.text).length,
           total_chars: part.total_chars,
-          next_offset: part.next_offset,
+          next_offset: part.next_offset ?? part.total_chars,
+        });
+      } else {
+        cut.push({
+          id: item.id,
+          field,
+          returned_chars: 0,
+          total_chars: Array.from(jsonOf(value) ?? "").length,
+          next_offset: 0,
+          json: true,
         });
       }
-      return { ...item, properties };
-    });
-    if (size(fitted) + JSON.stringify(cut).length <= budget) break;
-  }
+    }
+    return { ...item, properties };
+  });
   return { items: fitted, cut };
+}
+
+/**
+ * The answer for `items`, kept within `budget` characters as JSON: the
+ * longest fields cut to one length, as long as lets the items fit, and then,
+ * with every field at its shortest, the last items left out and named.
+ */
+export function fitToBudget(
+  items: GotItem[],
+  notFound: string[],
+  budget: number,
+): ReturnType<typeof answerOf> {
+  const fits = (answer: ReturnType<typeof answerOf>) =>
+    JSON.stringify(answer).length <= budget;
+  let answer = answerOf(items, notFound, [], []);
+  if (fits(answer)) return answer;
+  let limit = 0;
+  for (const item of items) {
+    for (const value of Object.values(item.properties)) {
+      limit = Math.max(limit, jsonLength(value));
+    }
+  }
+  let fitted: { items: GotItem[]; cut: Cut[] } = { items, cut: [] };
+  while (limit > MIN_FIELD_CHARS) {
+    limit = Math.max(MIN_FIELD_CHARS, Math.floor(limit * 0.7));
+    fitted = cutFields(items, limit);
+    answer = answerOf(fitted.items, notFound, fitted.cut, []);
+    if (fits(answer)) return answer;
+  }
+  const kept = [...fitted.items];
+  const notReturned: string[] = [];
+  for (let last = kept.pop(); last !== undefined; last = kept.pop()) {
+    notReturned.unshift(last.id);
+    const keptIds = new Set(kept.map((item) => item.id));
+    answer = answerOf(
+      kept,
+      notFound,
+      fitted.cut.filter((entry) => keptIds.has(entry.id)),
+      notReturned,
+    );
+    if (fits(answer)) return answer;
+  }
+  return answer;
 }
 
 function compact(item: ApiItem, tags: string[]): GotItem {
@@ -179,7 +249,7 @@ export function registerGet(server: McpServer, ctx: ToolContext): void {
           .min(1)
           .optional()
           .describe(
-            "With one ID, return only this text field, from offset; for reading the rest of a field that was cut.",
+            "With one ID, only this field as text, from offset, to read the rest of a cut field.",
           ),
         offset: z
           .number()
@@ -206,14 +276,31 @@ export function registerGet(server: McpServer, ctx: ToolContext): void {
         if (!answer.ok) return refused(answer.refusal);
         const item = (answer.data as unknown as { item: ApiItem }).item;
         const value = item.properties[field];
-        if (typeof value !== "string") {
+        const text = typeof value === "string" ? value : jsonOf(value);
+        if (text === undefined) {
           return fail({
             code: "validation_error",
-            message: `The item has no text field named ${field}.`,
+            message: `The item has no field named ${field}.`,
           });
         }
-        const part = cutText(value, offset ?? 0, ANSWER_BUDGET_CHARS);
-        return ok({ id, field, offset: offset ?? 0, ...part });
+        const start = offset ?? 0;
+        const total = Array.from(text).length;
+        const frame = JSON.stringify({
+          id,
+          field,
+          offset: start,
+          text: "",
+          next_offset: total,
+          total_chars: total,
+        }).length;
+        if (ANSWER_BUDGET_CHARS - frame < MIN_FIELD_CHARS) {
+          return fail({
+            code: "validation_error",
+            message: "The field's name is too long to read it by parts.",
+          });
+        }
+        const part = cutText(text, start, ANSWER_BUDGET_CHARS - frame);
+        return ok({ id, field, offset: start, ...part });
       }
 
       const unique = [...new Set(ids)];
@@ -257,15 +344,7 @@ export function registerGet(server: McpServer, ctx: ToolContext): void {
       }
       const found = new Set(items.map((item) => item.id));
       const notFound = unique.filter((id) => !found.has(id));
-      const fitted = fitToBudget(items, ANSWER_BUDGET_CHARS);
-      return ok({
-        items: fitted.items,
-        ...(notFound.length > 0 && { not_found: notFound }),
-        ...(fitted.cut.length > 0 && {
-          cut: fitted.cut,
-          hint: "Some long fields were cut. Read the rest with marfa_get, one ID, field and offset set to next_offset.",
-        }),
-      });
+      return ok(fitToBudget(items, notFound, ANSWER_BUDGET_CHARS));
     },
   );
 }
