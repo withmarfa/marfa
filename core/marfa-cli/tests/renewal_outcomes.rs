@@ -6,7 +6,7 @@ mod door;
 mod isolated;
 
 use isolated::Isolated;
-use std::io::{Read, Write};
+use std::io::Write;
 
 fn keep_token(keychain: &Isolated, origin: &str) {
     keychain.put(origin, &serde_json::json!({
@@ -83,8 +83,7 @@ fn device_renewal_reports_local_keychain_failure_without_server_status() {
     let path = keychain.keychain_path();
     let server = std::thread::spawn(move || {
         let (mut stream, _) = listener.accept().unwrap();
-        let mut buffer = [0; 8192];
-        assert!(stream.read(&mut buffer).unwrap() > 0);
+        door::read_request(&mut stream);
         std::fs::remove_file(path).unwrap();
         let body = r#"{"error":{"code":"unauthorized","message":"expired"}}"#;
         write!(stream, "HTTP/1.1 401 Unauthorized\r\nContent-Type: application/json\r\nX-Marfa-Contract: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", marfa_core::contract::CONTRACT_VERSION, body.len()).unwrap();

@@ -6,7 +6,7 @@
 mod door;
 mod isolated;
 
-use std::io::{Read, Write};
+use std::io::Write;
 use std::net::TcpListener;
 use std::sync::mpsc::{Receiver, channel};
 
@@ -20,14 +20,9 @@ fn server() -> (String, Receiver<Option<String>>) {
     std::thread::spawn(move || {
         for stream in listener.incoming() {
             let Ok(mut stream) = stream else { continue };
-            let mut request = [0u8; 8192];
-            let read = stream.read(&mut request).unwrap_or(0);
-            let head = String::from_utf8_lossy(&request[..read]).into_owned();
-            let bearer = head.lines().find_map(|line| {
-                let (name, value) = line.split_once(':')?;
-                name.eq_ignore_ascii_case("authorization")
-                    .then(|| value.trim().trim_start_matches("Bearer ").to_string())
-            });
+            let bearer = door::read_request(&mut stream)
+                .header("authorization")
+                .map(|value| value.trim_start_matches("Bearer ").to_string());
             let _ = sent.send(bearer);
             let body = r#"{"data":[]}"#;
             let _ = write!(
