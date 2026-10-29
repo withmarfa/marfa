@@ -9,6 +9,9 @@
  * `initialize` is served by the SDK's stateless fallback from the same
  * tools.
  *
+ * It keeps no stream open: `subscriptions/listen` is answered as a method
+ * it does not serve, before the SDK would hold a stream for it.
+ *
  * A browser page may call it only from an origin the owner approved, since
  * a bearer in a page's script is that page's to use; any other `Origin` is
  * refused, as the transport asks of a server.
@@ -41,6 +44,26 @@ export interface McpDoorOptions {
 }
 
 const TOOL_CONTEXT = "marfa.tools";
+
+const LISTEN = "subscriptions/listen";
+
+function isListen(message: unknown): message is { id?: unknown } {
+  return (
+    typeof message === "object" &&
+    message !== null &&
+    (message as { method?: unknown }).method === LISTEN
+  );
+}
+
+/** The body as JSON, or `undefined` for the SDK to read and refuse itself. */
+async function parsedBodyOf(request: Request): Promise<unknown> {
+  if (request.method !== "POST") return undefined;
+  try {
+    return await request.clone().json();
+  } catch {
+    return undefined;
+  }
+}
 
 export function mcpRoutes(options: McpDoorOptions): Hono<AppEnv> {
   const router = new Hono<AppEnv>();
@@ -90,8 +113,18 @@ export function mcpRoutes(options: McpDoorOptions): Hono<AppEnv> {
       fetchFile: options.fetchFile,
       now: options.now ?? nowMs,
     };
+    const parsedBody = await parsedBodyOf(c.req.raw);
+    const listen = isListen(parsedBody) ? parsedBody : undefined;
+    if (listen !== undefined) {
+      return c.json({
+        jsonrpc: "2.0",
+        id: listen.id ?? null,
+        error: { code: -32601, message: "Method not found" },
+      });
+    }
     const grant = c.get("oauthGrant");
     return handler.fetch(c.req.raw, {
+      ...(parsedBody !== undefined && { parsedBody }),
       authInfo: {
         token: credential,
         clientId: grant?.clientId ?? apiKey.id,

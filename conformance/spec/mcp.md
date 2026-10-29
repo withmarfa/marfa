@@ -36,6 +36,14 @@ When a client of MCP revision 2025-11-25 opens with `initialize`, the server MUS
 
 **Tests:** `compliance/mcp.test.ts › serves a client of revision 2025-11-25 that opens with initialize the same tools`.
 
+### `mcp/no-listen`
+
+When a client calls `subscriptions/listen` on `/mcp`, the server MUST answer with the JSON-RPC error `-32601` in a JSON body and MUST NOT open a stream.
+
+**Reason:** the endpoint keeps no session and no stream between requests, so a listen held open would only hold a connection.
+
+**Tests:** `compliance/mcp.test.ts › answers subscriptions/listen with method not found and opens no stream`.
+
 ## The tools a credential is offered
 
 ### `mcp/tools-for-writer`

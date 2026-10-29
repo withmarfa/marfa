@@ -160,6 +160,51 @@ describe("protocol revisions", () => {
       await legacy.close();
     }
   });
+
+  it("answers subscriptions/listen with method not found and opens no stream", async () => {
+    const send = (method: string) =>
+      fetch(new URL("/mcp", apiUrl), {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json",
+          Accept: "application/json, text/event-stream",
+          "MCP-Protocol-Version": "2026-07-28",
+          "Mcp-Method": method,
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 7,
+          method,
+          params: {
+            ...(method === "subscriptions/listen"
+              ? { notifications: { toolsListChanged: true } }
+              : {}),
+            _meta: {
+              "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+              "io.modelcontextprotocol/clientCapabilities": {},
+              "io.modelcontextprotocol/clientInfo": {
+                name: "conformance",
+                version: "0.0.0",
+              },
+            },
+          },
+        }),
+      });
+    // The witness: the same request is served for a method the endpoint serves.
+    const listed = await send("tools/list");
+    expect(listed.status).toBe(200);
+    await listed.body?.cancel();
+
+    const listen = await send("subscriptions/listen");
+    expect(listen.headers.get("content-type")).toMatch(/^application\/json/);
+    const body = (await listen.json()) as {
+      id: number;
+      error: { code: number };
+    };
+    expect(body.id).toBe(7);
+    expect(body.error.code).toBe(-32601);
+  });
 });
 
 describe("which tools a credential is offered", () => {

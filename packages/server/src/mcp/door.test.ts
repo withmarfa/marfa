@@ -179,6 +179,52 @@ describe("/mcp", () => {
     }
   });
 
+  it("answers subscriptions/listen with method not found and opens no stream", async () => {
+    const send = (method: string) =>
+      Promise.resolve(
+        ctx.app.request(MCP_URL, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${ctx.workingKey}`,
+            "Content-Type": "application/json",
+            Accept: "application/json, text/event-stream",
+            "MCP-Protocol-Version": "2026-07-28",
+            "Mcp-Method": method,
+          },
+          body: JSON.stringify({
+            jsonrpc: "2.0",
+            id: 7,
+            method,
+            params: {
+              ...(method === "subscriptions/listen"
+                ? { notifications: { toolsListChanged: true } }
+                : {}),
+              _meta: {
+                "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+                "io.modelcontextprotocol/clientCapabilities": {},
+                "io.modelcontextprotocol/clientInfo": {
+                  name: "test",
+                  version: "0.0.0",
+                },
+              },
+            },
+          }),
+        }),
+      );
+    // The witness: the same envelope reaches the server for another method.
+    const listed = await send("tools/list");
+    expect(listed.status).toBe(200);
+    await listed.body?.cancel();
+
+    const response = await send("subscriptions/listen");
+    expect(response.headers.get("content-type")).toMatch(/^application\/json/);
+    expect(await response.json()).toEqual({
+      jsonrpc: "2.0",
+      id: 7,
+      error: { code: -32601, message: "Method not found" },
+    });
+  });
+
   it("refuses a query key it does not take, once the credential is known", async () => {
     const response = await request(ctx.app, "POST", "/mcp?session=1", {
       key: ctx.workingKey,
