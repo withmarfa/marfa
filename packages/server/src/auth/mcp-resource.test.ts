@@ -14,6 +14,10 @@ describe("isAcceptedResource", () => {
     `${BASE}/mcp`,
     `${BASE}/mcp/schema`,
     `${BASE}/mcp/admin`,
+    "HTTPS://MARFA.EXAMPLE.TEST",
+    "https://Marfa.Example.Test/",
+    "HTTPS://MARFA.EXAMPLE.TEST/mcp",
+    "Https://marfa.EXAMPLE.test/mcp/admin",
   ])("accepts %s", (value) => {
     expect(isAcceptedResource(BASE, value)).toBe(true);
     expect(isAcceptedResource(`${BASE}/`, value)).toBe(true);
@@ -26,6 +30,13 @@ describe("isAcceptedResource", () => {
     `${BASE}/mcp?x=1`,
     `${BASE}/mcp#top`,
     `${BASE}/items`,
+    `${BASE}/MCP`,
+    `${BASE}/Mcp/schema`,
+    `${BASE}/%6Dcp`,
+    `${BASE}/mcp%2Fschema`,
+    "HTTPS://MARFA.EXAMPLE.TEST/mcp?x=1",
+    "HTTPS://MARFA.EXAMPLE.TEST/items",
+    "https://user@marfa.example.test/mcp",
     "https://other.example.test/mcp",
     "https://marfa.example.test:8443/mcp",
     "http://marfa.example.test/mcp",

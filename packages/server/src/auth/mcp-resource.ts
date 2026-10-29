@@ -24,16 +24,23 @@ function originOf(baseURL: string): string {
   return baseURL.replace(/\/+$/, "");
 }
 
+/** A URI split after its authority: `scheme://authority` and the rest. */
+const AUTHORITY = /^([a-z][a-z0-9+.-]*:\/\/[^/?#]*)(.*)$/i;
+
 /**
  * Whether a `resource` value names this server: its origin, with or without
  * a trailing slash, or one MCP endpoint exactly as {@link MCP_RESOURCE_PATHS}
- * spells it.
+ * spells it. The scheme and host compare without case (RFC 3986 §6.2.2.1);
+ * the path compares exactly.
  */
 export function isAcceptedResource(baseURL: string, value: string): boolean {
   const origin = originOf(baseURL);
   if (origin.length === 0) return false;
-  if (value.replace(/\/+$/, "") === origin) return true;
-  return MCP_RESOURCE_PATHS.some((path) => value === `${origin}${path}`);
+  const parts = AUTHORITY.exec(value);
+  if (!parts || parts[1]?.toLowerCase() !== origin.toLowerCase()) return false;
+  const rest = parts[2] ?? "";
+  if (/^\/*$/.test(rest)) return true;
+  return MCP_RESOURCE_PATHS.some((path) => rest === path);
 }
 
 /** The canonical URI a token for `path` names as its audience. */
