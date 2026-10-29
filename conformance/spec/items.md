@@ -178,7 +178,7 @@ If the natural key of `POST /items`, without `mode: create_only`, resolves an it
 
 ### `items/natural-key-new`
 
-When a create names a `source_id` no item holds under its source, or names neither a `source_id` nor an `id` an item holds, the server MUST create a new item.
+When a create names neither a `source_id` that an item holds under its source nor an `id` that an item holds, the server MUST create a new item.
 
 **Tests:** `correctness/dedup.test.ts › same source but different source_id is not a duplicate`, `› items without source/source_id are never duplicates`.
 
