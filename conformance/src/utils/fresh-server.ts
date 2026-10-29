@@ -104,8 +104,9 @@ export interface FreshServer {
    * `deadline:<job>=<ms>` shortens a job's run deadline,
    * `free:<volume>=<bytes>` sets the reported free space,
    * `store-check-deadline=<ms>` shortens how long a blob store may go
-   * unanswered, and `resolve:<hostname>=<answers>` scripts webhook name
-   * lookups. The points are stated in `conformance/README.md`, "Faults".
+   * unanswered, and `resolve:<hostname>=<answers>` scripts the name
+   * lookups of webhooks and of files the MCP tools fetch. The points are
+   * stated in `conformance/README.md`, "Faults".
    * The fault is cleared by `clearFault`, by `restart`, and by `stop`, so
    * none outlives the fixture that set it.
    */
