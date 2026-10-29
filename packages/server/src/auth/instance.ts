@@ -35,7 +35,6 @@ import { cimd } from "@better-auth/cimd";
 import { fetchClientMetadataResource as fetchOverPinnedAddress } from "@better-auth/cimd/node";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { jwt } from "better-auth/plugins";
-import { isAPIError } from "better-auth/api";
 import { ErrorCode, MarfaError } from "@withmarfa/shared";
 import * as sqliteSchema from "../storage/sqlite/schema.js";
 import { log } from "../middleware/logger.js";
@@ -463,23 +462,6 @@ export interface MarfaAuth {
 }
 
 /**
- * Whether the storage layer's write-lock refusal is somewhere in this
- * error's `cause` chain. The adapter's statements reach the database through
- * Drizzle, which wraps what the driver threw, so the refusal does not arrive
- * at the top. Bounded because a chain is data and may cycle.
- */
-function carriesWriteContention(err: unknown): boolean {
-  for (let step: unknown = err, depth = 0; depth < 8; depth++) {
-    if (step instanceof MarfaError) {
-      return step.code === ErrorCode.WRITE_CONTENTION;
-    }
-    if (step === null || typeof step !== "object") return false;
-    step = (step as { cause?: unknown }).cause;
-  }
-  return false;
-}
-
-/**
  * Whether the storage turned a write away for want of room, the write lock or
  * permission to write, wherever in the `cause` chain: the faults that leave a
  * read answerable. Bounded because a chain is data and may cycle.
@@ -563,19 +545,12 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
       ? withCredentialAudit(credentialAdapter, options.storage)
       : credentialAdapter,
     onAPIError: {
-      // Write contention, wherever it is wrapped, and anything else Better
-      // Auth's handler throws that is not one of its own errors are rethrown
-      // out of the handler to the server's error handler, which answers them
-      // as `503 write_contention` and `500 internal_error` and is the one
-      // place a fault is reported. Throwing is the only way out, since this
-      // hook's return is ignored, and left alone the library prints the error
-      // whole to stderr. Its own errors are logged as it logs them when no
-      // hook is set: only when they are a `500`.
-      onError: (error, ctx) => {
-        if (carriesWriteContention(error) || !isAPIError(error)) throw error;
-        if (error.status !== "INTERNAL_SERVER_ERROR") return;
-        ctx.logger.error(error.name, error);
-      },
+      // Anything Better Auth's handler throws that is not one of its own
+      // errors leaves the handler for the server's error handler, which
+      // answers it and is the one place a fault is reported. Without this the
+      // library prints the error whole, statement parameters included, to
+      // stderr, and a hook that throws is only logged.
+      throw: true,
     },
     // The provider renews a session only once its last renewal is a day old,
     // so a session used within that day still ends a week after the renewal.
