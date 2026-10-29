@@ -136,8 +136,9 @@ pub fn spawn_apart(
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Stop {
     pub signal: &'static str,
-    /// The process that sent it, where the platform said: a signal the
-    /// terminal raised for Ctrl-C comes from none.
+    /// The process that sent it, where the platform said: for Ctrl-C, Linux
+    /// names none and macOS names the process that wrote the key to the
+    /// terminal.
     pub sender: Option<u32>,
 }
 
