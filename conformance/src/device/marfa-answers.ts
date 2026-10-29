@@ -170,6 +170,7 @@ export function wireType(
       fields: { body: "keep_both_copies" },
       default: "last_writer_wins",
     },
+    own_roles: [],
     provenance: shipped
       ? { origin: "platform", created_by: null }
       : {
