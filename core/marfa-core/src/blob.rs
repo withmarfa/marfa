@@ -991,12 +991,27 @@ impl Cache {
             let _ = self.unlink_label(incoming);
             self.unwritable(error)
         })?;
+        // An upload is queued once its bytes have their name, and a rename
+        // that a power loss undoes leaves them in a file the startup sweep
+        // takes by its age.
         #[cfg(unix)]
-        if let Some(directory) = self
-            .capability(false)
-            .map_err(|error| self.unwritable(error))?
         {
-            directory.sync().map_err(|error| self.unwritable(error))?;
+            let opened;
+            let folder = match self
+                .capability(false)
+                .map_err(|error| self.unwritable(error))?
+            {
+                Some(directory) => directory.file(),
+                None => {
+                    opened = File::open(&self.dir).map_err(|error| self.unwritable(error))?;
+                    &opened
+                }
+            };
+            #[cfg(debug_assertions)]
+            if crate::fault::fails(|| "blob-folder-sync") {
+                return Err(self.unwritable(io::Error::other("the folder sync failed")));
+            }
+            folder.sync_all().map_err(|error| self.unwritable(error))?;
         }
         Ok(path)
     }
@@ -1650,6 +1665,35 @@ pub(crate) mod tests {
         assert_eq!(mark(no_uploads()), Mark::Excluded);
         assert_eq!(mark(Some(named)), Mark::Kept);
         assert_eq!(mark(None), Mark::Kept);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn bytes_take_their_name_only_once_the_folder_holding_them_is_synced() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap().join("owned");
+        fs::create_dir(&root).unwrap();
+        let directory = crate::directory::Directory::open(&root).unwrap();
+        let source = temp.path().join("source.bin");
+        fs::write(&source, b"queued as an upload").unwrap();
+        for cache in [
+            Cache::beside(&temp.path().join("core.sqlite")),
+            Cache::anchored(&directory, &root.join("core.sqlite"), true).unwrap(),
+        ] {
+            {
+                let _failing = crate::fault::fail_on_this_thread("blob-folder-sync");
+                let refused = cache.take_reader(&source, File::open(&source).unwrap());
+                assert!(
+                    matches!(refused, Err(CoreError::Store(_))),
+                    "bytes were taken without a sync of their folder"
+                );
+            }
+            // The witness: the same bytes are taken once the sync succeeds.
+            let taken = cache
+                .take_reader(&source, File::open(&source).unwrap())
+                .unwrap();
+            assert!(cache.held(&taken.hash).unwrap().is_some());
+        }
     }
 
     #[cfg(unix)]
