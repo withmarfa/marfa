@@ -1,8 +1,9 @@
 /**
  * /views: the one door that writes `system.view`. The item doors refuse
  * every `system.*` write, so a view is created, changed and deleted here,
- * gated on write to `system.view` in the caller's type map. Nothing here
- * returns the items a view lists: a view never widens what a key reads.
+ * gated on write to `system.view` in the caller's type map. The door that
+ * lists a view's items asks the reader's own type map of every row, so a view
+ * never widens what a key reads.
  */
 import { createRoute, z } from "@hono/zod-openapi";
 import {
@@ -11,16 +12,31 @@ import {
   getEdgeTypeSchema,
   isValidId,
   maxStringLength,
+  resolveEnforcement,
 } from "@withmarfa/shared";
 import type { Item, Metadata } from "@withmarfa/shared";
 import type { Context } from "hono";
+import { snapshotReadRoute } from "../middleware/read-snapshot.js";
+import {
+  DEFAULT_PAGE_LIMIT,
+  MAX_PAGE_LIMIT,
+  pageCursor,
+  pageLimit,
+} from "../page-limits.js";
 import type { AppEnv } from "../middleware/auth.js";
 import {
   checkTypePermission,
+  getTypeFilter,
   itemProvenanceSource,
+  readsSomeType,
   requireAuth,
+  requireEdgePermission,
+  requireReadableRow,
   standingRule,
 } from "../middleware/auth.js";
+import { readInstanceConfig } from "../storage/instance-config.js";
+import { PARENT_OF } from "../storage/view-listing.js";
+import { assertFilterEdgeTermsReadable } from "./_edge-visibility.js";
 import { rememberItemSubject } from "../middleware/replay-requirements.js";
 import { runAuditedTransaction } from "../storage/audited-transaction.js";
 import type { Storage } from "../storage/interface.js";
@@ -32,7 +48,7 @@ import {
   makeErrorResponseSchema,
   OkResponseSchema,
 } from "../openapi.js";
-import { ItemWithMetadataSchema } from "./_schemas.js";
+import { ItemSchema, ItemWithMetadataSchema, pageOf } from "./_schemas.js";
 import { AncestorUnavailableSchema, ConflictResponseSchema } from "./items.js";
 import { readableMetadata } from "./_extension-reach.js";
 import { requestBlobProof } from "./_blob-reach.js";
@@ -184,6 +200,12 @@ const UpdateViewSchema = z.strictObject({
     .describe(
       "A new grouping, which replaces the current one whole. `null` removes the grouping.",
     ),
+});
+
+/** The two settings a listing reads, from a stored view. */
+const StoredViewSchema = z.looseObject({
+  query: ViewQuerySchema.optional(),
+  sort: SortsSchema.optional(),
 });
 
 const IdParam = z.object({
@@ -437,6 +459,73 @@ const deleteViewRoute = createRoute({
   },
 });
 
+const listViewItemsRoute = createRoute({
+  operationId: "listViewItems",
+  method: "get",
+  path: "/{id}/items",
+  tags: ["Views"],
+  summary: "List a view's items",
+  description:
+    "Returns a page of the items a view lists, in the view's sort order. Items of types you can't read are left out. A view's grouping isn't applied.",
+  security: [{ bearerAuth: [] }],
+  middleware: readsSomeType,
+  request: {
+    params: IdParam,
+    query: z.object({
+      limit: pageLimit({ max: MAX_PAGE_LIMIT, default: DEFAULT_PAGE_LIMIT }),
+      cursor: pageCursor(),
+    }),
+  },
+  responses: {
+    200: {
+      content: {
+        "application/json": {
+          schema: pageOf(ItemSchema, "ViewItemPage", {
+            page: "A page of the items a view lists.",
+            data: "The items on this page, in the view's sort order.",
+          }),
+        },
+      },
+      description: "Returns a page of items.",
+    },
+    400: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema([
+            "validation_error",
+            "invalid_id",
+            "invalid_transition",
+          ]),
+        },
+      },
+      description:
+        "- `validation_error`: `cursor` came from another view or ordering, or the view holds a setting that can't be listed.\n- `invalid_id`: the ID is invalid.\n- `invalid_transition`: the view is revoked.",
+    },
+    ...unauthorized,
+    403: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema([
+            "type_not_permitted",
+            "edge_permission_denied",
+          ]),
+        },
+      },
+      description:
+        "- `type_not_permitted`: your credential reaches no type.\n- `edge_permission_denied`: the view's filter names an edge type, or its `beneath` needs `parent-of`, that you can't read.",
+    },
+    404: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["item_not_found"]),
+        },
+      },
+      description:
+        "- `item_not_found`: no `system.view` you can read has this ID.",
+    },
+  },
+});
+
 /**
  * The properties a change writes. A merge cannot remove a property, so a
  * `group` of `null` is a clear: the store removes it, and at a stale version
@@ -494,6 +583,58 @@ export function viewRoutes(storage: Storage) {
       { item, metadata: readableMetadata(metadata, c.get("apiKey")) },
       201,
     );
+  });
+
+  router.openapi(snapshotReadRoute(storage, listViewItemsRoute), async (c) => {
+    const { id } = c.req.valid("param");
+    const { limit, cursor } = c.req.valid("query");
+    if (!isValidId(id)) {
+      throw new MarfaError(ErrorCode.INVALID_ID, "Invalid item ID");
+    }
+    const found = await storage.items.get(id);
+    const view = requireReadableRow(
+      c,
+      found?.type === VIEW_TYPE ? found : null,
+      () => new MarfaError(ErrorCode.ITEM_NOT_FOUND, `View ${id} not found`),
+    );
+    if (view.state === "revoked") {
+      throw new MarfaError(
+        ErrorCode.INVALID_TRANSITION,
+        `View ${id} is revoked, and a revoked view lists nothing`,
+      );
+    }
+    const settings = StoredViewSchema.safeParse(view.properties);
+    if (!settings.success) {
+      throw new MarfaError(
+        ErrorCode.VALIDATION_ERROR,
+        `View ${id} holds a setting that can't be listed`,
+      );
+    }
+    const query = settings.data.query ?? {};
+    assertFilterEdgeTermsReadable(c, query.filter);
+    if (query.beneath !== undefined) {
+      requireEdgePermission(c, PARENT_OF, "read");
+    }
+    const reader = getTypeFilter(c);
+    const { source_filter } = resolveEnforcement(
+      await readInstanceConfig(storage.settings),
+      requireAuth(c),
+    );
+    const page = await storage.items.listInView(
+      {
+        id,
+        query,
+        sort: settings.data.sort ?? [],
+        reader: {
+          source_filter,
+          readable_sources: reader,
+          allowed_types: reader.allowed,
+          excluded_types: reader.excluded,
+        },
+      },
+      { limit, cursor },
+    );
+    return c.json(page, 200);
   });
 
   router.openapi(updateViewRoute, async (c) => {

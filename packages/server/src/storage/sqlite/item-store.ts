@@ -90,6 +90,7 @@ import type {
   CursorSortKey,
   Tombstone,
   TombstoneSelector,
+  ViewListing,
 } from "../interface.js";
 import {
   NaturalKeyHeld,
@@ -105,6 +106,14 @@ import {
   propertySortValue,
 } from "../property-sort.js";
 import { closedToNewEdge } from "../edge-constraints.js";
+import {
+  afterCursor,
+  beneathSql,
+  encodeViewCursor,
+  keyValue,
+  orderBy,
+  viewOrder,
+} from "../view-listing.js";
 import {
   MAX_STATEMENT_PARAMETERS,
   typeSlices,
@@ -1471,6 +1480,80 @@ export class SqliteItemStore implements ItemStore {
     }
 
     return { data, next_cursor: cursor };
+  }
+
+  async listInView(
+    view: ViewListing,
+    page: { limit?: number; cursor?: string },
+  ): Promise<PaginatedResult<Item>> {
+    const { query, reader } = view;
+    const limit = Math.max(
+      MIN_PAGE_LIMIT,
+      Math.min(page.limit ?? DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT),
+    );
+    const order = viewOrder(view.sort);
+    const conditions = itemFilterConditions({
+      ...reader,
+      all_states: true,
+      exclude_system_types: true,
+      filter: query.filter,
+      tier: query.tier === "all" ? undefined : query.tier,
+    });
+    conditions.push(
+      inArray(items.state, [...(query.state ?? ["active", "archived"])]),
+    );
+
+    const named = (query.types ?? []).map((type) => type.trim());
+    if (named.length > 0 && !named.includes(GLOBAL_TYPE_WILDCARD)) {
+      const subtrees = named.map((type) => typeSubtreeSql(items.type, type));
+      const held = or(...subtrees.filter((sub) => sub !== undefined));
+      if (held) conditions.push(held);
+    }
+    if (query.beneath !== undefined) {
+      conditions.push(
+        beneathSql(query.beneath, (type, source) =>
+          and(
+            typeFilterSql(type, {
+              allowed: reader.allowed_types,
+              excluded: reader.excluded_types ?? [],
+            }),
+            sourceFilterToSql(reader.source_filter, type, source),
+          ),
+        ),
+      );
+    }
+    if (page.cursor !== undefined) {
+      conditions.push(afterCursor(view.id, order, page.cursor));
+    }
+
+    const keyColumns = Object.fromEntries(
+      order.terms.map((term, i) => [
+        `key_${String(i)}`,
+        sql`${term.expr}`.as(`key_${String(i)}`),
+      ]),
+    );
+    const rows = await this.db
+      .select({ ...itemColumns, ...keyColumns })
+      .from(items)
+      .where(and(...conditions))
+      .orderBy(...orderBy(order))
+      .limit(limit + 1)
+      .all();
+
+    const data = rows.slice(0, limit).map(rowToItem);
+    const last: Record<string, unknown> | undefined =
+      rows.length > limit ? rows[limit - 1] : undefined;
+    const lastItem = data.at(-1);
+    if (last === undefined || lastItem === undefined) {
+      return { data, next_cursor: null };
+    }
+    const values = order.terms.map((_, i) =>
+      keyValue(last[`key_${String(i)}`]),
+    );
+    return {
+      data,
+      next_cursor: encodeViewCursor(view.id, order, values, lastItem.id),
+    };
   }
 
   async update(

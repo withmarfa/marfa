@@ -258,7 +258,7 @@ export const PUBLIC_TAGS: readonly PublicTag[] = [
     name: "Views",
     description:
       "Saved lists of items with their sort and grouping, held as `system.view` items.",
-    operations: ["createView", "updateView", "deleteView"],
+    operations: ["createView", "listViewItems", "updateView", "deleteView"],
   },
   {
     name: "Connectors",

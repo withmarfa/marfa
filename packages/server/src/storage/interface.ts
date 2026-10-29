@@ -111,6 +111,35 @@ export function parseSortField(
   );
 }
 
+/** One key a view sorts by. */
+export interface ViewSortKey {
+  by: string;
+  direction: SortDirection;
+}
+
+/**
+ * A saved view, resolved for a listing: the settings of its `query` and
+ * `sort`, and what the reading credential may see. The listing narrows by
+ * the reader exactly as `ItemFilters` does, so a view never lists a row the
+ * same credential could not list through `GET /items`.
+ */
+export interface ViewListing {
+  /** The view's id, which a cursor is bound to. */
+  id: string;
+  query: {
+    types?: readonly string[] | undefined;
+    tier?: "library" | "feed" | "all" | undefined;
+    state?: readonly ("active" | "archived")[] | undefined;
+    filter?: string | undefined;
+    beneath?: string | undefined;
+  };
+  sort: readonly ViewSortKey[];
+  reader: Pick<
+    ItemFilters,
+    "source_filter" | "readable_sources" | "allowed_types" | "excluded_types"
+  >;
+}
+
 export interface ItemFilters {
   type?: string;
   state?: ItemState;
@@ -851,6 +880,14 @@ export interface ItemStore {
    */
   getIncludingTrashed(id: string): Promise<Item | null>;
   list(filters: ItemFilters): Promise<PaginatedResult<Item>>;
+  /**
+   * A page of the items a view lists, in the view's own order: active and
+   * archived by default, never `system.*`, and only rows the reader may read.
+   */
+  listInView(
+    view: ViewListing,
+    page: { limit?: number; cursor?: string },
+  ): Promise<PaginatedResult<Item>>;
   trashDetailsOf(ids: readonly string[]): Promise<Map<string, TrashDetails>>;
   listTrashSummaries(
     filters: ItemSummaryFilters,
