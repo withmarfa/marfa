@@ -17,13 +17,6 @@ afterAll(async () => {
   await ctx.cleanup();
 });
 
-/**
- * Operations a tool calls that are not published yet, called through
- * `McpApi.raw`. When one is published this test fails: call it through the
- * typed client and take it off this list.
- */
-const UNPUBLISHED_OPERATIONS = new Set(["listViewItems"]);
-
 function publishedOperationIds(): Set<string> {
   const document = finalizeOpenAPISpec(
     ctx.app.getOpenAPI31Document({
@@ -52,19 +45,10 @@ const TOOL_LIST_BUDGET_CHARS = 16_000;
 describe("the MCP tools", () => {
   it("call only operations the API publishes", () => {
     const published = publishedOperationIds();
-    const missing: string[] = [];
-    const nowPublished: string[] = [];
-    for (const operations of Object.values(TOOL_OPERATIONS)) {
-      for (const operation of operations) {
-        if (UNPUBLISHED_OPERATIONS.has(operation)) {
-          if (published.has(operation)) nowPublished.push(operation);
-        } else if (!published.has(operation)) {
-          missing.push(operation);
-        }
-      }
-    }
+    const missing = Object.values(TOOL_OPERATIONS)
+      .flat()
+      .filter((operation) => !published.has(operation));
     expect(missing).toEqual([]);
-    expect(nowPublished).toEqual([]);
   });
 
   it("fit the client's context budget", async () => {

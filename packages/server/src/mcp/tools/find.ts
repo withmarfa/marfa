@@ -1,5 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/server";
 import { itemName } from "@withmarfa/shared";
+import { itemId } from "../args.js";
 import * as z from "zod";
 import type { ToolContext } from "../context.js";
 import { fail, ok, refused } from "../results.js";
@@ -167,9 +168,7 @@ export function registerFind(server: McpServer, ctx: ToolContext): void {
             "Order: `relevance` for a search (its default), otherwise `updated_at` by default.",
           ),
         direction: z.enum(["asc", "desc"]).optional(),
-        view: z
-          .string()
-          .min(1)
+        view: itemId
           .optional()
           .describe(
             "A view's ID from marfa_overview, to list the items the view shows. Takes no other filter.",
@@ -204,15 +203,17 @@ export function registerFind(server: McpServer, ctx: ToolContext): void {
             message: `A view lists the items it defines; leave out ${others.map(([key]) => key).join(", ")}.`,
           });
         }
-        // `GET /views/{id}/items` is not published, so the generated client
-        // lacks it; `server.test.ts` fails once it is.
-        const answer = await ctx.api.raw<{
-          data: ListedItem[];
-          next_cursor: string | null;
-        }>("GET", `/views/${encodeURIComponent(args.view)}/items`, {
-          limit,
-          cursor: args.cursor,
-        });
+        const answer = await ctx.api.answer(
+          ctx.api.client.GET("/views/{id}/items", {
+            params: {
+              path: { id: args.view },
+              query: {
+                limit,
+                ...(args.cursor !== undefined && { cursor: args.cursor }),
+              },
+            },
+          }),
+        );
         if (!answer.ok) return refused(answer.refusal);
         return page(
           answer.data.data.map((item) => rowOf(item)),

@@ -28,20 +28,6 @@ export interface McpApiOptions {
   dispatch: (request: Request) => Promise<Response>;
 }
 
-/** Read an error body into a refusal. */
-export async function refusalOf(response: Response): Promise<ApiRefusal> {
-  let body: Record<string, unknown> = {};
-  try {
-    const parsed: unknown = await response.json();
-    if (typeof parsed === "object" && parsed !== null) {
-      body = parsed as Record<string, unknown>;
-    }
-  } catch {
-    // An answer without a JSON body is named by its status alone.
-  }
-  return refusalFromBody(response.status, body);
-}
-
 export function refusalFromBody(status: number, body: unknown): ApiRefusal {
   const record =
     typeof body === "object" && body !== null
@@ -71,12 +57,10 @@ export function refusalFromBody(status: number, body: unknown): ApiRefusal {
 /** The API, for one MCP request. */
 export class McpApi {
   readonly client: MarfaClient;
-  private readonly base: string;
 
-  constructor(private readonly options: McpApiOptions) {
-    this.base = options.baseUrl.replace(/\/+$/, "");
+  constructor(options: McpApiOptions) {
     this.client = createClient({
-      baseUrl: this.base,
+      baseUrl: options.baseUrl.replace(/\/+$/, ""),
       credential: options.credential,
       fetch: (input, init) =>
         options.dispatch(
@@ -99,32 +83,5 @@ export class McpApi {
       return { ok: true, status: response.status, data: data as T };
     }
     return { ok: false, refusal: refusalFromBody(response.status, error) };
-  }
-
-  /**
-   * A call to an operation the generated client does not know yet. The
-   * request is the same in-process request the client sends.
-   */
-  async raw<T>(
-    method: "GET" | "POST" | "DELETE",
-    path: string,
-    query: Record<string, string | number | undefined> = {},
-  ): Promise<ApiAnswer<T>> {
-    const url = new URL(`${this.base}${path}`);
-    for (const [key, value] of Object.entries(query)) {
-      if (value !== undefined) url.searchParams.set(key, String(value));
-    }
-    const response = await this.options.dispatch(
-      new Request(url, {
-        method,
-        headers: { Authorization: `Bearer ${this.options.credential}` },
-      }),
-    );
-    if (!response.ok) return { ok: false, refusal: await refusalOf(response) };
-    return {
-      ok: true,
-      status: response.status,
-      data: (await response.json()) as T,
-    };
   }
 }
