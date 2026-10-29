@@ -1045,7 +1045,7 @@ The server MUST serve `/.well-known/oauth-protected-resource/mcp`, `/.well-known
 
 The server MUST advertise `client_id_metadata_document_supported` as `true` in both its OAuth authorization server metadata and its OpenID configuration.
 
-**Reason:** An MCP client names itself by a client ID metadata document only when the server advertises it beside the `none` authentication method, and otherwise falls back to registration.
+**Reason:** An MCP client names itself by a client ID metadata document only when the server advertises that it accepts one, and otherwise falls back to registration.
 
 **Tests:** `compliance/oauth.test.ts › advertises client ID metadata documents beside public clients in both discovery documents`.
 
