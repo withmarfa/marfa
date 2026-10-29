@@ -2,6 +2,8 @@
 
 The MCP endpoint, `/mcp`, serves Marfa's tools to an agent over Streamable HTTP. A request carries an API key or an app's access token as a Bearer credential, and every tool call is a call to the API with that credential, so the API's own rules for the credential hold for it. The tools are `marfa_overview`, `marfa_find`, `marfa_get`, `marfa_create`, `marfa_update` and `marfa_delete`.
 
+Two more endpoints serve the same tools and a group of their own. `/mcp/schema` adds `marfa_save_type`, `marfa_save_view`, `marfa_move_items`, `marfa_bulk_save` and `marfa_search_docs`, for shaping what the instance holds. `/mcp/admin` adds `marfa_health`, `marfa_audit`, `marfa_keys`, `marfa_manage_key`, `marfa_revoke_key`, `marfa_webhooks` and `marfa_manage_webhook`, for running it. Unless a statement names an endpoint, it holds at all three.
+
 ## Who may call it
 
 The challenges an MCP client signs in and steps up from are stated with the server's other resources, in `keys-and-oauth/mcp-challenge-credential` and `keys-and-oauth/mcp-challenge-scope`.
@@ -60,13 +62,35 @@ While a credential's type map grants no type, the server MUST NOT declare the `t
 
 **Tests:** `compliance/mcp.test.ts › offers no tools to a credential whose type map reaches no type`.
 
+### `mcp/tools-for-schema`
+
+When a credential calls `/mcp/schema`, the server MUST list to it the tools `/mcp` lists it and `marfa_search_docs`, with `marfa_save_type` while it may register types or holds `schema.write`, `marfa_save_view` while its type map grants `write` on `system.view`, and `marfa_move_items` and `marfa_bulk_save` while its type map grants `write` on at least one type.
+
+**Reason:** a tool the credential can never use costs the agent's context and invites calls that fail.
+
+**Tests:** `compliance/mcp.test.ts › lists the six tools and every schema tool at /mcp/schema to a credential that may use each`, `› lists only the read tools and marfa_search_docs at /mcp/schema to a credential that only reads`.
+
+### `mcp/tools-for-admin`
+
+When a credential calls `/mcp/admin`, the server MUST list to it the tools `/mcp` lists it, with `marfa_health` while it holds `instance.read` or `connectors.manage`, `marfa_audit` while it holds `audit.read`, `marfa_keys`, `marfa_manage_key` and `marfa_revoke_key` while it holds `keys.mint` or `keys.manage`, and `marfa_webhooks` and `marfa_manage_webhook` while it holds `webhooks.manage`.
+
+**Tests:** `compliance/mcp.test.ts › lists each admin tool at /mcp/admin only to a credential that holds its permission`, `› lists every admin tool at /mcp/admin to a credential that holds every permission and reaches no type`.
+
+### `mcp/tools-withheld`
+
+The server MUST NOT list at any MCP endpoint a tool that purges items, exports the instance, restores a backup, claims the instance, changes the instance's settings, manages the owner, passkeys or sign-ins, manages file storage or runs housekeeping.
+
+**Reason:** each of these can lose what the owner keeps or lock the owner out, and the owner does them in the console, not through an agent.
+
+**Tests:** `compliance/mcp.test.ts › lists every admin tool at /mcp/admin to a credential that holds every permission and reaches no type`, `› lists the six tools and every schema tool at /mcp/schema to a credential that may use each`.
+
 ### `mcp/open-world-hint`
 
-When the server lists its tools, the server MUST annotate `marfa_create` with `openWorldHint` `true` and every other tool with `openWorldHint` `false`.
+When the server lists its tools, the server MUST annotate `marfa_create` and `marfa_manage_webhook` with `openWorldHint` `true` and every other tool with `openWorldHint` `false`.
 
-**Reason:** `marfa_create` fetches a file from a web address the agent gives it, and a client asks the person differently before a tool that reaches outside the instance.
+**Reason:** `marfa_create` fetches a file from a web address the agent gives it, and `marfa_manage_webhook` has the instance send events to one; a client asks the person differently before a tool that reaches outside the instance.
 
-**Tests:** `compliance/mcp.test.ts › marks marfa_create as reaching outside the instance and no other tool`.
+**Tests:** `compliance/mcp.test.ts › marks marfa_create as reaching outside the instance and no other tool`, `› marks marfa_create and marfa_manage_webhook as reaching outside the instance and no other tool`.
 
 ## Calling a tool
 
@@ -201,6 +225,48 @@ If a `marfa_delete` call carries a `confirm` token a preview gave another creden
 If a `marfa_delete` call carries a `confirm` token from a preview more than five minutes earlier, then the server MUST refuse the call with the tool error code `confirmation_stale`.
 
 **Tests:** `compliance/mcp-scripted.test.ts › refuses a confirmation once five minutes have passed since the preview`.
+
+## Moving items to another type
+
+`marfa_move_items` moves every item of one type to another in two calls, as `marfa_delete` trashes: a preview that names the items the move would take, with a `confirm` token, and a call with that token, which starts the move as a job. A token is refused, as `marfa_delete`'s is, when another credential sends it or five minutes have passed.
+
+### `mcp/move-preview`
+
+When `marfa_move_items` is called without `confirm`, the server MUST NOT move any item.
+
+**Tests:** `compliance/mcp.test.ts › moves nothing when called without a confirmation, and refuses a confirmation when what would move changed`.
+
+### `mcp/move-plan-changed`
+
+If the items a `marfa_move_items` call would move changed since the preview that gave its `confirm` token, then the server MUST refuse the call with the tool error code `confirmation_stale`.
+
+**Reason:** the person agreed to what the preview showed, not to what the move would take now.
+
+**Tests:** `compliance/mcp.test.ts › moves nothing when called without a confirmation, and refuses a confirmation when what would move changed`.
+
+## Revoking a key
+
+`marfa_revoke_key` revokes a key in two calls: a preview of the key, with a `confirm` token, and a call with that token.
+
+### `mcp/revoke-preview`
+
+When `marfa_revoke_key` is called without `confirm`, the server MUST NOT revoke the key.
+
+**Tests:** `compliance/mcp.test.ts › revokes nothing when called without a confirmation`.
+
+### `mcp/revoke-confirmed`
+
+When `marfa_revoke_key` is called with the `confirm` token its preview of the same key gave, by the same credential, within five minutes, while the key's grant is unchanged, the server MUST revoke the key.
+
+**Tests:** `compliance/mcp.test.ts › revokes the key with the confirmation the preview gave`.
+
+### `mcp/revoke-other-credential`
+
+If a `marfa_revoke_key` call carries a `confirm` token a preview gave another credential, then the server MUST refuse the call with the tool error code `confirmation_stale`.
+
+**Reason:** the person agreed to a revoke through the agent they spoke to, not through whoever holds the token.
+
+**Tests:** `compliance/mcp.test.ts › refuses a revoke confirmation another credential got`.
 
 ## Saving a file
 

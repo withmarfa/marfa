@@ -8,12 +8,15 @@ import {
   trackEdgeType,
   trackItem,
   trackKey,
+  trackType,
 } from "../../utils/setup.js";
 import {
+  ADMIN_TOOLS,
   ALL_TOOLS,
   callTool,
   connectMcp,
   READ_TOOLS,
+  SCHEMA_TOOLS,
   toolError,
   toolNames,
   toolResult,
@@ -61,16 +64,23 @@ function post(headers: Record<string, string>): Promise<Response> {
   });
 }
 
-/** A key of this file's own, with the type map given. */
+/** A key of this file's own, with the type map and permissions given. */
 async function keyWith(
   label: string,
   typePermissions: Record<string, "read" | "write">,
+  reach: {
+    permissions?: string[];
+    metadata_permissions?: Record<string, "read" | "write">;
+  } = {},
 ): Promise<string> {
   const minted = await client.createKey({
     label: `${ctx.source}-${label}`,
     source: `${ctx.source}-${label}`,
-    permissions: [],
+    permissions: reach.permissions ?? [],
     type_permissions: typePermissions,
+    ...(reach.metadata_permissions !== undefined && {
+      metadata_permissions: reach.metadata_permissions,
+    }),
   });
   expect(minted.ok, JSON.stringify(minted.error)).toBe(true);
   trackKey(ctx, minted.data.id);
@@ -548,5 +558,322 @@ describe("marfa_delete", () => {
       await other.close();
     }
     expect(await stateOf(parent)).toBe("active");
+  });
+});
+
+describe("the schema and admin endpoints", () => {
+  /** A key that writes every type, registers types and changes the schema. */
+  async function schemaKey(label: string): Promise<string> {
+    return keyWith(
+      label,
+      { "*": "write" },
+      { permissions: ["schema.write"], metadata_permissions: { "*": "write" } },
+    );
+  }
+
+  it("lists the six tools and every schema tool at /mcp/schema to a credential that may use each", async () => {
+    const schema = await connectMcp(
+      apiUrl,
+      await schemaKey("schema-lister"),
+      "2026-07-28",
+      "/mcp/schema",
+    );
+    try {
+      expect(await toolNames(schema)).toEqual(
+        [...ALL_TOOLS, ...SCHEMA_TOOLS].sort(),
+      );
+    } finally {
+      await schema.close();
+    }
+  });
+
+  it("lists only the read tools and marfa_search_docs at /mcp/schema to a credential that only reads", async () => {
+    const reader = await connectMcp(
+      apiUrl,
+      await keyWith("schema-reader", { "core.note": "read" }),
+      "2026-07-28",
+      "/mcp/schema",
+    );
+    try {
+      expect(await toolNames(reader)).toEqual(
+        [...READ_TOOLS, "marfa_search_docs"].sort(),
+      );
+    } finally {
+      await reader.close();
+    }
+  });
+
+  it("lists each admin tool at /mcp/admin only to a credential that holds its permission", async () => {
+    const admin = await connectMcp(
+      apiUrl,
+      await keyWith(
+        "admin-lister",
+        { "core.note": "write" },
+        { permissions: ["audit.read", "keys.mint", "webhooks.manage"] },
+      ),
+      "2026-07-28",
+      "/mcp/admin",
+    );
+    try {
+      expect(await toolNames(admin)).toEqual(
+        [
+          ...ALL_TOOLS,
+          ...ADMIN_TOOLS.filter((t) => t !== "marfa_health"),
+        ].sort(),
+      );
+    } finally {
+      await admin.close();
+    }
+    const reader = await connectMcp(
+      apiUrl,
+      await keyWith("admin-reader", { "core.note": "read" }),
+      "2026-07-28",
+      "/mcp/admin",
+    );
+    try {
+      expect(await toolNames(reader)).toEqual(READ_TOOLS);
+    } finally {
+      await reader.close();
+    }
+  });
+
+  it("lists every admin tool at /mcp/admin to a credential that holds every permission and reaches no type", async () => {
+    const management = process.env.MARFA_MANAGEMENT_KEY;
+    if (!management) throw new Error("MARFA_MANAGEMENT_KEY is required");
+    const admin = await connectMcp(
+      apiUrl,
+      management,
+      "2026-07-28",
+      "/mcp/admin",
+    );
+    try {
+      expect(await toolNames(admin)).toEqual(ADMIN_TOOLS);
+      const health = toolResult(await callTool(admin, "marfa_health", {}));
+      expect(health.health).toMatchObject({ status: expect.any(String) });
+    } finally {
+      await admin.close();
+    }
+  });
+
+  it("marks marfa_create and marfa_manage_webhook as reaching outside the instance and no other tool", async () => {
+    const admin = await connectMcp(
+      apiUrl,
+      await keyWith(
+        "open-world",
+        { "*": "write" },
+        {
+          permissions: [
+            "schema.write",
+            "audit.read",
+            "keys.mint",
+            "webhooks.manage",
+          ],
+          metadata_permissions: { "*": "write" },
+        },
+      ),
+      "2026-07-28",
+      "/mcp/admin",
+    );
+    const schema = await connectMcp(
+      apiUrl,
+      await schemaKey("open-world-schema"),
+      "2026-07-28",
+      "/mcp/schema",
+    );
+    try {
+      for (const connection of [admin, schema]) {
+        const { tools } = await connection.client.listTools();
+        for (const tool of tools) {
+          expect(tool.annotations?.openWorldHint, tool.name).toBe(
+            tool.name === "marfa_create" ||
+              tool.name === "marfa_manage_webhook",
+          );
+        }
+      }
+    } finally {
+      await admin.close();
+      await schema.close();
+    }
+  });
+});
+
+describe("marfa_revoke_key", () => {
+  let admin: McpConnection;
+
+  beforeAll(async () => {
+    admin = await connectMcp(
+      apiUrl,
+      await keyWith("revoker", {}, { permissions: ["keys.mint"] }),
+      "2026-07-28",
+      "/mcp/admin",
+    );
+  });
+
+  afterAll(async () => {
+    await admin?.close();
+  });
+
+  /** A key the revoker made, so it is one the revoker may revoke. */
+  async function target(label: string): Promise<{ id: string; key: string }> {
+    const made = toolResult(
+      await callTool(admin, "marfa_manage_key", {
+        action: "make",
+        label: `${ctx.source}-${label}`,
+        source: `${ctx.source}-${label}`,
+      }),
+    );
+    const id = (made.key as { id: string }).id;
+    trackKey(ctx, id);
+    return { id, key: made.secret as string };
+  }
+
+  async function works(key: string): Promise<boolean> {
+    const response = await fetch(new URL("/keys/current", apiUrl), {
+      headers: { Authorization: `Bearer ${key}` },
+    });
+    await response.body?.cancel();
+    return response.status === 200;
+  }
+
+  it("revokes nothing when called without a confirmation", async () => {
+    const { id, key } = await target("revoke-preview");
+    const preview = toolResult(
+      await callTool(admin, "marfa_revoke_key", { id }),
+    );
+    expect(preview.key).toMatchObject({ id });
+    expect(typeof preview.confirm).toBe("string");
+    expect(await works(key)).toBe(true);
+  });
+
+  it("revokes the key with the confirmation the preview gave", async () => {
+    const { id, key } = await target("revoke-confirmed");
+    const preview = toolResult(
+      await callTool(admin, "marfa_revoke_key", { id }),
+    );
+    const done = toolResult(
+      await callTool(admin, "marfa_revoke_key", {
+        id,
+        confirm: preview.confirm,
+      }),
+    );
+    expect(done.revoked).toBe(id);
+    expect(await works(key)).toBe(false);
+  });
+
+  it("refuses a revoke confirmation another credential got", async () => {
+    const { id, key } = await target("revoke-replayed");
+    const preview = toolResult(
+      await callTool(admin, "marfa_revoke_key", { id }),
+    );
+    // The management key holds keys.manage, so it reaches the same key.
+    const management = process.env.MARFA_MANAGEMENT_KEY;
+    if (!management) throw new Error("MARFA_MANAGEMENT_KEY is required");
+    const other = await connectMcp(
+      apiUrl,
+      management,
+      "2026-07-28",
+      "/mcp/admin",
+    );
+    try {
+      const error = toolError(
+        await callTool(other, "marfa_revoke_key", {
+          id,
+          confirm: preview.confirm,
+        }),
+      );
+      expect(error.code).toBe("confirmation_stale");
+      expect(error.key).toMatchObject({ id });
+    } finally {
+      await other.close();
+    }
+    expect(await works(key)).toBe(true);
+  });
+});
+
+describe("marfa_move_items", () => {
+  let schema: McpConnection;
+  let from: string;
+  let to: string;
+
+  beforeAll(async () => {
+    const key = await keyWith(
+      "mover",
+      { "*": "write" },
+      { permissions: ["schema.write"], metadata_permissions: { "*": "write" } },
+    );
+    schema = await connectMcp(apiUrl, key, "2026-07-28", "/mcp/schema");
+    const owner = new MarfaClient({ baseUrl: apiUrl, apiKey: key });
+    from = `user.mcp-lead-${ctx.runId}`;
+    to = `user.mcp-contact-${ctx.runId}`;
+    for (const id of [to, from]) {
+      toolResult(
+        await callTool(schema, "marfa_save_type", {
+          action: "register",
+          id,
+          fields: { title: { type: "string" } },
+        }),
+      );
+      trackType(ctx, id, owner);
+    }
+  });
+
+  afterAll(async () => {
+    await schema?.close();
+  });
+
+  async function lead(title: string): Promise<string> {
+    const made = await client.createItem({ type: from, properties: { title } });
+    expect(made.status, JSON.stringify(made.error)).toBe(201);
+    trackItem(ctx, made.data.item.id);
+    return made.data.item.id;
+  }
+
+  async function typeOf(id: string): Promise<string | undefined> {
+    const read = await client.getItem(id);
+    return read.ok ? read.data.item.type : undefined;
+  }
+
+  it("moves nothing when called without a confirmation, and refuses a confirmation when what would move changed", async () => {
+    const first = await lead("Ada");
+    const preview = toolResult(
+      await callTool(schema, "marfa_move_items", { from, to }),
+    );
+    expect(preview).toMatchObject({ matched: 1, ids: [first] });
+    expect(await typeOf(first)).toBe(from);
+
+    const second = await lead("Grace");
+    const error = toolError(
+      await callTool(schema, "marfa_move_items", {
+        from,
+        to,
+        confirm: preview.confirm,
+      }),
+    );
+    expect(error.code).toBe("confirmation_stale");
+    expect(error.matched).toBe(2);
+    expect(await typeOf(first)).toBe(from);
+
+    // The witness: the confirmation the new preview gave moves both.
+    const started = toolResult(
+      await callTool(schema, "marfa_move_items", {
+        from,
+        to,
+        confirm: error.confirm,
+      }),
+    );
+    const job = started.job as { id: string };
+    const deadline = Date.now() + 30_000;
+    let status = "queued";
+    while (Date.now() < deadline) {
+      const progress = toolResult(
+        await callTool(schema, "marfa_move_items", { job_id: job.id }),
+      );
+      status = (progress.job as { status: string }).status;
+      if (status === "completed" || status === "failed") break;
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    }
+    expect(status).toBe("completed");
+    expect(await typeOf(first)).toBe(to);
+    expect(await typeOf(second)).toBe(to);
   });
 });

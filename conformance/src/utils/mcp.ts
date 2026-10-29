@@ -21,6 +21,8 @@ export async function connectMcp(
   apiUrl: string,
   credential: string,
   revision: McpRevision = "2026-07-28",
+  /** The endpoint: `/mcp`, `/mcp/schema` or `/mcp/admin`. */
+  path = "/mcp",
 ): Promise<McpConnection> {
   const methods: string[] = [];
   const client = new Client(
@@ -31,7 +33,7 @@ export async function connectMcp(
       },
     },
   );
-  const transport = new StreamableHTTPClientTransport(new URL("/mcp", apiUrl), {
+  const transport = new StreamableHTTPClientTransport(new URL(path, apiUrl), {
     requestInit: { headers: { Authorization: `Bearer ${credential}` } },
     fetch: async (url, init) => {
       if (typeof init?.body === "string") {
@@ -104,3 +106,23 @@ export const ALL_TOOLS = [
 ];
 
 export const READ_TOOLS = ["marfa_find", "marfa_get", "marfa_overview"];
+
+/** The tools `/mcp/schema` adds for a credential that may use each. */
+export const SCHEMA_TOOLS = [
+  "marfa_bulk_save",
+  "marfa_move_items",
+  "marfa_save_type",
+  "marfa_save_view",
+  "marfa_search_docs",
+];
+
+/** The tools `/mcp/admin` adds for a credential that may use each. */
+export const ADMIN_TOOLS = [
+  "marfa_audit",
+  "marfa_health",
+  "marfa_keys",
+  "marfa_manage_key",
+  "marfa_manage_webhook",
+  "marfa_revoke_key",
+  "marfa_webhooks",
+];

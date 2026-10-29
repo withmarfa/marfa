@@ -50,7 +50,7 @@ interface FieldDefinition {
 }
 
 /** A type's definition with only what an agent writing an item needs. */
-function compactType(type: Record<string, unknown>) {
+export function compactType(type: Record<string, unknown>) {
   const fields: Record<string, Record<string, unknown>> = {};
   const given = (type.fields ?? {}) as Record<string, FieldDefinition>;
   for (const [name, field] of Object.entries(given)) {

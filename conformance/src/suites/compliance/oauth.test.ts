@@ -122,6 +122,38 @@ describe("OAuth provider", () => {
     }
   });
 
+  it("advertises each MCP tool group's scopes in its endpoint's metadata, and not at /mcp", async () => {
+    const scopesAt = async (path: string): Promise<string[]> => {
+      const r = await fetch(
+        `${apiUrl}/.well-known/oauth-protected-resource${path}`,
+      );
+      expect(r.status, path).toBe(200);
+      return ((await r.json()) as { scopes_supported: string[] })
+        .scopes_supported;
+    };
+    const groups: Record<string, string[]> = {
+      "/mcp/schema": [
+        "metadata.types:write",
+        "schema.write",
+        "system.view:write",
+      ],
+      "/mcp/admin": [
+        "audit.read",
+        "connectors.manage",
+        "instance.read",
+        "keys.mint",
+        "webhooks.manage",
+      ],
+    };
+    const items = await scopesAt("/mcp");
+    for (const [path, scopes] of Object.entries(groups)) {
+      const advertised = await scopesAt(path);
+      expect(advertised, path).toEqual(expect.arrayContaining(items));
+      expect(advertised, path).toEqual(expect.arrayContaining(scopes));
+      for (const scope of scopes) expect(items, scope).not.toContain(scope);
+    }
+  });
+
   it("advertises client ID metadata documents beside public clients in both discovery documents", async () => {
     for (const path of [
       "/.well-known/oauth-authorization-server/auth",

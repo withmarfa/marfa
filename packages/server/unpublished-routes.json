@@ -54,5 +54,11 @@
   "GET /auth/owner/passkeys": "owner password and passkeys page",
   "POST /mcp": "the MCP endpoint, which speaks JSON-RPC over Streamable HTTP rather than the REST API",
   "GET /mcp": "the same endpoint's stream, which a stateless server answers 405",
-  "DELETE /mcp": "the same endpoint's session end, which a stateless server answers 405"
+  "DELETE /mcp": "the same endpoint's session end, which a stateless server answers 405",
+  "POST /mcp/schema": "the MCP endpoint with the schema tools",
+  "GET /mcp/schema": "its stream, which a stateless server answers 405",
+  "DELETE /mcp/schema": "its session end, which a stateless server answers 405",
+  "POST /mcp/admin": "the MCP endpoint with the admin tools",
+  "GET /mcp/admin": "its stream, which a stateless server answers 405",
+  "DELETE /mcp/admin": "its session end, which a stateless server answers 405"
 }

@@ -1001,7 +1001,7 @@ export function createApp(
     mcpRoutes({
       baseUrl: config.authBaseUrl,
       version: deployedVersion,
-      confirmKey: deriveKey(config.authSecret, SECRET_INFO.mcpDelete),
+      confirmKey: deriveKey(config.authSecret, SECRET_INFO.mcpConfirm),
       fetch: {
         fetcher: createPublicFetcher({
           maxBytes: config.mcpFetchMaxBytes ?? 50 * 1024 * 1024,

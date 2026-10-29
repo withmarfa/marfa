@@ -1041,6 +1041,14 @@ The server MUST serve `/.well-known/oauth-protected-resource/mcp`, `/.well-known
 
 **Tests:** `compliance/oauth.test.ts › serves protected resource metadata for each MCP endpoint, naming the endpoint as the resource`.
 
+### `keys-and-oauth/protected-resource-mcp-scopes`
+
+When the server serves the protected resource metadata of `/mcp/schema` or `/mcp/admin`, the server MUST name in its `scopes_supported` every scope the metadata of `/mcp` names and the scopes that endpoint's own tools need: `metadata.types:write`, `schema.write` and `system.view:write` for `/mcp/schema`, and `instance.read`, `connectors.manage`, `audit.read`, `keys.mint` and `webhooks.manage` for `/mcp/admin`.
+
+**Reason:** an MCP client asks for the scopes the metadata names, so an endpoint that does not name its tools' scopes is signed into without them.
+
+**Tests:** `compliance/oauth.test.ts › advertises each MCP tool group's scopes in its endpoint's metadata, and not at /mcp`.
+
 ### `keys-and-oauth/discovery-metadata-documents`
 
 The server MUST advertise `client_id_metadata_document_supported` as `true` in both its OAuth authorization server metadata and its OpenID configuration.
