@@ -617,6 +617,9 @@ button.row {
 .row .rd.danger {
   color: var(--danger);
 }
+.row .rd .undone {
+  color: var(--danger);
+}
 .row .rd.warn {
   color: var(--warn);
 }
@@ -1007,6 +1010,43 @@ body:has(.savebar:not([hidden])) .col {
 .switch:disabled {
   opacity: 0.4;
   cursor: default;
+}
+
+.radio {
+  appearance: none;
+  -webkit-appearance: none;
+  margin: 0;
+  width: 20px;
+  height: 20px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--line);
+  background: var(--surface);
+  position: relative;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.radio:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 var(--focus-halo-width) var(--focus-halo);
+}
+.radio:checked {
+  background: var(--primary);
+  border-color: var(--primary);
+}
+.radio:checked::after {
+  content: "";
+  position: absolute;
+  inset: 5px;
+  border-radius: var(--radius-pill);
+  background: var(--on-primary);
+}
+
+/* The controls of an approval screen show once "Choose access" is selected, with no script. */
+.access-panel {
+  display: none;
+}
+form:has(.radio[name="access"][value="choose"]:checked) .access-panel {
+  display: block;
 }
 
 .search {

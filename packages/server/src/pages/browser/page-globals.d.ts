@@ -28,6 +28,12 @@ interface BrowserElement {
   closest(selector: string): BrowserElement | null;
   checkVisibility(): boolean;
   focus(): void;
+  remove(): void;
+  addEventListener(
+    type: string,
+    listener: (event: { stopImmediatePropagation(): void }) => void,
+    capture: boolean,
+  ): void;
   getBoundingClientRect(): { top: number; right: number };
   querySelectorAll(selector: string): BrowserElement[];
   childNodes: { nodeType: number; textContent: string | null }[];

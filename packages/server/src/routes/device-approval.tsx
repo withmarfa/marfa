@@ -16,6 +16,7 @@ import { DEFAULT_INSTANCE_NAME } from "../instance-name.js";
 import {
   Button,
   ButtonPair,
+  NoEnterSubmit,
   CodeCells,
   ConfirmDialog,
   gateAttributes,
@@ -24,13 +25,10 @@ import {
 } from "../pages/parts/index.js";
 import type { ConfirmGate } from "../pages/parts/index.js";
 import { renderDocument } from "../pages/render.js";
-import { AccessChoices, offersChoice } from "./access-choices.js";
-import {
-  ApprovalFoot,
-  EverythingOffNote,
-  WebOriginNote,
-} from "./access-notes.js";
-import { buildAccess } from "./access-model.js";
+import { AccessChoices } from "./access-choices.js";
+import { ApprovalFoot, WebOriginNote } from "./access-notes.js";
+import { buildAccess, describeFullAccess } from "./access-model.js";
+import type { AccessInput } from "./access-model.js";
 import type { ChoosableType } from "./access-types.js";
 
 export interface DeviceConsentParams {
@@ -60,7 +58,7 @@ export interface DeviceConsentParams {
 
 /** Renders the Connect a device approval screen as an HTML document. */
 export function renderDeviceConsentScreen(params: DeviceConsentParams): string {
-  const model = buildAccess({
+  const input: AccessInput = {
     scopes: params.scopes,
     held: params.priorScopes,
     descriptions: params.descriptions,
@@ -68,7 +66,8 @@ export function renderDeviceConsentScreen(params: DeviceConsentParams): string {
     typeLabels: params.typeLabels,
     chooseTypes: params.chooseTypes,
     bundles: params.bundles ?? getPermissionBundles(),
-  });
+  };
+  const model = buildAccess(input);
   const instance = params.instanceName ?? DEFAULT_INSTANCE_NAME;
   return renderDocument(
     <PageShell
@@ -96,13 +95,20 @@ export function renderDeviceConsentScreen(params: DeviceConsentParams): string {
           method="post"
           action="/auth/device/consent"
           data-access
+          data-approval
           novalidate
           {...gateAttributes(params.confirmGate)}
         >
           <input type="hidden" name="user_code" value={params.userCode} />
-          <AccessChoices model={model} />
+          <NoEnterSubmit />
+          <AccessChoices
+            model={model}
+            approving={{
+              app: params.clientName,
+              full: describeFullAccess(input),
+            }}
+          />
           <WebOriginNote origins={params.webOrigins ?? []} />
-          {offersChoice(model) && <EverythingOffNote />}
           <ButtonPair>
             <Button type="submit" kind="outline" name="decision" value="deny">
               Cancel

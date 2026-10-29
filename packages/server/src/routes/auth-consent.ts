@@ -106,7 +106,7 @@ import type { MarfaAuth } from "../auth/instance.js";
 import { getPermissionBundles } from "../config.js";
 import { readInstanceName } from "../instance-name.js";
 import { renderConsentScreen } from "./consent.js";
-import { resolveSelection, typeLabel } from "./access-model.js";
+import { accessModeOf, resolveSelection, typeLabel } from "./access-model.js";
 import { chooseTypesFor } from "./access-types.js";
 import {
   canonicalizeOAuthQueryParams,
@@ -640,9 +640,12 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
     const requestedRedirectUri = signedParams.get("redirect_uri");
     const signedScopeStr = signedParams.get("scope") ?? "";
     const signedScopes = new Set(signedScopeStr.split(/\s+/).filter(Boolean));
+    // Full access reads only the signed request, so what the form carries
+    // beside it is not read and cannot refuse it.
+    const mode = accessModeOf(form.get("access"));
     if (
       containsProfileEmailWrite(signedScopeStr) ||
-      containsProfileEmailWrite(form.getAll("scopes"))
+      (mode !== "full" && containsProfileEmailWrite(form.getAll("scopes")))
     )
       return c.text("Invalid scope: profile.email:write", 400);
     if (!clientId) {
@@ -694,10 +697,13 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
             await chooseTypesFor(deps.storage, clientId, [...signedScopes])
           ).map((type) => type.id);
           const selection = accept
-            ? resolveSelection([...signedScopes], submitted, prior, {
-                values: typeValues,
-                offered,
-              })
+            ? resolveSelection(
+                [...signedScopes],
+                submitted,
+                prior,
+                { values: typeValues, offered },
+                mode,
+              )
             : null;
           if (selection && !selection.ok)
             return c.text(

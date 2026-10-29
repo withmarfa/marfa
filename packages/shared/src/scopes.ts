@@ -248,6 +248,10 @@ export function isPermission(scope: string): scope is Permission {
  * decide what they handed over; stating the rule once, here, keeps them to
  * one, including for the next scope family that needs it.
  *
+ * **It governs the controls a person opens with Choose access.** Full
+ * access is a deliberate yes to the whole request, so it grants these
+ * scopes without a switch.
+ *
  * **Distinct from `default_on`, which is a bundle's opinion about its own
  * contents.** This is the platform's opinion about a scope, so it holds
  * whether or not any bundle names the literal — which is the case the
@@ -1592,8 +1596,9 @@ export function expandBundlesToScopes(bundles: PermissionBundle[]): string[] {
 /**
  * Scopes that only an off-by-default bundle offers.
  *
- * `default_on: false` means the control starts off, and the whole of what it
- * grants is that a person turned it on. Both consent surfaces read this to
+ * `default_on: false` means the control starts off under Choose access, so
+ * that a person who narrows grants it only by turning it on; Full access
+ * grants it with the rest of the request. Both consent surfaces read this to
  * decide which controls start off, and withhold them the same way.
  *
  * Claimed by at least one bundle and reached by no on-by-default one, so a

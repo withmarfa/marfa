@@ -363,6 +363,7 @@ inBrowser("the policy, in a browser", () => {
       await signIn(page);
       await page.waitForURL(/\/auth\/authorize\?/);
       expect(await page.locator("script").count()).toBe(1);
+      await page.locator('label[for="access-choose"]').click();
       await page.locator("summary", { hasText: "Your data" }).click();
       const level = page.getByRole("combobox").first();
       await level.selectOption({ label: "No access" });

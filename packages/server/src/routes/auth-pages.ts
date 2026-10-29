@@ -68,7 +68,7 @@ import {
   renderDeviceConsentScreen,
   renderDeviceDecisionPage,
 } from "./device-approval.js";
-import { resolveSelection } from "./access-model.js";
+import { accessModeOf, resolveSelection } from "./access-model.js";
 import { chooseTypesFor } from "./access-types.js";
 import { setNoStore } from "./no-store.js";
 import { confirmGateFor } from "./confirm-gate.js";
@@ -977,9 +977,12 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth) {
     }
     const clientId = verdict.clientId;
     const requestedScopes = scopeList(verdict.scope);
+    // Full access reads only what the device asked for, so what the form
+    // carries beside it is not read and cannot refuse it.
+    const mode = accessModeOf(formData.get("access"));
     if (
       containsProfileEmailWrite(requestedScopes) ||
-      containsProfileEmailWrite(formData.getAll("scopes"))
+      (mode !== "full" && containsProfileEmailWrite(formData.getAll("scopes")))
     )
       return c.text("Invalid scope: profile.email:write", 400);
 
@@ -1065,6 +1068,7 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth) {
                   await chooseTypesFor(storage, clientId, requestedScopes)
                 ).map((type) => type.id),
               },
+              mode,
             );
             if (!selection.ok) return { kind: "refused" } as const;
             if (!selection.chosen) return { kind: "nothing" } as const;

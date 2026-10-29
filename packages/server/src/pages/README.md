@@ -41,11 +41,13 @@ There is no client framework and no client-side rendering.
   that says what they give; the browser opens it, with no script, and `live`
   marks the line for the browser module that rewrites it as they change. A
   `RowNote` is small print at the end of what a row opens to.
-- **Controls and fields:** `Button`, `ButtonPair`, `Select`, `Switch`,
+- **Controls and fields:** `Button`, `ButtonPair`, `NoEnterSubmit`, `Radio`, `Select`, `Switch`,
   `TextField`, `PasswordField`, `SearchField`, `FormFoot` and `SaveBar`. A
   `Select` and a `Switch` take `data`, which becomes `data-*` attributes for a
   browser module. A `ButtonPair` is two buttons of equal width, the main one
-  last.
+  last. A form that decides between them starts with `NoEnterSubmit`, a
+  hidden first submit button that does nothing, so Enter in one of its fields
+  sends nothing instead of pressing the first real button.
 - **Codes:** `CodeCells` shows a code for a person to compare with the one on
   their device, one cell for each character, as one picture named by the code.
 - **Feedback:** `Notice`, `EmptyState` and `Dialog`.
@@ -192,11 +194,14 @@ Render it as a child or an attribute value and it is escaped. Do not use
 ## Browser modules
 
 Each module in `client/` finds its own markup through a `data-` attribute and
-does nothing without it. `access.ts` finds an approval form (`data-access`),
+does nothing without it. `access.ts` finds a form with access rows
+(`data-access`: an approval form or a key's form),
 keeps the line under each of its rows (`data-access-group`) true as controls
 change, and hides "If everything is off, approving denies the request." while
 something is on. It calls the functions in `access-summary.ts`, which the
-server calls for the same lines, so the two cannot disagree. `client/confirm.ts` drives the dialog: `sendConfirmed` sends a change, and
+server calls for the same lines, so the two cannot disagree. On a form marked `data-approval` it also stops
+Enter in every field; on any of them, Enter in the types search sends nothing.
+`client/confirm.ts` drives the dialog: `sendConfirmed` sends a change, and
 when the answer is the refusal for an old sign-in it asks the person to
 confirm, posts the proof to `/auth/confirm`, and sends the change once more.
 A page's own script reaches it as `window.marfaConfirm.send`. An approval page

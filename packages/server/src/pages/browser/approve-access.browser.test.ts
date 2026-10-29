@@ -265,7 +265,9 @@ async function openRow(page: Page, title: string): Promise<void> {
     await row.locator("summary").click();
 }
 
+/** Picks Choose access, which shows the controls, and opens the data row. */
 const openChoices = async (page: Page): Promise<void> => {
+  await page.locator('label[for="access-choose"]').click();
   await openRow(page, "Your data");
 };
 
@@ -339,7 +341,9 @@ describe("Approve access in a browser", () => {
         }));
         expect(widths.page).toBeLessThanOrEqual(widths.viewport);
         expect(await illegible(b.page)).toEqual([]);
-        // With every row open the page is at its widest and tallest.
+        // With the controls shown and every row open the page is at its
+        // widest and tallest.
+        await b.page.locator('label[for="access-choose"]').click();
         for (const title of [
           "Your data",
           "Your profile",
@@ -368,6 +372,18 @@ describe("Approve access in a browser", () => {
     try {
       const { app, proof } = await openConsent(b, "Keyboard App");
       const summary = b.page.locator("summary", { hasText: "Your data" });
+      // The choice of access comes first: Tab reaches it, and an arrow key
+      // moves it to Choose access, which shows the rows below.
+      const full = b.page.locator("#access-full");
+      for (let i = 0; i < 12; i++) {
+        await b.page.keyboard.press("Tab");
+        if (await full.evaluate((el) => el === document.activeElement)) break;
+      }
+      expect(await full.evaluate((el) => el === document.activeElement)).toBe(
+        true,
+      );
+      await b.page.keyboard.press("ArrowDown");
+      expect(await b.page.locator("#access-choose").isChecked()).toBe(true);
       await summary.waitFor();
       // Tab to the row: nothing before it needs a mouse.
       for (let i = 0; i < 12; i++) {
@@ -419,6 +435,109 @@ describe("Approve access in a browser", () => {
       await b.context.close();
     }
   });
+
+  inBrowser(
+    "starts on full access with the controls out of sight, and approving grants the whole request",
+    async () => {
+      const b = await openSignedIn();
+      try {
+        const { app, proof } = await openConsent(
+          b,
+          "Full App",
+          `${REQUEST} keys.mint`,
+        );
+        expect(await b.page.locator("#access-full").isChecked()).toBe(true);
+        expect(await b.page.locator("#access-choose").isChecked()).toBe(false);
+        expect(await b.page.locator(".access-panel").isVisible()).toBe(false);
+        await b.page.getByText("Control over Marfa:").waitFor();
+        expect(await illegible(b.page)).toEqual([]);
+
+        // Choosing access shows the controls, with a permission off.
+        await b.page.locator('label[for="access-choose"]').click();
+        await b.page.locator(".access-panel").waitFor();
+        await openRow(b.page, "More control over Marfa");
+        expect(
+          await b.page
+            .getByRole("switch", { name: /Make, see, edit and revoke keys/ })
+            .isChecked(),
+        ).toBe(false);
+        expect(await illegible(b.page)).toEqual([]);
+
+        // Going back to full access ignores what the controls say.
+        await openRow(b.page, "Your data");
+        await b.page
+          .getByRole("combobox", { name: "Note" })
+          .selectOption({ label: "Read only" });
+        await b.page.locator('label[for="access-full"]').click();
+        const sent = await arrival(b, () =>
+          b.page.getByRole("button", { name: "Approve" }).click(),
+        );
+        expect(await scopesOf(app, sent, proof)).toEqual([
+          "core.note:read",
+          "core.note:write",
+          "core.task:read",
+          "keys.mint",
+          "offline_access",
+          "openid",
+        ]);
+      } finally {
+        await b.context.close();
+      }
+    },
+  );
+
+  inBrowser(
+    "does not send the form when Enter is pressed on a choice or a switch",
+    async () => {
+      const b = await openSignedIn();
+      try {
+        await openConsent(b, "Enter App", `${REQUEST} keys.mint`);
+        const before = b.callbacks.length;
+        const stays = async (): Promise<void> => {
+          await b.page.waitForTimeout(400);
+          expect(b.page.url()).toContain("/auth/authorize");
+          expect(b.callbacks.length).toBe(before);
+        };
+        await b.page.locator("#access-full").focus();
+        await b.page.keyboard.press("Enter");
+        await stays();
+
+        await b.page.locator('label[for="access-choose"]').click();
+        await openRow(b.page, "More control over Marfa");
+        await b.page
+          .getByRole("switch", { name: /Make, see, edit and revoke keys/ })
+          .focus();
+        await b.page.keyboard.press("Enter");
+        await stays();
+
+        // The witness: with that button and the page script out of the way,
+        // the same key sends the form by Cancel.
+        await b.page
+          .locator("form[data-access] > button[hidden]")
+          .evaluate((el: BrowserElement) => {
+            el.remove();
+          });
+        await b.page
+          .locator("form[data-access]")
+          .evaluate((form: BrowserElement) => {
+            form.addEventListener(
+              "keydown",
+              (event) => {
+                event.stopImmediatePropagation();
+              },
+              true,
+            );
+          });
+        await b.page.locator("#access-choose").focus();
+        const sent = new URL(
+          await arrival(b, () => b.page.keyboard.press("Enter")),
+        );
+        expect(sent.searchParams.get("error")).toBe("access_denied");
+      } finally {
+        await b.context.close();
+      }
+    },
+  );
 
   inBrowser(
     "approves what the page offered, chosen by mouse, and denies on Cancel",
@@ -508,6 +627,30 @@ describe("Approve access in a browser", () => {
           "offline_access",
           "openid",
         ]);
+      } finally {
+        await b.context.close();
+      }
+    },
+  );
+
+  inBrowser(
+    "works with scripting off: Enter on a choice or a switch sends nothing",
+    async () => {
+      const b = await openSignedIn({ js: false });
+      try {
+        await openConsent(b, "No Script Enter App", `${REQUEST} keys.mint`);
+        const before = b.callbacks.length;
+        await b.page.locator("#access-full").focus();
+        await b.page.keyboard.press("Enter");
+        await b.page.locator('label[for="access-choose"]').click();
+        await openRow(b.page, "More control over Marfa");
+        await b.page
+          .getByRole("switch", { name: /Make, see, edit and revoke keys/ })
+          .focus();
+        await b.page.keyboard.press("Enter");
+        await b.page.waitForTimeout(400);
+        expect(b.page.url()).toContain("/auth/authorize");
+        expect(b.callbacks.length).toBe(before);
       } finally {
         await b.context.close();
       }
@@ -1000,7 +1143,7 @@ describe("Approve access in a browser, choosing types in place of all data", () 
           .allTextContents();
         expect(names.length).toBeGreaterThan(0);
         expect(names.every((n) => /note/i.test(n))).toBe(true);
-        // Enter in the search field is not the form's first button, which cancels.
+        // Enter in the search field sends nothing.
         await search.press("Enter");
         expect(b.page.url()).toContain("/auth/authorize");
         expect(b.callbacks.length).toBe(0);
@@ -1086,6 +1229,9 @@ describe("Approve access in a browser, choosing types in place of all data", () 
       const b = await openSignedIn({ js: false });
       try {
         const { app, proof } = await openConsent(b, "No Script Types App", ALL);
+        // With no script the stylesheet shows the rows once Choose access is
+        // selected; approving then still posts all data.
+        await b.page.locator('label[for="access-choose"]').click();
         await b.page
           .locator("details.disclosure-row")
           .first()
@@ -1421,6 +1567,27 @@ describe("Connect a device in a browser", () => {
       await b.context.close();
     }
   });
+
+  inBrowser(
+    "does not deny the device when Enter is pressed on a choice",
+    async () => {
+      const b = await openSignedIn();
+      try {
+        const ask = await askAsDevice(REQUEST, "Enter Device");
+        await b.page.goto(
+          `${origin}/auth/device/consent?user_code=${ask.userCode}`,
+        );
+        await b.page.locator("#access-full").focus();
+        await b.page.keyboard.press("Enter");
+        await b.page.waitForTimeout(400);
+        expect(b.page.url()).toContain("/auth/device/consent");
+        await b.page.getByRole("button", { name: "Approve" }).waitFor();
+        expect((await pollDevice(ask)).error).toBe("authorization_pending");
+      } finally {
+        await b.context.close();
+      }
+    },
+  );
 
   inBrowser(
     "approves what was chosen, by keyboard, and the device's next poll is a token for it",
