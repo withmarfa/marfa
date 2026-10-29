@@ -64,6 +64,7 @@ jobs:
       conformance-compliance: ${{ steps.classify.outputs.conformance-compliance }}
       conformance-device: ${{ steps.classify.outputs.conformance-device }}
       conformance-statuses: ${{ steps.classify.outputs.conformance-statuses }}
+      mcp-conformance: ${{ steps.classify.outputs.mcp-conformance }}
       conformance-shards: ${{ steps.classify.outputs.conformance-shards }}
       cli-scenarios: ${{ steps.classify.outputs.cli-scenarios }}
       restore-drill: ${{ steps.classify.outputs.restore-drill }}
@@ -506,13 +507,67 @@ jobs:
         working-directory: conformance
         run: pnpm check:statuses --shards "$RUNNER_TEMP/shard-logs" --complete
 
+  # The MCP project's own conformance tool, against `/mcp` on a server booted
+  # from this checkout. `conformance/scripts/mcp-conformance.ts` names the
+  # scenarios and the checks pinned as known failures, with the reason for
+  # each.
+  mcp-conformance:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.mcp-conformance != 'false') }}
+    name: MCP conformance
+    timeout-minutes: 15
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          dest: ${{ runner.temp }}/setup-pnpm
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter "@withmarfa/server..." build
+
+      - name: Boot the server from this checkout
+        working-directory: conformance
+        run: pnpm marfa:up --state "$RUNNER_TEMP/marfa-mcp"
+
+      - name: Run the scenarios
+        working-directory: conformance
+        run: pnpm mcp:conformance --state "$RUNNER_TEMP/marfa-mcp"
+
+      # Before the stop, because `marfa:down` clears the state directory and
+      # the log is in it.
+      - name: Keep the server log
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: marfa-mcp-server-log
+          path: |
+            ${{ runner.temp }}/marfa-mcp/server.log
+            ${{ runner.temp }}/marfa-mcp/server.stderr
+          if-no-files-found: ignore
+
+      # The server was spawned detached, so nothing else reaps it.
+      - name: Stop the server
+        if: always()
+        working-directory: conformance
+        run: pnpm marfa:down --state "$RUNNER_TEMP/marfa-mcp"
+
   # The conformance jobs as one verdict, which `Full CI` collects with the
   # rest. It passes when every conformance job that ran passed and when the
   # classifier skipped them all; it fails when any of them failed or was
   # cancelled, or was owed a run and skipped.
   conformance:
     needs:
-      [changes, conformance-offline, conformance-shards, conformance-statuses]
+      [
+        changes,
+        conformance-offline,
+        conformance-shards,
+        conformance-statuses,
+        mcp-conformance,
+      ]
     if: ${{ !cancelled() }}
     name: Conformance
     timeout-minutes: 5
@@ -527,6 +582,8 @@ jobs:
           SHARDS_OWED: ${{ needs.changes.outputs.conformance-shards != '[]' }}
           OFFLINE: ${{ needs.conformance-offline.result }}
           OFFLINE_OWED: ${{ needs.changes.outputs.conformance-offline != 'false' }}
+          MCP: ${{ needs.mcp-conformance.result }}
+          MCP_OWED: ${{ needs.changes.outputs.mcp-conformance != 'false' }}
         run: |
           echo "Results: $RESULTS"
           if [ "$SHARDS_OWED" = true ] && [ "$SHARDS" = skipped ]; then
@@ -535,6 +592,10 @@ jobs:
           fi
           if [ "$OFFLINE_OWED" = true ] && [ "$OFFLINE" = skipped ]; then
             echo "::error::The offline lane was owed a run and was skipped."
+            exit 1
+          fi
+          if [ "$MCP_OWED" = true ] && [ "$MCP" = skipped ]; then
+            echo "::error::MCP conformance was owed a run and was skipped."
             exit 1
           fi
           for result in $RESULTS; do
@@ -920,6 +981,7 @@ jobs:
         conformance-shards,
         conformance-offline,
         conformance-statuses,
+        mcp-conformance,
         conformance,
         cli-scenarios,
         restore-drill,
@@ -959,6 +1021,7 @@ jobs:
         conformance-shards,
         conformance-offline,
         conformance-statuses,
+        mcp-conformance,
         conformance,
         cli-scenarios,
         restore-drill,
