@@ -170,7 +170,7 @@ describe("choosing access on the consent screen", () => {
     );
   });
 
-  it("reads a post with no answer as choosing, which can only narrow", async () => {
+  it("reads an unknown answer as choosing, which can only narrow", async () => {
     ctx = await createTestContext({});
     const clientId = await seedClient(ctx);
     const res = await decide(ctx, clientId, {

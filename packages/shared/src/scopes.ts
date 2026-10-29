@@ -1596,8 +1596,9 @@ export function expandBundlesToScopes(bundles: PermissionBundle[]): string[] {
 /**
  * Scopes that only an off-by-default bundle offers.
  *
- * `default_on: false` means the control starts off, and the whole of what it
- * grants is that a person turned it on. Both consent surfaces read this to
+ * `default_on: false` means the control starts off under Choose access, so
+ * that a person who narrows grants it only by turning it on; Full access
+ * grants it with the rest of the request. Both consent surfaces read this to
  * decide which controls start off, and withhold them the same way.
  *
  * Claimed by at least one bundle and reached by no on-by-default one, so a
