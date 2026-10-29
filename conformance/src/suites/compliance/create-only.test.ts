@@ -201,6 +201,9 @@ describe("a single create with mode create_only", () => {
     const repeated = await client.createItem(createNote({ id }));
     expect(repeated.status).toBe(200);
     expect(repeated.data.acknowledged).toBe(true);
+    const reused = await client.createItem(createBookmark({ id }));
+    expect(reused.status).toBe(409);
+    expect((reused.data as unknown as Refusal).error.code).toBe("id_reused");
   });
 
   it("names the item its natural key resolves before the one its id names", async () => {
@@ -440,6 +443,11 @@ describe("a create with mode create_only meeting an item the key may not read", 
     });
     expect(made.status, JSON.stringify(made.error)).toBe(201);
     trackItem(ctx, id);
+
+    // The witness: a key that may read the bookmark is told its type.
+    const told = await writer.createItem(createNote({ id }));
+    expect(told.status).toBe(409);
+    expect(disclosed(told.data, ["core.bookmark"])).toEqual(["core.bookmark"]);
 
     const hidden = await notesOnly.createItem(
       createNote({ id, mode: "create_only" }),
