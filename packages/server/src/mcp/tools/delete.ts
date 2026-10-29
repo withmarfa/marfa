@@ -184,17 +184,28 @@ export function registerDelete(server: McpServer, ctx: ToolContext): void {
         });
       }
 
+      // An item another named item takes goes last, with that item: trashed
+      // on its own first, it would change what the other takes, and each
+      // trash goes ahead only on the digest its preview gave.
+      const carried = new Set(planned.plan.flatMap((root) => root.takes));
+      const order = [
+        ...planned.plan.filter((root) => !carried.has(root.id)),
+        ...planned.plan.filter((root) => carried.has(root.id)),
+      ];
       const trashed: string[] = [];
       const gone = new Set<string>();
-      for (const root of planned.plan) {
-        // Trashed already, with an item named before it.
+      for (const root of order) {
+        // Trashed already, with another named item.
         if (gone.has(root.id)) {
           trashed.push(root.id);
           continue;
         }
         const answer = await ctx.api.answer(
           ctx.api.client.DELETE("/items/{id}", {
-            params: { path: { id: root.id }, query: { version: root.version } },
+            params: {
+              path: { id: root.id },
+              query: { version: root.version, digest: root.digest },
+            },
           }),
         );
         if (!answer.ok) {

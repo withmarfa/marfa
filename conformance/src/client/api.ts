@@ -324,12 +324,14 @@ export class MarfaClient {
 
   async deleteItem(
     id: string,
-    options?: { version?: number },
+    options?: { version?: number; digest?: string },
   ): Promise<ApiResponse<{ ok: boolean }>> {
-    const query =
-      options?.version !== undefined
-        ? `?version=${String(options.version)}`
-        : "";
+    const params = new URLSearchParams();
+    if (options?.version !== undefined) {
+      params.set("version", String(options.version));
+    }
+    if (options?.digest !== undefined) params.set("digest", options.digest);
+    const query = params.size > 0 ? `?${params.toString()}` : "";
     return this.request<{ ok: boolean }>(`/items/${id}${query}`, {
       method: "DELETE",
     });

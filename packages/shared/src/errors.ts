@@ -21,6 +21,11 @@ export enum ErrorCode {
   UNKNOWN_TYPE = "unknown_type",
   INVALID_ID = "invalid_id",
   VERSION_CONFLICT = "version_conflict",
+  /**
+   * A trash named the digest its preview gave, and what the trash would take
+   * now hashes to another.
+   */
+  TRASH_PLAN_CHANGED = "trash_plan_changed",
   REACH_CHANGED = "reach_changed",
   INSTANCE_CHANGED = "instance_changed",
   /**
@@ -437,6 +442,11 @@ export const ERROR_CODES: Record<AnsweredCode, ErrorCodeInfo> = {
     status: 409,
     summary:
       "The write names a version that is no longer the current one. The answer carries the current state.",
+  },
+  [ErrorCode.TRASH_PLAN_CHANGED]: {
+    status: 409,
+    summary:
+      "A trash names a `digest` that no longer matches what it would move to the trash. Nothing is trashed; preview it again.",
   },
   [ErrorCode.REACH_CHANGED]: {
     status: 409,

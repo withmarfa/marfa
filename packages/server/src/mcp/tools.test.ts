@@ -1,4 +1,12 @@
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 import { createHash } from "node:crypto";
 import {
   createServer,
@@ -9,7 +17,7 @@ import {
 import type { Client } from "@modelcontextprotocol/client";
 import { generateId } from "@withmarfa/shared";
 import { advanceClock, resetClockForTests } from "../clock.js";
-import { clearFaults, setFault } from "../control/faults.js";
+import { activeFaults, clearFaults, setFault } from "../control/faults.js";
 import {
   createTestContext,
   mintWorkingKey,
@@ -982,6 +990,36 @@ describe("marfa_delete", () => {
     );
     expect(stale).toMatchObject({ code: "confirmation_stale", total: 3 });
     expect((await readItem(parent.id)).state).toBe("active");
+  });
+
+  it("trashes nothing when a child joins between its check and the trash", async () => {
+    const { parent } = await family(1);
+    const preview = payloadOf(
+      await callTool(client, "marfa_delete", { ids: [parent.id] }),
+    );
+    setFault("hold:write", "item.delete");
+    const pending = callTool(client, "marfa_delete", {
+      ids: [parent.id],
+      confirm: preview.confirm,
+    });
+    await vi.waitFor(() => {
+      expect(activeFaults()[0]?.waiting).toBe(1);
+    });
+    const late = await saveNote({ title: "Added after the check" });
+    await ctx.storage.edges.createRaw({
+      source_id: parent.id,
+      target_id: late.id,
+      edge_type: "parent-of",
+    });
+    clearFaults();
+    const refused = errorOf(await pending);
+    expect(refused).toMatchObject({
+      code: "trash_plan_changed",
+      id: parent.id,
+      trashed: [],
+    });
+    expect((await readItem(parent.id)).state).toBe("active");
+    expect((await readItem(late.id)).state).toBe("active");
   });
 
   it("refuses a confirmation when an item past the preview's list changed or was swapped", async () => {

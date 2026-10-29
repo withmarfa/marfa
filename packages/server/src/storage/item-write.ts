@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { rememberItemSubject } from "../middleware/replay-requirements.js";
 /**
  * The one way an item row is created or changed.
@@ -189,6 +190,9 @@ export interface ItemDelete {
   id: string;
   /** The version the caller read; absent deletes whatever stands. */
   version?: number;
+  /** The digest a preview of the trash gave; absent trashes whatever the
+   *  trash takes now. */
+  digest?: string;
 }
 
 /** A move along the type's lifecycle. Into the bin it is a delete; out of
@@ -1261,9 +1265,10 @@ async function trash(
   storage: Storage,
   writer: ItemWriter,
   row: Item,
+  plan?: { toTrash: string[]; taken: Item[] },
 ): Promise<Item[]> {
   const root: CascadeRoot = { id: row.id, type: row.type };
-  const { toTrash, taken } = await planTrash(storage, writer, row);
+  const { toTrash, taken } = plan ?? (await planTrash(storage, writer, row));
   const by = await versionWriter(storage, writer);
   for (const id of toTrash) {
     await itemWrites(storage).delete(id, id === row.id ? undefined : root, by);
@@ -1312,7 +1317,7 @@ export async function previewTrash(
   storage: Storage,
   key: ApiKey,
   id: string,
-): Promise<{ row: Item; taken: Item[] }> {
+): Promise<{ row: Item; taken: Item[]; digest: string }> {
   const writer: ItemWriter = { kind: "credential", key };
   const row = await lifecycleRow(storage, writer, id, {
     includeTrashed: false,
@@ -1320,7 +1325,22 @@ export async function previewTrash(
   });
   assertTypeWrite(writer, row);
   const { taken } = await planTrash(storage, writer, row);
-  return { row, taken: taken.filter((snap) => mayRead(writer, snap.type)) };
+  const shown = taken.filter((snap) => mayRead(writer, snap.type));
+  return { row, taken: shown, digest: trashDigest([row, ...shown]) };
+}
+
+/**
+ * A SHA-256 hash, in hex, of the items a trash takes that the writer may
+ * read, with their versions, in no particular order: a preview answers it,
+ * and a trash that names it goes ahead only on the same.
+ */
+function trashDigest(
+  items: readonly { id: string; version: number }[],
+): string {
+  const lines = items
+    .map((item) => `${item.id}:${String(item.version)}`)
+    .sort();
+  return createHash("sha256").update(lines.join("\n")).digest("hex");
 }
 
 /**
@@ -1360,7 +1380,21 @@ async function deleteRow(
   assertTypeWrite(writer, row);
   const stale = staleAgainst(row, write.version);
   if (stale) return stale;
-  const trashed = await trash(storage, writer, row);
+  const plan = await planTrash(storage, writer, row);
+  if (write.digest !== undefined) {
+    const now = trashDigest([
+      row,
+      ...plan.taken.filter((snap) => mayRead(writer, snap.type)),
+    ]);
+    if (now !== write.digest) {
+      throw new MarfaError(
+        ErrorCode.TRASH_PLAN_CHANGED,
+        `What trashing item ${row.id} would take changed since its preview`,
+        { digest: now },
+      );
+    }
+  }
+  const trashed = await trash(storage, writer, row, plan);
   return moved(row, row.state, { trashed });
 }
 

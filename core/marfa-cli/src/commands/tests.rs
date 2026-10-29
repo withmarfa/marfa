@@ -1655,6 +1655,7 @@ mod dispatch {
             items::ItemsCommand::Delete {
                 id: "i".into(),
                 dry_run: false,
+                digest: None,
                 idempotency: items::IdempotencyArgs {
                     idempotency_key: Some("once".into()),
                 },
@@ -1679,6 +1680,7 @@ mod dispatch {
             items::ItemsCommand::Delete {
                 id: "i".into(),
                 dry_run: true,
+                digest: None,
                 idempotency: items::IdempotencyArgs {
                     idempotency_key: None,
                 },
@@ -1691,6 +1693,35 @@ mod dispatch {
         assert_eq!(received.len(), 1);
         assert_eq!(received[0].method(), "GET");
         assert_eq!(received[0].path(), "/items/i/trash-preview");
+    }
+
+    #[test]
+    fn a_delete_names_the_digest_its_preview_gave() {
+        use clap::Parser;
+        let digest = "a".repeat(64);
+        let cli =
+            crate::Cli::try_parse_from(["marfa", "items", "delete", "i", "--digest", &digest])
+                .unwrap();
+        let crate::Command::Items { command } = cli.command else {
+            panic!("not an items command");
+        };
+        let door = Door::open(vec![Answer::json("200 OK", r#"{"item":{"id":"i"}}"#)]);
+        items::run(command, &remote_at(&door), &QUIET).unwrap();
+        let received = door.received();
+        assert_eq!(received[0].method(), "DELETE");
+        assert_eq!(received[0].path(), format!("/items/i?digest={digest}"));
+        assert!(
+            crate::Cli::try_parse_from([
+                "marfa",
+                "items",
+                "delete",
+                "i",
+                "--dry-run",
+                "--digest",
+                "abc"
+            ])
+            .is_err()
+        );
     }
 
     #[test]

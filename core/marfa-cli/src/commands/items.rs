@@ -53,6 +53,10 @@ pub enum ItemsCommand {
         /// included, and move nothing.
         #[arg(long, conflicts_with = "idempotency_key")]
         dry_run: bool,
+        /// The digest `--dry-run` gave. If what the delete would move to the
+        /// bin has changed since, nothing is moved.
+        #[arg(long, conflicts_with = "dry_run")]
+        digest: Option<String>,
         #[command(flatten)]
         idempotency: IdempotencyArgs,
     },
@@ -716,8 +720,8 @@ pub fn update_request(args: &UpdateArgs) -> Result<Request, CliError> {
     ))
 }
 
-pub fn delete_request(id: &str) -> Request {
-    Request::delete(&["items", id])
+pub fn delete_request(id: &str, digest: Option<&str>) -> Request {
+    Request::delete(&["items", id]).query_opt("digest", digest)
 }
 
 pub fn trash_preview_request(id: &str) -> Request {
@@ -1040,8 +1044,11 @@ pub fn run(command: ItemsCommand, remote: &Remote, out: &Printer) -> Result<(), 
             id, dry_run: true, ..
         } => trash_preview_request(id),
         ItemsCommand::Delete {
-            id, idempotency, ..
-        } => idempotency.apply(delete_request(id)),
+            id,
+            digest,
+            idempotency,
+            ..
+        } => idempotency.apply(delete_request(id, digest.as_deref())),
         ItemsCommand::Restore { id, idempotency } => idempotency.apply(restore_request(id)),
         ItemsCommand::Transition {
             id,

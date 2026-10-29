@@ -260,3 +260,59 @@ describe("GET /items/{id}/trash-preview", () => {
     expect(invalid.error?.error.code).toBe("invalid_id");
   });
 });
+
+describe("DELETE /items/{id} with digest", () => {
+  it("trashes the item when what the trash would take is what the preview showed", async () => {
+    const parent = await note();
+    const child = await note();
+    await link(parent, child);
+    const preview = await client.previewItemTrash(parent);
+    expect(preview.status).toBe(200);
+    const deleted = await client.deleteItem(parent, {
+      digest: preview.data.digest,
+    });
+    expect(deleted.status).toBe(200);
+    expect((await client.getItem(child)).status).toBe(404);
+  });
+
+  it("refuses with 409 trash_plan_changed and trashes nothing when a child was attached or edited since the preview", async () => {
+    const parent = await note();
+    const child = await note();
+    await link(parent, child);
+    const attachedBefore = await client.previewItemTrash(parent);
+    const late = await note();
+    await link(parent, late);
+    const attached = await client.deleteItem(parent, {
+      digest: attachedBefore.data.digest,
+    });
+    expect(attached.status).toBe(409);
+    expect(attached.error?.error.code).toBe("trash_plan_changed");
+    await expectMatchesSchema("DELETE", "/items/{id}", 409, attached.error);
+    const now = await client.previewItemTrash(parent);
+    expect(attached.error?.error.details).toEqual({ digest: now.data.digest });
+
+    const read = await client.getItem(child);
+    const edited = await client.updateItem(child, {
+      version: read.data.item.version,
+      properties: { title: "Edited after the preview" },
+    });
+    expect(edited.status).toBe(200);
+    const editedRefusal = await client.deleteItem(parent, {
+      digest: now.data.digest,
+    });
+    expect(editedRefusal.status).toBe(409);
+    expect(editedRefusal.error?.error.code).toBe("trash_plan_changed");
+
+    for (const id of [parent, child, late]) {
+      expect((await client.getItem(id)).status).toBe(200);
+    }
+  });
+
+  it("refuses a digest that is not a SHA-256 hash in hex with 400 validation_error", async () => {
+    const parent = await note();
+    const refused = await client.deleteItem(parent, { digest: "not-a-digest" });
+    expect(refused.status).toBe(400);
+    expect(refused.error?.error.code).toBe("validation_error");
+    expect((await client.getItem(parent)).status).toBe(200);
+  });
+});

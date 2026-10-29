@@ -3161,6 +3161,23 @@ export interface components {
                 };
             };
         };
+        /** @description An error response. */
+        TrashPlanChangedRefusal: {
+            /** @description What went wrong. */
+            error: {
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
+                code: "trash_plan_changed";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
+                message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
+                details?: {
+                    [key: string]: unknown;
+                };
+            };
+        };
         /**
          * @description What trashing an item would move to the trash. Items you can't read are taken too and aren't listed or counted.
          * @example {
@@ -3201,7 +3218,7 @@ export interface components {
              */
             truncated?: true;
             /**
-             * @description A SHA-256 hash, in hex, of every item `count` counts with its version, listed or not. It changes if any of them changes, or an item joins or leaves them.
+             * @description A SHA-256 hash, in hex, of every item `count` counts with its version, listed or not. It changes if any of them changes, joins or leaves. Pass it to `DELETE /items/{id}` to trash only what it covers.
              * @example 9f2c1d3b5a7e4f60b8c9d0e1f2a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5
              */
             digest: string;
@@ -6852,6 +6869,8 @@ export interface operations {
             query?: {
                 /** @description The version you read. If the item has changed since, nothing is trashed. Leave it out to trash the item as it is. */
                 version?: number;
+                /** @description The `digest` from `GET /items/{id}/trash-preview`. If what the trash would take has changed since, nothing is trashed. Leave it out to trash what the item takes now. */
+                digest?: string;
             };
             header?: {
                 /** @description A unique key that makes the request safe to retry. If you send the same request with the same key again, Marfa returns the first response and doesn't write again. A key belongs to the credential that sends it. */
@@ -6953,6 +6972,7 @@ export interface operations {
             };
             /**
              * @description - `version_conflict`: `version` is stale. `current` is the item now, and nothing is trashed.
+             *     - `trash_plan_changed`: what the trash would take no longer matches `digest`. `details.digest` is the digest now, and nothing is trashed.
              *     - `idempotency_key_in_flight`: a request with this `Idempotency-Key` is still running, and this one wrote nothing. Retry.
              */
             409: {
@@ -6967,7 +6987,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ItemStaleVersion"] | components["schemas"]["InstanceChangedRefusal"] | components["schemas"]["IdempotencyKeyInFlightRefusal"];
+                    "application/json": components["schemas"]["ItemStaleVersion"] | components["schemas"]["TrashPlanChangedRefusal"] | components["schemas"]["InstanceChangedRefusal"] | components["schemas"]["IdempotencyKeyInFlightRefusal"];
                 };
             };
             /** @description `request_too_large`: the request body is larger than this instance accepts. */

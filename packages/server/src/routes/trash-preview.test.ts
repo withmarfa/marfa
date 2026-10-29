@@ -184,3 +184,72 @@ describe("GET /items/{id}/trash-preview", () => {
     expect((await ctx.storage.items.get(parent))?.state).toBe("active");
   });
 });
+
+describe("DELETE /items/{id} with digest", () => {
+  async function trashWith(id: string, digest: string): Promise<Response> {
+    return request(ctx.app, "DELETE", `/items/${id}?digest=${digest}`, {
+      key,
+    });
+  }
+
+  it("trashes the item when what it would take is what the preview showed", async () => {
+    const parent = await parentOf(2);
+    const { digest } = (await (await preview(parent)).json()) as Preview;
+    const res = await trashWith(parent, digest);
+    expect(res.status).toBe(200);
+    expect(await ctx.storage.items.get(parent)).toBeNull();
+  });
+
+  it("refuses with trash_plan_changed and trashes nothing when a child joined since the preview", async () => {
+    const parent = await parentOf(1);
+    const { digest } = (await (await preview(parent)).json()) as Preview;
+    const joined = await note();
+    await ctx.storage.edges.createRaw({
+      source_id: parent,
+      target_id: joined,
+      edge_type: "parent-of",
+    });
+    const res = await trashWith(parent, digest);
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as Refusal & {
+      error: { details?: { digest?: string } };
+    };
+    expect(body.error.code).toBe("trash_plan_changed");
+    const now = (await (await preview(parent)).json()) as Preview;
+    expect(body.error.details?.digest).toBe(now.digest);
+    expect((await ctx.storage.items.get(parent))?.state).toBe("active");
+    expect((await ctx.storage.items.get(joined))?.state).toBe("active");
+  });
+
+  it("refuses with trash_plan_changed when a child was edited since the preview", async () => {
+    const parent = await note();
+    const child = await note();
+    await ctx.storage.edges.createRaw({
+      source_id: parent,
+      target_id: child,
+      edge_type: "parent-of",
+    });
+    const { digest } = (await (await preview(parent)).json()) as Preview;
+    const row = await ctx.storage.items.get(child);
+    const patched = await request(ctx.app, "PATCH", `/items/${child}`, {
+      key,
+      body: { version: row?.version, properties: { body: "edited" } },
+    });
+    expect(patched.status).toBe(200);
+    const res = await trashWith(parent, digest);
+    expect(res.status).toBe(409);
+    expect(((await res.json()) as Refusal).error.code).toBe(
+      "trash_plan_changed",
+    );
+    expect((await ctx.storage.items.get(parent))?.state).toBe("active");
+    expect((await ctx.storage.items.get(child))?.state).toBe("active");
+  });
+
+  it("refuses a digest that is not a SHA-256 hash in hex", async () => {
+    const parent = await note();
+    const res = await trashWith(parent, "not-a-digest");
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as Refusal).error.code).toBe("validation_error");
+    expect((await ctx.storage.items.get(parent))?.state).toBe("active");
+  });
+});

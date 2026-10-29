@@ -973,6 +973,17 @@ const deleteItemRoute = createRoute({
         .describe(
           "The version you read. If the item has changed since, nothing is trashed. Leave it out to trash the item as it is.",
         ),
+      digest: z
+        .string()
+        .regex(/^[0-9a-f]{64}$/, "digest must be a SHA-256 hash in hex")
+        .optional()
+        .describe(
+          "The `digest` from `GET /items/{id}/trash-preview`. If what the trash would take has changed since, nothing is trashed. Leave it out to trash what the item takes now.",
+        )
+        .openapi({
+          example:
+            "9f2c1d3b5a7e4f60b8c9d0e1f2a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5",
+        }),
     }),
   },
   responses: {
@@ -1022,9 +1033,14 @@ const deleteItemRoute = createRoute({
     },
     409: {
       content: {
-        "application/json": { schema: StaleVersionSchema },
+        "application/json": {
+          schema: z.union([
+            StaleVersionSchema,
+            makeErrorResponseSchema(["trash_plan_changed"]),
+          ]),
+        },
       },
-      description: `- \`version_conflict\`: \`version\` is stale. \`current\` is the item now, and nothing is trashed.\n${IDEMPOTENCY_IN_FLIGHT}`,
+      description: `- \`version_conflict\`: \`version\` is stale. \`current\` is the item now, and nothing is trashed.\n- \`trash_plan_changed\`: what the trash would take no longer matches \`digest\`. \`details.digest\` is the digest now, and nothing is trashed.\n${IDEMPOTENCY_IN_FLIGHT}`,
     },
   },
 });
@@ -2111,14 +2127,19 @@ export function itemRoutes(storage: Storage) {
     }
 
     requireAuth(c);
-    const { version } = c.req.valid("query");
+    const { version, digest } = c.req.valid("query");
     const result = await runAuditedTransaction(
       storage,
       () =>
         writeItem(
           storage,
           { kind: "credential", key: requireAuth(c) },
-          { op: "delete", id, ...(version !== undefined && { version }) },
+          {
+            op: "delete",
+            id,
+            ...(version !== undefined && { version }),
+            ...(digest !== undefined && { digest }),
+          },
         ),
       (result) =>
         result.outcome !== "stale"

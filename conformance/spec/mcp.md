@@ -158,6 +158,14 @@ If the items the key can read that a `marfa_delete` call would trash, or their v
 
 **Tests:** `compliance/mcp.test.ts › refuses a confirmation when what would be trashed changed since the preview`, `› refuses a confirmation when an item past the preview's list changed`.
 
+### `mcp/delete-plan-changed-after-check`
+
+If the items the key can read that trashing a named item would take, or their versions, change after a `marfa_delete` call checks its `confirm` token and before that item is trashed, then the server MUST leave that item out of the trash and answer the tool error code `trash_plan_changed`, naming in `trashed` the items already trashed.
+
+**Reason:** the token is checked against a fresh preview, and each trash then names that preview's digest (`items/trash-digest-changed`), so the check and the trash are one step.
+
+**Tests:** `compliance/mcp-scripted.test.ts › trashes nothing when a child joins between the confirmation's check and the trash`.
+
 ### `mcp/delete-other-credential`
 
 If a `marfa_delete` call carries a `confirm` token a preview gave another credential, then the server MUST refuse the call with the tool error code `confirmation_stale`.

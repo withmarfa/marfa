@@ -1146,6 +1146,26 @@ When the server answers `GET /items/{id}/trash-preview`, the server MUST answer 
 
 **Tests:** `compliance/trash-preview.test.ts › changes its digest when an item past its list changes, and not otherwise`.
 
+### `items/trash-digest-match`
+
+When `DELETE /items/{id}` names a `digest` equal to the one `GET /items/{id}/trash-preview` answers for the item at the moment the trash commits, the server MUST move the item and what its trash takes to the trash.
+
+**Tests:** `compliance/trash-preview.test.ts › trashes the item when what the trash would take is what the preview showed`.
+
+### `items/trash-digest-changed`
+
+If `DELETE /items/{id}` names a `digest` other than the one `GET /items/{id}/trash-preview` answers for the item at the moment the trash would commit, then the server MUST answer `409 trash_plan_changed` with the digest now as `details.digest` and move no item to the trash.
+
+**Reason:** a preview and the trash are two requests, so what was shown is compared inside the trash's own transaction, and a change landing between the two cannot slip past.
+
+**Tests:** `compliance/trash-preview.test.ts › refuses with 409 trash_plan_changed and trashes nothing when a child was attached or edited since the preview`.
+
+### `items/trash-digest-malformed`
+
+If `DELETE /items/{id}` names a `digest` that is not 64 lowercase hex characters, then the server MUST answer `400 validation_error` and move no item to the trash.
+
+**Tests:** `compliance/trash-preview.test.ts › refuses a digest that is not a SHA-256 hash in hex with 400 validation_error`.
+
 ### `items/trash-preview-check`
 
 When `GET /items/{id}/trash-preview` names `check_ids`, the server MUST answer under `taken_ids` each of those IDs that names an item the key may read that the delete would move with the item, in the order named.

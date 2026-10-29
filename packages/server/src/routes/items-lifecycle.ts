@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { runAuditedTransaction } from "../storage/audited-transaction.js";
 import { snapshotReadRoute } from "../middleware/read-snapshot.js";
 import { createRoute, z } from "@hono/zod-openapi";
@@ -74,15 +73,6 @@ export const TRASH_PREVIEW_CHECK_LIMIT = 20;
  * as its ID and version, in ID order: equal for two previews only if the
  * same items at the same versions would go.
  */
-function trashDigest(
-  items: readonly { id: string; version: number }[],
-): string {
-  const lines = items
-    .map((item) => `${item.id}:${String(item.version)}`)
-    .sort();
-  return createHash("sha256").update(lines.join("\n")).digest("hex");
-}
-
 const TrashPreviewEntrySchema = z
   .object({
     id: z
@@ -135,7 +125,7 @@ const TrashPreviewSchema = z
     digest: z
       .string()
       .describe(
-        "A SHA-256 hash, in hex, of every item `count` counts with its version, listed or not. It changes if any of them changes, or an item joins or leaves them.",
+        "A SHA-256 hash, in hex, of every item `count` counts with its version, listed or not. It changes if any of them changes, joins or leaves. Pass it to `DELETE /items/{id}` to trash only what it covers.",
       )
       .openapi({
         example:
@@ -400,7 +390,11 @@ export function itemsLifecycleRoutes(storage: Storage) {
         throw new MarfaError(ErrorCode.INVALID_ID, "Invalid item ID");
       }
       const checkIds = checkedIds(c.req.valid("query").check_ids);
-      const { row, taken } = await previewTrash(storage, requireAuth(c), id);
+      const { row, taken, digest } = await previewTrash(
+        storage,
+        requireAuth(c),
+        id,
+      );
       const takenIds = new Set(taken.map((item) => item.id));
       const items = taken.slice(0, TRASH_PREVIEW_LIMIT).map((item) => ({
         id: item.id,
@@ -415,7 +409,7 @@ export function itemsLifecycleRoutes(storage: Storage) {
           items,
           count: taken.length + 1,
           ...(taken.length > items.length && { truncated: true as const }),
-          digest: trashDigest([row, ...taken]),
+          digest,
           ...(checkIds !== undefined && {
             taken_ids: checkIds.filter((checked) => takenIds.has(checked)),
           }),
