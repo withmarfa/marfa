@@ -36,6 +36,8 @@ interface CredentialRequest {
    *  plugin's exact-membership check reads them as held for this request only;
    *  nothing is written until a signed-in person approves. */
   deviceOffer?: { clientId: string; scopes: readonly string[] };
+  /** The scopes this instance can grant, read once for the request. */
+  liveScopes?: string[];
 }
 export const credentialRequest = new AsyncLocalStorage<CredentialRequest>();
 

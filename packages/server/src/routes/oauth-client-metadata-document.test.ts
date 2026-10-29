@@ -406,7 +406,7 @@ describe("a stored metadata document client", () => {
     // The stored client's document was fetched again, and the unknown
     // clients reached the transport only within their own budget.
     expect(fetched.slice(fetchedBefore)).toContain(CLIENT_ID);
-    const unknown = fetched.filter((url) => url !== CLIENT_ID).length;
+    const unknown = new Set(fetched.filter((url) => url !== CLIENT_ID)).size;
     expect(unknown).toBeGreaterThan(0);
     expect(unknown).toBeLessThanOrEqual(FIRST_FETCH_BUDGET.perMinute);
   });
@@ -471,5 +471,73 @@ describe("a stored metadata document client", () => {
     expect(((await refused.json()) as { error?: string }).error).toBe(
       "invalid_client",
     );
+  });
+});
+
+describe("the first authorization of a metadata document client", () => {
+  it("drops a scope the instance cannot grant and authorizes the rest", async () => {
+    const server = documentServer(() => Response.json(metadata()));
+    const c = await contextServing(server.fetch);
+    const consent = await authorize(c, {
+      client_id: CLIENT_ID,
+      redirect_uri: CALLBACK,
+      scope: `${SCOPE} user.nothing_registered_here:read`,
+    });
+    expect(reachedConsent(consent), consent.headers.get("location") ?? "").toBe(
+      true,
+    );
+    const location = new URL(consent.headers.get("location") ?? "", BASE);
+    expect(location.searchParams.get("scope")).toBe(SCOPE);
+  });
+
+  it("sends a resource it refuses to a callback the document lists", async () => {
+    const server = documentServer(() => Response.json(metadata()));
+    const c = await contextServing(server.fetch);
+    const refused = await authorize(c, {
+      client_id: CLIENT_ID,
+      redirect_uri: CALLBACK,
+      resource: "https://elsewhere.example.test",
+    });
+    expect(refused.status).toBe(302);
+    const sent = new URL(refused.headers.get("location") ?? "");
+    expect(`${sent.origin}${sent.pathname}`).toBe(CALLBACK);
+    expect(sent.searchParams.get("error")).toBe("invalid_target");
+    expect(sent.searchParams.get("state")).toBe("cimd-state");
+    expect(sent.searchParams.get("iss")).toBe(`${BASE}/auth`);
+    expect(sent.searchParams.get("code")).toBeNull();
+  });
+
+  it("answers a resource it refuses 400 when the callback is not in the document", async () => {
+    const server = documentServer(() => Response.json(metadata()));
+    const c = await contextServing(server.fetch);
+    const refused = await authorize(c, {
+      client_id: CLIENT_ID,
+      redirect_uri: "https://app.example.test/elsewhere",
+      resource: "https://elsewhere.example.test",
+    });
+    expect(refused.status).toBe(400);
+    expect(refused.headers.get("location")).toBeNull();
+    expect(((await refused.json()) as { error?: string }).error).toBe(
+      "invalid_target",
+    );
+  });
+
+  it("names the document's host on the approval page", async () => {
+    const server = documentServer(() => Response.json(metadata()));
+    const c = await contextServing(server.fetch);
+    const consent = await authorize(c, {
+      client_id: CLIENT_ID,
+      redirect_uri: CALLBACK,
+    });
+    const page = await request(
+      c.app,
+      "GET",
+      consent.headers.get("location") ?? "",
+      { headers: { cookie: c.owner.cookie } },
+    );
+    expect(page.status).toBe(200);
+    const html = await page.text();
+    expect(html).toContain("Example MCP App");
+    expect(html).toContain("From app.example.test");
   });
 });

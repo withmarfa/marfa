@@ -29,6 +29,8 @@ import { runAuditedTransaction } from "../storage/audited-transaction.js";
 
 import {
   DEVICE_CODE_GRANT_TYPE,
+  getIssuer,
+  getOAuthProviderApi,
   oauthProvider,
 } from "@better-auth/oauth-provider";
 import { isCimdClientIdUrlCandidate } from "@better-auth/cimd";
@@ -57,7 +59,7 @@ import {
   classifyNamespace,
 } from "@withmarfa/shared";
 import type { PermissionBundle } from "@withmarfa/shared";
-import type { Storage } from "../storage/interface.js";
+import type { OauthClientRow, Storage } from "../storage/interface.js";
 import { getPermissionBundles } from "../config.js";
 import { deriveRequestableNamespaceRoots } from "./default-bundles.js";
 import { SESSION_CRITICAL_SCOPES } from "./mint-ceiling.js";
@@ -111,8 +113,6 @@ interface HookCtxLite {
    *  nothing this server would accept before the plugin ran. */
   revokedTokenWasDead?: boolean;
   context?: {
-    /** The authorization server's issuer. */
-    baseURL?: string;
     session?: { user?: { id?: string } } | null;
     /** What the endpoint produced. On a redirect this is the thrown
      *  `APIError`-shaped object, whose `headers` carry the `Location`. */
@@ -351,6 +351,13 @@ export function buildAllowedScopes(
  * grantable at once.
  */
 export function liveAllowedScopes(): string[] {
+  const request = credentialRequest.getStore();
+  if (!request) return readLiveAllowedScopes();
+  request.liveScopes ??= readLiveAllowedScopes();
+  return request.liveScopes;
+}
+
+function readLiveAllowedScopes(): string[] {
   const roots = new Set(runtimeNamespaceRoots);
   const typeIds = listTypes().map((schema) => schema.id);
   const edgeTypeIds = listEdgeTypes().map((schema) => schema.id);
@@ -646,8 +653,9 @@ export function buildOauthProjectionPlugin(opts: {
   /** Issuer base URL; when set, the authorize and token endpoints validate
    *  and strip the RFC 8707 `resource` parameter so mints stay opaque. */
   baseURL?: string;
-  /** The provider whose allowlist each request points at the live one. */
-  provider?: ProviderAllowlist;
+  /** The provider whose allowlist each request points at the live one, and
+   *  through which an authorize request's client is resolved. */
+  provider: AuthorizationProvider;
 }) {
   const { storage, apiKeySalt, baseURL, provider } = opts;
   const refreshHasher = apiKeySalt ? makeTokenHasher(apiKeySalt) : undefined;
@@ -700,21 +708,17 @@ export function buildOauthProjectionPlugin(opts: {
           : []),
       ],
       before: [
-        ...(provider
-          ? [
-              {
-                // The provider holds its allowlist as an array fixed at
-                // construction. The narrowing below and the validation it
-                // runs ahead of must agree on what exists, so both read the
-                // registries as they stand for this request.
-                matcher: (ctx: HookCtxLite) => readsScopeAllowlist(ctx.path),
-                handler: createAuthMiddleware(() => {
-                  refreshProviderAllowlist(provider, liveAllowedScopes());
-                  return Promise.resolve();
-                }),
-              },
-            ]
-          : []),
+        {
+          // The provider holds its allowlist as an array fixed at
+          // construction. The narrowing below and the validation it runs
+          // ahead of must agree on what exists, so both read the registries
+          // as they stand for this request.
+          matcher: (ctx: HookCtxLite) => readsScopeAllowlist(ctx.path),
+          handler: createAuthMiddleware(() => {
+            refreshProviderAllowlist(provider, liveAllowedScopes());
+            return Promise.resolve();
+          }),
+        },
         {
           matcher: (ctx: HookCtxLite) => ctx.path === "/oauth2/token",
           handler: createAuthMiddleware(async (ctx: HookCtxLite) => {
@@ -792,7 +796,7 @@ export function buildOauthProjectionPlugin(opts: {
               {
                 matcher: (ctx: HookCtxLite) => ctx.path === "/oauth2/authorize",
                 handler: createAuthMiddleware((ctx: HookCtxLite) =>
-                  acceptAuthorizeResource(ctx, storage, baseURL),
+                  acceptAuthorizeResource(ctx, storage, baseURL, provider),
                 ),
               },
             ]
@@ -822,6 +826,7 @@ export function buildOauthProjectionPlugin(opts: {
             narrowAuthorizeScopes(
               ctx,
               storage,
+              provider,
               new Set(liveAllowedScopes()),
               bundleScopes,
             ),
@@ -1346,14 +1351,15 @@ async function normalizeResourceParameter(
  *
  * Anything else is refused here: the provider would look it up in a resource
  * registry Marfa does not keep. The refusal goes back to the client's
- * callback only when the request names one the stored client registered
- * (RFC 6749 §4.1.2.1); otherwise it is answered here, as for an unknown
- * client.
+ * callback only when the request names one the client registered, or one its
+ * metadata document lists (RFC 6749 §4.1.2.1); otherwise it is answered
+ * here, as for an unknown client.
  */
 async function acceptAuthorizeResource(
   ctx: HookCtxLite,
   storage: Storage,
   baseURL: string,
+  provider: AuthorizationProvider,
 ): Promise<{ redirect: true; url: string } | undefined> {
   const request = findAuthorizeRequest(ctx);
   if (request?.params.resource === undefined) return undefined;
@@ -1365,9 +1371,11 @@ async function acceptAuthorizeResource(
 
   const redirectUri = params.redirect_uri;
   let registered: readonly string[] | null = null;
+  let read = false;
   try {
     registered =
       (await storage.oauthProvider?.getClient(clientId))?.redirectUris ?? null;
+    read = true;
   } catch (err) {
     log(
       "warn",
@@ -1378,6 +1386,10 @@ async function acceptAuthorizeResource(
       },
     );
   }
+  if (read && registered === null && isCimdClientIdUrlCandidate(clientId))
+    registered =
+      (await discoverClient(ctx, storage, provider, clientId))?.redirectUris ??
+      null;
   if (
     typeof redirectUri !== "string" ||
     registered === null ||
@@ -1392,14 +1404,41 @@ async function acceptAuthorizeResource(
   if (typeof params.state === "string") {
     callback.searchParams.set("state", params.state);
   }
-  const issuer = ctx.context?.baseURL;
-  if (issuer) callback.searchParams.set("iss", issuer);
+  callback.searchParams.set(
+    "iss",
+    getIssuer(endpointContext(ctx), provider.options),
+  );
   return redirectFromAuthorize(ctx, callback.toString());
 }
 
-/** The slice of the provider plugin whose allowlist is kept live. */
-export interface ProviderAllowlist {
-  options: { scopes?: string[]; clientRegistrationAllowedScopes?: string[] };
+/** The provider plugin whose options the hooks keep live and read. */
+export interface AuthorizationProvider {
+  options: Parameters<typeof getOAuthProviderApi>[1];
+}
+
+/** A hook's context as the provider's own helpers type it. */
+function endpointContext(
+  ctx: HookCtxLite,
+): Parameters<typeof getOAuthProviderApi>[0] {
+  return ctx as unknown as Parameters<typeof getOAuthProviderApi>[0];
+}
+
+/**
+ * Creates a client that names itself by its metadata document, through the
+ * provider, the way the provider would a moment later, and answers the row it
+ * stored. The provider's refusal of the document is thrown as the provider
+ * throws it.
+ */
+async function discoverClient(
+  ctx: HookCtxLite,
+  storage: Storage,
+  provider: AuthorizationProvider,
+  clientId: string,
+): Promise<OauthClientRow | null> {
+  await getOAuthProviderApi(endpointContext(ctx), provider.options).getClient(
+    clientId,
+  );
+  return (await storage.oauthProvider?.getClient(clientId)) ?? null;
 }
 
 /** The endpoints whose handling reads the provider's allowlist. */
@@ -1416,7 +1455,7 @@ function readsScopeAllowlist(path: string | undefined): boolean {
  * from its metadata document is stored with, against these two fields.
  */
 function refreshProviderAllowlist(
-  provider: ProviderAllowlist,
+  provider: AuthorizationProvider,
   live: string[],
 ): void {
   provider.options.scopes = live;
@@ -1532,6 +1571,7 @@ function findAuthorizeRequest(
 async function narrowAuthorizeScopes(
   ctx: HookCtxLite,
   storage: Storage,
+  provider: AuthorizationProvider,
   liveScopes: Set<string>,
   bundleScopes: Set<string>,
 ): Promise<{ redirect: true; url: string } | undefined> {
@@ -1542,27 +1582,9 @@ async function narrowAuthorizeScopes(
   const oauth = storage.oauthProvider;
   if (!oauth) return;
 
-  let ceiling: readonly string[] | null;
-  let registeredRedirectUris: readonly string[];
+  let client: OauthClientRow | null;
   try {
-    const client = await oauth.getClient(clientId);
-    if (!client) {
-      // A client that identifies itself by its metadata document is stored
-      // by the provider during this request, with the live allowlist as its
-      // ceiling, so narrowing against that set now is what it will meet.
-      if (!isCimdClientIdUrlCandidate(clientId)) return;
-      ceiling = null;
-      registeredRedirectUris = [];
-    } else {
-      // Mirrors the plugin's own `client.scopes ?? opts.scopes`: a null
-      // ceiling tracks the live set, and an empty array is a real, empty
-      // ceiling that narrows everything away — which case 2 below then
-      // declines to act on.
-      ceiling = client.scopes;
-      // Read off the same row, so the redirect-URI gate below costs no extra
-      // query.
-      registeredRedirectUris = client.redirectUris;
-    }
+    client = await oauth.getClient(clientId);
   } catch (err) {
     log("warn", "oauth authorize scope-narrowing precheck failed", {
       client_id: clientId,
@@ -1570,6 +1592,25 @@ async function narrowAuthorizeScopes(
     });
     return;
   }
+  if (!client) {
+    // A client that names itself by its metadata document is created from it
+    // now, where the provider would create it a moment later, so its first
+    // request is narrowed against the registration it gets.
+    if (
+      !isCimdClientIdUrlCandidate(clientId) ||
+      refusedBeforeClientLookup(params)
+    )
+      return;
+    client = await discoverClient(ctx, storage, provider, clientId);
+    if (!client) return;
+  }
+  // Mirrors the plugin's own `client.scopes ?? opts.scopes`: a null ceiling
+  // tracks the live set, and an empty array is a real, empty ceiling that
+  // narrows everything away — which case 2 below then declines to act on.
+  let ceiling: readonly string[] | null = client.scopes;
+  // Read off the same row, so the redirect-URI gate below costs no extra
+  // query.
+  const registeredRedirectUris: readonly string[] = client.redirectUris;
 
   const rawScope = params.scope;
   const requested =
@@ -1623,9 +1664,10 @@ async function narrowAuthorizeScopes(
   // and the next genuine sign-in would meet a consent screen asking for the
   // union rather than the narrow set the client registered for.
   //
-  // **Then a request the plugin can accept.** The gates below reproduce four
-  // of the plugin's own refusals, in its order, and stop there, so a signed-in
-  // request the plugin is certain to refuse does not move the row either.
+  // **Then a request the plugin can accept.** `refusedBeforeClientLookup`
+  // and the redirect check below reproduce five of the plugin's own refusals,
+  // in its order, and stop there, so a signed-in request the plugin is
+  // certain to refuse does not move the row either.
   // **They do not establish that the plugin will accept the request**: the
   // plugin runs a whole query schema between them (a malformed `max_age` is
   // `invalid_request` and nothing here notices), so what this can honestly
@@ -1641,36 +1683,8 @@ async function narrowAuthorizeScopes(
   // for, because a device asks before anybody has signed in, by design. So it
   // writes nothing: the device approval writes what the person ticked.
 
-  // The plugin refuses a JAR request object outright, and refuses a
-  // `request_uri` because `requestUriResolver` is unconfigured. Matched on
-  // `typeof === "string"` rather than truthiness because that is how the
-  // plugin reads them: an empty string is present, and a non-string is not.
-  //
-  // These two also bound what the rest of this function may assume. The
-  // parameters are read off the wire, which is the only place they are; a
-  // request that carried them indirectly would be one whose real parameters
-  // a before-hook cannot see.
-  if (typeof params.request === "string") return;
-  if (typeof params.request_uri === "string") return;
-
-  // `prompt=select_account` is `unsupported_prompt_select_account` unless the
-  // provider is configured with a `selectAccount.page`, and this deployment
-  // configures none. Reproduces `parsePrompt`, which splits on whitespace and
-  // trims, so `prompt=login select_account` is caught too. If a select-account
-  // page is ever configured this gate becomes stricter than the plugin, which
-  // costs a stale client one more sign-in before it self-heals — the safe
-  // direction for a divergence to fall in.
+  if (refusedBeforeClientLookup(params)) return;
   const rawPrompt = params.prompt;
-  if (
-    typeof rawPrompt === "string" &&
-    rawPrompt.split(" ").some((prompt) => prompt.trim() === "select_account")
-  ) {
-    return;
-  }
-
-  // Anything other than `code` is `unsupported_response_type`, and there is
-  // no grant in it to catch a ceiling up for.
-  if (params.response_type !== "code") return;
 
   // The request has to name a callback the client registered. This is the
   // gate the ordering exists for: it is the one parameter an attacker
@@ -1861,6 +1875,43 @@ async function narrowAuthorizeScopes(
       dropped_outside_client_ceiling: outsideClientCeiling,
     },
   });
+}
+
+/**
+ * Whether the provider refuses an authorize request before it looks up the
+ * client: the four refusals it makes first, in its order.
+ */
+function refusedBeforeClientLookup(params: Record<string, unknown>): boolean {
+  // The plugin refuses a JAR request object outright, and refuses a
+  // `request_uri` because `requestUriResolver` is unconfigured. Matched on
+  // `typeof === "string"` rather than truthiness because that is how the
+  // plugin reads them: an empty string is present, and a non-string is not.
+  //
+  // These two also bound what the narrowing may assume. The
+  // parameters are read off the wire, which is the only place they are; a
+  // request that carried them indirectly would be one whose real parameters
+  // a before-hook cannot see.
+  if (typeof params.request === "string") return true;
+  if (typeof params.request_uri === "string") return true;
+
+  // `prompt=select_account` is `unsupported_prompt_select_account` unless the
+  // provider is configured with a `selectAccount.page`, and this deployment
+  // configures none. Reproduces `parsePrompt`, which splits on whitespace and
+  // trims, so `prompt=login select_account` is caught too. If a select-account
+  // page is ever configured this gate becomes stricter than the plugin, which
+  // costs a stale client one more sign-in before it self-heals — the safe
+  // direction for a divergence to fall in.
+  const rawPrompt = params.prompt;
+  if (
+    typeof rawPrompt === "string" &&
+    rawPrompt.split(" ").some((prompt) => prompt.trim() === "select_account")
+  ) {
+    return true;
+  }
+
+  // Anything other than `code` is `unsupported_response_type`, and there is
+  // no grant in it to catch a ceiling up for.
+  return params.response_type !== "code";
 }
 
 /** Whether the request carries a live session, resolved the way the plugin

@@ -15,6 +15,7 @@ import {
 } from "./oauth-provider.js";
 import type { PermissionBundle } from "@withmarfa/shared";
 import { DEFAULT_PERMISSION_BUNDLES, loadConfig } from "../config.js";
+import { withCredentialRequest } from "./credential-adapter.js";
 
 describe("buildAllowedScopes", () => {
   it("includes the global type wildcards (Customize full-access path)", () => {
@@ -121,6 +122,18 @@ describe("liveAllowedScopes", () => {
       unregisterTypeSchema(id);
     }
     expect(liveAllowedScopes()).not.toContain("rtlive.*:read");
+  });
+
+  it("is read once for a request and again for the next", async () => {
+    const read = () =>
+      withCredentialRequest({ path: "/oauth2/authorize", clientIp: null }, () =>
+        Promise.resolve([liveAllowedScopes(), liveAllowedScopes()] as const),
+      );
+    const [first, second] = await read();
+    expect(second).toBe(first);
+    const [next] = await read();
+    expect(next).not.toBe(first);
+    expect(next).toEqual(first);
   });
 
   it("takes no namespace from a shipped edge type's bare identifier", () => {
