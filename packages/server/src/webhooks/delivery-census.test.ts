@@ -68,6 +68,14 @@ const OUTBOUND: Record<string, string> = {
     "runs in the owner's browser and calls this server's own sign-out door; it sends no webhook delivery",
   "routes/account-pages.ts":
     "asks node:net only whether the base URL's host is an IP literal; it opens no connection and sends no webhook delivery",
+  "app.ts":
+    "dispatches an MCP tool's API call through app.fetch in process; it sends no webhook delivery",
+  "mcp/door.ts":
+    "hands the MCP request to the SDK's handler in process; it sends no webhook delivery",
+  "net/public-address.ts":
+    "asks node:net whether a host is an IP literal and resolves names to check they are public; it opens no connection",
+  "net/public-fetch.ts":
+    "fetches a file an MCP tool names, through the public-address check and with no redirect; it sends no webhook delivery",
   "test-browser.ts":
     "dispatches browser fixture requests through app.fetch in process; it sends no webhook delivery",
 };

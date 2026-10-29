@@ -19,21 +19,16 @@
  * An operator running receivers on a private network turns the check off
  * with `MARFA_WEBHOOK_ALLOW_PRIVATE_ADDRESSES`.
  */
-import {
-  lookup as realDnsLookup,
-  type LookupAddress,
-  type LookupAllOptions,
-} from "node:dns";
 import { lookup as dnsLookupAll } from "node:dns/promises";
-import { isIP, type LookupFunction } from "node:net";
-import ipaddr from "ipaddr.js";
 import { Agent, fetch } from "undici";
 import { log } from "../middleware/logger.js";
 import {
-  faultsArmed,
-  scriptedAnswer,
-  scriptedConnectionAddress,
-} from "../control/faults.js";
+  AddressNotPublicError,
+  connectionLookup,
+  hasCause,
+  isPublicAddress,
+  literalAddress,
+} from "../net/public-address.js";
 
 /** Why a delivery reached no receiver, as the delivery log records it. */
 export const DELIVERY_FAILURE = {
@@ -43,70 +38,9 @@ export const DELIVERY_FAILURE = {
   unreachable: "The receiver could not be reached.",
 } as const;
 
-class AddressNotPublicError extends Error {
-  constructor() {
-    super(DELIVERY_FAILURE.notPublic);
-  }
-}
-
-/**
- * An IPv6 address with its dotted IPv4 tail written as two hexadecimal
- * groups, and no zone. ipaddr.js reads any dotted tail as IPv4-mapped, so
- * `::8.8.8.8` in `::/96` would be taken for `::ffff:8.8.8.8`, while libuv
- * writes an address in `::/96` with a dotted tail. Whether an address is
- * mapped is then decided by its bits: `::ffff:808:808` is, `::808:808` is not.
- */
-function withHexTail(address: string): string {
-  const bare = address.replace(/%.*$/, "");
-  const dotted = /^(.*:)(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(bare);
-  if (dotted === null) return bare;
-  const octets = dotted.slice(2).map(Number);
-  if (octets.some((octet) => octet > 255)) return bare;
-  const [a = 0, b = 0, c = 0, d = 0] = octets;
-  const hex = (high: number, low: number) => (high * 256 + low).toString(16);
-  return `${dotted[1] ?? ""}${hex(a, b)}:${hex(c, d)}`;
-}
-
-/** Global unicast, the only IPv6 block that is assigned to hosts on the internet. */
-const GLOBAL_UNICAST_V6 = ipaddr.IPv6.parseCIDR("2000::/3");
-
-/**
- * Whether `address` is one a delivery may connect to: a global unicast
- * address, with an IPv4 address written as IPv6 judged as the IPv4 address
- * it carries. An IPv4 address must not be in a range ipaddr.js names special,
- * which takes in loopback, private, link-local, carrier-grade NAT, the
- * unspecified address, multicast and the reserved blocks. An IPv6 address
- * must lie in 2000::/3 as well, so every other block is refused whether or
- * not ipaddr.js has a name for it: unique-local, link-local, multicast, the
- * unspecified address, `::/96` and the translation prefixes among them.
- */
-export function isPublicAddress(address: string): boolean {
-  let parsed: ipaddr.IPv4 | ipaddr.IPv6;
-  try {
-    parsed = ipaddr.parse(withHexTail(address));
-  } catch {
-    return false;
-  }
-  if (parsed.kind() === "ipv6") {
-    const v6 = parsed as ipaddr.IPv6;
-    if (v6.isIPv4MappedAddress()) {
-      parsed = v6.toIPv4Address();
-    } else if (!v6.match(GLOBAL_UNICAST_V6)) {
-      return false;
-    }
-  }
-  return parsed.range() === "unicast";
-}
-
 /** What a refusal at registration says, for an address written out or a name. */
 const SETTING_HINT =
   "An operator whose receivers run on a private network can allow it with MARFA_WEBHOOK_ALLOW_PRIVATE_ADDRESSES.";
-
-/** The host of `url` as an address, or null where it is a name. */
-function literalAddress(url: URL): string | null {
-  const host = url.hostname.replace(/^\[(.*)\]$/, "$1");
-  return ipaddr.isValid(host) ? host : null;
-}
 
 /**
  * What registration refuses outright: a URL that does not parse, a scheme
@@ -218,108 +152,6 @@ export async function refuseNonPublicHost(
   return `url's host resolves to an address that is not public. ${SETTING_HINT}`;
 }
 
-/** Script only the resolver; the address check always sees its answer. */
-function dnsLookup(
-  hostname: string,
-  options: LookupAllOptions,
-  callback: (
-    err: NodeJS.ErrnoException | null,
-    addresses: LookupAddress[],
-  ) => void,
-): void {
-  const scripted = faultsArmed() ? scriptedAnswer(hostname) : undefined;
-  if (scripted === undefined) {
-    realDnsLookup(hostname, options, callback);
-    return;
-  }
-  callback(
-    null,
-    scripted.checked.map((address) => ({ address, family: isIP(address) })),
-  );
-}
-
-const systemLookup: LookupFunction = (hostname, options, callback) => {
-  dnsLookup(hostname, { ...options, all: true }, (err, all) => {
-    settle(err, all, options, callback, true);
-  });
-};
-
-/**
- * Refuse the connection unless every address that was checked is public, and
- * connect to the addresses of the same lookup. Every rather than any, because
- * a name answering one public and one private address would let the
- * connection land on whichever the socket tried first.
- */
-function settle(
-  err: NodeJS.ErrnoException | null,
-  all: LookupAddress[],
-  options: Parameters<LookupFunction>[1],
-  callback: Parameters<LookupFunction>[2],
-  allowPrivateAddresses = false,
-): void {
-  if (err) {
-    callback(err, "", 0);
-    return;
-  }
-  if (
-    all.length === 0 ||
-    (!allowPrivateAddresses && !all.every((a) => isPublicAddress(a.address)))
-  ) {
-    callback(new AddressNotPublicError(), "", 0);
-    return;
-  }
-  if (options.all === true) {
-    (callback as unknown as (e: null, a: LookupAddress[]) => void)(null, all);
-    return;
-  }
-  const first = all[0];
-  if (first === undefined) {
-    callback(new AddressNotPublicError(), "", 0);
-    return;
-  }
-  callback(null, first.address, first.family);
-}
-
-const publicOnlyLookup: LookupFunction = (hostname, options, callback) => {
-  dnsLookup(hostname, { ...options, all: true }, (err, all) => {
-    settle(err, all, options, callback);
-  });
-};
-
-/** Map checked public answers onto local sockets without another lookup. */
-function localSocketLookup(lookup: LookupFunction): LookupFunction {
-  return (hostname, options, callback) => {
-    if (!faultsArmed()) {
-      lookup(hostname, options, callback);
-      return;
-    }
-    const connected = (address: string) =>
-      scriptedConnectionAddress(hostname, address);
-    lookup(hostname, options, ((
-      err: NodeJS.ErrnoException | null,
-      address: string | LookupAddress[],
-      family: number,
-    ) => {
-      if (err) {
-        callback(err, "", 0);
-        return;
-      }
-      if (Array.isArray(address)) {
-        (callback as unknown as (e: null, a: LookupAddress[]) => void)(
-          null,
-          address.map((a) => ({
-            address: connected(a.address),
-            family: isIP(connected(a.address)),
-          })),
-        );
-      } else {
-        const mapped = connected(address);
-        callback(null, mapped, isIP(mapped) || family);
-      }
-    }) as Parameters<LookupFunction>[2]);
-  };
-}
-
 export interface WebhookPost {
   url: string;
   headers: Record<string, string>;
@@ -340,18 +172,6 @@ export type WebhookPostOutcome =
 
 export interface WebhookHttpClient {
   post(request: WebhookPost): Promise<WebhookPostOutcome>;
-}
-
-function hasCause(err: unknown, match: (e: unknown) => boolean): boolean {
-  let current: unknown = err;
-  for (let depth = 0; depth < 5 && current !== undefined; depth++) {
-    if (match(current)) return true;
-    if (current instanceof AggregateError) {
-      if (current.errors.some((e) => hasCause(e, match))) return true;
-    }
-    current = current instanceof Error ? current.cause : undefined;
-  }
-  return false;
 }
 
 /**
@@ -385,9 +205,10 @@ export function createWebhookHttpClient(options: {
 }): WebhookHttpClient {
   const dispatcher = new Agent({
     connect: {
-      lookup: localSocketLookup(
-        options.allowPrivateAddresses ? systemLookup : publicOnlyLookup,
-      ),
+      lookup: connectionLookup({
+        allowPrivateAddresses: options.allowPrivateAddresses,
+        refusal: DELIVERY_FAILURE.notPublic,
+      }),
     },
   });
   return {
@@ -401,8 +222,6 @@ export function createWebhookHttpClient(options: {
       if (url.protocol !== "http:" && url.protocol !== "https:") {
         return { kind: "failed", error: DELIVERY_FAILURE.unreachable };
       }
-      // A literal address opens a socket without a lookup, so the lookup's
-      // check never sees it.
       const literal = literalAddress(url);
       if (
         !options.allowPrivateAddresses &&

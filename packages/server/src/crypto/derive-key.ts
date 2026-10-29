@@ -30,4 +30,6 @@ export const SECRET_INFO = {
   /** The MAC over an instance-served blob link's hash and expiry. */
   blobLink: "blob-link",
   reach: "reach",
+  /** The MAC over an MCP delete preview, which the confirming call repeats. */
+  mcpDelete: "mcp-delete",
 } as const;

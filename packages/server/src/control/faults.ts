@@ -29,11 +29,12 @@
  * - `unfold-deadline=<ms>` shortens the time one series may take to unfold.
  * - `store-check-deadline=<ms>` shortens the time one question to a blob
  *   store may go unanswered.
- * - `resolve:<hostname>=<answers>` makes an outbound webhook delivery resolve
- *   that name to scripted addresses. `<answers>` is one answer per lookup,
- *   separated by `;`, each a list of addresses separated by `,`; the last
- *   answer repeats, and `fired` counts the lookups answered. The delivery
- *   checks the addresses an answer names as it does a real answer. An
+ * - `resolve:<hostname>=<answers>` makes an outbound webhook delivery, or an
+ *   MCP tool's fetch of a file, resolve that name to scripted addresses.
+ *   `<answers>` is one answer per lookup, separated by `;`, each a list of
+ *   addresses separated by `,`; the last answer repeats, and `fired` counts
+ *   the lookups answered. The check judges the addresses an answer names as
+ *   it does a real answer. An
  *   address may be written `<checked>><connected>`: the check judges the
  *   first, and the socket connects to the second, so a fixture can have a
  *   public address reach a receiver on loopback.
