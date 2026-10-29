@@ -5306,7 +5306,7 @@ When `folders watch` receives `SIGTERM`, the CLI MUST end within three seconds w
 
 Where telemetry is on, when `folders watch` receives `SIGTERM`, the CLI MUST end with exit status 0.
 
-**Reason:** The thread that sends telemetry starts before the watch, and `SIGTERM` reaching it would end the process at once, which a service manager reads as a failure.
+**Reason:** The thread that sends telemetry starts before the watch and may be the one that takes `SIGTERM`. The watch stops from whichever thread that is, and a signal lost there would leave the watch running until the service manager sends `SIGKILL`, which it reads as a failure.
 
 **Tests:** `device/folders-autostart.test.ts › ends on SIGTERM with exit status 0 while it sends telemetry, too`.
 
@@ -5346,9 +5346,9 @@ While `folders watch` runs with `--log`, when its file reaches 1 MiB, the CLI MU
 
 ### `folders/watch-launchd-log-start-full`
 
-When `folders watch` starts with `--log` naming a file, and a file named `folder-watch.launchd.log` in the same directory holds 1 MiB or more, the CLI MUST move that file to the same name with `.1` added, replacing any file there, before it opens the log.
+When `folders watch` starts with `--log` naming a file, and a file named `folder-watch.launchd.log` in the same directory holds 1 MiB or more, the CLI MUST move that file to the same name with `.1` added, replacing any file there, and leave an empty file at the name, readable and writable by its owner alone, before it opens the log.
 
-**Reason:** A watch that cannot open its log is started again by the service manager, and each start adds its error to the file launchd gives the watch's output (`folders/autostart-launchd-output`).
+**Reason:** A watch that cannot open its log is started again by the service manager, and each start adds its error to the file launchd gives the watch's output (`folders/autostart-launchd-output`). launchd makes a file it finds missing readable by others (`folders/autostart-launchd-output-private`), and the output names folders' directories. The start that moves the file aside already holds the file it opened, so what that start printed before the watch attached lands in the `.1` file, not the new one.
 
 **Tests:** `device/folders-autostart.test.ts › moves the file launchd gave the watch aside as the watch starts when it holds 1 MiB or more`.
 
@@ -5370,7 +5370,9 @@ Where the platform reports the process that sent the signal that stopped `folder
 
 ### `folders/watch-log-stopped-in-pass`
 
-While a sync pass waits on the server, when `SIGTERM` stops `folders watch` with `--log`, the CLI MUST write the line `folders/watch-log-stopped` describes before it ends, and end within the time `folders/watch-terminate` allows.
+While a sync pass waits on the server, when `SIGTERM` stops `folders watch` with `--log`, the CLI MUST write the line `folders/watch-log-stopped` describes before it ends.
+
+**Reason:** A request to the server that has not answered holds the pass, and a watch that ends while it waits would end before it wrote the line. The time it has to end in is `folders/watch-terminate`'s.
 
 **Tests:** `device/folders-autostart.test.ts › writes the stop line, and ends within three seconds with exit status 0, when SIGTERM comes during a pass that waits on the server`.
 

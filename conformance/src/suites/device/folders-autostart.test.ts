@@ -600,6 +600,27 @@ describe("folder syncing from login", () => {
       "was written by an earlier marfa and differs from what `marfa folders autostart on` writes now; run `marfa folders autostart on` again with the same options to replace it",
     );
 
+    if (macOS) {
+      // An agent from before launchd was given a file for the output has none
+      // to report, and says so, as one that has the file reports it.
+      expect(status.launchd_log).toBe(
+        join(dirname(registry), "folder-watch.launchd.log"),
+      );
+      const unnamed = earlier.replace(
+        /\t<key>Standard(Out|Error)Path<\/key>\n\t<string>[^<]*<\/string>\n/g,
+        "",
+      );
+      expect(unnamed).not.toBe(earlier);
+      writeFileSync(agentFile(root), unnamed);
+      const old = parsed<Status>(autostart(root, "status", { registry }));
+      expect(old).toMatchObject({ outdated: true, launchd_log: null });
+      expect(
+        autostart(root, "status", { registry, json: false }).stdout,
+      ).toContain(
+        "it names no file for what it prints before it opens that log; `marfa folders autostart on` again replaces it with an agent that does",
+      );
+    }
+
     expect(parsed<Switched>(autostart(root, "on", { registry })).changed).toBe(
       true,
     );
@@ -1421,7 +1442,8 @@ describe("the watch run by a service manager", () => {
     made.push(harness);
     const log = logIn("launchd-full");
     const launchd = join(dirname(log), "folder-watch.launchd.log");
-    writeFileSync(launchd, "x".repeat(MEBIBYTE));
+    writeFileSync(launchd, "x".repeat(MEBIBYTE), { mode: 0o644 });
+    chmodSync(launchd, 0o644);
     const watch = harness.folder
       .device()
       .hold(["folders", "watch", "--log", log], "root");
@@ -1430,7 +1452,10 @@ describe("the watch run by a service manager", () => {
       expect(readLog(log)).toContain("watching every folder");
     }, WAIT);
     expect(statSync(`${launchd}.1`).size).toBe(MEBIBYTE);
-    expect(existsSync(launchd)).toBe(false);
+    // Left empty and private for launchd's next start to open, which would
+    // otherwise make the file readable by others.
+    expect(statSync(launchd).size).toBe(0);
+    expect(statSync(launchd).mode & 0o077).toBe(0);
   });
 
   it("moves a log of 1 MiB or more aside as the watch starts, and writes to a fresh one", async () => {
