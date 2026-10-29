@@ -10,7 +10,10 @@ import { createHash, randomBytes } from "node:crypto";
 import { createRequire, syncBuiltinESMExports } from "node:module";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createApp } from "../app.js";
-import { FIRST_FETCH_BUDGET } from "../auth/client-metadata-discovery.js";
+import {
+  FIRST_FETCH_BUDGET,
+  METADATA_FETCH_POLICY,
+} from "../auth/client-metadata-discovery.js";
 import { ensureInstanceId } from "../storage/instance-id.js";
 import { transactionControl } from "../storage/sqlite/transaction-control.js";
 import type { TestAppOptions, TestContext } from "../test-utils.js";
@@ -677,6 +680,204 @@ describe("a stored metadata document client", () => {
     expect(((await refused.json()) as { error?: string }).error).toBe(
       "invalid_client",
     );
+  });
+});
+
+/**
+ * A transport that serves {@link CLIENT_ID} until `retire` is called and 404
+ * after, and passes every other URL to `other`. `storedCalls` records each
+ * fetch of {@link CLIENT_ID}.
+ */
+function retiringServer(other: Fetch): {
+  fetch: Fetch;
+  storedCalls: string[];
+  retire: () => void;
+} {
+  let retired = false;
+  const storedCalls: string[] = [];
+  const fetch: Fetch = (input, init) => {
+    const url = new Request(input, init).url;
+    if (url !== CLIENT_ID) return other(input, init);
+    storedCalls.push(url);
+    return retired
+      ? new Response("gone", { status: 404 })
+      : uncached(metadata());
+  };
+  return {
+    fetch,
+    storedCalls,
+    retire: () => {
+      retired = true;
+    },
+  };
+}
+
+/** A transport for other URLs that holds each fetch open until released. */
+function heldDocuments(): { fetch: Fetch; held: (() => void)[] } {
+  const held: (() => void)[] = [];
+  const fetch: Fetch = (input, init) => {
+    const url = new Request(input, init).url;
+    return new Promise<Response>((resolve) => {
+      held.push(() => {
+        resolve(Response.json(metadata({ client_id: url })));
+      });
+    });
+  };
+  return { fetch, held };
+}
+
+/** `host` with the letters at the set bits of `variant` in upper case. */
+function caseVariant(host: string, variant: number): string {
+  let letter = 0;
+  return host.replace(/[a-z]/g, (c) =>
+    (variant >> letter++) & 1 ? c.toUpperCase() : c,
+  );
+}
+
+async function expectFetchedAndRefused(
+  c: TestContext,
+  storedCalls: string[],
+): Promise<void> {
+  const before = storedCalls.length;
+  const answer = await authorize(c, {
+    client_id: CLIENT_ID,
+    redirect_uri: CALLBACK,
+  });
+  expect(storedCalls.length).toBe(before + 1);
+  expect(authorized(answer), await answer.clone().text()).toBe(false);
+}
+
+describe("a stored metadata document client whose document answers 404", () => {
+  it("is fetched and refused after one address sends many client IDs that are not valid", async () => {
+    const server = retiringServer((input, init) => {
+      throw new TypeError(
+        `unexpected fetch of ${new Request(input, init).url}`,
+      );
+    });
+    const c = await contextServing(server.fetch);
+    await connect(c);
+
+    const answers: string[] = [];
+    for (let i = 0; i < METADATA_FETCH_POLICY.maximumFetchesPerMinute; i++) {
+      const answer = await authorize(
+        c,
+        {
+          client_id: `https://n${String(i)}.example.test`,
+          redirect_uri: CALLBACK,
+        },
+        "203.0.113.7",
+      );
+      answers.push(await answer.text());
+    }
+    // The witness: a client ID with no path is refused as invalid.
+    expect(answers[0]).toContain("explicit path component");
+
+    server.retire();
+    await expectFetchedAndRefused(c, server.storedCalls);
+  });
+
+  it("is fetched and refused while new clients wait on first fetches held open", async () => {
+    const slow = heldDocuments();
+    const server = retiringServer(slow.fetch);
+    const c = await contextServing(server.fetch);
+    await connect(c);
+
+    const pending = Array.from(
+      { length: FIRST_FETCH_BUDGET.concurrent },
+      (_, i) =>
+        authorize(
+          c,
+          {
+            client_id: `https://slow${String(i)}.example.test/client.json`,
+            redirect_uri: CALLBACK,
+          },
+          `203.0.113.${String(i + 1)}`,
+        ),
+    );
+    try {
+      await vi.waitFor(() => {
+        expect(slow.held).toHaveLength(FIRST_FETCH_BUDGET.concurrent);
+      });
+      for (let i = 0; i < METADATA_FETCH_POLICY.maximumFetchesPerMinute; i++) {
+        const answer = await authorize(
+          c,
+          {
+            client_id: `https://more${String(i)}.example.test/client.json`,
+            redirect_uri: CALLBACK,
+          },
+          "198.51.100.7",
+        );
+        expect(await answer.text()).toContain("temporarily_unavailable");
+      }
+      expect(slow.held).toHaveLength(FIRST_FETCH_BUDGET.concurrent);
+
+      server.retire();
+      await expectFetchedAndRefused(c, server.storedCalls);
+    } finally {
+      for (const release of slow.held) release();
+      await Promise.all(pending);
+    }
+  });
+
+  it("is fetched and refused after one address sends case variants of a client ID being fetched", async () => {
+    const slowUrl = "https://app.example.test/slow.json";
+    const slow = heldDocuments();
+    const server = retiringServer((input, init) =>
+      new Request(input, init).url === slowUrl
+        ? slow.fetch(input, init)
+        : Response.json(metadata({ client_id: new Request(input, init).url })),
+    );
+    const c = await contextServing(server.fetch);
+    await connect(c);
+
+    const peer = "203.0.113.9";
+    const pending = authorize(
+      c,
+      { client_id: slowUrl, redirect_uri: CALLBACK },
+      peer,
+    );
+    try {
+      await vi.waitFor(() => {
+        expect(slow.held).toHaveLength(1);
+      });
+      for (let i = 1; i < FIRST_FETCH_BUDGET.perAddressPerMinute; i++) {
+        const consent = await authorize(
+          c,
+          {
+            client_id: `https://n${String(i)}.example.test/client.json`,
+            redirect_uri: CALLBACK,
+          },
+          peer,
+        );
+        expect(reachedConsent(consent), await consent.clone().text()).toBe(
+          true,
+        );
+      }
+      for (
+        let i = 1;
+        i <= METADATA_FETCH_POLICY.maximumFetchesPerOriginPerMinute;
+        i++
+      ) {
+        const answer = await authorize(
+          c,
+          {
+            client_id: slowUrl.replace(
+              "app.example.test",
+              caseVariant("app.example.test", i),
+            ),
+            redirect_uri: CALLBACK,
+          },
+          peer,
+        );
+        expect(await answer.text()).toContain("temporarily_unavailable");
+      }
+
+      server.retire();
+      await expectFetchedAndRefused(c, server.storedCalls);
+    } finally {
+      for (const release of slow.held) release();
+      await pending;
+    }
   });
 });
 

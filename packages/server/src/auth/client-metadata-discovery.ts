@@ -11,6 +11,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import {
   createCimdClientDiscovery,
   isCimdClientIdUrlCandidate,
+  validateClientIdUrl,
 } from "@better-auth/cimd";
 import {
   extendOAuthProvider,
@@ -34,7 +35,7 @@ type StoredClient = NonNullable<ResolveArgs[2]>;
  * them changes nothing here unnoticed. Every fetch counts against these,
  * including the revalidation of a stored client.
  */
-const METADATA_FETCH_POLICY = {
+export const METADATA_FETCH_POLICY = {
   minimumFetchInterval: "1s",
   maximumConcurrentFetches: 16,
   maximumConcurrentFetchesPerOrigin: 4,
@@ -151,11 +152,14 @@ class FirstFetchBudget {
 
   /**
    * Throws `temporarily_unavailable` when this minute's first fetches are
-   * spent, overall or for `address`, without taking one.
+   * spent, overall or for `address`, or as many as may run at once are
+   * under way, without taking one.
    */
   check(address: string | null): void {
     const now = nowMs();
     prune(this.starts, now);
+    if (this.active >= FIRST_FETCH_BUDGET.concurrent)
+      throw unavailable("Too many new clients are being looked up at once");
     if (this.starts.length >= FIRST_FETCH_BUDGET.perMinute)
       throw unavailable("Too many new clients were looked up this minute");
     const byAddress =
@@ -172,8 +176,6 @@ class FirstFetchBudget {
   /** Takes one first fetch from the budget, or throws `temporarily_unavailable`. */
   acquire(address: string | null): () => void {
     this.check(address);
-    if (this.active >= FIRST_FETCH_BUDGET.concurrent)
-      throw unavailable("Too many new clients are being looked up at once");
     const now = nowMs();
     if (address !== null) this.startsFor(address, now).push(now);
     this.starts.push(now);
@@ -260,7 +262,8 @@ export function buildClientMetadataDiscovery(
     input: string | URL | Request,
     init?: RequestInit,
   ) => {
-    const url = new URL(input instanceof Request ? input.url : input).href;
+    const raw = input instanceof Request ? input.url : String(input);
+    const url = new URL(raw).href;
     const first = firstFetch.getStore();
     let release: (() => void) | undefined;
     if (first) {
@@ -271,7 +274,7 @@ export function buildClientMetadataDiscovery(
         throw error;
       }
     }
-    fetching.add(url);
+    fetching.add(raw);
     try {
       const response = await fetchResource(input, init);
       if (response.redirected) {
@@ -306,7 +309,7 @@ export function buildClientMetadataDiscovery(
       record(url, { kind: "unavailable" });
       throw error;
     } finally {
-      fetching.delete(url);
+      fetching.delete(raw);
       release?.();
     }
   };
@@ -385,9 +388,16 @@ export function buildClientMetadataDiscovery(
     if (existingClient) return resolveStored(args, url, existingClient);
     const ip = credentialRequest.getStore()?.clientIp ?? null;
     const address = ip === null ? null : addressBucket(ip);
-    // Refused before the library takes a fetch from its own policy, unless
-    // this request will share a fetch already under way.
-    if (!fetching.has(url)) firstFetches.check(address);
+    // The library takes a fetch from its own policy before it validates the
+    // URL or calls the transport, and shares a fetch under way only for the
+    // same `client_id` string, so both are decided here first.
+    const urlError = validateClientIdUrl(clientId);
+    if (urlError)
+      throw new APIError("BAD_REQUEST", {
+        error: "invalid_client",
+        error_description: urlError,
+      });
+    if (!fetching.has(clientId)) firstFetches.check(address);
     try {
       return await firstFetch.run({ address }, () => inner.resolve(...args));
     } catch (error) {
