@@ -317,6 +317,38 @@ describe("marfa_delete", () => {
     expect(await stateOf(parent)).toBe("active");
   });
 
+  it("refuses a confirmation when an item past the preview's list changed", async () => {
+    const parent = await note("parent");
+    const children: string[] = [];
+    for (let i = 0; i < 102; i++) children.push(await addChild(parent));
+    const preview = toolResult(
+      await callTool(mcp, "marfa_delete", { ids: [parent.id] }),
+    );
+    const listed = new Set(
+      (
+        preview.preview as { also_trashes: { id: string }[] }[]
+      )[0]?.also_trashes.map((item) => item.id),
+    );
+    const unlisted = children.find((child) => !listed.has(child));
+    if (unlisted === undefined) throw new Error("every child is listed");
+    const read = await client.getItem(unlisted);
+    const edited = await client.updateItem(unlisted, {
+      version: read.data.item.version,
+      properties: { body: "edited" },
+    });
+    expect(edited.ok, JSON.stringify(edited.error)).toBe(true);
+
+    const error = toolError(
+      await callTool(mcp, "marfa_delete", {
+        ids: [parent.id],
+        confirm: preview.confirm,
+      }),
+    );
+    expect(error.code).toBe("confirmation_stale");
+    expect(error.total).toBe(103);
+    expect(await stateOf(parent.id)).toBe("active");
+  });
+
   it("refuses a confirmation another credential got", async () => {
     const parent = await family(0);
     const preview = toolResult(

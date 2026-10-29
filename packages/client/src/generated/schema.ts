@@ -3174,7 +3174,8 @@ export interface components {
          *           "version": 2
          *         }
          *       ],
-         *       "count": 2
+         *       "count": 2,
+         *       "digest": "9f2c1d3b5a7e4f60b8c9d0e1f2a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5"
          *     }
          */
         TrashPreview: {
@@ -3199,6 +3200,13 @@ export interface components {
              * @enum {boolean}
              */
             truncated?: true;
+            /**
+             * @description A SHA-256 hash, in hex, of every item `count` counts with its version, listed or not. It changes if any of them changes, or an item joins or leaves them.
+             * @example 9f2c1d3b5a7e4f60b8c9d0e1f2a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5
+             */
+            digest: string;
+            /** @description The IDs in `check_ids` that trashing the item would move to the trash, in the order you named them. Present only if you send `check_ids`. */
+            taken_ids?: string[];
         };
         /** @description An item that trashing another item would take with it. */
         TrashPreviewEntry: {
@@ -7338,7 +7346,10 @@ export interface operations {
     };
     previewItemTrash: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Other item IDs, comma-separated, at most 20. `taken_ids` answers which of them trashing the item would move to the trash. */
+                check_ids?: string;
+            };
             header?: never;
             path: {
                 /** @description The ID of the item. */
@@ -7363,9 +7374,9 @@ export interface operations {
                 };
             };
             /**
-             * @description - `invalid_id`: the ID is not a valid item ID.
+             * @description - `invalid_id`: the ID, or one in `check_ids`, is not a valid item ID.
              *     - `edge_constraint_violation`: an edge type on the item has `cascade_on_delete: block`, and such an edge exists, so a delete would be refused.
-             *     - `validation_error`: the item is a live `system.connection`.
+             *     - `validation_error`: the item is a live `system.connection`, or `check_ids` names more than 20 IDs.
              */
             400: {
                 headers: {

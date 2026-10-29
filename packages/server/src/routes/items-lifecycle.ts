@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { runAuditedTransaction } from "../storage/audited-transaction.js";
 import { snapshotReadRoute } from "../middleware/read-snapshot.js";
 import { createRoute, z } from "@hono/zod-openapi";
@@ -30,12 +31,57 @@ const IdParam = z.object({
   id: z.string().describe("The ID of the item."),
 });
 
+/** The IDs `check_ids` names, each once, or undefined if it is absent. */
+function checkedIds(raw: string | undefined): string[] | undefined {
+  if (raw === undefined) return undefined;
+  const ids = [
+    ...new Set(
+      raw
+        .split(",")
+        .map((id) => id.trim())
+        .filter((id) => id !== ""),
+    ),
+  ];
+  if (ids.length > TRASH_PREVIEW_CHECK_LIMIT) {
+    throw new MarfaError(
+      ErrorCode.VALIDATION_ERROR,
+      `check_ids names more than ${String(TRASH_PREVIEW_CHECK_LIMIT)} IDs`,
+      { field: "check_ids" },
+    );
+  }
+  for (const id of ids) {
+    if (!isValidId(id)) {
+      throw new MarfaError(ErrorCode.INVALID_ID, `Invalid item ID: ${id}`, {
+        field: "check_ids",
+      });
+    }
+  }
+  return ids;
+}
+
 // ---------------------------------------------------------------------------
 // Route definitions
 // ---------------------------------------------------------------------------
 
 /** The most items a trash preview lists beside the item itself. */
 export const TRASH_PREVIEW_LIMIT = 100;
+
+/** The most IDs a trash preview checks with `check_ids`. */
+export const TRASH_PREVIEW_CHECK_LIMIT = 20;
+
+/**
+ * A SHA-256 over every item a trash would take that the key may read, each
+ * as its ID and version, in ID order: equal for two previews only if the
+ * same items at the same versions would go.
+ */
+function trashDigest(
+  items: readonly { id: string; version: number }[],
+): string {
+  const lines = items
+    .map((item) => `${item.id}:${String(item.version)}`)
+    .sort();
+  return createHash("sha256").update(lines.join("\n")).digest("hex");
+}
 
 const TrashPreviewEntrySchema = z
   .object({
@@ -86,6 +132,21 @@ const TrashPreviewSchema = z
       .describe(
         "`true` if `items` was cut at its limit. Absent when it lists every item.",
       ),
+    digest: z
+      .string()
+      .describe(
+        "A SHA-256 hash, in hex, of every item `count` counts with its version, listed or not. It changes if any of them changes, or an item joins or leaves them.",
+      )
+      .openapi({
+        example:
+          "9f2c1d3b5a7e4f60b8c9d0e1f2a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5",
+      }),
+    taken_ids: z
+      .array(z.string())
+      .optional()
+      .describe(
+        "The IDs in `check_ids` that trashing the item would move to the trash, in the order you named them. Present only if you send `check_ids`.",
+      ),
   })
   .describe(
     "What trashing an item would move to the trash. Items you can't read are taken too and aren't listed or counted.",
@@ -103,6 +164,8 @@ const TrashPreviewSchema = z
         },
       ],
       count: 2,
+      digest:
+        "9f2c1d3b5a7e4f60b8c9d0e1f2a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5",
     },
   });
 
@@ -118,6 +181,14 @@ const previewItemTrashRoute = createRoute({
   middleware: readsSomeType,
   request: {
     params: IdParam,
+    query: z.object({
+      check_ids: z
+        .string()
+        .optional()
+        .describe(
+          `Other item IDs, comma-separated, at most ${String(TRASH_PREVIEW_CHECK_LIMIT)}. \`taken_ids\` answers which of them trashing the item would move to the trash.`,
+        ),
+    }),
   },
   responses: {
     200: {
@@ -136,8 +207,7 @@ const previewItemTrashRoute = createRoute({
           ]),
         },
       },
-      description:
-        "- `invalid_id`: the ID is not a valid item ID.\n- `edge_constraint_violation`: an edge type on the item has `cascade_on_delete: block`, and such an edge exists, so a delete would be refused.\n- `validation_error`: the item is a live `system.connection`.",
+      description: `- \`invalid_id\`: the ID, or one in \`check_ids\`, is not a valid item ID.\n- \`edge_constraint_violation\`: an edge type on the item has \`cascade_on_delete: block\`, and such an edge exists, so a delete would be refused.\n- \`validation_error\`: the item is a live \`system.connection\`, or \`check_ids\` names more than ${String(TRASH_PREVIEW_CHECK_LIMIT)} IDs.`,
     },
     401: {
       content: {
@@ -329,7 +399,9 @@ export function itemsLifecycleRoutes(storage: Storage) {
       if (!isValidId(id)) {
         throw new MarfaError(ErrorCode.INVALID_ID, "Invalid item ID");
       }
+      const checkIds = checkedIds(c.req.valid("query").check_ids);
       const { row, taken } = await previewTrash(storage, requireAuth(c), id);
+      const takenIds = new Set(taken.map((item) => item.id));
       const items = taken.slice(0, TRASH_PREVIEW_LIMIT).map((item) => ({
         id: item.id,
         type: item.type,
@@ -343,6 +415,10 @@ export function itemsLifecycleRoutes(storage: Storage) {
           items,
           count: taken.length + 1,
           ...(taken.length > items.length && { truncated: true as const }),
+          digest: trashDigest([row, ...taken]),
+          ...(checkIds !== undefined && {
+            taken_ids: checkIds.filter((checked) => takenIds.has(checked)),
+          }),
         },
         200,
       );

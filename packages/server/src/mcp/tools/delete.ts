@@ -47,9 +47,13 @@ async function previewAll(
 > {
   const previews: TrashPreview[] = [];
   for (const id of ids) {
+    const others = ids.filter((other) => other !== id);
     const answer = await ctx.api.answer(
       ctx.api.client.GET("/items/{id}/trash-preview", {
-        params: { path: { id } },
+        params: {
+          path: { id },
+          query: others.length > 0 ? { check_ids: others.join(",") } : {},
+        },
       }),
     );
     if (!answer.ok) return { ok: false, refusal: answer.refusal, id };
@@ -58,8 +62,9 @@ async function previewAll(
   const plan = previews.map((preview) => ({
     id: preview.id,
     version: preview.version,
-    with: preview.items.map((item) => ({ id: item.id, version: item.version })),
     count: preview.count,
+    digest: preview.digest,
+    takes: preview.taken_ids ?? [],
   }));
   return { ok: true, plan, previews };
 }
@@ -69,7 +74,7 @@ async function previewAll(
  * named item is counted once, in the other's count.
  */
 function totalOf(plan: readonly PlannedDelete[]): number {
-  const carried = new Set(plan.flatMap((root) => root.with.map((i) => i.id)));
+  const carried = new Set(plan.flatMap((root) => root.takes));
   return plan
     .filter((root) => !carried.has(root.id))
     .reduce((sum, root) => sum + root.count, 0);
@@ -201,7 +206,7 @@ export function registerDelete(server: McpServer, ctx: ToolContext): void {
           });
         }
         trashed.push(root.id);
-        for (const item of root.with) gone.add(item.id);
+        for (const id of root.takes) gone.add(id);
       }
       return ok({
         trashed,

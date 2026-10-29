@@ -4,31 +4,30 @@
  * The first `marfa_delete` call previews and returns a token; the second
  * call sends it back, and the delete goes ahead only if a fresh preview
  * gives the same token. The token is a MAC, keyed from the instance's
- * secret, over the credential that asked, every item the preview counted
- * with its version, and an expiry. So a token is refused when it is sent by
- * another credential, after it expires, or once anything the preview showed
- * has changed: an item edited, an item added to or dropped from what the
- * delete takes with it. The token carries only its expiry and the MAC, so
- * it says nothing about the items it covers.
+ * secret, over the credential that asked, each named item with its version,
+ * the preview's digest of every item the key can read that its trash would
+ * take, with their versions, listed or not, which named items go with it,
+ * and an expiry. So a token is refused when it is sent by another
+ * credential, after it expires, or once anything the preview covered has
+ * changed: an item edited, an item added to or dropped from what the delete
+ * takes with it. The token carries only its expiry and the MAC, so it says
+ * nothing about the items it covers.
  */
 import { createHmac, timingSafeEqual } from "node:crypto";
 
 /** How long a preview's token stays good. */
 export const CONFIRMATION_TTL_MS = 5 * 60 * 1000;
 
-/** One item a delete would trash, with the version the preview saw. */
-export interface PlannedItem {
-  id: string;
-  version: number;
-}
-
 /** One requested item and what trashing it takes with it. */
 export interface PlannedDelete {
   id: string;
   version: number;
-  /** Every readable item trashed with it, and how many there are in all. */
-  with: readonly PlannedItem[];
+  /** How many items the key can read that its trash takes, itself included. */
   count: number;
+  /** The preview's digest of those items and their versions. */
+  digest: string;
+  /** The other named items its trash takes. */
+  takes: readonly string[];
 }
 
 function canonical(
@@ -42,9 +41,8 @@ function canonical(
       id: root.id,
       version: root.version,
       count: root.count,
-      with: [...root.with]
-        .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
-        .map((item) => [item.id, item.version]),
+      digest: root.digest,
+      takes: [...root.takes].sort(),
     }));
   return JSON.stringify({ credential, roots, expiresAt });
 }

@@ -1138,6 +1138,22 @@ When `GET /items/{id}/trash-preview` names an item that `DELETE /items/{id}` wou
 
 **Tests:** `compliance/trash-preview.test.ts › names the item and everything a cascade would take with it, leaves first, and the delete then takes exactly that`.
 
+### `items/trash-preview-digest`
+
+When the server answers `GET /items/{id}/trash-preview`, the server MUST answer under `digest` a SHA-256 hash, in lowercase hex, of every item `count` counts, each with its version, that differs between two previews of the same item whenever an item joins or leaves those items or one of them changes version.
+
+**Reason:** `items` lists at most 100 items, and a confirmation given against a preview must still cover the items it does not list.
+
+**Tests:** `compliance/trash-preview.test.ts › changes its digest when an item past its list changes, and not otherwise`.
+
+### `items/trash-preview-check`
+
+When `GET /items/{id}/trash-preview` names `check_ids`, the server MUST answer under `taken_ids` each of those IDs that names an item the key may read that the delete would move with the item, in the order named.
+
+**Reason:** a caller deleting several items at once learns which of them go with another, whether or not `items` lists them.
+
+**Tests:** `compliance/trash-preview.test.ts › answers which of check_ids the trash would take, listed or not`.
+
 ### `items/trash-preview-writes-nothing`
 
 When the server answers `GET /items/{id}/trash-preview`, the server MUST NOT change the item or any item beneath it.

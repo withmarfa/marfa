@@ -619,6 +619,89 @@ describe("marfa_delete", () => {
     expect((await readItem(parent.id)).state).toBe("active");
   });
 
+  it("refuses a confirmation when an item past the preview's list changed or was swapped", async () => {
+    const { parent, kids } = await family(105);
+    const preview = async () =>
+      payloadOf(await callTool(client, "marfa_delete", { ids: [parent.id] }));
+    const first = await preview();
+    const listed = new Set(
+      (
+        first.preview as { also_trashes: { id: string }[] }[]
+      )[0]?.also_trashes.map((item) => item.id),
+    );
+    const unlisted = kids.filter((kid) => !listed.has(kid.id));
+    const [edited, swapped] = unlisted;
+    if (edited === undefined || swapped === undefined) {
+      throw new Error("every child is listed");
+    }
+
+    const patched = await request(ctx.app, "PATCH", `/items/${edited.id}`, {
+      key: ctx.workingKey,
+      body: { version: edited.version, properties: { title: "Edited" } },
+    });
+    expect(patched.status).toBe(200);
+    expect(
+      errorOf(
+        await callTool(client, "marfa_delete", {
+          ids: [parent.id],
+          confirm: first.confirm,
+        }),
+      ).code,
+    ).toBe("confirmation_stale");
+
+    const second = await preview();
+    const edge = (
+      await ctx.storage.edges.listOutboundOfType(parent.id, "parent-of")
+    ).find((e) => e.target_id === swapped.id);
+    if (edge === undefined) throw new Error("no edge to the swapped child");
+    await ctx.storage.edges.delete(edge.id);
+    const replacement = await saveNote({ title: "Replacement" });
+    await ctx.storage.edges.createRaw({
+      source_id: parent.id,
+      target_id: replacement.id,
+      edge_type: "parent-of",
+    });
+    const swappedAnswer = errorOf(
+      await callTool(client, "marfa_delete", {
+        ids: [parent.id],
+        confirm: second.confirm,
+      }),
+    );
+    expect(swappedAnswer).toMatchObject({
+      code: "confirmation_stale",
+      total: second.total,
+    });
+    expect((await readItem(parent.id)).state).toBe("active");
+  });
+
+  it("trashes a named item that goes with another named item past the preview's list", async () => {
+    const { parent, kids } = await family(105);
+    const first = payloadOf(
+      await callTool(client, "marfa_delete", { ids: [parent.id] }),
+    );
+    const listed = new Set(
+      (
+        first.preview as { also_trashes: { id: string }[] }[]
+      )[0]?.also_trashes.map((item) => item.id),
+    );
+    const named = kids.find((kid) => !listed.has(kid.id));
+    if (named === undefined) throw new Error("every child is listed");
+    const ids = [named.id, parent.id];
+    const preview = payloadOf(await callTool(client, "marfa_delete", { ids }));
+    expect(preview.total).toBe(106);
+    const done = payloadOf(
+      await callTool(client, "marfa_delete", { ids, confirm: preview.confirm }),
+    );
+    expect(done).toMatchObject({ total: 106 });
+    expect([...(done.trashed as string[])].sort()).toEqual([...ids].sort());
+    for (const id of ids) {
+      const read = await request(ctx.app, "GET", `/items/${id}`, {
+        key: ctx.workingKey,
+      });
+      expect(read.status).toBe(404);
+    }
+  });
+
   it("refuses a confirmation another credential got", async () => {
     const { parent } = await family(0);
     const preview = payloadOf(

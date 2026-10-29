@@ -106,17 +106,17 @@ When `marfa_delete` is called without `confirm`, the server MUST NOT move any it
 
 ### `mcp/delete-confirmed`
 
-When `marfa_delete` is called with the `confirm` token its preview of the same IDs gave, by the same credential, within five minutes, while the items it would trash and their versions are unchanged, the server MUST move the named items to the trash.
+When `marfa_delete` is called with the `confirm` token its preview of the same IDs gave, by the same credential, within five minutes, while the items the key can read that it would trash and their versions are unchanged, the server MUST move the named items to the trash.
 
 **Tests:** `compliance/mcp.test.ts › trashes the items with the confirmation the preview gave`.
 
 ### `mcp/delete-plan-changed`
 
-If the items a `marfa_delete` call would trash, or their versions, changed since the preview that gave its `confirm` token, then the server MUST refuse the call with the tool error code `confirmation_stale`.
+If the items the key can read that a `marfa_delete` call would trash, or their versions, changed since the preview that gave its `confirm` token, then the server MUST refuse the call with the tool error code `confirmation_stale`.
 
 **Reason:** the person agreed to what the preview showed, not to what the trash would take now.
 
-**Tests:** `compliance/mcp.test.ts › refuses a confirmation when what would be trashed changed since the preview`.
+**Tests:** `compliance/mcp.test.ts › refuses a confirmation when what would be trashed changed since the preview`, `› refuses a confirmation when an item past the preview's list changed`.
 
 ### `mcp/delete-other-credential`
 

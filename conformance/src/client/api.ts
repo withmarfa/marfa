@@ -335,7 +335,10 @@ export class MarfaClient {
     });
   }
 
-  async previewItemTrash(id: string): Promise<
+  async previewItemTrash(
+    id: string,
+    checkIds?: string[],
+  ): Promise<
     ApiResponse<{
       id: string;
       type: string;
@@ -343,9 +346,15 @@ export class MarfaClient {
       items: { id: string; type: string; version: number }[];
       count: number;
       truncated?: true;
+      digest: string;
+      taken_ids?: string[];
     }>
   > {
-    return this.request(`/items/${id}/trash-preview`);
+    const query =
+      checkIds === undefined
+        ? ""
+        : `?check_ids=${encodeURIComponent(checkIds.join(","))}`;
+    return this.request(`/items/${id}/trash-preview${query}`);
   }
 
   /**

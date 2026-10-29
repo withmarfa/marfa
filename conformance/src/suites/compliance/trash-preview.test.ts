@@ -114,6 +114,57 @@ describe("GET /items/{id}/trash-preview", () => {
     for (const id of [parent, ...listed]) expect(inBin).toContain(id);
   });
 
+  it("changes its digest when an item past its list changes, and not otherwise", async () => {
+    const parent = await note();
+    const children: string[] = [];
+    for (let i = 0; i < 102; i++) {
+      const child = await note();
+      children.push(child);
+      await link(parent, child);
+    }
+    const first = await client.previewItemTrash(parent);
+    expect(first.status).toBe(200);
+    expect(first.data.truncated).toBe(true);
+    expect(first.data.digest).toMatch(/^[0-9a-f]{64}$/);
+    expect((await client.previewItemTrash(parent)).data.digest).toBe(
+      first.data.digest,
+    );
+
+    const listed = new Set(first.data.items.map((i) => i.id));
+    const unlisted = children.find((child) => !listed.has(child));
+    if (unlisted === undefined) throw new Error("every child is listed");
+    const read = await client.getItem(unlisted);
+    const edited = await client.updateItem(unlisted, {
+      version: read.data.item.version,
+      properties: { body: "edited" },
+    });
+    expect(edited.ok, JSON.stringify(edited.error)).toBe(true);
+
+    const after = await client.previewItemTrash(parent);
+    expect(after.data.items).toEqual(first.data.items);
+    expect(after.data.count).toBe(first.data.count);
+    expect(after.data.digest).not.toBe(first.data.digest);
+  });
+
+  it("answers which of check_ids the trash would take, listed or not", async () => {
+    const parent = await note();
+    const child = await note();
+    const outside = await note();
+    await link(parent, child);
+
+    const plain = await client.previewItemTrash(parent);
+    expect(plain.data).not.toHaveProperty("taken_ids");
+    const checked = await client.previewItemTrash(parent, [outside, child]);
+    expect(checked.status).toBe(200);
+    await expectMatchesSchema(
+      "GET",
+      "/items/{id}/trash-preview",
+      200,
+      checked.data,
+    );
+    expect(checked.data.taken_ids).toEqual([child]);
+  });
+
   it("writes nothing", async () => {
     const parent = await note();
     const child = await note();
