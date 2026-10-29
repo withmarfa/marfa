@@ -609,11 +609,6 @@ impl Document {
             .path()
             .split_once('?')
             .unwrap_or((request.path(), ""));
-        // The health door is for whatever watches the server, and the document
-        // leaves it out.
-        if (method, path) == ("GET", "/health") {
-            return Ok("health".into());
-        }
         let (template, operation) = self
             .operation(method, path)
             .ok_or_else(|| format!("{method} {path} is no operation the document publishes"))?;

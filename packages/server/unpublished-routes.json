@@ -1,5 +1,4 @@
 {
-  "GET /health": "liveness, read before any credential exists",
   "GET /openapi.json": "the document itself",
   "GET /blobs/{hash}/fetch": "the target of an instance-served blob link, gated by the signature in its query",
   "POST /inbound/{token}": "where a sender posts an inbound webhook delivery, gated by the unguessable address",

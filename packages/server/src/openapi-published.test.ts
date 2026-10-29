@@ -84,6 +84,8 @@ function openRefusals(document: Record<string, unknown>): string[] {
     >;
     for (const [status, response] of Object.entries(responses)) {
       if (Number(status) < 400) continue;
+      // A down instance answers its health check with the health itself.
+      if (key === "GET /health" && status === "503") continue;
       const media = Object.values(response.content ?? {});
       if (media.length === 0) out.push(`${key} ${status} (no content)`);
       for (const { schema } of media) {

@@ -131,7 +131,11 @@ import {
   idempotencyMiddleware,
   IDEMPOTENT_WRITE_DOORS,
 } from "./middleware/idempotency.js";
-import { healthRoutes, instanceReadCaller } from "./routes/health.js";
+import {
+  healthRoute,
+  healthRoutes,
+  instanceReadCaller,
+} from "./routes/health.js";
 import { storageProbes } from "./routes/health-probes.js";
 import { readAttention } from "./attention.js";
 import { attentionRoutes } from "./routes/attention.js";
@@ -497,6 +501,7 @@ export function createApp(
   // instances answering the same shape, which is exactly the question
   // somebody pointing a client at an address is asking.
   app.openAPIRegistry.registerPath(instanceDescriptionRoute);
+  app.openAPIRegistry.registerPath(healthRoute);
   const consolePages = options.consolePages ?? CONSOLE_PAGES;
   const probes = storageProbes(storage, {
     sqlitePath: config.sqlitePath,

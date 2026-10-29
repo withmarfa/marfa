@@ -1,3 +1,4 @@
+import { createRoute, z } from "@hono/zod-openapi";
 import { Hono, type Context } from "hono";
 import { ErrorCode } from "@withmarfa/shared";
 import { shapedError } from "../middleware/error-handler.js";
@@ -14,6 +15,7 @@ import {
   type HealthProbes,
 } from "./health-probes.js";
 import { errorReason } from "../error-text.js";
+import { makeErrorResponseSchema } from "../openapi.js";
 
 export type Status = "ok" | "degraded" | "down";
 
@@ -263,6 +265,147 @@ export function objectStoreComponent(
     budgetMs,
   );
 }
+
+const StatusSchema = z
+  .enum(["ok", "degraded", "down"])
+  .describe(
+    "`ok`: serving normally. `degraded`: serving, but something is slow, low or unknown. `down`: something refused.",
+  );
+
+const ComponentStatusSchema = z
+  .object({
+    status: StatusSchema,
+    latency_ms: z
+      .number()
+      .int()
+      .min(0)
+      .optional()
+      .describe("How long the check took, in milliseconds."),
+    error: z
+      .string()
+      .optional()
+      .describe(
+        "What went wrong. Present only for a caller that holds `instance.read`.",
+      ),
+  })
+  .describe("One component's state.");
+
+export const HealthSchema = z
+  .object({
+    status: StatusSchema,
+    components: z
+      .object({
+        database: ComponentStatusSchema.describe(
+          "Whether the database answers a read.",
+        ),
+        database_write: ComponentStatusSchema.describe(
+          "Whether the database commits a write.",
+        ),
+        disk: ComponentStatusSchema.describe(
+          "Whether the disk has room to write.",
+        ),
+        blob_storage: ComponentStatusSchema.describe(
+          "Whether the blob store on disk answers.",
+        ),
+      })
+      .describe(
+        "Each component checked: reading and writing the database, free disk space and the blob store.",
+      ),
+    platform_types: z
+      .object({
+        retired: z
+          .number()
+          .int()
+          .min(0)
+          .describe(
+            "How many platform types the instance holds that this build no longer ships.",
+          ),
+      })
+      .describe("The platform types this build no longer ships."),
+    unrecognized_stored_values: z
+      .object({
+        rows: z
+          .number()
+          .int()
+          .min(0)
+          .describe(
+            "How many stored rows hold a value this build does not recognize.",
+          ),
+        scanned: z
+          .boolean()
+          .describe(
+            "`true` if the scan for such rows ran. `false` means `rows` is unknown.",
+          ),
+      })
+      .describe("Stored values this build does not recognize."),
+    placement: z
+      .object({
+        region: z
+          .string()
+          .optional()
+          .describe("The region the server runs in."),
+        location: z
+          .string()
+          .optional()
+          .describe("The location the server runs in."),
+        country: z
+          .string()
+          .optional()
+          .describe("The country the server runs in."),
+      })
+      .optional()
+      .describe("Where the server runs. Present only when it is configured."),
+    version: z
+      .string()
+      .optional()
+      .describe("The build the instance runs, when it is known."),
+  })
+  .describe(
+    "The instance's health: the worst state of its components, and each one's state.",
+  )
+  .openapi("Health", {
+    example: {
+      status: "ok",
+      components: {
+        database: { status: "ok", latency_ms: 1 },
+        database_write: { status: "ok", latency_ms: 2 },
+        disk: { status: "ok", latency_ms: 0 },
+        blob_storage: { status: "ok", latency_ms: 0 },
+      },
+      platform_types: { retired: 0 },
+      unrecognized_stored_values: { rows: 0, scanned: true },
+    },
+  });
+
+export const healthRoute = createRoute({
+  method: "get",
+  path: "/health",
+  operationId: "getHealth",
+  tags: ["Health and maintenance"],
+  summary: "Get the instance's health",
+  description:
+    "Returns whether the instance is serving and the state of each component it depends on. Needs no credential.",
+  responses: {
+    200: {
+      description: "Returns the health. `status` is `ok` or `degraded`.",
+      content: { "application/json": { schema: HealthSchema } },
+    },
+    400: {
+      description:
+        "- `validation_error`: the query has a parameter this endpoint doesn't take.",
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["validation_error"]),
+        },
+      },
+    },
+    503: {
+      description:
+        "Returns the health when `status` is `down`: a component refused.",
+      content: { "application/json": { schema: HealthSchema } },
+    },
+  },
+});
 
 /**
  * Placement is stated per environment rather than read from a provider's

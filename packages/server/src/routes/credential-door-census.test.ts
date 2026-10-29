@@ -102,6 +102,8 @@ const OPEN_OPERATIONS: Record<string, string> = {
     "claims the owner with setup proof carried in the body or setup session",
   "GET /":
     "the instance's description, where a caller with no credential yet reads which instance answers and which contract it speaks",
+  "GET /health":
+    "the instance's health, read by whatever watches it before any credential exists",
   "POST /auth/oauth2/register":
     "dynamic client registration, which is how a client comes to hold anything",
 };

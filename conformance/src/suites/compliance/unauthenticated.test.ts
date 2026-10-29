@@ -14,10 +14,14 @@ afterAll(async () => {
   await cleanup(ctx);
 });
 
-/** Registration and discovery precede authentication; claim carries its own machine proof. */
+/**
+ * Registration and discovery precede authentication, a health check is read
+ * by whatever watches the instance, and claim carries its own machine proof.
+ */
 const OPEN_DOORS = new Set([
   "POST /auth/oauth2/register",
   "GET /",
+  "GET /health",
   "POST /owner",
 ]);
 
@@ -86,9 +90,10 @@ describe("the open doors", () => {
       });
       await response.body?.cancel();
       expect(response.status, door).not.toBe(401);
-      // The root answers outright; registration refuses the malformed body
-      // on its merits, which is still not a credential refusal.
-      if (door === "GET /") expect(response.status, door).toBe(200);
+      // The root and the health check answer outright; registration refuses
+      // the malformed body on its merits, which is still not a credential
+      // refusal.
+      if (door.startsWith("GET ")) expect(response.status, door).toBe(200);
     }
   });
 });

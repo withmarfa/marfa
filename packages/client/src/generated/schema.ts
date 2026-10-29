@@ -1976,6 +1976,26 @@ export interface paths {
         patch: operations["updateConfig"];
         trace?: never;
     };
+    "/health": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get the instance's health
+         * @description Returns whether the instance is serving and the state of each component it depends on. Needs no credential.
+         */
+        get: operations["getHealth"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/attention": {
         parameters: {
             query?: never;
@@ -2721,6 +2741,118 @@ export interface components {
                     [key: string]: unknown;
                 };
             };
+        };
+        /**
+         * @description The instance's health: the worst state of its components, and each one's state.
+         * @example {
+         *       "status": "ok",
+         *       "components": {
+         *         "database": {
+         *           "status": "ok",
+         *           "latency_ms": 1
+         *         },
+         *         "database_write": {
+         *           "status": "ok",
+         *           "latency_ms": 2
+         *         },
+         *         "disk": {
+         *           "status": "ok",
+         *           "latency_ms": 0
+         *         },
+         *         "blob_storage": {
+         *           "status": "ok",
+         *           "latency_ms": 0
+         *         }
+         *       },
+         *       "platform_types": {
+         *         "retired": 0
+         *       },
+         *       "unrecognized_stored_values": {
+         *         "rows": 0,
+         *         "scanned": true
+         *       }
+         *     }
+         */
+        Health: {
+            /**
+             * @description `ok`: serving normally. `degraded`: serving, but something is slow, low or unknown. `down`: something refused.
+             * @enum {string}
+             */
+            status: "ok" | "degraded" | "down";
+            /** @description Each component checked: reading and writing the database, free disk space and the blob store. */
+            components: {
+                /** @description Whether the database answers a read. */
+                database: {
+                    /**
+                     * @description `ok`: serving normally. `degraded`: serving, but something is slow, low or unknown. `down`: something refused.
+                     * @enum {string}
+                     */
+                    status: "ok" | "degraded" | "down";
+                    /** @description How long the check took, in milliseconds. */
+                    latency_ms?: number;
+                    /** @description What went wrong. Present only for a caller that holds `instance.read`. */
+                    error?: string;
+                };
+                /** @description Whether the database commits a write. */
+                database_write: {
+                    /**
+                     * @description `ok`: serving normally. `degraded`: serving, but something is slow, low or unknown. `down`: something refused.
+                     * @enum {string}
+                     */
+                    status: "ok" | "degraded" | "down";
+                    /** @description How long the check took, in milliseconds. */
+                    latency_ms?: number;
+                    /** @description What went wrong. Present only for a caller that holds `instance.read`. */
+                    error?: string;
+                };
+                /** @description Whether the disk has room to write. */
+                disk: {
+                    /**
+                     * @description `ok`: serving normally. `degraded`: serving, but something is slow, low or unknown. `down`: something refused.
+                     * @enum {string}
+                     */
+                    status: "ok" | "degraded" | "down";
+                    /** @description How long the check took, in milliseconds. */
+                    latency_ms?: number;
+                    /** @description What went wrong. Present only for a caller that holds `instance.read`. */
+                    error?: string;
+                };
+                /** @description Whether the blob store on disk answers. */
+                blob_storage: {
+                    /**
+                     * @description `ok`: serving normally. `degraded`: serving, but something is slow, low or unknown. `down`: something refused.
+                     * @enum {string}
+                     */
+                    status: "ok" | "degraded" | "down";
+                    /** @description How long the check took, in milliseconds. */
+                    latency_ms?: number;
+                    /** @description What went wrong. Present only for a caller that holds `instance.read`. */
+                    error?: string;
+                };
+            };
+            /** @description The platform types this build no longer ships. */
+            platform_types: {
+                /** @description How many platform types the instance holds that this build no longer ships. */
+                retired: number;
+            };
+            /** @description Stored values this build does not recognize. */
+            unrecognized_stored_values: {
+                /** @description How many stored rows hold a value this build does not recognize. */
+                rows: number;
+                /** @description `true` if the scan for such rows ran. `false` means `rows` is unknown. */
+                scanned: boolean;
+            };
+            /** @description Where the server runs. Present only when it is configured. */
+            placement?: {
+                /** @description The region the server runs in. */
+                region?: string;
+                /** @description The location the server runs in. */
+                location?: string;
+                /** @description The country the server runs in. */
+                country?: string;
+            };
+            /** @description The build the instance runs, when it is known. */
+            version?: string;
         };
         /** @description A page of trashed item summaries. */
         TrashPage: components["schemas"]["TrashSummaryPage"] & {
@@ -29581,6 +29713,64 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["InsufficientStorageRefusal"];
+                };
+            };
+        };
+    };
+    getHealth: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Returns the health. `status` is `ok` or `degraded`. */
+            200: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Health"];
+                };
+            };
+            /** @description - `validation_error`: the query has a parameter this endpoint doesn't take. */
+            400: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ValidationErrorRefusal"];
+                };
+            };
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
+            500: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InternalErrorRefusal"];
+                };
+            };
+            /** @description Returns the health when `status` is `down`: a component refused. */
+            503: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Health"];
                 };
             };
         };

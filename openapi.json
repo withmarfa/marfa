@@ -1337,6 +1337,230 @@
         ],
         "description": "An error response."
       },
+      "Health": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "ok",
+              "degraded",
+              "down"
+            ],
+            "description": "`ok`: serving normally. `degraded`: serving, but something is slow, low or unknown. `down`: something refused."
+          },
+          "components": {
+            "type": "object",
+            "properties": {
+              "database": {
+                "type": "object",
+                "properties": {
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "ok",
+                      "degraded",
+                      "down"
+                    ],
+                    "description": "`ok`: serving normally. `degraded`: serving, but something is slow, low or unknown. `down`: something refused."
+                  },
+                  "latency_ms": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "How long the check took, in milliseconds."
+                  },
+                  "error": {
+                    "type": "string",
+                    "description": "What went wrong. Present only for a caller that holds `instance.read`."
+                  }
+                },
+                "required": [
+                  "status"
+                ],
+                "description": "Whether the database answers a read."
+              },
+              "database_write": {
+                "type": "object",
+                "properties": {
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "ok",
+                      "degraded",
+                      "down"
+                    ],
+                    "description": "`ok`: serving normally. `degraded`: serving, but something is slow, low or unknown. `down`: something refused."
+                  },
+                  "latency_ms": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "How long the check took, in milliseconds."
+                  },
+                  "error": {
+                    "type": "string",
+                    "description": "What went wrong. Present only for a caller that holds `instance.read`."
+                  }
+                },
+                "required": [
+                  "status"
+                ],
+                "description": "Whether the database commits a write."
+              },
+              "disk": {
+                "type": "object",
+                "properties": {
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "ok",
+                      "degraded",
+                      "down"
+                    ],
+                    "description": "`ok`: serving normally. `degraded`: serving, but something is slow, low or unknown. `down`: something refused."
+                  },
+                  "latency_ms": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "How long the check took, in milliseconds."
+                  },
+                  "error": {
+                    "type": "string",
+                    "description": "What went wrong. Present only for a caller that holds `instance.read`."
+                  }
+                },
+                "required": [
+                  "status"
+                ],
+                "description": "Whether the disk has room to write."
+              },
+              "blob_storage": {
+                "type": "object",
+                "properties": {
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "ok",
+                      "degraded",
+                      "down"
+                    ],
+                    "description": "`ok`: serving normally. `degraded`: serving, but something is slow, low or unknown. `down`: something refused."
+                  },
+                  "latency_ms": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "How long the check took, in milliseconds."
+                  },
+                  "error": {
+                    "type": "string",
+                    "description": "What went wrong. Present only for a caller that holds `instance.read`."
+                  }
+                },
+                "required": [
+                  "status"
+                ],
+                "description": "Whether the blob store on disk answers."
+              }
+            },
+            "required": [
+              "database",
+              "database_write",
+              "disk",
+              "blob_storage"
+            ],
+            "description": "Each component checked: reading and writing the database, free disk space and the blob store."
+          },
+          "platform_types": {
+            "type": "object",
+            "properties": {
+              "retired": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "How many platform types the instance holds that this build no longer ships."
+              }
+            },
+            "required": [
+              "retired"
+            ],
+            "description": "The platform types this build no longer ships."
+          },
+          "unrecognized_stored_values": {
+            "type": "object",
+            "properties": {
+              "rows": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "How many stored rows hold a value this build does not recognize."
+              },
+              "scanned": {
+                "type": "boolean",
+                "description": "`true` if the scan for such rows ran. `false` means `rows` is unknown."
+              }
+            },
+            "required": [
+              "rows",
+              "scanned"
+            ],
+            "description": "Stored values this build does not recognize."
+          },
+          "placement": {
+            "type": "object",
+            "properties": {
+              "region": {
+                "type": "string",
+                "description": "The region the server runs in."
+              },
+              "location": {
+                "type": "string",
+                "description": "The location the server runs in."
+              },
+              "country": {
+                "type": "string",
+                "description": "The country the server runs in."
+              }
+            },
+            "description": "Where the server runs. Present only when it is configured."
+          },
+          "version": {
+            "type": "string",
+            "description": "The build the instance runs, when it is known."
+          }
+        },
+        "required": [
+          "status",
+          "components",
+          "platform_types",
+          "unrecognized_stored_values"
+        ],
+        "description": "The instance's health: the worst state of its components, and each one's state.",
+        "example": {
+          "status": "ok",
+          "components": {
+            "database": {
+              "status": "ok",
+              "latency_ms": 1
+            },
+            "database_write": {
+              "status": "ok",
+              "latency_ms": 2
+            },
+            "disk": {
+              "status": "ok",
+              "latency_ms": 0
+            },
+            "blob_storage": {
+              "status": "ok",
+              "latency_ms": 0
+            }
+          },
+          "platform_types": {
+            "retired": 0
+          },
+          "unrecognized_stored_values": {
+            "rows": 0,
+            "scanned": true
+          }
+        }
+      },
       "TrashPage": {
         "allOf": [
           {
@@ -58052,6 +58276,99 @@
         ]
       }
     },
+    "/health": {
+      "get": {
+        "operationId": "getHealth",
+        "tags": [
+          "Health and maintenance"
+        ],
+        "summary": "Get the instance's health",
+        "description": "Returns whether the instance is serving and the state of each component it depends on. Needs no credential.",
+        "responses": {
+          "200": {
+            "description": "Returns the health. `status` is `ok` or `degraded`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Health"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              }
+            }
+          },
+          "400": {
+            "description": "- `validation_error`: the query has a parameter this endpoint doesn't take.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "500": {
+            "description": "`internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternalErrorRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "503": {
+            "description": "Returns the health when `status` is `down`: a component refused.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Health"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          }
+        }
+      }
+    },
     "/attention": {
       "get": {
         "operationId": "listAttention",
@@ -61434,8 +61751,9 @@
     },
     {
       "name": "Health and maintenance",
-      "description": "How the instance is doing: what needs attention, its metrics and audit log, its housekeeping jobs and its retired platform types, which this build no longer ships.",
+      "description": "How the instance is doing: its health, what needs attention, its metrics and audit log, its housekeeping jobs and its retired platform types, which this build no longer ships.",
       "x-operation-order": [
+        "getHealth",
         "listAttention",
         "getInstanceMetrics",
         "listAuditLog",
