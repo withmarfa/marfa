@@ -65,7 +65,7 @@ describe("the MCP challenges", () => {
     ]);
     expect(response.status).toBe(403);
     expect(response.headers.get("www-authenticate")).toBe(
-      `Bearer error="insufficient_scope", scope="core.note:read core.task:write", resource_metadata="${BASE}/.well-known/oauth-protected-resource/mcp"`,
+      `Bearer error="insufficient_scope", scope="core.note:read core.task:write", resource_metadata="${BASE}/.well-known/oauth-protected-resource/mcp", error_description="access token is missing required scope: core.note:read core.task:write"`,
     );
     expect(await response.json()).toEqual({
       error: {
@@ -75,4 +75,11 @@ describe("the MCP challenges", () => {
       },
     });
   });
+
+  it.each(['core.note:read"', "core.note:read\r\nx: y", ""])(
+    "refuses to name a scope a header cannot carry: %j",
+    (scope) => {
+      expect(() => mcpInsufficientScope(BASE, "/mcp", [scope])).toThrow();
+    },
+  );
 });

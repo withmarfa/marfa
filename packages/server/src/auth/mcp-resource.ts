@@ -8,6 +8,9 @@
  * and its two narrower groups.
  */
 
+import { createResourceServerChallenge } from "@better-auth/oauth-provider";
+import { APIError } from "better-auth/api";
+import { createInsufficientScopeError } from "better-auth/oauth2";
 import { MarfaError, ErrorCode } from "@withmarfa/shared";
 
 export const MCP_RESOURCE_PATHS = [
@@ -53,28 +56,17 @@ export function protectedResourceMetadataPath(path?: McpResourcePath): string {
   return `${PROTECTED_RESOURCE_METADATA}${path ?? ""}`;
 }
 
-function protectedResourceMetadataUrl(
-  baseURL: string,
-  path: McpResourcePath,
-): string {
-  return `${originOf(baseURL)}${protectedResourceMetadataPath(path)}`;
-}
-
-function quoted(value: string): string {
-  return `"${value.replace(/[\\"]/g, "\\$&")}"`;
-}
-
 function challengeResponse(
-  status: 401 | 403,
-  challenge: string,
+  challenge: ReturnType<typeof createResourceServerChallenge>,
   error: MarfaError,
 ): Response {
+  if (!challenge) throw new Error("This failure has no resource challenge");
+  // The challenge builder sets its header as a plain record.
+  const headers = new Headers(challenge.headers as Record<string, string>);
+  headers.set("content-type", "application/json");
   return new Response(JSON.stringify(error.toResponse()), {
-    status,
-    headers: {
-      "content-type": "application/json",
-      "www-authenticate": challenge,
-    },
+    status: challenge.statusCode,
+    headers,
   });
 }
 
@@ -88,8 +80,10 @@ export function mcpUnauthorized(
   path: McpResourcePath,
 ): Response {
   return challengeResponse(
-    401,
-    `Bearer resource_metadata=${quoted(protectedResourceMetadataUrl(baseURL, path))}`,
+    createResourceServerChallenge(
+      new APIError("UNAUTHORIZED", { message: "Authentication required" }),
+      mcpResourceUri(baseURL, path),
+    ),
     new MarfaError(ErrorCode.UNAUTHORIZED, "Authentication required"),
   );
 }
@@ -98,23 +92,20 @@ export function mcpUnauthorized(
  * The answer to a request at an MCP endpoint whose credential is valid but
  * lacks a scope the call needs: `403` with an `insufficient_scope` Bearer
  * challenge naming the scopes to ask for (RFC 6750 §3.1), so the client can
- * step up its authorization.
+ * step up its authorization. Throws for a scope a header cannot carry.
  */
 export function mcpInsufficientScope(
   baseURL: string,
   path: McpResourcePath,
   scopes: readonly string[],
 ): Response {
-  const scope = scopes.join(" ");
   return challengeResponse(
-    403,
-    [
-      `Bearer error="insufficient_scope"`,
-      `scope=${quoted(scope)}`,
-      `resource_metadata=${quoted(protectedResourceMetadataUrl(baseURL, path))}`,
-    ].join(", "),
+    createResourceServerChallenge(
+      createInsufficientScopeError(scopes),
+      mcpResourceUri(baseURL, path),
+    ),
     new MarfaError(ErrorCode.FORBIDDEN, "Insufficient scope", {
-      required_scope: scope,
+      required_scope: scopes.join(" "),
     }),
   );
 }
