@@ -226,9 +226,15 @@ Where a view sorts by a field an item does not hold, the server MUST list that i
 
 ### `views/items-order-ties`
 
-Where items tie on every sort key, the server MUST list them by ascending ID, or by the direction of the key when the view sorts by one timestamp alone.
+Where a view has a sort and items tie on every sort key, the server MUST list them by ascending ID, or by the direction of the key when the view sorts by one timestamp alone.
 
 **Tests:** `compliance/views-items.test.ts › breaks a tie by the item's ID, and a tie on the one timestamp key in that key's direction`, `› orders by every key in turn, up to ten, and pages through a tie on the leading keys`.
+
+### `views/items-order-default-ties`
+
+Where a view has no sort, the server MUST list items that share an `occurred_at` by descending ID.
+
+**Tests:** `compliance/views-items.test.ts › breaks a tie by descending ID where the view names no sort`.
 
 ### `views/items-limit`
 
@@ -250,9 +256,11 @@ When a key sends the `next_cursor` of a page as `cursor`, the server MUST answer
 
 ### `views/items-cursor-foreign`
 
-If a key sends a `cursor` that another view, another ordering or no listing issued, then the server MUST answer `400 validation_error`.
+If a key sends a `cursor` that another view, an earlier version of the view, another ordering or no listing issued, then the server MUST answer `400 validation_error`.
 
-**Tests:** `compliance/views-items.test.ts › refuses a cursor from another view, another ordering or no listing at all`.
+**Reason:** a change to a view's query or sort changes which items follow a position, so a position named before the change would skip or repeat items.
+
+**Tests:** `compliance/views-items.test.ts › refuses a cursor from another view, another ordering or no listing at all`, `› refuses a cursor an earlier version of the view issued`.
 
 ### `views/items-readable`
 

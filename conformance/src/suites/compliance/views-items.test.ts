@@ -397,6 +397,19 @@ describe("the view's items door", () => {
     expect(await listed(down, 1)).toEqual([third.id, second.id, first.id]);
   });
 
+  it("breaks a tie by descending ID where the view names no sort", async () => {
+    const source = await freshSource();
+    const at = "2024-05-05T00:00:00Z";
+    const first = await note(source, "Same", {}, { occurred_at: at });
+    const second = await note(source, "Same", {}, { occurred_at: at });
+    const third = await note(source, "Same", {}, { occurred_at: at });
+    const expected = [first.id, second.id, third.id].sort().reverse();
+    expect(await listed(await viewOf(source), 1)).toEqual(expected);
+    expect(await listed(await viewOf(source, { sort: [] }), 2)).toEqual(
+      expected,
+    );
+  });
+
   it("orders by every key in turn, up to ten, and pages through a tie on the leading keys", async () => {
     const source = await freshSource();
     const a = await note(source, "A", { notes: "2" });
@@ -669,5 +682,34 @@ describe("the view's items door", () => {
     const junk = await client.listViewItems(id, { cursor: "junk" });
     expect(junk.status).toBe(400);
     expect(junk.error?.error.code).toBe("validation_error");
+  });
+
+  it("refuses a cursor an earlier version of the view issued", async () => {
+    const source = await freshSource();
+    await note(source, "One");
+    await note(source, "Two");
+    await note(source, "Three");
+    const id = await viewOf(source, {
+      sort: [{ by: "title", direction: "asc" }],
+    });
+    const page = await client.listViewItems(id, { limit: 1 });
+    const cursor = page.data.next_cursor;
+    expect(cursor).not.toBeNull();
+    const witness = await client.listViewItems(id, {
+      limit: 1,
+      cursor: cursor!,
+    });
+    expect(witness.status).toBe(200);
+
+    const changed = await client.updateView(id, {
+      version: 1,
+      query: { filter: `source eq "${source}" AND type eq "core.note"` },
+    });
+    expect(changed.status, JSON.stringify(changed.error)).toBe(200);
+    const stale = await client.listViewItems(id, { limit: 1, cursor: cursor! });
+    expect(stale.status).toBe(400);
+    expect(stale.error?.error.code).toBe("validation_error");
+    await expectMatchesSchema("GET", "/views/{id}/items", 400, stale.error);
+    expect((await client.listViewItems(id, { limit: 1 })).status).toBe(200);
   });
 });
