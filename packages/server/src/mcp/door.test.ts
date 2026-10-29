@@ -237,6 +237,52 @@ describe("/mcp", () => {
     }
   });
 
+  it("answers an app a tool error, not a challenge, for a type or edge type nothing registered", async () => {
+    const { token } = await seedOauthBearer(ctx, [
+      "core.task:write",
+      "core.note:read",
+    ]);
+    const client = await connectMcp(ctx, token);
+    try {
+      const unknownType = await callTool(client, "marfa_create", {
+        type: "core.notez",
+        properties: { title: "Misspelled" },
+      });
+      expect(unknownType.isError, unknownType.text).toBe(true);
+      expect(unknownType.body).toMatchObject({
+        error: { code: "type_not_permitted" },
+      });
+      const target = await callTool(client, "marfa_create", {
+        type: "core.task",
+        properties: { title: "Target" },
+      });
+      const unknownEdge = await callTool(client, "marfa_update", {
+        id: target.structured?.id,
+        version: target.structured?.version,
+        add_edges: [
+          { edge_type: "attached-too", target_id: target.structured?.id },
+        ],
+      });
+      expect(unknownEdge.isError, unknownEdge.text).toBe(true);
+      expect(unknownEdge.text).toContain("edge_permission_denied");
+      // The witness: the registered edge type is asked for.
+      await expect(
+        client.callTool({
+          name: "marfa_update",
+          arguments: {
+            id: target.structured?.id,
+            version: target.structured?.version,
+            add_edges: [
+              { edge_type: "attached-to", target_id: target.structured?.id },
+            ],
+          },
+        }),
+      ).rejects.toThrow(/edge\.attached-to:write/);
+    } finally {
+      await client.close();
+    }
+  });
+
   it("answers an API key that lacks a type with a tool error, not a challenge", async () => {
     const key = await mintWorkingKey(ctx, {
       type_permissions: { "core.task": "write", "core.note": "read" },

@@ -4,7 +4,11 @@
  * (MCP authorization, RFC 6750 §3.1) in place of a tool error the person
  * cannot act on.
  */
-import { isValidScope } from "@withmarfa/shared";
+import {
+  getEdgeTypeSchema,
+  getTypeSchema,
+  isValidScope,
+} from "@withmarfa/shared";
 
 interface ToolCall {
   id: string | number;
@@ -20,7 +24,12 @@ export function isToolCall(message: unknown): message is ToolCall {
   );
 }
 
-/** The scope literal a refusal's details name as missing. */
+/**
+ * The scope literal a refusal's details name as missing. A grant on a type
+ * or edge type nothing registered names no scope: a person asked for it
+ * would approve access to a name no write can use, and the call would fail
+ * again on the name.
+ */
 export function scopeOfRefusal(
   details: Record<string, unknown> | undefined,
 ): string | undefined {
@@ -29,8 +38,15 @@ export function scopeOfRefusal(
     { kind?: unknown; name?: unknown; level?: unknown } | undefined;
   let scope: string | undefined;
   if (typeof grant?.name === "string" && typeof grant.level === "string") {
-    if (grant.kind === "type") scope = `${grant.name}:${grant.level}`;
-    if (grant.kind === "edge_type") scope = `edge.${grant.name}:${grant.level}`;
+    if (grant.kind === "type" && getTypeSchema(grant.name) !== undefined) {
+      scope = `${grant.name}:${grant.level}`;
+    }
+    if (
+      grant.kind === "edge_type" &&
+      getEdgeTypeSchema(grant.name) !== undefined
+    ) {
+      scope = `edge.${grant.name}:${grant.level}`;
+    }
   } else if (typeof details.required_scope === "string") {
     scope = details.required_scope;
   }

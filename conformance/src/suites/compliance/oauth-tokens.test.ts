@@ -428,6 +428,26 @@ describe("the MCP endpoint", () => {
     expect(saved.status).toBe(200);
     expect(await saved.text()).toContain("created");
   });
+
+  it("answers a tool call naming a type nothing registered with the tool's error, not a challenge", async () => {
+    const scope = "core.task:write core.note:read";
+    const app = await registerApp(server, scope);
+    const accessToken = await tokenNaming(app, scope, `${origin}/mcp`);
+    const answer = await mcp(accessToken, {
+      jsonrpc: "2.0",
+      id: 3,
+      method: "tools/call",
+      params: {
+        name: "marfa_create",
+        arguments: { type: "core.notez", properties: { title: "Misspelled" } },
+      },
+    });
+    expect(answer.status).toBe(200);
+    expect(answer.headers.get("www-authenticate")).toBeNull();
+    const text = await answer.text();
+    expect(text).toContain('"isError":true');
+    expect(text).toContain("type_not_permitted");
+  });
 });
 
 describe("revocation", () => {
