@@ -35,6 +35,7 @@ import { nowMs } from "../clock.js";
 import { mcpInsufficientScope, mcpUnauthorized } from "../auth/mcp-resource.js";
 import type { ToolContext } from "./context.js";
 import { type ToolFetchOptions, toolFetchFor } from "./file-fetch.js";
+import { asInProcessCaller } from "../middleware/in-process-caller.js";
 import { createMarfaMcpServer } from "./server.js";
 import { isToolCall, scopeTheCallLacked } from "./step-up.js";
 
@@ -112,12 +113,16 @@ export function mcpRoutes(options: McpDoorOptions): Hono<AppEnv> {
     refuseUndeclaredKeysOf(c.req.url, []);
     const credential = header.slice("Bearer ".length);
     const env: unknown = c.env;
+    const clientIp = c.get("clientIp") ?? null;
     const handle = credentialHandle(c);
     const ctx: ToolContext = {
       api: new McpApi({
         baseUrl: options.baseUrl,
         credential,
-        dispatch: (request) => options.dispatch(request, env),
+        dispatch: (request) =>
+          asInProcessCaller({ clientIp, via: "mcp" }, () =>
+            options.dispatch(request, env),
+          ),
       }),
       typePermissions: apiKey.type_permissions,
       credentialHandle: handle,
@@ -125,7 +130,7 @@ export function mcpRoutes(options: McpDoorOptions): Hono<AppEnv> {
       fetchFile: toolFetchFor(options.fetch, {
         handle,
         keyId: authorityId(c),
-        clientIp: c.get("clientIp") ?? null,
+        clientIp,
       }),
       now: options.now ?? nowMs,
     };

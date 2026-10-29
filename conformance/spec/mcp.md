@@ -78,6 +78,14 @@ If a tool call names an argument the tool does not take, then the server MUST an
 
 **Tests:** `compliance/mcp.test.ts › refuses a tool call naming an argument the tool does not take`.
 
+### `mcp/write-audited`
+
+When a tool call writes, the server MUST record on the write's audit entry the credential as `key_id`, the address the MCP request came from as `client_ip`, and `via: "mcp"` in `details`.
+
+**Reason:** a tool call reaches the API inside the server, so without this the entry would name the server's own address, or its proxy's, and could not be told from a write the credential made directly.
+
+**Tests:** `compliance/mcp-scripted.test.ts › records a tool call's write with the caller's address and marks it as made through MCP`.
+
 ## Reading items
 
 `marfa_get` keeps its answer short enough for a client to hand to the model whole, and says where to read what it left out.

@@ -15,14 +15,24 @@ export const MCP_URL = "http://localhost/mcp";
 export async function connectMcp(
   ctx: Pick<TestContext, "app">,
   credential: string,
-  options: { negotiation?: Negotiation; headers?: Record<string, string> } = {},
+  options: {
+    negotiation?: Negotiation;
+    headers?: Record<string, string>;
+    /** The address the connection comes from, as `request`'s `peer`. */
+    peer?: string;
+  } = {},
 ): Promise<Client> {
+  const env =
+    options.peer === undefined
+      ? undefined
+      : { incoming: { socket: { remoteAddress: options.peer } } };
   const client = new Client(
     { name: "marfa-test", version: "0.0.0" },
     { versionNegotiation: { mode: options.negotiation ?? "auto" } },
   );
   const transport = new StreamableHTTPClientTransport(new URL(MCP_URL), {
-    fetch: (url, init) => Promise.resolve(ctx.app.request(String(url), init)),
+    fetch: (url, init) =>
+      Promise.resolve(ctx.app.request(String(url), init, env)),
     requestInit: {
       headers: { Authorization: `Bearer ${credential}`, ...options.headers },
     },

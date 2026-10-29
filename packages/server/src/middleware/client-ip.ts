@@ -36,6 +36,7 @@ import type { Context, MiddlewareHandler } from "hono";
 import type { AppEnv } from "./auth.js";
 import { log } from "./logger.js";
 import { errorMessage } from "../error-text.js";
+import { inProcessCaller } from "./in-process-caller.js";
 
 type CidrRange = [ipaddr.IPv4 | ipaddr.IPv6, number];
 
@@ -239,7 +240,13 @@ export function clientIpMiddleware(
         "A request carried a forwarding header, but no proxy is trusted, so every client behind a proxy counts as one address. Set TRUSTED_PROXY_CIDRS or TRUSTED_PROXY_HEADER if this instance runs behind one.",
       );
     }
-    c.set("clientIp", getClientIp(c, trustedCidrs, trustedHeader));
+    const caller = inProcessCaller();
+    c.set(
+      "clientIp",
+      caller === undefined
+        ? getClientIp(c, trustedCidrs, trustedHeader)
+        : caller.clientIp,
+    );
     await next();
   };
 }

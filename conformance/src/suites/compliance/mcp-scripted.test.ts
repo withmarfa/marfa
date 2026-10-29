@@ -430,6 +430,44 @@ describe("marfa_create's fetches", () => {
   );
 });
 
+describe("a tool call's writes", () => {
+  it("records a tool call's write with the caller's address and marks it as made through MCP", async () => {
+    const direct = await owner().createItem({
+      type: "core.note",
+      properties: { body: "written directly" },
+    });
+    expect(direct.status, JSON.stringify(direct.error)).toBe(201);
+    const created = toolResult(
+      await callTool(mcp, "marfa_create", {
+        type: "core.note",
+        properties: { body: "written through MCP" },
+      }),
+    );
+    const audit = new MarfaClient({
+      baseUrl: server.apiUrl,
+      apiKey: server.managementKey,
+    });
+    const entryFor = async (id: string) => {
+      const page = await audit.listAudit({
+        action: "item.create",
+        resource_id: id,
+      });
+      expect(page.status, JSON.stringify(page.error)).toBe(200);
+      expect(page.data.data).toHaveLength(1);
+      return page.data.data[0];
+    };
+    const plain = await entryFor(direct.data.item.id);
+    const through = await entryFor(created.id as string);
+    expect(plain?.client_ip).not.toBeNull();
+    expect(plain?.details).not.toHaveProperty("via");
+    expect(through).toMatchObject({
+      key_id: plain?.key_id,
+      client_ip: plain?.client_ip,
+      details: { via: "mcp" },
+    });
+  });
+});
+
 describe("marfa_update", () => {
   it("tags nothing when the item changes between the call's read and its tag write", async () => {
     const made = await owner().createItem({
