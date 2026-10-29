@@ -981,9 +981,9 @@ async function put(
     // only that the key is taken. An id held by one goes on to the insert's
     // plain `conflict`, as it does without the mode.
     if (matchedBy === "source_id") {
-      throw new MarfaError(
-        ErrorCode.TYPE_NOT_PERMITTED,
-        "The natural key resolves a row of a type this credential may not reach",
+      if (key !== undefined) checkResolvedRowWrite(key, existing);
+      throw new Error(
+        "A natural key held by an unreadable row was not refused",
       );
     }
     existing = null;

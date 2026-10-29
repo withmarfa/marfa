@@ -227,7 +227,7 @@ const createItemRoute = createRoute({
   tags: ["Items"],
   summary: "Create an item",
   description:
-    "Creates an item. If `source_id` matches an existing item under the same source, updates that item instead. Repeating an `id` you already created returns the stored item with `acknowledged: true` and writes nothing. With `mode` set to `create_only`, an item that already holds the `source_id` or the `id` is refused as `item_exists` and nothing is written.",
+    "Creates an item. If `source_id` matches an existing item under the same source, updates that item instead. Repeating an `id` you already created returns the stored item with `acknowledged: true` and writes nothing.",
   security: [{ bearerAuth: [] }],
   middleware: readsSomeType,
   request: {
@@ -402,7 +402,7 @@ const createItemRoute = createRoute({
         },
       },
       description:
-        "- `item_exists`: `mode` is `create_only` and an item already holds the `source_id` under the source, or the `id`. `details.existing_id` names it, `details.matched_by` is `source_id` or `id`.\n- `id_reused`: `id` names an item of another type.\n- `conflict`: `id` names an item you can't read.\n- `link_taken`: another item of the type holds this link. `details.existing_id` names it.\n- `type_mismatch`: `source_id` matches an item of another type.\n- `version_conflict`, `ancestor_unavailable`: `version` is stale.",
+        "- `item_exists`: `create_only` found an item holding the `source_id` or `id`.\n- `id_reused`: `id` names an item of another type.\n- `conflict`: `id` names an item you can't read.\n- `link_taken`: another item of the type holds this link. `details.existing_id` names it.\n- `type_mismatch`: `source_id` matches an item of another type.\n- `version_conflict`, `ancestor_unavailable`: `version` is stale.",
     },
   },
 });
