@@ -209,11 +209,12 @@ Fixture paths are under `src/suites/`.
 
 ## Views
 
-| Operation            | Status  | Fixture                    | Notes                                                                                |
-| -------------------- | ------- | -------------------------- | ------------------------------------------------------------------------------------ |
-| `POST /views`        | covered | `compliance/views.test.ts` | Write on `system.view` in the type map; each setting checked and named when refused. |
-| `PATCH /views/{id}`  | covered | `compliance/views.test.ts` | Needs the version read; a stale change merges or answers `409 version_conflict`.     |
-| `DELETE /views/{id}` | covered | `compliance/views.test.ts` | Removes the view at once with no trash, announced as `item.purged`.                  |
+| Operation               | Status  | Fixture                          | Notes                                                                                                               |
+| ----------------------- | ------- | -------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `POST /views`           | covered | `compliance/views.test.ts`       | Write on `system.view` in the type map; each setting checked and named when refused.                                |
+| `GET /views/{id}/items` | covered | `compliance/views-items.test.ts` | Items the view lists in its sort order with a cursor, only of types the key reads; `404` for a view it cannot read. |
+| `PATCH /views/{id}`     | covered | `compliance/views.test.ts`       | Needs the version read; a stale change merges or answers `409 version_conflict`.                                    |
+| `DELETE /views/{id}`    | covered | `compliance/views.test.ts`       | Removes the view at once with no trash, announced as `item.purged`.                                                 |
 
 ## Instance maintenance
 

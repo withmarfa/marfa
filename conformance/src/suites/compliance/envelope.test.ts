@@ -7,6 +7,7 @@ import {
   trackEdge,
   trackItem,
   trackKey,
+  trackView,
   trackWebhook,
 } from "../../utils/setup.js";
 import { createNote } from "../../generators/items.js";
@@ -34,6 +35,7 @@ let itemId: string;
 let targetId: string;
 let webhookId: string;
 let connectorId: string;
+let viewId: string;
 let blobHash: string;
 let title: string;
 
@@ -66,6 +68,10 @@ beforeAll(async () => {
   expect(webhook.ok).toBe(true);
   webhookId = webhook.data.id;
   trackWebhook(ctx, webhookId);
+  const view = await client.createView({ title });
+  expect(view.ok).toBe(true);
+  viewId = view.data.item.id;
+  trackView(ctx, viewId);
   const connector = await client.registerConnector({ name: title });
   expect(connector.ok).toBe(true);
   connectorId = connector.data.id;
@@ -125,6 +131,7 @@ describe("one envelope for every list and search", () => {
     },
     { template: "/audit", path: () => "/audit" },
     { template: "/search", path: () => `/search?q=${title}` },
+    { template: "/views/{id}/items", path: () => `/views/${viewId}/items` },
     { template: "/types", path: () => "/types" },
     { template: "/edge-types", path: () => "/edge-types" },
     { template: "/keys", path: () => "/keys" },
@@ -190,12 +197,12 @@ describe("one envelope for every list and search", () => {
   const credentialOf = (door: (typeof doors)[number]) =>
     door.owner ? ownerCookie : door.operator ? managementKey : apiKey;
 
-  it("names thirty doors, every one the document publishes as a page", async () => {
+  it("names thirty-one doors, every one the document publishes as a page", async () => {
     // The derived set holds the rows to the document, so a door that starts
     // answering a page without a row here turns this red. The count holds
     // both to the number the specification states, so a new page added with
     // a row beside it turns this red too.
-    expect(doors).toHaveLength(30);
+    expect(doors).toHaveLength(31);
     expect(doors.map((door) => `GET ${door.template}`).sort()).toEqual(
       pageDoors(await servedDocument()).sort(),
     );

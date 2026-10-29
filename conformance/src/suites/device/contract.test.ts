@@ -1067,6 +1067,7 @@ const invocations: Record<string, () => string[]> = {
   ],
   "views change": () => [ID, "--version", "1", "--title", "Notes"],
   "views delete": () => [ID],
+  "views items": () => [ID],
   "webhooks create": () => [
     "--to",
     "https://example.com/hook",

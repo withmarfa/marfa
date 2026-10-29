@@ -386,6 +386,19 @@ export class MarfaClient {
     });
   }
 
+  async listViewItems(
+    id: string,
+    page: { limit?: number; cursor?: string } = {},
+  ): Promise<ApiResponse<PaginatedResult<MarfaItem>>> {
+    const params = new URLSearchParams();
+    if (page.limit !== undefined) params.set("limit", String(page.limit));
+    if (page.cursor !== undefined) params.set("cursor", page.cursor);
+    const query = params.size > 0 ? `?${params}` : "";
+    return this.request<PaginatedResult<MarfaItem>>(
+      `/views/${id}/items${query}`,
+    );
+  }
+
   async updateView(
     id: string,
     changes: Record<string, unknown> & { version: number },

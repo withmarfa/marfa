@@ -1,6 +1,6 @@
 # Views
 
-A view is a saved list of items, held as a `system.view` item and shared by every app: its `query` says which items it lists, and its `sort` and `group` say in what order and how they group. How an app shows the items is the app's own, so a view holds no layout. A view is written only through `/views` and read through the item operations. The view operations never answer the items a view lists.
+A view is a saved list of items, held as a `system.view` item and shared by every app: its `query` says which items it lists, and its `sort` and `group` say in what order and how they group. How an app shows the items is the app's own, so a view holds no layout. A view is written only through `/views` and read through the item operations. `GET /views/{id}/items` answers the items a view lists.
 
 ## Writing a view
 
@@ -161,6 +161,140 @@ When a key deletes a view, the server MUST announce `item.purged` for it, and ne
 **Reason:** `item.deleted` means a move to the trash, which a working copy keeps; `item.purged` tells every working copy to drop the view.
 
 **Tests:** `compliance/views.test.ts › publishes a view's create and change as item events, and its delete as item.purged`.
+
+## Reading what a view lists
+
+### `views/items`
+
+When a key sends `GET /views/{id}/items` for a view it can read, the server MUST answer `200` with a page of the items the view lists.
+
+**Reason:** an app with no working copy reads a saved list from the server, in the order the view names.
+
+**Tests:** `compliance/views-items.test.ts › lists the newest occurrence first when the view names no sort, and answers a page the document declares`.
+
+### `views/items-query`
+
+The server MUST list in a view the items that match its `query`: the named `types` with their subtypes, the named `state` (active and archived when absent), the named `tier` (both when absent), and the `filter`.
+
+**Tests:** `compliance/views-items.test.ts › lists active and archived items by default, and the states a view names`, `› lists the types a view names with their subtypes, and narrows by its filter`, `› sorts by type, state, tier and tags`.
+
+### `views/items-system`
+
+The server MUST NOT list an item of a `system.*` type in a view.
+
+**Reason:** a view of every item lists what a person keeps, not the records the server keeps for itself.
+
+**Tests:** `compliance/views-items.test.ts › never lists a system item, though the view's own query would reach one`.
+
+### `views/items-beneath`
+
+Where a view names `query.beneath`, the server MUST list that item and every item under it by `parent-of` at any depth, each once.
+
+**Tests:** `compliance/views-items.test.ts › lists the item beneath and everything under it by parent-of, at any depth`.
+
+### `views/items-beneath-state`
+
+Where a view names `query.beneath`, the server MUST NOT list a trashed item.
+
+**Tests:** `compliance/views-items.test.ts › leaves out a trashed item beneath and a trashed item itself, and lists nothing beneath an item that does not exist`.
+
+### `views/items-beneath-missing`
+
+If a view names a `query.beneath` that is no item, then the server MUST answer `200` with an empty page.
+
+**Tests:** `compliance/views-items.test.ts › leaves out a trashed item beneath and a trashed item itself, and lists nothing beneath an item that does not exist`.
+
+### `views/items-order`
+
+The server MUST list a view's items by its `sort` keys in turn, first key first, and by the newest `occurred_at` first when the view has no sort.
+
+**Tests:** `compliance/views-items.test.ts › lists the newest occurrence first when the view names no sort, and answers a page the document declares`, `› sorts by type, state, tier and tags`, `› orders by every key in turn, up to ten, and pages through a tie on the leading keys`.
+
+### `views/items-order-title`
+
+Where a view sorts by `title`, the server MUST order each item by the field its type names as its title field, or by `title` where the type names none.
+
+**Reason:** the title a person sees is the field the type names, so the order matches what the screen shows.
+
+**Tests:** `compliance/views-items.test.ts › sorts by title, naming each type's own title field, with an untitled item last in either direction`, `› sorts by a title field a type registered at runtime names`.
+
+### `views/items-order-missing`
+
+Where a view sorts by a field an item does not hold, the server MUST list that item after every item that holds it, in either direction.
+
+**Tests:** `compliance/views-items.test.ts › sorts by title, naming each type's own title field, with an untitled item last in either direction`, `› sorts by a property, numbers by value and an item without the property last in either direction`, `› sorts by type, state, tier and tags`.
+
+### `views/items-order-ties`
+
+Where items tie on every sort key, the server MUST list them by ascending ID, or by the direction of the key when the view sorts by one timestamp alone.
+
+**Tests:** `compliance/views-items.test.ts › breaks a tie by the item's ID, and a tie on the one timestamp key in that key's direction`, `› orders by every key in turn, up to ten, and pages through a tie on the leading keys`.
+
+### `views/items-limit`
+
+The server MUST answer a page of at most `limit` items, 50 when `limit` is absent.
+
+**Tests:** `compliance/views-items.test.ts › answers 50 items without a limit and refuses a limit above 200 or below 1`.
+
+### `views/items-limit-range`
+
+If a key sends a `limit` below 1 or above 200, then the server MUST answer `400 validation_error`.
+
+**Tests:** `compliance/views-items.test.ts › answers 50 items without a limit and refuses a limit above 200 or below 1`.
+
+### `views/items-cursor`
+
+When a key sends the `next_cursor` of a page as `cursor`, the server MUST answer the items that follow that page in the view's order, with none repeated and none left out.
+
+**Tests:** `compliance/views-items.test.ts › pages in the view's order with a cursor, whatever the limit, with no item twice and none missed`, `› orders by every key in turn, up to ten, and pages through a tie on the leading keys`.
+
+### `views/items-cursor-foreign`
+
+If a key sends a `cursor` that another view, another ordering or no listing issued, then the server MUST answer `400 validation_error`.
+
+**Tests:** `compliance/views-items.test.ts › refuses a cursor from another view, another ordering or no listing at all`.
+
+### `views/items-readable`
+
+The server MUST NOT list in a view an item of a type the key cannot read.
+
+**Reason:** a saved view never widens what a key reads.
+
+**Tests:** `compliance/views-items.test.ts › leaves out the types a key cannot read, and walks beneath only through items it can read`, `› lists nothing for a key that reads the view but no item, and refuses a key that reads no type`.
+
+### `views/items-beneath-readable`
+
+Where a view names `query.beneath`, the server MUST NOT reach an item through one the key cannot read.
+
+**Reason:** an item under an unreadable one would show that the unreadable one has children.
+
+**Tests:** `compliance/views-items.test.ts › leaves out the types a key cannot read, and walks beneath only through items it can read`.
+
+### `views/items-edge-read`
+
+If a view names `query.beneath` and the key cannot read `parent-of` edges, then the server MUST answer `403 edge_permission_denied`.
+
+**Tests:** `compliance/views-items.test.ts › refuses a view that goes beneath an item to a key that cannot read parent-of edges`.
+
+### `views/items-no-type`
+
+If a key reads no type, then the server MUST answer `GET /views/{id}/items` with `403 type_not_permitted`.
+
+**Tests:** `compliance/views-items.test.ts › lists nothing for a key that reads the view but no item, and refuses a key that reads no type`.
+
+### `views/items-not-found`
+
+If no view the key can read has the ID, then the server MUST answer `GET /views/{id}/items` with `404 item_not_found`.
+
+**Reason:** an item that is not a view and a view the key cannot read answer as an ID nothing holds, as `views/not-found` and `views/read-hidden` do.
+
+**Tests:** `compliance/views-items.test.ts › answers 404 for a view the key cannot read, an item that is not a view and an ID nothing holds`.
+
+### `views/items-revoked`
+
+If a view is revoked, then the server MUST answer `GET /views/{id}/items` with `400 invalid_transition`.
+
+**Tests:** `compliance/views-items.test.ts › refuses a listing of a view whose parent was deleted`.
 
 ## Who may read and write a view
 
