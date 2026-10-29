@@ -1319,6 +1319,14 @@ If `POST /edge-types` names an `id` or a `reverse_name` that the key's own edge 
 
 **Tests:** `compliance/edge-types.test.ts › registers only the edge type ids the key's own edge map grants write on`.
 
+### `edges/types-register-map-scope`
+
+When the server refuses `POST /edge-types` under `edges/types-register-map` for a name whose own write scope an app cannot be granted, because no edge type has that id, the server MUST name in `details.required_scope` the narrowest edge namespace wildcard covering the name that an app can be granted, where there is one.
+
+**Reason:** a new edge type id or a reverse name has no scope of its own, so without the wildcard an app signed in through OAuth could not be asked for what lets it register the name.
+
+**Tests:** `compliance/edge-types.test.ts › names the edge namespace wildcard an app can be granted when a key may not register a new edge type`.
+
 ### `edges/types-register-shipped`
 
 If `POST /edge-types` names the `id` of a shipped edge type, then the server MUST answer `409 conflict`.

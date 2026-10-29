@@ -1837,7 +1837,7 @@ If a request to an MCP endpoint the server serves carries no credential the serv
 
 ### `keys-and-oauth/mcp-challenge-scope`
 
-If a tool call to an MCP endpoint the server serves carries an app's access token, and the API refuses the call for a scope the token lacks before the call changes anything, other than a grant on a type or edge type nothing registered, then the server MUST answer `403` with a `WWW-Authenticate` Bearer challenge holding `error="insufficient_scope"`, that scope as `scope` and the endpoint's `resource_metadata`.
+If a tool call to an MCP endpoint the server serves carries an app's access token, and the API refuses the call before the call changes anything for a scope the token lacks and an app can be granted, then the server MUST answer `403` with a `WWW-Authenticate` Bearer challenge holding `error="insufficient_scope"`, that scope as `scope` (the refusal's `details.required_scope` where it names one, else the scope of the type or edge type its `details.grant` names) and the endpoint's `resource_metadata`.
 
 **Reason:** RFC 6750 section 3.1: the challenge names what to ask for, so an MCP client can ask the person for more without starting over. A call that already changed something is answered with the tool's error instead, since calling it again would repeat that change. An API key is not issued through sign-in, so it has no sign-in to step up, and a refusal to one stays the tool's error.
 
@@ -1845,7 +1845,7 @@ If a tool call to an MCP endpoint the server serves carries an app's access toke
 
 ### `keys-and-oauth/mcp-challenge-unregistered`
 
-If a tool call to an MCP endpoint the server serves carries an app's access token, and the API refuses the call for a grant on a type or edge type nothing registered, then the server MUST answer with the tool's error and no `insufficient_scope` challenge.
+If a tool call to an MCP endpoint the server serves carries an app's access token, and the API refuses the call for a scope no app can be granted, such as the scope of a type or edge type nothing registered, then the server MUST answer with the tool's error and no `insufficient_scope` challenge.
 
 **Reason:** the API asks for the grant before it looks the name up, so a misspelled type would otherwise ask the person to approve access to a name no write can use, and the call would fail again once they did.
 

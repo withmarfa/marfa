@@ -4,11 +4,7 @@
  * (MCP authorization, RFC 6750 §3.1) in place of a tool error the person
  * cannot act on.
  */
-import {
-  getEdgeTypeSchema,
-  getTypeSchema,
-  isValidScope,
-} from "@withmarfa/shared";
+import { liveAllowedScopes } from "../auth/oauth-provider.js";
 
 interface ToolCall {
   id: string | number;
@@ -25,10 +21,10 @@ export function isToolCall(message: unknown): message is ToolCall {
 }
 
 /**
- * The scope literal a refusal's details name as missing. A grant on a type
- * or edge type nothing registered names no scope: a person asked for it
- * would approve access to a name no write can use, and the call would fail
- * again on the name.
+ * The scope a refusal's details name as missing, when an app could be
+ * granted it. A refusal naming none the instance would grant, such as a
+ * misspelled type, names none here: the person would approve access to a
+ * name no write can use, and the call would fail again.
  */
 export function scopeOfRefusal(
   details: Record<string, unknown> | undefined,
@@ -37,20 +33,18 @@ export function scopeOfRefusal(
   const grant = details.grant as
     { kind?: unknown; name?: unknown; level?: unknown } | undefined;
   let scope: string | undefined;
-  if (typeof grant?.name === "string" && typeof grant.level === "string") {
-    if (grant.kind === "type" && getTypeSchema(grant.name) !== undefined) {
-      scope = `${grant.name}:${grant.level}`;
-    }
-    if (
-      grant.kind === "edge_type" &&
-      getEdgeTypeSchema(grant.name) !== undefined
-    ) {
-      scope = `edge.${grant.name}:${grant.level}`;
-    }
-  } else if (typeof details.required_scope === "string") {
+  if (typeof details.required_scope === "string") {
     scope = details.required_scope;
+  } else if (
+    typeof grant?.name === "string" &&
+    typeof grant.level === "string"
+  ) {
+    if (grant.kind === "type") scope = `${grant.name}:${grant.level}`;
+    if (grant.kind === "edge_type") scope = `edge.${grant.name}:${grant.level}`;
   }
-  return scope !== undefined && isValidScope(scope) ? scope : undefined;
+  return scope !== undefined && liveAllowedScopes().includes(scope)
+    ? scope
+    : undefined;
 }
 
 /** The JSON-RPC messages of a response body, whether JSON or a stream. */

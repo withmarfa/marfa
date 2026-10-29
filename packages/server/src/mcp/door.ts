@@ -13,8 +13,8 @@
  * it does not serve, before the SDK would hold a stream for it.
  *
  * A tool call by a signed-in app that the API refused for a scope the app
- * was not granted, before anything was written, is answered with an
- * `insufficient_scope` challenge naming that scope, so the app can ask the
+ * lacks and could be granted, before anything was written, is answered with
+ * an `insufficient_scope` challenge naming that scope, so the app can ask the
  * person for it and call again.
  *
  * A browser page may call it only from an origin the owner approved, since

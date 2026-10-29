@@ -396,6 +396,35 @@ describe("custom edge-type registration", () => {
     }
   });
 
+  it("names the edge namespace wildcard an app can be granted when a key may not register a new edge type", async () => {
+    const id = `user.needs-namespace-${ctx.runId}`;
+    const minted = await client.createKey({
+      label: "edge-types-namespace",
+      source: `${ctx.source}-edge-namespace`,
+      permissions: [],
+      type_permissions: { "core.note": "write" },
+      edge_permissions: { "attached-to": "write" },
+      metadata_permissions: { edge_types: "write" },
+    });
+    expect(minted.ok).toBe(true);
+    trackKey(ctx, minted.data.id);
+    const scoped = new MarfaClient({
+      baseUrl: apiUrl,
+      apiKey: minted.data.key,
+    });
+    const refused = await scoped.registerEdgeType({
+      label: "Test edge type",
+      id,
+      cardinality: "many-to-many",
+    });
+    expect(refused.status).toBe(403);
+    expect(refused.error?.error.code).toBe("edge_permission_denied");
+    expect(refused.error?.error.details).toMatchObject({
+      edge_type: id,
+      required_scope: "edge.user.*:write",
+    });
+  });
+
   it("rejects a custom type whose id collides with a core edge type", async () => {
     const r = await client.registerEdgeType({
       label: "Test edge type",
