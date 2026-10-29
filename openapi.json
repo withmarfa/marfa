@@ -5100,7 +5100,7 @@
                 "type": "string",
                 "description": "The instance's display name."
               },
-              "build": {
+              "version": {
                 "type": "string",
                 "description": "The build the instance runs."
               },
@@ -5111,7 +5111,7 @@
             },
             "required": [
               "name",
-              "build"
+              "version"
             ],
             "description": "The instance's name and the build it runs."
           },
@@ -5182,7 +5182,7 @@
             "items": {
               "$ref": "#/components/schemas/OverviewEdgeType"
             },
-            "description": "The edge types you can read or write, sorted by identifier, at most 50. Absent when you can use none."
+            "description": "The edge types you can read or write, sorted by identifier, at most 50. Absent when you can read no type or can use no edge type."
           },
           "tags": {
             "type": "array",
@@ -5221,7 +5221,7 @@
         "example": {
           "instance": {
             "name": "Marfa",
-            "build": "dev"
+            "version": "dev"
           },
           "credential": {
             "kind": "key",

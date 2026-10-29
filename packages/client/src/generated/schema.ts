@@ -4110,7 +4110,7 @@ export interface components {
          * @example {
          *       "instance": {
          *         "name": "Marfa",
-         *         "build": "dev"
+         *         "version": "dev"
          *       },
          *       "credential": {
          *         "kind": "key",
@@ -4160,7 +4160,7 @@ export interface components {
                 /** @description The instance's display name. */
                 name: string;
                 /** @description The build the instance runs. */
-                build: string;
+                version: string;
                 /** @description The release the build was made as. Absent for a build that is not a release. */
                 release?: string;
             };
@@ -4187,7 +4187,7 @@ export interface components {
             };
             /** @description The types you can read, most items first, then by identifier, at most 50. Types in the `system` namespace are left out. Absent when you can read none. */
             types?: components["schemas"]["OverviewType"][];
-            /** @description The edge types you can read or write, sorted by identifier, at most 50. Absent when you can use none. */
+            /** @description The edge types you can read or write, sorted by identifier, at most 50. Absent when you can read no type or can use no edge type. */
             edge_types?: components["schemas"]["OverviewEdgeType"][];
             /** @description The most used tags on items you can read, at most 30. Absent when there are none. */
             tags?: components["schemas"]["TagCount"][];

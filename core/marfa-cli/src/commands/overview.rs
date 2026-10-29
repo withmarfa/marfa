@@ -77,8 +77,8 @@ pub fn describe(overview: &Value) -> String {
         "instance {} ({})",
         text(instance, "name"),
         match instance.get("release").and_then(Value::as_str) {
-            Some(release) => format!("{release}, build {}", text(instance, "build")),
-            None => text(instance, "build").to_string(),
+            Some(release) => format!("{release}, build {}", text(instance, "version")),
+            None => text(instance, "version").to_string(),
         }
     )];
     let kind = match text(credential, "kind") {

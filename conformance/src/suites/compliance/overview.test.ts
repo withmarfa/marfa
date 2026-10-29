@@ -9,7 +9,7 @@ import { controlRequest } from "../../utils/control-request.js";
 import { expectMatchesSchema } from "../../utils/openapi.js";
 
 interface Overview {
-  instance: { name: string; build: string; release?: string };
+  instance: { name: string; version: string; release?: string };
   credential: {
     kind: string;
     label?: string;
@@ -98,8 +98,13 @@ describe("GET /overview", () => {
       properties: { url: "https://example.test/" },
     });
     await create("/views", { title: "Reading list" });
+    await create("/views", { title: "Archive" });
     await create("/folders", {
       title: "Project",
+      query: { types: ["core.note"] },
+    });
+    await create("/folders", {
+      title: "Inbox",
       query: { types: ["core.note"] },
     });
     await create("/types", {
@@ -119,7 +124,7 @@ describe("GET /overview", () => {
 
     expect(answer.instance).toMatchObject({
       name: expect.any(String),
-      build: expect.any(String),
+      version: expect.any(String),
     });
     expect(answer.credential).toMatchObject({
       kind: "key",
@@ -144,9 +149,11 @@ describe("GET /overview", () => {
       { tag: "beta", count: 1 },
     ]);
     expect(answer.views).toEqual([
+      { id: expect.any(String), title: "Archive" },
       { id: expect.any(String), title: "Reading list" },
     ]);
     expect(answer.folders).toEqual([
+      { id: expect.any(String), title: "Inbox" },
       { id: expect.any(String), title: "Project" },
     ]);
     expect(answer.edge_types?.length).toBeGreaterThan(0);
@@ -190,11 +197,19 @@ describe("GET /overview", () => {
     const none = await mintKey("overview-none", {
       permissions: [],
       type_permissions: {},
-      edge_permissions: {},
+      edge_permissions: { "*": "write" },
     });
     const answer = await overview(none);
     expect(Object.keys(answer).sort()).toEqual(["credential", "instance"]);
     expect(answer.credential.kind).toBe("key");
+    const witness = await overview(
+      await mintKey("overview-edges-only", {
+        permissions: [],
+        type_permissions: { "core.note": "read" },
+        edge_permissions: { "*": "write" },
+      }),
+    );
+    expect(witness.edge_types?.length).toBeGreaterThan(0);
   });
 
   it("reports a signed-in app as an app with the scopes it was granted", async () => {
@@ -254,9 +269,11 @@ describe("GET /overview", () => {
         properties: { body: `tagged ${String(i)}` },
         tags: [`bulk-tag-${String(i).padStart(2, "0")}`],
       });
-      await create("/views", { title: `View ${String(i).padStart(2, "0")}` });
+      await create("/views", {
+        title: `${String(i).padStart(2, "0")} view ${long.slice(0, 120)}`,
+      });
       await create("/folders", {
-        title: `Folder ${String(i).padStart(2, "0")}`,
+        title: `${String(i).padStart(2, "0")} folder ${long.slice(0, 120)}`,
         query: { types: ["core.note"] },
       });
     }
@@ -290,9 +307,16 @@ describe("GET /overview", () => {
     expect(answer.tags).toHaveLength(30);
     expect(answer.truncated?.tags).toBeGreaterThanOrEqual(40);
     expect(answer.views).toHaveLength(30);
-    expect(answer.truncated?.views).toBe(41);
+    expect(answer.truncated?.views).toBe(42);
     expect(answer.folders).toHaveLength(30);
-    expect(answer.truncated?.folders).toBe(41);
+    expect(answer.truncated?.folders).toBe(42);
+    for (const list of [answer.views ?? [], answer.folders ?? []]) {
+      for (const entry of list) {
+        expect(Array.from(entry.title).length).toBeLessThanOrEqual(100);
+      }
+      const titles = list.map((entry) => entry.title);
+      expect(titles).toEqual([...titles].sort());
+    }
     expect(answer.credential.type_permissions?.read).toHaveLength(30);
     expect(answer.truncated?.["credential.type_permissions.read"]).toBe(41);
     for (const entry of answer.types ?? []) {
@@ -300,7 +324,7 @@ describe("GET /overview", () => {
         100,
       );
     }
-    expect(text.length).toBeLessThan(20_000);
+    expect(text.length).toBeLessThan(30_000);
     const witness = await overview(server.workingKey);
     expect(witness.truncated?.types).toBeGreaterThanOrEqual(61);
   });

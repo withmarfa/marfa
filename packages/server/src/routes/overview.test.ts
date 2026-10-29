@@ -32,7 +32,7 @@ afterEach(() => {
 });
 
 interface Overview {
-  instance: { name: string; build: string; release?: string };
+  instance: { name: string; version: string; release?: string };
   credential: {
     kind: string;
     label?: string;
@@ -173,11 +173,19 @@ describe("GET /overview", () => {
     const none = await mintWorkingKey(ctx, {
       type_permissions: {},
       permissions: [],
-      edge_permissions: {},
+      edge_permissions: { "*": "write" },
     });
     const answer = await overview(none);
     expect(Object.keys(answer).sort()).toEqual(["credential", "instance"]);
     expect(answer.credential.kind).toBe("key");
+    const witness = await overview(
+      await mintWorkingKey(ctx, {
+        type_permissions: { "core.note": "read" },
+        permissions: [],
+        edge_permissions: { "*": "write" },
+      }),
+    );
+    expect(witness.edge_types?.length).toBeGreaterThan(0);
   });
 
   it("reads a signed-in app's grant as the app, not as a key", async () => {

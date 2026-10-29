@@ -1990,7 +1990,7 @@ fn the_overview_is_one_credentialed_read_of_the_overview_path() {
 #[test]
 fn the_overview_reads_as_sections_with_what_was_cut() {
     let text = overview::describe(&json!({
-        "instance": { "name": "Marfa", "build": "abc", "release": "0.1.2" },
+        "instance": { "name": "Marfa", "version": "abc", "release": "0.1.2" },
         "credential": {
             "kind": "key",
             "label": "Notes agent",
@@ -2032,7 +2032,7 @@ fn the_overview_reads_as_sections_with_what_was_cut() {
 #[test]
 fn an_overview_of_a_credential_that_reaches_nothing_is_two_lines() {
     let text = overview::describe(&json!({
-        "instance": { "name": "Marfa", "build": "abc" },
+        "instance": { "name": "Marfa", "version": "abc" },
         "credential": { "kind": "app" }
     }));
     assert_eq!(text, "instance Marfa (abc)\ncredential app");

@@ -314,13 +314,13 @@ When a request to `GET /overview` carries no key or app token, including one mad
 
 ### `instance/overview-fields`
 
-When `GET /overview` is answered `200`, the server MUST give `instance` with the `name` and `build` and give `credential` with its `kind`.
+When `GET /overview` is answered `200`, the server MUST give `instance` with the `name` and `version` and give `credential` with its `kind`.
 
 **Tests:** `compliance/overview.test.ts › answers the instance, the key, and what it reads with counts, tags, edge types, views and folders`.
 
 ### `instance/overview-no-reach`
 
-When the credential may read no type, the server MUST answer `GET /overview` with `200`, `instance` and `credential`, and no list.
+When the credential may read no type, the server MUST answer `GET /overview` with `200`, `instance` and `credential`, and no list, whatever its edge permissions.
 
 **Tests:** `compliance/overview.test.ts › answers a key that reaches no type with the instance and itself only`.
 

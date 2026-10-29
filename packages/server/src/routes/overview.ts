@@ -48,7 +48,7 @@ export const OVERVIEW_TEXT_CAP = 100;
 const InstanceSchema = z
   .object({
     name: z.string().describe("The instance's display name."),
-    build: z.string().describe("The build the instance runs."),
+    version: z.string().describe("The build the instance runs."),
     release: z
       .string()
       .optional()
@@ -169,7 +169,7 @@ const OverviewSchema = z
       .array(EdgeTypeEntrySchema)
       .optional()
       .describe(
-        `The edge types you can read or write, sorted by identifier, at most ${String(OVERVIEW_CAPS.edge_types)}. Absent when you can use none.`,
+        `The edge types you can read or write, sorted by identifier, at most ${String(OVERVIEW_CAPS.edge_types)}. Absent when you can read no type or can use no edge type.`,
       ),
     tags: z
       .array(TagWithCountSchema)
@@ -201,7 +201,7 @@ const OverviewSchema = z
   )
   .openapi("Overview", {
     example: {
-      instance: { name: "Marfa", build: "dev" },
+      instance: { name: "Marfa", version: "dev" },
       credential: {
         kind: "key",
         label: "Notes agent",
@@ -422,7 +422,8 @@ export function overviewRoutes(storage: Storage, build: DeployedBuild) {
       })
       .sort((a, b) => b.count - a.count || byId(a, b));
 
-    const edgeEntries = edgeTypes
+    // A credential that reads no type gets no list at all, edge types too.
+    const edgeEntries = (typeIds.size === 0 ? [] : edgeTypes)
       .filter((edgeType) =>
         edgePermissionCovers(key.edge_permissions, edgeType.id, "read"),
       )
@@ -472,7 +473,7 @@ export function overviewRoutes(storage: Storage, build: DeployedBuild) {
       {
         instance: {
           name: reads.name,
-          build: build.version,
+          version: build.version,
           ...(build.release !== undefined && { release: build.release }),
         },
         credential,
