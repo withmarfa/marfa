@@ -328,6 +328,7 @@ export function registerMoveItems(server: McpServer, ctx: ToolContext): void {
         to,
         properties: properties ?? null,
         ids: [...plan.ids].sort(),
+        settings: plan.settings,
       };
 
       const previewAnswer = (

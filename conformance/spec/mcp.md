@@ -238,11 +238,11 @@ When `marfa_move_items` is called without `confirm`, the server MUST NOT move an
 
 ### `mcp/move-plan-changed`
 
-If the items a `marfa_move_items` call would move changed since the preview that gave its `confirm` token, then the server MUST refuse the call with the tool error code `confirmation_stale`.
+If the items a `marfa_move_items` call would move, or the settings that name the type it moves them from, changed since the preview that gave its `confirm` token, then the server MUST refuse the call with the tool error code `confirmation_stale`.
 
 **Reason:** the person agreed to what the preview showed, not to what the move would take now.
 
-**Tests:** `compliance/mcp.test.ts › moves nothing when called without a confirmation, and refuses a confirmation when what would move changed`.
+**Tests:** `compliance/mcp.test.ts › moves nothing when called without a confirmation, and refuses a confirmation when what would move changed`, `› refuses a move confirmation once a setting names the type after the preview`.
 
 ## Revoking a key
 

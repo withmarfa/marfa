@@ -432,6 +432,50 @@ describe("marfa_move_items", () => {
       item: { type: "user.contact" },
     });
   });
+
+  it("refuses the confirmation once a setting names the type after the preview", async () => {
+    for (const id of ["user.prospect", "user.client"]) {
+      payloadOf(
+        await callTool(schema, "marfa_save_type", {
+          action: "register",
+          id,
+          fields: { title: { type: "string" } },
+        }),
+      );
+    }
+    await request(ctx.app, "POST", "/items", {
+      key: adminKey,
+      body: { type: "user.prospect", properties: { title: "Ada" } },
+    });
+    const preview = payloadOf(
+      await callTool(schema, "marfa_move_items", {
+        from: "user.prospect",
+        to: "user.client",
+      }),
+    );
+    expect(preview.settings).toEqual([]);
+    const hook = await request(ctx.app, "POST", "/webhooks", {
+      key: adminKey,
+      body: {
+        url: "https://example.com/prospects",
+        events: ["item.created"],
+        type_filter: "user.prospect",
+      },
+    });
+    expect(hook.status).toBe(201);
+    const stale = errorOf(
+      await callTool(schema, "marfa_move_items", {
+        from: "user.prospect",
+        to: "user.client",
+        confirm: preview.confirm,
+      }),
+    );
+    expect(stale.code).toBe("confirmation_stale");
+    expect(stale.settings).toHaveLength(1);
+    expect(stale.matched).toBe(1);
+    const { id } = (await hook.json()) as { id: string };
+    await request(ctx.app, "DELETE", `/webhooks/${id}`, { key: adminKey });
+  });
 });
 
 describe("marfa_bulk_save", () => {

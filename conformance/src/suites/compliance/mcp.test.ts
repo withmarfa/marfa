@@ -9,6 +9,7 @@ import {
   trackItem,
   trackKey,
   trackType,
+  trackWebhook,
 } from "../../utils/setup.js";
 import {
   ADMIN_TOOLS,
@@ -792,14 +793,19 @@ describe("marfa_revoke_key", () => {
 
 describe("marfa_move_items", () => {
   let schema: McpConnection;
+  let key: string;
   let from: string;
   let to: string;
 
   beforeAll(async () => {
-    const key = await keyWith(
+    // webhooks.manage, so a webhook the mover makes is one its move may change.
+    key = await keyWith(
       "mover",
       { "*": "write" },
-      { permissions: ["schema.write"], metadata_permissions: { "*": "write" } },
+      {
+        permissions: ["schema.write", "webhooks.manage"],
+        metadata_permissions: { "*": "write" },
+      },
     );
     schema = await connectMcp(apiUrl, key, "2026-07-28", "/mcp/schema");
     const owner = new MarfaClient({ baseUrl: apiUrl, apiKey: key });
@@ -875,5 +881,44 @@ describe("marfa_move_items", () => {
     expect(status).toBe("completed");
     expect(await typeOf(first)).toBe(to);
     expect(await typeOf(second)).toBe(to);
+  });
+
+  it("refuses a move confirmation once a setting names the type after the preview", async () => {
+    const left = await lead("Hedy");
+    const preview = toolResult(
+      await callTool(schema, "marfa_move_items", { from, to }),
+    );
+    expect(preview.settings).toEqual([]);
+
+    const made = await fetch(new URL("/webhooks", apiUrl), {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${key}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        url: `http://127.0.0.1:9/${ctx.runId}/move`,
+        events: ["item.created"],
+        type_filter: from,
+      }),
+    });
+    expect(made.status).toBe(201);
+    const hook = (await made.json()) as { id: string };
+    trackWebhook(
+      ctx,
+      hook.id,
+      new MarfaClient({ baseUrl: apiUrl, apiKey: key }),
+    );
+
+    const error = toolError(
+      await callTool(schema, "marfa_move_items", {
+        from,
+        to,
+        confirm: preview.confirm,
+      }),
+    );
+    expect(error.code).toBe("confirmation_stale");
+    expect(error.settings).not.toEqual([]);
+    expect(await typeOf(left)).toBe(from);
   });
 });
