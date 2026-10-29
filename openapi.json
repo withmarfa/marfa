@@ -38996,7 +38996,7 @@
             }
           },
           "400": {
-            "description": "- `validation_error`: `limit` is out of range, `cursor` came from another view or ordering, or the view holds a setting that can't be listed.\n- `invalid_id`: the ID is invalid.\n- `invalid_transition`: the view is revoked.",
+            "description": "- `validation_error`: `limit` is out of range, `cursor` came from another view or an earlier version of it, or the view holds a setting that can't be listed.\n- `invalid_id`: the ID is invalid.\n- `invalid_transition`: the view is revoked.",
             "content": {
               "application/json": {
                 "schema": {

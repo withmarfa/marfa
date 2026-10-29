@@ -65,6 +65,7 @@ it("ends a walk beneath on a parent-of cycle and lists each item once", async ()
   const sort = [{ by: "title", direction: "asc" as const }];
   const view = (beneath?: string) => ({
     id: "view",
+    version: 1,
     query: beneath ? { beneath } : {},
     sort,
     reader: {},
@@ -96,6 +97,7 @@ it("lists an item without the sorted property last in either direction and pages
   ] as const) {
     const view = {
       id: "view",
+      version: 1,
       query: {},
       sort: [{ by: "properties.notes", direction }],
       reader: {},
@@ -104,7 +106,7 @@ it("lists an item without the sorted property last in either direction and pages
   }
 });
 
-it("refuses more than ten sort keys, a property name that is not one, and a cursor of another ordering", async () => {
+it("refuses more than ten sort keys, a property name that is not one, and a cursor of another version of the view", async () => {
   ctx = await createTestContext();
   await note("One", at(1));
   await note("Two", at(2));
@@ -114,7 +116,7 @@ it("refuses more than ten sort keys, a property name that is not one, and a curs
   }));
   await expect(
     ctx.storage.items.listInView(
-      { id: "v", query: {}, sort: tooMany, reader: {} },
+      { id: "v", version: 1, query: {}, sort: tooMany, reader: {} },
       {},
     ),
   ).rejects.toMatchObject({ code: "validation_error" });
@@ -122,6 +124,7 @@ it("refuses more than ten sort keys, a property name that is not one, and a curs
     ctx.storage.items.listInView(
       {
         id: "v",
+        version: 1,
         query: {},
         sort: [{ by: "properties.a b", direction: "asc" }],
         reader: {},
@@ -134,20 +137,62 @@ it("refuses more than ten sort keys, a property name that is not one, and a curs
   expect(
     (
       await ctx.storage.items.listInView(
-        { id: "v", query: {}, sort: ten, reader: {} },
+        { id: "v", version: 1, query: {}, sort: ten, reader: {} },
         { limit: 1 },
       )
     ).data,
   ).toHaveLength(1);
 
-  const first = await ctx.storage.items.listInView(
-    { id: "v", query: {}, sort: ten.slice(0, 2), reader: {} },
-    { limit: 1 },
-  );
-  await expect(
-    ctx.storage.items.listInView(
-      { id: "v", query: {}, sort: ten, reader: {} },
-      { cursor: first.next_cursor! },
-    ),
-  ).rejects.toMatchObject({ code: "validation_error" });
+  const view = { id: "v", version: 1, query: {}, sort: ten, reader: {} };
+  const first = await ctx.storage.items.listInView(view, { limit: 1 });
+  expect(
+    (
+      await ctx.storage.items.listInView(view, {
+        limit: 1,
+        cursor: first.next_cursor!,
+      })
+    ).data,
+  ).toHaveLength(1);
+  for (const other of [
+    { ...view, version: 2 },
+    { ...view, id: "w" },
+  ]) {
+    await expect(
+      ctx.storage.items.listInView(other, { cursor: first.next_cursor! }),
+    ).rejects.toMatchObject({ code: "validation_error" });
+  }
+});
+
+it("orders by a property as GET /items does", async () => {
+  ctx = await createTestContext();
+  const made: string[] = [];
+  for (const [i, notes] of ["c", "a", "b"].entries()) {
+    const item = await itemWrites(ctx.storage).create({
+      writer: null,
+      id: at(i + 1),
+      type: "core.note",
+      source: "test",
+      properties: { title: `N${String(i)}`, notes },
+    });
+    made.push(item.id);
+  }
+  for (const [direction, expected] of [
+    ["asc", [made[1], made[2], made[0]]],
+    ["desc", [made[0], made[2], made[1]]],
+  ] as const) {
+    const listed = await ctx.storage.items.list({
+      sort: "properties.notes",
+      direction,
+      limit: 10,
+    });
+    const view = {
+      id: "v",
+      version: 1,
+      query: {},
+      sort: [{ by: "properties.notes", direction }],
+      reader: {},
+    };
+    expect(listed.data.map((item) => item.id)).toEqual(expected);
+    expect(await ids(view, 1)).toEqual(expected);
+  }
 });

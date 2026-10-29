@@ -1523,7 +1523,7 @@ export class SqliteItemStore implements ItemStore {
       );
     }
     if (page.cursor !== undefined) {
-      conditions.push(afterCursor(view.id, order, page.cursor));
+      conditions.push(afterCursor(view, order, page.cursor));
     }
 
     const keyColumns = Object.fromEntries(
@@ -1552,7 +1552,7 @@ export class SqliteItemStore implements ItemStore {
     );
     return {
       data,
-      next_cursor: encodeViewCursor(view.id, order, values, lastItem.id),
+      next_cursor: encodeViewCursor(view, values, lastItem.id),
     };
   }
 

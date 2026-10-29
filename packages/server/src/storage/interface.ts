@@ -126,6 +126,8 @@ export interface ViewSortKey {
 export interface ViewListing {
   /** The view's id, which a cursor is bound to. */
   id: string;
+  /** The view's version, which a cursor is bound to with its id. */
+  version: number;
   query: {
     types?: readonly string[] | undefined;
     tier?: "library" | "feed" | "all" | undefined;

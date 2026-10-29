@@ -88,3 +88,17 @@ describe("property SQL and cursor scalar agreement", () => {
     },
   );
 });
+
+describe("a property path", () => {
+  it("names one key, so a dot in it is not a step into a nested object", async () => {
+    const properties = JSON.stringify({
+      "display.name": "flat",
+      display: { name: "nested" },
+    });
+    const row = await db.get<{ flat: string; absent: string | null }>(
+      sql`SELECT ${buildPropertySortExpr(sql`${properties}`, "display.name")} AS flat,
+        ${buildPropertySortExpr(sql`${JSON.stringify({ display: { name: "nested" } })}`, "display.name")} AS absent`,
+    );
+    expect(row).toEqual({ flat: "flat", absent: null });
+  });
+});

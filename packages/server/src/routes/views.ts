@@ -499,7 +499,7 @@ const listViewItemsRoute = createRoute({
         },
       },
       description:
-        "- `validation_error`: `limit` is out of range, `cursor` came from another view or ordering, or the view holds a setting that can't be listed.\n- `invalid_id`: the ID is invalid.\n- `invalid_transition`: the view is revoked.",
+        "- `validation_error`: `limit` is out of range, `cursor` came from another view or an earlier version of it, or the view holds a setting that can't be listed.\n- `invalid_id`: the ID is invalid.\n- `invalid_transition`: the view is revoked.",
     },
     ...unauthorized,
     403: {
@@ -623,6 +623,7 @@ export function viewRoutes(storage: Storage) {
     const page = await storage.items.listInView(
       {
         id,
+        version: view.version,
         query,
         sort: settings.data.sort ?? [],
         reader: {

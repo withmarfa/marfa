@@ -25,9 +25,11 @@ import {
 import {
   decodeKeyedCursor,
   encodeKeyedCursor,
+  type ViewListing,
   type ViewSortKey,
 } from "./interface.js";
 import { resolveTypeSchema } from "./policy.js";
+import { buildPropertySortExpr } from "./property-sort.js";
 import { items } from "./sqlite/schema.js";
 
 type Direction = "asc" | "desc";
@@ -43,8 +45,6 @@ export interface ViewOrder {
   terms: Term[];
   /** The direction `items.id` breaks a tie in. */
   tie: Direction;
-  /** The ordering as written, which a cursor names. */
-  spelling: string;
 }
 
 export const PARENT_OF = "parent-of";
@@ -60,15 +60,8 @@ function refuse(message: string): MarfaError {
   return new MarfaError(ErrorCode.VALIDATION_ERROR, message);
 }
 
-/**
- * A property's scalar value for ordering: numbers as `REAL` so a large integer
- * and a fraction compare as numbers, a boolean as `1` or `0`, and an object,
- * an array or an absent value as `NULL`.
- */
 function propertyExpr(name: string): SQL {
-  const path = `$.${JSON.stringify(name)}`;
-  const column = items.properties;
-  return sql`CASE WHEN json_type(${column}, ${path}) IN ('integer', 'real') THEN CAST(json_extract(${column}, ${path}) AS REAL) WHEN json_type(${column}, ${path}) IN ('text', 'true', 'false') THEN json_extract(${column}, ${path}) ELSE NULL END`;
+  return buildPropertySortExpr(items.properties, name);
 }
 
 function propertyName(by: string): string {
@@ -146,7 +139,6 @@ export function viewOrder(keys: readonly ViewSortKey[]): ViewOrder {
     return {
       terms: [term("occurred_at", "desc")],
       tie: "desc",
-      spelling: "occurred_at:desc",
     };
   }
   const [only] = keys;
@@ -156,7 +148,6 @@ export function viewOrder(keys: readonly ViewSortKey[]): ViewOrder {
       keys.length === 1 && only !== undefined && TIMESTAMPS.has(only.by)
         ? only.direction
         : "asc",
-    spelling: keys.map((key) => `${key.by}:${key.direction}`).join(","),
   };
 }
 
@@ -173,9 +164,12 @@ export function orderBy(order: ViewOrder): SQL[] {
 
 type KeyValue = string | number | null;
 
-/** The cursor names the view and the ordering that issued it. */
-function cursorKey(viewId: string, order: ViewOrder): string {
-  return `view-items:${viewId}:${order.spelling}`;
+/**
+ * The cursor names the view and the version of it that issued it, so any
+ * change to the view, its sort and query among them, refuses an old cursor.
+ */
+function cursorKey(view: Pick<ViewListing, "id" | "version">): string {
+  return `view-items:${view.id}:${String(view.version)}`;
 }
 
 export function keyValue(raw: unknown): KeyValue {
@@ -186,16 +180,11 @@ export function keyValue(raw: unknown): KeyValue {
 }
 
 export function encodeViewCursor(
-  viewId: string,
-  order: ViewOrder,
+  view: Pick<ViewListing, "id" | "version">,
   values: readonly KeyValue[],
   id: string,
 ): string {
-  return encodeKeyedCursor(
-    JSON.stringify(values),
-    id,
-    cursorKey(viewId, order),
-  );
+  return encodeKeyedCursor(JSON.stringify(values), id, cursorKey(view));
 }
 
 function malformedCursor(): MarfaError {
@@ -211,11 +200,11 @@ function malformedCursor(): MarfaError {
  * differ, and the last branch is a full tie broken by `items.id`.
  */
 export function afterCursor(
-  viewId: string,
+  view: Pick<ViewListing, "id" | "version">,
   order: ViewOrder,
   cursor: string,
 ): SQL {
-  const { v, id } = decodeKeyedCursor(cursor, cursorKey(viewId, order));
+  const { v, id } = decodeKeyedCursor(cursor, cursorKey(view));
   let values: unknown;
   try {
     values = JSON.parse(v);
