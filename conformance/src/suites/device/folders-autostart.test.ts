@@ -68,7 +68,7 @@ afterEach(async () => {
  * holds fail, once.
  */
 const FAKE_MANAGER = String.raw`#!/usr/bin/env node
-const { readFileSync, writeFileSync, existsSync } = require("node:fs");
+const { readFileSync, writeFileSync, existsSync, openSync, closeSync } = require("node:fs");
 const { spawn, execFileSync } = require("node:child_process");
 const { basename, dirname, join } = require("node:path");
 
@@ -95,14 +95,18 @@ const failOnce = (verb) => {
     fail(1, verb + " failed, as the fixture asked");
   }
 };
-const start = (argv, env) => {
+// launchd opens the files a job names for its output as the job starts, and
+// fails the job where it cannot. A file that is not there is made.
+const start = (argv, env, output) => {
+  const out = output ? [openSync(output.stdout, "a"), openSync(output.stderr, "a")] : ["ignore", "ignore"];
   const session = { HOME: root, PATH: process.env.PATH, TMPDIR: process.env.TMPDIR ?? "/tmp" };
   if (process.env.MARFA_KEYCHAIN) session.MARFA_KEYCHAIN = process.env.MARFA_KEYCHAIN;
   const child = spawn(argv[0], argv.slice(1), {
     detached: true,
-    stdio: "ignore",
+    stdio: ["ignore", ...out],
     env: { ...session, ...env },
   });
+  for (const fd of out) if (typeof fd === "number") closeSync(fd);
   child.unref();
   state.pid = child.pid;
   state.started = argv;
@@ -130,7 +134,7 @@ if (tool === "launchctl") {
     if (state.loaded) fail(5, "Bootstrap failed: 5: Input/output error");
     const agent = JSON.parse(execFileSync("plutil", ["-convert", "json", "-o", "-", path], { encoding: "utf8" }));
     state.loaded = true;
-    if (agent.RunAtLoad) start(agent.ProgramArguments, agent.EnvironmentVariables ?? {});
+    if (agent.RunAtLoad) start(agent.ProgramArguments, agent.EnvironmentVariables ?? {}, agent.StandardOutPath ? { stdout: agent.StandardOutPath, stderr: agent.StandardErrorPath } : undefined);
   } else if (verb === "bootout") {
     if (!state.loaded) fail(3, "Boot-out failed: 3: No such process");
     stop();
@@ -330,6 +334,7 @@ interface Status {
   outdated: boolean;
   binary: { path: string; exists: boolean; this_binary: boolean } | null;
   log: string | null;
+  launchd_log: string | null;
   registry: string | null;
   key_file: string | null;
   record: {
@@ -381,6 +386,7 @@ describe("folder syncing from login", () => {
     });
     const report = parsed<Switched>(ran);
     const log = join(dirname(registry), "folder-watch.log");
+    const launchdLog = join(dirname(registry), "folder-watch.launchd.log");
     expect(report).toMatchObject({
       autostart: "on",
       changed: true,
@@ -391,6 +397,7 @@ describe("folder syncing from login", () => {
       log,
       registry,
     });
+    expect(report.launchd_log).toBe(macOS ? launchdLog : undefined);
     expect(existsSync(agentFile(root))).toBe(true);
     // Written only below the stand-in home, never writable by others.
     expect(statSync(agentFile(root)).mode & 0o022).toBe(0);
@@ -416,7 +423,11 @@ describe("folder syncing from login", () => {
         ThrottleInterval: 30,
         Nice: 10,
         LowPriorityIO: true,
+        StandardOutPath: launchdLog,
+        StandardErrorPath: launchdLog,
       });
+      // Made by the command, for its owner alone, before launchd could make it.
+      expect(statSync(launchdLog).mode & 0o077).toBe(0);
       expect(
         managerState(root).calls.filter((call) => !call.startsWith("print")),
       ).toEqual([
@@ -430,6 +441,11 @@ describe("folder syncing from login", () => {
       expect(written).toContain("\nIOSchedulingClass=best-effort\n");
       expect(written).toContain("\nIOSchedulingPriority=7\n");
       expect(written).toContain("\n[Install]\nWantedBy=default.target\n");
+      // The journal keeps a user unit's standard output and error, so the
+      // unit names no file for them.
+      expect(written).not.toContain("StandardOutput");
+      expect(written).not.toContain("StandardError");
+      expect(existsSync(launchdLog)).toBe(false);
       expect(
         managerState(root).calls.filter(
           (call) => !call.startsWith("--user show"),
@@ -469,6 +485,33 @@ describe("folder syncing from login", () => {
     expect(alive(pid!)).toBe(true);
     expect(report.running).toBe(true);
   });
+
+  it.runIf(macOS)(
+    "keeps an error the watch makes before it opens its log in the file launchd was given beside the log",
+    async () => {
+      const root = standIn("launchd-output");
+      const registry = registryOf(root);
+      const log = join(dirname(registry), "folder-watch.log");
+      const launchdLog = join(dirname(registry), "folder-watch.launchd.log");
+      // A directory where the log should be: the watch cannot open it.
+      mkdirSync(log, { recursive: true });
+      parsed<Switched>(autostart(root, "on", { registry }));
+      expect(statSync(launchdLog).mode & 0o077).toBe(0);
+      await vi.waitFor(() => {
+        expect(readLog(launchdLog)).toMatch(/directory/i);
+      }, WAIT);
+      // The witness: with the log a file, the same agent writes there instead.
+      rmSync(log, { recursive: true });
+      const size = statSync(launchdLog).size;
+      stopAgent(root);
+      parsed<Switched>(autostart(root, "off", { registry }));
+      parsed<Switched>(autostart(root, "on", { registry }));
+      await vi.waitFor(() => {
+        expect(readLog(log)).toContain("watching every folder");
+      }, WAIT);
+      expect(statSync(launchdLog).size).toBe(size);
+    },
+  );
 
   it("changes nothing when turned on again, and off removes the agent and stops its watch, twice over", async () => {
     const root = standIn("twice");
@@ -753,6 +796,9 @@ describe("folder syncing from login", () => {
       running: true,
       pid,
       log: join(dirname(registry), "folder-watch.log"),
+      launchd_log: macOS
+        ? join(dirname(registry), "folder-watch.launchd.log")
+        : null,
       registry,
       credential: [harness.dir],
     });
@@ -775,6 +821,13 @@ describe("folder syncing from login", () => {
     expect(text.stdout).toContain(
       `it logs to ${join(dirname(registry), "folder-watch.log")}`,
     );
+    // The line is launchd's alone: a systemd unit's journal keeps that output.
+    expect(text.stdout.includes("before it opens that log")).toBe(macOS);
+    if (macOS) {
+      expect(text.stdout).toContain(
+        `what it prints before it opens that log goes to ${join(dirname(registry), "folder-watch.launchd.log")}`,
+      );
+    }
     const reason = status!.record!.folders.find(
       (folder) => folder.dir === harness.dir,
     )!.reason;
@@ -1261,6 +1314,125 @@ describe("the watch run by a service manager", () => {
     expect(watch.exitCode(), watch.stderr).toBe(0);
   });
 
+  describe.each([
+    { signal: "SIGTERM", status: 0 },
+    { signal: "SIGINT", status: 130 },
+  ] as const)("stopped by $signal", ({ signal, status }) => {
+    it("writes the signal, its sender and the time as the last line of its log", async () => {
+      const harness = await folderHarness(`autostart-stop-${signal}`);
+      made.push(harness);
+      const log = logIn("stop-line");
+      const watch = harness.folder
+        .device()
+        .hold(["folders", "watch", "--log", log], "root");
+      held.push(watch);
+      await vi.waitFor(() => {
+        expect(readLog(log)).toContain("watching every folder");
+      }, WAIT);
+      const before = Date.now();
+      process.kill(watch.pid(), signal);
+      await watch.exited();
+      const after = Date.now();
+      expect(watch.exitCode(), readLog(log)).toBe(status);
+      const text = readLog(log);
+      expect(text).toMatch(/folders watch started, process \d+\n/);
+      const stopped = lastLine(text);
+      expect(stopped).toMatch(
+        new RegExp(
+          `^\\d{4}-\\d\\d-\\d\\dT\\d\\d:\\d\\d:\\d\\dZ folders watch stopped by ${signal}, sent by process ${process.pid}$`,
+        ),
+      );
+      // To the second the line is written in, which is the clock's and not a
+      // guess: the second it was sent in, or the next.
+      const at = Date.parse(stopped.split(" ")[0]!);
+      expect(at).toBeGreaterThanOrEqual(Math.floor(before / 1000) * 1000);
+      expect(at).toBeLessThanOrEqual(after);
+      // The witness: the line is the stop's, and the start's line is not it.
+      expect(
+        text.split("\n").filter((line) => line.includes("stopped by")),
+      ).toHaveLength(1);
+    });
+  });
+
+  it("writes the stop line to the fresh log after the file reached 1 MiB while the watch ran", async () => {
+    const harness = await folderHarness("autostart-stop-rotated");
+    made.push(harness);
+    const log = logIn("stop-rotated");
+    const watch = harness.folder
+      .device()
+      .hold(["folders", "watch", "--log", log], "root");
+    held.push(watch);
+    await vi.waitFor(() => {
+      expect(readLog(log)).toContain("watching every folder");
+    }, WAIT);
+    appendFileSync(log, "y".repeat(MEBIBYTE));
+    await vi.waitFor(() => {
+      expect(existsSync(`${log}.1`)).toBe(true);
+    }, WAIT);
+    process.kill(watch.pid(), "SIGTERM");
+    await watch.exited();
+    expect(watch.exitCode()).toBe(0);
+    expect(lastLine(readLog(log))).toMatch(
+      /folders watch stopped by SIGTERM, sent by process \d+$/,
+    );
+    expect(readLog(`${log}.1`)).not.toContain("stopped by");
+  });
+
+  it("writes the stop line, and ends within three seconds with exit status 0, when SIGTERM comes during a pass that waits on the server", async () => {
+    const harness = await folderHarness("autostart-stop-in-pass");
+    made.push(harness);
+    // The server takes the create and never answers, so the pass stays under way.
+    scriptFolderWrites(harness, { creating: () => ({ kind: "stall" }) });
+    const log = logIn("stop-in-pass");
+    const watch = harness.folder
+      .device()
+      .hold(["folders", "watch", harness.dir, "--log", log], "root");
+    held.push(watch);
+    await vi.waitFor(() => {
+      expect(readLog(log)).toContain("watching");
+    }, WAIT);
+    put(
+      harness,
+      "Waiting.md",
+      "---\ntitle: Waiting\n---\nsent, never answered\n",
+    );
+    await vi.waitFor(() => {
+      expect(
+        harness.server.requests.filter(
+          (request) =>
+            request.method === "POST" && request.pathname === "/items",
+        ),
+      ).not.toHaveLength(0);
+    }, WAIT);
+    const sent = Date.now();
+    process.kill(watch.pid(), "SIGTERM");
+    await watch.exited();
+    expect(Date.now() - sent).toBeLessThan(3_000);
+    expect(watch.exitCode(), readLog(log)).toBe(0);
+    expect(lastLine(readLog(log))).toMatch(
+      new RegExp(
+        `folders watch stopped by SIGTERM, sent by process ${process.pid}$`,
+      ),
+    );
+  });
+
+  it("moves the file launchd gave the watch aside as the watch starts when it holds 1 MiB or more", async () => {
+    const harness = await folderHarness("autostart-launchd-full");
+    made.push(harness);
+    const log = logIn("launchd-full");
+    const launchd = join(dirname(log), "folder-watch.launchd.log");
+    writeFileSync(launchd, "x".repeat(MEBIBYTE));
+    const watch = harness.folder
+      .device()
+      .hold(["folders", "watch", "--log", log], "root");
+    held.push(watch);
+    await vi.waitFor(() => {
+      expect(readLog(log)).toContain("watching every folder");
+    }, WAIT);
+    expect(statSync(`${launchd}.1`).size).toBe(MEBIBYTE);
+    expect(existsSync(launchd)).toBe(false);
+  });
+
   it("moves a log of 1 MiB or more aside as the watch starts, and writes to a fresh one", async () => {
     const harness = await folderHarness("autostart-log-start");
     made.push(harness);
@@ -1317,6 +1489,24 @@ describe("the watch run by a service manager", () => {
     expect(watch.running()).toBe(true);
   });
 });
+
+/** A log path in a directory of the test's own. */
+function logIn(label: string): string {
+  const dir = mkdtempSync(
+    join(realpathSync(tmpdir()), `marfa-autostart-${label}-`),
+  );
+  cleanups.push(() => rmSync(dir, { recursive: true, force: true }));
+  return join(dir, "folder-watch.log");
+}
+
+function readLog(path: string): string {
+  return existsSync(path) ? readFileSync(path, "utf8") : "";
+}
+
+/** The last line of `text`, which is not the empty one a final newline leaves. */
+function lastLine(text: string): string {
+  return text.trimEnd().split("\n").at(-1) ?? "";
+}
 
 /** Ends the agent's watch as a crash would, leaving the agent installed. */
 function stopAgent(root: string): void {
