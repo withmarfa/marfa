@@ -6663,6 +6663,9 @@ mod tests {
             .unwrap();
             shipped
         };
+        // The witness for the other test's unchanged data_version: an open that writes moves it.
+        let watching = rusqlite::Connection::open(&path).unwrap();
+        let before = store::data_version(&watching).unwrap();
         let other = holding_a_write(&path);
         let held = std::time::Duration::from_millis(300);
         let letting_go = std::thread::spawn(move || {
@@ -6677,6 +6680,11 @@ mod tests {
             "the open wrote under another's write"
         );
         letting_go.join().unwrap();
+        assert_ne!(
+            store::data_version(&watching).unwrap(),
+            before,
+            "an open that changed the catalog committed nothing"
+        );
         assert_eq!(
             store::edge_type_rows(&core.conn().unwrap()).unwrap(),
             shipped
