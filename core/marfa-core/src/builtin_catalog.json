@@ -929,6 +929,28 @@
      "description": "BCP 47 language code",
      "format": "bcp47"
     },
+    "progress": {
+     "type": "status",
+     "description": "Where the owner is with the work: want to read, watch, listen to or play it, started, finished, or gave up",
+     "status_values": [
+      {
+       "value": "planned",
+       "group": "not_started"
+      },
+      {
+       "value": "started",
+       "group": "in_progress"
+      },
+      {
+       "value": "finished",
+       "group": "completed"
+      },
+      {
+       "value": "abandoned",
+       "group": "canceled"
+      }
+     ]
+    },
     "notes": {
      "type": "string",
      "description": "Personal annotations"
@@ -995,6 +1017,28 @@
      "type": "string",
      "description": "BCP 47 language code",
      "format": "bcp47"
+    },
+    "progress": {
+     "type": "status",
+     "description": "Where the owner is with the work: want to read, watch, listen to or play it, started, finished, or gave up",
+     "status_values": [
+      {
+       "value": "planned",
+       "group": "not_started"
+      },
+      {
+       "value": "started",
+       "group": "in_progress"
+      },
+      {
+       "value": "finished",
+       "group": "completed"
+      },
+      {
+       "value": "abandoned",
+       "group": "canceled"
+      }
+     ]
     },
     "notes": {
      "type": "string",
@@ -1072,6 +1116,28 @@
      "description": "BCP 47 language code",
      "format": "bcp47"
     },
+    "progress": {
+     "type": "status",
+     "description": "Where the owner is with the work: want to read, watch, listen to or play it, started, finished, or gave up",
+     "status_values": [
+      {
+       "value": "planned",
+       "group": "not_started"
+      },
+      {
+       "value": "started",
+       "group": "in_progress"
+      },
+      {
+       "value": "finished",
+       "group": "completed"
+      },
+      {
+       "value": "abandoned",
+       "group": "canceled"
+      }
+     ]
+    },
     "notes": {
      "type": "string",
      "description": "Personal annotations"
@@ -1144,6 +1210,28 @@
      "type": "string",
      "description": "BCP 47 language code",
      "format": "bcp47"
+    },
+    "progress": {
+     "type": "status",
+     "description": "Where the owner is with the work: want to read, watch, listen to or play it, started, finished, or gave up",
+     "status_values": [
+      {
+       "value": "planned",
+       "group": "not_started"
+      },
+      {
+       "value": "started",
+       "group": "in_progress"
+      },
+      {
+       "value": "finished",
+       "group": "completed"
+      },
+      {
+       "value": "abandoned",
+       "group": "canceled"
+      }
+     ]
     },
     "notes": {
      "type": "string",
@@ -1221,6 +1309,28 @@
      "type": "string",
      "description": "BCP 47 language code",
      "format": "bcp47"
+    },
+    "progress": {
+     "type": "status",
+     "description": "Where the owner is with the work: want to read, watch, listen to or play it, started, finished, or gave up",
+     "status_values": [
+      {
+       "value": "planned",
+       "group": "not_started"
+      },
+      {
+       "value": "started",
+       "group": "in_progress"
+      },
+      {
+       "value": "finished",
+       "group": "completed"
+      },
+      {
+       "value": "abandoned",
+       "group": "canceled"
+      }
+     ]
     },
     "notes": {
      "type": "string",
@@ -1318,6 +1428,28 @@
      "description": "BCP 47 language code",
      "format": "bcp47"
     },
+    "progress": {
+     "type": "status",
+     "description": "Where the owner is with the work: want to read, watch, listen to or play it, started, finished, or gave up",
+     "status_values": [
+      {
+       "value": "planned",
+       "group": "not_started"
+      },
+      {
+       "value": "started",
+       "group": "in_progress"
+      },
+      {
+       "value": "finished",
+       "group": "completed"
+      },
+      {
+       "value": "abandoned",
+       "group": "canceled"
+      }
+     ]
+    },
     "notes": {
      "type": "string",
      "description": "Personal annotations"
@@ -1402,6 +1534,28 @@
      "type": "string",
      "description": "BCP 47 language code",
      "format": "bcp47"
+    },
+    "progress": {
+     "type": "status",
+     "description": "Where the owner is with the work: want to read, watch, listen to or play it, started, finished, or gave up",
+     "status_values": [
+      {
+       "value": "planned",
+       "group": "not_started"
+      },
+      {
+       "value": "started",
+       "group": "in_progress"
+      },
+      {
+       "value": "finished",
+       "group": "completed"
+      },
+      {
+       "value": "abandoned",
+       "group": "canceled"
+      }
+     ]
     },
     "notes": {
      "type": "string",
@@ -1490,6 +1644,28 @@
      "type": "string",
      "description": "BCP 47 language code",
      "format": "bcp47"
+    },
+    "progress": {
+     "type": "status",
+     "description": "Where the owner is with the work: want to read, watch, listen to or play it, started, finished, or gave up",
+     "status_values": [
+      {
+       "value": "planned",
+       "group": "not_started"
+      },
+      {
+       "value": "started",
+       "group": "in_progress"
+      },
+      {
+       "value": "finished",
+       "group": "completed"
+      },
+      {
+       "value": "abandoned",
+       "group": "canceled"
+      }
+     ]
     },
     "notes": {
      "type": "string",

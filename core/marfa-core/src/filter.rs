@@ -1150,6 +1150,63 @@ mod tests {
     }
 
     #[test]
+    fn the_shipped_media_types_read_progress_as_their_status_field() {
+        let conn = conn();
+        store::replace_catalog(&conn, &crate::builtin::catalog().unwrap()).unwrap();
+        for (subtype, word) in [
+            ("album", "planned"),
+            ("article", "started"),
+            ("book", "finished"),
+            ("episode", "abandoned"),
+            ("film", "finished"),
+            ("series", "planned"),
+            ("song", "started"),
+        ] {
+            let item = wire_item(
+                subtype,
+                &format!("core.media.{subtype}"),
+                "active",
+                "2026-01-01T00:00:00Z",
+                json!({ "title": "x", "progress": word }),
+            );
+            store::upsert_item(&conn, &item, None, &Indexing::default()).unwrap();
+        }
+        // A series' own `status` enum is not a status word, so it joins no group.
+        let series = wire_item(
+            "ongoing",
+            "core.media.series",
+            "active",
+            "2026-01-01T00:00:00Z",
+            json!({ "title": "x", "status": "ongoing" }),
+        );
+        store::upsert_item(&conn, &series, None, &Indexing::default()).unwrap();
+
+        for (group, matched) in [
+            ("not_started", &["album", "series"][..]),
+            ("in_progress", &["article", "song"]),
+            ("completed", &["book", "film"]),
+            ("canceled", &["episode"]),
+        ] {
+            let filter = format!("status_group eq \"{group}\"");
+            assert_eq!(ids(&conn, Some(&filter), None), matched, "{filter}");
+        }
+        assert_eq!(
+            ids(&conn, Some("status_group not_exists"), None),
+            ["ongoing"]
+        );
+
+        let catalog = Catalog::load(&conn).unwrap();
+        let written = |word: &str| {
+            let mut properties = serde_json::Map::new();
+            properties.insert("title".into(), json!("x"));
+            properties.insert("progress".into(), json!(word));
+            catalog.validate_properties("core.media.book", &properties, true)
+        };
+        assert!(written("started").is_ok());
+        assert!(written("reading").is_err());
+    }
+
+    #[test]
     fn a_status_group_term_takes_only_a_group_and_the_operators_that_ask_for_one() {
         for (input, said) in [
             ("status_group eq \"todo\"", "Unknown status group \"todo\""),

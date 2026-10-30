@@ -535,6 +535,14 @@ If an item holds a `status` value that its type no longer declares, then the ser
 
 **Tests:** `compliance/status-groups.test.ts › leaves a stored word the type no longer declares until a write changes it`, `› refuses a move into a type that does not declare the item's word, and keeps the item`, `› makes the copy when the stale write leaves an undeclared stored word alone`.
 
+### `types/shipped-progress`
+
+The server MUST ship `core.media` declaring an optional field named `progress` of the `status` kind, with the words `planned` in the `not_started` group, `started` in `in_progress`, `finished` in `completed` and `abandoned` in `canceled`, which every subtype of `core.media` inherits.
+
+**Reason:** `progress` is where the owner is with the work: want to read, watch, listen to or play it, started, finished, or gave up. It is not named `status`, because `core.media.series` declares `status` as an `enum` for whether the series is still producing episodes, and a subtype cannot give an inherited field another kind (`types/child-shape`). A series holds both, and `status_group` reads `progress` on every media type (`types/status-one`).
+
+**Tests:** `compliance/media-progress.test.ts › is an optional status field on %s`, `› sits beside a series' own status enum`, `› takes a book started and puts it in the in_progress group`, `› refuses a word the type does not declare, naming progress`, `› finds a finished film by its group, and leaves a planned one out`.
+
 ## Thumbnails
 
 A `thumbnail` field holds a small image the writer supplies; what a value may be is `items/thumbnail-format`.
