@@ -1,11 +1,12 @@
 use std::collections::HashMap;
 use std::io::BufReader;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
 use crate::catalog::Catalog;
+use crate::catch_up::Pending;
 use crate::error::CoreError;
 use crate::http::{Http, ItemsQuery, Registration, Replacement};
 use crate::model::{
@@ -13,7 +14,7 @@ use crate::model::{
 };
 use crate::sse::{Frame, Frames};
 use crate::store;
-use crate::wire::{WireCatalog, WireEdge, WireEdgeBlock, WireItemWithMetadata};
+use crate::wire::{WireCatalog, WireEdge, WireEdgeBlock, WireItemWithMetadata, WirePage};
 use crate::{Core, Result};
 
 const HEAD_ATTEMPTS: usize = 3;
@@ -331,140 +332,134 @@ fn attempt(
         let mut pages_total = reached.pages;
 
         for (index, declared) in types.iter().enumerate().skip(item_from) {
-            let listing = (declared != store::EVERY_TYPE).then_some(declared.as_str());
-            let mut page_cursor = if index == item_from {
+            let listing = (declared != store::EVERY_TYPE).then(|| declared.clone());
+            let from = if index == item_from {
                 reached.cursor.clone()
             } else {
                 None
             };
-            // Only a cursor an earlier call kept can be one the server has
-            // since stopped taking.
-            let mut kept = resumed && page_cursor.is_some();
-            let mut seen: std::collections::HashSet<String> = page_cursor.iter().cloned().collect();
-            loop {
-                crate::catch_up::refuse_if_stopped(stop)?;
-                let page = match http.items_page(&ItemsQuery {
+            let read = move |http: &Http, cursor: Option<&str>| {
+                let listing = listing.as_deref();
+                http.items_page(&ItemsQuery {
                     r#type: listing,
                     tier: listed_tier(listing, tier),
-                    cursor: page_cursor.as_deref(),
-                }) {
-                    Err(CoreError::Validation { .. }) if kept => {
-                        return Ok(Attempt::Again(HydrateRestart::CursorRefused));
-                    }
-                    page => page?,
-                };
-                kept = false;
-                *pages += 1;
-                pages_total += 1;
-                let mut overflow: Vec<WireEdge> = Vec::new();
-                for row in &page.data {
-                    if let Some(blocks) = &row.item.edges {
-                        for (edge_type, block) in blocks {
-                            overflow.extend(fetch_overflow(http, &row.item.id, edge_type, block)?);
+                    cursor,
+                })
+            };
+            crate::catch_up::refuse_if_stopped(stop)?;
+            let first = match read(http, from.as_deref()) {
+                // Only a cursor an earlier call kept can be one the server has
+                // since stopped taking.
+                Err(CoreError::Validation { .. }) if resumed && from.is_some() => {
+                    return Ok(Attempt::Again(HydrateRestart::CursorRefused));
+                }
+                page => page?,
+            };
+            walk(
+                http,
+                stop,
+                from,
+                with_overflow(http, first)?,
+                |(page, _)| page.next_cursor.clone(),
+                move |http, cursor| with_overflow(http, read(http, Some(cursor))?),
+                |(page, overflow)| {
+                    *pages += 1;
+                    pages_total += 1;
+                    let mut conn = core.conn()?;
+                    let tx = conn.transaction()?;
+                    context.check(&tx)?;
+                    // The expected count is of the slice's listings, so pinned
+                    // rows and queued creates, which `items` also counts, stay
+                    // out of this one. A row two listings bring counts once.
+                    let mut listed: u64 = store::meta_get(&tx, store::META_ITEMS_LISTED)?
+                        .and_then(|count| count.parse().ok())
+                        .unwrap_or(0);
+                    for row in &page.data {
+                        if !crate::reach::answered(&tx, &row.item.id)? {
+                            listed += 1;
+                        }
+                        crate::reach::set_listed(
+                            &tx,
+                            &row.item.id,
+                            row.listed.ok_or_else(crate::reach::invalid)?,
+                        )?;
+                        store::take_server_item(
+                            &tx,
+                            &row.item,
+                            Some(&row.metadata.tags),
+                            &catalog,
+                        )?;
+                        for block in row.item.edges.iter().flat_map(|blocks| blocks.values()) {
+                            for edge in &block.data {
+                                store::put_server_edge(&tx, edge)?;
+                            }
                         }
                     }
-                }
-                let mut conn = core.conn()?;
-                let tx = conn.transaction()?;
-                context.check(&tx)?;
-                // The expected count is of the slice's listings, so pinned
-                // rows and queued creates, which `items` also counts, stay out
-                // of this one. A row two listings bring counts once.
-                let mut listed: u64 = store::meta_get(&tx, store::META_ITEMS_LISTED)?
-                    .and_then(|count| count.parse().ok())
-                    .unwrap_or(0);
-                for row in &page.data {
-                    if !crate::reach::answered(&tx, &row.item.id)? {
-                        listed += 1;
+                    for edge in &overflow {
+                        store::put_server_edge(&tx, edge)?;
                     }
-                    crate::reach::set_listed(
-                        &tx,
-                        &row.item.id,
-                        row.listed.ok_or_else(crate::reach::invalid)?,
-                    )?;
-                    store::take_server_item(&tx, &row.item, Some(&row.metadata.tags), &catalog)?;
-                    for block in row.item.edges.iter().flat_map(|blocks| blocks.values()) {
-                        for edge in &block.data {
-                            store::put_server_edge(&tx, edge)?;
-                        }
+                    store::meta_set(&tx, store::META_ITEMS_LISTED, &listed.to_string())?;
+                    match page.next_cursor {
+                        Some(next) => Reached {
+                            phase: Phase::Items,
+                            listing: Some(declared.clone()),
+                            cursor: Some(next),
+                            pages: pages_total,
+                        },
+                        None => Reached::after_items(types, edge_types, index + 1, pages_total),
                     }
-                }
-                for edge in &overflow {
-                    store::put_server_edge(&tx, edge)?;
-                }
-                store::meta_set(&tx, store::META_ITEMS_LISTED, &listed.to_string())?;
-                // A server can report more while handing back the same cursor;
-                // without this check a hydration spins forever.
-                if let Some(next) = &page.next_cursor
-                    && !seen.insert(next.clone())
-                {
-                    return Err(crate::reach::invalid());
-                }
-                match &page.next_cursor {
-                    Some(next) => Reached {
-                        phase: Phase::Items,
-                        listing: Some(declared.clone()),
-                        cursor: Some(next.clone()),
-                        pages: pages_total,
-                    },
-                    None => Reached::after_items(types, edge_types, index + 1, pages_total),
-                }
-                .keep(&tx)?;
-                tx.commit()?;
-                let Some(next) = page.next_cursor else {
-                    break;
-                };
-                page_cursor = Some(next);
-            }
+                    .keep(&tx)?;
+                    tx.commit()?;
+                    Ok(())
+                },
+            )?;
         }
 
         for (index, edge_type) in edge_types.iter().enumerate().skip(edge_from) {
-            let mut page_cursor = if index == edge_from && reached.phase == Phase::Edges {
+            let from = if index == edge_from && reached.phase == Phase::Edges {
                 reached.cursor.clone()
             } else {
                 None
             };
-            let mut kept = resumed && page_cursor.is_some();
-            let mut seen: std::collections::HashSet<String> = page_cursor.iter().cloned().collect();
-            loop {
-                crate::catch_up::refuse_if_stopped(stop)?;
-                let page = match http.edges_page(edge_type, page_cursor.as_deref()) {
-                    Err(CoreError::Validation { .. }) if kept => {
-                        return Ok(Attempt::Again(HydrateRestart::CursorRefused));
+            crate::catch_up::refuse_if_stopped(stop)?;
+            let first = match http.edges_page(edge_type, from.as_deref()) {
+                Err(CoreError::Validation { .. }) if resumed && from.is_some() => {
+                    return Ok(Attempt::Again(HydrateRestart::CursorRefused));
+                }
+                page => page?,
+            };
+            // Rows the key cannot read leave a page short or empty, not last.
+            let listed = edge_type.clone();
+            walk(
+                http,
+                stop,
+                from,
+                first,
+                |page| page.next_cursor.clone(),
+                move |http, cursor| http.edges_page(&listed, Some(cursor)),
+                |page| {
+                    *pages += 1;
+                    pages_total += 1;
+                    let mut conn = core.conn()?;
+                    let tx = conn.transaction()?;
+                    context.check(&tx)?;
+                    for edge in &page.data {
+                        store::put_server_edge(&tx, edge)?;
                     }
-                    page => page?,
-                };
-                kept = false;
-                *pages += 1;
-                pages_total += 1;
-                let mut conn = core.conn()?;
-                let tx = conn.transaction()?;
-                context.check(&tx)?;
-                for edge in &page.data {
-                    store::put_server_edge(&tx, edge)?;
-                }
-                // Rows the key cannot read leave a page short or empty, not last.
-                if let Some(next) = &page.next_cursor
-                    && !seen.insert(next.clone())
-                {
-                    return Err(crate::reach::invalid());
-                }
-                match &page.next_cursor {
-                    Some(next) => Reached {
-                        phase: Phase::Edges,
-                        listing: Some(edge_type.clone()),
-                        cursor: Some(next.clone()),
-                        pages: pages_total,
-                    },
-                    None => Reached::after_edges(edge_types, index + 1, pages_total),
-                }
-                .keep(&tx)?;
-                tx.commit()?;
-                let Some(next) = page.next_cursor else {
-                    break;
-                };
-                page_cursor = Some(next);
-            }
+                    match page.next_cursor {
+                        Some(next) => Reached {
+                            phase: Phase::Edges,
+                            listing: Some(edge_type.clone()),
+                            cursor: Some(next),
+                            pages: pages_total,
+                        },
+                        None => Reached::after_edges(edge_types, index + 1, pages_total),
+                    }
+                    .keep(&tx)?;
+                    tx.commit()?;
+                    Ok(())
+                },
+            )?;
         }
 
         if reached.phase != Phase::Replay {
@@ -1247,6 +1242,64 @@ pub(crate) fn hold_row(
         store::take_server_edge(conn, edge)?;
     }
     Ok(())
+}
+
+/// Walks a listing from `first`, the page `from` brought, writing each page
+/// with `write` while `read` asks for the one after it, so a page's transfer
+/// and the write of the page before it overlap.
+fn walk<P: Send + 'static, R>(
+    http: &Http,
+    stop: &AtomicBool,
+    from: Option<String>,
+    first: P,
+    next: impl Fn(&P) -> Option<String>,
+    read: R,
+    mut write: impl FnMut(P) -> Result<()>,
+) -> Result<()>
+where
+    R: Fn(&Http, &str) -> Result<P> + Clone + Send + 'static,
+{
+    let mut seen: std::collections::HashSet<String> = from.into_iter().collect();
+    let mut page = first;
+    loop {
+        let cursor = next(&page);
+        // A server can report more while handing back the same cursor;
+        // without this check a hydration spins forever.
+        if let Some(cursor) = &cursor
+            && !seen.insert(cursor.clone())
+        {
+            return Err(crate::reach::invalid());
+        }
+        let ahead = cursor
+            .clone()
+            .filter(|_| !stop.load(Ordering::Relaxed))
+            .map(|cursor| {
+                let read = read.clone();
+                Pending::start(http, move |http| read(http, &cursor))
+            });
+        write(page)?;
+        match (cursor, ahead) {
+            (None, _) => return Ok(()),
+            (Some(_), None) => return Err(CoreError::Canceled),
+            (Some(_), Some(ahead)) => page = ahead.answer(stop)?,
+        }
+    }
+}
+
+/// `page` with the edges its rows' blocks hold past their first page.
+fn with_overflow(
+    http: &Http,
+    page: WirePage<WireItemWithMetadata>,
+) -> Result<(WirePage<WireItemWithMetadata>, Vec<WireEdge>)> {
+    let mut overflow = Vec::new();
+    for row in &page.data {
+        if let Some(blocks) = &row.item.edges {
+            for (edge_type, block) in blocks {
+                overflow.extend(fetch_overflow(http, &row.item.id, edge_type, block)?);
+            }
+        }
+    }
+    Ok((page, overflow))
 }
 
 /// Fetched before any write so no transaction waits on the network.
@@ -2105,7 +2158,97 @@ mod tests {
             std::thread::spawn(move || hydrate(&core))
         };
         server.wait_for("/items", 2, std::time::Duration::from_secs(10));
+        // The second page is asked for while the first is written.
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while core.status().unwrap().items_listed != Some(1) {
+            assert!(
+                std::time::Instant::now() < until,
+                "the first page never reached the copy"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
         (core, ready, hydrating)
+    }
+
+    #[test]
+    fn a_hydration_asks_for_the_next_page_while_it_writes_the_one_before() {
+        let server = Scripted::start();
+        let core = copy(&server);
+        let ready = std::sync::Arc::new(AtomicBool::new(false));
+        server.on(
+            "/items",
+            vec![
+                Answer::WaitFor {
+                    ready: std::sync::Arc::clone(&ready),
+                    answer: Box::new(page(&["first"], Some("2"))),
+                },
+                page(&["second"], None),
+            ],
+        );
+        server.on(
+            "/events",
+            vec![
+                scripted::stream(
+                    vec![scripted::copy_marker("stream_cursor", "10")],
+                    Then::End,
+                ),
+                scripted::stream(
+                    vec![
+                        scripted::copy_marker("stream_cursor", "10"),
+                        scripted::copy_marker("stream_live", "10"),
+                    ],
+                    Then::End,
+                ),
+            ],
+        );
+        let hydrating = {
+            let core = std::sync::Arc::clone(&core);
+            std::thread::spawn(move || hydrate(&core))
+        };
+        server.wait_for("/items", 1, std::time::Duration::from_secs(10));
+        // Holding the store keeps the first page from being written.
+        let store = core.conn().unwrap();
+        ready.store(true, Ordering::SeqCst);
+        server.wait_for("/items", 2, std::time::Duration::from_secs(5));
+        drop(store);
+        assert_eq!(hydrating.join().unwrap().unwrap().items, 2);
+    }
+
+    #[test]
+    fn a_hydration_stopped_while_it_writes_a_page_ends_without_waiting_on_the_next() {
+        let server = Scripted::start();
+        let core = copy(&server);
+        let ready = std::sync::Arc::new(AtomicBool::new(false));
+        server.on(
+            "/items",
+            vec![
+                Answer::WaitFor {
+                    ready: std::sync::Arc::clone(&ready),
+                    answer: Box::new(page(&["first"], Some("2"))),
+                },
+                Answer::Stall,
+            ],
+        );
+        let stop = std::sync::Arc::new(AtomicBool::new(false));
+        let hydrating = {
+            let (core, stop) = (std::sync::Arc::clone(&core), std::sync::Arc::clone(&stop));
+            std::thread::spawn(move || {
+                core.hydrate_until(&["core.note".into()], SliceTier::Library, &[], &stop)
+            })
+        };
+        server.wait_for("/items", 1, std::time::Duration::from_secs(10));
+        let store = core.conn().unwrap();
+        ready.store(true, Ordering::SeqCst);
+        server.wait_for("/items", 2, std::time::Duration::from_secs(5));
+        stop.store(true, Ordering::SeqCst);
+        drop(store);
+        let stopped = std::time::Instant::now();
+        assert_eq!(hydrating.join().unwrap(), Err(CoreError::Canceled));
+        assert!(
+            stopped.elapsed() < std::time::Duration::from_secs(5),
+            "the stop waited on the request for the next page"
+        );
+        assert_eq!(core.status().unwrap().items_listed, Some(1));
     }
 
     #[test]

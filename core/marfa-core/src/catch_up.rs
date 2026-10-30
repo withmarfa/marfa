@@ -684,28 +684,63 @@ pub(crate) fn ask_unless_stopped<T: Send + 'static>(
     read: impl FnOnce(&Http) -> Result<T> + Send + 'static,
 ) -> Result<T> {
     refuse_if_stopped(stop)?;
-    let asked = http.to_let_go();
-    let reading = asked.clone();
-    let (sender, answer) = mpsc::sync_channel::<Result<T>>(1);
-    thread::spawn(inheriting(move || {
-        if sender.send(read(&reading)).is_err() {
-            #[cfg(debug_assertions)]
-            crate::fault::hold(|| "answer-dropped");
-        }
-    }));
-    loop {
-        if stop.load(Ordering::Relaxed) {
-            asked.let_go();
-            return Err(CoreError::Canceled);
-        }
-        match answer.recv_timeout(PACE.stop_poll) {
-            Ok(read) => return read,
-            Err(RecvTimeoutError::Timeout) => continue,
-            Err(RecvTimeoutError::Disconnected) => {
-                return Err(CoreError::Network(
-                    "the request ended with no answer".into(),
-                ));
+    Pending::start(http, read).answer(stop)
+}
+
+/// A request running on a thread of its own, as `ask_unless_stopped` runs
+/// one, whose caller does other work before it waits for the answer. One
+/// stopped, or dropped before its answer came, is let go.
+pub(crate) struct Pending<T> {
+    http: Http,
+    answer: Receiver<Result<T>>,
+    answered: bool,
+}
+
+impl<T: Send + 'static> Pending<T> {
+    pub(crate) fn start(
+        http: &Http,
+        read: impl FnOnce(&Http) -> Result<T> + Send + 'static,
+    ) -> Self {
+        let http = http.to_let_go();
+        let reading = http.clone();
+        let (sender, answer) = mpsc::sync_channel::<Result<T>>(1);
+        thread::spawn(inheriting(move || {
+            if sender.send(read(&reading)).is_err() {
+                #[cfg(debug_assertions)]
+                crate::fault::hold(|| "answer-dropped");
             }
+        }));
+        Self {
+            http,
+            answer,
+            answered: false,
+        }
+    }
+
+    pub(crate) fn answer(mut self, stop: &AtomicBool) -> Result<T> {
+        loop {
+            refuse_if_stopped(stop)?;
+            match self.answer.recv_timeout(PACE.stop_poll) {
+                Ok(read) => {
+                    self.answered = true;
+                    return read;
+                }
+                Err(RecvTimeoutError::Timeout) => continue,
+                Err(RecvTimeoutError::Disconnected) => {
+                    self.answered = true;
+                    return Err(CoreError::Network(
+                        "the request ended with no answer".into(),
+                    ));
+                }
+            }
+        }
+    }
+}
+
+impl<T> Drop for Pending<T> {
+    fn drop(&mut self) {
+        if !self.answered {
+            self.http.let_go();
         }
     }
 }

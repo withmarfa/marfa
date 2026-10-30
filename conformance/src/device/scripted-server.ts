@@ -5,6 +5,7 @@ import {
   type ServerResponse,
 } from "node:http";
 import type { AddressInfo } from "node:net";
+import { gzipSync } from "node:zlib";
 import document from "../../../openapi.json" with { type: "json" };
 import {
   answers,
@@ -52,6 +53,8 @@ export type Answer =
       /** Text sent in place of `body`, for a body the server's own encoder never writes. */
       raw?: string;
       headers?: Record<string, string>;
+      /** Sent gzip-compressed, as the server sends JSON to a credential that accepts it. */
+      gzip?: boolean;
       /**
        * The contract this one answer names, where it is not the server's:
        * `null` names none, as a proxy in front of the server answers, and a
@@ -497,9 +500,10 @@ export class ScriptedServer {
       response.writeHead(answer.status, {
         "content-type": "application/json",
         ...named,
+        ...(answer.gzip === true ? { "content-encoding": "gzip" } : {}),
         ...answer.headers,
       });
-      response.end(body);
+      response.end(answer.gzip === true ? gzipSync(body) : body);
       return;
     }
     response.writeHead(200, {

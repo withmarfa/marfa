@@ -1,6 +1,6 @@
 # The instance
 
-What one deployment says about itself, and what happens to it as an owner runs it: the identity it answers to, the features and contract version it advertises, backing up, health, upgrading, stopping, the pages it renders, the configuration operations and the settings that stop it from starting. The credential chapters state what a key may reach and the registry chapters state what the data plane holds.
+What one deployment says about itself, and what happens to it as an owner runs it: the identity it answers to, the features and contract version it advertises, how it compresses its answers, backing up, health, upgrading, stopping, the pages it renders, the configuration operations and the settings that stop it from starting. The credential chapters state what a key may reach and the registry chapters state what the data plane holds.
 
 `GET /` answers one of two things. The description is the JSON object with `name`, `version`, `instance_id`, `contract` and `features`, and with `release` when the build is a numbered release. A page is the HTML a browser is given instead.
 
@@ -271,6 +271,32 @@ The server MUST send `X-Marfa-Contract`, with the number the root answers as `co
 **Reason:** a client checks the answer it is about to read against the contract it was built for, so the header cannot be missing on the answers a layer in front of the routes shapes. A request the server cannot parse is refused by the HTTP layer before anything that knows the contract sees it.
 
 **Tests:** `compliance/instance.test.ts › sends its contract version on every answer, a refusal included`, `› sends its contract version on every kind of answer, not only a JSON body`, `compliance/contract-header.test.ts › sends its contract version on a request the limiter refuses`, `› sends its contract version on a preflight from an origin the instance allows`.
+
+## Compression
+
+### `instance/gzip-json`
+
+When a `GET` request carries an `Authorization` header and an `Accept-Encoding` header that accepts `gzip`, the server MUST send a JSON answer with `Content-Encoding: gzip`.
+
+**Reason:** the pages a hydration reads are mostly item bodies, which compress several times over, and over a slow link their bytes are most of the time a device waits.
+
+**Tests:** `compliance/instance.test.ts › gzips a JSON answer to a GET that carries a credential and accepts gzip, a refusal included`.
+
+### `instance/gzip-needs-authorization`
+
+If a request carries no `Authorization` header, then the server MUST NOT send its JSON answer with a `Content-Encoding`.
+
+**Reason:** a page on another site can make a browser send its session cookie with text of the page's choosing, and the size of a compressed answer that holds that text beside a secret can give the secret away (BREACH). A browser sends no `Authorization` header a page did not give it.
+
+**Tests:** `compliance/instance.test.ts › answers a request without a credential uncompressed, where the same request with one is gzipped`.
+
+### `instance/event-stream-uncompressed`
+
+The server MUST NOT send an event stream with a `Content-Encoding`.
+
+**Reason:** a compressor holds back what it has not filled a block with, so a frame would wait for the frames after it.
+
+**Tests:** `compliance/instance.test.ts › sends an event stream uncompressed to a request that accepts gzip`.
 
 ## The reference's groups
 

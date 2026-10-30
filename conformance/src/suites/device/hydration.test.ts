@@ -438,6 +438,45 @@ describe("what a hydration leaves behind", () => {
     ).toEqual([2, 3]);
   });
 
+  it("says it accepts gzip for each listing page and takes the rows of one sent compressed", async () => {
+    harness = await startHarness("gzip-pages");
+    const { server, device } = harness;
+    server.copyAnswer("GET", "/events", copyHeadRead("7"));
+    server.copyAnswer("GET", "/types", typeCatalog());
+    server.copyAnswer("GET", "/edge-types", edgeTypeCatalog());
+    scriptKey(server);
+    scriptStats(server);
+    const compressed = itemsPage([{ item: wireItem({ id: "compressed" }) }], {
+      nextCursor: "p2",
+    });
+    if (compressed.kind !== "json") throw new Error("a page is JSON");
+    server.copyAnswer(
+      "GET",
+      "/items",
+      { ...compressed, gzip: true },
+      itemsPage([{ item: wireItem({ id: "plain" }) }]),
+    );
+
+    const hydrated = await device.hydrate(["core.note"], "library");
+    expect(
+      hydrated.ok ? [hydrated.value.items, hydrated.value.pages] : hydrated,
+    ).toEqual([2, 2]);
+    const listings = server.requests.filter(
+      (request) => request.pathname === "/items",
+    );
+    expect(listings).toHaveLength(2);
+    for (const request of listings)
+      expect(
+        request.headers["accept-encoding"] ?? "",
+        "a listing page was asked for without accepting gzip, so the server sends it whole",
+      ).toMatch(/(^|[\s,])gzip([\s;,]|$)/);
+    const held = await device.list();
+    expect(
+      held.ok ? held.value.map((item) => item.id).sort() : held,
+      "the rows of the compressed page are not in the copy",
+    ).toEqual(["compressed", "plain"]);
+  });
+
   it("walks every page of an edge type held whole", async () => {
     harness = await startHarness("edge-pages");
     const { server, device } = harness;
