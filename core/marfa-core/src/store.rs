@@ -3242,9 +3242,9 @@ pub fn hold_local_catalog(conn: &Connection) -> Result<(), CoreError> {
 
 /// `hold_local_catalog` for a connection in no transaction, as an open is.
 /// It reads first, so an open with nothing to change takes no write lock.
-/// Where it changes something it takes the write lock before it reads: in
-/// WAL mode a read transaction that turns into a write while another
-/// connection writes is refused at once, without the busy timeout.
+/// Where it changes something it takes the write lock before the reads it
+/// acts on: in WAL mode a read transaction that turns into a write while
+/// another connection writes is refused at once, without the busy timeout.
 pub fn hold_local_catalog_alone(conn: &Connection) -> Result<(), CoreError> {
     if catalog_version(conn)?.is_some() || local_catalog_held(conn)? {
         return Ok(());
@@ -3266,7 +3266,8 @@ fn local_catalog(conn: &Connection) -> Result<(Vec<WireType>, Vec<Value>), CoreE
     Ok((types, shipped.edge_types))
 }
 
-/// Whether `hold_local_catalog` would write nothing.
+/// Whether the store holds the local catalog as `hold_local_catalog` writes
+/// it. False where a server's catalog is held.
 fn local_catalog_held(conn: &Connection) -> Result<bool, CoreError> {
     let (types, edge_types) = local_catalog(conn)?;
     Ok(meta_get(conn, META_LOCAL_CATALOG)?.as_deref() == Some("1")
