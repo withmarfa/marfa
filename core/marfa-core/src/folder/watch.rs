@@ -603,6 +603,7 @@ impl Passes {
 
     /// Makes the next pull render every file, as an hour after the last
     /// that did.
+    #[cfg(debug_assertions)]
     pub(super) fn render_all_next(&mut self) {
         self.telling.selection.render_all_next();
     }

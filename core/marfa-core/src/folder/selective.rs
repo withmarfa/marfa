@@ -184,7 +184,7 @@ impl Selection {
         std::mem::take(&mut self.missed)
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, debug_assertions))]
     pub(super) fn render_all_next(&mut self) {
         self.rendered_all_at = None;
     }

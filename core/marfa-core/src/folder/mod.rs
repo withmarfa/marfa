@@ -4176,6 +4176,7 @@ mod tests {
         assert!(dir.path().join("b2.md").exists());
     }
 
+    #[cfg(debug_assertions)]
     #[test]
     fn the_hourly_full_render_tells_of_each_file_the_choice_left_out() {
         let (dir, folder, _server, mut passes) = watched_notes(&["a.md", "b.md"]);
@@ -4529,6 +4530,7 @@ mod tests {
     /// while `change` is made to the note's item as another device's change
     /// heard by a follow would make it. Answers the sweep's report, with the
     /// folder and the note's directory and item.
+    #[cfg(debug_assertions)]
     fn sweep_while_changed(
         folder_id: &str,
         change: impl Fn(&Folder, &str) + Sync,
@@ -4580,6 +4582,7 @@ mod tests {
             .collect()
     }
 
+    #[cfg(debug_assertions)]
     #[test]
     fn a_sweep_queues_no_delete_of_an_item_changed_elsewhere_while_it_decides() {
         let (_, _registry) = registry::tests::own_registry();
@@ -4602,6 +4605,7 @@ mod tests {
         );
     }
 
+    #[cfg(debug_assertions)]
     #[test]
     fn a_sweep_queues_no_delete_of_an_item_whose_tag_changes_while_it_decides() {
         let (_, _registry) = registry::tests::own_registry();
@@ -4634,6 +4638,7 @@ mod tests {
         );
     }
 
+    #[cfg(debug_assertions)]
     #[test]
     fn a_sweep_queues_no_delete_of_an_item_whose_edge_changes_while_it_decides() {
         let (_, _registry) = registry::tests::own_registry();
@@ -4679,6 +4684,7 @@ mod tests {
         );
     }
 
+    #[cfg(debug_assertions)]
     #[test]
     fn a_sweep_keeps_the_item_of_a_file_put_back_before_its_turn() {
         // The second case puts back the file the sweep is holding on; the
@@ -4775,6 +4781,7 @@ mod tests {
         }
     }
 
+    #[cfg(debug_assertions)]
     #[test]
     fn a_file_put_back_and_then_moved_over_by_another_leaves_no_delete_of_its_item() {
         let (_, _registry) = registry::tests::own_registry();
@@ -4934,6 +4941,7 @@ mod tests {
         }
     }
 
+    #[cfg(debug_assertions)]
     #[test]
     fn a_sweep_queues_the_delete_of_an_item_nothing_changed_while_it_decides() {
         let (_, _registry) = registry::tests::own_registry();

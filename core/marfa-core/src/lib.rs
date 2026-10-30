@@ -7101,6 +7101,7 @@ mod tests {
     /// Two readers on one shared handle under a budget of zero: the second
     /// reader's trim must not take the bytes the first has fetched and not
     /// yet answered.
+    #[cfg(debug_assertions)]
     #[test]
     fn a_trim_on_another_thread_keeps_the_bytes_a_caller_is_reading() {
         let server = crate::scripted::Scripted::start();
@@ -7152,6 +7153,7 @@ mod tests {
         assert!(!core.blob_held(&second).unwrap());
     }
 
+    #[cfg(debug_assertions)]
     #[test]
     fn a_trim_through_the_writer_keeps_the_bytes_a_reading_handle_is_reading() {
         let server = crate::scripted::Scripted::start();
@@ -7200,6 +7202,7 @@ mod tests {
     /// Bytes an upload names are the only copy until the server has them,
     /// whether the upload is queued after they were fetched or while a fetch
     /// of them is arriving.
+    #[cfg(debug_assertions)]
     #[cfg(target_os = "macos")]
     #[test]
     fn bytes_an_upload_names_stay_in_backups_whichever_comes_first() {
@@ -7270,6 +7273,7 @@ mod tests {
         assert_eq!(core.file_cache().unwrap().backup_mark_failure, None);
     }
 
+    #[cfg(debug_assertions)]
     #[test]
     fn two_budgets_set_at_once_each_trim_to_the_one_they_stored() {
         let dir = tempfile::tempdir().unwrap();

@@ -220,6 +220,7 @@ mod tests {
         );
     }
 
+    #[cfg(debug_assertions)]
     #[test]
     fn a_folder_store_that_cannot_be_made_leaves_the_refused_one_where_it_was() {
         let (dir, path) = refused_folder(true, RECORD);

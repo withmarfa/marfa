@@ -241,6 +241,11 @@ jobs:
           # the Swift and Node builds ship it.
           cargo clippy --locked -p marfa-core --all-targets --no-deps -- -D warnings
           cargo nextest run --locked -p marfa-core
+          # Fault injection compiles only with debug assertions, so a test or
+          # benchmark that names it must be gated the same way. A release
+          # build of every target is the cheapest proof that it is.
+          cargo check --locked --release --workspace --all-targets
+          cargo check --locked --release -p marfa-core --all-targets
 
   # The contract, run against the server in this same checkout.
   #
