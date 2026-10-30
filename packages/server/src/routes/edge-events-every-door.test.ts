@@ -404,6 +404,84 @@ describe("edge events on every door", () => {
   });
 });
 
+describe("a door that replaces an item's edges keeps the ones it still lists", () => {
+  const doors = [
+    {
+      name: "POST /items by natural key",
+      path: "/items",
+      wrap: (body: Record<string, unknown>) => body,
+    },
+    {
+      name: "POST /items/bulk",
+      path: "/items/bulk",
+      wrap: (body: Record<string, unknown>) => ({
+        enable_fanout: true,
+        items: [body],
+      }),
+    },
+  ];
+  for (const door of doors) {
+    it(`${door.name} leaves an edge to a target it still lists alone, and announces only the edges it changes`, async () => {
+      const sourceKey = `keep-${Math.random().toString(36).slice(2, 8)}`;
+      const [stays, dropped, added] = await Promise.all([
+        note("keep-stays"),
+        note("keep-dropped"),
+        note("keep-added"),
+      ]);
+      const send = async (targets: string[]): Promise<string> => {
+        const res = await request(ctx.app, "POST", door.path, {
+          key: ctx.workingKey,
+          body: door.wrap({
+            type: "core.note",
+            source_id: sourceKey,
+            properties: { body: "keep-source" },
+            edges: { references: targets },
+          }),
+        });
+        expect(res.status).toBeLessThan(300);
+        const body = (await res.json()) as {
+          item?: { id: string };
+          results?: { id: string }[];
+        };
+        return (body.item?.id ?? body.results?.[0]?.id)!;
+      };
+      const itemId = await send([stays, dropped]);
+      const edges = async () => {
+        const res = await request(ctx.app, "GET", `/items/${itemId}/edges`, {
+          key: ctx.workingKey,
+        });
+        return ((await res.json()) as { data: Record<string, unknown>[] }).data;
+      };
+      const before = await edges();
+      expect(before).toHaveLength(2);
+
+      const quiet = await edgeEventsDuring(async () => {
+        expect(await send([stays, dropped])).toBe(itemId);
+      });
+      expect(
+        quiet.filter((e) => [stays, dropped].includes(e.edge.target_id)),
+      ).toEqual([]);
+      expect(await edges()).toEqual(before);
+
+      // The witness: the same door announces once the list changes.
+      const loud = await edgeEventsDuring(async () => {
+        await send([stays, added]);
+      });
+      const mine = loud.filter((e) =>
+        [stays, dropped, added].includes(e.edge.target_id),
+      );
+      expect(mine.map((e) => [e.type, e.edge.target_id])).toEqual([
+        ["edge_deleted", dropped],
+        ["edge_created", added],
+      ]);
+      const after = await edges();
+      expect(after.find((e) => e.target_id === stays)).toEqual(
+        before.find((e) => e.target_id === stays),
+      );
+    });
+  }
+});
+
 describe("the remaining doors that write an edge", () => {
   it("a natural-key re-sync announces the edges it replaces", async () => {
     // The upsert short-circuit reaches `applyInlineEdges`, the same helper

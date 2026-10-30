@@ -177,14 +177,11 @@ const BulkInputItemSchema = z.object({
     .describe(
       "Tags to put on the item: at most 100, each up to 128 characters.",
     ),
-  /** Inline edges (replace-all semantics per edge_type) applied after
-   *  create/update in the same transaction. Absent means leave edges
-   *  untouched. */
   edges: z
     .record(z.string(), z.array(z.string()))
     .optional()
     .describe(
-      "Edge types to set, each mapped to the target item IDs the item should now point to. Types you don't name are untouched. An edge made this way carries no properties, so an edge type that requires one refuses the write.",
+      "Edge types to set, each mapped to the target item IDs the item should now point to. An edge to an ID you still list stays as it is, with its properties. Types you don't name are untouched. A new edge made this way carries no properties, so an edge type that requires one refuses the write.",
     ),
 });
 

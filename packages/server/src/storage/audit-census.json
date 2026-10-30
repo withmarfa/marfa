@@ -197,7 +197,7 @@
     "boundary": "Contained edge subwrites under item create/update audited unit; audit-atomicity.test.ts.",
     "calls": {
       "EdgeStore.createRaw": 1,
-      "EdgeStore.deleteBySource": 1
+      "EdgeStore.delete": 1
     }
   },
   "routes/auth-consent.ts": {

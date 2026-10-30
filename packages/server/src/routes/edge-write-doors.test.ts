@@ -13,7 +13,7 @@
  * door rather than reading it. So the property asserted is agreement.
  *
  * Both halves are covered. `applyInlineEdges` deletes every existing edge
- * of a listed type before recreating the requested set, so an empty array
+ * of a listed type whose target the list does not name, so an empty array
  * is a delete instruction, and a caller who may not create an edge must
  * not be able to clear one either. The delete half is the easier one to
  * miss: a test that only checks creation passes while a caller can still

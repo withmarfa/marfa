@@ -5,17 +5,24 @@ import {
   createTestContext,
   trackItem,
   trackEdge,
+  trackEdgeType,
   trackFolder,
   cleanup,
 } from "../../../utils/setup.js";
 import { createAlbum, createNote } from "../../../generators/items.js";
 import { expectMatchesSchema } from "../../../utils/openapi.js";
+import { collectUntil, withStream } from "../../../utils/stream.js";
 
 let client: MarfaClient;
 let ctx: TestContext;
+let apiUrl: string;
+let apiKey: string;
 
 beforeAll(async () => {
-  ({ ctx, client } = await createTestContext("correctness", "edges-crud"));
+  ({ ctx, client, apiUrl, apiKey } = await createTestContext(
+    "correctness",
+    "edges-crud",
+  ));
 });
 
 afterAll(async () => {
@@ -489,5 +496,278 @@ describe("edges CRUD", () => {
     expect(stillThere.status).toBe(200);
     expect(stillThere.data.edge).toEqual(referencesBefore);
     expect(Object.keys(emptied.data.item.edges ?? {})).toEqual(["references"]);
+  });
+
+  it("PATCH /items keeps the edge to a target it still lists, with its id, version and properties, and announces only what it changes", async ({
+    signal,
+  }) => {
+    const [stays, dropped, added] = await Promise.all(
+      [1, 2, 3].map(() => makeContainer()),
+    );
+    const referenced = await makeItem();
+    const created = await client.createItem({
+      type: "core.note",
+      properties: { body: "patch-keep" },
+      edges: { "in-collection": [stays!, dropped!], references: [referenced] },
+    });
+    expect(created.status, JSON.stringify(created.error)).toBe(201);
+    const itemId = created.data.item.id;
+    trackItem(ctx, itemId);
+
+    const edgesOf = async (edgeType: string) => {
+      const r = await client.listItemEdges(itemId, { edge_type: edgeType });
+      expect(r.ok).toBe(true);
+      for (const edge of r.data.data) trackEdge(ctx, edge.id);
+      return r.data.data;
+    };
+    const held = (await edgesOf("in-collection")).find(
+      (e) => e.target_id === stays,
+    )!;
+    const positioned = await client.updateEdge(held.id, {
+      properties: { position: 3 },
+      version: held.version,
+    });
+    expect(positioned.status, JSON.stringify(positioned.error)).toBe(200);
+    const kept = positioned.data.edge;
+    expect(kept.properties).toEqual({ position: 3 });
+    const droppedEdge = (await edgesOf("in-collection")).find(
+      (e) => e.target_id === dropped,
+    )!;
+    const [referencesEdge] = await edgesOf("references");
+
+    const patchEdges = async (edges: Record<string, string[]>) => {
+      const current = await client.getItem(itemId);
+      expect(current.status).toBe(200);
+      return client.updateItem(itemId, {
+        edges,
+        version: current.data.item.version,
+      });
+    };
+
+    const ofThisItem = (events: { event: string; data: unknown }[]) =>
+      events
+        .filter((e) => e.event.startsWith("edge."))
+        .map((e) => ({
+          event: e.event,
+          edge: (
+            e.data as {
+              edge: { id: string; source_id: string; target_id: string };
+            }
+          ).edge,
+        }))
+        .filter(({ edge }) => edge.source_id === itemId)
+        .map(({ event, edge }) => [event, edge.target_id]);
+
+    await withStream(apiUrl, apiKey, {}, async (stream) => {
+      await collectUntil(
+        stream,
+        (events) => events.some((e) => e.event === "stream_live"),
+        "stream readiness",
+        signal,
+      );
+
+      const unchanged = await patchEdges({
+        "in-collection": [stays!, dropped!],
+      });
+      expect(unchanged.status, JSON.stringify(unchanged.error)).toBe(200);
+      expect((await client.getEdge(kept.id)).data.edge).toEqual(kept);
+      expect((await client.getEdge(droppedEdge.id)).data.edge).toEqual(
+        droppedEdge,
+      );
+
+      // The witness: the same door, once a target is dropped and one added,
+      // does announce. Its frames arriving after the unchanged write's would
+      // is what settles that the unchanged write announced nothing.
+      const changed = await patchEdges({
+        "in-collection": [stays!, added!],
+      });
+      expect(changed.status, JSON.stringify(changed.error)).toBe(200);
+      const { events } = await collectUntil(
+        stream,
+        (seen) =>
+          seen.some(
+            (e) =>
+              e.event === "edge.created" &&
+              (e.data as { edge: { source_id: string; target_id: string } })
+                .edge.target_id === added,
+          ),
+        "the witness write's edge.created",
+        signal,
+      );
+      expect(ofThisItem(events)).toEqual([
+        ["edge.deleted", dropped],
+        ["edge.created", added],
+      ]);
+    });
+
+    expect((await client.getEdge(kept.id)).data.edge).toEqual(kept);
+    expect((await client.getEdge(droppedEdge.id)).status).toBe(404);
+    expect(
+      (await edgesOf("in-collection")).map((e) => e.target_id).sort(),
+    ).toEqual([stays!, added!].sort());
+    expect((await client.getEdge(referencesEdge!.id)).data.edge).toEqual(
+      referencesEdge,
+    );
+
+    const emptied = await patchEdges({ "in-collection": [] });
+    expect(emptied.status, JSON.stringify(emptied.error)).toBe(200);
+    expect(await edgesOf("in-collection")).toEqual([]);
+    expect((await client.getEdge(referencesEdge!.id)).data.edge).toEqual(
+      referencesEdge,
+    );
+  });
+
+  it.each(["POST /items", "POST /items/bulk"])(
+    "%s landing on an item by its natural key keeps the edge to a target it still lists, and announces only what it changes",
+    async (door) => {
+      const [stays, dropped, added] = await Promise.all(
+        [1, 2, 3].map(() => makeContainer()),
+      );
+      const sourceId = `keep-${door.replace(/\W+/g, "-")}-${ctx.runId}`;
+      const send = async (targets: string[]): Promise<string> => {
+        const body = {
+          type: "core.note",
+          source: ctx.source,
+          source_id: sourceId,
+          properties: { body: "upsert-keep" },
+          edges: { "in-collection": targets },
+        };
+        if (door === "POST /items") {
+          const r = await client.createItem(body);
+          expect(r.ok, JSON.stringify(r.error)).toBe(true);
+          return r.data.item.id;
+        }
+        const r = await client.bulkItems([body]);
+        expect(r.ok, JSON.stringify(r.error)).toBe(true);
+        expect(r.data.counts.errored).toBe(0);
+        return r.data.results[0]!.id!;
+      };
+      const itemId = await send([stays!, dropped!]);
+      trackItem(ctx, itemId);
+      const edgesOf = async () => {
+        const r = await client.listItemEdges(itemId, {
+          edge_type: "in-collection",
+        });
+        expect(r.ok).toBe(true);
+        for (const edge of r.data.data) trackEdge(ctx, edge.id);
+        return r.data.data;
+      };
+      const held = (await edgesOf()).find((e) => e.target_id === stays)!;
+      const positioned = await client.updateEdge(held.id, {
+        properties: { position: 1 },
+        version: held.version,
+      });
+      expect(positioned.status, JSON.stringify(positioned.error)).toBe(200);
+      const kept = positioned.data.edge;
+
+      await withStream(apiUrl, apiKey, {}, async (stream) => {
+        await collectUntil(
+          stream,
+          (events) => events.some((e) => e.event === "stream_live"),
+          "stream readiness",
+        );
+        expect(await send([stays!, dropped!])).toBe(itemId);
+        expect((await client.getEdge(kept.id)).data.edge).toEqual(kept);
+        // The witness: the same door announces once the list changes, and
+        // its frames arriving settles that the repeat before it announced
+        // nothing.
+        await send([stays!, added!]);
+        const { events } = await collectUntil(
+          stream,
+          (seen) =>
+            seen.some(
+              (e) =>
+                e.event === "edge.created" &&
+                (e.data as { edge: { target_id: string } }).edge.target_id ===
+                  added,
+            ),
+          "the witness write's edge.created",
+        );
+        expect(
+          events
+            .filter((e) => e.event.startsWith("edge."))
+            .map((e) => ({
+              event: e.event,
+              edge: (
+                e.data as { edge: { source_id: string; target_id: string } }
+              ).edge,
+            }))
+            .filter(({ edge }) => edge.source_id === itemId)
+            .map(({ event, edge }) => [event, edge.target_id]),
+        ).toEqual([
+          ["edge.deleted", dropped],
+          ["edge.created", added],
+        ]);
+      });
+      expect((await client.getEdge(kept.id)).data.edge).toEqual(kept);
+      expect((await edgesOf()).map((e) => e.target_id).sort()).toEqual(
+        [stays!, added!].sort(),
+      );
+    },
+  );
+
+  it("PATCH /items keeps a held edge whose type requires properties, and still refuses a new target without them", async () => {
+    const edgeType = `mock.keepreq.${ctx.runId}`;
+    const registered = await client.registerEdgeType({
+      label: "Keep required",
+      id: edgeType,
+      cardinality: "many-to-many",
+      property_schema: { label: { type: "string", required: true } },
+    });
+    expect(registered.status, JSON.stringify(registered.error)).toBe(201);
+    trackEdgeType(ctx, edgeType);
+    const [held, fresh, folder] = [
+      await makeItem(),
+      await makeItem(),
+      await makeFolder(),
+    ];
+    const created = await client.createItem(createNote({ source: ctx.source }));
+    expect(created.status).toBe(201);
+    const sourceId = created.data.item.id;
+    trackItem(ctx, sourceId);
+
+    const labelled = await client.createEdge({
+      source_id: sourceId,
+      target_id: held,
+      edge_type: edgeType,
+      properties: { label: "kept" },
+    });
+    expect(labelled.status, JSON.stringify(labelled.error)).toBe(201);
+    trackEdge(ctx, labelled.data.edge.id);
+    const placed = await client.createEdge({
+      source_id: sourceId,
+      target_id: folder,
+      edge_type: "in-folder",
+      properties: { path: "Notes/held.md" },
+    });
+    expect(placed.status, JSON.stringify(placed.error)).toBe(201);
+    trackEdge(ctx, placed.data.edge.id);
+
+    const patch = async (edges: Record<string, string[]>) => {
+      const current = await client.getItem(sourceId);
+      expect(current.status).toBe(200);
+      return client.rawRequest(`/items/${sourceId}`, {
+        method: "PATCH",
+        body: { version: current.data.item.version, edges },
+      });
+    };
+
+    const resent = await patch({ [edgeType]: [held], "in-folder": [folder] });
+    expect(resent.status, JSON.stringify(resent.error)).toBe(200);
+    expect((await client.getEdge(labelled.data.edge.id)).data.edge).toEqual(
+      labelled.data.edge,
+    );
+    expect((await client.getEdge(placed.data.edge.id)).data.edge).toEqual(
+      placed.data.edge,
+    );
+
+    // The witness: a target the item holds no edge to is still held to the
+    // schema, so the resend passing is the keep and not a gate left open.
+    const added = await patch({ [edgeType]: [held, fresh] });
+    expect(added.status).toBe(400);
+    expect(added.error?.error.code).toBe("invalid_properties");
+    expect((await client.getEdge(labelled.data.edge.id)).data.edge).toEqual(
+      labelled.data.edge,
+    );
   });
 });

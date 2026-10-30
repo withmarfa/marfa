@@ -127,8 +127,9 @@ export interface UpdateItemInput {
   version: number;
   version_match?: "exact";
   /**
-   * Replace-all-for-specified-types. Edges of types listed here are
-   * replaced wholesale; edges of types NOT listed remain untouched.
+   * Edges of each type listed here are set to the targets listed: an edge
+   * to a listed target stays as it is, the others are deleted, and new
+   * targets get new edges. Edges of types not listed remain untouched.
    */
   edges?: Record<string, string[]>;
 }

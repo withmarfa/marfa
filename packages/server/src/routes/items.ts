@@ -314,7 +314,7 @@ const createItemRoute = createRoute({
               .record(z.string(), z.array(z.string()))
               .optional()
               .describe(
-                "Edges to create with the item, as edge type to a list of target item IDs. The new item is the source. Marfa creates the item and all its edges, or none. An edge made this way carries no properties, so an edge type that requires one refuses the write.",
+                "Edges to create with the item, as edge type to a list of target item IDs. The new item is the source. Marfa creates the item and all its edges, or none. When the request lands on an item by its natural key, each type you name replaces that item's edges of the type, and an edge to an ID you still list stays as it is. A new edge made this way carries no properties, so an edge type that requires one refuses the write.",
               ),
           }),
         },
@@ -857,16 +857,11 @@ const updateItemRoute = createRoute({
               .describe(
                 "The item's new `source_id`. Marfa moves its natural key under the item's own `source`, which never changes.",
               ),
-            // Replace-all-for-specified-types semantics: any edge_type
-            // listed wipes existing outbound edges of that type from
-            // this item, then creates new edges to each listed target.
-            // Empty array for an edge_type deletes all of that type.
-            // Unmentioned edge types are untouched.
             edges: z
               .record(z.string(), z.array(z.string()))
               .optional()
               .describe(
-                "Edge types to replace, each mapped to the item IDs it should now point to. An empty list removes every edge of that type. Types you don't name are untouched. An edge made this way carries no properties, so an edge type that requires one refuses the write.",
+                "Edge types to replace, each mapped to the item IDs it should now point to. An edge to an ID you still list stays as it is, with its properties. An empty list removes every edge of that type. Types you don't name are untouched. A new edge made this way carries no properties, so an edge type that requires one refuses the write.",
               ),
           }),
         },
