@@ -546,6 +546,45 @@ describe("a device refuses a write only the server may make", () => {
     }
   });
 
+  it("refuses a list or a search naming a type its catalog does not hold, as the server does", async () => {
+    harness = await hydrated("type-unknown");
+    const { device } = harness;
+    // The witnesses: a type the catalog holds answers, one that holds no
+    // row answers an empty page, and so does a wildcard that names nothing,
+    // so the refusal below is the missing type and not a device that
+    // refuses every filter.
+    const held = await device.list({ type: "core.note" });
+    expect(held.ok && held.value.map((item) => item.id)).toEqual(["n1"]);
+    for (const type of ["core.event", "core.taks.*", "acme.*"]) {
+      const listed = await device.list({ type });
+      expect(
+        listed.ok && listed.value,
+        `${type} was refused, and it names no unknown type`,
+      ).toEqual([]);
+      const searched = await device.search("n1", { type });
+      expect(
+        searched.ok && searched.value,
+        `${type} was refused on a search, and it names no unknown type`,
+      ).toEqual([]);
+    }
+    // A mistyped name, and a well-formed one nothing registers, are
+    // refused as the server refuses them: `unknown_type`, not an empty page.
+    for (const type of ["core.taks", "acme.memo", "core.note.todo"]) {
+      for (const outcome of [
+        await device.list({ type }),
+        await device.search("n1", { type }),
+      ]) {
+        expect(
+          outcome.ok ? "answered" : outcome.refusal.code,
+          `${type} answered, so a mistyped type reads as nothing here`,
+        ).toBe("unknown_type");
+        if (!outcome.ok) {
+          expect(outcome.refusal.raw).toContain("unknown_type");
+        }
+      }
+    }
+  });
+
   it("queues no purge, and keeps the row, when the purge cannot be sent", async () => {
     harness = await startHarness("purge");
     scriptHydration(harness.server, {
