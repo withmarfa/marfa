@@ -4910,9 +4910,7 @@ pub fn block_unanswered(conn: &Connection, reason: BlockedReason) -> Result<usiz
 /// never held. A refused write stays refused. Answers how many it held.
 pub fn block_for_another_instance(conn: &Connection) -> Result<usize, CoreError> {
     Ok(conn.execute(
-        &format!(
-            "UPDATE queue SET verdict = ?1, reason = ?2, answered_at = ?3 WHERE {WAITING}"
-        ),
+        &format!("UPDATE queue SET verdict = ?1, reason = ?2, answered_at = ?3 WHERE {WAITING}"),
         params![
             Verdict::Blocked.as_str(),
             BlockedReason::InstanceChanged.as_str(),
