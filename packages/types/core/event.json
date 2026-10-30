@@ -74,6 +74,26 @@
       "type": "string",
       "description": "IANA time zone the event ends in, when that differs from timezone — a flight lands in a zone it did not depart from, and both ends are wall-clock facts a person reads off a ticket. Absent means the event ends in the zone it started in. Recurrence expands in timezone only; this field never anchors a rule. A write is refused unless the zone database resolves it as a named zone."
     },
+    "attendees": {
+      "type": "array",
+      "items_type": "object",
+      "description": "The people invited, one entry each, in the order written. An entry names a person by name, email or both, and holds no item ID: an app finds the person behind an entry by its email, in the emails of a person. response is the reply, from the participation status of RFC 5545; needs_action means no reply yet.",
+      "items_fields": {
+        "name": {
+          "type": "string",
+          "description": "The attendee's name as the source gives it"
+        },
+        "email": {
+          "type": "email",
+          "description": "The attendee's email address"
+        },
+        "response": {
+          "type": "enum",
+          "description": "The attendee's reply to the invitation",
+          "enum_values": ["needs_action", "accepted", "declined", "tentative"]
+        }
+      }
+    },
     "original_starts_at": {
       "type": "string",
       "description": "For an event that replaces one occurrence of a series, the start instant of the occurrence it replaces. Its series is named by a parent-of edge.",

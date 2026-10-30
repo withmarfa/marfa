@@ -82,6 +82,7 @@ const coreEvent: TypeSchema = {
     all_day: { type: "boolean", description: "True when the event occupies whole days rather than a span of time. A whole day has no instant, so a reader must take the calendar date from starts_at read in timezone and never re-derive it in the reader's own zone, which is how an all-day event ends up on the wrong day for anyone further west. Absent or false means the event has real start and end instants." },
     timezone: { type: "string", description: "IANA time zone the event's schedule keeps its wall-clock hour in, e.g. Europe/Berlin. Stored times stay instants; a recurring series expands in this zone so occurrences keep their local hour across a daylight-saving transition. Absent means the rule advances in UTC. This is the start zone: an event that ends somewhere else states that in end_timezone. A write is refused unless the zone database resolves it as a named zone." },
     end_timezone: { type: "string", description: "IANA time zone the event ends in, when that differs from timezone — a flight lands in a zone it did not depart from, and both ends are wall-clock facts a person reads off a ticket. Absent means the event ends in the zone it started in. Recurrence expands in timezone only; this field never anchors a rule. A write is refused unless the zone database resolves it as a named zone." },
+    attendees: { type: "array", description: "The people invited, one entry each, in the order written. An entry names a person by name, email or both, and holds no item ID: an app finds the person behind an entry by its email, in the emails of a person. response is the reply, from the participation status of RFC 5545; needs_action means no reply yet.", items_type: "object", items_fields: {"name":{"type":"string","description":"The attendee's name as the source gives it"},"email":{"type":"email","description":"The attendee's email address"},"response":{"type":"enum","description":"The attendee's reply to the invitation","enum_values":["needs_action","accepted","declined","tentative"]}} },
     original_starts_at: { type: "datetime", description: "For an event that replaces one occurrence of a series, the start instant of the occurrence it replaces. Its series is named by a parent-of edge." },
   },
   display_hints: { title_field: "title", body_field: "description", icon: "lucide:calendar" },
@@ -197,6 +198,7 @@ const coreTask: TypeSchema = {
     place: { type: "string", description: "Location" },
     precision: { type: "enum", description: "Temporal precision", enum_values: ["year", "month", "day", "time"] },
     url: { type: "url", description: "Related link" },
+    assignees: { type: "array", description: "The people the task is assigned to, one entry each, in the order written. An entry names a person by name, email or both, and holds no item ID: an app finds the person behind an entry by its email, in the emails of a person. It has the members of an attendee of an event, without a response.", items_type: "object", items_fields: {"name":{"type":"string","description":"The assignee's name as the source gives it, such as a login"},"email":{"type":"email","description":"The assignee's email address"}} },
     notes: { type: "string", description: "Personal annotations" },
     recurrence: { type: "array", description: "RFC 5545 recurrence property lines (RRULE, RDATE, EXDATE) for a task that repeats. The series starts at due_at, or at starts_at when the task has no due_at, and advances in UTC because a task has no timezone. The server keeps and checks the rule but does not unfold it: GET /occurrences answers events only. A write is refused when a line cannot be read or is not applied (EXRULE, an RDATE period), when it carries more than one RRULE, more than 40,000 characters in all or more than 1,000 added and removed dates, when the rule names no date that exists after the start, when it produces no occurrence within the bound a read unfolds a rule to, or when the task has neither due_at nor starts_at.", items_type: "string" },
   },
@@ -958,6 +960,27 @@ export const SHIPPED_TYPE_SHAPES = {
     "fields": {
       "all_day": {
         "type": "boolean"
+      },
+      "attendees": {
+        "items_fields": {
+          "email": {
+            "type": "email"
+          },
+          "name": {
+            "type": "string"
+          },
+          "response": {
+            "enum_values": [
+              "needs_action",
+              "accepted",
+              "declined",
+              "tentative"
+            ],
+            "type": "enum"
+          }
+        },
+        "items_type": "object",
+        "type": "array"
       },
       "description": {
         "type": "string"
@@ -2121,6 +2144,18 @@ export const SHIPPED_TYPE_SHAPES = {
       "title_field": "title"
     },
     "fields": {
+      "assignees": {
+        "items_fields": {
+          "email": {
+            "type": "email"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "items_type": "object",
+        "type": "array"
+      },
       "body": {
         "type": "string"
       },

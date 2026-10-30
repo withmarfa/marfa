@@ -659,6 +659,22 @@ The server MUST ship `core.media` declaring an optional field named `progress` o
 
 **Tests:** `compliance/media-progress.test.ts › is an optional status field on %s`, `› sits beside a series' own status enum`, `› takes a book started and puts it in the in_progress group`, `› refuses a word the type does not declare, naming progress`, `› finds a finished film by its group, and leaves a planned one out`.
 
+### `types/shipped-attendees`
+
+The server MUST ship `core.event` declaring an optional field named `attendees`, an `array` of `object` whose `items_fields` are `name`, a `string`, `email`, an `email`, and `response`, an `enum` of `needs_action`, `accepted`, `declined` and `tentative`, none of them required, which every subtype of `core.event` inherits.
+
+**Reason:** an app shows who is invited and who has replied from the event alone. An entry names a person by the one thing every calendar gives, the email, and holds no item ID, so an invitee needs no item of their own; an app finds the person behind an entry by the email in the `emails` of a `core.entity`. The four replies are the participation statuses of RFC 5545 an invitation moves through, `needs_action` before a reply. An entry holding only an email or only a name is taken, and the entry rules (`types/array-entries-refused`) refuse the rest, naming the field, the position and the member, as `attendees.0.response`. A device refuses the same writes (`device/entries-checked`).
+
+**Tests:** `compliance/attendees.test.ts › lists attendees on core.event and assignees on core.task`, `› takes an event with two attendees, one only an email and one only a name, in the order written`, `› refuses a response outside the four, naming attendees.0.response: %j`, `› refuses an attendee whose email is not an email address, or who holds another member`, `› lets a type under core.event hold attendees and refuse a bad one`, `device/attendees-live.test.ts › refuses on the device the attendee the server refuses`.
+
+### `types/shipped-assignees`
+
+The server MUST ship `core.task` declaring an optional field named `assignees`, an `array` of `object` whose `items_fields` are `name`, a `string`, and `email`, an `email`, neither of them required, which every subtype of `core.task` inherits.
+
+**Reason:** an entry has the members and the meaning of an attendee's (`types/shipped-attendees`) without `response`, because a task has no reply to give, so an app that reads one list reads the other. A source with no email writes the person's login as `name`. An entry with a `response` is refused as an undeclared member.
+
+**Tests:** `compliance/attendees.test.ts › lists attendees on core.event and assignees on core.task`, `› takes a task with an assignee and refuses a response on it`.
+
 ## Thumbnails
 
 A `thumbnail` field holds a small image the writer supplies; what a value may be is `items/thumbnail-format`.

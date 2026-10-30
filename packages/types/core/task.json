@@ -60,6 +60,21 @@
       "description": "Related link",
       "format": "url"
     },
+    "assignees": {
+      "type": "array",
+      "items_type": "object",
+      "description": "The people the task is assigned to, one entry each, in the order written. An entry names a person by name, email or both, and holds no item ID: an app finds the person behind an entry by its email, in the emails of a person. It has the members of an attendee of an event, without a response.",
+      "items_fields": {
+        "name": {
+          "type": "string",
+          "description": "The assignee's name as the source gives it, such as a login"
+        },
+        "email": {
+          "type": "email",
+          "description": "The assignee's email address"
+        }
+      }
+    },
     "notes": {
       "type": "string",
       "description": "Personal annotations"
