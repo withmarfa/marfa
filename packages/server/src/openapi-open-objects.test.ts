@@ -62,7 +62,7 @@ const OPEN_ON_PURPOSE: readonly { pattern: RegExp; reason: string }[] = [
   },
   {
     pattern:
-      /^(FieldDefinition|TypeDefinitionInput|TypeDefinitionUpdate|MergePolicy|VersionPolicy|RetentionPolicy|DisplayHints)$/,
+      /^(FieldDefinition|EntryMember|TypeDefinitionInput|TypeDefinitionUpdate|MergePolicy|VersionPolicy|RetentionPolicy|DisplayHints)$/,
     reason:
       "Declared, and loose so a key the declaration does not name reaches the type validator, which refuses it with the authoring doors' own codes.",
   },
