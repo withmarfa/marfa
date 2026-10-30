@@ -36,6 +36,6 @@
     }
   },
   "display_hints": {
-    "icon": "file-video-camera"
+    "icon": "lucide:file-video-camera"
   }
 }

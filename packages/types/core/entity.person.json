@@ -53,6 +53,6 @@
   },
   "required": [],
   "display_hints": {
-    "icon": "user"
+    "icon": "lucide:user"
   }
 }

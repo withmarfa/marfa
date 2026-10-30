@@ -122,7 +122,7 @@ describe("The type catalog a working copy holds", () => {
       version: 0,
       title_field: "title",
       body_field: "body",
-      icon: "sticky-note",
+      icon: "lucide:sticky-note",
       link_field: null,
       roles: [],
       compatible_with: [],
@@ -220,12 +220,12 @@ describe("The type catalog a working copy holds", () => {
     // sets only a title and a child that sets only an icon both show.
     const stamp = wireType("acme.stamp", {
       parent: "core.note",
-      icon: "stamp",
+      icon: "lucide:stamp",
     });
     const stampedKid = wireType("acme.stamp.kid", { parent: "acme.stamp" });
     const loud = wireType("acme.stamp.loud", {
       parent: "acme.stamp",
-      icon: "megaphone",
+      icon: "lucide:megaphone",
     });
     const bare = wireType("acme.bare");
     let ownerChose = false;
@@ -238,7 +238,7 @@ describe("The type catalog a working copy holds", () => {
               ...stamp,
               display_hints: {
                 ...(stamp.display_hints as object),
-                icon: "award",
+                icon: "lucide:award",
               },
             }
           : stamp,
@@ -274,11 +274,11 @@ describe("The type catalog a working copy holds", () => {
       await icons(),
       "a type's icon was not the nearest one set, or a type that sets none read as having none",
     ).toEqual({
-      "core.note": "sticky-note",
+      "core.note": "lucide:sticky-note",
       "acme.bare": null,
-      "acme.stamp": "stamp",
-      "acme.stamp.kid": "stamp",
-      "acme.stamp.loud": "megaphone",
+      "acme.stamp": "lucide:stamp",
+      "acme.stamp.kid": "lucide:stamp",
+      "acme.stamp.loud": "lucide:megaphone",
     });
 
     // A device that missed the change takes it with the next catch-up.
@@ -294,7 +294,7 @@ describe("The type catalog a working copy holds", () => {
           .icon,
       ],
       "the owner's new icon did not reach the copy at its next catch-up, or did not reach the subtype that sets none",
-    ).toEqual(["award", "award", "megaphone"]);
+    ).toEqual(["lucide:award", "lucide:award", "lucide:megaphone"]);
   });
 
   it("answers every catalog read on a copy that has never reached a server with the types Marfa ships", async () => {

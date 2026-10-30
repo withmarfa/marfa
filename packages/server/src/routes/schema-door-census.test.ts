@@ -191,7 +191,7 @@ const CHANGING: Record<string, Driver> = {
     const set = (key: string) =>
       request(ctx.app, "PUT", `/types/${id}/icon`, {
         key,
-        body: { icon: "box" },
+        body: { icon: "lucide:box" },
       });
     await expectRefused(await set(refused), "type_not_permitted", id);
     expect((await set(served)).status).toBe(200);

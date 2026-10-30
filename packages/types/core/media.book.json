@@ -20,6 +20,6 @@
   },
   "required": [],
   "display_hints": {
-    "icon": "book-open"
+    "icon": "lucide:book-open"
   }
 }

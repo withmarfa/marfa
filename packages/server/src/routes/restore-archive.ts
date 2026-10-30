@@ -184,7 +184,7 @@ const restoreArchiveRoute = createRoute({
             type_icons_skipped_reasons: z
               .record(z.string(), z.number())
               .describe(
-                "How many of the owner's type icons Marfa skipped for each reason: `already_set` when the instance already has an owner icon for the type, `unknown_icon` when the name is not an icon of the Lucide release Marfa pins.",
+                "How many of the owner's type icons Marfa skipped for each reason: `already_set` when the instance already has an owner icon for the type, `unknown_icon` when the icon isn't the ID of an icon in a set Marfa pins.",
               ),
           }),
         },

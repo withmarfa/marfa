@@ -204,7 +204,7 @@ const DisplayHintsSchema = z
       .string()
       .optional()
       .describe(
-        "The icon that stands for the type, as the kebab-case name of an icon in the Lucide release Marfa pins, such as `calendar-days`. On a type read back, the owner's own choice replaces the author's.",
+        "The type's icon, as an Iconify ID, `<set>:<name>`, from a pinned version of `lucide` or `simple-icons`, such as `lucide:calendar-days`. On a type read back, the owner's own choice replaces the author's.",
       ),
   })
   .describe(
@@ -657,7 +657,7 @@ const TypeIconBodySchema = z
     icon: z
       .string()
       .describe(
-        "The kebab-case name of an icon in the Lucide release Marfa pins, such as `calendar-days`.",
+        "An Iconify ID, `<set>:<name>`, from a set and version Marfa pins: `lucide` or `simple-icons`, such as `lucide:calendar-days` or `simple-icons:github`.",
       ),
   })
   .describe("The icon to show for a type.")
@@ -1074,7 +1074,7 @@ const setTypeIconRoute = createRoute({
         },
       },
       description:
-        "`invalid_schema`: `icon` isn't the name of an icon in the pinned Lucide release (`details.errors` names it).",
+        "`invalid_schema`: `icon` isn't the ID of an icon in a pinned set (`details.errors` names it).",
     },
     ...iconDoorResponses,
   },

@@ -58,7 +58,7 @@
   "display_hints": {
     "title_field": "title",
     "body_field": "body",
-    "icon": "bookmark"
+    "icon": "lucide:bookmark"
   },
   "merge_policy": {
     "fields": {

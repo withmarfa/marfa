@@ -125,7 +125,7 @@ pub struct ItemType {
     pub fields: Vec<TypeField>,
     pub title_field: Option<String>,
     pub body_field: Option<String>,
-    /// The Lucide icon that stands for the type, kebab-case: the owner's
+    /// The Iconify icon ID that stands for the type, `<set>:<name>`: the owner's
     /// choice where they made one, else the nearest author's.
     pub icon: Option<String>,
     pub link_field: Option<String>,
@@ -772,7 +772,7 @@ impl Catalog {
         self.nearest(type_id, |entry| entry.body_field.as_deref())
     }
 
-    /// The Lucide icon of the nearest type that sets one. The catalog holds
+    /// The icon ID of the nearest type that sets one. The catalog holds
     /// the owner's choice for a type in that type's place, so it is this
     /// icon where a type has one and is inherited like any other.
     pub fn icon(&self, type_id: &str) -> Option<&str> {
@@ -1008,7 +1008,7 @@ mod tests {
                 { "id": "acme.base", "label": "Base",
                   "fields": { "name": { "type": "string", "required": true },
                               "note": { "type": "string" } },
-                  "display_hints": { "title_field": "name", "body_field": "note", "icon": "box" } },
+                  "display_hints": { "title_field": "name", "body_field": "note", "icon": "lucide:box" } },
                 { "id": "acme.mid", "parent": "acme.base",
                   "fields": { "name": { "type": "string", "required": true, "description": "again" } },
                   "display_hints": { "title_field": "name" } },
@@ -1039,7 +1039,7 @@ mod tests {
                 leaf.body_field.as_deref(),
                 leaf.icon.as_deref()
             ),
-            (Some("name"), Some("note"), Some("box")),
+            (Some("name"), Some("note"), Some("lucide:box")),
             "each hint comes from the nearest type that sets it"
         );
         assert_eq!(leaf.label.as_deref(), Some("Leaf"));
@@ -1052,12 +1052,12 @@ mod tests {
         let conn = held(
             serde_json::json!([
                 { "id": "acme.base", "fields": { "name": { "type": "string" } },
-                  "display_hints": { "title_field": "name", "body_field": "text", "icon": "box" } },
+                  "display_hints": { "title_field": "name", "body_field": "text", "icon": "lucide:box" } },
                 { "id": "acme.leaf", "parent": "acme.base",
                   "fields": { "comment": { "type": "string" } },
                   "display_hints": { "body_field": "comment" } },
                 { "id": "acme.starred", "parent": "acme.base", "fields": {},
-                  "display_hints": { "icon": "star" } },
+                  "display_hints": { "icon": "lucide:star" } },
                 { "id": "acme.titled", "parent": "acme.starred",
                   "fields": { "label": { "type": "string" } },
                   "display_hints": { "title_field": "label" } },
@@ -1076,22 +1076,22 @@ mod tests {
         let some = |value: &str| Some(value.to_string());
         assert_eq!(
             hints("acme.leaf"),
-            (some("name"), some("comment"), some("box")),
+            (some("name"), some("comment"), some("lucide:box")),
             "a subtype naming only its body lost its parent's title or icon"
         );
         assert_eq!(
             hints("acme.starred"),
-            (some("name"), some("text"), some("star")),
+            (some("name"), some("text"), some("lucide:star")),
             "a subtype naming only an icon lost its parent's title or body"
         );
         assert_eq!(
             hints("acme.titled"),
-            (some("label"), some("text"), some("star")),
+            (some("label"), some("text"), some("lucide:star")),
             "a hint was not taken from the nearest type that sets it"
         );
         assert_eq!(
             hints("acme.bare"),
-            (some("name"), some("text"), some("box"))
+            (some("name"), some("text"), some("lucide:box"))
         );
         assert_eq!(hints("acme.unheld"), (None, None, None));
         let leaf = item_type(&conn, "acme.leaf").unwrap();
@@ -1101,7 +1101,7 @@ mod tests {
                 leaf.body_field.as_deref(),
                 leaf.icon.as_deref()
             ),
-            (Some("name"), Some("comment"), Some("box"))
+            (Some("name"), Some("comment"), Some("lucide:box"))
         );
     }
 

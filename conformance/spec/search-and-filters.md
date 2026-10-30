@@ -1450,11 +1450,11 @@ When `POST /restore` reads a `type_icon` line, the server MUST set that icon for
 
 ### `search-and-filters/restore-type-icons-skipped`
 
-If a `type_icon` line of an archive names an icon outside the pinned Lucide release, then the server MUST skip that line, set no icon for the type, and count it in `type_icons_skipped` and under `unknown_icon` in `type_icons_skipped_reasons`; an icon skipped because the instance has an owner icon for the type is counted under `already_set`.
+If a `type_icon` line of an archive names an icon that `types/icon-name` refuses, then the server MUST skip that line, set no icon for the type, and count it in `type_icons_skipped` and under `unknown_icon` in `type_icons_skipped_reasons`; an icon skipped because the instance has an owner icon for the type is counted under `already_set`.
 
-**Reason:** an archive made by a build that pins another release holds a well-formed line this instance cannot draw, and one such line must not keep an owner from restoring everything else, as an edge a restore cannot place is skipped and counted instead of refusing the archive (`search-and-filters/restore-edge-skips`).
+**Reason:** an archive made by a build that pins other sets or versions holds a well-formed line this instance cannot draw, and one such line must not keep an owner from restoring everything else, as an edge a restore cannot place is skipped and counted instead of refusing the archive (`search-and-filters/restore-edge-skips`). The rule covers `type_icon` lines only: an archived type definition is held to the same check as a registered one, so a definition whose `display_hints.icon` `types/icon-name` refuses, a bare name among them, refuses the archive. Until the first public release an archive is read only by the build that wrote it, so no archive from before icons were Iconify IDs is expected to restore.
 
-**Tests:** `compliance/type-icons.test.ts › skips and counts an icon outside the pinned release, and refuses a line that names no type or no icon string, writing nothing`.
+**Tests:** `compliance/type-icons.test.ts › skips and counts an icon outside the pinned sets, and refuses a line that names no type or no icon string, writing nothing`.
 
 ### `search-and-filters/restore-type-icons-refused`
 
@@ -1462,7 +1462,7 @@ If a `type_icon` line of an archive is not an object holding a `type_id` and a s
 
 **Reason:** a line that is damaged, or an icon for a type nothing registers (`types/icon-missing-type`), is a fault in the archive and not a difference of release, and a restore checks every row before it writes any.
 
-**Tests:** `compliance/type-icons.test.ts › skips and counts an icon outside the pinned release, and refuses a line that names no type or no icon string, writing nothing`.
+**Tests:** `compliance/type-icons.test.ts › skips and counts an icon outside the pinned sets, and refuses a line that names no type or no icon string, writing nothing`.
 
 ### `search-and-filters/archive-history`
 

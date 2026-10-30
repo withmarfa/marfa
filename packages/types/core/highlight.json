@@ -35,7 +35,7 @@
   "display_hints": {
     "title_field": "text",
     "body_field": "note",
-    "icon": "highlighter"
+    "icon": "lucide:highlighter"
   },
   "merge_policy": {
     "fields": {

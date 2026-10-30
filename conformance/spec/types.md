@@ -223,11 +223,11 @@ The server MUST keep the field a type names in `display_hints.body_field` as Mar
 
 ### `types/icon-name`
 
-If a request to `POST /types`, `PUT /types/{id}` or `POST /types/normalize` carries a `display_hints.icon` that is not a kebab-case name from the Lucide release the instance pins (1.61.0), then the server MUST answer `400 invalid_schema` naming the member `display_hints.icon`.
+If a request to `POST /types`, `PUT /types/{id}` or `POST /types/normalize` carries a `display_hints.icon` that is not an Iconify icon ID, `<set>:<name>`, whose set is `lucide` at `@iconify-json/lucide` 1.2.149 or `simple-icons` at `@iconify-json/simple-icons` 1.2.101 and whose name is one of that version's icons, neither an alias nor one the set marks hidden, then the server MUST answer `400 invalid_schema` naming the member `display_hints.icon`.
 
-**Reason:** an app draws the icon from its own copy of that release, so a name outside it draws nothing; a wrong-case name, a name from a later release and a brand logo Lucide removed are all refused alike. The list is `packages/types/generated/lucide-icons.json`, regenerated from the pinned package.
+**Reason:** an app draws the icon from its own copy of those sets at those versions, so an ID outside them draws nothing. A bare name such as `calendar`, a set not named here, a name the set's version does not have, an alias such as `lucide:alert-circle`, an icon the set marks hidden because it removed it, and a wrong-case or padded ID are all refused alike. Lucide is the set for everything but brand marks, which come from Simple Icons, such as `simple-icons:github`. The lists are `packages/types/generated/icon-set-lucide.json` and `icon-set-simple-icons.json`, regenerated from the pinned packages.
 
-**Tests:** `compliance/type-icons.test.ts › refuses a display_hints.icon that is not a Lucide name on every door that takes a definition`.
+**Tests:** `compliance/type-icons.test.ts › refuses a display_hints.icon that is not an icon ID from a pinned set on every door that takes a definition`.
 
 ### `types/read-missing`
 
@@ -1159,7 +1159,7 @@ The owner can choose the icon any type is shown by, a core or connector type amo
 
 ### `types/icon-set`
 
-When a caller allowed by `types/icon-who` sends `PUT /types/{id}/icon` with an `icon` that is a name `types/icon-name` accepts, for a registered type, the server MUST keep it as the owner's icon for that type and answer `200` with the `type` as `GET /types/{id}` now answers it.
+When a caller allowed by `types/icon-who` sends `PUT /types/{id}/icon` with an `icon` that is an ID `types/icon-name` accepts, for a registered type, the server MUST keep it as the owner's icon for that type and answer `200` with the `type` as `GET /types/{id}` now answers it.
 
 **Reason:** an owner tells types apart by their icons, and a core or connector type's author cannot know which icon its owner wants. A core type can't be replaced, and a connector writes its own types again when it starts, so a choice made in the definition would not last.
 
@@ -1209,9 +1209,9 @@ When the definition stored for a type sets none of a display hint (`title_field`
 
 If `PUT /types/{id}/icon` names an `icon` that `types/icon-name` refuses, then the server MUST answer `400 invalid_schema` naming the member `icon`.
 
-**Reason:** the owner's choice is drawn from the same list as the author's, so it can hold no name an app cannot draw; a refused call leaves the icon the type had.
+**Reason:** the owner's choice is drawn from the same sets as the author's, so it can hold no icon an app cannot draw; a refused call leaves the icon the type had.
 
-**Tests:** `compliance/type-icons.test.ts › refuses a name outside the pinned release and a type nothing registered, and keeps the earlier choice`.
+**Tests:** `compliance/type-icons.test.ts › refuses an icon outside the pinned sets and a type nothing registered, and keeps the earlier choice`.
 
 ### `types/icon-missing-type`
 
@@ -1219,7 +1219,7 @@ If `PUT /types/{id}/icon` or `DELETE /types/{id}/icon` names a type nothing regi
 
 **Reason:** an icon belongs to a registered type, so a choice for a name nothing holds would wait for an unrelated type to be registered.
 
-**Tests:** `compliance/type-icons.test.ts › refuses a name outside the pinned release and a type nothing registered, and keeps the earlier choice`.
+**Tests:** `compliance/type-icons.test.ts › refuses an icon outside the pinned sets and a type nothing registered, and keeps the earlier choice`.
 
 ### `types/icon-who`
 

@@ -33,6 +33,6 @@
   },
   "required": [],
   "display_hints": {
-    "icon": "audio-lines"
+    "icon": "lucide:audio-lines"
   }
 }

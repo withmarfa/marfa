@@ -1420,7 +1420,7 @@ describe("an interrupted hydration", () => {
 
   it("resumes under a catalog that differs only in a type's icon, and holds the new icon", async () => {
     let catalog = typeCatalog([
-      wireType("user.late", { parent: "core.note", icon: "star" }),
+      wireType("user.late", { parent: "core.note", icon: "lucide:star" }),
     ]);
     const { device } = await interrupted("resume-icon-only", {
       catalog: () => catalog,
@@ -1429,7 +1429,7 @@ describe("an interrupted hydration", () => {
     expect(first.ok).toBe(true);
     const before = first.ok ? first.value.catalog_version : undefined;
     catalog = typeCatalog([
-      wireType("user.late", { parent: "core.note", icon: "moon" }),
+      wireType("user.late", { parent: "core.note", icon: "lucide:moon" }),
     ]);
     const again = await device.hydrate(["core.note"], "library");
     expect(again.ok, JSON.stringify(again)).toBe(true);

@@ -29,6 +29,6 @@
   },
   "required": [],
   "display_hints": {
-    "icon": "film"
+    "icon": "lucide:film"
   }
 }

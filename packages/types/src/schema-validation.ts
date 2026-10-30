@@ -8,7 +8,7 @@
 // nothing here may reach back into shared; registry access is injected through
 // `SchemaValidationContext` instead.
 
-import { isLucideIcon, LUCIDE_VERSION } from "./lucide-icons.js";
+import { ICON_SETS, isIconId, lucideIconId } from "./icon-sets.js";
 import { TYPE_ROLES } from "./schema-types.js";
 import type {
   DisplayHints,
@@ -1137,21 +1137,25 @@ function validateThumbnails(
 }
 
 /**
- * The refusal for a value that is not the name of an icon in the pinned
- * Lucide release, or nothing when it is one. `field` names the member in the
- * refusal: `display_hints.icon` in a type's definition, `icon` where the
- * owner sets one directly.
+ * The refusal for a value that is not the Iconify ID of an icon in a pinned
+ * set, or nothing when it is one. `field` names the member in the refusal:
+ * `display_hints.icon` in a type's definition, `icon` where the owner sets
+ * one directly.
  */
 export function iconNameIssue(
   value: unknown,
   field: string,
 ): SchemaValidationIssue | undefined {
-  if (typeof value === "string" && isLucideIcon(value)) return undefined;
+  if (typeof value === "string" && isIconId(value)) return undefined;
+  const lucide = typeof value === "string" ? lucideIconId(value) : undefined;
   return issue({
     field,
-    expected: `the kebab-case name of an icon in Lucide ${LUCIDE_VERSION}`,
+    expected: `an icon ID, "<set>:<name>", from ${ICON_SETS.map((set) => `${set.prefix} ${set.version}`).join(" or ")}`,
     actual: describe(value),
-    hint: 'Use a name from lucide.dev/icons, such as "calendar-days".',
+    hint:
+      lucide === undefined
+        ? 'Use an ID from icon-sets.iconify.design, such as "lucide:calendar-days" or "simple-icons:github".'
+        : `Use "${lucide}".`,
   });
 }
 

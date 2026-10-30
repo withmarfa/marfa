@@ -110,7 +110,10 @@ export interface DisplayHints {
   title_field?: string;
   /** Field that carries this type's canonical body text. */
   body_field?: string;
-  /** Kebab-case name of the Lucide icon that stands for this type. */
+  /**
+   * Iconify ID of the icon that stands for this type, `<set>:<name>`, from a
+   * set in `ICON_SETS`.
+   */
   icon?: string;
 }
 

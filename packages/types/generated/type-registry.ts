@@ -21,7 +21,7 @@ const coreBookmark: TypeSchema = {
     language: { type: "string", description: "BCP 47 language code", format: "bcp47" },
     notes: { type: "string", description: "Personal annotations" },
   },
-  display_hints: { title_field: "title", body_field: "body", icon: "bookmark" },
+  display_hints: { title_field: "title", body_field: "body", icon: "lucide:bookmark" },
   merge_policy: { fields: { body: "keep_both_copies", notes: "keep_both_copies" }, default: "last_writer_wins" },
 };
 
@@ -34,7 +34,7 @@ const coreCollection: TypeSchema = {
     title: { type: "string", description: "Name of the collection", required: true },
     description: { type: "string", description: "What the collection gathers" },
   },
-  display_hints: { title_field: "title", body_field: "description", icon: "layers" },
+  display_hints: { title_field: "title", body_field: "description", icon: "lucide:layers" },
   merge_policy: { default: "last_writer_wins" },
   roles: ["container"],
 };
@@ -56,7 +56,7 @@ const coreEntity: TypeSchema = {
     founded: { type: "date", description: "Founding date (ISO 8601)" },
     notes: { type: "string", description: "Personal annotations" },
   },
-  display_hints: { title_field: "name", icon: "shapes" },
+  display_hints: { title_field: "name", icon: "lucide:shapes" },
   merge_policy: { default: "last_writer_wins" },
 };
 
@@ -84,7 +84,7 @@ const coreEvent: TypeSchema = {
     end_timezone: { type: "string", description: "IANA time zone the event ends in, when that differs from timezone — a flight lands in a zone it did not depart from, and both ends are wall-clock facts a person reads off a ticket. Absent means the event ends in the zone it started in. Recurrence expands in timezone only; this field never anchors a rule. A write is refused unless the zone database resolves it as a named zone." },
     original_starts_at: { type: "datetime", description: "For an event that replaces one occurrence of a series, the start instant of the occurrence it replaces. Its series is named by a parent-of edge." },
   },
-  display_hints: { title_field: "title", body_field: "description", icon: "calendar" },
+  display_hints: { title_field: "title", body_field: "description", icon: "lucide:calendar" },
   merge_policy: { fields: { notes: "keep_both_copies" }, default: "last_writer_wins" },
 };
 
@@ -107,7 +107,7 @@ const coreFile: TypeSchema = {
     executable: { type: "boolean", description: "Whether the file may be run as a program; absent means it may not" },
     size_bytes: { type: "integer", description: "Size in bytes of the referenced blob (set by the server from the bytes the instance holds; absent where whoever named blob_ref never proved it holds them)" },
   },
-  display_hints: { title_field: "title", icon: "file" },
+  display_hints: { title_field: "title", icon: "lucide:file" },
   merge_policy: { default: "last_writer_wins" },
 };
 
@@ -124,7 +124,7 @@ const coreHighlight: TypeSchema = {
     start_location: { type: "string", description: "Start locator, typed by locator_type" },
     end_location: { type: "string", description: "End locator, typed by locator_type" },
   },
-  display_hints: { title_field: "text", body_field: "note", icon: "highlighter" },
+  display_hints: { title_field: "text", body_field: "note", icon: "lucide:highlighter" },
   merge_policy: { fields: { note: "keep_both_copies" }, default: "last_writer_wins" },
 };
 
@@ -146,7 +146,7 @@ const coreMedia: TypeSchema = {
     notes: { type: "string", description: "Personal annotations" },
     thumbnail: { type: "thumbnail", description: "A small preview of the work, supplied by the writer" },
   },
-  display_hints: { title_field: "title", body_field: "body", icon: "library-big" },
+  display_hints: { title_field: "title", body_field: "body", icon: "lucide:library-big" },
   merge_policy: { fields: { body: "keep_both_copies", notes: "keep_both_copies" }, default: "last_writer_wins" },
 };
 
@@ -160,7 +160,7 @@ const coreMessage: TypeSchema = {
     from: { type: "string", description: "Sender identifier — format-agnostic (phone number, email, handle, etc.)", required: true },
     to: { type: "array", description: "Recipient identifiers — same format-agnostic shape as from", items_type: "string" },
   },
-  display_hints: { body_field: "body", icon: "message-square" },
+  display_hints: { body_field: "body", icon: "lucide:message-square" },
   merge_policy: { fields: { body: "keep_both_copies" }, default: "last_writer_wins" },
 };
 
@@ -175,7 +175,7 @@ const coreNote: TypeSchema = {
     language: { type: "string", description: "BCP 47 language code", format: "bcp47" },
     notes: { type: "string", description: "Personal annotations" },
   },
-  display_hints: { title_field: "title", body_field: "body", icon: "sticky-note" },
+  display_hints: { title_field: "title", body_field: "body", icon: "lucide:sticky-note" },
   merge_policy: { fields: { body: "keep_both_copies", notes: "keep_both_copies" }, default: "last_writer_wins" },
 };
 
@@ -198,7 +198,7 @@ const coreTask: TypeSchema = {
     url: { type: "url", description: "Related link" },
     notes: { type: "string", description: "Personal annotations" },
   },
-  display_hints: { title_field: "title", body_field: "body", icon: "square-check-big" },
+  display_hints: { title_field: "title", body_field: "body", icon: "lucide:square-check-big" },
   merge_policy: { fields: { body: "keep_both_copies", notes: "keep_both_copies" }, default: "last_writer_wins" },
 };
 
@@ -231,7 +231,7 @@ const coreEntityPerson: TypeSchema = {
     birthday: { type: "date", description: "Date of birth (ISO 8601)" },
     pronouns: { type: "string", description: "Pronouns" },
   },
-  display_hints: { icon: "user" },
+  display_hints: { icon: "lucide:user" },
   merge_policy: { default: "last_writer_wins" },
 };
 
@@ -262,7 +262,7 @@ const coreEntityPlace: TypeSchema = {
     longitude: { type: "number", description: "Subject longitude" },
     altitude: { type: "number", description: "Altitude in meters above sea level" },
   },
-  display_hints: { icon: "map-pin" },
+  display_hints: { icon: "lucide:map-pin" },
   merge_policy: { default: "last_writer_wins" },
 };
 
@@ -287,7 +287,7 @@ const coreFileAudio: TypeSchema = {
     size_bytes: { type: "integer", description: "Size in bytes of the referenced blob (set by the server from the bytes the instance holds; absent where whoever named blob_ref never proved it holds them)" },
     duration: { type: "number", description: "Length in seconds (server enrichment: derived from the file when the client does not supply it)" },
   },
-  display_hints: { icon: "file-music" },
+  display_hints: { icon: "lucide:file-music" },
   merge_policy: { default: "last_writer_wins" },
 };
 
@@ -317,7 +317,7 @@ const coreFileImage: TypeSchema = {
     altitude: { type: "number", description: "Altitude in meters" },
     thumbnail: { type: "thumbnail", description: "A small preview of the image, supplied by the writer" },
   },
-  display_hints: { icon: "file-image" },
+  display_hints: { icon: "lucide:file-image" },
   merge_policy: { default: "last_writer_wins" },
 };
 
@@ -347,7 +347,7 @@ const coreFileVideo: TypeSchema = {
     longitude: { type: "number", description: "Subject longitude" },
     altitude: { type: "number", description: "Altitude in meters" },
   },
-  display_hints: { icon: "file-video-camera" },
+  display_hints: { icon: "lucide:file-video-camera" },
   merge_policy: { default: "last_writer_wins" },
 };
 
@@ -371,7 +371,7 @@ const coreFileWebpage: TypeSchema = {
     executable: { type: "boolean", description: "Whether the file may be run as a program; absent means it may not" },
     size_bytes: { type: "integer", description: "Size in bytes of the referenced blob (set by the server from the bytes the instance holds; absent where whoever named blob_ref never proved it holds them)" },
   },
-  display_hints: { title_field: "title", icon: "globe" },
+  display_hints: { title_field: "title", icon: "lucide:globe" },
   merge_policy: { default: "last_writer_wins" },
 };
 
@@ -396,7 +396,7 @@ const coreMediaAlbum: TypeSchema = {
     release_type: { type: "string", description: "Recommended values: album, ep, single" },
     num_tracks: { type: "integer", description: "Total track count" },
   },
-  display_hints: { icon: "disc-3" },
+  display_hints: { icon: "lucide:disc-3" },
   merge_policy: { fields: { body: "keep_both_copies", notes: "keep_both_copies" }, default: "last_writer_wins" },
   roles: ["container"],
 };
@@ -422,7 +422,7 @@ const coreMediaArticle: TypeSchema = {
     section: { type: "string", description: "Section of the publication" },
     word_count: { type: "integer", description: "Word count" },
   },
-  display_hints: { icon: "newspaper" },
+  display_hints: { icon: "lucide:newspaper" },
   merge_policy: { fields: { body: "keep_both_copies", notes: "keep_both_copies" }, default: "last_writer_wins" },
 };
 
@@ -448,7 +448,7 @@ const coreMediaBook: TypeSchema = {
     page_count: { type: "integer", description: "Number of pages" },
     edition: { type: "string", description: "Edition designation" },
   },
-  display_hints: { icon: "book-open" },
+  display_hints: { icon: "lucide:book-open" },
   merge_policy: { fields: { body: "keep_both_copies", notes: "keep_both_copies" }, default: "last_writer_wins" },
 };
 
@@ -477,7 +477,7 @@ const coreMediaEpisode: TypeSchema = {
     media_url: { type: "url", description: "Direct address of the media file itself: an episode's audio or video enclosure, a track's audio file, a film's stream. Distinct from url, which is the web page about the work." },
     mime_type: { type: "string", description: "MIME type of the resource at media_url, such as audio/mpeg or video/mp4. Describes what media_url points at, not what this item is." },
   },
-  display_hints: { icon: "circle-play" },
+  display_hints: { icon: "lucide:circle-play" },
   merge_policy: { fields: { body: "keep_both_copies", notes: "keep_both_copies" }, default: "last_writer_wins" },
 };
 
@@ -505,7 +505,7 @@ const coreMediaFilm: TypeSchema = {
     media_url: { type: "url", description: "Direct address of the media file itself: an episode's audio or video enclosure, a track's audio file, a film's stream. Distinct from url, which is the web page about the work." },
     mime_type: { type: "string", description: "MIME type of the resource at media_url, such as audio/mpeg or video/mp4. Describes what media_url points at, not what this item is." },
   },
-  display_hints: { icon: "film" },
+  display_hints: { icon: "lucide:film" },
   merge_policy: { fields: { body: "keep_both_copies", notes: "keep_both_copies" }, default: "last_writer_wins" },
 };
 
@@ -530,7 +530,7 @@ const coreMediaSeries: TypeSchema = {
     medium: { type: "enum", description: "What the series is made of.", enum_values: ["tv", "podcast", "radio", "video", "mixed"] },
     status: { type: "enum", description: "Whether the series is still producing new members.", enum_values: ["ongoing", "ended", "canceled"] },
   },
-  display_hints: { icon: "tv" },
+  display_hints: { icon: "lucide:tv" },
   merge_policy: { fields: { body: "keep_both_copies", notes: "keep_both_copies" }, default: "last_writer_wins" },
   roles: ["container"],
 };
@@ -560,7 +560,7 @@ const coreMediaSong: TypeSchema = {
     media_url: { type: "url", description: "Direct address of the media file itself: an episode's audio or video enclosure, a track's audio file, a film's stream. Distinct from url, which is the web page about the work." },
     mime_type: { type: "string", description: "MIME type of the resource at media_url, such as audio/mpeg or video/mp4. Describes what media_url points at, not what this item is." },
   },
-  display_hints: { icon: "audio-lines" },
+  display_hints: { icon: "lucide:audio-lines" },
   merge_policy: { fields: { body: "keep_both_copies", notes: "keep_both_copies" }, default: "last_writer_wins" },
 };
 
@@ -678,7 +678,7 @@ export const SHIPPED_TYPE_SHAPES = {
   "core.bookmark": {
     "display_hints": {
       "body_field": "body",
-      "icon": "bookmark",
+      "icon": "lucide:bookmark",
       "title_field": "title"
     },
     "fields": {
@@ -729,7 +729,7 @@ export const SHIPPED_TYPE_SHAPES = {
   "core.collection": {
     "display_hints": {
       "body_field": "description",
-      "icon": "layers",
+      "icon": "lucide:layers",
       "title_field": "title"
     },
     "fields": {
@@ -751,7 +751,7 @@ export const SHIPPED_TYPE_SHAPES = {
   },
   "core.entity": {
     "display_hints": {
-      "icon": "shapes",
+      "icon": "lucide:shapes",
       "title_field": "name"
     },
     "fields": {
@@ -794,7 +794,7 @@ export const SHIPPED_TYPE_SHAPES = {
   },
   "core.entity.person": {
     "display_hints": {
-      "icon": "user"
+      "icon": "lucide:user"
     },
     "fields": {
       "birthday": {
@@ -870,7 +870,7 @@ export const SHIPPED_TYPE_SHAPES = {
   },
   "core.entity.place": {
     "display_hints": {
-      "icon": "map-pin"
+      "icon": "lucide:map-pin"
     },
     "fields": {
       "altitude": {
@@ -942,7 +942,7 @@ export const SHIPPED_TYPE_SHAPES = {
   "core.event": {
     "display_hints": {
       "body_field": "description",
-      "icon": "calendar",
+      "icon": "lucide:calendar",
       "title_field": "title"
     },
     "fields": {
@@ -1021,7 +1021,7 @@ export const SHIPPED_TYPE_SHAPES = {
   },
   "core.file": {
     "display_hints": {
-      "icon": "file",
+      "icon": "lucide:file",
       "title_field": "title"
     },
     "fields": {
@@ -1072,7 +1072,7 @@ export const SHIPPED_TYPE_SHAPES = {
   },
   "core.file.audio": {
     "display_hints": {
-      "icon": "file-music"
+      "icon": "lucide:file-music"
     },
     "fields": {
       "author": {
@@ -1126,7 +1126,7 @@ export const SHIPPED_TYPE_SHAPES = {
   },
   "core.file.image": {
     "display_hints": {
-      "icon": "file-image"
+      "icon": "lucide:file-image"
     },
     "fields": {
       "altitude": {
@@ -1195,7 +1195,7 @@ export const SHIPPED_TYPE_SHAPES = {
   },
   "core.file.video": {
     "display_hints": {
-      "icon": "file-video-camera"
+      "icon": "lucide:file-video-camera"
     },
     "fields": {
       "altitude": {
@@ -1264,7 +1264,7 @@ export const SHIPPED_TYPE_SHAPES = {
   },
   "core.file.webpage": {
     "display_hints": {
-      "icon": "globe",
+      "icon": "lucide:globe",
       "title_field": "title"
     },
     "fields": {
@@ -1317,7 +1317,7 @@ export const SHIPPED_TYPE_SHAPES = {
   "core.highlight": {
     "display_hints": {
       "body_field": "note",
-      "icon": "highlighter",
+      "icon": "lucide:highlighter",
       "title_field": "text"
     },
     "fields": {
@@ -1368,7 +1368,7 @@ export const SHIPPED_TYPE_SHAPES = {
   "core.media": {
     "display_hints": {
       "body_field": "body",
-      "icon": "library-big",
+      "icon": "lucide:library-big",
       "title_field": "title"
     },
     "fields": {
@@ -1419,7 +1419,7 @@ export const SHIPPED_TYPE_SHAPES = {
   },
   "core.media.album": {
     "display_hints": {
-      "icon": "disc-3"
+      "icon": "lucide:disc-3"
     },
     "fields": {
       "author": {
@@ -1479,7 +1479,7 @@ export const SHIPPED_TYPE_SHAPES = {
   },
   "core.media.article": {
     "display_hints": {
-      "icon": "newspaper"
+      "icon": "lucide:newspaper"
     },
     "fields": {
       "author": {
@@ -1536,7 +1536,7 @@ export const SHIPPED_TYPE_SHAPES = {
   },
   "core.media.book": {
     "display_hints": {
-      "icon": "book-open"
+      "icon": "lucide:book-open"
     },
     "fields": {
       "author": {
@@ -1596,7 +1596,7 @@ export const SHIPPED_TYPE_SHAPES = {
   },
   "core.media.episode": {
     "display_hints": {
-      "icon": "circle-play"
+      "icon": "lucide:circle-play"
     },
     "fields": {
       "author": {
@@ -1672,7 +1672,7 @@ export const SHIPPED_TYPE_SHAPES = {
   },
   "core.media.film": {
     "display_hints": {
-      "icon": "film"
+      "icon": "lucide:film"
     },
     "fields": {
       "author": {
@@ -1738,7 +1738,7 @@ export const SHIPPED_TYPE_SHAPES = {
   },
   "core.media.series": {
     "display_hints": {
-      "icon": "tv"
+      "icon": "lucide:tv"
     },
     "fields": {
       "author": {
@@ -1810,7 +1810,7 @@ export const SHIPPED_TYPE_SHAPES = {
   },
   "core.media.song": {
     "display_hints": {
-      "icon": "audio-lines"
+      "icon": "lucide:audio-lines"
     },
     "fields": {
       "album": {
@@ -1880,7 +1880,7 @@ export const SHIPPED_TYPE_SHAPES = {
   "core.message": {
     "display_hints": {
       "body_field": "body",
-      "icon": "message-square"
+      "icon": "lucide:message-square"
     },
     "fields": {
       "body": {
@@ -1906,7 +1906,7 @@ export const SHIPPED_TYPE_SHAPES = {
   "core.note": {
     "display_hints": {
       "body_field": "body",
-      "icon": "sticky-note",
+      "icon": "lucide:sticky-note",
       "title_field": "title"
     },
     "fields": {
@@ -1936,7 +1936,7 @@ export const SHIPPED_TYPE_SHAPES = {
   "core.task": {
     "display_hints": {
       "body_field": "body",
-      "icon": "square-check-big",
+      "icon": "lucide:square-check-big",
       "title_field": "title"
     },
     "fields": {
