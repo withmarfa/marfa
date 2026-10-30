@@ -436,12 +436,19 @@ impl Core {
             .map(Core::swept)
     }
 
-    /// Takes what a process that ended part way left in the cache, for a
-    /// writer, sparing the partial files of attachments.
+    /// For a writer, lets go of old changes of removed edges and takes what
+    /// a process that ended part way left in the cache, sparing the partial
+    /// files of attachments.
     fn swept(self) -> Core {
-        if self.handle() == Handle::Writer
-            && let Some(cache) = &self.cache
-        {
+        if self.handle() != Handle::Writer {
+            return self;
+        }
+        // Left to a later open where it fails: it commits the floor with the
+        // rows it lets go, so a failed run leaves both as they were.
+        if let Ok(conn) = self.conn() {
+            let _ = store::prune_edge_changes(&conn, store::EDGE_CHANGES_KEPT);
+        }
+        if let Some(cache) = &self.cache {
             let attachments = self
                 .conn()
                 .ok()

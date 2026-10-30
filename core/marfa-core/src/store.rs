@@ -63,8 +63,8 @@ pub const META_STORE_ID: &str = "store_id";
 /// (`prune_edge_changes`).
 pub const META_EDGE_CHANGES_FLOOR: &str = "edge_changes_floor";
 /// How many of the latest changes `edge_changes` keeps whatever they name.
-/// Opening the store lets go of older rows of edges the copy no longer
-/// holds.
+/// The writer, as it opens the store, lets go of older rows of edges the
+/// copy no longer holds once there are more than twice this many.
 pub const EDGE_CHANGES_KEPT: usize = 10_000;
 pub const HYDRATE_IN_PROGRESS: &str = "in_progress";
 pub const SCHEMA_VERSION: &str = "0";
@@ -717,7 +717,7 @@ fn prepare(conn: &Connection) -> Result<(), CoreError> {
             &uuid::Uuid::now_v7().simple().to_string(),
         )?;
     }
-    prune_edge_changes(conn, EDGE_CHANGES_KEPT)
+    Ok(())
 }
 
 pub(crate) fn store_id(conn: &Connection) -> Result<String, CoreError> {
@@ -1112,22 +1112,32 @@ pub(crate) fn edge_changes_floor(conn: &Connection) -> Result<i64, CoreError> {
     }
 }
 
-/// Lets go of the rows of `edge_changes` that name an edge the copy no
-/// longer holds and are older than its latest `keep` changes, and raises
-/// the floor to the latest let go. A held edge keeps its row, so the table
-/// holds at most a row for each held edge and `keep` more. A cursor at or
-/// past the floor loses nothing, and one before it has seen more than
-/// `keep` changes since. The latest row always stays, since the triggers
-/// number the next change from it.
+/// Where `edge_changes` holds more than twice `keep` rows of edges the copy
+/// no longer holds, lets go of those older than its latest `keep` changes,
+/// and raises the floor to the latest let go. The slack makes this run about
+/// once in `keep` removals rather than on every open past the limit, since
+/// each run reads every held edge's row. A held edge keeps its row, so the
+/// table holds at most a row for each held edge and twice `keep` more. A
+/// cursor at or past the floor loses nothing, and one before it has seen at
+/// least `keep` changes since. The latest row always stays, since the
+/// triggers number the next change from it. Only the writer calls this: it
+/// writes, and a reading handle never does.
 pub(crate) fn prune_edge_changes(conn: &Connection, keep: usize) -> Result<(), CoreError> {
-    let keep = keep.max(1);
-    let rows: i64 = conn.query_row("SELECT count(*) FROM edge_changes", [], |row| row.get(0))?;
-    let held: i64 = conn.query_row("SELECT count(*) FROM edges", [], |row| row.get(0))?;
-    let keep = i64::try_from(keep).unwrap_or(i64::MAX);
-    if rows.saturating_sub(held) <= keep {
+    let keep = i64::try_from(keep.max(1)).unwrap_or(i64::MAX / 2);
+    let removed = |conn: &Connection| -> rusqlite::Result<i64> {
+        conn.query_row(
+            "SELECT (SELECT count(*) FROM edge_changes) - (SELECT count(*) FROM edges)",
+            [],
+            |row| row.get(0),
+        )
+    };
+    if removed(conn)? <= keep * 2 {
         return Ok(());
     }
-    let tx = conn.unchecked_transaction()?;
+    let tx = rusqlite::Transaction::new_unchecked(conn, rusqlite::TransactionBehavior::Immediate)?;
+    if removed(&tx)? <= keep * 2 {
+        return Ok(());
+    }
     let Some(oldest_kept) = tx
         .query_row(
             "SELECT seq FROM edge_changes ORDER BY seq DESC LIMIT 1 OFFSET ?1",

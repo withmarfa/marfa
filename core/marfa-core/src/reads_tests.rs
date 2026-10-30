@@ -550,26 +550,41 @@ fn changes_since_is_refused_part_way_through_a_hydration_as_every_read_of_edges_
     }
 }
 
+/// Adds `count` edges and removes them, in one transaction.
+fn remove_edges(core: &Core, count: usize) {
+    let mut conn = core.conn().unwrap();
+    let tx = conn.transaction().unwrap();
+    tx.execute(
+        "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < ?1)
+         INSERT INTO edges (id, source_id, target_id, edge_type, properties, version, created_at, updated_at)
+         SELECT 'gone-' || i, 'a', 'b', 'references', '{}', 1, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z' FROM n",
+        [i64::try_from(count).unwrap()],
+    )
+    .unwrap();
+    tx.execute("DELETE FROM edges", []).unwrap();
+    tx.commit().unwrap();
+}
+
+/// The rows of `edge_changes` and the floor.
+fn edge_changes(core: &Core) -> (usize, i64) {
+    let conn = core.conn().unwrap();
+    let rows: i64 = conn
+        .query_row("SELECT count(*) FROM edge_changes", [], |row| row.get(0))
+        .unwrap();
+    (
+        usize::try_from(rows).unwrap(),
+        store::edge_changes_floor(&conn).unwrap(),
+    )
+}
+
 #[test]
 fn a_cursor_from_before_the_removed_edges_an_open_lets_go_answers_everything() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("core.sqlite");
     let core = Core::open(&path, None).unwrap();
     let old = core.changes_since(None, 100).unwrap().cursor;
-    let made = store::EDGE_CHANGES_KEPT + 5;
-    {
-        let mut conn = core.conn().unwrap();
-        let tx = conn.transaction().unwrap();
-        tx.execute(
-            "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < ?1)
-             INSERT INTO edges (id, source_id, target_id, edge_type, properties, version, created_at, updated_at)
-             SELECT 'gone-' || i, 'a', 'b', 'references', '{}', 1, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z' FROM n",
-            [i64::try_from(made).unwrap()],
-        )
-        .unwrap();
-        tx.execute("DELETE FROM edges", []).unwrap();
-        tx.commit().unwrap();
-    }
+    let made = 2 * store::EDGE_CHANGES_KEPT + 1;
+    remove_edges(&core, made);
     // The witness: before the open lets them go, each removal is named.
     let named = core.changes_since(Some(&old), u32::MAX).unwrap();
     assert_eq!(named.removed_edges.len(), made);
@@ -577,15 +592,9 @@ fn a_cursor_from_before_the_removed_edges_an_open_lets_go_answers_everything() {
     drop(core);
 
     let reopened = Core::open(&path, None).unwrap();
-    let rows: i64 = reopened
-        .conn()
-        .unwrap()
-        .query_row("SELECT count(*) FROM edge_changes", [], |row| row.get(0))
-        .unwrap();
-    assert!(
-        rows <= i64::try_from(store::EDGE_CHANGES_KEPT).unwrap(),
-        "{rows} rows kept"
-    );
+    let (rows, floor) = edge_changes(&reopened);
+    assert_eq!(rows, store::EDGE_CHANGES_KEPT);
+    assert!(floor > 0, "the floor stayed at {floor}");
     assert!(
         reopened
             .changes_since(Some(&old), u32::MAX)
@@ -598,11 +607,49 @@ fn a_cursor_from_before_the_removed_edges_an_open_lets_go_answers_everything() {
 }
 
 #[test]
+fn a_writer_open_within_the_slack_lets_go_of_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("core.sqlite");
+    let core = Core::open(&path, None).unwrap();
+    remove_edges(&core, 2 * store::EDGE_CHANGES_KEPT);
+    drop(core);
+
+    let reopened = Core::open(&path, None).unwrap();
+    assert_eq!(reopened.handle(), crate::Handle::Writer);
+    assert_eq!(edge_changes(&reopened), (2 * store::EDGE_CHANGES_KEPT, 0));
+}
+
+#[test]
+fn a_reading_open_lets_go_of_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("core.sqlite");
+    let writer = Core::open(&path, None).unwrap();
+    let made = 2 * store::EDGE_CHANGES_KEPT + 1;
+    remove_edges(&writer, made);
+    let version = store::data_version(&writer.conn().unwrap()).unwrap();
+
+    let reader = Core::open(&path, None).unwrap();
+    assert_eq!(reader.handle(), crate::Handle::Reader);
+    assert_eq!(edge_changes(&reader), (made, 0));
+    assert_eq!(
+        store::data_version(&writer.conn().unwrap()).unwrap(),
+        version,
+        "the reading open wrote to the store"
+    );
+    drop(reader);
+    drop(writer);
+
+    // The witness: the writer's open lets the same rows go.
+    let reopened = Core::open(&path, None).unwrap();
+    assert_eq!(edge_changes(&reopened).0, store::EDGE_CHANGES_KEPT);
+}
+
+#[test]
 fn letting_go_of_removed_edges_keeps_the_held_ones_and_what_a_later_cursor_names() {
     let server = Scripted::start();
     let core = notes(&server);
     let old = core.changes_since(None, 100).unwrap().cursor;
-    for n in 0..4 {
+    for n in 0..6 {
         edge(&core, &format!("e{n}"), "a", "c", "references");
     }
     let remove = |id: &str| {
@@ -611,15 +658,19 @@ fn letting_go_of_removed_edges_keeps_the_held_ones_and_what_a_later_cursor_names
             .execute("DELETE FROM edges WHERE id = ?1", [id])
             .unwrap();
     };
-    remove("e0");
-    remove("e1");
+    for id in ["e0", "e1", "e2", "e3"] {
+        remove(id);
+    }
     let later = core.changes_since(None, 100).unwrap().cursor;
-    remove("e2");
-    remove("e3");
+    // Four removed rows, twice the two kept: within the slack.
+    store::prune_edge_changes(&core.conn().unwrap(), 2).unwrap();
+    assert_eq!(edge_changes(&core), (8, 0));
+    remove("e4");
+    remove("e5");
     // The witness: before the copy lets go, the old cursor names each.
     assert_eq!(
         core.changes_since(Some(&old), 100).unwrap().removed_edges,
-        ids(&["e0", "e1", "e2", "e3"])
+        ids(&["e0", "e1", "e2", "e3", "e4", "e5"])
     );
 
     store::prune_edge_changes(&core.conn().unwrap(), 2).unwrap();
@@ -633,11 +684,11 @@ fn letting_go_of_removed_edges_keeps_the_held_ones_and_what_a_later_cursor_names
         .unwrap()
         .collect::<rusqlite::Result<_>>()
         .unwrap();
-    assert_eq!(kept, ["ab", "ba", "e2", "e3"]);
+    assert_eq!(kept, ["ab", "ba", "e4", "e5"]);
     assert!(core.changes_since(Some(&old), 100).unwrap().everything);
     let named = core.changes_since(Some(&later), 100).unwrap();
     assert!(!named.everything);
-    assert_eq!(named.removed_edges, ids(&["e2", "e3"]));
+    assert_eq!(named.removed_edges, ids(&["e4", "e5"]));
 }
 
 #[test]

@@ -591,8 +591,9 @@ END;
 -- (`Core::changes_since`). `copy_changes` names an edge's ends, not the edge,
 -- and so cannot name an edge that has gone. A table of its own because a
 -- store already holds `copy_changes` in its present shape. One row an edge;
--- opening the store deletes the rows of edges it no longer holds past the
--- latest changes it keeps, and records where (`store::prune_edge_changes`).
+-- the writer, as it opens the store, deletes the rows of edges it no longer
+-- holds past the latest changes it keeps once there are twice that many, and
+-- records where (`store::prune_edge_changes`).
 CREATE TABLE IF NOT EXISTS edge_changes (
   edge_id TEXT PRIMARY KEY,
   seq INTEGER NOT NULL
