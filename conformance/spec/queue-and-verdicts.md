@@ -2230,7 +2230,7 @@ When a device judges an array property against a field of the held catalog, a de
 
 ### `queue-and-verdicts/check-status-word`
 
-If a caller queues an item create, update or keyed create that would leave the item's `status` field holding a value that is not a word the held catalog gives the item's type for that field, its own or inherited, and the write is a create that names the value, changes the held row's value, or moves the row to another type, then a device MUST refuse it in the `validation` class with the server's code `invalid_properties` and a message naming the property, changing neither the copy nor the queue and sending nothing.
+If a caller queues an item create, update or keyed create that would leave the item's status field holding a value that is not a word the held catalog gives the item's type for that field, its own or inherited, and the write is a create that names the value, changes the held row's value, or moves the row to another type, then a device MUST refuse it in the `validation` class with the server's code `invalid_properties` and a message naming the property, changing neither the copy nor the queue and sending nothing.
 
 **Reason:** the server refuses the same write (`types/status-write-refused`).
 
@@ -2238,7 +2238,7 @@ If a caller queues an item create, update or keyed create that would leave the i
 
 ### `queue-and-verdicts/check-status-held`
 
-If a row in the copy holds a `status` value that its type, as the held catalog declares it, does not declare, then a device MUST NOT refuse an update of the row for that value unless the update changes the field's value or moves the row to another type.
+If a row in the copy holds a value in its status field that its type, as the held catalog declares it, does not declare, then a device MUST NOT refuse an update of the row for that value unless the update changes the field's value or moves the row to another type.
 
 **Reason:** the server takes the same update (`types/status-word-held`), and a synced file sends every property back on any edit.
 
@@ -2246,7 +2246,7 @@ If a row in the copy holds a `status` value that its type, as the held catalog d
 
 ### `queue-and-verdicts/check-inherited-nearest`
 
-When a device judges a property its type inherits, a device MUST judge it as the nearest type in the chain that declares it declares it, and a `status` field with every word its chain declares (`types/status-inherit`).
+When a device judges a property its type inherits, a device MUST judge it as the nearest type in the chain that declares it declares it, and a status field with every word its chain declares (`types/status-inherit`).
 
 **Reason:** a subtype may redeclare an inherited field required (`types.md`), and a grandchild that declares nothing of its own takes that.
 

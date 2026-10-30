@@ -524,17 +524,17 @@ When a `filter` on `GET /items` or `GET /search` compares `created_at`, `updated
 
 ## The status group term
 
-A `status_group` term selects items by the group of the word their `status` field holds, as their own type resolves it (`types/status-groups`, `types/status-inherit`).
+A `status_group` term selects items by the group of the word their status field holds, as their own type resolves it (`types/status-groups`, `types/status-inherit`).
 
 ### `search-and-filters/status-group`
 
-When a `filter`, on a listing or in a view's `query`, holds `status_group eq "<group>"`, the server MUST select the items whose `status` field holds a word their type puts in that group.
+When a `filter`, on a listing or in a view's `query`, holds `status_group eq "<group>"`, the server MUST select the items whose status field holds a word their type puts in that group.
 
 **Tests:** `compliance/status-groups.test.ts › %s`, `› selects by group in a saved view`.
 
 ### `search-and-filters/status-group-neq`
 
-When a `filter` holds `status_group neq "<group>"`, the server MUST select the items whose `status` field holds a word their type puts in another group.
+When a `filter` holds `status_group neq "<group>"`, the server MUST select the items whose status field holds a word their type puts in another group.
 
 **Reason:** `status_group neq "completed" AND status_group neq "canceled"` then selects the open items of every type with a status field, and nothing else.
 
@@ -542,7 +542,7 @@ When a `filter` holds `status_group neq "<group>"`, the server MUST select the i
 
 ### `search-and-filters/status-group-none`
 
-When a `filter` holds `status_group not_exists`, the server MUST select the items whose type has no `status` field, those that hold no value in it, and those that hold a word their type does not declare.
+When a `filter` holds `status_group not_exists`, the server MUST select the items whose type has no status field, those that hold no value in it, and those that hold a word their type does not declare.
 
 **Reason:** such an item is in no group, so neither `eq` nor `neq` selects it (`types/status-word-held`).
 
@@ -550,7 +550,7 @@ When a `filter` holds `status_group not_exists`, the server MUST select the item
 
 ### `search-and-filters/status-group-exists`
 
-When a `filter` holds `status_group exists`, the server MUST select the items whose `status` field holds a word their type declares.
+When a `filter` holds `status_group exists`, the server MUST select the items whose status field holds a word their type declares.
 
 **Tests:** `compliance/status-groups.test.ts › %s`.
 

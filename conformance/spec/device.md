@@ -1694,7 +1694,7 @@ When a filter compares a text system field such as `source_id` with a number or 
 
 ### `device/filter-status-group`
 
-When a local list, a local search, a folder or a view names a `status_group` term, a device MUST select the rows whose `status` field holds a word that their type, as the held catalog resolves it with every word its chain declares, puts in the group named, as `search-and-filters/status-group`, `search-and-filters/status-group-neq`, `search-and-filters/status-group-exists` and `search-and-filters/status-group-none` say.
+When a local list, a local search, a folder or a view names a `status_group` term, a device MUST select the rows whose status field holds a word that their type, as the held catalog resolves it with every word its chain declares, puts in the group named, as `search-and-filters/status-group`, `search-and-filters/status-group-neq`, `search-and-filters/status-group-exists` and `search-and-filters/status-group-none` say.
 
 **Reason:** a working copy that read a subtype's word, or a word its type no longer declares, otherwise than the server would show different open work offline and online.
 
@@ -4410,7 +4410,7 @@ If a write names a type the copy was never told of, then a device MUST refuse it
 
 ### `device/declaration-refused`
 
-If an app declares a type whose identifier breaks the type grammar or uses a reserved root, that names a type Marfa ships, that has a field with no known type, that names a parent the copy does not know, that declares a `status` field with an empty `status_values` or with no words anywhere in its chain of declared and shipped types, or that the same declaration names already, then a device MUST refuse the declaration `invalid`.
+If an app declares a type whose identifier breaks the type grammar or uses a reserved root, that names a type Marfa ships, that has a field with no known type, that names a parent the copy does not know, that declares a status field with an empty `status_values` or with no words anywhere in its chain of declared and shipped types, or that the same declaration names already, then a device MUST refuse the declaration `invalid`.
 
 **Reason:** the server refuses such a status field when the type is registered (`types/status-refused`, `types/status-parent-wordless`), and a status field with no words takes no value.
 
