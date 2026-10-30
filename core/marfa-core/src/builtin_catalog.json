@@ -976,6 +976,12 @@
       }
      ]
     },
+    "rating": {
+     "type": "integer",
+     "description": "The owner's overall view of the work, from 1 (lowest) to 5 (highest)",
+     "minimum": 1,
+     "maximum": 5
+    },
     "notes": {
      "type": "string",
      "description": "Personal annotations"
@@ -1064,6 +1070,12 @@
        "group": "canceled"
       }
      ]
+    },
+    "rating": {
+     "type": "integer",
+     "description": "The owner's overall view of the work, from 1 (lowest) to 5 (highest)",
+     "minimum": 1,
+     "maximum": 5
     },
     "notes": {
      "type": "string",
@@ -1162,6 +1174,12 @@
        "group": "canceled"
       }
      ]
+    },
+    "rating": {
+     "type": "integer",
+     "description": "The owner's overall view of the work, from 1 (lowest) to 5 (highest)",
+     "minimum": 1,
+     "maximum": 5
     },
     "notes": {
      "type": "string",
@@ -1262,6 +1280,12 @@
       }
      ]
     },
+    "rating": {
+     "type": "integer",
+     "description": "The owner's overall view of the work, from 1 (lowest) to 5 (highest)",
+     "minimum": 1,
+     "maximum": 5
+    },
     "notes": {
      "type": "string",
      "description": "Personal annotations"
@@ -1360,6 +1384,12 @@
        "group": "canceled"
       }
      ]
+    },
+    "rating": {
+     "type": "integer",
+     "description": "The owner's overall view of the work, from 1 (lowest) to 5 (highest)",
+     "minimum": 1,
+     "maximum": 5
     },
     "notes": {
      "type": "string",
@@ -1479,6 +1509,12 @@
       }
      ]
     },
+    "rating": {
+     "type": "integer",
+     "description": "The owner's overall view of the work, from 1 (lowest) to 5 (highest)",
+     "minimum": 1,
+     "maximum": 5
+    },
     "notes": {
      "type": "string",
      "description": "Personal annotations"
@@ -1510,6 +1546,114 @@
    },
    "display_hints": {
     "icon": "lucide:film"
+   },
+   "merge_policy": {
+    "fields": {
+     "body": "keep_both_copies",
+     "notes": "keep_both_copies"
+    },
+    "default": "last_writer_wins"
+   }
+  },
+  {
+   "id": "core.media.game",
+   "parent": "core.media",
+   "label": "Game",
+   "description": "A video, board or card game. Inherits all core.media fields.",
+   "version": 0,
+   "fields": {
+    "title": {
+     "type": "string",
+     "description": "Name of the work",
+     "required": true
+    },
+    "body": {
+     "type": "string",
+     "description": "Text content or description"
+    },
+    "author": {
+     "type": "string",
+     "description": "Who created the work"
+    },
+    "url": {
+     "type": "url",
+     "description": "Web address"
+    },
+    "description": {
+     "type": "string",
+     "description": "Summary or blurb"
+    },
+    "publisher": {
+     "type": "string",
+     "description": "Who published the work"
+    },
+    "published_at": {
+     "type": "datetime",
+     "description": "When originally published or released"
+    },
+    "image_url": {
+     "type": "url",
+     "description": "Cover art, poster, or thumbnail"
+    },
+    "language": {
+     "type": "string",
+     "description": "BCP 47 language code",
+     "format": "bcp47"
+    },
+    "progress": {
+     "type": "status",
+     "description": "Where the owner is with the work: want to read, watch, listen to or play it, started, finished, or gave up",
+     "status_values": [
+      {
+       "value": "planned",
+       "group": "not_started"
+      },
+      {
+       "value": "started",
+       "group": "in_progress"
+      },
+      {
+       "value": "finished",
+       "group": "completed"
+      },
+      {
+       "value": "abandoned",
+       "group": "canceled"
+      }
+     ]
+    },
+    "rating": {
+     "type": "integer",
+     "description": "The owner's overall view of the work, from 1 (lowest) to 5 (highest)",
+     "minimum": 1,
+     "maximum": 5
+    },
+    "notes": {
+     "type": "string",
+     "description": "Personal annotations"
+    },
+    "thumbnail": {
+     "type": "thumbnail",
+     "description": "A small preview of the work, supplied by the writer"
+    },
+    "platforms": {
+     "type": "array",
+     "description": "What the game is played on, such as Nintendo Switch, PC or Tabletop",
+     "items_type": "string"
+    },
+    "min_players": {
+     "type": "integer",
+     "description": "Fewest players the game supports",
+     "minimum": 1
+    },
+    "max_players": {
+     "type": "integer",
+     "description": "Most players the game supports",
+     "minimum": 1
+    }
+   },
+   "display_hints": {
+    "icon": "lucide:gamepad-2"
    },
    "merge_policy": {
     "fields": {
@@ -1585,6 +1729,12 @@
        "group": "canceled"
       }
      ]
+    },
+    "rating": {
+     "type": "integer",
+     "description": "The owner's overall view of the work, from 1 (lowest) to 5 (highest)",
+     "minimum": 1,
+     "maximum": 5
     },
     "notes": {
      "type": "string",
@@ -1695,6 +1845,12 @@
        "group": "canceled"
       }
      ]
+    },
+    "rating": {
+     "type": "integer",
+     "description": "The owner's overall view of the work, from 1 (lowest) to 5 (highest)",
+     "minimum": 1,
+     "maximum": 5
     },
     "notes": {
      "type": "string",

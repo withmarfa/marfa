@@ -1401,7 +1401,7 @@ export const CONSENT_SCOPE_DESCRIPTIONS: Record<string, string> = {
   // The same defect `core.entity` carried, on the surface that has no second
   // line to soften it. "Media: books, films, music, podcasts." named four
   // kinds a bare `core.media` grant reaches none of: the registry holds
-  // seven subtypes, each separately requestable with a scope of its own, and
+  // eight subtypes, each separately requestable with a scope of its own, and
   // `grantCoversScope` answers false for every one of them. So the device
   // screen, which prints this sentence and nothing else, described the grant
   // by listing what it does not include.
@@ -1411,7 +1411,7 @@ export const CONSENT_SCOPE_DESCRIPTIONS: Record<string, string> = {
   // sentence like "Media content" could not be checked against anything and
   // so could never be found wrong again, which is a worse place to end up
   // than the wrong list. This one is checkable against the registry, and it
-  // stays true when an eighth subtype is registered, because it names the
+  // stays true when a ninth subtype is registered, because it names the
   // relationship instead of the members.
   //
   // It also names no subtype, not even in the negative. "Media that is not a
@@ -1425,6 +1425,7 @@ export const CONSENT_SCOPE_DESCRIPTIONS: Record<string, string> = {
   "core.media.book": "Books.",
   "core.media.episode": "Episodes of a series.",
   "core.media.film": "Films.",
+  "core.media.game": "Video, board and card games.",
   "core.media.series": "Ongoing series.",
   "core.media.song": "Songs.",
 

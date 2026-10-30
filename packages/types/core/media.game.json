@@ -1,0 +1,28 @@
+{
+  "id": "core.media.game",
+  "parent": "core.media",
+  "label": "Game",
+  "description": "A video, board or card game. Inherits all core.media fields.",
+  "version": 0,
+  "fields": {
+    "platforms": {
+      "type": "array",
+      "items_type": "string",
+      "description": "What the game is played on, such as Nintendo Switch, PC or Tabletop"
+    },
+    "min_players": {
+      "type": "integer",
+      "description": "Fewest players the game supports",
+      "minimum": 1
+    },
+    "max_players": {
+      "type": "integer",
+      "description": "Most players the game supports",
+      "minimum": 1
+    }
+  },
+  "required": [],
+  "display_hints": {
+    "icon": "lucide:gamepad-2"
+  }
+}

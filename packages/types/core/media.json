@@ -54,6 +54,12 @@
         { "value": "abandoned", "group": "canceled" }
       ]
     },
+    "rating": {
+      "type": "integer",
+      "description": "The owner's overall view of the work, from 1 (lowest) to 5 (highest)",
+      "minimum": 1,
+      "maximum": 5
+    },
     "notes": {
       "type": "string",
       "description": "Personal annotations"

@@ -105,3 +105,62 @@ pub(crate) fn searched_field_names() -> Result<Vec<String>, CoreError> {
 pub(crate) fn ships(id: &str) -> Result<bool, CoreError> {
     Ok(catalog()?.types.iter().any(|shipped| shipped.id == id))
 }
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+
+    use serde_json::{Map, Value, json};
+
+    use super::catalog;
+
+    #[test]
+    fn the_shipped_game_and_rating_are_judged_as_the_server_judges_them() {
+        let shipped = catalog().unwrap();
+        let game = shipped
+            .types
+            .iter()
+            .find(|t| t.id == "core.media.game")
+            .unwrap();
+        let fields: BTreeMap<&str, &Value> = game.rest["fields"]
+            .as_object()
+            .unwrap()
+            .iter()
+            .map(|(name, definition)| (name.as_str(), definition))
+            .collect();
+        let judged = |properties: Value| {
+            let Value::Object(properties): Value = properties else {
+                unreachable!()
+            };
+            crate::validation::properties(&fields, &properties, true)
+                .err()
+                .map(|e| e.to_string())
+        };
+        let title = |extra: Value| {
+            let mut properties = Map::from_iter([("title".to_string(), json!("A game"))]);
+            properties.extend(extra.as_object().unwrap().clone());
+            Value::Object(properties)
+        };
+        assert_eq!(
+            judged(title(
+                json!({"platforms": ["PC", "Tabletop"], "min_players": 1, "max_players": 4, "rating": 5})
+            )),
+            None
+        );
+        for bad in [
+            json!({"rating": 0}),
+            json!({"rating": 6}),
+            json!({"rating": 3.5}),
+            json!({"min_players": 0}),
+            json!({"max_players": -1}),
+            json!({"platforms": ["PC", 1]}),
+        ] {
+            let name = bad.as_object().unwrap().keys().next().unwrap().clone();
+            let refusal = judged(title(bad.clone()));
+            assert!(
+                refusal.is_some_and(|message| message.contains(&name)),
+                "{bad}"
+            );
+        }
+    }
+}
