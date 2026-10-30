@@ -616,10 +616,9 @@ describe("edges CRUD", () => {
     );
   });
 
-  for (const door of ["POST /items", "POST /items/bulk"] as const) {
-    it(`${door} landing on an item by its natural key keeps the edge to a target it still lists, and announces only what it changes`, async ({
-      signal,
-    }) => {
+  it.each(["POST /items", "POST /items/bulk"])(
+    "%s landing on an item by its natural key keeps the edge to a target it still lists, and announces only what it changes",
+    async (door) => {
       const [stays, dropped, added] = await Promise.all(
         [1, 2, 3].map(() => makeContainer()),
       );
@@ -665,7 +664,6 @@ describe("edges CRUD", () => {
           stream,
           (events) => events.some((e) => e.event === "stream_live"),
           "stream readiness",
-          signal,
         );
         expect(await send([stays!, dropped!])).toBe(itemId);
         expect((await client.getEdge(kept.id)).data.edge).toEqual(kept);
@@ -683,7 +681,6 @@ describe("edges CRUD", () => {
                   added,
             ),
           "the witness write's edge.created",
-          signal,
         );
         expect(
           events
@@ -705,6 +702,6 @@ describe("edges CRUD", () => {
       expect((await edgesOf()).map((e) => e.target_id).sort()).toEqual(
         [stays!, added!].sort(),
       );
-    });
-  }
+    },
+  );
 });
