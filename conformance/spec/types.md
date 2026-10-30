@@ -507,7 +507,7 @@ If a type would declare a word that a type in its chain already gives the same `
 
 ### `types/status-parent-wordless`
 
-If a change to a type would leave a type inheriting from it that declares a `status` field without `status_values` with no word for that field in its chain, by removing the field or by giving it another kind, then the server MUST answer `400 inheritance_violation` naming the field.
+If a change to a type would leave no word in the chain of a type below it that declares a `status` field without `status_values`, by removing the field or by giving it another kind, then the server MUST answer `400 inheritance_violation` naming the field.
 
 **Reason:** the subtype's declaration was taken because its chain gave the words (`types/child-adds`), and a status field with no words takes no value.
 
