@@ -789,7 +789,7 @@ impl Core {
     /// credential or the reach by the server still ends a stale copy,
     /// keeping the queue (`device/refill-in-place-only-server-ends`), and
     /// can also carry `reach_changed`: the copy's `hydration` then reads
-    /// `Expired`, where a refused fill leaves it `Stale`.
+    /// `Expired`, where a refused fill leaves a stale copy `Stale`.
     pub fn hydrate_in_place_only(
         &self,
         types: &[String],

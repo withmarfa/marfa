@@ -2250,7 +2250,7 @@ impl Core {
     /// refuses the credential or the reach, the stale copy still ends,
     /// keeping its queue, which can also carry `reach_changed`: read
     /// `status().hydration` before offering to keep the copy stale, since a refused
-    /// fill leaves it `stale` and an ended copy is `expired`.
+    /// fill leaves a stale copy `stale` and an ended copy is `expired`.
     #[uniffi::method(default(in_place_only = false))]
     pub fn hydrate_with(
         &self,

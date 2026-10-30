@@ -2554,7 +2554,7 @@ marfa device hydrate [OPTIONS] --types <TYPE> --tier <TIER>
 | `--types <TYPE>` | Comma-separated type identifiers, such as core.note,core.file, or `*` alone for every type but `system.*`, hydrated in one pass without reading the catalog first. |
 | `--tier <TIER>` | The tier to hold the slice at, or `all` for both. One of `library`, `feed`, `all`. |
 | `--edge-type <TYPE>` | An edge type to hold whole: every edge of it the key reads, whichever ends the copy holds. Repeatable. |
-| `--in-place-only` | Fill only a copy whose cursor aged out, and only in place. Where the instance, the key's reach or the slice has changed, the server was restored to an earlier point, or the copy is not waiting to be filled again, the hydration is refused copy_expired with the reason before it changes anything, and the copy, its queue and its files stay as they were. Where the server refuses the key or its reach, the stale copy still ends, keeping the queue: `device status` then shows its hydration as expired, where a refused fill leaves it stale. |
+| `--in-place-only` | Fill only a copy whose cursor aged out, and only in place. Where the instance, the key's reach or the slice has changed, the server was restored to an earlier point, or the copy is not waiting to be filled again, the hydration is refused copy_expired with the reason before it changes anything, and the copy, its queue and its files stay as they were. Where the server refuses the key or its reach, the stale copy still ends, keeping the queue: `device status` then shows its hydration as expired, where a refused fill leaves a stale copy stale. |
 
 Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 

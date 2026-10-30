@@ -78,7 +78,7 @@ pub enum DeviceCommand {
         /// copy, its queue and its files stay as they were. Where the
         /// server refuses the key or its reach, the stale copy still ends,
         /// keeping the queue: `device status` then shows its hydration as
-        /// expired, where a refused fill leaves it stale.
+        /// expired, where a refused fill leaves a stale copy stale.
         #[arg(long)]
         in_place_only: bool,
     },
