@@ -57,6 +57,7 @@ describe("the page bound", () => {
     const [hub, ...others] = (
       (await seeded.json()) as { results: { id: string }[] }
     ).results.map((row) => row.id);
+    if (hub === undefined) throw new Error("the bulk write made no item");
     for (const edges of [
       others.map((id) => ({ source_id: hub, target_id: id })),
       others.map((id) => ({ source_id: id, target_id: hub })),
