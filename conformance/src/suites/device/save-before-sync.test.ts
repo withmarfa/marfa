@@ -228,7 +228,7 @@ describe("a copy no server has been named for", () => {
     ).toBe(true);
   });
 
-  it("refuses a declaration that names a type of Marfa's, one it cannot read, or a parent it does not know", async () => {
+  it("refuses a declaration that names a type of Marfa's, one it cannot read, a parent it does not know, or one type twice", async () => {
     const device = await offline("save-declare-refused");
     for (const definition of [
       { id: "core.note", fields: {} },
@@ -243,6 +243,11 @@ describe("a copy no server has been named for", () => {
         `${JSON.stringify(definition)} was declared`,
       ).toBe("invalid");
     }
+    const twice = await device.declareTypes([RECIPE, RECIPE]);
+    expect(
+      twice.ok ? "declared" : twice.refusal.code,
+      "a declaration naming one type twice was declared",
+    ).toBe("invalid");
     expect(value(await device.declaredTypes())).toEqual([]);
     // The witness: a well-formed one is taken.
     value(await device.declareTypes([RECIPE]));
