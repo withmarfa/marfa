@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { v7 as uuidv7 } from "uuid";
 import { MarfaClient } from "../../client/api.js";
 import type { TestContext } from "../../client/types.js";
 import {
@@ -768,7 +769,7 @@ describe("compression", () => {
     expect(listing.headers.get("content-encoding")).toBe("gzip");
     expect(Array.isArray((await listing.json()).data)).toBe(true);
 
-    const refused = await fetch(`${apiUrl}/items/${crypto.randomUUID()}`, {
+    const refused = await fetch(`${apiUrl}/items/${uuidv7()}`, {
       headers: auth,
     });
     expect(refused.status).toBe(404);
@@ -802,10 +803,13 @@ describe("compression", () => {
     expect(unsigned.headers.get("content-encoding")).toBeNull();
 
     // An owner's browser session, which a page on another site can make the
-    // browser send with text of that page's choosing.
-    const asOwner = await getOwnerClient().listTypes();
-    expect(asOwner.status).toBe(200);
-    expect(asOwner.headers.get("content-encoding")).toBeNull();
+    // browser send with text of that page's choosing, on a door it reaches.
+    const keysAsKey = await getManagementClient().listKeys();
+    expect(keysAsKey.status).toBe(200);
+    expect(keysAsKey.headers.get("content-encoding")).toBe("gzip");
+    const keysAsOwner = await getOwnerClient().listKeys();
+    expect(keysAsOwner.status).toBe(200);
+    expect(keysAsOwner.headers.get("content-encoding")).toBeNull();
   });
 
   it("sends an event stream uncompressed to a request that accepts gzip", async () => {
