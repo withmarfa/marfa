@@ -698,6 +698,20 @@ If a listing a hydration walks answers a `next_cursor` the hydration has already
 
 **Tests:** `device/hydration.test.ts › expires the copy when a listing hands back a cursor it already read`.
 
+### `device/hydrate-accepts-gzip`
+
+When a device asks for a page of a listing a hydration walks, a device MUST send an `Accept-Encoding` header that accepts `gzip`.
+
+**Reason:** the server compresses a JSON answer only for a request that accepts it (`instance/gzip-json`), and over a slow link a hydration's time is mostly its pages' bytes.
+
+**Tests:** `device/hydration.test.ts › says it accepts gzip for each listing page and takes the rows of one sent compressed`.
+
+### `device/hydrate-reads-gzip`
+
+When a page of a listing a hydration walks arrives with `Content-Encoding: gzip`, a device MUST take the rows the page holds once decompressed.
+
+**Tests:** `device/hydration.test.ts › says it accepts gzip for each listing page and takes the rows of one sent compressed`.
+
 ### `device/hydrate-replays`
 
 When a device has read a hydration's pages, a device MUST apply the events written since the head it read before it reports the hydration complete.
