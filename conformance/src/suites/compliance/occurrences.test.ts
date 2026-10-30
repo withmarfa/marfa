@@ -228,7 +228,7 @@ describe("occurrences", () => {
       const r = await client.listOccurrences({ from, to });
       expect(r.status, named).toBe(400);
       expect(r.error?.error.code, named).toBe("validation_error");
-      expect(r.error?.error.details, named).toHaveProperty(named);
+      expect(r.error?.error.details, named).toMatchObject({ field: named });
     }
   });
 

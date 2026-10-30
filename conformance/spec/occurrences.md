@@ -40,15 +40,15 @@ If the `to` of `GET /occurrences` is not after its `from`, then the server MUST 
 
 ### `occurrences/window-instants`
 
-The server MUST read each bound of a window as the instant it names, spelled in UTC, with an offset or as a date with no time, which is its midnight in UTC, and answer the window in UTC.
+The server MUST read each bound of a window as the instant it names, spelled in UTC, with an offset, as a date-time with no zone, which is read as UTC, or as a date with no time, which is its midnight in UTC, and answer the window in UTC, whatever time zone the server's host is set to.
 
-**Tests:** `compliance/occurrences.test.ts › reads each bound of the window in any ISO 8601 spelling and answers the window in UTC`.
+**Tests:** `compliance/occurrences.test.ts › reads each bound of the window in any ISO 8601 spelling and answers the window in UTC`, `compliance/occurrences-window-bounds.test.ts › reads a zone-less bound as UTC under a host zone that is not UTC`.
 
 ### `occurrences/window-unreadable`
 
-If a bound of the window is not a timestamp, then the server MUST answer `400 validation_error` naming the bound in `details`.
+If a bound of the window is not a timestamp, then the server MUST answer `400 validation_error` naming the bound in `details.field`. A string that is not in ISO 8601 form and a date that does not exist, such as 30 February, are not timestamps.
 
-**Tests:** `compliance/occurrences.test.ts › refuses a bound that is no timestamp, naming which`.
+**Tests:** `compliance/occurrences.test.ts › refuses a bound that is no timestamp, naming which`, `compliance/occurrences-window-bounds.test.ts › refuses an impossible date and a string that is not ISO 8601, naming the bound`.
 
 ### `occurrences/no-credential`
 
