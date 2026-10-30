@@ -684,7 +684,9 @@ function judgeResult(
       Object.entries(result).filter(([key]) => Object.hasOwn(fields, key)),
     );
   }
-  const validation = validateProperties(resultingType, result);
+  const validation = validateProperties(resultingType, result, {
+    written: input.properties ?? {},
+  });
   if (validation.success) return result;
   const detail = validation.errors
     .map((e) => `${e.field}: ${e.message}`)
