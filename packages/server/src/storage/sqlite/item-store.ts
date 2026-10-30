@@ -1895,15 +1895,23 @@ export class SqliteItemStore implements ItemStore {
               ancestorFields,
             );
           }
-          // The copy is a new item, so every word it holds is judged as a
-          // create's would be, and refusing it refuses the whole write.
+          // The copy is a new item, so a status word it holds that the write
+          // changed is judged as a create's would be, and refusing it refuses
+          // the whole write. A stored word the write leaves alone is kept.
           const siblingProperties = conflictedSiblingProperties({
             clientProperties: clientProps,
             currentProperties: currentProps,
             keepBothFields: plan.keepBothFields,
             clearedProperties,
           });
-          const errors = statusIssues(row.type, siblingProperties);
+          const errors = statusIssues(
+            row.type,
+            Object.fromEntries(
+              Object.entries(siblingProperties).filter(
+                ([name, value]) => !Object.is(value, currentProps[name]),
+              ),
+            ),
+          );
           if (errors.length > 0) {
             throw new MarfaError(
               ErrorCode.INVALID_PROPERTIES,

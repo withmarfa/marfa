@@ -523,17 +523,17 @@ When `GET /types` lists a type, the server MUST answer its `status` field with t
 
 ### `types/status-write-refused`
 
-If a create, an update, an upsert or an entry of a bulk write would leave an item's `status` field holding a value that is not a word the item's type gives the field, its own or inherited, and the write is a create that names the value, changes the stored value, or moves the item to another type, then the server MUST answer `400 invalid_properties` with `details.errors` naming the field.
+If a create, an update, an upsert or an entry of a bulk write would leave an item, or a conflicted copy it makes, holding a `status` value that is not a word the item's type gives the field, its own or inherited, and the write is a create that names the value, changes the stored value, or moves the item to another type, then the server MUST answer `400 invalid_properties` with `details.errors` naming the field.
 
-**Tests:** `compliance/status-groups.test.ts › refuses a word the type does not declare, naming the field`, `› takes a subtype's word on its own items and refuses it on the parent's`, `› refuses an undeclared word in a bulk entry, an upsert by natural key and a bulk upsert`, `› refuses a move into a type that does not declare the item's word, and keeps the item`, `› refuses a stale write whose conflicted copy would hold an undeclared word, writing nothing`.
+**Tests:** `compliance/status-groups.test.ts › refuses a word the type does not declare, naming the field`, `› takes a subtype's word on its own items and refuses it on the parent's`, `› refuses an undeclared word in a bulk entry, an upsert by natural key and a bulk upsert`, `› refuses a move into a type that does not declare the item's word, and keeps the item`, `› refuses a stale write whose conflicted copy would hold an undeclared word, writing nothing`, `› makes the copy when the stale write leaves an undeclared stored word alone`.
 
 ### `types/status-word-held`
 
-If an item holds a `status` value that its type no longer declares, then the server MUST NOT refuse an update of the item for that value unless the update changes the field's value, moves the item to another type, or makes a conflicted copy that would hold the value.
+If an item holds a `status` value that its type no longer declares, then the server MUST NOT refuse an update of the item for that value unless the update changes the field's value or moves the item to another type.
 
-**Reason:** a type can stop declaring a word while its items still hold it, and an edit to an item's title is not the write that has to move it to a word the type declares. A synced file and a whole-properties write send every property back, the stored word among them, so naming the field unchanged is not a change. A conflicted copy is a new item, so it is a create that names the value (`types/status-write-refused`). The value is in no group (`search-and-filters/status-group-none`).
+**Reason:** a type can stop declaring a word while its items still hold it, and an edit to an item's title is not the write that has to move it to a word the type declares. A synced file and a whole-properties write send every property back, the stored word among them, so naming the field unchanged is not a change. A conflicted copy is a new item, so a value the stale write changed is judged as a create's is (`types/status-write-refused`), and a stored value the write leaves alone is kept in the copy. The value is in no group (`search-and-filters/status-group-none`).
 
-**Tests:** `compliance/status-groups.test.ts › leaves a stored word the type no longer declares until a write changes it`, `› refuses a move into a type that does not declare the item's word, and keeps the item`.
+**Tests:** `compliance/status-groups.test.ts › leaves a stored word the type no longer declares until a write changes it`, `› refuses a move into a type that does not declare the item's word, and keeps the item`, `› makes the copy when the stale write leaves an undeclared stored word alone`.
 
 ## Thumbnails
 

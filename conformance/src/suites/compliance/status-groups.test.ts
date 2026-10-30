@@ -591,6 +591,64 @@ describe("a conflicted copy of a status field", () => {
     const copy = await client.getItem(String(copyId));
     expect(copy.data.item.properties.stage).toBe("done");
   });
+
+  it("makes the copy when the stale write leaves an undeclared stored word alone", async () => {
+    const type = nextId();
+    const fields = {
+      title: { type: "string" },
+      body: { type: "string" },
+      stage: {
+        type: "status",
+        status_values: [...WORDS, { value: "waiting", group: "not_started" }],
+      },
+    };
+    await register({
+      id: type,
+      fields,
+      merge_policy: { fields: { body: "keep_both_copies" } },
+    });
+    const created = await create(type, {
+      title: "Held",
+      body: "base",
+      stage: "waiting",
+    });
+    expect(created.status).toBe(201);
+    const { id, version } = created.data.item;
+
+    const narrowed = await client.replaceType(type, {
+      id: type,
+      fields: { ...fields, stage: { type: "status", status_values: WORDS } },
+      merge_policy: { fields: { body: "keep_both_copies" } },
+    });
+    expect(narrowed.status, JSON.stringify(narrowed.error)).toBe(200);
+
+    const moved = await client.updateItem(id, {
+      properties: { body: "first writer" },
+      version,
+    });
+    expect(moved.status, JSON.stringify(moved.error)).toBe(200);
+
+    const stale = await client.rawRequest<{
+      conflict_resolution?: { conflicted_copy_id?: string };
+    }>(`/items/${id}?conflict=auto`, {
+      method: "PATCH",
+      body: { properties: { body: "second writer" }, version },
+    });
+    expect(stale.status, JSON.stringify(stale.data)).toBe(200);
+    const copyId = stale.data.conflict_resolution?.conflicted_copy_id;
+    expect(copyId, "no copy was written").toBeTruthy();
+    trackItem(ctx, String(copyId));
+    const copy = await client.getItem(String(copyId));
+    expect(copy.data.item.properties).toMatchObject({
+      body: "second writer",
+      stage: "waiting",
+    });
+    const kept = await client.getItem(id);
+    expect(kept.data.item.properties).toMatchObject({
+      body: "first writer",
+      stage: "waiting",
+    });
+  });
 });
 
 describe("filtering by status_group", () => {
