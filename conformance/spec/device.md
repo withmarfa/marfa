@@ -1390,7 +1390,7 @@ If a local list or a local search names a filter that the server's listing gramm
 
 **Reason:** a filter a device ignored would answer every row, which reads as a matched filter and is the hardest wrong answer to notice.
 
-**Tests:** `device/local-refusals.test.ts › refuses a list filter the grammar refuses, as the server does`, `› refuses a search filter the grammar refuses, as the server does`, `› refuses a search filter the grammar refuses on a search with no words`, `device/fidelity.test.ts › answers each filter expression with the ids the server answers`.
+**Tests:** `device/local-refusals.test.ts › refuses a list filter the grammar refuses, as the server does`, `› refuses a search filter the grammar refuses, as the server does`, `› refuses a search filter the grammar refuses on a search with no words`, `device/fidelity.test.ts › answers each filter expression with the ids the server answers`, `device/status-groups.test.ts › answers status_group by each type's own words, and takes only a group`.
 
 ### `device/filter-limits-answered`
 
@@ -1691,6 +1691,14 @@ When a filter bounds a property by a number, a device MUST compare the property 
 When a filter compares a text system field such as `source_id` with a number or a boolean, a device MUST match the text the server matches, so `5.0` matches `eq 5` and `5` does not, and `1.0` matches `eq true`.
 
 **Tests:** `device/fidelity.test.ts › answers each filter expression with the ids the server answers`.
+
+### `device/filter-status-group`
+
+When a local list, a local search, a folder or a view names a `status_group` term, a device MUST select the rows whose `status` field holds a word that their type, as the held catalog resolves it with every word its chain declares, puts in the group named, as `search-and-filters/status-group`, `search-and-filters/status-group-neq`, `search-and-filters/status-group-exists` and `search-and-filters/status-group-none` say.
+
+**Reason:** a working copy that read a subtype's word, or a word its type no longer declares, otherwise than the server would show different open work offline and online.
+
+**Tests:** `device/status-groups.test.ts › answers status_group by each type's own words, and takes only a group`.
 
 ### `device/filter-property-kind`
 

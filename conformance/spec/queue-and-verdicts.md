@@ -2228,9 +2228,25 @@ When a device judges an array property against a field of the held catalog, a de
 
 **Tests:** `device/property-validation.test.ts › refuses missing and invalid fields atomically and accepts their boundary neighbours`, `device/property-validation-live.test.ts › matches a real server's field decisions and keeps queued writes across a catalog change`.
 
+### `queue-and-verdicts/check-status-word`
+
+If a caller queues an item create or update whose properties set a `status` field to a value that is not a word the held catalog gives the item's type for that field, its own or inherited, then a device MUST refuse it in the `validation` class with the server's code `invalid_properties` and a message naming the property, changing neither the copy nor the queue and sending nothing.
+
+**Reason:** the server refuses the same write (`types/status-write-refused`).
+
+**Tests:** `device/status-groups.test.ts › refuses a write that sets a status word the type does not declare, and not one that leaves a stored word alone`.
+
+### `queue-and-verdicts/check-status-held`
+
+If a row in the copy holds a `status` value that its type, as the held catalog declares it, does not declare, then a device MUST NOT refuse an update of the row for that value unless the update's properties name the field.
+
+**Reason:** the server takes the same update (`types/status-word-held`).
+
+**Tests:** `device/status-groups.test.ts › refuses a write that sets a status word the type does not declare, and not one that leaves a stored word alone`.
+
 ### `queue-and-verdicts/check-inherited-nearest`
 
-When a device judges a property its type inherits, a device MUST judge it as the nearest type in the chain that declares it declares it.
+When a device judges a property its type inherits, a device MUST judge it as the nearest type in the chain that declares it declares it, and a `status` field with every word its chain declares (`types/status-inherit`).
 
 **Reason:** a subtype may redeclare an inherited field required (`types.md`), and a grandchild that declares nothing of its own takes that.
 
