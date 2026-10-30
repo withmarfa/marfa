@@ -103,9 +103,13 @@ export type FieldType =
   | "date"
   | "datetime"
   | "enum"
+  | "status"
   | "array"
   | "object"
   | "thumbnail";
+
+/** The four fixed groups every status word belongs to. */
+export type StatusGroup = "not_started" | "in_progress" | "completed" | "canceled";
 
 export interface FieldDefinition {
   type: FieldType;
@@ -115,6 +119,8 @@ export interface FieldDefinition {
   searchable?: boolean;
   /** Required on an `enum` field: the closed set of accepted values. */
   enum_values?: string[];
+  /** Required on a `status` field: its words, each in one group. */
+  status_values?: { value: string; group: StatusGroup }[];
   /** Required on an `array` field: names the element type. */
   items_type?: FieldType;
   maxLength?: number;

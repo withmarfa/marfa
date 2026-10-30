@@ -658,3 +658,50 @@ describe("parseFilter", () => {
     });
   });
 });
+
+describe("status_group", () => {
+  it.each(["not_started", "in_progress", "completed", "canceled"])(
+    "parses eq %s",
+    (group) => {
+      expect(parseFilter(`status_group eq "${group}"`)).toEqual<FilterExpression>(
+        {
+          conditions: [
+            { field: { kind: "status_group" }, op: "eq", value: group },
+          ],
+          logical: "AND",
+        },
+      );
+    },
+  );
+
+  it("parses neq, exists and not_exists", () => {
+    const result = parseFilter(
+      'status_group neq "completed" AND status_group exists AND status_group neq "canceled"',
+    );
+    expect(result.conditions.map((c) => c.op)).toEqual([
+      "neq",
+      "exists",
+      "neq",
+    ]);
+    expect(parseFilter("status_group not_exists").conditions[0]).toMatchObject(
+      { field: { kind: "status_group" }, op: "not_exists" },
+    );
+  });
+
+  it.each(['status_group eq "done"', 'status_group eq "pending"', "status_group eq 3"])(
+    "refuses a value that is not a group: %s",
+    (filter) => {
+      expect(() => parseFilter(filter)).toThrow(/status group/i);
+    },
+  );
+
+  it.each(["contains", "gt", "starts_with"])("refuses %s", (op) => {
+    expect(() => parseFilter(`status_group ${op} "completed"`)).toThrow(
+      MarfaError,
+    );
+  });
+
+  it("refuses a null comparison", () => {
+    expect(() => parseFilter("status_group eq null")).toThrow(/not_exists/);
+  });
+});

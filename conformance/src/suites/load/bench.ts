@@ -175,7 +175,7 @@ function propertiesFor(
       return {
         title: corpus.title(),
         description: corpus.sentence() + suffix,
-        status: "pending",
+        status: "not_started",
         priority: ["low", "medium", "high"][index % 3],
       };
     case "core.highlight": {

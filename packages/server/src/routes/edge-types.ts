@@ -65,11 +65,11 @@ const TypeConstraintSchema = z
 /** Nothing reads a thumbnail from an edge. */
 const EdgePropertyTypeSchema = z
   .string()
-  .refine((type) => type !== "thumbnail", {
-    message: "An edge never carries a thumbnail",
+  .refine((type) => type !== "thumbnail" && type !== "status", {
+    message: "An edge never carries a thumbnail or a status",
   })
   .describe(
-    "The property's type: one of the field types a type's `fields` take, except `thumbnail`.",
+    "The property's type: one of the field types a type's `fields` take, except `thumbnail` and `status`.",
   );
 
 /** Declared so the format that stands for a thumbnail on a type's field is

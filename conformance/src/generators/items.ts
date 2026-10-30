@@ -85,7 +85,7 @@ export function createTask(
     properties: {
       title: "Review pull request",
       description: "Check the conformance suite changes",
-      status: "pending",
+      status: "not_started",
       priority: "medium",
     },
     ...overrides,

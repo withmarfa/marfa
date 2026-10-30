@@ -15,6 +15,7 @@ import {
   classifyNamespace,
   TYPE_ROLES,
   FIELD_TYPES,
+  STATUS_GROUPS,
   FIELD_FORMATS,
   malformedTypeIdentifier,
   labelledTypeDefinition,
@@ -145,7 +146,7 @@ const FieldDefinitionSchema = z
     type: z
       .enum(FIELD_TYPES as unknown as [string, ...string[]])
       .describe(
-        "The field's type. A `thumbnail` holds an image of at most 16 KiB, as a base64 `data:` URI of type `image/png`, `image/jpeg` or `image/webp`. A type has at most one, never as an array's `items_type` or under `title`, `body`, `description` or `name`.",
+        "The field's type. A `thumbnail` holds an image of at most 16 KiB, as a base64 `data:` URI of type `image/png`, `image/jpeg` or `image/webp`. A type has at most one, never as an array's `items_type` or under `title`, `body`, `description` or `name`. A `status` holds one of the words in `status_values`. A type has at most one, never as an array's `items_type`.",
       ),
     description: z.string().optional().describe("What the field holds."),
     required: z
@@ -156,6 +157,26 @@ const FieldDefinitionSchema = z
       .array(z.string())
       .optional()
       .describe("The values an `enum` field allows."),
+    status_values: z
+      .array(
+        z
+          .object({
+            value: z
+              .string()
+              .describe(
+                "The word, such as `in_review`: a lowercase letter, then up to 63 lowercase letters, digits and underscores.",
+              ),
+            group: z
+              .enum(STATUS_GROUPS)
+              .describe("The group the word belongs to."),
+          })
+          .describe("One word a `status` field takes, with its group.")
+          .openapi("StatusValue"),
+      )
+      .optional()
+      .describe(
+        "The words a `status` field takes, each in one of the four fixed groups: `not_started`, `in_progress`, `completed` and `canceled`. A subtype lists only the words it adds to the field it inherits. A type read answers every word, inherited ones first; the type list answers the words the type declares itself.",
+      ),
     items_type: z
       .string()
       .optional()

@@ -98,7 +98,7 @@ describe("createTask", () => {
     const task = createTask();
     expect(task.type).toBe("core.task");
     expect(task.properties?.title).toBeDefined();
-    expect(task.properties?.status).toBe("pending");
+    expect(task.properties?.status).toBe("not_started");
   });
 });
 

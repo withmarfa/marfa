@@ -275,7 +275,7 @@ describe("core.task — body+notes keep-both, status+priority LWW", () => {
       source: ctx.source,
       properties: {
         title: "Ship the conformance suite",
-        status: "pending",
+        status: "not_started",
         priority: "medium",
         body: "Original details",
       },

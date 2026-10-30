@@ -143,7 +143,7 @@ beforeAll(async () => {
     createTask({
       properties: {
         title: `unreadable-filter-${ctx.runId}`,
-        status: "pending",
+        status: "not_started",
         priority: "medium",
       },
     }),

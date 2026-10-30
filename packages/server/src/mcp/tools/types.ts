@@ -1,5 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/server";
 import type { components } from "@withmarfa/client";
+import { STATUS_GROUPS } from "@withmarfa/shared";
 import * as z from "zod";
 import { pathSegment } from "../args.js";
 import {
@@ -22,11 +23,20 @@ const field = z
       .string()
       .min(1)
       .describe(
-        "string, number, integer, boolean, url, email, datetime, date, enum, array, object or thumbnail.",
+        "string, number, integer, boolean, url, email, datetime, date, enum, status, array, object or thumbnail.",
       ),
     description: z.string().optional(),
     required: z.boolean().optional(),
     enum_values: z.array(z.string()).optional(),
+    status_values: z
+      .array(
+        z.object({
+          value: z.string(),
+          group: z.enum(STATUS_GROUPS),
+        }),
+      )
+      .optional()
+      .describe("A status field's words, each in one of the four groups."),
     items_type: z.string().optional(),
   })
   .describe("A field's definition.");
