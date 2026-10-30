@@ -450,7 +450,7 @@ When the server leaves a series out of `data`, the server MUST answer the rest o
 
 ## What a write may store
 
-An event's schedule and a task's `recurrence` are judged on every operation that writes an item's properties, `POST /items`, `PATCH /items/{id}`, `POST /items/bulk`, `POST /items/bulk-actions` with `update_properties` and `POST /restore`, and each refuses as it refuses any other property (`items/property-invalid`). A refusal is `400 invalid_properties` with `details.errors` naming the field. A task is any item of `core.task` or of a type under it. A task's rule starts at its `due_at`, or at its `starts_at` when it has no `due_at`, and advances in UTC because a task has no `timezone`; a rule the rules below judge against "the start" is judged against that first date.
+An event's schedule and a task's `recurrence` are judged on every operation that writes an item's properties, `POST /items`, `PATCH /items/{id}`, `POST /items/bulk`, `POST /items/bulk-actions` with `update_properties`, `POST /restore` and the conflicted copy that a `PATCH /items/{id}` with `conflict=auto` writes, and each refuses as it refuses any other property (`items/property-invalid`). A refusal is `400 invalid_properties` with `details.errors` naming the field. A task is any item of `core.task` or of a type under it. A task's rule starts at its `due_at`, or at its `starts_at` when it has no `due_at`, and advances in UTC because a task has no `timezone`; a rule the rules below judge against "the start" is judged against that first date.
 
 ### `occurrences/schedule-unreadable`
 
@@ -500,7 +500,7 @@ If an event carries a `recurrence` and no `starts_at` to unfold it from, then th
 
 If a task carries a `recurrence` and neither a `due_at` nor a `starts_at` to start it from, then the server MUST refuse the write and name `recurrence`.
 
-**Tests:** `compliance/recurrence.test.ts › refuses a task with %s, naming recurrence`.
+**Tests:** `compliance/recurrence.test.ts › refuses a task with %s, naming recurrence`, `› refuses a task's rule removed from its dates by a replacing write, naming recurrence`.
 
 ### `occurrences/schedule-second-rule`
 
@@ -581,6 +581,14 @@ Where no rule above refuses an event's schedule, the server MUST take the event 
 If a `PATCH /items/{id}` adds a schedule or a task's `recurrence` that the rules above refuse, then the server MUST refuse it as `POST /items` does.
 
 **Tests:** `compliance/recurrence.test.ts › refuses the same rule added by an update or a bulk write, and stores none of it`, `› holds a type under core.task to the same rules, on a create and on an update`.
+
+### `occurrences/schedule-conflicted-copy`
+
+If a `PATCH /items/{id}` with `conflict=auto` would write a conflicted copy whose schedule or task `recurrence` the rules above refuse, then the server MUST refuse the write as `400 invalid_properties`, name `recurrence`, and write neither the copy nor the change.
+
+**Reason:** a type under `core.event` or `core.task` can set `merge_policy` to `keep_both_copies` for `recurrence`, and the copy is a new item that every reader unfolds as it unfolds any other.
+
+**Tests:** `compliance/recurrence.test.ts › holds the conflicted copy of a stale write to the same rule, on a task and an event`.
 
 ### `occurrences/schedule-bulk`
 

@@ -1404,6 +1404,101 @@ describe("a task's recurrence", () => {
     expect(fields(patch.error?.error.details)).toEqual(["recurrence"]);
   });
 
+  it("refuses a task's rule removed from its dates by a replacing write, naming recurrence", async () => {
+    const made = await createTask({ ...DUE, recurrence: WEEKLY });
+    expect(made.status, JSON.stringify(made.error)).toBe(201);
+    trackItem(ctx, made.data.item.id);
+
+    const refused = await client.updateItem(made.data.item.id, {
+      version: made.data.item.version,
+      properties: { title: `task recurrence ${ctx.runId}`, recurrence: WEEKLY },
+      properties_mode: "replace",
+    });
+    expect(refused.status).toBe(400);
+    expect(refused.error?.error.code).toBe("invalid_properties");
+    expect(fields(refused.error?.error.details)).toEqual(["recurrence"]);
+
+    // The witness: the same replacing write that keeps the date is taken.
+    const taken = await client.updateItem(made.data.item.id, {
+      version: made.data.item.version,
+      properties: {
+        title: `task recurrence ${ctx.runId}`,
+        ...DUE,
+        recurrence: WEEKLY,
+      },
+      properties_mode: "replace",
+    });
+    expect(taken.status, JSON.stringify(taken.error)).toBe(200);
+  });
+
+  it("holds the conflicted copy of a stale write to the same rule, on a task and an event", async () => {
+    const bad = ["RRULE:FREQ=YEARLY;BYMONTH=2;BYMONTHDAY=30"];
+    for (const [parent, dates] of [
+      ["core.task", DUE],
+      ["core.event", { starts_at: "2041-03-04T09:00:00.000Z" }],
+    ] as const) {
+      const type = `task-recurrence-${ctx.runId}.${parent.slice(5)}-copy`;
+      const registered = await client.registerType({
+        id: type,
+        parent,
+        fields: {},
+        merge_policy: { fields: { recurrence: "keep_both_copies" } },
+      });
+      expect(registered.status, JSON.stringify(registered.error)).toBe(201);
+
+      const listed = async () => {
+        const items = await client.listItems({ type, limit: 100 });
+        expect(items.status).toBe(200);
+        return items.data.data.map((item) => item.id).sort();
+      };
+      const collide = async (stale: string[]) => {
+        const made = await client.createItem({
+          type,
+          source: ctx.source,
+          properties: {
+            title: `copy ${ctx.runId}`,
+            ...dates,
+            recurrence: WEEKLY,
+          },
+        });
+        expect(made.status, JSON.stringify(made.error)).toBe(201);
+        trackItem(ctx, made.data.item.id);
+        const { id, version } = made.data.item;
+        const moved = await client.updateItem(id, {
+          version,
+          properties: { recurrence: ["RRULE:FREQ=DAILY;COUNT=5"] },
+        });
+        expect(moved.status, JSON.stringify(moved.error)).toBe(200);
+        const before = await listed();
+        const r = await client.rawRequest<{
+          conflict_resolution?: { conflicted_copy_id?: string };
+        }>(`/items/${id}?conflict=auto`, {
+          method: "PATCH",
+          body: { properties: { recurrence: stale }, version },
+        });
+        return { id, moved, r, before };
+      };
+
+      const refused = await collide(bad);
+      expect(
+        refused.r.status,
+        `${parent}: ${JSON.stringify(refused.r.data)}`,
+      ).toBe(400);
+      expect(refused.r.error?.error.code).toBe("invalid_properties");
+      expect(fields(refused.r.error?.error.details)).toEqual(["recurrence"]);
+      expect(await listed(), "a copy was written").toEqual(refused.before);
+      const kept = await client.getItem(refused.id);
+      expect(kept.data.item.version).toBe(refused.moved.data.item.version);
+
+      // The witness: a rule that can be unfolded makes the copy.
+      const taken = await collide(["RRULE:FREQ=WEEKLY;BYDAY=TU"]);
+      expect(taken.r.status, JSON.stringify(taken.r.data)).toBe(200);
+      const copyId = taken.r.data.conflict_resolution?.conflicted_copy_id;
+      expect(copyId, `${parent}: no copy was written`).toBeTruthy();
+      trackItem(ctx, String(copyId));
+    }
+  });
+
   it("leaves a repeating task out of GET /occurrences, which answers the event beside it", async () => {
     const from = "2041-03-04T00:00:00Z";
     const to = "2041-03-12T00:00:00Z";
