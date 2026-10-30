@@ -3083,7 +3083,7 @@ fn read_writes(
                 .parse::<BlockedReason>()
                 .map_err(|_| {
                     CoreError::Store(format!(
-                        "queued write {} is blocked for a reason outside the five a caller can name: {:?}",
+                        "queued write {} is blocked for a reason outside the six a caller can name: {:?}",
                         raw.id, raw.reason
                     ))
                 })?;
@@ -4904,7 +4904,7 @@ pub fn block_unanswered(conn: &Connection, reason: BlockedReason) -> Result<usiz
     )?)
 }
 
-/// For a copy about to be built from another instance than the one its
+/// For a copy about to be built from an instance other than the one its
 /// writes were queued against: every write a drain or a release could still
 /// send is held until a caller releases it, so none reaches rows the copy
 /// never held. A refused write stays refused. Answers how many it held.

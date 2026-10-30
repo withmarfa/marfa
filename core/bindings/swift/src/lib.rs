@@ -769,8 +769,8 @@ pub enum BlockedReason {
     /// The write keeps meeting an environmental failure while the server
     /// answers other writes.
     FailingAlone,
-    /// The write was queued against another instance than the one the copy
-    /// was built from since, and is sent only once released.
+    /// The write was queued against an instance other than the one the copy
+    /// has been built from since, and is sent only once released.
     InstanceChanged,
 }
 
