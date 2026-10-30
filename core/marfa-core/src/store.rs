@@ -6679,7 +6679,7 @@ mod tests {
         );
 
         let mut and_label = icon_only.clone();
-        and_label.types[0].display_hints.as_mut().unwrap().icon = Some("star".into());
+        and_label.types[0].display_hints.as_mut().unwrap().icon = Some("lucide:star".into());
         and_label.types[0].label = Some("Changed".into());
         assert_eq!(
             replace_catalog(&conn, &and_label).unwrap(),
@@ -6687,7 +6687,7 @@ mod tests {
         );
 
         let mut icon_and_edge = and_label.clone();
-        icon_and_edge.types[0].display_hints.as_mut().unwrap().icon = Some("moon".into());
+        icon_and_edge.types[0].display_hints.as_mut().unwrap().icon = Some("lucide:moon".into());
         icon_and_edge.edge_types = vec![json!({
             "id": "mentor-of", "source_type_constraints": ["*"],
             "target_type_constraints": ["*"], "cardinality": "many-to-many",
