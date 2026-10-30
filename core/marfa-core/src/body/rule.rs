@@ -930,12 +930,12 @@ pub(crate) fn item_changing(conn: &Connection, id: &str, next: Option<&WireItem>
 
 /// Whether any body links to `id` or embeds it.
 fn linked(conn: &Connection, id: &str) -> Result<bool> {
-    Ok(conn.query_row(
-        "SELECT EXISTS (SELECT 1 FROM edges WHERE edge_type = ?1 AND target_id = ?3 AND source_id <> ?3)
+    Ok(conn
+        .prepare_cached(
+            "SELECT EXISTS (SELECT 1 FROM edges WHERE edge_type = ?1 AND target_id = ?3 AND source_id <> ?3)
              OR EXISTS (SELECT 1 FROM edges WHERE edge_type = ?2 AND source_id = ?3 AND target_id <> ?3)",
-        params![LINK_EDGE, ATTACHMENT_EDGE, id],
-        |row| row.get(0),
-    )?)
+        )?
+        .query_row(params![LINK_EDGE, ATTACHMENT_EDGE, id], |row| row.get(0))?)
 }
 
 /// Called before a hydration clears the slice: it lands every row as the
@@ -1045,12 +1045,12 @@ fn recording(conn: &Connection) -> Result<bool> {
 /// carries: the copy holds rows for it, and no edit read on its answer
 /// (`body_checks`) still needs them to read the body it was made against.
 pub(crate) fn drops_on_landing(conn: &Connection, id: &str) -> Result<bool> {
-    Ok(conn.query_row(
-        "SELECT EXISTS (SELECT 1 FROM body_names WHERE item_id = ?1)
-            AND NOT EXISTS (SELECT 1 FROM body_checks WHERE item_id = ?1)",
-        [id],
-        |row| row.get(0),
-    )?)
+    Ok(conn
+        .prepare_cached(
+            "SELECT EXISTS (SELECT 1 FROM body_names WHERE item_id = ?1)
+                AND NOT EXISTS (SELECT 1 FROM body_checks WHERE item_id = ?1)",
+        )?
+        .query_row([id], |row| row.get(0))?)
 }
 
 /// Once a server row has landed on `id` with no write of this copy's laid
@@ -1098,12 +1098,12 @@ const RECHECK: &str = "body_recheck";
 /// answered naming nothing or more than one item, so the next pass counts
 /// again what the copy holds of it.
 pub(crate) fn rows_changed(conn: &Connection) -> Result<()> {
-    conn.execute(
+    conn.prepare_cached(
         "INSERT OR IGNORE INTO meta (key, value)
          SELECT ?1, '1' WHERE EXISTS (
            SELECT 1 FROM body_names WHERE state IN ('missing', 'ambiguous'))",
-        [RECHECK],
-    )?;
+    )?
+    .execute([RECHECK])?;
     Ok(())
 }
 
