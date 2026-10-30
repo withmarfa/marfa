@@ -57,11 +57,12 @@ import { ErrorCode, MarfaError } from "./errors.js";
 import type { EnforcementSettings, InstanceConfig } from "./types.js";
 import { isValidTypeIdentifier, RESERVED_ROOTS } from "./validation.js";
 import { maxStringLength } from "./string-length.js";
-import { eventScheduleIssues } from "./recurrence.js";
+import { eventScheduleIssues, taskScheduleIssues } from "./recurrence.js";
 import { urlValue } from "./url-value.js";
 
-/** The type whose schedule fields every write is held to, with its subtypes. */
+/** The types whose schedule fields every write is held to, with their subtypes. */
 const EVENT_TYPE = "core.event";
+const TASK_TYPE = "core.task";
 
 // Re-export schema-shape types and the shipped registries so consumers of
 // @withmarfa/shared don't need to reach into @withmarfa/types directly.
@@ -1109,16 +1110,20 @@ export function statusFieldsByType(): {
 }
 
 /**
- * The issues an event's schedule fields raise, none for a type that is not an
- * event. An event's rule is unfolded on every calendar read, so a rule no read
- * can unfold is refused where every item write is judged, and by a restore of
- * a row that it otherwise takes in whatever shape it was archived.
+ * The issues an event's or a task's schedule fields raise, none for a type
+ * that is neither. An event's rule is unfolded on every calendar read, so a
+ * rule no read can unfold is refused where every item write is judged, and by
+ * a restore of a row that it otherwise takes in whatever shape it was
+ * archived. A task's rule is held to the same checks, so that the two cannot
+ * disagree about one line.
  */
 export function scheduleIssues(
   typeId: string,
   properties: Record<string, unknown>,
 ): { field: string; message: string }[] {
-  return isSubtypeOf(typeId, EVENT_TYPE) ? eventScheduleIssues(properties) : [];
+  if (isSubtypeOf(typeId, EVENT_TYPE)) return eventScheduleIssues(properties);
+  if (isSubtypeOf(typeId, TASK_TYPE)) return taskScheduleIssues(properties);
+  return [];
 }
 
 // A registered schema is frozen and replaced whole, never edited, so the
