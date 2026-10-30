@@ -79,7 +79,7 @@ describe("POST /edges", () => {
 });
 
 describe("GET /items/{id}/backrefs", () => {
-  it("takes a limit of 500, reads 501 as 500 and refuses 0", async () => {
+  it("takes a limit of 500 and of 501, and refuses 0", async () => {
     const target = await note();
     const source = await note();
     const made = await client.createEdge({
