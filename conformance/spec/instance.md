@@ -276,11 +276,11 @@ The server MUST send `X-Marfa-Contract`, with the number the root answers as `co
 
 ### `instance/gzip-json`
 
-When a request carries an `Authorization` header and an `Accept-Encoding` header that accepts `gzip`, the server MUST send an answer whose body is JSON with `Content-Encoding: gzip`.
+When a `GET` request carries an `Authorization` header and an `Accept-Encoding` header that accepts `gzip`, the server MUST send an answer whose body is JSON with `Content-Encoding: gzip`.
 
 **Reason:** the pages a hydration reads are mostly item bodies, which compress several times over, and over a slow link their bytes are most of the time a device waits.
 
-**Tests:** `compliance/instance.test.ts › gzips a JSON answer to a request that carries a credential and accepts gzip, a refusal included`.
+**Tests:** `compliance/instance.test.ts › gzips a JSON answer to a GET that carries a credential and accepts gzip, a refusal included`.
 
 ### `instance/gzip-needs-authorization`
 

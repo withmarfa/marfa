@@ -762,7 +762,7 @@ describe("the instance", () => {
 describe("compression", () => {
   const gzipOnly = { "accept-encoding": "gzip" };
 
-  it("gzips a JSON answer to a request that carries a credential and accepts gzip, a refusal included", async () => {
+  it("gzips a JSON answer to a GET that carries a credential and accepts gzip, a refusal included", async () => {
     const auth = { Authorization: `Bearer ${apiKey}`, ...gzipOnly };
     const listing = await fetch(`${apiUrl}/items?limit=5`, { headers: auth });
     expect(listing.status).toBe(200);

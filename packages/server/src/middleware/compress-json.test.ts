@@ -26,6 +26,7 @@ describe("JSON compression", () => {
   app.get("/refused", () => {
     throw new MarfaError(ErrorCode.NOT_FOUND, "x".repeat(4096));
   });
+  app.post("/page", (c) => c.json(page));
   app.get("/stream", (c) =>
     c.body("data: " + "x".repeat(4096) + "\n\n", 200, {
       "Content-Type": "text/event-stream",
@@ -81,6 +82,21 @@ describe("JSON compression", () => {
       expect(response.headers.get("Content-Encoding")).toBeNull();
       expect(await response.json()).toEqual(page);
     }
+  });
+
+  it("answers as it is to a request other than GET", async () => {
+    const witness = await request("/page", bearer);
+    expect(witness.headers.get("Content-Encoding")).toBe("gzip");
+    const response = await app.fetch(
+      new Request("http://h/page", {
+        method: "POST",
+        headers: { ...bearer, "Content-Type": "application/json" },
+        body: "{}",
+      }),
+    );
+    expect(response.status).toBe(200);
+    expect(response.headers.get("Content-Encoding")).toBeNull();
+    expect(await response.json()).toEqual(page);
   });
 
   it("leaves an event stream and other types alone", async () => {
