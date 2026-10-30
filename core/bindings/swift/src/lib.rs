@@ -1625,14 +1625,9 @@ impl From<marfa_core::ItemState> for ItemState {
 }
 
 pub(crate) fn listing(listed: marfa_core::Rows<(marfa_core::Item, marfa_core::Shown)>) -> Listing {
-    let items: Vec<Item> = listed
-        .rows
-        .into_iter()
-        .map(|(held, shown)| item(held, shown))
-        .collect();
     Listing {
         completeness: listed.completeness.into(),
-        rows: packed::pack(&items),
+        rows: packed::pack(&listed.rows),
     }
 }
 
@@ -4794,6 +4789,38 @@ mod tests {
             }
         }
         assert_eq!(core.queue().unwrap().len(), queued);
+    }
+
+    #[test]
+    fn a_row_nested_past_the_depth_limit_crosses_flagged_in_a_listing_as_in_a_read_of_it() {
+        let (_dir, path, core) = copy_with_entries();
+        let mut ids = Vec::new();
+        for title in ["kept", "deep"] {
+            ids.push(
+                core.create_item(draft(
+                    "app.test.entry",
+                    &format!(r#"{{"title":"{title}"}}"#),
+                ))
+                .unwrap()
+                .item_id
+                .unwrap(),
+            );
+        }
+        let deep = (1..70).fold("null".to_string(), |inner, _| format!("[{inner}]"));
+        rusqlite::Connection::open(&path)
+            .unwrap()
+            .execute(
+                "UPDATE items SET properties = ?1 WHERE id = ?2",
+                [format!(r#"{{"deep":{deep}}}"#).as_str(), ids[1].as_str()],
+            )
+            .unwrap();
+
+        let listed = core.list(ListFilters::default(), None).unwrap().items();
+        assert_eq!(listed.len(), 2, "one deep row takes down the listing");
+        let held = listed.iter().find(|item| item.id == ids[1]).unwrap();
+        assert!(held.properties.members.is_empty());
+        assert!(held.unreadable_properties.is_some());
+        assert_eq!(Some(held), core.get(ids[1].clone()).unwrap().as_ref());
     }
 
     #[test]

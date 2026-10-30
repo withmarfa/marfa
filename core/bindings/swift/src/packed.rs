@@ -4,11 +4,12 @@
 //! costs several microseconds an item: a listing of 10,000 notes took 70 ms to
 //! read into Swift against 13 ms to list. A listing therefore crosses as one
 //! buffer that the Swift package reads in one pass (`PackedRows.swift` in
-//! withmarfa/marfa-swift), and each `Item` in it reads as the record would.
+//! withmarfa/marfa-swift), and each item in it reads as the `Item` record
+//! would.
 //!
 //! The layout, with every integer little-endian:
 //!
-//! - The buffer: a `u32` count, then that many items.
+//! - The buffer: `FORMAT` as a `u32`, a `u32` count, then that many items.
 //! - An item, its fields in the order `Item` declares them: `id`, `type` and
 //!   `properties`; `state` as one byte (0 active, 1 archived, 2 trashed, 3
 //!   revoked); `tier` as one byte (0 none, 1 library, 2 feed); `version` and
@@ -21,16 +22,23 @@
 //! - An `f64`: its IEEE 754 bits as a `u64`.
 //! - A value: one byte, 0 null, 1 false, 2 true, 3 an integer as `i64`, 4 a
 //!   number as `f64`, 5 a text, 6 an array as a `u32` count and that many
-//!   values, 7 an object.
+//!   values, 7 an object. A number is an integer where `JsonValue` would hold
+//!   it as one.
 //! - An object: a `u32` count, then that many pairs of a text key and a value.
 
-use crate::{Item, ItemState, JsonObject, JsonValue, Tier};
+use marfa_core::{Item, ItemState, Shown, Tier};
+use serde_json::{Map, Value};
 
-pub(crate) fn pack(items: &[Item]) -> Vec<u8> {
-    let mut packer = Packer(Vec::with_capacity(items.len() * 256));
-    packer.count(items.len());
-    for item in items {
-        packer.item(item);
+/// The layout's version. A change to the layout, or to `Item` or `JsonValue`,
+/// changes it, and the Swift package refuses a buffer of another version.
+pub(crate) const FORMAT: u32 = 1;
+
+pub(crate) fn pack(rows: &[(Item, Shown)]) -> Vec<u8> {
+    let mut packer = Packer(Vec::with_capacity(8 + rows.len() * 256));
+    packer.0.extend_from_slice(&FORMAT.to_le_bytes());
+    packer.count(rows.len());
+    for (item, shown) in rows {
+        packer.item(item, shown);
     }
     packer.0
 }
@@ -82,7 +90,7 @@ impl Packer {
         }
     }
 
-    fn item(&mut self, item: &Item) {
+    fn item(&mut self, item: &Item, shown: &Shown) {
         self.text(&item.id);
         self.text(&item.r#type);
         self.object(&item.properties);
@@ -110,44 +118,46 @@ impl Packer {
         }
         self.optional_f64(item.capture_latitude);
         self.optional_f64(item.capture_longitude);
-        self.optional_text(item.title.as_deref());
-        self.optional_text(item.body.as_deref());
-        self.optional_text(item.unreadable_properties.as_deref());
+        self.optional_text(shown.title.as_deref());
+        self.optional_text(shown.body.as_deref());
+        self.optional_text(shown.unreadable_properties.as_deref());
     }
 
-    fn object(&mut self, object: &JsonObject) {
-        self.count(object.members.len());
-        for member in &object.members {
-            self.text(&member.key);
-            self.value(&member.value);
+    fn object(&mut self, object: &Map<String, Value>) {
+        self.count(object.len());
+        for (key, value) in object {
+            self.text(key);
+            self.value(value);
         }
     }
 
-    fn value(&mut self, value: &JsonValue) {
+    fn value(&mut self, value: &Value) {
         match value {
-            JsonValue::Null => self.byte(0),
-            JsonValue::Bool(false) => self.byte(1),
-            JsonValue::Bool(true) => self.byte(2),
-            JsonValue::Integer(integer) => {
-                self.byte(3);
-                self.i64(*integer);
-            }
-            JsonValue::Number(number) => {
-                self.byte(4);
-                self.f64(*number);
-            }
-            JsonValue::String(text) => {
+            Value::Null => self.byte(0),
+            Value::Bool(false) => self.byte(1),
+            Value::Bool(true) => self.byte(2),
+            Value::Number(number) => match number.as_i64() {
+                Some(integer) => {
+                    self.byte(3);
+                    self.i64(integer);
+                }
+                None => {
+                    self.byte(4);
+                    self.f64(number.as_f64().unwrap_or(f64::NAN));
+                }
+            },
+            Value::String(text) => {
                 self.byte(5);
                 self.text(text);
             }
-            JsonValue::Array(values) => {
+            Value::Array(values) => {
                 self.byte(6);
                 self.count(values.len());
                 for value in values {
                     self.value(value);
                 }
             }
-            JsonValue::Object(object) => {
+            Value::Object(object) => {
                 self.byte(7);
                 self.object(object);
             }
@@ -155,18 +165,22 @@ impl Packer {
     }
 }
 
-/// Reads what `pack` wrote, for the binding's own tests.
+/// Reads what `pack` wrote, for the binding's own tests, refusing what the
+/// Swift package's reader refuses.
 #[cfg(test)]
-pub(crate) fn unpack(bytes: &[u8]) -> Vec<Item> {
-    let mut reader = Reader(bytes);
+pub(crate) fn unpack(bytes: &[u8]) -> Vec<crate::Item> {
+    let mut reader = Reader(bytes, 0);
+    let format = reader.count();
+    assert_eq!(format, FORMAT as usize, "a listing of format {format}");
     let count = reader.count();
     let items = (0..count).map(|_| reader.item()).collect();
     assert!(reader.0.is_empty(), "bytes left after the last item");
     items
 }
 
+/// The bytes left to read, and how deep the value being read nests.
 #[cfg(test)]
-struct Reader<'a>(&'a [u8]);
+struct Reader<'a>(&'a [u8], usize);
 
 #[cfg(test)]
 impl Reader<'_> {
@@ -207,8 +221,9 @@ impl Reader<'_> {
         }
     }
 
-    fn item(&mut self) -> Item {
-        Item {
+    fn item(&mut self) -> crate::Item {
+        use crate::{ItemState, Tier};
+        crate::Item {
             id: self.text(),
             r#type: self.text(),
             properties: self.object(),
@@ -241,18 +256,30 @@ impl Reader<'_> {
         }
     }
 
-    fn object(&mut self) -> JsonObject {
-        JsonObject {
-            members: (0..self.count())
-                .map(|_| crate::JsonMember {
-                    key: self.text(),
-                    value: self.value(),
-                })
-                .collect(),
-        }
+    /// The properties object is the first level, as `MAX_JSON_DEPTH` counts.
+    fn nest(&mut self) {
+        self.1 += 1;
+        assert!(
+            self.1 <= marfa_core::MAX_JSON_DEPTH,
+            "a value nested deeper than {}",
+            marfa_core::MAX_JSON_DEPTH
+        );
     }
 
-    fn value(&mut self) -> JsonValue {
+    fn object(&mut self) -> crate::JsonObject {
+        self.nest();
+        let members = (0..self.count())
+            .map(|_| crate::JsonMember {
+                key: self.text(),
+                value: self.value(),
+            })
+            .collect();
+        self.1 -= 1;
+        crate::JsonObject { members }
+    }
+
+    fn value(&mut self) -> crate::JsonValue {
+        use crate::JsonValue;
         match self.byte() {
             0 => JsonValue::Null,
             1 => JsonValue::Bool(false),
@@ -260,7 +287,12 @@ impl Reader<'_> {
             3 => JsonValue::Integer(self.i64()),
             4 => JsonValue::Number(self.f64()),
             5 => JsonValue::String(self.text()),
-            6 => JsonValue::Array((0..self.count()).map(|_| self.value()).collect()),
+            6 => {
+                self.nest();
+                let values = (0..self.count()).map(|_| self.value()).collect();
+                self.1 -= 1;
+                JsonValue::Array(values)
+            }
             7 => JsonValue::Object(self.object()),
             other => panic!("a value marked {other}"),
         }
@@ -269,43 +301,28 @@ impl Reader<'_> {
 
 #[cfg(test)]
 mod tests {
+    use serde_json::json;
+
     use super::*;
-    use crate::JsonMember;
 
-    fn member(key: &str, value: JsonValue) -> JsonMember {
-        JsonMember {
-            key: key.into(),
-            value,
-        }
-    }
-
-    fn every_field() -> Item {
-        Item {
+    fn every_field() -> (Item, Shown) {
+        let properties = json!({
+            "null": null,
+            "no": false,
+            "yes": true,
+            "integer": i64::MIN,
+            "number": -0.5,
+            "text": "é ✓ \u{0}",
+            "array": [1, []],
+            "object": { "": null },
+        });
+        let item = Item {
             id: "a".into(),
             r#type: "core.note".into(),
-            properties: JsonObject {
-                members: vec![
-                    member("null", JsonValue::Null),
-                    member("no", JsonValue::Bool(false)),
-                    member("yes", JsonValue::Bool(true)),
-                    member("integer", JsonValue::Integer(i64::MIN)),
-                    member("number", JsonValue::Number(-0.5)),
-                    member("text", JsonValue::String("é ✓ \u{0}".into())),
-                    member(
-                        "array",
-                        JsonValue::Array(vec![JsonValue::Integer(1), JsonValue::Array(vec![])]),
-                    ),
-                    member(
-                        "object",
-                        JsonValue::Object(JsonObject {
-                            members: vec![member("", JsonValue::Null)],
-                        }),
-                    ),
-                ],
-            },
+            properties: properties.as_object().unwrap().clone(),
             state: ItemState::Revoked,
             tier: Some(Tier::Feed),
-            version: i64::MAX,
+            version: 7,
             schema_version: 2,
             source: "device".into(),
             source_id: Some("source".into()),
@@ -315,74 +332,168 @@ mod tests {
             tags: vec!["x".into(), "".into()],
             capture_latitude: Some(51.5),
             capture_longitude: Some(-0.12),
+        };
+        let shown = Shown {
             title: Some("Title".into()),
             body: Some(String::new()),
             unreadable_properties: Some("why".into()),
-        }
+        };
+        (item, shown)
     }
 
-    fn no_options() -> Item {
-        Item {
-            properties: JsonObject { members: vec![] },
+    fn plain() -> (Item, Shown) {
+        let (item, _) = every_field();
+        let item = Item {
+            id: "id".into(),
+            properties: json!({ "k": 1 }).as_object().unwrap().clone(),
             state: ItemState::Active,
             tier: None,
+            version: i64::MAX,
             source_id: None,
             tags: vec![],
             capture_latitude: None,
             capture_longitude: None,
+            ..item
+        };
+        let shown = Shown {
             title: None,
             body: None,
             unreadable_properties: None,
-            ..every_field()
-        }
+        };
+        (item, shown)
     }
 
-    #[test]
-    fn every_field_and_value_reads_back_as_it_was_packed() {
-        let archived = Item {
-            state: ItemState::Archived,
-            tier: Some(Tier::Library),
-            ..no_options()
-        };
-        let trashed = Item {
-            state: ItemState::Trashed,
-            ..no_options()
-        };
-        let items = vec![every_field(), no_options(), archived, trashed];
-        assert_eq!(unpack(&pack(&items)), items);
-        assert_eq!(unpack(&pack(&[])), vec![]);
+    fn text(bytes: &mut Vec<u8>, text: &str) {
+        bytes.extend((text.len() as u32).to_le_bytes());
+        bytes.extend(text.as_bytes());
     }
 
-    #[test]
-    fn the_layout_is_the_one_the_swift_package_reads() {
-        let item = Item {
-            id: "id".into(),
-            properties: JsonObject {
-                members: vec![member("k", JsonValue::Integer(1))],
-            },
-            ..no_options()
-        };
-        let mut expected = vec![1, 0, 0, 0];
-        expected.extend([2, 0, 0, 0, b'i', b'd']);
-        expected.extend([9, 0, 0, 0]);
-        expected.extend(b"core.note");
-        expected.extend([1, 0, 0, 0, 1, 0, 0, 0, b'k', 3, 1, 0, 0, 0, 0, 0, 0, 0]);
-        expected.extend([0, 0]);
-        expected.extend(i64::MAX.to_le_bytes());
-        expected.extend(2i64.to_le_bytes());
-        expected.extend([6, 0, 0, 0]);
-        expected.extend(b"device");
-        expected.push(0);
+    fn times(bytes: &mut Vec<u8>) {
         for at in [
             "2026-01-01T00:00:00Z",
             "2026-01-02T00:00:00Z",
             "2026-01-03T00:00:00Z",
         ] {
-            expected.extend([20, 0, 0, 0]);
-            expected.extend(at.as_bytes());
+            text(bytes, at);
         }
+    }
+
+    #[test]
+    fn every_field_and_value_reads_back_as_the_record_would_cross() {
+        let (item, none) = plain();
+        let archived = Item {
+            state: ItemState::Archived,
+            tier: Some(Tier::Library),
+            ..item.clone()
+        };
+        let trashed = Item {
+            state: ItemState::Trashed,
+            ..item.clone()
+        };
+        let wide = Item {
+            properties: json!({ "big": u64::MAX, "small": i64::MIN, "large": 1e300 })
+                .as_object()
+                .unwrap()
+                .clone(),
+            ..item.clone()
+        };
+        let rows = vec![
+            every_field(),
+            (item, none.clone()),
+            (archived, none.clone()),
+            (trashed, none.clone()),
+            (wide, none),
+        ];
+        let crossed: Vec<crate::Item> = rows
+            .iter()
+            .map(|(item, shown)| crate::item(item.clone(), shown.clone()))
+            .collect();
+        assert_eq!(unpack(&pack(&rows)), crossed);
+        assert_eq!(unpack(&pack(&[])), vec![]);
+    }
+
+    /// The bytes the Swift package's `PackedListing.agreed` holds.
+    #[test]
+    fn the_layout_of_a_plain_item_is_the_one_the_swift_package_reads() {
+        let mut expected = vec![1, 0, 0, 0, 1, 0, 0, 0];
+        text(&mut expected, "id");
+        text(&mut expected, "core.note");
+        expected.extend([1, 0, 0, 0, 1, 0, 0, 0, b'k', 3, 1, 0, 0, 0, 0, 0, 0, 0]);
+        expected.extend([0, 0]);
+        expected.extend(i64::MAX.to_le_bytes());
+        expected.extend(2i64.to_le_bytes());
+        text(&mut expected, "device");
+        expected.push(0);
+        times(&mut expected);
         expected.extend([0, 0, 0, 0]);
         expected.extend([0, 0, 0, 0, 0]);
-        assert_eq!(pack(&[item]), expected);
+        assert_eq!(pack(&[plain()]), expected);
+    }
+
+    /// The bytes the Swift package's `PackedListing.fullBytes` holds: every
+    /// value tag, every optional present, `f64`s, tags, and the state and
+    /// tier codes the plain item leaves out.
+    #[test]
+    fn the_layout_of_a_full_item_is_the_one_the_swift_package_reads() {
+        let mut expected = vec![1, 0, 0, 0, 1, 0, 0, 0];
+        text(&mut expected, "a");
+        text(&mut expected, "core.note");
+        expected.extend([8, 0, 0, 0]);
+        text(&mut expected, "null");
+        expected.push(0);
+        text(&mut expected, "no");
+        expected.push(1);
+        text(&mut expected, "yes");
+        expected.push(2);
+        text(&mut expected, "integer");
+        expected.push(3);
+        expected.extend(i64::MIN.to_le_bytes());
+        text(&mut expected, "number");
+        expected.push(4);
+        expected.extend((-0.5f64).to_bits().to_le_bytes());
+        text(&mut expected, "text");
+        expected.push(5);
+        text(&mut expected, "é ✓ \u{0}");
+        text(&mut expected, "array");
+        expected.extend([6, 2, 0, 0, 0, 3, 1, 0, 0, 0, 0, 0, 0, 0, 6, 0, 0, 0, 0]);
+        text(&mut expected, "object");
+        expected.extend([7, 1, 0, 0, 0, 0, 0, 0, 0, 0]);
+        expected.extend([3, 2]);
+        expected.extend(7i64.to_le_bytes());
+        expected.extend(2i64.to_le_bytes());
+        text(&mut expected, "device");
+        expected.push(1);
+        text(&mut expected, "source");
+        times(&mut expected);
+        expected.extend([2, 0, 0, 0]);
+        text(&mut expected, "x");
+        text(&mut expected, "");
+        expected.push(1);
+        expected.extend(51.5f64.to_bits().to_le_bytes());
+        expected.push(1);
+        expected.extend((-0.12f64).to_bits().to_le_bytes());
+        expected.push(1);
+        text(&mut expected, "Title");
+        expected.push(1);
+        text(&mut expected, "");
+        expected.push(1);
+        text(&mut expected, "why");
+        assert_eq!(pack(&[every_field()]), expected);
+    }
+
+    #[test]
+    #[should_panic(expected = "nested deeper")]
+    fn the_test_reader_refuses_a_value_nested_past_the_limit_as_the_swift_one_does() {
+        let nested = |arrays: usize| {
+            let deep = (0..arrays).fold(json!(null), |inner, _| json!([inner]));
+            let (item, shown) = plain();
+            let item = Item {
+                properties: json!({ "deep": deep }).as_object().unwrap().clone(),
+                ..item
+            };
+            pack(&[(item, shown)])
+        };
+        unpack(&nested(marfa_core::MAX_JSON_DEPTH - 1));
+        unpack(&nested(marfa_core::MAX_JSON_DEPTH));
     }
 }
