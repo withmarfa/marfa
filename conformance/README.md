@@ -624,7 +624,7 @@ measure the build) against the server the run booted. It seeds
 and with none, hydrates a working copy of each, and writes
 `reports/load/hydration.json`: for each set the hydration's wall time and rows
 a second, the bytes a row crosses the wire as, the copy's size, the server's
-time to serve a page of 500, and the time of one listing and one search on the
+time to serve a page of 200, and the time of one listing and one search on the
 filled copy. It is a measurement, not a gate: it fails only when a hydration
 fails or brings fewer rows than were seeded. Unset, the row count is small
 enough for a laptop; the nightly run sets 100,000.

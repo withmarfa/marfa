@@ -18,10 +18,17 @@ use crate::wire::{
     WireMetadata, WirePage, WireType,
 };
 
-/// The largest page the item listing (`search-and-filters/limit-listing`)
-/// and the edge listings (`edges/list-limit`) answer. A hydration reads a
-/// page per round trip, so a larger page fills a copy sooner over a slow link.
-pub const PAGE_LIMIT: u32 = 500;
+/// The page asked of the item listing (`search-and-filters/limit-listing`).
+/// A larger page fills a copy in fewer round trips, but a server that refuses
+/// a `limit` above its bound, rather than reading it as the bound
+/// (`search-and-filters/limit-listing-capped`), refuses one above 200, and
+/// the contract version does not tell it from one that takes more.
+pub const ITEM_PAGE_LIMIT: u32 = 200;
+
+/// The page asked of the edge listings, the most they answer
+/// (`edges/list-limit`). A hydration reads a page per round trip, so a larger
+/// page fills a copy sooner over a slow link.
+pub const EDGE_PAGE_LIMIT: u32 = 500;
 
 /// The most ids `POST /items/bulk-get` takes in one request
 /// (`items/bulk-get-cap`).
@@ -721,7 +728,7 @@ impl Http {
         &self,
         query: &ItemsQuery<'_>,
     ) -> Result<WirePage<WireItemWithMetadata>, CoreError> {
-        let limit = PAGE_LIMIT.to_string();
+        let limit = ITEM_PAGE_LIMIT.to_string();
         let mut params: Vec<(&str, &str)> = query
             .r#type
             .map(|declared| ("type", declared))
@@ -801,7 +808,7 @@ impl Http {
         edge_type: &str,
         cursor: Option<&str>,
     ) -> Result<WirePage<WireEdge>, CoreError> {
-        let limit = PAGE_LIMIT.to_string();
+        let limit = EDGE_PAGE_LIMIT.to_string();
         let mut params: Vec<(&str, &str)> = vec![("edge_type", edge_type), ("limit", &limit)];
         if let Some(cursor) = cursor {
             params.push(("cursor", cursor));
@@ -814,7 +821,7 @@ impl Http {
         edge_type: &str,
         cursor: Option<&str>,
     ) -> Result<WirePage<WireEdge>, CoreError> {
-        let limit = PAGE_LIMIT.to_string();
+        let limit = EDGE_PAGE_LIMIT.to_string();
         let mut params: Vec<(&str, &str)> = vec![("edge_type", edge_type), ("limit", &limit)];
         if let Some(cursor) = cursor {
             params.push(("cursor", cursor));
@@ -974,7 +981,7 @@ impl Http {
         // written; the caller matches the whole name after.
         let searched = text.trim_end_matches('\\').replace('"', "\\\"");
         let filter = format!("properties.{field} contains \"{searched}\"");
-        let limit = PAGE_LIMIT.to_string();
+        let limit = ITEM_PAGE_LIMIT.to_string();
         let mut found = Vec::new();
         let mut cursor: Option<String> = None;
         for _ in 0..pages {
@@ -1737,7 +1744,7 @@ impl Http {
 }
 
 impl Http {
-    /// An answer read whole, past ureq's default 10 MiB, which a page of 500
+    /// An answer read whole, past ureq's default 10 MiB, which a page of 200
     /// rows, a bulk read of 100 or an export can pass. A text answer that is
     /// not UTF-8, such as a proxy's page, is read with its bad bytes
     /// replaced, so its status still reaches the caller; JSON is read
@@ -2457,7 +2464,7 @@ mod tests {
         serving.join().unwrap().unwrap();
     }
 
-    /// A page of 500 rows, a bulk read of 100 and a write's answer can each
+    /// A page of 200 rows, a bulk read of 100 and a write's answer can each
     /// be larger than ureq's default 10 MiB, and an answer cut off there
     /// would fail every hydration that holds such rows.
     #[test]
@@ -2732,6 +2739,45 @@ mod tests {
         assert!(http.edge_types().unwrap().is_empty());
         assert_eq!(server.seen("/types")[0].query, "");
         assert_eq!(server.seen("/edge-types")[0].query, "");
+    }
+
+    #[test]
+    fn each_listing_asks_for_a_page_every_server_takes() {
+        let server = crate::scripted::Scripted::start();
+        let empty = || {
+            vec![crate::scripted::json(
+                200,
+                r#"{"data":[],"next_cursor":null}"#,
+            )]
+        };
+        for path in ["/items", "/edges", "/items/n1/edges"] {
+            server.on(path, empty());
+        }
+        let http = Http::new(&server.url(), "k").unwrap();
+        http.items_page(&ItemsQuery {
+            r#type: None,
+            tier: SliceTier::All,
+            cursor: None,
+        })
+        .unwrap();
+        http.items_containing("title", "a", 1).unwrap();
+        http.edges_page("parent-of", None).unwrap();
+        http.item_edges_page("n1", "parent-of", None).unwrap();
+        let limits = |path: &str| -> Vec<String> {
+            server
+                .seen(path)
+                .iter()
+                .map(|seen| {
+                    url::form_urlencoded::parse(seen.query.as_bytes())
+                        .find(|(name, _)| name == "limit")
+                        .map(|(_, value)| value.into_owned())
+                        .unwrap_or_default()
+                })
+                .collect()
+        };
+        assert_eq!(limits("/items"), ["200", "200"]);
+        assert_eq!(limits("/edges"), ["500"]);
+        assert_eq!(limits("/items/n1/edges"), ["500"]);
     }
 
     #[test]
