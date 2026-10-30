@@ -130,6 +130,10 @@ describe("unreadKeys", () => {
           maxLength: 10,
         },
         kind: { type: "enum", enum_values: ["a", "b"] },
+        stage: {
+          type: "status",
+          status_values: [{ value: "todo", group: "not_started" }],
+        },
         tags: { type: "array", items_type: "string", maxItems: 3 },
         lang: { type: "string", format: "bcp47" },
       },
@@ -266,7 +270,10 @@ describe("unreadKeys", () => {
     expect(sorted(RETENTION_POLICY_KEYS)).toEqual(["feed_days"]);
     expect(sorted(EDGE_PROPERTY_KEYS)).toEqual(
       sorted(FIELD_DEFINITION_KEYS).filter(
-        (key) => !["maxItems", "maxLength", "searchable"].includes(key),
+        (key) =>
+          !["maxItems", "maxLength", "searchable", "status_values"].includes(
+            key,
+          ),
       ),
     );
   });

@@ -8,6 +8,9 @@ import type { TypeSchema } from "./schema-types.js";
 import { mergeFieldChain, statusGroupOf } from "./status.js";
 import { ALL_TYPES } from "../generated/type-registry.js";
 
+/** A fixture's definition, as the registry would hold it. */
+const schema = (data: unknown): TypeSchema => data as TypeSchema;
+
 const WORDS = [
   { value: "todo", group: "not_started" },
   { value: "doing", group: "in_progress" },
@@ -47,13 +50,13 @@ function refuse(data: unknown, ctx = registryWith()): SchemaValidationIssue[] {
   return result.success ? [] : result.errors;
 }
 
-const workItem: TypeSchema = {
+const workItem = schema({
   id: "acme.work",
   fields: {
     title: { type: "string" },
     stage: { type: "status", status_values: WORDS },
   },
-} as TypeSchema;
+});
 
 describe("a status field's definition", () => {
   it("accepts words in the four groups and keeps their order", () => {
@@ -228,7 +231,7 @@ describe("a status field down a chain", () => {
   });
 
   it("refuses a parent change that adds a word a subtype declares", () => {
-    const bug: TypeSchema = {
+    const bug = schema({
       id: "acme.bug",
       parent: "acme.work",
       fields: {
@@ -237,7 +240,7 @@ describe("a status field down a chain", () => {
           status_values: [{ value: "blocked", group: "in_progress" }],
         },
       },
-    } as TypeSchema;
+    });
     const errors = refuse(
       {
         ...workItem,
@@ -260,19 +263,22 @@ describe("a status field down a chain", () => {
   });
 
   it("refuses a parent status field beside a subtype's own under another name", () => {
-    const plain: TypeSchema = {
+    const plain = schema({
       id: "acme.plain",
       fields: { title: { type: "string" } },
-    } as TypeSchema;
-    const child: TypeSchema = {
+    });
+    const child = schema({
       id: "acme.plain.child",
       parent: "acme.plain",
       fields: { phase: { type: "status", status_values: WORDS } },
-    } as TypeSchema;
+    });
     const errors = refuse(
       {
         ...plain,
-        fields: { ...plain.fields, stage: { type: "status", status_values: WORDS } },
+        fields: {
+          ...plain.fields,
+          stage: { type: "status", status_values: WORDS },
+        },
       },
       registryWith(plain, child),
     );
@@ -287,10 +293,10 @@ describe("a status field down a chain", () => {
 
 describe("compatible_with and a status field", () => {
   it("reads a status field as a string", () => {
-    const target: TypeSchema = {
+    const target = schema({
       id: "acme.text",
       fields: { stage: { type: "string" } },
-    } as TypeSchema;
+    });
     accept(
       { ...workItem, id: "acme.work2", compatible_with: ["acme.text"] },
       registryWith(target),
@@ -298,7 +304,7 @@ describe("compatible_with and a status field", () => {
   });
 
   it("reads a status field as a target status field with the same groups", () => {
-    const target: TypeSchema = {
+    const target = schema({
       id: "acme.wide",
       fields: {
         stage: {
@@ -306,7 +312,7 @@ describe("compatible_with and a status field", () => {
           status_values: [...WORDS, { value: "blocked", group: "in_progress" }],
         },
       },
-    } as TypeSchema;
+    });
     accept(
       { ...workItem, id: "acme.work2", compatible_with: ["acme.wide"] },
       registryWith(target),
@@ -314,19 +320,16 @@ describe("compatible_with and a status field", () => {
   });
 
   it.each([
-    [
-      "a word the target lacks",
-      [WORDS[0], WORDS[1], WORDS[2]],
-    ],
+    ["a word the target lacks", [WORDS[0], WORDS[1], WORDS[2]]],
     [
       "a word the target puts in another group",
       [...WORDS.slice(0, 3), { value: "dropped", group: "completed" }],
     ],
   ])("refuses a status target with %s", (_, targetWords) => {
-    const target: TypeSchema = {
+    const target = schema({
       id: "acme.narrow",
       fields: { stage: { type: "status", status_values: targetWords } },
-    } as TypeSchema;
+    });
     const errors = refuse(
       { ...workItem, id: "acme.work2", compatible_with: ["acme.narrow"] },
       registryWith(target),
@@ -337,10 +340,10 @@ describe("compatible_with and a status field", () => {
   });
 
   it("refuses a status target for a string field", () => {
-    const target: TypeSchema = {
+    const target = schema({
       id: "acme.wide",
       fields: { stage: { type: "status", status_values: WORDS } },
-    } as TypeSchema;
+    });
     const errors = refuse(
       {
         id: "acme.loose",

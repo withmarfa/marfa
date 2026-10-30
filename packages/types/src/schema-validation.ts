@@ -1070,11 +1070,9 @@ export function validateTypeSchema(
     if (inherited) {
       // A status field's words stay with the types that declare them, so a
       // subtype restating the field carries none of its own.
-      const { status_values: _words, ...restated } = inherited;
-      normalizedFields[name] = {
-        ...(inherited.type === "status" ? restated : inherited),
-        required: true,
-      };
+      const restated = { ...inherited, required: true };
+      if (restated.type === "status") delete restated.status_values;
+      normalizedFields[name] = restated;
     }
   }
 

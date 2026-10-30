@@ -136,7 +136,10 @@ describe("a status field's definition", () => {
 
   it("takes words in the four groups and answers each with its group", async () => {
     const id = nextId();
-    await register({ id, fields: { stage: { type: "status", status_values: WORDS } } });
+    await register({
+      id,
+      fields: { stage: { type: "status", status_values: WORDS } },
+    });
     const read = await client.getType(id);
     expect(read.data.fields.stage).toEqual({
       type: "status",
@@ -312,7 +315,10 @@ describe("a status field down a chain", () => {
     const onChild = await create(child, { title: "Child", stage: "blocked" });
     expect(onChild.status, JSON.stringify(onChild.error)).toBe(201);
 
-    const onParent = await create(parent, { title: "Parent", stage: "blocked" });
+    const onParent = await create(parent, {
+      title: "Parent",
+      stage: "blocked",
+    });
     expect(onParent.status).toBe(400);
     expect(onParent.error?.error.code).toBe("invalid_properties");
     expect(errorFields(onParent)).toContain("stage");
@@ -337,7 +343,10 @@ describe("writing a status field", () => {
   });
 
   it("refuses a word the type does not declare, naming the field", async () => {
-    const refused = await create(type, { title: "Undeclared", stage: "pending" });
+    const refused = await create(type, {
+      title: "Undeclared",
+      stage: "pending",
+    });
     expect(refused.status).toBe(400);
     expect(refused.error?.error.code).toBe("invalid_properties");
     expect(errorFields(refused)).toContain("stage");
@@ -360,8 +369,16 @@ describe("writing a status field", () => {
       mode: "create_only",
       atomic: false,
       items: [
-        { type, source_id: `${key}-a`, properties: { title: "a", stage: "todo" } },
-        { type, source_id: `${key}-b`, properties: { title: "b", stage: "pending" } },
+        {
+          type,
+          source_id: `${key}-a`,
+          properties: { title: "a", stage: "todo" },
+        },
+        {
+          type,
+          source_id: `${key}-b`,
+          properties: { title: "b", stage: "pending" },
+        },
       ],
     });
     expect(bulk.status, JSON.stringify(bulk.error)).toBe(200);
@@ -527,14 +544,17 @@ describe("filtering by status_group", () => {
   });
 
   it("selects by group in a saved view", async () => {
-    const filter = 'status_group neq "completed" AND status_group neq "canceled"';
+    const filter =
+      'status_group neq "completed" AND status_group neq "canceled"';
     const view = await client.createView({
       title: "Open work",
       query: { filter, types: [parent] },
     });
     expect(view.status, JSON.stringify(view.error)).toBe(201);
     trackView(ctx, view.data.item.id);
-    const listed = await client.listViewItems(view.data.item.id, { limit: 100 });
+    const listed = await client.listViewItems(view.data.item.id, {
+      limit: 100,
+    });
     expect(listed.status).toBe(200);
     const ids = new Set(listed.data.data.map((item) => item.id));
     expect(
@@ -565,14 +585,25 @@ describe("compatible_with and a status field", () => {
       fields: {
         stage: {
           type: "status",
-          status_values: [...WORDS.slice(0, 3), { value: "dropped", group: "completed" }],
+          status_values: [
+            ...WORDS.slice(0, 3),
+            { value: "dropped", group: "completed" },
+          ],
         },
       },
     });
     const stage = { type: "status", status_values: WORDS };
 
-    await register({ id: nextId(), fields: { stage }, compatible_with: [text] });
-    await register({ id: nextId(), fields: { stage }, compatible_with: [wide] });
+    await register({
+      id: nextId(),
+      fields: { stage },
+      compatible_with: [text],
+    });
+    await register({
+      id: nextId(),
+      fields: { stage },
+      compatible_with: [wide],
+    });
 
     const regrouped = await client.registerType({
       id: nextId(),

@@ -109,7 +109,8 @@ export type FieldType =
   | "thumbnail";
 
 /** The four fixed groups every status word belongs to. */
-export type StatusGroup = "not_started" | "in_progress" | "completed" | "canceled";
+export type StatusGroup =
+  "not_started" | "in_progress" | "completed" | "canceled";
 
 export interface FieldDefinition {
   type: FieldType;
