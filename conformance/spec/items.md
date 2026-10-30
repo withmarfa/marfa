@@ -716,7 +716,21 @@ If `PATCH /items/{id}` carries a top-level body key the operation does not decla
 
 When `PATCH /items/{id}` names `edges`, the server MUST replace the item's outbound edges of each edge type named with edges to the targets listed, and leave every other edge type as it stands.
 
-**Tests:** `correctness/edges/edges-crud.test.ts › PATCH /items with edges replaces edges of specified types only`.
+**Tests:** `correctness/edges/edges-crud.test.ts › PATCH /items with edges replaces edges of specified types only`, `› PATCH /items keeps the edge to a target it still lists, with its id, version and properties, and announces only what it changes`.
+
+### `items/update-inline-edges-keep`
+
+When `PATCH /items/{id}`, a `POST /items` that lands on an item by its natural key or a `POST /items/bulk` entry that lands on an item names `edges` and lists a target the item already has an outbound edge of that edge type to, the server MUST leave that edge with its id, version and properties.
+
+**Reason:** an app that sends back the list it read is not asking to change the edges in it, and an edge's properties, such as `position` on `in-collection` or `path` on `in-folder`, are not part of the list.
+
+**Tests:** `correctness/edges/edges-crud.test.ts › PATCH /items keeps the edge to a target it still lists, with its id, version and properties, and announces only what it changes`, `› POST /items landing on an item by its natural key keeps the edge to a target it still lists, and announces only what it changes`, `› POST /items/bulk landing on an item by its natural key keeps the edge to a target it still lists, and announces only what it changes`.
+
+### `items/update-inline-edges-quiet`
+
+When `PATCH /items/{id}`, a `POST /items` that lands on an item by its natural key or a `POST /items/bulk` entry that lands on an item names `edges` and lists a target the item already has an outbound edge of that edge type to, the server MUST NOT send an `edge.deleted` or `edge.created` event for that edge.
+
+**Tests:** `correctness/edges/edges-crud.test.ts › PATCH /items keeps the edge to a target it still lists, with its id, version and properties, and announces only what it changes`, `› POST /items landing on an item by its natural key keeps the edge to a target it still lists, and announces only what it changes`, `› POST /items/bulk landing on an item by its natural key keeps the edge to a target it still lists, and announces only what it changes`.
 
 ## Moving an item to another type
 

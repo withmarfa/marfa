@@ -6649,7 +6649,7 @@ export interface operations {
                     capture_longitude?: number;
                     /** @description Tags to put on the item: at most 100, each up to 128 characters. */
                     tags?: string[];
-                    /** @description Edges to create with the item, as edge type to a list of target item IDs. The new item is the source. Marfa creates the item and all its edges, or none. An edge made this way carries no properties, so an edge type that requires one refuses the write. */
+                    /** @description Edges to create with the item, as edge type to a list of target item IDs. The new item is the source. Marfa creates the item and all its edges, or none. When the request lands on an item by its natural key, each type you name replaces that item's edges of the type, and an edge to an ID you still list stays as it is. A new edge made this way carries no properties, so an edge type that requires one refuses the write. */
                     edges?: {
                         [key: string]: string[];
                     };
@@ -7333,7 +7333,7 @@ export interface operations {
                     occurred_at?: string;
                     /** @description The item's new `source_id`. Marfa moves its natural key under the item's own `source`, which never changes. */
                     source_id?: string;
-                    /** @description Edge types to replace, each mapped to the item IDs it should now point to. An empty list removes every edge of that type. Types you don't name are untouched. An edge made this way carries no properties, so an edge type that requires one refuses the write. */
+                    /** @description Edge types to replace, each mapped to the item IDs it should now point to. An edge to an ID you still list stays as it is, with its properties. An empty list removes every edge of that type. Types you don't name are untouched. A new edge made this way carries no properties, so an edge type that requires one refuses the write. */
                     edges?: {
                         [key: string]: string[];
                     };
@@ -9215,7 +9215,7 @@ export interface operations {
                         version?: number;
                         /** @description Tags to put on the item: at most 100, each up to 128 characters. */
                         tags?: string[];
-                        /** @description Edge types to set, each mapped to the target item IDs the item should now point to. Types you don't name are untouched. An edge made this way carries no properties, so an edge type that requires one refuses the write. */
+                        /** @description Edge types to set, each mapped to the target item IDs the item should now point to. An edge to an ID you still list stays as it is, with its properties. Types you don't name are untouched. A new edge made this way carries no properties, so an edge type that requires one refuses the write. */
                         edges?: {
                             [key: string]: string[];
                         };

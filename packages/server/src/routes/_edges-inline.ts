@@ -18,41 +18,46 @@ export interface InlineEdgeChanges {
 /**
  * Replace the outbound edges of `itemId` for the listed edge types,
  * setting the new target list per type. For each `[edgeType, targets]`
- * entry: every existing edge from `itemId` of that type is deleted,
- * then one edge per target is created. Edge types not listed in `edges`
- * are left untouched.
+ * entry: an existing edge to a listed target is kept as it is, with its
+ * id, version and properties; every other edge of that type is deleted;
+ * and one edge is created per listed target that had none. Edge types not
+ * listed in `edges` are left untouched.
  *
- * Used by every door that writes an item's edges inline. The proposed
- * (post-delete) edge set is validated
- * through the same `assertEdgesCanBeCreated` checks the create path uses
- * — cardinality, type constraints, exact-duplicate, and the load-bearing
- * cycle checks. Without it the upsert path
- * could re-introduce a graph cycle or a cardinality / type-constraint
- * violation that the first write rejected, and a poisoned cycle later
- * breaks cascade delete.
+ * Used by every door that writes an item's edges inline. The created
+ * edges are validated against the post-delete graph, kept edges included,
+ * through the same `assertEdgesCanBeCreated` checks the create path uses:
+ * cardinality, type constraints, exact-duplicate, and the load-bearing
+ * cycle checks. Without it the upsert path could re-introduce a graph
+ * cycle or a cardinality / type-constraint violation that the first write
+ * rejected, and a poisoned cycle later breaks cascade delete. A kept edge
+ * is not judged again, as no other write of an item judges its standing
+ * edges again.
  *
- * The delete + create are not transactional on their own — the caller
- * MUST invoke this inside a `storage.runInTransaction` so a validation
- * failure rolls the deletes back. Every caller does. Validation runs after the deletes
- * but before any create, so a rejected set never lands a write; the
+ * The read, deletes and creates are not transactional on their own: the
+ * caller MUST invoke this inside a `storage.runInTransaction`, so the edges
+ * read are the edges the deletes act on and a validation failure rolls the
+ * deletes back. Every caller does. Validation runs after the deletes but
+ * before any create, so a rejected set never lands a write; the
  * transaction unwinds the deletes.
  *
  * **Returns what it changed and announces nothing.** `writeItem` records
  * item and edge events inside the write's transaction, after the outcome is
- * known. A failed atomic bulk batch then leaves neither rows nor events.
+ * known. A failed atomic bulk batch then leaves neither rows nor events. A
+ * kept edge is in neither list, so it is never announced.
  *
  * `assertEdgeWritable` is the caller's edge-type permission gate, run once
  * per listed edge type. It lives here rather than at each call site because
  * every route reaching this function reaches the same state, and a gate that
- * has to be remembered per route is a gate one of them will be missing — as
- * both bulk branches were. It is a required parameter for the same reason:
- * a new call site has to state an answer rather than inherit a default.
+ * has to be remembered per route is a gate one of them will be missing. It
+ * is a required parameter for the same reason: a new call site has to state
+ * an answer rather than inherit a default.
  *
  * The gate runs for every listed type including one whose target list is
- * empty. An empty list is not a no-op, it is a delete instruction: the
- * loop below removes every existing edge of that type and then creates
- * nothing. Gating only non-empty lists leaves the delete primitive
- * ungated, which is the half a create-only test passes straight over.
+ * empty, and one whose list names exactly the targets held. An empty list
+ * is not a no-op, it is a delete instruction: every existing edge of that
+ * type is removed and nothing is created. Gating only lists that change
+ * something leaves the delete primitive ungated, which is the half a
+ * create-only test passes straight over.
  *
  * `mayReadTarget` is required for the same reason: a target whose type the
  * caller may not read is answered as missing, on every door alike.
@@ -64,6 +69,7 @@ export async function applyInlineEdges(
   assertEdgeWritable: (edgeType: string) => void,
   mayReadTarget: (type: string) => boolean,
 ): Promise<InlineEdgeChanges> {
+  storage.assertInWriteTransaction();
   // Permission first, before any shape validation or write. A caller with
   // no edge permission must not be able to distinguish a malformed target
   // from a well-formed one it still may not write.
@@ -71,9 +77,8 @@ export async function applyInlineEdges(
     assertEdgeWritable(edgeType);
   }
 
-  // Build and shape the proposals up front so a malformed target id is
-  // rejected before any write — preserves the prior fail-fast behavior.
-  const proposals: EdgeProposal[] = [];
+  // Shape every target up front so a malformed id is rejected before any
+  // write.
   for (const [edgeType, targets] of Object.entries(edges)) {
     for (const target of targets) {
       if (!isValidId(target)) {
@@ -82,6 +87,30 @@ export async function applyInlineEdges(
           `Invalid target id in edges.${edgeType}: ${target}`,
         );
       }
+    }
+  }
+
+  // Delete first so cardinality / duplicate checks see the post-delete
+  // graph: replacing this item's edges of a type must not collide with
+  // the very edges being replaced.
+  const removed: Edge[] = [];
+  const proposals: EdgeProposal[] = [];
+  for (const [edgeType, targets] of Object.entries(edges)) {
+    const listed = new Set(targets);
+    const held = new Set<string>();
+    for (const edge of await storage.edges.listOutboundOfType(
+      itemId,
+      edgeType,
+    )) {
+      if (listed.has(edge.target_id)) {
+        held.add(edge.target_id);
+        continue;
+      }
+      const gone = await storage.edges.delete(edge.id);
+      if (gone) removed.push(gone);
+    }
+    for (const target of targets) {
+      if (held.has(target)) continue;
       proposals.push({
         source_id: itemId,
         target_id: target,
@@ -90,17 +119,9 @@ export async function applyInlineEdges(
     }
   }
 
-  // Delete first so cardinality / duplicate checks see the post-delete
-  // graph: replacing this item's edges of a type must not collide with
-  // the very edges being replaced.
-  const removed: Edge[] = [];
-  for (const edgeType of Object.keys(edges)) {
-    removed.push(...(await storage.edges.deleteBySource(itemId, edgeType)));
-  }
-
-  // Validate the full proposed set against the post-delete state. Throws
-  // on the first violation (cardinality, type constraint, duplicate,
-  // cycle), aborting the caller's transaction before any edge is recreated.
+  // Validate the created set against the post-delete state. Throws on the
+  // first violation (cardinality, type constraint, duplicate, cycle),
+  // aborting the caller's transaction before any edge is created.
   await assertEdgesCanBeCreated(storage, proposals, mayReadTarget);
 
   const created: Edge[] = [];

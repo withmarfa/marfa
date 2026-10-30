@@ -113,7 +113,8 @@ interface RowChange {
   idempotency_key?: string;
   /** Replaces the row's tags. */
   tags?: string[];
-  /** Replaces the row's outbound edges of each type named. */
+  /** Replaces the row's outbound edges of each type named, keeping each
+   *  edge to a target still listed. */
   edges?: Record<string, string[]>;
   blob_proof?: BlobProof;
 }
