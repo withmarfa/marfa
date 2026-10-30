@@ -363,7 +363,6 @@ describe("isValidEdgeTypeIdentifier", () => {
     for (const id of [
       "about",
       "attached-to",
-      "authored-by",
       "derived-from",
       "in-collection",
       "in-thread",

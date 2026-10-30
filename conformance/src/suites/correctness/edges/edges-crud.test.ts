@@ -68,7 +68,6 @@ const CORE_EDGE_TYPES: readonly {
   { id: "parent-of", target: makeItem },
   { id: "in-thread", target: makeItem },
   { id: "attached-to", target: makeItem },
-  { id: "authored-by", target: makeItem },
   { id: "derived-from", target: makeItem },
   { id: "supersedes", target: makeItem },
   { id: "references", target: makeItem },

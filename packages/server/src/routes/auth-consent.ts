@@ -1452,7 +1452,6 @@ export const CONSENT_SCOPE_DESCRIPTIONS: Record<string, string> = {
   "edge.in-folder": "Where an item's file sits in a folder.",
   "edge.attached-to": "Which item a file is attached to.",
   "edge.references": "Which items point to others.",
-  "edge.authored-by": "Who made an item.",
   "edge.derived-from": "Which item another came from.",
   "edge.supersedes": "Which item replaces another.",
 

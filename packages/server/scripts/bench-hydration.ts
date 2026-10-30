@@ -93,7 +93,7 @@ async function main(): Promise<void> {
   const source = await mk();
   for (let i = 0; i < 25; i++) {
     const t = await mk();
-    const edgeType = i < 10 ? "about" : i < 20 ? "derived-from" : "authored-by";
+    const edgeType = i < 10 ? "about" : i < 20 ? "derived-from" : "references";
     await req("POST", "/edges", {
       source_id: source,
       target_id: t,
