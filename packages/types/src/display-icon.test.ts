@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { describe, expect, it } from "vitest";
-import { ICON_SETS } from "./icon-sets.js";
+import { ICON_SETS, isIconId, lucideIconId } from "./icon-sets.js";
 import { validateTypeSchema } from "./schema-validation.js";
 import type { TypeSchema } from "./schema-types.js";
 
@@ -130,6 +130,32 @@ describe("display_hints.icon", () => {
   });
 });
 
+describe("lucideIconId", () => {
+  it("names the icon a bare name stands for, following a rename, and nothing else", () => {
+    expect(lucideIconId("calendar")).toBe("lucide:calendar");
+    expect(lucideIconId("bold")).toBe("lucide:letter-b");
+    expect(lucideIconId("archive-restore")).toBe("lucide:archive-arrow-up");
+    expect(lucideIconId("circle-parking-off")).toBe(
+      "lucide:circle-letter-p-off",
+    );
+    expect(lucideIconId("square-parking-off")).toBe(
+      "lucide:square-letter-p-off",
+    );
+    for (const name of [
+      "indent",
+      "album",
+      "no-such-icon",
+      "Bold",
+      "toString",
+    ]) {
+      expect(lucideIconId(name), name).toBeUndefined();
+    }
+    // The ID it gives is an accepted one; the alias it came from is not.
+    expect(isIconId(String(lucideIconId("bold")))).toBe(true);
+    expect(isIconId("lucide:bold")).toBe(false);
+  });
+});
+
 describe("the pinned icon sets", () => {
   const pins = (
     JSON.parse(
@@ -167,6 +193,22 @@ describe("the pinned icon sets", () => {
         expect(aliases.filter((alias) => set.icons.includes(alias))).toEqual(
           [],
         );
+      });
+
+      it("maps each alias to the listed icon it resolves to, and no other", () => {
+        const { aliases } = installed(set.prefix).data;
+        const resolved = (alias: string): string => {
+          let name = alias;
+          for (let a = aliases?.[name]; a; a = aliases?.[name]) name = a.parent;
+          return name;
+        };
+        const expected: Record<string, string> = {};
+        for (const alias of Object.keys(aliases ?? {}).sort()) {
+          const icon = resolved(alias);
+          if (set.icons.includes(icon)) expected[alias] = icon;
+        }
+        expect({ ...set.aliases }).toEqual(expected);
+        expect(Object.keys(set.aliases).length).toBeGreaterThan(0);
       });
     });
   }

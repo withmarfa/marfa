@@ -3470,5 +3470,17 @@
   "zulip",
   "zx",
   "zyte"
- ]
+ ],
+ "aliases": {
+  "airbrakedotio": "airbrake",
+  "chromecast": "googlecast",
+  "d3dotjs": "d3",
+  "empirekred": "kred",
+  "nextui": "heroui",
+  "nuxtdotjs": "nuxt",
+  "renovatebot": "renovate",
+  "rstudio": "rstudioide",
+  "tencentqq": "qq",
+  "tmobile": "deutschetelekom"
+ }
 }

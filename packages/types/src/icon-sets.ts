@@ -10,6 +10,8 @@ export interface IconSet {
   version: string;
   /** Every icon of that version, by name; no alias and no hidden icon. */
   icons: readonly string[];
+  /** Each alias of an icon in `icons`, with the icon it resolves to. */
+  aliases: Readonly<Record<string, string>>;
 }
 
 /** The sets a type's `display_hints.icon` may name an icon from. */
@@ -26,7 +28,14 @@ export function isIconId(id: string): boolean {
   return NAMES.get(id.slice(0, colon))?.has(id.slice(colon + 1)) === true;
 }
 
-/** The ID of the Lucide icon named `name`, when Lucide has one. */
+/**
+ * The ID of the Lucide icon a bare `name` stands for: the icon of that name,
+ * or the icon Lucide renamed it to. An alias is not itself an accepted ID.
+ */
 export function lucideIconId(name: string): string | undefined {
-  return NAMES.get("lucide")?.has(name) === true ? `lucide:${name}` : undefined;
+  if (NAMES.get("lucide")?.has(name) === true) return `lucide:${name}`;
+  const renamed = Object.hasOwn(lucide.aliases, name)
+    ? (lucide.aliases as Record<string, string>)[name]
+    : undefined;
+  return renamed === undefined ? undefined : `lucide:${renamed}`;
 }

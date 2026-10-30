@@ -386,7 +386,7 @@ async function versionTwo(
 }
 
 describe("starting on a database at schema version 2", () => {
-  it("writes each stored icon as a Lucide icon ID, and drops one Lucide does not have", async () => {
+  it("writes each stored icon as a Lucide icon ID, follows a renamed one and drops one Lucide does not have", async () => {
     const path = scratch();
     const fields = { name: { type: "string" } };
     const definition = (display_hints?: Record<string, string>) => ({
@@ -401,6 +401,10 @@ describe("starting on a database at schema version 2", () => {
         "user.bare": definition({ title_field: "name", icon: "star" }),
         "user.gone": definition({ title_field: "name", icon: "no-such-icon" }),
         "user.only": definition({ icon: "github" }),
+        "user.renamed": definition({ icon: "archive-restore" }),
+        "user.hidden": definition({ icon: "album" }),
+        "user.hiddenalias": definition({ icon: "indent" }),
+        "user.second": definition(),
         "user.prefixed": definition({ icon: "simple-icons:github" }),
         "user.plain": definition(),
         "user.damaged": "not json",
@@ -408,6 +412,10 @@ describe("starting on a database at schema version 2", () => {
       {
         "user.bare": "heart",
         "user.gone": "Heart",
+        "user.renamed": "bold",
+        "user.hidden": "album",
+        "user.hiddenalias": "indent",
+        "user.second": "circle-parking-off",
         "user.prefixed": "lucide:moon",
       },
     );
@@ -437,6 +445,9 @@ describe("starting on a database at schema version 2", () => {
       icon: "lucide:star",
     });
     expect(hints("user.gone")).toEqual({ title_field: "name" });
+    expect(hints("user.renamed")).toEqual({ icon: "lucide:archive-arrow-up" });
+    expect(hints("user.hidden")).toBeUndefined();
+    expect(hints("user.hiddenalias")).toBeUndefined();
     expect(hints("user.only")).toBeUndefined();
     expect(types["user.only"]?.schema).toBe(JSON.stringify(definition()));
     expect(hints("user.prefixed")).toEqual({ icon: "simple-icons:github" });
@@ -445,6 +456,8 @@ describe("starting on a database at schema version 2", () => {
     expect(types["user.bare"]?.updated_at).toBe("2026-10-01T00:00:00.000Z");
     expect(icons).toEqual({
       "user.bare": "lucide:heart",
+      "user.renamed": "lucide:letter-b",
+      "user.second": "lucide:circle-letter-p-off",
       "user.prefixed": "lucide:moon",
     });
   });
