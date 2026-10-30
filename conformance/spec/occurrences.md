@@ -46,7 +46,7 @@ The server MUST read each bound of a window as the instant it names, spelled in 
 
 ### `occurrences/window-unreadable`
 
-If a bound of the window is not a timestamp, then the server MUST answer `400 validation_error` naming the bound in `details.field`. A string that is not in ISO 8601 form and a date that does not exist, such as 30 February, are not timestamps.
+If a bound of the window is not a timestamp, being a string not in ISO 8601 form or a date that does not exist, such as 30 February, then the server MUST answer `400 validation_error` naming the bound in `details.field`.
 
 **Tests:** `compliance/occurrences.test.ts › refuses a bound that is no timestamp, naming which`, `compliance/occurrences-window-bounds.test.ts › refuses an impossible date and a string that is not ISO 8601, naming the bound`.
 

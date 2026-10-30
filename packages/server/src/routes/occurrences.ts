@@ -907,7 +907,7 @@ const occurrencesRoute = createRoute({
       from: z
         .string()
         .describe(
-          "Window start, ISO 8601. A time with no zone is read as UTC, and a date with no time is its midnight in UTC. An event overlaps the window if it starts before `to` and ends after this time. Its end is `ends_at`, else its start plus `duration`. A whole-day event fills whole days in its `timezone`, or in UTC if it has none.",
+          "Window start, ISO 8601. No zone means UTC; a date is its UTC midnight. An event overlaps if it starts before `to` and ends after this. Its end is `ends_at`, else start plus `duration`. A whole-day event fills whole days in its `timezone`, else UTC.",
         ),
       to: z
         .string()
