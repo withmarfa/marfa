@@ -81,9 +81,10 @@ export const MIGRATIONS: readonly Migration[] = [
 /**
  * Stores every type icon as an Iconify ID, `<set>:<name>`. A bare name, held
  * as an owner's icon or in a definition's `display_hints.icon`, becomes
- * `lucide:<name>` where the pinned Lucide set has it; where it does not, the
- * owner's icon or the hint is removed, since no app can draw it. A value with
- * a colon is already an ID and is left.
+ * `lucide:<name>` where the pinned Lucide set has it, or `lucide:<icon>` for
+ * the icon Lucide renamed it to; where it has neither, the owner's icon or
+ * the hint is removed, since no app can draw it. A value with a colon is
+ * already an ID and is left.
  */
 async function iconsAsIconifyIds(db: Writer): Promise<void> {
   const owned = await db.execute("SELECT type_id, icon FROM type_icons");
