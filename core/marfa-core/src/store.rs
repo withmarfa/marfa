@@ -6628,7 +6628,11 @@ mod tests {
         );
         assert_eq!(indexed(), 0, "no row was reindexed");
         assert_ne!(catalog_version(&conn).unwrap(), version);
-        assert!(type_rows(&conn).unwrap()[0].1.contains("lucide:sticky-note"));
+        assert!(
+            type_rows(&conn).unwrap()[0]
+                .1
+                .contains("lucide:sticky-note")
+        );
 
         let mut cleared = icon_only.clone();
         cleared.types[0].display_hints.as_mut().unwrap().icon = None;
