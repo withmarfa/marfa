@@ -48,7 +48,7 @@ const BATCH = 250;
 /** Rows sharing a tag, so a clean-up bulk action stays under the 50,000 a bulk action may match. */
 const GROUP = 25_000;
 /** The rows in a page of a hydration, `PAGE_LIMIT` in `core/marfa-core/src/http.rs`. */
-const PAGE = 200;
+const PAGE = 500;
 /** Pages read to measure the server, from the first. */
 const SERVER_PAGES = 10;
 /** Runs of each local read after its first. */
@@ -140,7 +140,7 @@ interface SetReport {
     bytes_per_row: number;
     ms: Spread;
   };
-  /** `items list --limit 200`, answered from the copy. */
+  /** `items list --limit 500`, answered from the copy. */
   listing: LocalRead;
   /** `search`, answered from the copy. */
   search: LocalRead;

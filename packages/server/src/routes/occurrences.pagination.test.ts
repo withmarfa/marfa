@@ -16,7 +16,11 @@
  * large to write to a database.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT } from "../page-limits.js";
+import {
+  DEFAULT_PAGE_LIMIT,
+  MAX_LISTING_LIMIT,
+  MAX_PAGE_LIMIT,
+} from "../page-limits.js";
 import { OpenAPIHono } from "@hono/zod-openapi";
 import {
   createTestContext,
@@ -363,7 +367,7 @@ function syntheticCalendar(
           filters.cursor === undefined ? 0 : Number(filters.cursor);
         const end = Math.min(
           offset +
-            Math.min(filters.limit ?? DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT),
+            Math.min(filters.limit ?? DEFAULT_PAGE_LIMIT, MAX_LISTING_LIMIT),
           eligible.length,
         );
         return Promise.resolve({

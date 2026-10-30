@@ -18,8 +18,16 @@ import { z } from "@hono/zod-openapi";
  * not.
  */
 
-/** Largest page any item, audit, connector or webhook door will return. */
+/** Largest page any item, audit, connector or webhook door but the item
+ * listing will return. */
 export const MAX_PAGE_LIMIT = 200;
+
+/**
+ * Largest page `GET /items` will return. A device fills its copy from this
+ * listing one page per round trip, so over a link with a long round trip the
+ * number of pages, not the bytes, sets how long a first sync takes.
+ */
+export const MAX_LISTING_LIMIT = 500;
 
 /** What a door returns when the caller names no limit. */
 export const DEFAULT_PAGE_LIMIT = 50;

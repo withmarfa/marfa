@@ -169,7 +169,7 @@ describe("pagination correctness", () => {
 });
 
 describe("the page limit", () => {
-  const LISTING_MAX = 200;
+  const LISTING_MAX = 500;
   const SEARCH_MAX = 100;
   let word: string;
   let wide: MarfaClient;
@@ -192,10 +192,10 @@ describe("the page limit", () => {
     for (const result of seeded.data.results) trackItem(ctx, String(result.id));
   });
 
-  it("takes a limit of 200 and refuses 201 and 0, on the listing", async () => {
+  it("takes a limit of 500 and refuses 501 and 0, on the listing", async () => {
     const path = (limit: number) =>
       `/items?source=${encodeURIComponent(wideSource)}&limit=${String(limit)}`;
-    // More rows are held than the largest page, so a page of 200 is the limit
+    // More rows are held than the largest page, so a full page is the limit
     // honored and not the listing running out.
     const widest = await wide.rawRequest<{
       data: unknown[];

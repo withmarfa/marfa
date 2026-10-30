@@ -18,7 +18,10 @@ use crate::wire::{
     WireMetadata, WirePage, WireType,
 };
 
-pub const PAGE_LIMIT: u32 = 200;
+/// The largest page the item listing (`search-and-filters/limit-listing`)
+/// and the edge listings (`edges/list-limit`) answer. A hydration reads a
+/// page per round trip, so a larger page fills a copy sooner over a slow link.
+pub const PAGE_LIMIT: u32 = 500;
 
 /// The most ids `POST /items/bulk-get` takes in one request
 /// (`items/bulk-get-cap`).
@@ -1734,7 +1737,7 @@ impl Http {
 }
 
 impl Http {
-    /// An answer read whole, past ureq's default 10 MiB, which a page of 200
+    /// An answer read whole, past ureq's default 10 MiB, which a page of 500
     /// rows, a bulk read of 100 or an export can pass. A text answer that is
     /// not UTF-8, such as a proxy's page, is read with its bad bytes
     /// replaced, so its status still reaches the caller; JSON is read
@@ -2454,7 +2457,7 @@ mod tests {
         serving.join().unwrap().unwrap();
     }
 
-    /// A page of 200 rows, a bulk read of 100 and a write's answer can each
+    /// A page of 500 rows, a bulk read of 100 and a write's answer can each
     /// be larger than ureq's default 10 MiB, and an answer cut off there
     /// would fail every hydration that holds such rows.
     #[test]

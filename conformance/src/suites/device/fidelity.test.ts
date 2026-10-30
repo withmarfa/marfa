@@ -1817,7 +1817,7 @@ describe("the scripted answers match the server's", () => {
     // The query a hydration sends, so a key the server refuses is one the
     // device would meet too.
     const page = await client.rawRequest(
-      "/edges?edge_type=parent-of&limit=200",
+      "/edges?edge_type=parent-of&limit=500",
     );
     expect(page.ok, JSON.stringify(page.error)).toBe(true);
     const listed = (page.data as { data: { id: string }[] }).data;
@@ -1964,7 +1964,7 @@ describe("the scripted answers match the server's", () => {
     );
     expect(archived.ok, JSON.stringify(archived.error)).toBe(true);
     const lookup = await client.rawRequest(
-      `/items?filter=${encodeURIComponent(`properties.title contains "${name.toLowerCase()}"`)}&state=any&include=metadata&limit=200`,
+      `/items?filter=${encodeURIComponent(`properties.title contains "${name.toLowerCase()}"`)}&state=any&include=metadata&limit=500`,
     );
     expect(lookup.ok, JSON.stringify(lookup.error)).toBe(true);
     const ids = (lookup.data as { data: Array<{ item: { id: string } }> }).data

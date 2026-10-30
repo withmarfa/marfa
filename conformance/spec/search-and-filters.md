@@ -568,15 +568,15 @@ The rows of one page and the key that continues them are in `search-and-filters/
 
 ### `search-and-filters/limit-listing`
 
-When `GET /items` names a `limit` from 1 to 200, the server MUST answer a page of at most that many items.
+When `GET /items` names a `limit` from 1 to 500, the server MUST answer a page of at most that many items.
 
-**Tests:** `correctness/pagination.test.ts › takes a limit of 200 and refuses 201 and 0, on the listing`, `› basic pagination: limit restricts result count and signals more`.
+**Tests:** `correctness/pagination.test.ts › takes a limit of 500 and refuses 501 and 0, on the listing`, `› basic pagination: limit restricts result count and signals more`.
 
 ### `search-and-filters/limit-listing-refused`
 
-If `GET /items` names a `limit` above 200 or below 1, then the server MUST answer `400 validation_error` naming `limit`.
+If `GET /items` names a `limit` above 500 or below 1, then the server MUST answer `400 validation_error` naming `limit`.
 
-**Tests:** `correctness/pagination.test.ts › takes a limit of 200 and refuses 201 and 0, on the listing`.
+**Tests:** `correctness/pagination.test.ts › takes a limit of 500 and refuses 501 and 0, on the listing`.
 
 ### `search-and-filters/limit-search`
 
