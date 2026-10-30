@@ -284,6 +284,30 @@ fn a_url_the_server_refuses_is_refused_and_one_it_takes_is_not() {
 }
 
 #[test]
+fn an_event_status_outside_the_fixed_list_is_refused_naming_the_field() {
+    let core = copy(&Scripted::start());
+    let event = |status: &str| crate::Draft {
+        r#type: "core.event".into(),
+        properties: serde_json::json!({ "title": "Dinner", "status": status })
+            .as_object()
+            .unwrap()
+            .clone(),
+        ..Default::default()
+    };
+    let error = core.create_item(&event("rescheduled")).unwrap_err();
+    assert!(
+        matches!(&error, CoreError::Validation { code, message }
+            if code == "invalid_properties" && message.starts_with("status: ")),
+        "{error:?}"
+    );
+    assert!(core.queue().unwrap().is_empty());
+    for taken in ["tentative", "confirmed", "canceled"] {
+        core.create_item(&event(taken)).unwrap();
+    }
+    assert_eq!(core.queue().unwrap().len(), 3);
+}
+
+#[test]
 fn a_whole_number_a_float_would_change_is_refused_before_it_is_queued() {
     let core = copy(&Scripted::start());
     let mut kept = 0;

@@ -122,6 +122,28 @@ describe("POST /items", () => {
     }
   });
 
+  it("refuses an event status outside the fixed list, naming the field", async () => {
+    const write = (status: string) =>
+      request(ctx.app, "POST", "/items", {
+        key: ctx.workingKey,
+        body: { type: "core.event", properties: { title: "Dinner", status } },
+      });
+    const refused = await write("rescheduled");
+    expect(refused.status).toBe(400);
+    const result = (await refused.json()) as {
+      error: { code: string; details: { errors: { field: string }[] } };
+    };
+    expect(result.error.code).toBe("invalid_properties");
+    expect(result.error.details.errors.map((error) => error.field)).toEqual([
+      "status",
+    ]);
+
+    // The witness: a listed value is accepted on the same path.
+    for (const status of ["tentative", "confirmed", "canceled"]) {
+      expect((await write(status)).status, status).toBe(201);
+    }
+  });
+
   it("rejects missing required field", async () => {
     const res = await request(ctx.app, "POST", "/items", {
       key: ctx.workingKey,

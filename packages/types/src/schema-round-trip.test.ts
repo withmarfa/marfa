@@ -442,10 +442,9 @@ describe("compatible_with — optional fields on the target", () => {
   });
 
   it("allows narrowing an optional string to an enum", () => {
-    // `core.task.status` and `core.event.status` are free-text, and a
-    // connector knows the closed set its upstream service actually emits.
-    // An enum only ever holds a string, so a reader expecting `string` is
-    // never surprised.
+    // `core.task.status` is free-text, and a connector knows the closed set
+    // its upstream service actually emits. An enum only ever holds a string,
+    // so a reader expecting `string` is never surprised.
     const result = validate({
       id: "acme.staged_task",
       version: 1,
