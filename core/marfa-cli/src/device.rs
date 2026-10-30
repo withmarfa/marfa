@@ -1985,12 +1985,31 @@ fn type_line(held: &marfa_core::ItemType) -> String {
 }
 
 fn field_line(field: &marfa_core::TypeField) -> String {
+    let words: Vec<String> = field
+        .definition
+        .get("status_values")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|entry| {
+            Some(format!(
+                "{}={}",
+                entry.get("value")?.as_str()?,
+                entry.get("group")?.as_str()?
+            ))
+        })
+        .collect();
     format!(
-        "  {}  {}{}  from {}",
+        "  {}  {}{}  from {}{}",
         field.name,
         field.r#type,
         if field.required { "  required" } else { "" },
-        field.declared_by
+        field.declared_by,
+        if words.is_empty() {
+            String::new()
+        } else {
+            format!("  words {}", words.join(", "))
+        }
     )
 }
 

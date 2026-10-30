@@ -157,6 +157,39 @@ fn it_prints_the_definition_the_same_way_with_and_without_json() {
 }
 
 #[test]
+fn a_status_field_takes_its_words_with_their_groups() {
+    let ran = marfa(
+        &[
+            "types",
+            "scaffold",
+            "user.ticket",
+            "--field",
+            "stage:status:open=not_started,fixing=in_progress,closed=completed",
+        ],
+        &[],
+    );
+    assert_eq!(ran.code, 0, "{}", ran.stderr);
+    assert_eq!(
+        serde_json::from_str::<Value>(&ran.stdout).unwrap()["fields"]["stage"],
+        json!({ "type": "status", "status_values": [
+            { "value": "open", "group": "not_started" },
+            { "value": "fixing", "group": "in_progress" },
+            { "value": "closed", "group": "completed" }
+        ] })
+    );
+    for (spec, said) in [
+        ("stage:status:open", "with no group"),
+        ("stage:status:open=todo", "not one of not_started"),
+        ("stage:status", "needs its words"),
+    ] {
+        let refused = marfa(&["types", "scaffold", "user.ticket", "--field", spec], &[]);
+        assert_ne!(refused.code, 0, "{spec}: {}", refused.stderr);
+        assert!(refused.stderr.contains(said), "{spec}: {}", refused.stderr);
+        assert_eq!(refused.stdout, "");
+    }
+}
+
+#[test]
 fn it_takes_a_parent_and_a_description() {
     let ran = marfa(
         &[
@@ -364,6 +397,54 @@ fn a_working_copy_declares_what_it_printed_unchanged() {
         &[],
     );
     assert_eq!(refused.code, 1, "{}", refused.stderr);
+    std::fs::remove_dir_all(folder).unwrap();
+}
+
+#[test]
+fn a_working_copy_reads_a_status_field_with_every_word_its_chain_gives_it() {
+    let folder = scratch("declare-status");
+    let store = folder.join("store.sqlite");
+    let store = store.to_str().unwrap();
+    let made = marfa(&["device", "--db", store, "status"], &[]);
+    assert_eq!(made.code, 0, "{}", made.stderr);
+    let printed = marfa(
+        &[
+            "types",
+            "scaffold",
+            "user.chore",
+            "--parent",
+            "core.task",
+            "--field",
+            "status:status:waiting=in_progress",
+        ],
+        &[],
+    );
+    assert_eq!(printed.code, 0, "{}", printed.stderr);
+    let declared = marfa(
+        &[
+            "device",
+            "--db",
+            store,
+            "types",
+            "declare",
+            "--definitions",
+            &printed.stdout,
+        ],
+        &[],
+    );
+    assert_eq!(declared.code, 0, "{}", declared.stderr);
+    let read = marfa(
+        &["device", "--db", store, "types", "get", "user.chore"],
+        &[],
+    );
+    assert_eq!(read.code, 0, "{}", read.stderr);
+    assert!(
+        read.stdout.contains(
+            "  status  status  from user.chore  words not_started=not_started, in_progress=in_progress, completed=completed, canceled=canceled, waiting=in_progress"
+        ),
+        "{}",
+        read.stdout
+    );
     std::fs::remove_dir_all(folder).unwrap();
 }
 

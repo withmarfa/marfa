@@ -3383,10 +3383,11 @@ fn queue_create(
     };
     // A natural key may name a row outside this slice. Its required fields
     // and a stale upsert's merged result can only be judged by the server.
-    catalog.validate_properties(
+    catalog.validate_merged(
         &draft.r#type,
         &properties,
         current.is_some() || draft.source_id.is_none(),
+        &draft.properties,
     )?;
     // A tier is chosen where none is named: left out, the server gives a new
     // row the key's default, and a row shown at one tier would come back at
@@ -3667,7 +3668,7 @@ fn queue_update(
     // them. Stale edits cannot prove the server's eventual merged result.
     catalog.validate_properties(&next.r#type, &edit.properties, false)?;
     if base == held.version && !store::unanswered_keyed_create(tx, &held)? {
-        catalog.validate_properties(&next.r#type, &next.properties, true)?;
+        catalog.validate_merged(&next.r#type, &next.properties, true, &edit.properties)?;
     }
     store::hold_beneath_item(tx, id)?;
     store::upsert_item(tx, &next.as_wire(), None, &catalog.indexing(&next.r#type))?;

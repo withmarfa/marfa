@@ -921,6 +921,40 @@ mod tests {
     }
 
     #[test]
+    fn a_view_by_status_group_reads_the_types_words() {
+        let core = copy();
+        {
+            let conn = core.conn().unwrap();
+            let mut note = wire_type("core.note", None, Some("title"));
+            note.rest.insert(
+                "fields".into(),
+                json!({ "status": { "type": "status", "status_values": [
+                    { "value": "todo", "group": "not_started" },
+                    { "value": "done", "group": "completed" }
+                ] } }),
+            );
+            store::replace_types(&conn, &[note, wire_type("system.view", None, None)]).unwrap();
+        }
+        for (id, status) in [("a", "todo"), ("b", "done"), ("c", "pending")] {
+            put(&core, id, json!({ "status": status }), &[]);
+        }
+        put(&core, "d", json!({}), &[]);
+        filtered(&core, r#"status_group eq "completed""#);
+        assert_eq!(ids(&core), ["b"]);
+        filtered(&core, r#"status_group neq "completed""#);
+        assert_eq!(ids(&core), ["a"]);
+        filtered(&core, "status_group not_exists");
+        assert_eq!(ids(&core), ["d", "c"]);
+        filtered(&core, r#"status_group eq "done""#);
+        assert!(
+            core.list_in_view("view", None, None)
+                .unwrap_err()
+                .to_string()
+                .contains("Unknown status group")
+        );
+    }
+
+    #[test]
     fn grouping_honors_hidden_values() {
         let core = copy();
         put(&core, "a", json!({}), &["x"]);

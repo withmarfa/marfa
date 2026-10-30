@@ -52,6 +52,7 @@ pub(crate) fn search(
         filters.filter.as_deref(),
         filters.beneath.as_deref(),
         &store::whole_edge_types(conn)?,
+        catalog,
         &mut clauses,
         &mut values,
     )?;

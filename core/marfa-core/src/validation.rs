@@ -167,6 +167,9 @@ fn field(kind: &str, definition: &Value, value: &Value) -> Result<Option<String>
     };
     Ok(match kind {
         "string" => match value.as_str() { Some(text) => bounded(text), None => expected("string") },
+        // Whether the word is one the type declares is judged apart, only
+        // where a write sets it (`Catalog::validate_merged`).
+        "status" => field("string", &Value::Null, value)?,
         "enum" => match value.as_str() {
             None => expected("string"),
             Some(text) => match definition.get("enum_values").and_then(Value::as_array).filter(|values| !values.is_empty()) {

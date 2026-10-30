@@ -288,6 +288,7 @@ impl Settings {
             self.query.filter.as_deref(),
             self.query.beneath.as_deref(),
             whole_edges,
+            catalog,
             clauses,
             values,
         )

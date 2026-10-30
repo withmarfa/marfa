@@ -307,6 +307,160 @@ fn an_event_status_outside_the_fixed_list_is_refused_naming_the_field() {
     assert_eq!(core.queue().unwrap().len(), 3);
 }
 
+fn task(properties: serde_json::Value) -> crate::Draft {
+    crate::Draft {
+        r#type: "core.task".into(),
+        properties: properties.as_object().unwrap().clone(),
+        ..Default::default()
+    }
+}
+
+#[test]
+fn a_status_word_the_type_does_not_declare_is_refused_only_where_a_write_sets_it() {
+    let core = copy(&Scripted::start());
+    let undeclared = |error: CoreError| {
+        matches!(&error, CoreError::Validation { code, message }
+            if code == "invalid_properties"
+                && message == "status: Must be a status word the type declares: not_started, in_progress, completed, canceled")
+    };
+    assert!(undeclared(
+        core.create_item(&task(
+            serde_json::json!({ "title": "Ship", "status": "pending" })
+        ))
+        .unwrap_err()
+    ));
+    assert!(core.queue().unwrap().is_empty());
+    for taken in [
+        serde_json::json!({ "title": "Ship", "status": "in_progress" }),
+        serde_json::json!({ "title": "Ship", "status": null }),
+        serde_json::json!({ "title": "Ship" }),
+    ] {
+        core.create_item(&task(taken)).unwrap();
+    }
+    // A row the server holds with a word the type no longer declares.
+    let id = uuid::Uuid::now_v7().to_string();
+    {
+        let conn = core.conn().unwrap();
+        let held = crate::store::testing::wire_item(
+            &id,
+            "core.task",
+            "active",
+            "2026-01-01T00:00:00.000Z",
+            serde_json::json!({ "title": "Old", "status": "pending" }),
+        );
+        store::upsert_item(&conn, &held, None, &crate::catalog::Indexing::default()).unwrap();
+    }
+    let edit = |properties: serde_json::Value| crate::Edit {
+        properties: properties.as_object().unwrap().clone(),
+        base_version: Some(1),
+        ..Default::default()
+    };
+    assert!(undeclared(
+        core.update_item(&id, &edit(serde_json::json!({ "status": "pending" })))
+            .unwrap_err()
+    ));
+    core.update_item(&id, &edit(serde_json::json!({ "title": "Renamed" })))
+        .unwrap();
+    let held = core.get(&id).unwrap().unwrap();
+    assert_eq!(held.properties["title"], "Renamed");
+    assert_eq!(held.properties["status"], "pending");
+}
+
+#[test]
+fn a_subtype_adds_status_words_after_the_ones_it_inherits() {
+    // A copy that has never reached a server holds the types it declares.
+    let core = Core::open_in_memory(None).unwrap();
+    core.declare_types(&[serde_json::json!({
+        "id": "acme.chore",
+        "parent": "core.task",
+        "fields": { "status": { "type": "status", "status_values": [
+            { "value": "waiting", "group": "in_progress" }
+        ] } }
+    })])
+    .unwrap();
+    let chore = |status: &str| crate::Draft {
+        r#type: "acme.chore".into(),
+        properties: serde_json::json!({ "title": "Sweep", "status": status })
+            .as_object()
+            .unwrap()
+            .clone(),
+        ..Default::default()
+    };
+    for taken in ["waiting", "not_started", "completed"] {
+        core.create_item(&chore(taken)).unwrap();
+    }
+    let Err(CoreError::Validation { code, message }) = core.create_item(&chore("pending")) else {
+        panic!("a word neither type declares was taken");
+    };
+    assert_eq!(code, "invalid_properties");
+    assert_eq!(
+        message,
+        "status: Must be a status word the type declares: not_started, in_progress, completed, canceled, waiting"
+    );
+    assert!(
+        core.create_item(&task(
+            serde_json::json!({ "title": "x", "status": "waiting" })
+        ))
+        .is_err()
+    );
+}
+
+#[test]
+fn a_status_field_declared_with_words_the_server_refuses_is_refused() {
+    let core = copy(&Scripted::start());
+    for (status_values, refused) in [
+        (serde_json::json!([]), "not a list"),
+        (
+            serde_json::json!([{ "value": "Open", "group": "not_started" }]),
+            "lowercase",
+        ),
+        (
+            serde_json::json!([{ "value": "open", "group": "todo" }]),
+            "not one of",
+        ),
+        (
+            serde_json::json!([{ "value": "open" }]),
+            "exactly value and group",
+        ),
+        (
+            serde_json::json!([{ "value": "open", "group": "not_started" }, { "value": "open", "group": "completed" }]),
+            "more than once",
+        ),
+    ] {
+        let Err(CoreError::Invalid(message)) = core.declare_types(&[serde_json::json!({
+            "id": "acme.ticket",
+            "fields": { "stage": { "type": "status", "status_values": status_values } }
+        })]) else {
+            panic!("{status_values} was declared");
+        };
+        assert!(message.contains(refused), "{status_values}: {message}");
+    }
+    for fields in [
+        serde_json::json!({ "a": { "type": "string", "status_values": [] } }),
+        serde_json::json!({ "a": { "type": "array", "items_type": "status" } }),
+        serde_json::json!({
+            "a": { "type": "status", "status_values": [{ "value": "x", "group": "completed" }] },
+            "b": { "type": "status", "status_values": [{ "value": "y", "group": "completed" }] }
+        }),
+    ] {
+        assert!(
+            matches!(
+                core.declare_types(&[serde_json::json!({ "id": "acme.ticket", "fields": fields })]),
+                Err(CoreError::Invalid(_))
+            ),
+            "{fields}"
+        );
+    }
+    core.declare_types(&[serde_json::json!({
+        "id": "acme.ticket",
+        "fields": { "stage": { "type": "status", "status_values": [
+            { "value": "open", "group": "not_started" },
+            { "value": "closed_9", "group": "completed" }
+        ] } }
+    })])
+    .unwrap();
+}
+
 #[test]
 fn a_whole_number_a_float_would_change_is_refused_before_it_is_queued() {
     let core = copy(&Scripted::start());

@@ -1269,7 +1269,7 @@ Print a starting definition for a type, ready for `types register` or `device ty
 
 Needs no server, working copy or key, sends nothing, and takes none of `--url`, `--key` and `--socket`. An id, field or parent the registry would refuse for its form is refused here with the reason. What only a server knows is left to it: whether a parent exists, and whether a key may register the type.
 
-A field is `NAME:TYPE`, given once for each field, in the order it is printed. An `enum` field takes its allowed values after a second colon, as `status:enum:open,closed`, and an `array` field the type of its elements, as `tags:array:string`.
+A field is `NAME:TYPE`, given once for each field, in the order it is printed. An `enum` field takes its allowed values after a second colon, as `effort:enum:easy,hard`, an `array` field the type of its elements, as `tags:array:string`, and a `status` field its words, each with its group, as `stage:status:open=not_started,closed=completed`. The groups are `not_started`, `in_progress`, `completed` and `canceled`. A type that inherits a status field may give it without words, or with only the words it adds.
 
 ```text
 marfa types scaffold [OPTIONS] <ID>
@@ -1281,7 +1281,7 @@ marfa types scaffold [OPTIONS] <ID>
 
 | Option | Description |
 | --- | --- |
-| `--field <SPEC>` | A field of the type, as `NAME:TYPE`, `NAME:enum:VALUE,VALUE` or `NAME:array:TYPE`. Repeatable. |
+| `--field <SPEC>` | A field of the type, as `NAME:TYPE`, `NAME:enum:VALUE,VALUE`, `NAME:array:TYPE` or `NAME:status:WORD=GROUP,WORD=GROUP`. Repeatable. |
 | `--required <NAME>` | A field an item of the type must have. Repeatable; each names a field given with `--field`. |
 | `--parent <ID>` | The id of the type this one inherits from. A parent Marfa ships is checked against its fields; any other is taken as named. |
 | `--description <TEXT>` | What the type is for. |
