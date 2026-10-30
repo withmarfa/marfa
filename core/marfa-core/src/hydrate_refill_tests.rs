@@ -133,7 +133,11 @@ fn aged_out_on(server: &Scripted, core: Arc<Core>) -> Arc<Core> {
 
 /// `aged_out_on`, with `before` done to the whole copy before its cursor ages
 /// out.
-fn aged_out_after(server: &Scripted, core: Arc<Core>, before: impl FnOnce(&Core)) -> Arc<Core> {
+pub(crate) fn aged_out_after(
+    server: &Scripted,
+    core: Arc<Core>,
+    before: impl FnOnce(&Core),
+) -> Arc<Core> {
     crate::stop_tests::holding_a_catalog(&core);
     put(
         &core,

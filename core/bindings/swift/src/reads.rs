@@ -78,7 +78,9 @@ impl Core {
 
     /// The items and edges changed since `cursor`, or `everything` where
     /// they cannot be named one by one, such as with no cursor or more than
-    /// `most` changed. Take the cursor before reading what it covers.
+    /// `most` changed. Throws `HydrationIncomplete` where the copy is not
+    /// whole, as every read of edges does. Take the cursor before reading
+    /// what it covers, and keep the earlier cursor until that read succeeds.
     pub fn changes_since(
         &self,
         cursor: Option<String>,

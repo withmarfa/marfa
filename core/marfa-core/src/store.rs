@@ -59,6 +59,13 @@ pub const META_COPY_REVISION: &str = "copy_revision";
 /// `Core::changes_since` taken from one store is told from another's at the
 /// same path.
 pub const META_STORE_ID: &str = "store_id";
+/// The latest change of an edge `edge_changes` no longer records
+/// (`prune_edge_changes`).
+pub const META_EDGE_CHANGES_FLOOR: &str = "edge_changes_floor";
+/// How many of the latest changes `edge_changes` keeps whatever they name.
+/// Opening the store lets go of older rows of edges the copy no longer
+/// holds.
+pub const EDGE_CHANGES_KEPT: usize = 10_000;
 pub const HYDRATE_IN_PROGRESS: &str = "in_progress";
 pub const SCHEMA_VERSION: &str = "0";
 
@@ -710,7 +717,7 @@ fn prepare(conn: &Connection) -> Result<(), CoreError> {
             &uuid::Uuid::now_v7().simple().to_string(),
         )?;
     }
-    Ok(())
+    prune_edge_changes(conn, EDGE_CHANGES_KEPT)
 }
 
 pub(crate) fn store_id(conn: &Connection) -> Result<String, CoreError> {
@@ -1046,23 +1053,45 @@ pub fn copy_revision(conn: &Connection) -> Result<u64, CoreError> {
     }
 }
 
-/// The number of the latest change `copy_changes` holds, 0 for none.
-pub(crate) fn last_change(conn: &Connection) -> Result<i64, CoreError> {
-    Ok(conn.query_row(
-        "SELECT coalesce(max(seq), 0) FROM copy_changes",
-        [],
-        |row| row.get(0),
-    )?)
+/// A record of the copy's changes: one row an id, numbered by its latest
+/// change.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum Changes {
+    /// `copy_changes`, where `''` stands for every item.
+    Items,
+    /// `edge_changes`.
+    Edges,
 }
 
-/// The items changed after change `since`, or `None` where more than `most`
+impl Changes {
+    fn table(self) -> (&'static str, &'static str) {
+        match self {
+            Changes::Items => ("copy_changes", "item_id"),
+            Changes::Edges => ("edge_changes", "edge_id"),
+        }
+    }
+}
+
+/// The number of the latest change `of` holds, 0 for none.
+pub(crate) fn last_change(conn: &Connection, of: Changes) -> Result<i64, CoreError> {
+    let (table, _) = of.table();
+    Ok(conn
+        .prepare_cached(&format!("SELECT coalesce(max(seq), 0) FROM {table}"))?
+        .query_row([], |row| row.get(0))?)
+}
+
+/// The ids changed after change `since`, or `None` where more than `most`
 /// did or the types changed, which reaches every item.
 pub(crate) fn changed_since(
     conn: &Connection,
+    of: Changes,
     since: i64,
     most: usize,
 ) -> Result<Option<HashSet<String>>, CoreError> {
-    let mut statement = conn.prepare("SELECT item_id FROM copy_changes WHERE seq > ?1 LIMIT ?2")?;
+    let (table, column) = of.table();
+    let mut statement = conn.prepare_cached(&format!(
+        "SELECT {column} FROM {table} WHERE seq > ?1 LIMIT ?2"
+    ))?;
     let ids = statement
         .query_map(
             params![since, i64::try_from(most).unwrap_or(i64::MAX - 1) + 1],
@@ -1070,6 +1099,58 @@ pub(crate) fn changed_since(
         )?
         .collect::<rusqlite::Result<HashSet<String>>>()?;
     Ok((ids.len() <= most && !ids.contains("")).then_some(ids))
+}
+
+/// The latest change of an edge the copy let go of from `edge_changes`, 0
+/// for none: the removals up to it are no longer named.
+pub(crate) fn edge_changes_floor(conn: &Connection) -> Result<i64, CoreError> {
+    match meta_get(conn, META_EDGE_CHANGES_FLOOR)? {
+        Some(value) => value.parse().map_err(|_| {
+            CoreError::Store(format!("the edge changes' floor {value:?} is no number"))
+        }),
+        None => Ok(0),
+    }
+}
+
+/// Lets go of the rows of `edge_changes` that name an edge the copy no
+/// longer holds and are older than its latest `keep` changes, and raises
+/// the floor to the latest let go. A held edge keeps its row, so the table
+/// holds at most a row for each held edge and `keep` more. A cursor at or
+/// past the floor loses nothing, and one before it has seen more than
+/// `keep` changes since. The latest row always stays, since the triggers
+/// number the next change from it.
+pub(crate) fn prune_edge_changes(conn: &Connection, keep: usize) -> Result<(), CoreError> {
+    let keep = keep.max(1);
+    let rows: i64 = conn.query_row("SELECT count(*) FROM edge_changes", [], |row| row.get(0))?;
+    let held: i64 = conn.query_row("SELECT count(*) FROM edges", [], |row| row.get(0))?;
+    let keep = i64::try_from(keep).unwrap_or(i64::MAX);
+    if rows.saturating_sub(held) <= keep {
+        return Ok(());
+    }
+    let tx = conn.unchecked_transaction()?;
+    let Some(oldest_kept) = tx
+        .query_row(
+            "SELECT seq FROM edge_changes ORDER BY seq DESC LIMIT 1 OFFSET ?1",
+            [keep],
+            |row| row.get::<_, i64>(0),
+        )
+        .optional()?
+    else {
+        return Ok(());
+    };
+    let gone =
+        "seq <= ?1 AND NOT EXISTS (SELECT 1 FROM edges WHERE edges.id = edge_changes.edge_id)";
+    let floor: Option<i64> = tx.query_row(
+        &format!("SELECT max(seq) FROM edge_changes WHERE {gone}"),
+        [oldest_kept],
+        |row| row.get(0),
+    )?;
+    if let Some(floor) = floor {
+        tx.execute(&format!("DELETE FROM edge_changes WHERE {gone}"), [floor])?;
+        meta_set(&tx, META_EDGE_CHANGES_FLOOR, &floor.to_string())?;
+    }
+    tx.commit()?;
+    Ok(())
 }
 
 /// Says nothing about whether a hydration has ever run: a fresh store has no
@@ -1268,6 +1349,20 @@ pub fn refuse_unless_held(completeness: Completeness) -> Result<(), CoreError> {
         Completeness::Complete => Ok(()),
         Completeness::Stale | Completeness::Partial => Err(CoreError::HydrationIncomplete),
     }
+}
+
+/// Runs a local read under one snapshot, refused as `refuse_unless_usable`
+/// refuses on that snapshot, so a hydration another handle commits between
+/// the check and the read cannot slip in.
+pub fn read_usable<T>(
+    conn: &mut Connection,
+    read: impl FnOnce(&Connection) -> Result<T, CoreError>,
+) -> Result<T, CoreError> {
+    let tx = conn.transaction()?;
+    refuse_unless_usable(&tx)?;
+    let answer = read(&tx)?;
+    tx.commit()?;
+    Ok(answer)
 }
 
 /// Runs a local read under one snapshot with the completeness it is marked
@@ -4108,6 +4203,37 @@ pub fn item_by_id_with(
     Ok(items.pop().filter(|item| item.state != ItemState::Trashed))
 }
 
+/// `ids` without repeats, each where it was first named.
+pub(crate) fn unique(ids: &[String]) -> Vec<&str> {
+    let mut seen = HashSet::with_capacity(ids.len());
+    ids.iter()
+        .map(String::as_str)
+        .filter(|id| seen.insert(*id))
+        .collect()
+}
+
+/// The counts an `IN` list is padded to, so the statement cache holds a few
+/// shapes of each query rather than one for every count of ids.
+const IN_LIST_SIZES: [usize; 4] = [1, 16, 128, 500];
+
+/// `ids` in chunks for `IN (...)`, each beside its placeholders and padded
+/// with its last id to one of `IN_LIST_SIZES`. A repeat in an `IN` list
+/// matches its row once.
+pub(crate) fn in_lists<'a>(
+    ids: &'a [&'a str],
+) -> impl Iterator<Item = (String, Vec<&'a str>)> + 'a {
+    ids.chunks(IN_LIST_SIZES[IN_LIST_SIZES.len() - 1])
+        .map(|chunk| {
+            let size = IN_LIST_SIZES
+                .into_iter()
+                .find(|size| *size >= chunk.len())
+                .unwrap_or(chunk.len());
+            let mut padded = chunk.to_vec();
+            padded.resize(size, chunk[chunk.len() - 1]);
+            (vec!["?"; size].join(", "), padded)
+        })
+}
+
 /// Items for `ids`, in the order given, skipping ids not held.
 pub fn items_by_ids(conn: &Connection, ids: &[String]) -> Result<Vec<Item>, CoreError> {
     items_by_ids_with(conn, ids, &mut Unreadable::Refuse)
@@ -4120,12 +4246,12 @@ pub fn items_by_ids_with(
     ids: &[String],
     unreadable: &mut Unreadable,
 ) -> Result<Vec<Item>, CoreError> {
+    let ids = unique(ids);
     let mut by_id: HashMap<String, Item> = HashMap::new();
-    for chunk in ids.chunks(500) {
-        let placeholders = vec!["?"; chunk.len()].join(", ");
+    for (placeholders, chunk) in in_lists(&ids) {
         let sql = format!("SELECT {ITEM_COLUMNS} FROM items WHERE id IN ({placeholders})");
         let mut statement = conn.prepare_cached(&sql)?;
-        let rows = statement.query_map(params_from_iter(chunk.iter()), read_item)?;
+        let rows = statement.query_map(params_from_iter(chunk), read_item)?;
         for row in rows {
             let (item, why) = row?;
             if let Some(why) = why {
@@ -4134,10 +4260,10 @@ pub fn items_by_ids_with(
             by_id.insert(item.id.clone(), item);
         }
     }
-    let tags = tags_for(conn, ids)?;
+    let tags = tags_for(conn, &ids)?;
     Ok(ids
         .iter()
-        .filter_map(|id| by_id.remove(id))
+        .filter_map(|id| by_id.remove(*id))
         .map(|mut item| {
             item.tags = tags.get(&item.id).cloned().unwrap_or_default();
             item
@@ -4167,7 +4293,7 @@ pub fn items_where(
         }
         items.push(item);
     }
-    let ids: Vec<String> = items.iter().map(|item| item.id.clone()).collect();
+    let ids: Vec<&str> = items.iter().map(|item| item.id.as_str()).collect();
     let tags = tags_for(conn, &ids)?;
     for item in &mut items {
         item.tags = tags.get(&item.id).cloned().unwrap_or_default();
@@ -4252,7 +4378,8 @@ fn tags_for_one(conn: &Connection, id: &str) -> Result<Vec<String>, CoreError> {
     Ok(rows.collect::<Result<Vec<String>, _>>()?)
 }
 
-fn tags_for(conn: &Connection, ids: &[String]) -> Result<HashMap<String, Vec<String>>, CoreError> {
+/// `ids` holds no repeat.
+fn tags_for(conn: &Connection, ids: &[&str]) -> Result<HashMap<String, Vec<String>>, CoreError> {
     let mut tags: HashMap<String, Vec<String>> = HashMap::new();
     // Reading a tag in turn costs about a quarter of looking up a row's tags
     // by id, so where the copy holds at most four tags for each row asked,
@@ -4263,7 +4390,7 @@ fn tags_for(conn: &Connection, ids: &[String]) -> Result<HashMap<String, Vec<Str
                 .unwrap_or(i64::MAX)
                 .saturating_mul(4)
     {
-        let wanted: HashSet<&str> = ids.iter().map(String::as_str).collect();
+        let wanted: HashSet<&str> = ids.iter().copied().collect();
         let mut statement =
             conn.prepare_cached("SELECT item_id, tag FROM tags ORDER BY item_id, tag")?;
         let rows = statement.query_map([], |row| {
@@ -4277,13 +4404,12 @@ fn tags_for(conn: &Connection, ids: &[String]) -> Result<HashMap<String, Vec<Str
         }
         return Ok(tags);
     }
-    for chunk in ids.chunks(500) {
-        let placeholders = vec!["?"; chunk.len()].join(", ");
+    for (placeholders, chunk) in in_lists(ids) {
         let sql = format!(
             "SELECT item_id, tag FROM tags WHERE item_id IN ({placeholders}) ORDER BY item_id, tag"
         );
-        let mut statement = conn.prepare(&sql)?;
-        let rows = statement.query_map(params_from_iter(chunk.iter()), |row| {
+        let mut statement = conn.prepare_cached(&sql)?;
+        let rows = statement.query_map(params_from_iter(chunk), |row| {
             Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
         })?;
         for row in rows {
@@ -5734,12 +5860,12 @@ pub fn edges_by_ids_with(
     ids: &[String],
     unreadable: &mut Unreadable,
 ) -> Result<Vec<Edge>, CoreError> {
+    let ids = unique(ids);
     let mut by_id: HashMap<String, Edge> = HashMap::new();
-    for chunk in ids.chunks(500) {
-        let placeholders = vec!["?"; chunk.len()].join(", ");
+    for (placeholders, chunk) in in_lists(&ids) {
         let sql = format!("SELECT {EDGE_COLUMNS} FROM edges WHERE id IN ({placeholders})");
-        let mut statement = conn.prepare(&sql)?;
-        let rows = statement.query_map(params_from_iter(chunk.iter()), read_edge)?;
+        let mut statement = conn.prepare_cached(&sql)?;
+        let rows = statement.query_map(params_from_iter(chunk), read_edge)?;
         for row in rows {
             let (edge, why) = row?;
             if let Some(why) = why {
@@ -5748,7 +5874,7 @@ pub fn edges_by_ids_with(
             by_id.insert(edge.id.clone(), edge);
         }
     }
-    Ok(ids.iter().filter_map(|id| by_id.remove(id)).collect())
+    Ok(ids.iter().filter_map(|id| by_id.remove(*id)).collect())
 }
 
 pub fn edge_by_id_with(
@@ -6093,10 +6219,10 @@ mod tests {
     #[test]
     fn each_change_to_the_copy_names_the_items_it_touches() {
         let conn = testing::conn();
-        let since = |from: i64| changed_since(&conn, from, 8).unwrap();
+        let since = |from: i64| changed_since(&conn, Changes::Items, from, 8).unwrap();
         let ids = |names: &[&str]| Some(names.iter().map(|id| id.to_string()).collect());
         let empty = crate::catalog::Catalog::empty();
-        let from = last_change(&conn).unwrap();
+        let from = last_change(&conn, Changes::Items).unwrap();
         for id in ["a", "b", "c"] {
             put_server_item(
                 &conn,
@@ -6108,20 +6234,20 @@ mod tests {
         }
         assert_eq!(since(from), ids(&["a", "b", "c"]));
 
-        let from = last_change(&conn).unwrap();
+        let from = last_change(&conn, Changes::Items).unwrap();
         assert_eq!(since(from), ids(&[]));
         put_server_edge(&conn, &wire_edge("a-b", "a", "b", "references")).unwrap();
         assert_eq!(since(from), ids(&["a", "b"]));
 
-        let from = last_change(&conn).unwrap();
+        let from = last_change(&conn, Changes::Items).unwrap();
         pin(&conn, "c").unwrap();
         assert_eq!(since(from), ids(&["c"]));
 
         // A change to the types reaches every item, as does one past `most`.
-        let from = last_change(&conn).unwrap();
+        let from = last_change(&conn, Changes::Items).unwrap();
         replace_types(&conn, &[wire_type("acme.photo", None, None)]).unwrap();
         assert_eq!(since(from), None);
-        let from = last_change(&conn).unwrap();
+        let from = last_change(&conn, Changes::Items).unwrap();
         for id in 0..9 {
             let id = format!("n{id}");
             put_server_item(
@@ -6134,7 +6260,9 @@ mod tests {
         }
         assert_eq!(since(from), None);
         assert_eq!(
-            changed_since(&conn, from, 9).unwrap().map(|ids| ids.len()),
+            changed_since(&conn, Changes::Items, from, 9)
+                .unwrap()
+                .map(|ids| ids.len()),
             Some(9)
         );
     }

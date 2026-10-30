@@ -4,13 +4,14 @@
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, params_from_iter};
 use serde::Serialize;
 
 use crate::body::rule::Bodies;
 use crate::catalog::Catalog;
 use crate::error::CoreError;
 use crate::model::{Edge, Item, ItemState, Rows, Shown};
+use crate::store::Changes;
 use crate::{BodyLinks, Core, Result, store};
 
 /// What changed in the copy since a cursor `Core::changes_since` gave.
@@ -125,106 +126,107 @@ impl Core {
     /// id it does not hold is left out. Refused `HydrationIncomplete` where
     /// the copy is not whole, as every read of edges is.
     pub fn get_edges(&self, ids: &[String]) -> Result<Vec<Edge>> {
-        let conn = self.conn()?;
-        store::refuse_unless_usable(&conn)?;
-        store::edges_by_ids_with(&conn, ids, &mut store::Unreadable::Refuse)
+        store::read_usable(&mut *self.conn()?, |conn| {
+            store::edges_by_ids_with(conn, ids, &mut store::Unreadable::Refuse)
+        })
     }
 
     /// `get_edges`, but an edge whose stored properties cannot be read
     /// stays in the answer with no properties, beside why.
     pub fn get_edges_kept(&self, ids: &[String]) -> Result<Vec<(Edge, Option<String>)>> {
-        let conn = self.conn()?;
-        store::refuse_unless_usable(&conn)?;
-        let mut unreadable = store::Unreadable::Keep(HashMap::new());
-        let edges = store::edges_by_ids_with(&conn, ids, &mut unreadable)?;
-        Ok(edges
-            .into_iter()
-            .map(|edge| {
-                let why = unreadable.why(&edge.id);
-                (edge, why)
-            })
-            .collect())
+        store::read_usable(&mut *self.conn()?, |conn| {
+            let mut unreadable = store::Unreadable::Keep(HashMap::new());
+            let edges = store::edges_by_ids_with(conn, ids, &mut unreadable)?;
+            Ok(edges
+                .into_iter()
+                .map(|edge| {
+                    let why = unreadable.why(&edge.id);
+                    (edge, why)
+                })
+                .collect())
+        })
     }
 
     /// The edge the copy holds by `id`, or `None`. Refused
     /// `HydrationIncomplete` where the copy is not whole, as every read of
     /// edges is.
     pub fn get_edge(&self, id: &str) -> Result<Option<Edge>> {
-        let conn = self.conn()?;
-        store::refuse_unless_usable(&conn)?;
-        store::edge_by_id(&conn, id)
+        store::read_usable(&mut *self.conn()?, |conn| store::edge_by_id(conn, id))
     }
 
     /// `get_edge`, but an edge whose stored properties cannot be read is
     /// answered with no properties, beside why.
     pub fn get_edge_kept(&self, id: &str) -> Result<Option<(Edge, Option<String>)>> {
-        let conn = self.conn()?;
-        store::refuse_unless_usable(&conn)?;
-        let mut unreadable = store::Unreadable::Keep(HashMap::new());
-        let edge = store::edge_by_id_with(&conn, id, &mut unreadable)?;
-        Ok(edge.map(|edge| {
-            let why = unreadable.why(&edge.id);
-            (edge, why)
-        }))
+        store::read_usable(&mut *self.conn()?, |conn| {
+            let mut unreadable = store::Unreadable::Keep(HashMap::new());
+            let edge = store::edge_by_id_with(conn, id, &mut unreadable)?;
+            Ok(edge.map(|edge| {
+                let why = unreadable.why(&edge.id);
+                (edge, why)
+            }))
+        })
     }
 
-    /// `body_links` for each id, read against one catalog: each item the
-    /// copy holds outside the bin, by id. An id `body_links` would refuse,
-    /// one the copy does not hold, one in the bin or one whose stored
-    /// properties cannot be read, is left out, so one such item does not
-    /// refuse the rest. Refused `HydrationIncomplete` where the copy is not
-    /// whole, as `body_links` is.
+    /// `body_links` for each id, read against one catalog under one
+    /// snapshot: each item the copy holds outside the bin, by id. An id
+    /// `body_links` would refuse, one the copy does not hold, one in the bin
+    /// or one whose stored properties cannot be read, is left out, so one
+    /// such item does not refuse the rest. Refused `HydrationIncomplete`
+    /// where the copy is not whole, as `body_links` is.
     pub fn body_links_of(&self, ids: &[String]) -> Result<HashMap<String, BodyLinks>> {
-        let conn = self.conn()?;
-        store::refuse_unless_usable(&conn)?;
-        let mut damaged = store::Unreadable::Keep(HashMap::new());
-        let items = store::items_by_ids_with(&conn, ids, &mut damaged)?;
-        let catalog = Catalog::load(&conn)?;
-        let bodies = Bodies::new(&conn, &catalog);
-        let mut answer = HashMap::with_capacity(items.len());
-        for item in items {
-            if item.state == ItemState::Trashed || damaged.why(&item.id).is_some() {
-                continue;
-            }
-            match bodies.read(&item) {
-                Ok(links) => {
-                    answer.insert(item.id, links);
+        store::read_usable(&mut *self.conn()?, |conn| {
+            let mut damaged = store::Unreadable::Keep(HashMap::new());
+            let items = store::items_by_ids_with(conn, ids, &mut damaged)?;
+            let catalog = Catalog::load(conn)?;
+            let bodies = Bodies::new(conn, &catalog);
+            let mut answer = HashMap::with_capacity(items.len());
+            for item in items {
+                if item.state == ItemState::Trashed || damaged.why(&item.id).is_some() {
+                    continue;
                 }
-                Err(error) if store::unreadable(&error) => {}
-                Err(error) => return Err(error),
+                match bodies.read(&item) {
+                    Ok(links) => {
+                        answer.insert(item.id, links);
+                    }
+                    Err(error) if store::unreadable(&error) => {}
+                    Err(error) => return Err(error),
+                }
             }
-        }
-        Ok(answer)
+            Ok(answer)
+        })
     }
 
     /// The items and edges that changed since `cursor`, a cursor an earlier
     /// call gave, with the cursor to pass next. Without a cursor, or with
-    /// one from another store, from beyond what this copy has recorded, or
-    /// from before a change to the types, or where more than `most` items or
-    /// `most` edges changed, the answer is `everything`.
+    /// one from another store, from beyond what this copy has recorded, from
+    /// before a change to the types or from before the removed edges it
+    /// keeps a record of (`store::EDGE_CHANGES_KEPT`), or where more than
+    /// `most` items or `most` edges changed, the answer is `everything`.
     ///
     /// An item is named when its row, its tags, an edge at it, its pin or a
     /// write queued for it changed, so a name may change nothing the caller
     /// shows. An item whose body links read differently only because another
-    /// item changed is not named. A caller takes the cursor before it reads
-    /// what it shows, so a change made between the two is named again rather
-    /// than missed. Answered in every state of the copy, a hydration and a
-    /// refill included: clearing the copy names every item it held.
+    /// item changed, such as a link that starts to resolve when its target
+    /// arrives, is not named. A caller takes the cursor before it reads what
+    /// it shows, so a change made between the two is named again rather than
+    /// missed, and keeps its earlier cursor until the reread of what an
+    /// answer names succeeds: a reread refused `HydrationIncomplete` is made
+    /// again from the earlier cursor once the copy is whole. Refused
+    /// `HydrationIncomplete` where the copy is not whole, as every read of
+    /// edges is, since what it names could not all be reread.
     pub fn changes_since(&self, cursor: Option<&str>, most: u32) -> Result<CopyChanges> {
         let since = cursor.map(Mark::parse).transpose()?;
-        let mut conn = self.conn()?;
-        let tx = conn.transaction()?;
-        let changes = changes_in(&tx, since, most as usize)?;
-        tx.commit()?;
-        Ok(changes)
+        store::read_usable(&mut *self.conn()?, |conn| {
+            changes_in(conn, since, most as usize)
+        })
     }
 }
 
 fn changes_in(conn: &Connection, since: Option<Mark>, most: usize) -> Result<CopyChanges> {
     let now = Mark {
         store: store::store_id(conn)?,
-        items: store::last_change(conn)?,
-        edges: last_edge_change(conn)?,
+        items: store::last_change(conn, Changes::Items)?,
+        edges: store::last_change(conn, Changes::Edges)?,
     };
     let everything = || CopyChanges {
         cursor: now.render(),
@@ -234,15 +236,18 @@ fn changes_in(conn: &Connection, since: Option<Mark>, most: usize) -> Result<Cop
         edges: Vec::new(),
         removed_edges: Vec::new(),
     };
+    let floor = store::edge_changes_floor(conn)?;
     let Some(since) = since.filter(|since| {
-        since.store == now.store && since.items <= now.items && since.edges <= now.edges
+        since.store == now.store
+            && since.items <= now.items
+            && (floor..=now.edges).contains(&since.edges)
     }) else {
         return Ok(everything());
     };
-    let Some(items) = store::changed_since(conn, since.items, most)? else {
+    let Some(items) = store::changed_since(conn, Changes::Items, since.items, most)? else {
         return Ok(everything());
     };
-    let Some(edges) = changed_edges_since(conn, since.edges, most)? else {
+    let Some(edges) = store::changed_since(conn, Changes::Edges, since.edges, most)? else {
         return Ok(everything());
     };
     let (items, removed_items) = split_held(conn, "items", items)?;
@@ -257,31 +262,6 @@ fn changes_in(conn: &Connection, since: Option<Mark>, most: usize) -> Result<Cop
     })
 }
 
-fn last_edge_change(conn: &Connection) -> Result<i64> {
-    Ok(conn.query_row(
-        "SELECT coalesce(max(seq), 0) FROM edge_changes",
-        [],
-        |row| row.get(0),
-    )?)
-}
-
-/// `None` where more than `most` changed.
-fn changed_edges_since(
-    conn: &Connection,
-    since: i64,
-    most: usize,
-) -> Result<Option<HashSet<String>>> {
-    let mut statement =
-        conn.prepare_cached("SELECT edge_id FROM edge_changes WHERE seq > ?1 LIMIT ?2")?;
-    let ids = statement
-        .query_map(
-            params![since, i64::try_from(most).unwrap_or(i64::MAX - 1) + 1],
-            |row| row.get::<_, String>(0),
-        )?
-        .collect::<rusqlite::Result<HashSet<String>>>()?;
-    Ok((ids.len() <= most).then_some(ids))
-}
-
 /// The ids `table` holds and those it does not, each sorted. `table` is a
 /// literal, never a caller's text.
 fn split_held(
@@ -294,14 +274,12 @@ fn split_held(
         .collect::<BTreeSet<_>>()
         .into_iter()
         .collect();
+    let named: Vec<&str> = ids.iter().map(String::as_str).collect();
     let mut held: HashSet<String> = HashSet::new();
-    for chunk in ids.chunks(500) {
-        let placeholders = vec!["?"; chunk.len()].join(", ");
+    for (placeholders, chunk) in store::in_lists(&named) {
         let sql = format!("SELECT id FROM {table} WHERE id IN ({placeholders})");
-        let mut statement = conn.prepare(&sql)?;
-        let rows = statement.query_map(rusqlite::params_from_iter(chunk.iter()), |row| {
-            row.get::<_, String>(0)
-        })?;
+        let mut statement = conn.prepare_cached(&sql)?;
+        let rows = statement.query_map(params_from_iter(chunk), |row| row.get::<_, String>(0))?;
         for row in rows {
             held.insert(row?);
         }

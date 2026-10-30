@@ -685,7 +685,7 @@ impl Core {
     /// registers on the instance the ones it does not hold, and replaces each
     /// `app.*` one it holds in another definition, where the key may.
     /// On a copy that holds a server's catalog the set waits for the next
-    /// hydration.
+    /// hydration. A set that names one id twice is refused `Invalid`.
     pub fn declare_types(&self, types: &[Value]) -> Result<()> {
         self.lock.refuse_unless_writer()?;
         let mut conn = self.conn()?;
@@ -701,8 +701,16 @@ impl Core {
             declared.iter().any(|held| held == id) || builtin::ships(id).unwrap_or(false)
         };
         let mut rows = Vec::new();
+        let mut seen = HashSet::new();
         for definition in types {
-            rows.push(catalog::declaration(definition, &known)?);
+            let row = catalog::declaration(definition, &known)?;
+            if !seen.insert(row.0.clone()) {
+                return Err(CoreError::Invalid(format!(
+                    "{} is declared twice; a set declares each type once",
+                    row.0
+                )));
+            }
+            rows.push(row);
         }
         // The same set again writes nothing, so a declaration at each launch
         // is no change to the copy (`changes_since`).

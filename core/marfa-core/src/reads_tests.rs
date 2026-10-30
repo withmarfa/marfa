@@ -6,7 +6,9 @@ use std::sync::Arc;
 
 use serde_json::json;
 
-use crate::hydrate_refill_tests::{aged_out, head, hydrate, pinned_row, refill_pages, replay};
+use crate::hydrate_refill_tests::{
+    aged_out_after, head, hydrate, pinned_row, refill_pages, replay,
+};
 use crate::scripted::{self, Scripted, Then, event, item_payload};
 use crate::stop_tests::{copy, holding_a_catalog};
 use crate::{Completeness, CopyChanges, Core, CoreError, store};
@@ -355,8 +357,20 @@ fn changes_since_names_a_row_written_and_binned_on_the_device() {
 #[test]
 fn changes_since_names_what_a_refill_changed_and_took_out() {
     let server = Scripted::start();
-    let core = aged_out(&server);
-    let since = core.changes_since(None, 100).unwrap().cursor;
+    let mut since = String::new();
+    let core = aged_out_after(&server, copy(&server), |core| {
+        // The catch-up that ages the copy out holds the server's catalog,
+        // which is a change to every row unless the copy holds it already.
+        caught_up(&server, core, Vec::new(), "10");
+        since = core.changes_since(None, 100).unwrap().cursor;
+    });
+    assert!(
+        matches!(
+            core.changes_since(Some(&since), 100),
+            Err(CoreError::HydrationIncomplete)
+        ),
+        "a copy whose edges cannot be read said what changed"
+    );
     server.on("/items", refill_pages());
     server.on("/items/bulk-get", vec![pinned_row()]);
     server.on("/events", vec![head("60"), replay(vec![], "60")]);
@@ -477,4 +491,170 @@ fn the_batch_reads_answer_nothing_for_no_ids() {
     assert!(answer.is_empty());
     assert!(core.get_items_shown(&[], true).unwrap().rows.is_empty());
     assert!(core.get_edges(&[]).unwrap().is_empty());
+}
+
+#[test]
+fn an_id_named_again_past_a_chunk_answers_its_tags_once() {
+    let server = Scripted::start();
+    let core = notes(&server);
+    let mut named = ids(&["a"]);
+    named.extend((0..520).map(|n| format!("never-held-{n}")));
+    named.push("a".into());
+
+    let rows = core.get_items_shown(&named, false).unwrap().rows;
+
+    assert_eq!(item_ids(&rows), ["a"]);
+    assert_eq!(
+        rows[0],
+        core.get_shown("a").unwrap().unwrap(),
+        "an item read with others differs from the same item read alone"
+    );
+    assert_eq!(rows[0].0.tags, ["kept"]);
+}
+
+#[test]
+fn declaring_one_type_twice_in_a_set_is_refused() {
+    let core = Core::open_in_memory(None).unwrap();
+    let task = json!({"id": "app.acme.task", "fields": {"title": {"type": "string"}}});
+    let other = json!({"id": "app.acme.task", "fields": {}});
+
+    for set in [[task.clone(), task.clone()], [task.clone(), other]] {
+        assert!(
+            matches!(
+                core.declare_types(&set),
+                Err(CoreError::Invalid(message)) if message.contains("app.acme.task")
+            ),
+            "{set:?}"
+        );
+    }
+    // The witness: the type declared once is taken.
+    core.declare_types(&[task]).unwrap();
+    assert_eq!(core.declared_types().unwrap().len(), 1);
+}
+
+#[test]
+fn changes_since_is_refused_part_way_through_a_hydration_as_every_read_of_edges_is() {
+    let server = Scripted::start();
+    let core = notes(&server);
+    let since = core.changes_since(None, 100).unwrap().cursor;
+    hydrating(&core);
+
+    for cursor in [None, Some(since.as_str())] {
+        assert!(
+            matches!(
+                core.changes_since(cursor, 100),
+                Err(CoreError::HydrationIncomplete)
+            ),
+            "{cursor:?}"
+        );
+    }
+}
+
+#[test]
+fn a_cursor_from_before_the_removed_edges_an_open_lets_go_answers_everything() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("core.sqlite");
+    let core = Core::open(&path, None).unwrap();
+    let old = core.changes_since(None, 100).unwrap().cursor;
+    let made = store::EDGE_CHANGES_KEPT + 5;
+    {
+        let mut conn = core.conn().unwrap();
+        let tx = conn.transaction().unwrap();
+        tx.execute(
+            "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < ?1)
+             INSERT INTO edges (id, source_id, target_id, edge_type, properties, version, created_at, updated_at)
+             SELECT 'gone-' || i, 'a', 'b', 'references', '{}', 1, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z' FROM n",
+            [i64::try_from(made).unwrap()],
+        )
+        .unwrap();
+        tx.execute("DELETE FROM edges", []).unwrap();
+        tx.commit().unwrap();
+    }
+    // The witness: before the open lets them go, each removal is named.
+    let named = core.changes_since(Some(&old), u32::MAX).unwrap();
+    assert_eq!(named.removed_edges.len(), made);
+    let recent = named.cursor;
+    drop(core);
+
+    let reopened = Core::open(&path, None).unwrap();
+    let rows: i64 = reopened
+        .conn()
+        .unwrap()
+        .query_row("SELECT count(*) FROM edge_changes", [], |row| row.get(0))
+        .unwrap();
+    assert!(
+        rows <= i64::try_from(store::EDGE_CHANGES_KEPT).unwrap(),
+        "{rows} rows kept"
+    );
+    assert!(
+        reopened
+            .changes_since(Some(&old), u32::MAX)
+            .unwrap()
+            .everything,
+        "a cursor from before removals the copy let go named only those it kept"
+    );
+    let quiet = reopened.changes_since(Some(&recent), u32::MAX).unwrap();
+    assert_eq!(without_cursor(quiet), none());
+}
+
+#[test]
+fn letting_go_of_removed_edges_keeps_the_held_ones_and_what_a_later_cursor_names() {
+    let server = Scripted::start();
+    let core = notes(&server);
+    let old = core.changes_since(None, 100).unwrap().cursor;
+    for n in 0..4 {
+        edge(&core, &format!("e{n}"), "a", "c", "references");
+    }
+    let remove = |id: &str| {
+        core.conn()
+            .unwrap()
+            .execute("DELETE FROM edges WHERE id = ?1", [id])
+            .unwrap();
+    };
+    remove("e0");
+    remove("e1");
+    let later = core.changes_since(None, 100).unwrap().cursor;
+    remove("e2");
+    remove("e3");
+    // The witness: before the copy lets go, the old cursor names each.
+    assert_eq!(
+        core.changes_since(Some(&old), 100).unwrap().removed_edges,
+        ids(&["e0", "e1", "e2", "e3"])
+    );
+
+    store::prune_edge_changes(&core.conn().unwrap(), 2).unwrap();
+
+    let kept: Vec<String> = core
+        .conn()
+        .unwrap()
+        .prepare("SELECT edge_id FROM edge_changes ORDER BY edge_id")
+        .unwrap()
+        .query_map([], |row| row.get(0))
+        .unwrap()
+        .collect::<rusqlite::Result<_>>()
+        .unwrap();
+    assert_eq!(kept, ["ab", "ba", "e2", "e3"]);
+    assert!(core.changes_since(Some(&old), 100).unwrap().everything);
+    let named = core.changes_since(Some(&later), 100).unwrap();
+    assert!(!named.everything);
+    assert_eq!(named.removed_edges, ids(&["e2", "e3"]));
+}
+
+#[test]
+fn an_in_list_takes_one_of_a_few_shapes_and_names_each_id() {
+    let names: Vec<String> = (0..1203).map(|n| format!("id-{n}")).collect();
+    let named: Vec<&str> = names.iter().map(String::as_str).collect();
+    for count in [0, 1, 2, 16, 17, 129, 500, 501, 1203] {
+        let mut seen: Vec<&str> = Vec::new();
+        for (placeholders, chunk) in store::in_lists(&named[..count]) {
+            assert!([1, 16, 128, 500].contains(&chunk.len()), "{count}");
+            assert_eq!(placeholders.matches('?').count(), chunk.len());
+            for id in chunk {
+                if seen.last() != Some(&id) {
+                    seen.push(id);
+                }
+            }
+        }
+        assert_eq!(seen, &named[..count], "{count}");
+    }
 }
