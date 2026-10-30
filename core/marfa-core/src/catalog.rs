@@ -258,6 +258,20 @@ pub(crate) fn declaration(
                         kinds.join(", ")
                     )));
                 }
+                if let Some(problem) = status_declaration(&held.r#type, definition) {
+                    return Err(invalid(format!("{id} declares {name} {problem}")));
+                }
+            }
+            let statuses = fields
+                .values()
+                .filter(|definition| {
+                    definition.get("type").and_then(Value::as_str) == Some("status")
+                })
+                .count();
+            if statuses > 1 {
+                return Err(invalid(format!(
+                    "{id} declares {statuses} status fields, and a type has at most one"
+                )));
             }
         }
         Some(_) => return Err(invalid(format!("the fields of {id} are an object by name"))),
@@ -274,6 +288,156 @@ pub(crate) fn declaration(
         )));
     }
     Ok((id.to_string(), Value::Object(row).to_string()))
+}
+
+/// Refuses a declared type whose `status` field has no words anywhere in its
+/// chain, the declared set's and the shipped types', as the server refuses
+/// such a registration (`types/status-refused`, `types/status-parent-wordless`).
+pub(crate) fn refuse_wordless_status(types: &[Value]) -> Result<(), CoreError> {
+    let shipped = crate::builtin::catalog()?;
+    // Each type's parent and the fields it declares itself.
+    type Link<'a> = (Option<&'a str>, Option<&'a Map<String, Value>>);
+    let mut chain: HashMap<&str, Link> = shipped
+        .types
+        .iter()
+        .map(|held| {
+            (
+                held.id.as_str(),
+                (
+                    held.parent.as_deref(),
+                    held.rest.get("fields").and_then(Value::as_object),
+                ),
+            )
+        })
+        .collect();
+    for definition in types {
+        if let Some(id) = definition.get("id").and_then(Value::as_str) {
+            chain.insert(
+                id,
+                (
+                    definition.get("parent").and_then(Value::as_str),
+                    definition.get("fields").and_then(Value::as_object),
+                ),
+            );
+        }
+    }
+    let has_words = |definition: &Value| {
+        definition.get("type").and_then(Value::as_str) == Some("status")
+            && definition
+                .get("status_values")
+                .and_then(Value::as_array)
+                .is_some_and(|words| !words.is_empty())
+    };
+    for definition in types {
+        let Some(id) = definition.get("id").and_then(Value::as_str) else {
+            continue;
+        };
+        let Some((name, _)) = definition
+            .get("fields")
+            .and_then(Value::as_object)
+            .into_iter()
+            .flatten()
+            .find(|(_, field)| field.get("type").and_then(Value::as_str) == Some("status"))
+        else {
+            continue;
+        };
+        let mut current = Some(id);
+        let mut walked = 0;
+        let mut found = false;
+        while let Some(at) = current {
+            let Some((parent, fields)) = chain.get(at) else {
+                break;
+            };
+            if fields
+                .and_then(|fields| fields.get(name))
+                .is_some_and(has_words)
+            {
+                found = true;
+                break;
+            }
+            walked += 1;
+            if walked > MAX_PARENT_WALK || *parent == Some(at) {
+                break;
+            }
+            current = *parent;
+        }
+        if !found {
+            return Err(CoreError::Invalid(format!(
+                "{id} declares {name} as status with no status_values, and no type above it gives the field its words"
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// The groups every status word belongs to one of, fixed for every type.
+pub const STATUS_GROUPS: [&str; 4] = ["not_started", "in_progress", "completed", "canceled"];
+
+/// A status word: a lowercase letter, then up to 63 lowercase letters,
+/// digits and underscores.
+pub(crate) fn status_word(text: &str) -> bool {
+    let mut chars = text.chars();
+    text.len() <= 64
+        && chars.next().is_some_and(|first| first.is_ascii_lowercase())
+        && chars.all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '_')
+}
+
+/// What the server refuses in a field's status words: a list where the field
+/// is not `status`, a list that is not `{ value, group }` pairs naming each
+/// word once in one of the four groups, `enum_values` on a status field, or
+/// `status` as an array's element type. A status field that leaves its words
+/// out is judged against its chain by [`refuse_wordless_status`].
+pub(crate) fn status_declaration(kind: &str, definition: &Value) -> Option<String> {
+    if definition.get("items_type").and_then(Value::as_str) == Some("status") {
+        return Some(
+            "with status elements; an item has one status, in a field of type status".into(),
+        );
+    }
+    let words = definition.get("status_values");
+    if kind != "status" {
+        return words
+            .map(|_| format!("as {kind:?} with status_values, which only a status field takes"));
+    }
+    if definition.get("enum_values").is_some() {
+        return Some(
+            "as status with enum_values; a status field lists its words in status_values".into(),
+        );
+    }
+    let words = match words? {
+        Value::Array(words) if !words.is_empty() => words,
+        _ => return Some("as status with status_values that is not a list of words".into()),
+    };
+    let mut seen = Vec::new();
+    for entry in words {
+        let Some(pair) = entry.as_object().filter(|pair| {
+            pair.len() == 2 && pair.contains_key("value") && pair.contains_key("group")
+        }) else {
+            return Some(format!(
+                "with the status word {entry}, which is not an object of exactly value and group"
+            ));
+        };
+        let Some(word) = pair["value"].as_str().filter(|word| status_word(word)) else {
+            return Some(format!(
+                "with the status word {}, which is not a lowercase letter then up to 63 lowercase letters, digits and underscores",
+                pair["value"]
+            ));
+        };
+        if seen.contains(&word) {
+            return Some(format!("with the status word {word:?} more than once"));
+        }
+        seen.push(word);
+        if !pair["group"]
+            .as_str()
+            .is_some_and(|group| STATUS_GROUPS.contains(&group))
+        {
+            return Some(format!(
+                "with the status word {word:?} in the group {}, which is not one of {}",
+                pair["group"],
+                STATUS_GROUPS.join(", ")
+            ));
+        }
+    }
+    None
 }
 
 fn object(id: &str, json: &str) -> Result<Map<String, Value>, CoreError> {
@@ -321,6 +485,85 @@ fn field(name: &str, definition: &Value, declared_by: &str) -> Result<TypeField,
     })
 }
 
+/// One field's definition after a type in the chain declares it again: a
+/// `status` field declared again as `status` keeps the words above it and adds
+/// its new ones after them, and any other declaration replaces the one above.
+pub(crate) fn merge_field_definition(inherited: Option<&Value>, own: &Value) -> Value {
+    let (Some(Value::Object(above)), Value::Object(below)) = (inherited, own) else {
+        return own.clone();
+    };
+    if status_kind(above) != Some("status") || status_kind(below) != Some("status") {
+        return own.clone();
+    }
+    let words = |definition: &Map<String, Value>| {
+        definition
+            .get("status_values")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default()
+    };
+    let mut joined = words(above);
+    for entry in words(below) {
+        if !joined
+            .iter()
+            .any(|held| held.get("value") == entry.get("value"))
+        {
+            joined.push(entry);
+        }
+    }
+    let mut merged = above.clone();
+    merged.extend(below.clone());
+    merged.insert("status_values".into(), Value::Array(joined));
+    Value::Object(merged)
+}
+
+fn status_kind(definition: &Map<String, Value>) -> Option<&str> {
+    definition.get("type").and_then(Value::as_str)
+}
+
+/// A type's one `status` field as it resolves: its name and its words, each
+/// with its group, in the order the chain declares them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct StatusField {
+    pub(crate) type_id: String,
+    pub(crate) name: String,
+    pub(crate) words: Vec<(String, String)>,
+}
+
+impl StatusField {
+    fn of(type_id: &str, fields: &Map<String, Value>) -> Option<StatusField> {
+        let (name, definition) = fields.iter().find(|(_, definition)| {
+            definition.get("type").and_then(Value::as_str) == Some("status")
+        })?;
+        let words = definition
+            .get("status_values")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|entry| {
+                Some((
+                    entry.get("value")?.as_str()?.to_string(),
+                    entry.get("group")?.as_str()?.to_string(),
+                ))
+            })
+            .collect();
+        Some(StatusField {
+            type_id: type_id.to_string(),
+            name: name.clone(),
+            words,
+        })
+    }
+
+    /// The group `value` is in, where it is a word the field declares.
+    pub(crate) fn group_of(&self, value: &Value) -> Option<&str> {
+        let word = value.as_str()?;
+        self.words
+            .iter()
+            .find(|(declared, _)| declared == word)
+            .map(|(_, group)| group.as_str())
+    }
+}
+
 /// The server's resolution of `GET /types/{id}`: fields merged from the root
 /// down, the nearer declaration winning, and the hints by the rule every
 /// reader of the copy takes them by. The listing already answers `roles`
@@ -349,7 +592,11 @@ fn resolve(
     for (declaring, row) in chain.iter().rev() {
         if let Some(declared) = row.get("fields").and_then(Value::as_object) {
             for (name, definition) in declared {
-                fields.insert(name.clone(), field(name, definition, declaring)?);
+                let merged = merge_field_definition(
+                    fields.get(name).map(|above| &above.definition),
+                    definition,
+                );
+                fields.insert(name.clone(), field(name, &merged, declaring)?);
             }
         }
     }
@@ -531,17 +778,70 @@ impl Catalog {
         Ok(Catalog { entries })
     }
 
+    /// Refuses `properties` where the server would refuse them as an item
+    /// of `type_id`, `complete` where they are the whole item. A status word
+    /// is judged only where the write itself sets it, so this is for
+    /// properties a write names; `validate_merged` judges the item a write
+    /// leaves.
     pub(crate) fn validate_properties(
         &self,
         type_id: &str,
         properties: &Map<String, Value>,
         complete: bool,
     ) -> Result<(), CoreError> {
+        self.validate_merged(type_id, properties, complete, properties)
+    }
+
+    /// Refuses `properties` where the server would, judging a status word
+    /// only where `written`, the properties the write changes, sets it: a
+    /// stored word the type does not declare does not refuse a write that
+    /// leaves it alone or sends it back unchanged.
+    pub(crate) fn validate_merged(
+        &self,
+        type_id: &str,
+        properties: &Map<String, Value>,
+        complete: bool,
+        written: &Map<String, Value>,
+    ) -> Result<(), CoreError> {
         if !self.known(type_id) {
             return Err(CoreError::UnknownType {
                 message: format!("{type_id} is not a type this copy holds"),
             });
         }
+        let resolved = self.resolved(type_id)?;
+        let every: Vec<(&str, Value)> = EVERY_TYPE_TAKES
+            .iter()
+            .map(|(name, items)| (*name, json!({ "type": "array", "items_type": items })))
+            .collect();
+        let mut fields = BTreeMap::new();
+        for (name, definition) in &every {
+            fields.insert(*name, definition);
+        }
+        for (name, definition) in &resolved {
+            fields.insert(name.as_str(), definition);
+        }
+        crate::validation::properties(&fields, properties, complete)?;
+        if let Some(status) = StatusField::of(type_id, &resolved)
+            && let Some(value) = written.get(&status.name)
+            && !value.is_null()
+            && status.group_of(value).is_none()
+        {
+            let words: Vec<&str> = status.words.iter().map(|(word, _)| word.as_str()).collect();
+            return Err(CoreError::Validation {
+                code: "invalid_properties".into(),
+                message: format!(
+                    "{}: Must be a status word the type declares: {}",
+                    status.name,
+                    words.join(", ")
+                ),
+            });
+        }
+        Ok(())
+    }
+
+    /// The fields `type_id` declares and inherits, merged root to leaf as the
+    /// server merges them. A type the copy does not hold declares none.
+    fn resolved(&self, type_id: &str) -> Result<Map<String, Value>, CoreError> {
         let mut chain = Vec::new();
         let mut current = Some(type_id);
         while let Some(at) = current {
@@ -556,20 +856,26 @@ impl Catalog {
             chain.push((at, entry));
             current = entry.parent.as_deref();
         }
-        let every: Vec<(&str, Value)> = EVERY_TYPE_TAKES
-            .iter()
-            .map(|(name, items)| (*name, json!({ "type": "array", "items_type": items })))
-            .collect();
-        let mut fields = BTreeMap::new();
-        for (name, definition) in &every {
-            fields.insert(*name, definition);
-        }
+        let mut fields = Map::new();
         for (_, entry) in chain.into_iter().rev() {
             for (name, definition) in &entry.definitions {
-                fields.insert(name.as_str(), definition);
+                let merged = merge_field_definition(fields.get(name), definition);
+                fields.insert(name.clone(), merged);
             }
         }
-        crate::validation::properties(&fields, properties, complete)
+        Ok(fields)
+    }
+
+    /// Each held type that resolves to a status field, with the field. A type
+    /// whose chain cannot be resolved has none.
+    pub(crate) fn status_fields(&self) -> Vec<StatusField> {
+        let mut fields: Vec<StatusField> = self
+            .entries
+            .keys()
+            .filter_map(|id| StatusField::of(id, &self.resolved(id).ok()?))
+            .collect();
+        fields.sort_by(|a, b| a.type_id.cmp(&b.type_id));
+        fields
     }
 
     /// A create's properties as the server holds them: a null on a field
@@ -580,11 +886,12 @@ impl Catalog {
         type_id: &str,
         properties: &Map<String, Value>,
     ) -> Map<String, Value> {
+        let resolved = self.resolved(type_id).unwrap_or_default();
         properties
             .iter()
             .filter(|(name, value)| {
                 !value.is_null()
-                    || match self.definition(type_id, name) {
+                    || match resolved.get(*name) {
                         Some(definition) => Self::required(definition),
                         None => !EVERY_TYPE_TAKES
                             .iter()
@@ -607,10 +914,11 @@ impl Catalog {
             Some(url) => Value::String(url),
             None => value.clone(),
         };
+        let resolved = self.resolved(type_id).unwrap_or_default();
         properties
             .iter()
             .map(|(name, value)| {
-                let definition = self.definition(type_id, name);
+                let definition = resolved.get(name);
                 let field = |key| {
                     definition
                         .and_then(|definition| definition.get(key))
@@ -628,19 +936,6 @@ impl Catalog {
             .collect()
     }
 
-    /// The nearest declaration of `name` in the type's chain.
-    fn definition(&self, type_id: &str, name: &str) -> Option<&Value> {
-        let mut current = type_id;
-        for _ in 0..MAX_PARENT_WALK {
-            let entry = self.entries.get(current)?;
-            if let Some(definition) = entry.definitions.get(name) {
-                return Some(definition);
-            }
-            current = entry.parent.as_deref()?;
-        }
-        None
-    }
-
     fn required(definition: &Value) -> bool {
         definition.get("required").and_then(Value::as_bool) == Some(true)
     }
@@ -653,6 +948,8 @@ impl Catalog {
         properties: &Map<String, Value>,
         replace: bool,
     ) -> Map<String, Value> {
+        let known = self.known(type_id);
+        let resolved = self.resolved(type_id).unwrap_or_default();
         properties
             .iter()
             .filter(|(name, value)| {
@@ -662,23 +959,7 @@ impl Catalog {
                 if replace {
                     return false;
                 }
-                if !self.known(type_id) {
-                    return true;
-                }
-                let mut current = type_id;
-                for _ in 0..MAX_PARENT_WALK {
-                    let Some(entry) = self.entries.get(current) else {
-                        break;
-                    };
-                    if let Some(definition) = entry.definitions.get(*name) {
-                        return definition.get("required").and_then(Value::as_bool) == Some(true);
-                    }
-                    let Some(parent) = entry.parent.as_deref() else {
-                        break;
-                    };
-                    current = parent;
-                }
-                false
+                !known || resolved.get(*name).is_some_and(Self::required)
             })
             .map(|(name, value)| (name.clone(), value.clone()))
             .collect()
@@ -1045,6 +1326,68 @@ mod tests {
         assert_eq!(leaf.label.as_deref(), Some("Leaf"));
         assert_eq!(leaf.parent.as_deref(), Some("acme.mid"));
         assert_eq!(item_types(&conn).unwrap().len(), 3);
+    }
+
+    #[test]
+    fn a_status_field_declared_again_keeps_the_words_above_it_and_adds_its_own() {
+        let words = |list: &[(&str, &str)]| {
+            Value::Array(
+                list.iter()
+                    .map(|(value, group)| json!({ "value": value, "group": group }))
+                    .collect(),
+            )
+        };
+        let conn = held(
+            json!([
+                { "id": "acme.task",
+                  "fields": { "status": { "type": "status", "description": "Where it stands",
+                                          "status_values": words(&[("todo", "not_started"), ("done", "completed")]) } } },
+                { "id": "acme.chore", "parent": "acme.task",
+                  "fields": { "status": { "type": "status", "required": true,
+                                          "status_values": words(&[("waiting", "in_progress"), ("todo", "canceled")]) } } },
+                { "id": "acme.errand", "parent": "acme.chore",
+                  "fields": { "status": { "type": "status" } } },
+                { "id": "acme.list", "parent": "acme.task",
+                  "fields": { "status": { "type": "string" } } }
+            ]),
+            json!([]),
+        );
+        let errand = item_type(&conn, "acme.errand").unwrap();
+        let status = &errand.fields[0];
+        assert_eq!(status.declared_by, "acme.errand");
+        assert!(
+            status.required,
+            "a declaration that leaves required out dropped it"
+        );
+        assert_eq!(status.description.as_deref(), Some("Where it stands"));
+        assert_eq!(
+            status.definition["status_values"],
+            words(&[
+                ("todo", "not_started"),
+                ("done", "completed"),
+                ("waiting", "in_progress")
+            ]),
+            "the chain's words were not joined root first, each word once in the group it first took"
+        );
+        let list = item_type(&conn, "acme.list").unwrap();
+        assert_eq!(list.fields[0].definition, json!({ "type": "string" }));
+
+        let catalog = Catalog::load(&conn).unwrap();
+        let fields = catalog.status_fields();
+        let named: Vec<(&str, usize)> = fields
+            .iter()
+            .map(|field| (field.type_id.as_str(), field.words.len()))
+            .collect();
+        assert_eq!(
+            named,
+            [("acme.chore", 3), ("acme.errand", 3), ("acme.task", 2)]
+        );
+        let required = |type_id: &str| {
+            catalog
+                .validate_properties(type_id, &Map::new(), true)
+                .is_err()
+        };
+        assert!(required("acme.errand") && !required("acme.task"));
     }
 
     #[test]

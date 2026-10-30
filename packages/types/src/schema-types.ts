@@ -21,7 +21,30 @@ export type FieldType =
   | "enum"
   | "array"
   | "object"
-  | "thumbnail";
+  | "thumbnail"
+  | "status";
+
+/**
+ * The four groups every status word belongs to. Fixed for every type: a type
+ * names its own words and puts each in one of these, so a reader that knows
+ * the groups can fold and filter any type's statuses without knowing the type.
+ */
+export type StatusGroup =
+  "not_started" | "in_progress" | "completed" | "canceled";
+
+/** Every status group, in the order work moves through them. */
+export const STATUS_GROUPS = [
+  "not_started",
+  "in_progress",
+  "completed",
+  "canceled",
+] as const satisfies readonly StatusGroup[];
+
+/** One word a `status` field takes, and the group it belongs to. */
+export interface StatusValue {
+  value: string;
+  group: StatusGroup;
+}
 
 /**
  * Semantic refinements on top of a `FieldType`. Those with a first-class
@@ -39,6 +62,12 @@ export interface FieldDefinition {
   description?: string;
   required?: boolean;
   enum_values?: string[];
+  /**
+   * The words a `status` field takes, each with its group. A stored
+   * definition holds only the words its own type declares; a subtype's
+   * resolved field holds its ancestors' words in order, then its own.
+   */
+  status_values?: StatusValue[];
   items_type?: string;
   /**
    * Semantic refinement of a `string` field. Only the annotation-only formats

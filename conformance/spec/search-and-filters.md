@@ -522,6 +522,46 @@ When a `filter` on `GET /items` or `GET /search` compares `created_at`, `updated
 
 **Tests:** `compliance/canonical-time.test.ts › refuses invalid time comparisons while retaining text operators`.
 
+## The status group term
+
+A `status_group` term selects items by the group of the word their `status` field holds, as their own type resolves it (`types/status-groups`, `types/status-inherit`).
+
+### `search-and-filters/status-group`
+
+When a `filter`, on a listing or in a view's `query`, holds `status_group eq "<group>"`, the server MUST select the items whose `status` field holds a word their type puts in that group.
+
+**Tests:** `compliance/status-groups.test.ts › %s`, `› selects by group in a saved view`.
+
+### `search-and-filters/status-group-neq`
+
+When a `filter` holds `status_group neq "<group>"`, the server MUST select the items whose `status` field holds a word their type puts in another group.
+
+**Reason:** `status_group neq "completed" AND status_group neq "canceled"` then selects the open items of every type with a status field, and nothing else.
+
+**Tests:** `compliance/status-groups.test.ts › %s`, `› selects by group in a saved view`.
+
+### `search-and-filters/status-group-none`
+
+When a `filter` holds `status_group not_exists`, the server MUST select the items whose type has no `status` field, those that hold no value in it, and those that hold a word their type does not declare.
+
+**Reason:** such an item is in no group, so neither `eq` nor `neq` selects it (`types/status-word-held`).
+
+**Tests:** `compliance/status-groups.test.ts › %s`.
+
+### `search-and-filters/status-group-exists`
+
+When a `filter` holds `status_group exists`, the server MUST select the items whose `status` field holds a word their type declares.
+
+**Tests:** `compliance/status-groups.test.ts › %s`.
+
+### `search-and-filters/status-group-refused`
+
+If a `filter` compares `status_group` with a value other than `"not_started"`, `"in_progress"`, `"completed"` or `"canceled"`, or with an operator other than `eq`, `neq`, `exists` and `not_exists`, then the server MUST answer `400 validation_error`.
+
+**Reason:** a word is a type's own, so a filter that names one is refused rather than silently selecting nothing; a word is matched with `properties.<field> eq`.
+
+**Tests:** `compliance/status-groups.test.ts › refuses %s with validation_error`.
+
 ## Sorting by a property
 
 ### `search-and-filters/sort-property`

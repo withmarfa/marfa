@@ -596,7 +596,7 @@ export const ERROR_CODES: Record<AnsweredCode, ErrorCodeInfo> = {
   [ErrorCode.INHERITANCE_VIOLATION]: {
     status: 400,
     summary:
-      "A type changes the shape of a field it inherits, or a parent gains a field that a child declares with another shape.",
+      "A type changes the shape of a field it inherits, or a change to a parent clashes with a field a child declares.",
   },
   [ErrorCode.PROPERTY_SHADOWS_FIELD]: {
     status: 400,

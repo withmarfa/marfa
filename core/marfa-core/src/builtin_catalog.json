@@ -1636,8 +1636,26 @@
      "description": "When completed"
     },
     "status": {
-     "type": "string",
-     "description": "Recommended values: pending, in_progress, completed, canceled"
+     "type": "status",
+     "description": "Where the task stands",
+     "status_values": [
+      {
+       "value": "not_started",
+       "group": "not_started"
+      },
+      {
+       "value": "in_progress",
+       "group": "in_progress"
+      },
+      {
+       "value": "completed",
+       "group": "completed"
+      },
+      {
+       "value": "canceled",
+       "group": "canceled"
+      }
+     ]
     },
     "priority": {
      "type": "enum",
@@ -1990,7 +2008,8 @@
   "enum",
   "array",
   "object",
-  "thumbnail"
+  "thumbnail",
+  "status"
  ],
  "reserved_type_roots": [
   "app",

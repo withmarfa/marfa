@@ -12,6 +12,7 @@ import {
   GLOBAL_TYPE_WILDCARD,
   MarfaError,
   declaredDescendantsOutsideNamespace,
+  statusFieldsByType,
   subtreeWildcardRoot,
   typeFilterTerms,
   type TypeFilter,
@@ -258,8 +259,67 @@ function conditionToSql(
     );
   }
 
+  if (field.kind === "status_group") {
+    return statusGroupSql(table.type, table.properties, op, value);
+  }
+
   // tags
   return tagsFieldSql(table.id, op, value);
+}
+
+/**
+ * A `status_group` term, resolved through each registered type's status
+ * field: the row's type picks the field and the words, and the words pick
+ * the group. Types that share a field and the same words are compared
+ * together. A row whose type has no status field, or whose value is no word
+ * its type declares, is in no group, so `eq` and `neq` both pass it by and
+ * `not_exists` takes it.
+ */
+function statusGroupSql(
+  typeCol: unknown,
+  propertiesCol: unknown,
+  op: ComparisonOp,
+  value: unknown,
+): SQL {
+  const wanted = (group: string): boolean => {
+    switch (op) {
+      case "eq":
+        return group === value;
+      case "neq":
+        return group !== value;
+      default:
+        return true;
+    }
+  };
+  const bySelection = new Map<
+    string,
+    { field: string; words: string[]; types: string[] }
+  >();
+  for (const { type, field, words } of statusFieldsByType()) {
+    const selected = words
+      .filter((entry) => wanted(entry.group))
+      .map((entry) => entry.value);
+    if (selected.length === 0) continue;
+    const key = JSON.stringify([field, selected]);
+    const entry = bySelection.get(key);
+    if (entry) entry.types.push(type);
+    else bySelection.set(key, { field, words: selected, types: [type] });
+  }
+  const clauses = [...bySelection.values()].map(
+    ({ field, words, types }) =>
+      sql`(${typeCol} IN (${sql.join(
+        types.map((t) => sql`${t}`),
+        sql`, `,
+      )}) AND json_extract(${propertiesCol}, ${`$.${JSON.stringify(field)}`}) IN (${sql.join(
+        words.map((w) => sql`${w}`),
+        sql`, `,
+      )}))`,
+  );
+  const matched =
+    clauses.length === 0 ? sql`1=0` : sql`(${sql.join(clauses, sql` OR `)})`;
+  // A row whose type matches but holds no value compares as NULL, which
+  // `not_exists` must count as absent.
+  return op === "not_exists" ? sql`NOT COALESCE(${matched}, 0)` : matched;
 }
 
 /**

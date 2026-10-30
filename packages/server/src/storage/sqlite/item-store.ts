@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from "node:util";
 import { safeJsonParse } from "../json-utils.js";
 import {
   DEFAULT_PAGE_LIMIT,
@@ -33,6 +34,7 @@ import {
   ALL_TYPE_IDS,
   isValidTypeIdentifier,
   scheduleIssues,
+  statusIssues,
   validateProperties,
   validateTransition,
   getEdgeTypeSchema,
@@ -661,11 +663,14 @@ function withoutKeys(
  * up as, at the current version and a stale one alike. Judged only where the
  * write carries properties or a move: a type may gain a required field while
  * rows that lack it stand, and a write that changes nothing a schema has an
- * opinion about is not the write that has to satisfy it.
+ * opinion about is not the write that has to satisfy it. A status word is
+ * judged where the write changes it or moves the row, so a word the type no
+ * longer declares stands through a write that sends it back unchanged.
  */
 function judgeResult(
   input: StoredUpdateItemInput,
   rowType: string,
+  current: Record<string, unknown>,
   result: Record<string, unknown>,
 ): Record<string, unknown> {
   if (
@@ -684,7 +689,15 @@ function judgeResult(
       Object.entries(result).filter(([key]) => Object.hasOwn(fields, key)),
     );
   }
-  const validation = validateProperties(resultingType, result);
+  const written =
+    resultingType === rowType
+      ? Object.fromEntries(
+          Object.entries(result).filter(
+            ([key, value]) => !isDeepStrictEqual(value, current[key]),
+          ),
+        )
+      : result;
+  const validation = validateProperties(resultingType, result, { written });
   if (validation.success) return result;
   const detail = validation.errors
     .map((e) => `${e.field}: ${e.message}`)
@@ -1673,6 +1686,7 @@ export class SqliteItemStore implements ItemStore {
         const merged = judgeResult(
           input,
           row.type,
+          currentProps,
           withoutKeys(
             mergeUpdateProperties(
               currentProps,
@@ -1881,6 +1895,32 @@ export class SqliteItemStore implements ItemStore {
               ancestorFields,
             );
           }
+          // The copy is a new item, so a status word it holds that the write
+          // changed is judged as a create's would be, and refusing it refuses
+          // the whole write. A stored word the write leaves alone is kept.
+          const siblingProperties = conflictedSiblingProperties({
+            clientProperties: clientProps,
+            currentProperties: currentProps,
+            keepBothFields: plan.keepBothFields,
+            clearedProperties,
+          });
+          const errors = statusIssues(
+            row.type,
+            Object.fromEntries(
+              Object.entries(siblingProperties).filter(
+                ([name, value]) => !Object.is(value, currentProps[name]),
+              ),
+            ),
+          );
+          if (errors.length > 0) {
+            throw new MarfaError(
+              ErrorCode.INVALID_PROPERTIES,
+              `Invalid properties: ${errors
+                .map((e) => `${e.field}: ${e.message}`)
+                .join("; ")}`,
+              { errors },
+            );
+          }
           siblingId = conflictedSiblingIdFor(id, input.version, input);
           sibling = await insertConflictedSibling(tx, this.searchStore, {
             siblingId,
@@ -1891,12 +1931,7 @@ export class SqliteItemStore implements ItemStore {
             refuseUnprovenFile: input.refuse_unproven_file === true,
             carried: staleCarried,
             writer: input.writer ?? null,
-            properties: conflictedSiblingProperties({
-              clientProperties: clientProps,
-              currentProperties: currentProps,
-              keepBothFields: plan.keepBothFields,
-              clearedProperties,
-            }),
+            properties: siblingProperties,
           });
         }
 
@@ -1916,7 +1951,12 @@ export class SqliteItemStore implements ItemStore {
         resolvedFields = result.changedFields;
       }
 
-      resolvedProperties = judgeResult(input, row.type, resolvedProperties);
+      resolvedProperties = judgeResult(
+        input,
+        row.type,
+        currentProps,
+        resolvedProperties,
+      );
 
       // Same invariant as the fast path above: the version being left behind
       // is snapshotted so a later stale write can merge against it.

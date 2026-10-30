@@ -171,7 +171,7 @@ describe("concurrent client scaling", () => {
             properties: {
               title: corpus.title(),
               description: corpus.sentence(),
-              status: "pending",
+              status: "not_started",
               priority: "low",
             },
             source_id: `conc-mixed-${ctx.runId}-${index}`,

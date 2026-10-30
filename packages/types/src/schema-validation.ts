@@ -9,7 +9,12 @@
 // `SchemaValidationContext` instead.
 
 import { ICON_SETS, isIconId, lucideIconId } from "./icon-sets.js";
-import { TYPE_ROLES } from "./schema-types.js";
+import { STATUS_GROUPS, TYPE_ROLES } from "./schema-types.js";
+import {
+  STATUS_WORD_PATTERN,
+  isStatusGroup,
+  mergeFieldDefinition,
+} from "./status.js";
 import type {
   DisplayHints,
   EdgeCardinality,
@@ -21,6 +26,7 @@ import type {
   FieldType,
   MergePolicy,
   RetentionPolicy,
+  StatusValue,
   TypeRole,
   TypeSchema,
   VersionPolicy,
@@ -60,6 +66,7 @@ export const FIELD_TYPES: readonly FieldType[] = [
   "array",
   "object",
   "thumbnail",
+  "status",
 ];
 
 export const FIELD_FORMATS: readonly FieldFormat[] = [
@@ -279,6 +286,15 @@ export function normalizeFieldDefinition(
   if (Array.isArray(raw.enum_values)) {
     out.enum_values = raw.enum_values as string[];
   }
+  if (Array.isArray(raw.status_values)) {
+    out.status_values = raw.status_values.map((entry) => {
+      const record = asRecord(entry) ?? {};
+      return {
+        value: record.value as string,
+        group: record.group as StatusValue["group"],
+      };
+    });
+  }
   if (typeof raw.items_type === "string") {
     out.items_type = isList ? (collapsed ?? raw.items_type) : raw.items_type;
   }
@@ -323,6 +339,7 @@ function validateFieldShape(
   name: string,
   def: unknown,
   errors: SchemaValidationIssue[],
+  options?: { inheritsStatus?: boolean },
 ): void {
   const fd = asRecord(def);
   if (!fd) {
@@ -433,6 +450,39 @@ function validateFieldShape(
     }
   }
 
+  if (fd.type === "status") {
+    validateStatusValues(name, fd, options?.inheritsStatus === true, errors);
+  } else if (fd.status_values !== undefined) {
+    errors.push(
+      issue({
+        field: `fields.${name}.status_values`,
+        expected: "status_values on a status field",
+        actual: `status_values on a ${describe(fd.type)} field`,
+        hint: 'Set the type to "status", or drop status_values.',
+      }),
+    );
+  }
+  if (fd.type === "status" && fd.enum_values !== undefined) {
+    errors.push(
+      issue({
+        field: `fields.${name}.enum_values`,
+        expected: "no enum_values on a status field",
+        actual: describe(fd.enum_values),
+        hint: "A status field lists its words in status_values, each with its group.",
+      }),
+    );
+  }
+  if (fd.items_type === "status") {
+    errors.push(
+      issue({
+        field: `fields.${name}.items_type`,
+        expected: "an element type other than status",
+        actual: '"status"',
+        hint: "An item has one status. Declare it as its own field of type status.",
+      }),
+    );
+  }
+
   if (fd.type === "array" && typeof fd.items_type !== "string") {
     errors.push(
       issue({
@@ -510,6 +560,90 @@ function validateFieldShape(
   }
 }
 
+/**
+ * A status field's own words: a list of `{ value, group }`, each word
+ * matching `STATUS_WORD_PATTERN` and named once, each group one of
+ * `STATUS_GROUPS`. A field that redeclares an inherited status field may
+ * leave the list out, to make the field required or describe it anew.
+ */
+function validateStatusValues(
+  name: string,
+  fd: Record<string, unknown>,
+  inheritsStatus: boolean,
+  errors: SchemaValidationIssue[],
+): void {
+  const path = `fields.${name}.status_values`;
+  const list = fd.status_values;
+  if (list === undefined && inheritsStatus) return;
+  if (!Array.isArray(list) || list.length === 0) {
+    errors.push(
+      issue({
+        field: path,
+        expected:
+          'a non-empty array of { "value", "group" } objects, each group one of: ' +
+          STATUS_GROUPS.join(", "),
+        actual: Array.isArray(list) ? "an empty array" : describe(list),
+        hint: 'List the words the field takes, e.g. [{ "value": "not_started", "group": "not_started" }].',
+      }),
+    );
+    return;
+  }
+  const seen = new Set<string>();
+  list.forEach((entry: unknown, index) => {
+    const at = `${path}.${String(index)}`;
+    const record = asRecord(entry);
+    const keys = record ? Object.keys(record).sort().join(",") : "";
+    if (!record || keys !== "group,value") {
+      errors.push(
+        issue({
+          field: at,
+          expected: 'an object with exactly "value" and "group"',
+          actual: record
+            ? `an object with keys ${keys || "none"}`
+            : describe(entry),
+          hint: 'Write each word as { "value": "blocked", "group": "in_progress" }.',
+        }),
+      );
+      return;
+    }
+    if (
+      typeof record.value !== "string" ||
+      !STATUS_WORD_PATTERN.test(record.value)
+    ) {
+      errors.push(
+        issue({
+          field: `${at}.value`,
+          expected:
+            "a word of a lowercase letter, then up to 63 lowercase letters, digits and underscores",
+          actual: describe(record.value),
+          hint: "Write the word as an API name, such as in_review. Apps show their own labels.",
+        }),
+      );
+    } else if (seen.has(record.value)) {
+      errors.push(
+        issue({
+          field: `${at}.value`,
+          expected: "each word once",
+          actual: `"${record.value}" again`,
+          hint: "A word belongs to one group. Remove the repeat.",
+        }),
+      );
+    } else {
+      seen.add(record.value);
+    }
+    if (!isStatusGroup(record.group)) {
+      errors.push(
+        issue({
+          field: `${at}.group`,
+          expected: `one of: ${STATUS_GROUPS.join(", ")}`,
+          actual: describe(record.group),
+          hint: "The four groups are fixed. Put the word in the one it belongs to.",
+        }),
+      );
+    }
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Inheritance
 // ---------------------------------------------------------------------------
@@ -541,15 +675,23 @@ function collectAncestorFields(
     { owner: string; definition: FieldDefinition }
   >([]);
   const seen = new Set<string>();
+  const chain: TypeSchema[] = [];
   let cursor: string | undefined = parentId;
   while (cursor && !seen.has(cursor)) {
     seen.add(cursor);
     const ancestor = ctx.resolveSchema(cursor);
     if (!ancestor) break;
-    for (const [name, definition] of Object.entries(ancestor.fields)) {
-      if (!owners.has(name)) owners.set(name, { owner: cursor, definition });
-    }
+    chain.unshift(ancestor);
     cursor = ancestor.parent;
+  }
+  // Root to leaf, so a status field carries every word the chain gives it.
+  for (const ancestor of chain) {
+    for (const [name, own] of Object.entries(ancestor.fields)) {
+      owners.set(name, {
+        owner: ancestor.id,
+        definition: mergeFieldDefinition(owners.get(name)?.definition, own),
+      });
+    }
   }
   return owners;
 }
@@ -780,10 +922,6 @@ export function validateTypeSchema(
         );
       }
     }
-
-    for (const [name, def] of Object.entries(fields)) {
-      validateFieldShape(name, def, errors);
-    }
   }
 
   const requiredNames = collectRequiredNames(obj);
@@ -797,6 +935,16 @@ export function validateTypeSchema(
   const ancestorFields = parentId
     ? collectAncestorFields(parentId, ctx)
     : new Map<string, { owner: string; definition: FieldDefinition }>();
+
+  if (fields) {
+    for (const [name, def] of Object.entries(fields)) {
+      validateFieldShape(name, def, errors, {
+        inheritsStatus:
+          ctx.deferRegistryChecks === true ||
+          ancestorFields.get(name)?.definition.type === "status",
+      });
+    }
+  }
 
   if (fields && !ctx.deferRegistryChecks) {
     for (const [name, def] of Object.entries(fields)) {
@@ -827,6 +975,14 @@ export function validateTypeSchema(
       ? ctx.descendantsOf(obj.id)
       : [];
   if (fields) {
+    validateStatusFields(
+      obj.id,
+      fields,
+      ctx.deferRegistryChecks ? new Map() : ancestorFields,
+      descendants,
+      ctx,
+      errors,
+    );
     validateDescendantShapes(fields, requiredNames, descendants, errors);
     validateDescendantLinks(
       obj.id,
@@ -913,7 +1069,11 @@ export function validateTypeSchema(
     if (Object.hasOwn(normalizedFields, name)) continue;
     const inherited = ancestorFields.get(name)?.definition;
     if (inherited) {
-      normalizedFields[name] = { ...inherited, required: true };
+      // A status field's words stay with the types that declare them, so a
+      // subtype restating the field carries none of its own.
+      const restated = { ...inherited, required: true };
+      if (restated.type === "status") delete restated.status_values;
+      normalizedFields[name] = restated;
     }
   }
 
@@ -1064,6 +1224,153 @@ function validateDescendantShapes(
           }),
         );
       }
+    }
+  }
+}
+
+/**
+ * A type resolves to at most one status field, whose words its chain joins
+ * root to leaf: a type adds words to the field it inherits and never names
+ * an inherited word again, in any group. This holds for the type submitted
+ * and, with the submission in place of the stored type, for every type that
+ * inherits from it.
+ */
+function validateStatusFields(
+  id: unknown,
+  fields: Record<string, unknown>,
+  ancestorFields: ReadonlyMap<
+    string,
+    { owner: string; definition: FieldDefinition }
+  >,
+  descendants: readonly TypeSchema[],
+  ctx: SchemaValidationContext,
+  errors: SchemaValidationIssue[],
+): void {
+  const own: Record<string, FieldDefinition> = {};
+  for (const [name, def] of Object.entries(fields)) {
+    const record = asRecord(def);
+    if (record?.type === "status") own[name] = normalizeFieldDefinition(record);
+  }
+  const ownNames = Object.keys(own);
+  for (const extra of ownNames.slice(1)) {
+    errors.push(
+      issue({
+        field: `fields.${extra}.type`,
+        expected: "at most one status field in a type",
+        actual: `status fields ${ownNames.map((n) => `"${n}"`).join(", ")}`,
+        hint: "Keep one status field and put every word in it.",
+      }),
+    );
+  }
+
+  // What the chain above gives this type, and what this type then holds.
+  const resolved = new Map<string, FieldDefinition>();
+  for (const [name, { definition }] of ancestorFields) {
+    resolved.set(name, definition);
+  }
+  const inherited = [...ancestorFields].find(
+    ([, { definition }]) => definition.type === "status",
+  );
+  for (const [name, definition] of Object.entries(own)) {
+    if (inherited && inherited[0] !== name) {
+      errors.push(
+        issue({
+          field: `fields.${name}`,
+          code: "inheritance_violation",
+          expected: `the status field "${inherited[0]}", inherited from "${inherited[1].owner}"`,
+          actual: `a second status field "${name}"`,
+          hint: `Add the words to "${inherited[0]}" instead.`,
+        }),
+      );
+      continue;
+    }
+    const above = ancestorFields.get(name);
+    if (above?.definition.type === "status") {
+      const held = new Set(
+        (above.definition.status_values ?? []).map((entry) => entry.value),
+      );
+      for (const entry of definition.status_values ?? []) {
+        if (!held.has(entry.value)) continue;
+        errors.push(
+          issue({
+            field: `fields.${name}.status_values`,
+            code: "inheritance_violation",
+            expected: `only words "${above.owner}" and its parents do not declare`,
+            actual: `"${entry.value}", which "${name}" already takes`,
+            hint: "A subtype adds words to an inherited status field. List only the new ones.",
+          }),
+        );
+      }
+    }
+    resolved.set(name, mergeFieldDefinition(above?.definition, definition));
+  }
+
+  if (typeof id !== "string" || descendants.length === 0) return;
+  const top = [...resolved].find(([, def]) => def.type === "status");
+  for (const child of descendants) {
+    // The child's own chain below this type, root first.
+    const below: TypeSchema[] = [];
+    const seen = new Set<string>();
+    let cursor: TypeSchema | undefined = child;
+    while (cursor && cursor.id !== id && !seen.has(cursor.id)) {
+      seen.add(cursor.id);
+      below.unshift(cursor);
+      cursor = cursor.parent ? ctx.resolveSchema(cursor.parent) : undefined;
+    }
+    let name = top?.[0];
+    const words = new Set(
+      (top?.[1].status_values ?? []).map((entry) => entry.value),
+    );
+    for (const type of below) {
+      for (const [field, def] of Object.entries(type.fields)) {
+        if (def.type !== "status") continue;
+        if (name !== undefined && field !== name) {
+          if (type.id === child.id && top !== undefined) {
+            errors.push(
+              issue({
+                field: `fields.${name}`,
+                code: "inheritance_violation",
+                expected: `no status field beside "${field}", which "${child.id}" declares`,
+                actual: `a status field "${name}"`,
+                hint: `Name the status field "${field}", or change "${child.id}" first.`,
+              }),
+            );
+          }
+          continue;
+        }
+        name = field;
+        for (const entry of def.status_values ?? []) {
+          if (words.has(entry.value) && type.id === child.id && own[field]) {
+            errors.push(
+              issue({
+                field: `fields.${field}.status_values`,
+                code: "inheritance_violation",
+                expected: `no word "${child.id}" already declares`,
+                actual: `"${entry.value}" here and in "${child.id}"`,
+                hint: `Leave "${entry.value}" out here, or remove it from "${child.id}" first.`,
+              }),
+            );
+          }
+          words.add(entry.value);
+        }
+      }
+    }
+    // A subtype may redeclare the field without words only while a type
+    // above it gives the words.
+    if (
+      name !== undefined &&
+      words.size === 0 &&
+      child.fields[name]?.type === "status"
+    ) {
+      errors.push(
+        issue({
+          field: `fields.${name}`,
+          code: "inheritance_violation",
+          expected: `a status field with words for "${child.id}", which declares "${name}" without its own`,
+          actual: `no word for "${name}" in "${child.id}" or above it`,
+          hint: `Keep "${name}" as a status field with words here, or give "${child.id}" its own words first.`,
+        }),
+      );
     }
   }
 }
@@ -1645,9 +1952,12 @@ function validateCompatibleWith(
     if (!record) continue;
     candidateFields.set(
       name,
-      normalizeFieldDefinition(record, {
-        required: requiredNames.has(name),
-      }),
+      mergeFieldDefinition(
+        ancestorFields.get(name)?.definition,
+        normalizeFieldDefinition(record, {
+          required: requiredNames.has(name),
+        }),
+      ),
     );
   }
 
@@ -1753,6 +2063,7 @@ const FIELD_TYPES_READABLE_AS: Partial<
   date: ["string"],
   thumbnail: ["string"],
   enum: ["string"],
+  status: ["string"],
   integer: ["number"],
 };
 
@@ -1809,6 +2120,22 @@ function describeCompatibilityConflict(
       expected: `items_type ${describe(target.items_type)}`,
       actual: `items_type ${describe(candidate.items_type)}`,
     };
+  }
+
+  if (target.type === "status") {
+    const targetGroups = new Map(
+      (target.status_values ?? []).map((entry) => [entry.value, entry.group]),
+    );
+    const stray = (candidate.status_values ?? []).find(
+      (entry) => targetGroups.get(entry.value) !== entry.group,
+    );
+    if (stray !== undefined) {
+      return {
+        attribute: "status_values",
+        expected: `status words drawn from ${JSON.stringify(target.status_values ?? [])}, each in the same group`,
+        actual: `"${stray.value}" in ${stray.group}`,
+      };
+    }
   }
 
   if (target.type === "enum") {
@@ -2076,6 +2403,16 @@ export function validateEdgeTypeSchema(
       for (const [name, def] of Object.entries(props)) {
         const before = errors.length;
         validateFieldShape(name, def, errors);
+        if (asRecord(def)?.type === "status") {
+          errors.push(
+            issue({
+              field: `property_schema.${name}`,
+              expected: "a property type an edge can carry",
+              actual: "a status",
+              hint: "Put the status on the item the edge points at.",
+            }),
+          );
+        }
         // An edge carries no thumbnail: nothing reads one from an edge.
         if (isThumbnail(def)) {
           errors.push(
@@ -2162,6 +2499,7 @@ export const FIELD_DEFINITION_KEYS: ReadonlySet<string> = new Set(
     description: true,
     required: true,
     enum_values: true,
+    status_values: true,
     items_type: true,
     format: true,
     searchable: true,
@@ -2258,8 +2596,8 @@ export const EDGE_TYPE_SCHEMA_KEYS: ReadonlySet<string> = new Set(
 
 /**
  * Every key of a property an edge type declares. A field's definition less
- * the three keys that only mean something to the items a type validates:
- * `searchable`, `maxLength` and `maxItems`. `POST /edge-types` does not
+ * the keys that only mean something to the items a type validates:
+ * `searchable`, `maxLength`, `maxItems` and `status_values`. `POST /edge-types` does not
  * declare them, and an edge write does not apply them.
  */
 export const EDGE_PROPERTY_KEYS: ReadonlySet<string> = new Set(
@@ -2271,7 +2609,10 @@ export const EDGE_PROPERTY_KEYS: ReadonlySet<string> = new Set(
     items_type: true,
     format: true,
   } satisfies Record<
-    Exclude<keyof FieldDefinition, "searchable" | "maxLength" | "maxItems">,
+    Exclude<
+      keyof FieldDefinition,
+      "searchable" | "maxLength" | "maxItems" | "status_values"
+    >,
     true
   >),
 );

@@ -17,6 +17,8 @@ pub struct ScaffoldField {
     pub enum_values: Vec<String>,
     /// What each element of an `array` field is.
     pub items_type: Option<String>,
+    /// The words a `status` field takes, each with its group.
+    pub status_values: Vec<(String, String)>,
 }
 
 /// A type definition naming `id`, with `fields` in the order given, that a
@@ -47,6 +49,7 @@ pub fn scaffold_type(
     let searched = crate::builtin::searched_field_names()?;
     let mut held = Map::new();
     let mut thumbnail = false;
+    let mut status = None;
     for field in fields {
         let name = field.name.as_str();
         if reserved.iter().any(|held| held == name) {
@@ -93,7 +96,34 @@ pub fn scaffold_type(
                 }
                 definition.insert("items_type".into(), items.into());
             }
+            "status" => {
+                if let Some(first) = status.replace(name) {
+                    return Err(invalid(format!(
+                        "{name} is a second status field beside {first}, and a type has at most one"
+                    )));
+                }
+                if field.status_values.is_empty() {
+                    if parent.is_none() {
+                        return Err(invalid(format!(
+                            "{name} is a status field, which needs its words, each with its group: one of {}",
+                            crate::catalog::STATUS_GROUPS.join(", ")
+                        )));
+                    }
+                } else {
+                    let words: Vec<Value> = field
+                        .status_values
+                        .iter()
+                        .map(|(value, group)| json!({ "value": value, "group": group }))
+                        .collect();
+                    definition.insert("status_values".into(), Value::Array(words));
+                }
+            }
             _ => {}
+        }
+        if let Some(problem) =
+            crate::catalog::status_declaration(&field.kind, &Value::Object(definition.clone()))
+        {
+            return Err(invalid(format!("{name} {problem}")));
         }
         if field.kind == "thumbnail" {
             if thumbnail {
@@ -163,6 +193,23 @@ fn agree_with_shipped(parent: &str, held: &Map<String, Value>) -> Result<(), Cor
                 "{parent} already declares {name} with a different {attribute}, which a subtype cannot change: leave {name} out to inherit it"
             )));
         }
+        let words = |definition: &Value| -> Vec<Value> {
+            definition
+                .get("status_values")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(|entry| entry.get("value").cloned())
+                .collect()
+        };
+        if let Some(word) = words(definition)
+            .into_iter()
+            .find(|word| words(above).contains(word))
+        {
+            return Err(CoreError::Invalid(format!(
+                "{parent} already gives {name} the word {word}: list only the words it adds"
+            )));
+        }
         if above.get("required") == Some(&Value::Bool(true))
             && definition.get("required") != Some(&Value::Bool(true))
         {
@@ -186,6 +233,7 @@ mod tests {
             required: false,
             enum_values: Vec::new(),
             items_type: None,
+            status_values: Vec::new(),
         }
     }
 
@@ -244,6 +292,98 @@ mod tests {
         assert_eq!(names, ["body", "servings", "effort", "sources"]);
     }
 
+    fn status(name: &str, words: &[(&str, &str)]) -> ScaffoldField {
+        ScaffoldField {
+            status_values: words
+                .iter()
+                .map(|(word, group)| (word.to_string(), group.to_string()))
+                .collect(),
+            ..field(name, "status")
+        }
+    }
+
+    #[test]
+    fn a_status_field_prints_its_words_with_their_groups() {
+        let definition = scaffold_type(
+            "user.ticket",
+            None,
+            None,
+            &[status(
+                "stage",
+                &[("open", "not_started"), ("closed", "completed")],
+            )],
+        )
+        .unwrap();
+        assert_eq!(
+            definition["fields"]["stage"],
+            json!({ "type": "status", "status_values": [
+                { "value": "open", "group": "not_started" },
+                { "value": "closed", "group": "completed" }
+            ] })
+        );
+        // A subtype of a type Marfa ships adds words to the field it inherits.
+        let chore = scaffold_type(
+            "user.chore",
+            Some("core.task"),
+            None,
+            &[status("status", &[("waiting", "in_progress")])],
+        )
+        .unwrap();
+        let core = Core::open_in_memory(None).unwrap();
+        core.declare_types(&[definition, chore]).unwrap();
+        assert!(
+            scaffold_type(
+                "user.chore",
+                Some("core.task"),
+                None,
+                &[field("status", "status")]
+            )
+            .is_ok(),
+            "a subtype could not declare the inherited status field again without words"
+        );
+    }
+
+    #[test]
+    fn a_status_field_the_server_would_refuse_is_refused_with_the_reason() {
+        for (fields, parent, said) in [
+            (vec![field("stage", "status")], None, "needs its words"),
+            (
+                vec![status("stage", &[("open", "todo")])],
+                None,
+                "which is not one of not_started, in_progress, completed, canceled",
+            ),
+            (
+                vec![status("stage", &[("Open", "not_started")])],
+                None,
+                "lowercase letter",
+            ),
+            (
+                vec![status(
+                    "stage",
+                    &[("open", "not_started"), ("open", "completed")],
+                )],
+                None,
+                "more than once",
+            ),
+            (
+                vec![
+                    status("stage", &[("open", "not_started")]),
+                    status("phase", &[("open", "not_started")]),
+                ],
+                None,
+                "a second status field",
+            ),
+            (
+                vec![status("status", &[("completed", "completed")])],
+                Some("core.task"),
+                "already gives status the word \"completed\"",
+            ),
+        ] {
+            let message = refusal("user.ticket", parent, &fields);
+            assert!(message.contains(said), "{fields:?}: {message}");
+        }
+    }
+
     #[test]
     fn a_bare_id_is_a_definition_with_no_fields() {
         assert_eq!(
@@ -264,6 +404,11 @@ mod tests {
                     Vec::new()
                 },
                 items_type: (kind == "array").then(|| "string".to_string()),
+                status_values: if kind == "status" {
+                    vec![("open".into(), "not_started".into())]
+                } else {
+                    Vec::new()
+                },
                 ..field(&format!("{kind}_field"), kind)
             })
             .collect();

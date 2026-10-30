@@ -8,10 +8,14 @@
 // shipped parent never passes through codegen, so a role flattened at build
 // time would be a role only in-tree types could hold.
 
-import { ErrorCode, MarfaError, MAX_RESOLUTION_DEPTH } from "@withmarfa/shared";
+import {
+  ErrorCode,
+  MarfaError,
+  MAX_RESOLUTION_DEPTH,
+  mergeFieldChain,
+} from "@withmarfa/shared";
 import type {
   DisplayHints,
-  FieldDefinition,
   MergePolicy,
   MergeStrategy,
   RetentionPolicy,
@@ -118,7 +122,8 @@ function buildChain(typeId: string, resolve: TypeResolver): TypeSchema[] {
  * Resolves the effective type schema for `typeId` by walking its parent chain
  * and returning an inheritance-resolved view:
  *
- * - `fields`: merged root→leaf, per-key, preserving child-owned refinements.
+ * - `fields`: merged root→leaf, per-key, preserving child-owned refinements,
+ *   a status field carrying every word the chain declares.
  * - `display_hints` — per hint, nearest-ancestor-wins. `title_field`,
  *   `body_field` and `icon` each come from the nearest type in the chain
  *   that sets that hint.
@@ -143,11 +148,8 @@ export function resolveTypeSchema(
 
   const chain = buildChain(typeId, resolve);
 
-  // fields: root→leaf, per-key merge.
-  const fields: Record<string, FieldDefinition> = {};
-  for (const ancestor of chain) {
-    Object.assign(fields, ancestor.fields);
-  }
+  // fields: root→leaf, per-key merge, a status field joining its words.
+  const fields = mergeFieldChain(chain.map((ancestor) => ancestor.fields));
 
   // display_hints: each hint comes from the nearest type that sets that hint,
   // so a child can set an icon and keep its parent's title. Walk root→leaf and

@@ -45,6 +45,7 @@ interface FieldDefinition {
   description?: string;
   required?: boolean;
   enum_values?: string[];
+  status_values?: { value: string; group: string }[];
   items_type?: string;
   format?: string;
 }
@@ -62,6 +63,9 @@ export function compactType(type: Record<string, unknown>) {
       }),
       ...(field.enum_values !== undefined && {
         enum_values: field.enum_values,
+      }),
+      ...(field.status_values !== undefined && {
+        status_values: field.status_values,
       }),
       ...(field.items_type !== undefined && { items_type: field.items_type }),
       ...(field.format !== undefined && { format: field.format }),

@@ -9,6 +9,7 @@
  * into a structured AST for SQL generation.
  */
 
+import { STATUS_GROUPS } from "@withmarfa/types";
 import { ErrorCode, MarfaError } from "./errors.js";
 
 // ---------------------------------------------------------------------------
@@ -35,6 +36,7 @@ type FieldRef =
   | { kind: "system"; column: string }
   | { kind: "property"; path: string }
   | { kind: "tags" }
+  | { kind: "status_group" }
   | {
       kind: "edge";
       edge_type: string;
@@ -105,6 +107,18 @@ const EDGE_ALLOWED_OPS = new Set<ComparisonOp>([
   "exists",
   "not_exists",
 ]);
+
+/** The term that selects by the group of each item's status word. */
+const STATUS_GROUP_TERM = "status_group";
+
+const STATUS_GROUP_ALLOWED_OPS = new Set<ComparisonOp>([
+  "eq",
+  "neq",
+  "exists",
+  "not_exists",
+]);
+
+const STATUS_GROUP_SET: ReadonlySet<string> = new Set<string>(STATUS_GROUPS);
 
 const PROPERTY_PATH_RE = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
 
@@ -327,6 +341,10 @@ function parseFieldRef(token: Token): FieldRef {
     return { kind: "tags" };
   }
 
+  if (name === STATUS_GROUP_TERM) {
+    return { kind: "status_group" };
+  }
+
   if (name.startsWith("properties.")) {
     const path = name.slice("properties.".length);
     if (!path) {
@@ -358,7 +376,7 @@ function parseFieldRef(token: Token): FieldRef {
     ErrorCode.VALIDATION_ERROR,
     `Unknown field "${name}" at position ${String(token.pos)}. ` +
       `Valid system fields: ${[...SYSTEM_FIELDS].join(", ")}. ` +
-      `Use "properties.<field>" for custom fields, or "tags" for tag filtering.`,
+      `Use "properties.<field>" for custom fields, "tags" for tag filtering, or "status_group" for a status group.`,
   );
 }
 
@@ -412,6 +430,11 @@ function refuseNullComparison(
       return new MarfaError(
         ErrorCode.VALIDATION_ERROR,
         `${never} Name the tag to look for`,
+      );
+    case "status_group":
+      return new MarfaError(
+        ErrorCode.VALIDATION_ERROR,
+        `${never} Use "not_exists" to ask for items with no status word their type declares, and "exists" for items with one`,
       );
   }
 }
@@ -492,6 +515,13 @@ export function parseFilter(input: string): FilterExpression {
       );
     }
 
+    if (field.kind === "status_group" && !STATUS_GROUP_ALLOWED_OPS.has(op)) {
+      throw new MarfaError(
+        ErrorCode.VALIDATION_ERROR,
+        `Operator "${op}" is not valid for "status_group". Use: ${[...STATUS_GROUP_ALLOWED_OPS].join(", ")}`,
+      );
+    }
+
     if (field.kind === "system" && UNARY_OPS.has(op)) {
       throw new MarfaError(
         ErrorCode.VALIDATION_ERROR,
@@ -507,6 +537,15 @@ export function parseFilter(input: string): FilterExpression {
         throw refuseNullComparison(valToken, field, op);
       }
       value = parseValue(valToken);
+      if (
+        field.kind === "status_group" &&
+        (typeof value !== "string" || !STATUS_GROUP_SET.has(value))
+      ) {
+        throw new MarfaError(
+          ErrorCode.VALIDATION_ERROR,
+          `Unknown status group ${valToken.raw} at position ${String(valToken.pos)}. Status groups: ${STATUS_GROUPS.join(", ")}`,
+        );
+      }
       pos++;
     }
 

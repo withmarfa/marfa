@@ -10,11 +10,21 @@ export type {
   MergePolicy,
   MergeStrategy,
   RetentionPolicy,
+  StatusGroup,
+  StatusValue,
   TypeRole,
   TypeSchema,
   VersionPolicy,
 } from "./schema-types.js";
-export { TYPE_ROLES } from "./schema-types.js";
+export { STATUS_GROUPS, TYPE_ROLES } from "./schema-types.js";
+export {
+  STATUS_WORD_PATTERN,
+  isStatusGroup,
+  mergeFieldChain,
+  mergeFieldDefinition,
+  statusFieldName,
+  statusGroupOf,
+} from "./status.js";
 
 export type { IconSet } from "./icon-sets.js";
 export { ICON_SETS, lucideIconId } from "./icon-sets.js";

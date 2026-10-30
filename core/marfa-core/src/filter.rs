@@ -7,6 +7,7 @@
 use serde_json::{Number, Value};
 
 use crate::Result;
+use crate::catalog::{Catalog, STATUS_GROUPS, StatusField};
 use crate::error::CoreError;
 use crate::js;
 use crate::query::escape_like;
@@ -28,6 +29,9 @@ const SYSTEM_FIELDS: [&str; 10] = [
     "source_id",
 ];
 
+/// The term that selects by the group of each item's status word.
+const STATUS_GROUP: &str = "status_group";
+
 /// The edge type `beneath` walks: an edge's source is the parent and its
 /// target the child.
 pub(crate) const PARENT_OF: &str = "parent-of";
@@ -37,16 +41,23 @@ pub(crate) const PARENT_OF: &str = "parent-of";
 /// cannot know. `whole` is the edge types the copy holds whole
 /// (`store::whole_edge_types`): a `backref` term is answered only on one of
 /// them, since a copy holds the other edge types only as its own items draw
-/// them.
+/// them. A `status_group` term reads each type's status field from `catalog`.
 pub(crate) fn narrow(
     filter: Option<&str>,
     beneath: Option<&str>,
     whole: &[String],
+    catalog: &Catalog,
     clauses: &mut Vec<String>,
     values: &mut Vec<Value>,
 ) -> Result<()> {
     if let Some(filter) = filter {
-        clauses.push(parse(filter)?.clause(values, whole)?);
+        let expression = parse(filter)?;
+        let statuses = if expression.reads_status() {
+            catalog.status_fields()
+        } else {
+            Vec::new()
+        };
+        clauses.push(expression.clause(values, whole, &statuses)?);
     }
     if let Some(root) = beneath {
         // `UNION`, not `UNION ALL`: a copy can hold a cycle the server would
@@ -67,7 +78,7 @@ pub(crate) fn narrow(
 /// Refuses, before any read, what `narrow` would refuse for this expression
 /// on a copy that holds no edge type whole.
 pub(crate) fn check(filter: &str) -> Result<()> {
-    parse(filter)?.clause(&mut Vec::new(), &[]).map(|_| ())
+    parse(filter)?.clause(&mut Vec::new(), &[], &[]).map(|_| ())
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -181,6 +192,8 @@ enum Term {
         negated: bool,
         to_item: bool,
     },
+    /// The value, where the operator takes one, is one of `STATUS_GROUPS`.
+    StatusGroup(Op),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -197,19 +210,35 @@ struct Expression {
 }
 
 impl Expression {
-    fn clause(&self, values: &mut Vec<Value>, whole: &[String]) -> Result<String> {
+    fn reads_status(&self) -> bool {
+        self.conditions
+            .iter()
+            .any(|condition| matches!(condition.term, Term::StatusGroup(_)))
+    }
+
+    fn clause(
+        &self,
+        values: &mut Vec<Value>,
+        whole: &[String],
+        statuses: &[StatusField],
+    ) -> Result<String> {
         let joiner = if self.any { " OR " } else { " AND " };
         let parts = self
             .conditions
             .iter()
-            .map(|condition| condition.clause(values, whole))
+            .map(|condition| condition.clause(values, whole, statuses))
             .collect::<Result<Vec<String>>>()?;
         Ok(format!("({})", parts.join(joiner)))
     }
 }
 
 impl Condition {
-    fn clause(&self, values: &mut Vec<Value>, whole: &[String]) -> Result<String> {
+    fn clause(
+        &self,
+        values: &mut Vec<Value>,
+        whole: &[String],
+        statuses: &[StatusField],
+    ) -> Result<String> {
         Ok(match &self.term {
             Term::System { column, compare } => {
                 let literal = if matches!(*column, "created_at" | "updated_at" | "occurred_at")
@@ -300,7 +329,71 @@ impl Condition {
                     if *negated { "NOT " } else { "" }
                 )
             }
+            Term::StatusGroup(op) => status_group(*op, &self.value, statuses, values),
         })
+    }
+}
+
+/// A `status_group` term, answered through each type's status field: the
+/// row's type picks the field and its words, and the words pick the group. A
+/// row whose type has no status field, or whose value is no word its type
+/// declares, is in no group, so `eq` and `neq` both pass it by and
+/// `not_exists` takes it.
+fn status_group(
+    op: Op,
+    value: &Literal,
+    statuses: &[StatusField],
+    values: &mut Vec<Value>,
+) -> String {
+    let wanted = |group: &str| match (op, value) {
+        (Op::Compare(Compare::Eq), Literal::Text(asked)) => group == asked,
+        (Op::Compare(Compare::Neq), Literal::Text(asked)) => group != asked,
+        _ => true,
+    };
+    // Types that share a field and the words it selects are compared together.
+    let mut selections: Vec<(&str, Vec<&str>, Vec<&str>)> = Vec::new();
+    for status in statuses {
+        let words: Vec<&str> = status
+            .words
+            .iter()
+            .filter(|(_, group)| wanted(group))
+            .map(|(word, _)| word.as_str())
+            .collect();
+        if words.is_empty() {
+            continue;
+        }
+        match selections
+            .iter_mut()
+            .find(|(name, selected, _)| *name == status.name && *selected == words)
+        {
+            Some((_, _, types)) => types.push(&status.type_id),
+            None => selections.push((&status.name, words, vec![&status.type_id])),
+        }
+    }
+    let placeholders = |count: usize| vec!["?"; count].join(", ");
+    let mut parts = Vec::new();
+    for (name, words, types) in selections {
+        let path = format!("$.{}", Value::String(name.to_string()));
+        parts.push(format!(
+            "(items.type IN ({}) AND CASE WHEN json_valid(items.properties) THEN json_extract(items.properties, ?) IN ({}) ELSE 0 END)",
+            placeholders(types.len()),
+            placeholders(words.len()),
+        ));
+        values.extend(types.into_iter().map(|id| Value::String(id.into())));
+        values.push(Value::String(path));
+        values.extend(words.into_iter().map(|word| Value::String(word.into())));
+    }
+    // `IFNULL`, since an absent value compares as unknown, and `NOT` an
+    // unknown would pass the row by rather than take it.
+    let matched = if parts.is_empty() {
+        "0".to_string()
+    } else {
+        format!("IFNULL(({}), 0)", parts.join(" OR "))
+    };
+    if op == Op::NotExists {
+        format!("NOT {matched}")
+    } else {
+        matched
     }
 }
 
@@ -503,6 +596,7 @@ enum Field {
     System(&'static str),
     Property(String),
     Tags,
+    StatusGroup,
     Edge { edge_type: String, backref: bool },
 }
 
@@ -521,6 +615,9 @@ fn field(token: &Token) -> Result<Field> {
     }
     if name == "tags" {
         return Ok(Field::Tags);
+    }
+    if name == STATUS_GROUP {
+        return Ok(Field::StatusGroup);
     }
     if let Some(path) = name.strip_prefix("properties.") {
         if path.is_empty() {
@@ -551,7 +648,7 @@ fn field(token: &Token) -> Result<Field> {
         return Ok(Field::System(column));
     }
     Err(refused(format!(
-        "Unknown field \"{name}\" at position {}. Valid system fields: {}. Use \"properties.<field>\" for custom fields, or \"tags\" for tag filtering.",
+        "Unknown field \"{name}\" at position {}. Valid system fields: {}. Use \"properties.<field>\" for custom fields, \"tags\" for tag filtering, or \"status_group\" for a status group.",
         token.pos,
         SYSTEM_FIELDS.join(", ")
     )))
@@ -581,6 +678,17 @@ fn term(field: Field, op: Op) -> Result<Term> {
             Op::Compare(_) => {
                 return Err(refused(format!(
                     "Operator \"{}\" is not valid for \"tags\". Use: contains, exists, not_exists",
+                    op.name()
+                )));
+            }
+        },
+        Field::StatusGroup => match op {
+            Op::Compare(Compare::Eq | Compare::Neq) | Op::Exists | Op::NotExists => {
+                Term::StatusGroup(op)
+            }
+            Op::Compare(_) => {
+                return Err(refused(format!(
+                    "Operator \"{}\" is not valid for \"{STATUS_GROUP}\". Use: eq, neq, exists, not_exists",
                     op.name()
                 )));
             }
@@ -635,6 +743,9 @@ fn refuse_null(token: &Token, term: &Term, op: Op) -> CoreError {
         ),
         Term::System { column, .. } => format!("{never} Compare \"{column}\" with a value"),
         Term::TagHeld | Term::TagsPresent(_) => format!("{never} Name the tag to look for"),
+        Term::StatusGroup(_) => format!(
+            "{never} Use \"not_exists\" to ask for items with no status word their type declares, and \"exists\" for items with one"
+        ),
     })
 }
 
@@ -690,7 +801,18 @@ fn parse(input: &str) -> Result<Expression> {
         pos += 1;
         let term = term(field, op)?;
         let value = if matches!(op, Op::Compare(_)) {
-            let literal = value(expect(&tokens, pos, "value")?, &term, op)?;
+            let token = expect(&tokens, pos, "value")?;
+            let literal = value(token, &term, op)?;
+            if matches!(term, Term::StatusGroup(_))
+                && !matches!(&literal, Literal::Text(group) if STATUS_GROUPS.contains(&group.as_str()))
+            {
+                return Err(refused(format!(
+                    "Unknown status group {} at position {}. Status groups: {}",
+                    token.raw,
+                    token.pos,
+                    STATUS_GROUPS.join(", ")
+                )));
+            }
             pos += 1;
             literal
         } else {
@@ -769,7 +891,7 @@ mod tests {
                 let mut values = Vec::new();
                 parse(&format!("{field} {op} \"2026-01-01T01:00:00.500+01:00\""))
                     .unwrap()
-                    .clause(&mut values, &[])
+                    .clause(&mut values, &[], &[])
                     .unwrap();
                 assert_eq!(values, [Value::String("2026-01-01T00:00:00.500Z".into())]);
                 for invalid in ["42", "true", "null", "\"bad\""] {
@@ -905,7 +1027,7 @@ mod tests {
     fn names_a_position_in_utf16_units() {
         assert_eq!(
             message("id eq \"\u{1F426}\" OR x eq 1"),
-            "Unknown field \"x\" at position 14. Valid system fields: state, type, source, occurred_at, created_at, updated_at, tier, version, id, source_id. Use \"properties.<field>\" for custom fields, or \"tags\" for tag filtering."
+            "Unknown field \"x\" at position 14. Valid system fields: state, type, source, occurred_at, created_at, updated_at, tier, version, id, source_id. Use \"properties.<field>\" for custom fields, \"tags\" for tag filtering, or \"status_group\" for a status group."
         );
         assert_eq!(
             message("id eq \"\u{1F426}\" \u{e9}"),
@@ -960,6 +1082,108 @@ mod tests {
         conn
     }
 
+    /// Tasks with status words, a subtype that adds one, a type with no
+    /// status field holding a property of the same name, and a stored word
+    /// the type does not declare.
+    fn statuses() -> Connection {
+        let conn = conn();
+        let catalog = crate::wire::WireCatalog {
+            types: serde_json::from_value(json!([
+                { "id": "acme.task", "fields": { "state": { "type": "status", "status_values": [
+                    { "value": "todo", "group": "not_started" },
+                    { "value": "doing", "group": "in_progress" },
+                    { "value": "done", "group": "completed" },
+                    { "value": "dropped", "group": "canceled" }
+                ] } } },
+                { "id": "acme.chore", "parent": "acme.task", "fields": { "state": { "type": "status", "status_values": [
+                    { "value": "waiting", "group": "in_progress" }
+                ] } } },
+                { "id": "acme.note", "fields": { "state": { "type": "string" } } }
+            ]))
+            .unwrap(),
+            edge_types: Vec::new(),
+        };
+        store::replace_catalog(&conn, &catalog).unwrap();
+        for (id, r#type, properties) in [
+            ("todo", "acme.task", json!({ "state": "todo" })),
+            ("doing", "acme.task", json!({ "state": "doing" })),
+            ("done", "acme.task", json!({ "state": "done" })),
+            ("waiting", "acme.chore", json!({ "state": "waiting" })),
+            ("chore-done", "acme.chore", json!({ "state": "done" })),
+            ("task-waiting", "acme.task", json!({ "state": "waiting" })),
+            ("pending", "acme.task", json!({ "state": "pending" })),
+            ("blank", "acme.task", json!({})),
+            ("note", "acme.note", json!({ "state": "done" })),
+        ] {
+            let item = wire_item(id, r#type, "active", "2026-01-01T00:00:00Z", properties);
+            store::upsert_item(&conn, &item, None, &Indexing::default()).unwrap();
+        }
+        conn
+    }
+
+    #[test]
+    fn a_status_group_term_reads_each_types_own_words() {
+        let conn = statuses();
+        for (filter, matched) in [
+            ("status_group eq \"in_progress\"", &["doing", "waiting"][..]),
+            ("status_group eq \"completed\"", &["chore-done", "done"]),
+            ("status_group eq \"canceled\"", &[]),
+            (
+                "status_group neq \"completed\"",
+                &["doing", "todo", "waiting"],
+            ),
+            (
+                "status_group exists",
+                &["chore-done", "doing", "done", "todo", "waiting"],
+            ),
+            (
+                "status_group not_exists",
+                &["blank", "note", "pending", "task-waiting"],
+            ),
+            (
+                "status_group eq \"not_started\" OR status_group eq \"completed\"",
+                &["chore-done", "done", "todo"],
+            ),
+        ] {
+            assert_eq!(ids(&conn, Some(filter), None), matched, "{filter}");
+        }
+    }
+
+    #[test]
+    fn a_status_group_term_takes_only_a_group_and_the_operators_that_ask_for_one() {
+        for (input, said) in [
+            ("status_group eq \"todo\"", "Unknown status group \"todo\""),
+            ("status_group eq 1", "Unknown status group 1"),
+            ("status_group neq true", "Unknown status group true"),
+            (
+                "status_group contains \"completed\"",
+                "is not valid for \"status_group\"",
+            ),
+            (
+                "status_group gt \"completed\"",
+                "is not valid for \"status_group\"",
+            ),
+            (
+                "status_group eq null",
+                "\"not_exists\" to ask for items with no status word",
+            ),
+            (
+                "status_groups exists",
+                "or \"status_group\" for a status group",
+            ),
+        ] {
+            let Err(CoreError::Validation { code, message }) = check(input) else {
+                panic!("{input} was accepted");
+            };
+            assert_eq!(code, "validation_error");
+            assert!(message.contains(said), "{input}: {message}");
+        }
+        // A copy that holds no status field answers every group with no row.
+        let conn = family();
+        assert!(ids(&conn, Some("status_group eq \"completed\""), None).is_empty());
+        assert_eq!(ids(&conn, Some("status_group not_exists"), None).len(), 4);
+    }
+
     fn ids(conn: &Connection, filter: Option<&str>, beneath: Option<&str>) -> Vec<String> {
         ids_whole(conn, filter, beneath, &[])
     }
@@ -973,7 +1197,8 @@ mod tests {
         let whole: Vec<String> = whole.iter().map(|held| held.to_string()).collect();
         let mut clauses = Vec::new();
         let mut values = Vec::new();
-        narrow(filter, beneath, &whole, &mut clauses, &mut values).unwrap();
+        let catalog = Catalog::load(conn).unwrap();
+        narrow(filter, beneath, &whole, &catalog, &mut clauses, &mut values).unwrap();
         let mut ids: Vec<String> = store::items_where(
             conn,
             &clauses.join(" AND "),
@@ -1177,9 +1402,14 @@ mod tests {
         ] {
             let mut clauses = Vec::new();
             let mut values = Vec::new();
-            let Err(CoreError::Invalid(message)) =
-                narrow(Some(filter), None, &whole, &mut clauses, &mut values)
-            else {
+            let Err(CoreError::Invalid(message)) = narrow(
+                Some(filter),
+                None,
+                &whole,
+                &Catalog::empty(),
+                &mut clauses,
+                &mut values,
+            ) else {
                 panic!("{filter} was answered");
             };
             assert!(message.contains("backref"), "{message}");
@@ -1190,6 +1420,7 @@ mod tests {
                 Some("backref[x] exists AND title eq 1"),
                 None,
                 &["x".to_string()],
+                &Catalog::empty(),
                 &mut Vec::new(),
                 &mut Vec::new()
             ),

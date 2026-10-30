@@ -23,7 +23,7 @@ pub enum TypesCommand {
     ///
     /// Needs no server, working copy or key, sends nothing, and takes none of `--url`, `--key` and `--socket`. An id, field or parent the registry would refuse for its form is refused here with the reason. What only a server knows is left to it: whether a parent exists, and whether a key may register the type.
     ///
-    /// A field is `NAME:TYPE`, given once for each field, in the order it is printed. An `enum` field takes its allowed values after a second colon, as `status:enum:open,closed`, and an `array` field the type of its elements, as `tags:array:string`.
+    /// A field is `NAME:TYPE`, given once for each field, in the order it is printed. An `enum` field takes its allowed values after a second colon, as `effort:enum:easy,hard`, an `array` field the type of its elements, as `tags:array:string`, and a `status` field its words, each with its group, as `stage:status:open=not_started,closed=completed`. The groups are `not_started`, `in_progress`, `completed` and `canceled`. A type that inherits a status field may give it without words, or with only the words it adds.
     Scaffold(ScaffoldArgs),
     /// Register a type from its definition. Needs `metadata.types:write` and write on the type in the key's type map.
     Register(BodySource),
@@ -91,7 +91,7 @@ pub struct MoveArgs {
 pub struct ScaffoldArgs {
     /// The type id, such as `user.recipe` or `app.notes.entry`.
     id: String,
-    /// A field of the type, as `NAME:TYPE`, `NAME:enum:VALUE,VALUE` or `NAME:array:TYPE`. Repeatable.
+    /// A field of the type, as `NAME:TYPE`, `NAME:enum:VALUE,VALUE`, `NAME:array:TYPE` or `NAME:status:WORD=GROUP,WORD=GROUP`. Repeatable.
     #[arg(long = "field", value_name = "SPEC")]
     fields: Vec<String>,
     /// A field an item of the type must have. Repeatable; each names a field given with `--field`.
@@ -123,16 +123,29 @@ impl ScaffoldArgs {
                 required: false,
                 enum_values: Vec::new(),
                 items_type: None,
+                status_values: Vec::new(),
             };
             match (kind, detail) {
                 ("enum", Some(values)) => {
                     field.enum_values = values.split(',').map(str::to_string).collect();
                 }
                 ("array", Some(items)) => field.items_type = Some(items.to_string()),
+                ("status", Some(words)) => {
+                    for pair in words.split(',') {
+                        let Some((word, group)) = pair.split_once('=') else {
+                            return Err(CliError::Usage(format!(
+                                "--field {spec:?} gives the status word {pair:?} with no group: write each as WORD=GROUP, such as open=not_started"
+                            )));
+                        };
+                        field
+                            .status_values
+                            .push((word.to_string(), group.to_string()));
+                    }
+                }
                 (_, None) => {}
                 (_, Some(_)) => {
                     return Err(CliError::Usage(format!(
-                        "--field {spec:?} gives a third part, which only an enum (its values) and an array (its element type) take"
+                        "--field {spec:?} gives a third part, which only an enum (its values), an array (its element type) and a status (its words with their groups) take"
                     )));
                 }
             }

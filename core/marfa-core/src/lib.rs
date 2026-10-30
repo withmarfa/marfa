@@ -693,7 +693,8 @@ impl Core {
     /// registers on the instance the ones it does not hold, and replaces each
     /// `app.*` one it holds in another definition, where the key may.
     /// On a copy that holds a server's catalog the set waits for the next
-    /// hydration. A set that names one id twice is refused `Invalid`.
+    /// hydration. A set that names one id twice, or a `status` field with no
+    /// words anywhere in its chain, is refused `Invalid`.
     pub fn declare_types(&self, types: &[Value]) -> Result<()> {
         self.lock.refuse_unless_writer()?;
         let mut conn = self.conn()?;
@@ -720,6 +721,7 @@ impl Core {
             }
             rows.push(row);
         }
+        catalog::refuse_wordless_status(types)?;
         // The same set again writes nothing, so a declaration at each launch
         // is no change to the copy (`changes_since`).
         let mut sorted = rows.clone();
@@ -3343,6 +3345,18 @@ fn refuse_unmakeable_create(catalog: &catalog::Catalog, draft: &Draft) -> Result
     Ok(())
 }
 
+/// The properties of `written` whose values `held` does not already hold.
+fn changed_properties(
+    written: &serde_json::Map<String, Value>,
+    held: &serde_json::Map<String, Value>,
+) -> serde_json::Map<String, Value> {
+    written
+        .iter()
+        .filter(|(key, value)| held.get(*key) != Some(*value))
+        .map(|(key, value)| (key.clone(), value.clone()))
+        .collect()
+}
+
 /// An id is minted here, where the draft names none, so a queued row is
 /// readable locally before the server answers.
 fn queue_create(
@@ -3381,12 +3395,20 @@ fn queue_create(
     } else {
         draft.properties.clone()
     };
+    // Landing on a held row, the create is an update of it, and a status
+    // word it sends back unchanged is not judged (`types/status-word-held`),
+    // whether or not the copy can judge its merged result.
+    let written = match target.as_ref().filter(|held| held.r#type == draft.r#type) {
+        Some(held) => changed_properties(&draft.properties, &held.properties),
+        None => draft.properties.clone(),
+    };
     // A natural key may name a row outside this slice. Its required fields
     // and a stale upsert's merged result can only be judged by the server.
-    catalog.validate_properties(
+    catalog.validate_merged(
         &draft.r#type,
         &properties,
         current.is_some() || draft.source_id.is_none(),
+        &written,
     )?;
     // A tier is chosen where none is named: left out, the server gives a new
     // row the key's default, and a row shown at one tier would come back at
@@ -3663,11 +3685,19 @@ fn queue_update(
         next.occurred_at.clone_from(&create.queued_at);
         next.created_at.clone_from(&create.queued_at);
     }
+    // A status word is judged where the edit changes it, as the server
+    // judges it: a synced file sends every property back, and a word the
+    // type no longer declares stands through that. A move changes them all.
+    let written = if next.r#type == held.r#type {
+        changed_properties(&edit.properties, &held.properties)
+    } else {
+        next.properties.clone()
+    };
     // Required nulls remain invalid even where replace projection drops
     // them. Stale edits cannot prove the server's eventual merged result.
-    catalog.validate_properties(&next.r#type, &edit.properties, false)?;
+    catalog.validate_merged(&next.r#type, &edit.properties, false, &written)?;
     if base == held.version && !store::unanswered_keyed_create(tx, &held)? {
-        catalog.validate_properties(&next.r#type, &next.properties, true)?;
+        catalog.validate_merged(&next.r#type, &next.properties, true, &written)?;
     }
     store::hold_beneath_item(tx, id)?;
     store::upsert_item(tx, &next.as_wire(), None, &catalog.indexing(&next.r#type))?;

@@ -27,6 +27,13 @@ import {
   roleFromConstraint,
   unreadKeys,
   validateTypeSchema as validateTypeSchemaShape,
+  STATUS_GROUPS,
+  STATUS_WORD_PATTERN,
+  isStatusGroup,
+  mergeFieldChain,
+  mergeFieldDefinition,
+  statusFieldName,
+  statusGroupOf,
 } from "@withmarfa/types";
 import type {
   DisplayHints,
@@ -39,6 +46,8 @@ import type {
   PlatformTypeId,
   RetentionPolicy,
   SchemaValidationIssue,
+  StatusGroup,
+  StatusValue,
   TypeRole,
   TypeSchema,
   TypeSchemaValidationResult,
@@ -69,6 +78,8 @@ export type {
   SchemaValidationIssue,
   TypeRole,
   TypeSchema,
+  StatusGroup,
+  StatusValue,
   TypeSchemaValidationResult,
   VersionPolicy,
 };
@@ -93,6 +104,17 @@ export {
 // reason: the door that declares what a field definition looks like reads
 // the validator's own lists rather than restating them.
 export { ALWAYS_SEARCHED_FIELDS, FIELD_TYPES, FIELD_FORMATS };
+
+// The fixed status groups and how a chain joins a status field's words.
+export {
+  STATUS_GROUPS,
+  STATUS_WORD_PATTERN,
+  isStatusGroup,
+  mergeFieldChain,
+  mergeFieldDefinition,
+  statusFieldName,
+  statusGroupOf,
+};
 
 // The keys an edge type and its properties take, and the check that names a
 // key outside them. The edge doors read a request through a schema that
@@ -505,7 +527,8 @@ export const MAX_RESOLUTION_DEPTH = 100;
  * Returns the fully resolved fields for a type, including inherited parent
  * fields and universal fields (attachments, links).
  *
- * Subtype fields override parent fields of the same name.
+ * Subtype fields override parent fields of the same name, except that a
+ * status field joins its words down the chain.
  */
 export function getResolvedFields(
   typeId: string,
@@ -535,12 +558,10 @@ export function getResolvedFields(
     current = current.parent ? resolveSchema(current.parent) : undefined;
   }
 
-  // Merge fields — later entries override earlier ones
-  for (const ancestor of chain) {
-    Object.assign(fields, ancestor.fields);
-  }
-
-  return fields;
+  return mergeFieldChain(
+    chain.map((ancestor) => ancestor.fields),
+    fields,
+  );
 }
 
 const CORE_SEARCH_FIELDS: ReadonlySet<string> = new Set(ALWAYS_SEARCHED_FIELDS);
@@ -889,6 +910,11 @@ function valueToZod(
         return z.enum(field.enum_values as [string, ...string[]]);
       }
       return boundedString(field);
+    case "status":
+      // Whether the word is one the type declares is judged only for a value
+      // a write changes (`statusIssues`), so a stored word the type no longer
+      // declares does not refuse a write that leaves it alone.
+      return boundedString({});
     case "array":
       return z
         .array(z.unknown())
@@ -1004,7 +1030,7 @@ function judgeFields(
 export function validateProperties(
   typeId: string,
   properties: Record<string, unknown>,
-  options?: { strict?: boolean },
+  options?: { strict?: boolean; written?: Record<string, unknown> },
 ): ValidationResult {
   const schema = getZodSchema(typeId, options);
   if (!schema) {
@@ -1016,10 +1042,70 @@ export function validateProperties(
 
   const judged = judgeFields(schema, properties);
   if (judged.success) {
-    const errors = scheduleIssues(typeId, judged.data);
+    const errors = [
+      ...statusIssues(typeId, options?.written ?? properties),
+      ...scheduleIssues(typeId, judged.data),
+    ];
     if (errors.length > 0) return { success: false, errors };
   }
   return judged;
+}
+
+/**
+ * The issue a write raises by setting the type's status field to a word the
+ * type does not declare. `written` is what the write changes: a write that
+ * sends a stored word back unchanged leaves it alone, and one that moves the
+ * item to another type changes every property it holds.
+ */
+export function statusIssues(
+  typeId: string,
+  written: Record<string, unknown>,
+): { field: string; message: string }[] {
+  const fields = getResolvedFields(typeId);
+  if (!fields) return [];
+  const name = statusFieldName(fields);
+  if (name === undefined || !Object.hasOwn(written, name)) return [];
+  const value = written[name];
+  if (value === null || value === undefined) return [];
+  const field = fields[name];
+  if (field && statusGroupOf(field, value) !== undefined) return [];
+  const words = (field?.status_values ?? []).map((entry) => entry.value);
+  return [
+    {
+      field: name,
+      message: `Must be a status word the type declares: ${words.join(", ")}`,
+    },
+  ];
+}
+
+/**
+ * Every registered type that resolves to a status field, with the field's
+ * name and its words. A type whose chain cannot be walked has none.
+ */
+export function statusFieldsByType(): {
+  type: string;
+  field: string;
+  words: readonly StatusValue[];
+}[] {
+  const out: { type: string; field: string; words: readonly StatusValue[] }[] =
+    [];
+  for (const schema of listTypes()) {
+    let fields: Record<string, FieldDefinition> | undefined;
+    try {
+      fields = getResolvedFields(schema.id);
+    } catch {
+      continue;
+    }
+    if (!fields) continue;
+    const field = statusFieldName(fields);
+    if (field === undefined) continue;
+    out.push({
+      type: schema.id,
+      field,
+      words: fields[field]?.status_values ?? [],
+    });
+  }
+  return out;
 }
 
 /**

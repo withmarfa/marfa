@@ -741,7 +741,7 @@ export class Corpus {
     return {
       title: this.title(),
       description: desc,
-      status: "pending",
+      status: "not_started",
       priority: ["low", "medium", "high"][Math.floor(this.rand() * 3)],
     };
   }

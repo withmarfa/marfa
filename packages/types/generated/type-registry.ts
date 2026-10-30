@@ -191,7 +191,7 @@ const coreTask: TypeSchema = {
     due_at: { type: "datetime", description: "Deadline" },
     starts_at: { type: "datetime", description: "When to start" },
     completed_at: { type: "datetime", description: "When completed" },
-    status: { type: "string", description: "Recommended values: pending, in_progress, completed, canceled" },
+    status: { type: "status", description: "Where the task stands", status_values: [{ value: "not_started", group: "not_started" }, { value: "in_progress", group: "in_progress" }, { value: "completed", group: "completed" }, { value: "canceled", group: "canceled" }] },
     priority: { type: "enum", description: "Task priority", enum_values: ["low", "medium", "high", "urgent"] },
     place: { type: "string", description: "Location" },
     precision: { type: "enum", description: "Temporal precision", enum_values: ["year", "month", "day", "time"] },
@@ -1980,7 +1980,25 @@ export const SHIPPED_TYPE_SHAPES = {
         "type": "datetime"
       },
       "status": {
-        "type": "string"
+        "status_values": [
+          {
+            "group": "not_started",
+            "value": "not_started"
+          },
+          {
+            "group": "in_progress",
+            "value": "in_progress"
+          },
+          {
+            "group": "completed",
+            "value": "completed"
+          },
+          {
+            "group": "canceled",
+            "value": "canceled"
+          }
+        ],
+        "type": "status"
       },
       "title": {
         "required": true,

@@ -17,6 +17,7 @@ import {
   validateEdgeTypeSchema,
   validateTypeSchema,
 } from "../src/schema-validation.js";
+import { mergeFieldDefinition } from "../src/status.js";
 
 const typesRoot = resolve(import.meta.dirname, "..");
 const coreDir = join(typesRoot, "core");
@@ -106,7 +107,10 @@ function resolveFields(schema: TypeSchema): Record<string, FieldDefinition> {
       // A child may sharpen an inherited field's description or tighten it to
       // required; required-ness is never lost on the way down.
       const inherited = fields[name];
-      fields[name] = inherited?.required ? { ...def, required: true } : def;
+      const merged = mergeFieldDefinition(inherited, def);
+      fields[name] = inherited?.required
+        ? { ...merged, required: true }
+        : merged;
     }
   }
   return fields;
@@ -212,6 +216,13 @@ function fieldLiteral(field: FieldDefinition): string {
   if (field.required) parts.push("required: true");
   if (field.enum_values) {
     parts.push(`enum_values: [${field.enum_values.map(quote).join(", ")}]`);
+  }
+  if (field.status_values) {
+    const words = field.status_values.map(
+      (entry) =>
+        `{ value: ${quote(entry.value)}, group: ${quote(entry.group)} }`,
+    );
+    parts.push(`status_values: [${words.join(", ")}]`);
   }
   if (field.items_type) parts.push(`items_type: ${quote(field.items_type)}`);
   if (field.format) parts.push(`format: ${quote(field.format)}`);

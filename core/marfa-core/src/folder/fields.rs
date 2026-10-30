@@ -481,7 +481,7 @@ mod tests {
                 "child-of": "[[P]]",
                 "cites": "[[Q]]",
                 "cited-by": "[[R]]",
-                "status": "open",
+                "status": "not_started",
             })),
             &edge_types(),
         )
