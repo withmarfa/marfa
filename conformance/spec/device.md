@@ -1806,7 +1806,7 @@ When a caller asks what changed in its copy, a device MUST answer a cursor that 
 
 When a caller asks what changed in its copy since a cursor the same store answered, a device MUST name each item and each edge added, changed or removed in the copy since that cursor, or answer `everything`.
 
-**Reason:** an app rereads only what it is told changed, so a change left unnamed stays wrong on screen until the app reads everything again. An item whose links and embeds read differently only because another item changed, such as a link that starts to resolve when its target arrives, is not a change to that item and is not named. A device that cannot name each change since a cursor, such as one from before a change to the types or from before the oldest removed edge it still records, answers `everything`.
+**Reason:** an app rereads only what it is told changed, so a change left unnamed stays wrong on screen until the app reads everything again. An item whose links and embeds read differently only because another item changed, such as a link that starts to resolve when its target arrives, is not a change to that item and is not named. A device that cannot name each change since a cursor, such as one from before a change to the types or from before a removed edge it no longer records, answers `everything`.
 
 **Tests:** `device/batch-reads.test.ts › names the items and edges a catch-up changed, moved and purged`, `› names what a hydration that replaces the copy holds, and what it took out`.
 

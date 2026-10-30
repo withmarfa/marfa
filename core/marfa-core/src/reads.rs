@@ -199,8 +199,8 @@ impl Core {
     /// The items and edges that changed since `cursor`, a cursor an earlier
     /// call gave, with the cursor to pass next. Without a cursor, or with
     /// one from another store, from beyond what this copy has recorded, from
-    /// before a change to the types or from before the removed edges it
-    /// keeps a record of (`store::EDGE_CHANGES_KEPT`), or where more than
+    /// before a change to the types or from before a removed edge it no
+    /// longer records (`store::prune_edge_changes`), or where more than
     /// `most` items or `most` edges changed, the answer is `everything`.
     ///
     /// An item is named when its row, its tags, an edge at it, its pin or a

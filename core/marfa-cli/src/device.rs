@@ -136,7 +136,7 @@ pub enum DeviceCommand {
     ///
     /// Without `--since`, with a cursor from another store, from beyond what
     /// the copy recorded, from before a change to the types or from before
-    /// the oldest removed edge the copy still records, or where more than
+    /// a removed edge the copy no longer records, or where more than
     /// `--most` items or edges changed, it names none and answers
     /// `everything: true`: read the whole copy again. An item is named where
     /// its row, tags, edges, pin or a queued write to it changed; one whose
