@@ -1806,7 +1806,7 @@ When a caller asks what changed in its copy, a device MUST answer a cursor that 
 
 When a caller asks what changed in its copy since a cursor the same store answered, a device MUST name each item and each edge added, changed or removed in the copy since that cursor, or answer `everything`.
 
-**Reason:** an app rereads only what it is told changed, so a change left unnamed stays wrong on screen until the app reads everything again.
+**Reason:** an app rereads only what it is told changed, so a change left unnamed stays wrong on screen until the app reads everything again. An item whose links and embeds read differently only because another item changed, such as a link that starts to resolve when its target arrives, is not a change to that item and is not named. A device that cannot name each change since a cursor, such as one from before a change to the types or from before the oldest removed edge it still records, answers `everything`.
 
 **Tests:** `device/batch-reads.test.ts › names the items and edges a catch-up changed, moved and purged`, `› names what a hydration that replaces the copy holds, and what it took out`.
 
@@ -1841,6 +1841,14 @@ If more items or more edges changed since a cursor than the caller would take, t
 **Reason:** past some number of changes a whole read is cheaper than a reread of each, and the caller says where that is. The CLI takes it as `--most`, 1000 unless named.
 
 **Tests:** `device/batch-reads.test.ts › answers everything for a cursor it cannot follow one by one`.
+
+### `device/changed-partial-refused`
+
+While a hydration has started and not completed, or its copy is stale, a device MUST refuse a request for what changed in its copy `hydration_incomplete`.
+
+**Reason:** an answer names edges, which a copy in this state refuses to read (`device/read-partial-edges-refused`), so an app that took the answer's cursor would lose the changes it could not read again. An app keeps its earlier cursor until it has read again what an answer names, and asks again from that cursor once the copy is whole.
+
+**Tests:** `device/batch-reads.test.ts › refuses to say what changed part way through a hydration, and names it once the copy is whole`.
 
 ### `device/changed-malformed`
 

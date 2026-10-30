@@ -51,8 +51,8 @@ let replayed: Answer | undefined;
  *  changes it to stand for the server changing. */
 async function hydrated(
   label: string,
-  rows: Array<{ item: WireItemOptions }> = [
-    { item: note(A, "Note A", "about [[Note B]]") },
+  rows: Array<{ item: WireItemOptions; tags?: string[] }> = [
+    { item: note(A, "Note A", "about [[Note B]]"), tags: ["kept"] },
     { item: note(B, "Note B", "about [[Note A]] and [[Nowhere]]") },
     { item: note(C, "Note C", "") },
     {
@@ -62,7 +62,10 @@ async function hydrated(
       },
     },
   ],
-): Promise<{ started: Harness; rows: Array<{ item: WireItemOptions }> }> {
+): Promise<{
+  started: Harness;
+  rows: Array<{ item: WireItemOptions; tags?: string[] }>;
+}> {
   const started = await startHarness(label);
   scriptHydration(started.server, {
     head: "10",
@@ -111,6 +114,17 @@ describe("a read of many items by id", () => {
       listed.items[1],
       "an item read with others differs from the same item read alone",
     ).toEqual(one);
+    expect(one.tags).toEqual(["kept"]);
+    // An id named again past the first few hundred others.
+    const unheld = Array.from(
+      { length: 520 },
+      (_, n) => `01b00000-0000-7000-8000-${String(n).padStart(12, "0")}`,
+    );
+    const again = value(await device.bulkGet([A, ...unheld, A]));
+    expect(
+      again.items,
+      "an item named twice, far apart, differs from the same item read alone",
+    ).toEqual([one]);
   });
 
   it("answers what has arrived part way through a hydration, saying the answer is partial", async () => {
@@ -336,6 +350,39 @@ describe("what changed since a cursor", () => {
       expect.arrayContaining([A, C, "01b00000-0000-7000-8000-0000000000a5"]),
     );
     expect(changes.removed_items).toEqual([B]);
+  });
+
+  it("refuses to say what changed part way through a hydration, and names it once the copy is whole", async () => {
+    harness = await startHarness("changed-partial");
+    const { server, device } = harness;
+    let cut = false;
+    const rows = [
+      { item: note(A, "Note A", "") },
+      { item: note(B, "Note B", "") },
+    ];
+    scriptHydration(server, {
+      head: "10",
+      pageSize: 1,
+      drop: () => cut,
+      rows: { "core.note": rows },
+    });
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    const since = value(await device.changed()).cursor;
+    rows.push({ item: note(C, "Note C", "") });
+
+    cut = true;
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(false);
+    expect(
+      code(await device.changed({ since })),
+      "a copy part way through a hydration said what changed",
+    ).toBe("hydration_incomplete");
+    // The witness: once whole, the same cursor names what the hydration
+    // brought.
+    cut = false;
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    const changes = value(await device.changed({ since }));
+    expect(changes.everything).toBe(false);
+    expect(changes.items).toContain(C);
   });
 
   it("answers everything for a cursor it cannot follow one by one", async () => {
