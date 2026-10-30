@@ -49,8 +49,9 @@
       "enum_values": ["year", "month", "day", "time"]
     },
     "status": {
-      "type": "string",
-      "description": "Recommended values: tentative, confirmed, canceled, rescheduled"
+      "type": "enum",
+      "description": "Whether the event will happen. A tentative event might not, a confirmed one will and a canceled one will not. Moving an event changes its time, not its status.",
+      "enum_values": ["tentative", "confirmed", "canceled"]
     },
     "notes": {
       "type": "string",

@@ -76,7 +76,7 @@ const coreEvent: TypeSchema = {
     longitude: { type: "number", description: "Venue longitude" },
     url: { type: "url", description: "Event link" },
     precision: { type: "enum", description: "How much of the start instant is actually known, for an event dated from memory or from a source that gave only a year. Narrows an instant that exists; it does not say the event has no instant, which is what all_day says.", enum_values: ["year", "month", "day", "time"] },
-    status: { type: "string", description: "Recommended values: tentative, confirmed, canceled, rescheduled" },
+    status: { type: "enum", description: "Whether the event will happen. A tentative event might not, a confirmed one will and a canceled one will not. Moving an event changes its time, not its status.", enum_values: ["tentative", "confirmed", "canceled"] },
     notes: { type: "string", description: "Personal annotations" },
     recurrence: { type: "array", description: "RFC 5545 recurrence property lines (RRULE, RDATE, EXDATE). Present on the series itself; occurrences are computed from it at read time rather than stored, starting with starts_at itself. A write is refused when a line cannot be read or is not applied (EXRULE, an RDATE period), when it carries more than one RRULE, more than 40,000 characters in all or more than 1,000 added and removed dates, when the rule names no date that exists after the start, or when it produces no occurrence within the bound a read unfolds a rule to.", items_type: "string" },
     all_day: { type: "boolean", description: "True when the event occupies whole days rather than a span of time. A whole day has no instant, so a reader must take the calendar date from starts_at read in timezone and never re-derive it in the reader's own zone, which is how an all-day event ends up on the wrong day for anyone further west. Absent or false means the event has real start and end instants." },
@@ -993,7 +993,12 @@ export const SHIPPED_TYPE_SHAPES = {
         "type": "datetime"
       },
       "status": {
-        "type": "string"
+        "enum_values": [
+          "tentative",
+          "confirmed",
+          "canceled"
+        ],
+        "type": "enum"
       },
       "timezone": {
         "type": "string"
