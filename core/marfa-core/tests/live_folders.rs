@@ -441,10 +441,12 @@ fn a_watch_whose_tell_panics_ends_and_lets_the_folder_go() {
 }
 
 /// How many passes a watch has started in this process.
+#[cfg(debug_assertions)]
 fn passes() -> usize {
     marfa_core::fault::reached("folder-pass-start")
 }
 
+#[cfg(debug_assertions)]
 #[test]
 #[ignore = "needs a running server"]
 fn a_watch_of_a_quiet_folder_runs_no_pass_and_one_for_a_file_it_takes() {

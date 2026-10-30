@@ -962,6 +962,7 @@ mod tests {
     /// What a reusing observation computes when `change` lands before the
     /// status reads the store and the disk, and `undo` puts it back after the
     /// status has read `path` and before the observation ends.
+    #[cfg(debug_assertions)]
     fn computed_across(
         folder: &Folder,
         path: &Path,
@@ -996,6 +997,7 @@ mod tests {
         })
     }
 
+    #[cfg(debug_assertions)]
     #[test]
     fn a_file_changed_and_put_back_while_the_status_read_it_is_not_reused() {
         let (_dir, folder, _server, mut passes) = super::super::tests::watched_notes(&["a.md"]);
@@ -1024,6 +1026,7 @@ mod tests {
         reuses_what_it_would_compute(&folder);
     }
 
+    #[cfg(debug_assertions)]
     #[test]
     fn a_store_row_changed_and_put_back_while_the_status_read_it_is_not_reused() {
         // Through another connection, as another process writes, and through

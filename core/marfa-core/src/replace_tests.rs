@@ -294,6 +294,7 @@ fn listing(path: &Path) -> Vec<String> {
     names
 }
 
+#[cfg(debug_assertions)]
 #[test]
 fn a_store_that_cannot_be_made_leaves_the_refused_one_where_it_was() {
     let (_dir, path) = refused_store(false);

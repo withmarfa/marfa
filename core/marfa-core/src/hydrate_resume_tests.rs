@@ -891,6 +891,7 @@ fn a_resume_that_starts_again_reports_every_page_the_call_read() {
 
 /// A drain that reads the copy while a hydration replaces it must find the
 /// store free, so it can see the copy has changed and end.
+#[cfg(debug_assertions)]
 #[test]
 fn a_hydration_about_to_replace_the_copy_leaves_the_store_to_other_callers() {
     let server = Scripted::start();

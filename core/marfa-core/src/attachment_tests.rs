@@ -173,6 +173,7 @@ fn a_hydration_that_expires_part_way_keeps_the_bytes_of_attachments_and_trims_th
     assert!(!core.blob_held(&photo).unwrap());
 }
 
+#[cfg(debug_assertions)]
 #[test]
 fn an_attachment_made_while_a_trim_reads_what_to_keep_waits_for_the_trim() {
     let dir = tempfile::tempdir().unwrap();

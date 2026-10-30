@@ -1687,6 +1687,7 @@ pub(crate) mod tests {
         assert_eq!(mark(None), Mark::Kept);
     }
 
+    #[cfg(debug_assertions)]
     #[cfg(unix)]
     #[test]
     fn bytes_take_their_name_only_once_the_folder_holding_them_is_synced() {
@@ -1718,6 +1719,7 @@ pub(crate) mod tests {
         }
     }
 
+    #[cfg(debug_assertions)]
     #[cfg(unix)]
     #[test]
     fn fetched_bytes_are_given_although_the_folder_holding_them_is_not_synced() {
@@ -2518,6 +2520,7 @@ pub(crate) mod tests {
         assert_ne!(staged, held, "bytes in a marked file were not copied");
     }
 
+    #[cfg(debug_assertions)]
     #[cfg(target_os = "macos")]
     #[test]
     fn a_copy_the_volume_has_no_room_for_keeps_the_fetched_bytes_for_a_resume() {
