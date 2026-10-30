@@ -204,7 +204,7 @@ const DisplayHintsSchema = z
       .string()
       .optional()
       .describe(
-        "The icon that stands for the type, as an Iconify ID, `<set>:<name>`, from a set and version Marfa pins: `lucide` or `simple-icons`, such as `lucide:calendar-days` or `simple-icons:github`. On a type read back, the owner's own choice replaces the author's.",
+        "The type's icon, as an Iconify ID, `<set>:<name>`, from a pinned version of `lucide` or `simple-icons`, such as `lucide:calendar-days`. On a type read back, the owner's own choice replaces the author's.",
       ),
   })
   .describe(
