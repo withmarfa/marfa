@@ -272,6 +272,32 @@ The server MUST send `X-Marfa-Contract`, with the number the root answers as `co
 
 **Tests:** `compliance/instance.test.ts › sends its contract version on every answer, a refusal included`, `› sends its contract version on every kind of answer, not only a JSON body`, `compliance/contract-header.test.ts › sends its contract version on a request the limiter refuses`, `› sends its contract version on a preflight from an origin the instance allows`.
 
+## Compression
+
+### `instance/gzip-json`
+
+When a request carries an `Authorization` header and an `Accept-Encoding` header that accepts `gzip`, the server MUST send an answer whose body is JSON with `Content-Encoding: gzip`.
+
+**Reason:** the pages a hydration reads are mostly item bodies, which compress several times over, and over a slow link their bytes are most of the time a device waits.
+
+**Tests:** `compliance/instance.test.ts › gzips a JSON answer to a request that carries a credential and accepts gzip, a refusal included`.
+
+### `instance/gzip-needs-authorization`
+
+If a request carries no `Authorization` header, then the server MUST NOT send its JSON answer with a `Content-Encoding`.
+
+**Reason:** a page on another site can make a browser send its session cookie with text of the page's choosing, and the size of a compressed answer that holds that text beside a secret can give the secret away (BREACH). A browser sends no `Authorization` header a page did not give it.
+
+**Tests:** `compliance/instance.test.ts › answers a request without a credential uncompressed, where the same request with one is gzipped`.
+
+### `instance/event-stream-uncompressed`
+
+The server MUST NOT send an event stream with a `Content-Encoding`.
+
+**Reason:** a compressor holds back what it has not filled a block with, so a frame would wait for the frames after it.
+
+**Tests:** `compliance/instance.test.ts › sends an event stream uncompressed to a request that accepts gzip`.
+
 ## The reference's groups
 
 ### `instance/document-groups`

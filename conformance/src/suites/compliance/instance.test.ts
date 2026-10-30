@@ -757,3 +757,71 @@ describe("the instance", () => {
     expect(wavedOut).toEqual([]);
   });
 });
+
+describe("compression", () => {
+  const gzipOnly = { "accept-encoding": "gzip" };
+
+  it("gzips a JSON answer to a request that carries a credential and accepts gzip, a refusal included", async () => {
+    const auth = { Authorization: `Bearer ${apiKey}`, ...gzipOnly };
+    const listing = await fetch(`${apiUrl}/items?limit=5`, { headers: auth });
+    expect(listing.status).toBe(200);
+    expect(listing.headers.get("content-encoding")).toBe("gzip");
+    expect(Array.isArray((await listing.json()).data)).toBe(true);
+
+    const refused = await fetch(`${apiUrl}/items/${crypto.randomUUID()}`, {
+      headers: auth,
+    });
+    expect(refused.status).toBe(404);
+    expect(refused.headers.get("content-encoding")).toBe("gzip");
+    expect((await refused.json()).error.code).toBe("item_not_found");
+  });
+
+  it("answers a request without a credential uncompressed, where the same request with one is gzipped", async () => {
+    // The witness: the same JSON doors compress for a bearer credential.
+    const asKey = await fetch(`${apiUrl}/`, {
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        accept: "application/json",
+        ...gzipOnly,
+      },
+    });
+    expect(asKey.headers.get("content-encoding")).toBe("gzip");
+    const keyed = await client.listTypes();
+    expect(keyed.status).toBe(200);
+    expect(keyed.headers.get("content-encoding")).toBe("gzip");
+
+    const anonymous = await fetch(`${apiUrl}/`, {
+      headers: { accept: "application/json", ...gzipOnly },
+    });
+    expect(anonymous.status).toBe(200);
+    expect(anonymous.headers.get("content-encoding")).toBeNull();
+    expect((await anonymous.json()).contract).toBeTypeOf("number");
+
+    const unsigned = await fetch(`${apiUrl}/items`, { headers: gzipOnly });
+    expect(unsigned.status).toBe(401);
+    expect(unsigned.headers.get("content-encoding")).toBeNull();
+
+    // An owner's browser session, which a page on another site can make the
+    // browser send with text of that page's choosing.
+    const asOwner = await getOwnerClient().listTypes();
+    expect(asOwner.status).toBe(200);
+    expect(asOwner.headers.get("content-encoding")).toBeNull();
+  });
+
+  it("sends an event stream uncompressed to a request that accepts gzip", async () => {
+    const auth = { Authorization: `Bearer ${apiKey}`, ...gzipOnly };
+    // The witness: a JSON answer to the same headers is gzipped.
+    const listing = await fetch(`${apiUrl}/items?limit=1`, { headers: auth });
+    expect(listing.headers.get("content-encoding")).toBe("gzip");
+    await listing.body?.cancel();
+
+    const stream = await fetch(`${apiUrl}/events`, { headers: auth });
+    try {
+      expect(stream.status).toBe(200);
+      expect(stream.headers.get("content-type")).toMatch(/^text\/event-stream/);
+      expect(stream.headers.get("content-encoding")).toBeNull();
+    } finally {
+      await stream.body?.cancel();
+    }
+  });
+});

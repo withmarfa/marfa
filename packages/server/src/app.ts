@@ -13,6 +13,7 @@ import { testRoutes } from "./control/test-routes.js";
 import { setupRoutes } from "./routes/setup.js";
 import { ownerPages } from "./routes/owner-pages.js";
 import { directAuthorityMiddleware } from "./middleware/direct-authority.js";
+import { compressJson } from "./middleware/compress-json.js";
 import { OpenAPIHono } from "@hono/zod-openapi";
 import {
   EXPOSED_RESPONSE_HEADERS,
@@ -272,6 +273,8 @@ export function createApp(
   // Next out, so every answer the application gives carries the contract
   // version, the ones no later layer shapes included.
   app.use("*", contractHeader());
+
+  app.use("*", compressJson());
 
   // The root answers a page or the description by what the caller asks for,
   // so a cache must not hand one the other's: a refusal included.
