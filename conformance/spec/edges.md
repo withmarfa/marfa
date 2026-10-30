@@ -1054,11 +1054,11 @@ If an entry of `POST /edges/bulk` would leave an `in-folder` edge, created or me
 
 ### `edges/folder-inline`
 
-If `POST /items` or `PATCH /items/{id}` names an inline `in-folder` edge, then the server MUST answer `400 validation_error` with `details.errors[0].path` `properties.path`.
+If `POST /items` or `PATCH /items/{id}` names an inline `in-folder` edge to a target the item has no `in-folder` edge to, then the server MUST answer `400 validation_error` with `details.errors[0].path` `properties.path`.
 
 **Reason:** an inline edge carries no properties, so the `path` an `in-folder` edge requires is what it lacks.
 
-**Tests:** `compliance/edge-types.test.ts › names the property an in-folder refusal rests on, on an edge update, a bulk entry and an inline edge`.
+**Tests:** `compliance/edge-types.test.ts › names the property an in-folder refusal rests on, on an edge update, a bulk entry and an inline edge`, `correctness/edges/edges-crud.test.ts › PATCH /items keeps a held edge whose type requires properties, and still refuses a new target without them`.
 
 ### `edges/folder-revoked`
 
@@ -1664,11 +1664,11 @@ If an entry of `POST /edges/bulk` under `atomic: true` would leave an edge, crea
 
 ### `edges/properties-inline`
 
-If `POST /items`, `PATCH /items/{id}` or an entry of `POST /items/bulk` names an inline edge of a type whose `property_schema` declares a property `required`, then the server MUST refuse the write `invalid_properties` with `details.errors` naming the property in `field`.
+If `POST /items`, `PATCH /items/{id}` or an entry of `POST /items/bulk` names an inline edge of a type whose `property_schema` declares a property `required`, to a target the item has no edge of that type to, then the server MUST refuse the write `invalid_properties` with `details.errors` naming the property in `field`.
 
 **Reason:** an inline edge carries no properties, so a required property is what it lacks.
 
-**Tests:** `compliance/edge-property-schema.test.ts › refuses an item write whose inline edge lacks a required property, and writes nothing of it`.
+**Tests:** `compliance/edge-property-schema.test.ts › refuses an item write whose inline edge lacks a required property, and writes nothing of it`, `correctness/edges/edges-crud.test.ts › PATCH /items keeps a held edge whose type requires properties, and still refuses a new target without them`.
 
 ### `edges/properties-inline-none`
 

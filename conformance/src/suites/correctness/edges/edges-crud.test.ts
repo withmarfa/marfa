@@ -5,6 +5,7 @@ import {
   createTestContext,
   trackItem,
   trackEdge,
+  trackEdgeType,
   trackFolder,
   cleanup,
 } from "../../../utils/setup.js";
@@ -704,4 +705,69 @@ describe("edges CRUD", () => {
       );
     },
   );
+
+  it("PATCH /items keeps a held edge whose type requires properties, and still refuses a new target without them", async () => {
+    const edgeType = `mock.keepreq.${ctx.runId}`;
+    const registered = await client.registerEdgeType({
+      label: "Keep required",
+      id: edgeType,
+      cardinality: "many-to-many",
+      property_schema: { label: { type: "string", required: true } },
+    });
+    expect(registered.status, JSON.stringify(registered.error)).toBe(201);
+    trackEdgeType(ctx, edgeType);
+    const [held, fresh, folder] = [
+      await makeItem(),
+      await makeItem(),
+      await makeFolder(),
+    ];
+    const created = await client.createItem(createNote({ source: ctx.source }));
+    expect(created.status).toBe(201);
+    const sourceId = created.data.item.id;
+    trackItem(ctx, sourceId);
+
+    const labelled = await client.createEdge({
+      source_id: sourceId,
+      target_id: held,
+      edge_type: edgeType,
+      properties: { label: "kept" },
+    });
+    expect(labelled.status, JSON.stringify(labelled.error)).toBe(201);
+    trackEdge(ctx, labelled.data.edge.id);
+    const placed = await client.createEdge({
+      source_id: sourceId,
+      target_id: folder,
+      edge_type: "in-folder",
+      properties: { path: "Notes/held.md" },
+    });
+    expect(placed.status, JSON.stringify(placed.error)).toBe(201);
+    trackEdge(ctx, placed.data.edge.id);
+
+    const patch = async (edges: Record<string, string[]>) => {
+      const current = await client.getItem(sourceId);
+      expect(current.status).toBe(200);
+      return client.rawRequest(`/items/${sourceId}`, {
+        method: "PATCH",
+        body: { version: current.data.item.version, edges },
+      });
+    };
+
+    const resent = await patch({ [edgeType]: [held], "in-folder": [folder] });
+    expect(resent.status, JSON.stringify(resent.error)).toBe(200);
+    expect((await client.getEdge(labelled.data.edge.id)).data.edge).toEqual(
+      labelled.data.edge,
+    );
+    expect((await client.getEdge(placed.data.edge.id)).data.edge).toEqual(
+      placed.data.edge,
+    );
+
+    // The witness: a target the item holds no edge to is still held to the
+    // schema, so the resend passing is the keep and not a gate left open.
+    const added = await patch({ [edgeType]: [held, fresh] });
+    expect(added.status).toBe(400);
+    expect(added.error?.error.code).toBe("invalid_properties");
+    expect((await client.getEdge(labelled.data.edge.id)).data.edge).toEqual(
+      labelled.data.edge,
+    );
+  });
 });
