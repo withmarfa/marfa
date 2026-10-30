@@ -1,8 +1,8 @@
 import { z } from "@hono/zod-openapi";
 
 /**
- * The page bound, in one place, so every route schema, description and
- * storage clamp reads the same number.
+ * The page bounds, in one place, so every route schema, description and
+ * storage clamp reads the same numbers.
  *
  * **The floor is load-bearing.** `ItemStore.list` guards its pagination with
  * `throw new Error("unreachable: hasMore but data is empty")`, and a `limit`
@@ -18,8 +18,10 @@ import { z } from "@hono/zod-openapi";
  * not.
  */
 
-/** Largest page any item, audit, connector or webhook door but the item
- * listing will return. */
+/**
+ * Largest page any item, audit, connector or webhook door but the item
+ * listing will return.
+ */
 export const MAX_PAGE_LIMIT = 200;
 
 /**
