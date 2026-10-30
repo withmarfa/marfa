@@ -1033,6 +1033,11 @@ describe("a fill asked to happen only in place", () => {
   /** What a refused fill must leave exactly as it was. */
   async function kept(h: Harness): Promise<unknown> {
     const status = await h.device.status();
+    // The default budget follows the volume's free bytes, which other
+    // processes change between the two reads.
+    if (status.ok && status.value.file_cache.setting === "default") {
+      status.value.file_cache.budget = null;
+    }
     const listed = await h.device.listAnswer();
     return {
       status,
