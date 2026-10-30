@@ -537,6 +537,62 @@ describe("writing a status field", () => {
   });
 });
 
+describe("a conflicted copy of a status field", () => {
+  it("refuses a stale write whose conflicted copy would hold an undeclared word, writing nothing", async () => {
+    const type = nextId();
+    await register({
+      id: type,
+      fields: {
+        title: { type: "string" },
+        stage: { type: "status", status_values: WORDS },
+      },
+      merge_policy: { fields: { stage: "keep_both_copies" } },
+    });
+    const listed = async () => {
+      const items = await client.listItems({ type, limit: 100 });
+      expect(items.status).toBe(200);
+      return items.data.data.map((item) => item.id).sort();
+    };
+    const collide = async (stage: string) => {
+      const created = await create(type, { title: "Shared", stage: "todo" });
+      expect(created.status).toBe(201);
+      const { id, version } = created.data.item;
+      const moved = await client.updateItem(id, {
+        properties: { stage: "doing" },
+        version,
+      });
+      expect(moved.status, JSON.stringify(moved.error)).toBe(200);
+      const before = await listed();
+      const stale = await client.rawRequest<{
+        item?: { version: number };
+        conflict_resolution?: { conflicted_copy_id?: string };
+      }>(`/items/${id}?conflict=auto`, {
+        method: "PATCH",
+        body: { properties: { stage }, version },
+      });
+      return { id, stale, before, current: moved.data.item.version };
+    };
+
+    const refused = await collide("bogus");
+    expect(refused.stale.status, JSON.stringify(refused.stale.data)).toBe(400);
+    expect(refused.stale.error?.error.code).toBe("invalid_properties");
+    expect(errorFields(refused.stale)).toContain("stage");
+    expect(await listed(), "a copy was written").toEqual(refused.before);
+    const kept = await client.getItem(refused.id);
+    expect(kept.data.item.version).toBe(refused.current);
+    expect(kept.data.item.properties.stage).toBe("doing");
+
+    // The witness: a declared word in the same collision makes the copy.
+    const taken = await collide("done");
+    expect(taken.stale.status, JSON.stringify(taken.stale.error)).toBe(200);
+    const copyId = taken.stale.data.conflict_resolution?.conflicted_copy_id;
+    expect(copyId, "no copy was written").toBeTruthy();
+    trackItem(ctx, String(copyId));
+    const copy = await client.getItem(String(copyId));
+    expect(copy.data.item.properties.stage).toBe("done");
+  });
+});
+
 describe("filtering by status_group", () => {
   let tag: string;
   let parent: string;

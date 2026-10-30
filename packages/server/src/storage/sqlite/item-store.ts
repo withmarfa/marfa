@@ -34,6 +34,7 @@ import {
   ALL_TYPE_IDS,
   isValidTypeIdentifier,
   scheduleIssues,
+  statusIssues,
   validateProperties,
   validateTransition,
   getEdgeTypeSchema,
@@ -1894,6 +1895,24 @@ export class SqliteItemStore implements ItemStore {
               ancestorFields,
             );
           }
+          // The copy is a new item, so every word it holds is judged as a
+          // create's would be, and refusing it refuses the whole write.
+          const siblingProperties = conflictedSiblingProperties({
+            clientProperties: clientProps,
+            currentProperties: currentProps,
+            keepBothFields: plan.keepBothFields,
+            clearedProperties,
+          });
+          const errors = statusIssues(row.type, siblingProperties);
+          if (errors.length > 0) {
+            throw new MarfaError(
+              ErrorCode.INVALID_PROPERTIES,
+              `Invalid properties: ${errors
+                .map((e) => `${e.field}: ${e.message}`)
+                .join("; ")}`,
+              { errors },
+            );
+          }
           siblingId = conflictedSiblingIdFor(id, input.version, input);
           sibling = await insertConflictedSibling(tx, this.searchStore, {
             siblingId,
@@ -1904,12 +1923,7 @@ export class SqliteItemStore implements ItemStore {
             refuseUnprovenFile: input.refuse_unproven_file === true,
             carried: staleCarried,
             writer: input.writer ?? null,
-            properties: conflictedSiblingProperties({
-              clientProperties: clientProps,
-              currentProperties: currentProps,
-              keepBothFields: plan.keepBothFields,
-              clearedProperties,
-            }),
+            properties: siblingProperties,
           });
         }
 
