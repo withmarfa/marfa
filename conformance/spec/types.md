@@ -377,7 +377,7 @@ If a type names a field definition with an unknown `type` or `format`, an `enum`
 
 If `POST /types` or `PUT /types/{id}` names a key the type schema does not define, at the top level, in a field definition (which takes only `type`, `description`, `required`, `enum_values`, `status_values`, `items_type`, `items_fields`, `format`, `searchable`, `maxLength`, `maxItems`, `minimum` and `maximum`), in a member of `items_fields` (which takes only `type`, `description`, `required`, `enum_values`, `format`, `maxLength`, `minimum` and `maximum`), or in `display_hints`, `version_policy`, `merge_policy` or `retention_policy`, then the server MUST answer `400 invalid_schema` with `details.errors` naming the path of each such key.
 
-**Reason:** a key the server ignored would let a misspelled rule, or a `searchable` on a member of `items_fields`, register as though it held, and the type would then accept what its author meant it to refuse.
+**Reason:** a key the server ignored would let a misspelled rule, or an `exclusiveMinimum` on an `integer` field, register as though it held, and the type would then accept what its author meant it to refuse.
 
 **Tests:** `compliance/types.test.ts › refuses a key the type schema does not define, at the top level, in a field and in a block, naming each path`, `› refuses a key the type schema does not define on a replacement, and keeps the type as it was`.
 

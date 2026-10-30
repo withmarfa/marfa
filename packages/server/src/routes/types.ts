@@ -134,7 +134,8 @@ function validateParentChain(
 // Schemas
 // ---------------------------------------------------------------------------
 
-const RANGE_BOUND = "A `number` or `integer` field takes it.";
+const rangeBound = (holder: string) =>
+  `Only a \`number\` or \`integer\` ${holder} takes it.`;
 
 /**
  * One member of a list entry. The kinds it may take are narrower than a
@@ -170,13 +171,13 @@ const EntryMemberSchema = z
       .number()
       .optional()
       .describe(
-        `The lowest value the member allows, itself included. ${RANGE_BOUND}`,
+        `The lowest value the member allows, itself included. ${rangeBound("member")}`,
       ),
     maximum: z
       .number()
       .optional()
       .describe(
-        `The highest value the member allows, itself included. ${RANGE_BOUND}`,
+        `The highest value the member allows, itself included. ${rangeBound("member")}`,
       ),
   })
   .describe("One member of the entries of an `array` field.")
@@ -263,13 +264,13 @@ const FieldDefinitionSchema = z
       .number()
       .optional()
       .describe(
-        `The lowest value the field allows, itself included. ${RANGE_BOUND} A subtype may raise it, never lower or drop it.`,
+        `The lowest value the field allows, itself included. ${rangeBound("field")} A subtype may raise it, never lower or drop it.`,
       ),
     maximum: z
       .number()
       .optional()
       .describe(
-        `The highest value the field allows, itself included. ${RANGE_BOUND} A subtype may lower it, never raise or drop it.`,
+        `The highest value the field allows, itself included. ${rangeBound("field")} A subtype may lower it, never raise or drop it.`,
       ),
   })
   .describe("One field of a type: its type, and how items may fill it.")

@@ -3982,9 +3982,9 @@ export interface components {
             maxLength?: number;
             /** @description The most elements an `array` field allows. */
             maxItems?: number;
-            /** @description The lowest value the field allows, itself included. A `number` or `integer` field takes it. A subtype may raise it, never lower or drop it. */
+            /** @description The lowest value the field allows, itself included. Only a `number` or `integer` field takes it. A subtype may raise it, never lower or drop it. */
             minimum?: number;
-            /** @description The highest value the field allows, itself included. A `number` or `integer` field takes it. A subtype may lower it, never raise or drop it. */
+            /** @description The highest value the field allows, itself included. Only a `number` or `integer` field takes it. A subtype may lower it, never raise or drop it. */
             maximum?: number;
         } & {
             [key: string]: unknown;
@@ -4019,9 +4019,9 @@ export interface components {
             format?: "url" | "email" | "datetime" | "date" | "thumbnail" | "bcp47" | "iso3166" | "currency";
             /** @description The longest value a `string` or `enum` member allows. */
             maxLength?: number;
-            /** @description The lowest value the member allows, itself included. A `number` or `integer` field takes it. */
+            /** @description The lowest value the member allows, itself included. Only a `number` or `integer` member takes it. */
             minimum?: number;
-            /** @description The highest value the member allows, itself included. A `number` or `integer` field takes it. */
+            /** @description The highest value the member allows, itself included. Only a `number` or `integer` member takes it. */
             maximum?: number;
         } & {
             [key: string]: unknown;

@@ -4333,11 +4333,11 @@
           },
           "minimum": {
             "type": "number",
-            "description": "The lowest value the field allows, itself included. A `number` or `integer` field takes it. A subtype may raise it, never lower or drop it."
+            "description": "The lowest value the field allows, itself included. Only a `number` or `integer` field takes it. A subtype may raise it, never lower or drop it."
           },
           "maximum": {
             "type": "number",
-            "description": "The highest value the field allows, itself included. A `number` or `integer` field takes it. A subtype may lower it, never raise or drop it."
+            "description": "The highest value the field allows, itself included. Only a `number` or `integer` field takes it. A subtype may lower it, never raise or drop it."
           }
         },
         "required": [
@@ -4427,11 +4427,11 @@
           },
           "minimum": {
             "type": "number",
-            "description": "The lowest value the member allows, itself included. A `number` or `integer` field takes it."
+            "description": "The lowest value the member allows, itself included. Only a `number` or `integer` member takes it."
           },
           "maximum": {
             "type": "number",
-            "description": "The highest value the member allows, itself included. A `number` or `integer` field takes it."
+            "description": "The highest value the member allows, itself included. Only a `number` or `integer` member takes it."
           }
         },
         "required": [

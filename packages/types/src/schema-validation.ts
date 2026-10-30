@@ -382,7 +382,7 @@ function validateFieldShape(
         field: path,
         expected: "an object describing the field",
         actual: describe(def),
-        hint: `Write fields.${name} as { "type": "string", "description": "..." }.`,
+        hint: `Write ${path} as { "type": "string", "description": "..." }.`,
       }),
     );
     return;
@@ -2273,10 +2273,10 @@ function fieldTypeIsReadableAs(
 /**
  * The first way `candidate` would surprise a reader of `target`, or null.
  *
- * Reaches field declarations only. Two `object` fields — or two arrays of
- * them — pass whatever they contain, because a `FieldDefinition` has no
- * vocabulary for nested shape and inventing one here would be guesswork. The
- * limit is documented alongside the authoring rule rather than papered over.
+ * Reaches field declarations only. Two `object` fields, or two arrays of
+ * them that name no `items_fields`, pass whatever they contain, because the
+ * declaration says nothing of their shape. Two arrays of entries compare by
+ * their `items_fields`.
  */
 function describeCompatibilityConflict(
   candidate: FieldDefinition,
