@@ -39,6 +39,11 @@ mod priority;
 mod query;
 mod reach;
 #[cfg(test)]
+mod read_bench_tests;
+mod reads;
+#[cfg(test)]
+mod reads_tests;
+#[cfg(test)]
 mod refusal_tests;
 #[cfg(test)]
 mod relocation_tests;
@@ -108,6 +113,7 @@ pub use model::{
     Shown, SliceTier, Sort, SortDirection, SortField, Status, Thumbnail, Tier, UnregisteredType,
     Verdict, WriteKind,
 };
+pub use reads::CopyChanges;
 pub use scaffold::{ScaffoldField, scaffold_type};
 pub use store::CEILING;
 pub use views::{VIEW_TYPE, ViewGroup, ViewRow};
@@ -430,12 +436,19 @@ impl Core {
             .map(Core::swept)
     }
 
-    /// Takes what a process that ended part way left in the cache, for a
-    /// writer, sparing the partial files of attachments.
+    /// For a writer, lets go of old changes of removed edges and takes what
+    /// a process that ended part way left in the cache, sparing the partial
+    /// files of attachments.
     fn swept(self) -> Core {
-        if self.handle() == Handle::Writer
-            && let Some(cache) = &self.cache
-        {
+        if self.handle() != Handle::Writer {
+            return self;
+        }
+        // Left to a later open where it fails: it commits the floor with the
+        // rows it lets go, so a failed run leaves both as they were.
+        if let Ok(conn) = self.conn() {
+            let _ = store::prune_edge_changes(&conn, store::EDGE_CHANGES_KEPT);
+        }
+        if let Some(cache) = &self.cache {
             let attachments = self
                 .conn()
                 .ok()
@@ -679,7 +692,7 @@ impl Core {
     /// registers on the instance the ones it does not hold, and replaces each
     /// `app.*` one it holds in another definition, where the key may.
     /// On a copy that holds a server's catalog the set waits for the next
-    /// hydration.
+    /// hydration. A set that names one id twice is refused `Invalid`.
     pub fn declare_types(&self, types: &[Value]) -> Result<()> {
         self.lock.refuse_unless_writer()?;
         let mut conn = self.conn()?;
@@ -695,12 +708,26 @@ impl Core {
             declared.iter().any(|held| held == id) || builtin::ships(id).unwrap_or(false)
         };
         let mut rows = Vec::new();
+        let mut seen = HashSet::new();
         for definition in types {
-            rows.push(catalog::declaration(definition, &known)?);
+            let row = catalog::declaration(definition, &known)?;
+            if !seen.insert(row.0.clone()) {
+                return Err(CoreError::Invalid(format!(
+                    "{} is declared twice; a set declares each type once",
+                    row.0
+                )));
+            }
+            rows.push(row);
         }
-        store::clear_declared_types(&tx)?;
-        for (id, json) in &rows {
-            store::declare_type(&tx, id, json)?;
+        // The same set again writes nothing, so a declaration at each launch
+        // is no change to the copy (`changes_since`).
+        let mut sorted = rows.clone();
+        sorted.sort();
+        if store::declared_type_rows(&tx)? != sorted {
+            store::clear_declared_types(&tx)?;
+            for (id, json) in &rows {
+                store::declare_type(&tx, id, json)?;
+            }
         }
         if store::never_synced(&tx)? {
             store::hold_local_catalog(&tx)?;

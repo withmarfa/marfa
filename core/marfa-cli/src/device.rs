@@ -131,6 +131,28 @@ pub enum DeviceCommand {
         #[arg(long = "for", value_name = "SECONDS")]
         r#for: Option<u64>,
     },
+    /// The items and edges that changed in the copy since a cursor this
+    /// command printed, and the cursor to pass next.
+    ///
+    /// Without `--since`, with a cursor from another store, from beyond what
+    /// the copy recorded, from before a change to the types or from before
+    /// a removed edge the copy no longer records, or where more than
+    /// `--most` items or edges changed, it names none and answers
+    /// `everything: true`: read the whole copy again. An item is named where
+    /// its row, tags, edges, pin or a queued write to it changed; one whose
+    /// body links read differently only because another item changed is
+    /// not. Refused `hydration_incomplete` while a hydration is part way or
+    /// the copy is stale. Take the cursor before reading what it covers, and
+    /// keep the earlier cursor until that read succeeds.
+    Changed {
+        /// A cursor an earlier run printed.
+        #[arg(long, value_name = "CURSOR")]
+        since: Option<String>,
+        /// The most items, and the most edges, to name before answering
+        /// `everything` instead.
+        #[arg(long, default_value_t = 1000)]
+        most: u32,
+    },
     /// Read items from the local copy.
     Items {
         #[command(subcommand)]
@@ -393,6 +415,22 @@ pub enum ItemsCommand {
         /// The item id.
         id: String,
     },
+    /// Many items by id, read from one snapshot of the copy, each once and
+    /// in the order named.
+    ///
+    /// An id the copy does not hold is left out, and so is an item in the
+    /// bin unless `--include-bin`. Under --json the answer is `items` beside
+    /// `completeness`, as `items list` answers; while a hydration fills the
+    /// copy it is `partial`, since an item left out may be still to arrive.
+    #[command(name = "bulk-get")]
+    BulkGet {
+        /// The item ids.
+        #[arg(required = true)]
+        ids: Vec<String>,
+        /// Answer items in the bin too.
+        #[arg(long)]
+        include_bin: bool,
+    },
     /// Write a new item into the local copy and queue it for the server.
     Create(CreateArgs),
     /// Change an item in the local copy and queue the change.
@@ -459,6 +497,16 @@ pub enum ItemsCommand {
         /// The item id.
         id: String,
     },
+    /// The links and embeds of files in the bodies of many items, read
+    /// against one catalog, by item id: what `items links` answers for
+    /// each. An item the copy does not hold, one in the bin and one whose
+    /// properties cannot be read are left out.
+    #[command(name = "bulk-links")]
+    BulkLinks {
+        /// The item ids.
+        #[arg(required = true)]
+        ids: Vec<String>,
+    },
     /// The text that embeds a file item in an item's body, which reads back
     /// as the file's `attached-to` edge to the item.
     Embed {
@@ -521,6 +569,19 @@ pub struct AttachArgs {
 
 #[derive(Debug, Subcommand)]
 pub enum EdgesCommand {
+    /// One edge by id.
+    Get {
+        /// The edge id.
+        id: String,
+    },
+    /// Many edges by id, each once and in the order named; an id the copy
+    /// does not hold is left out.
+    #[command(name = "bulk-get")]
+    BulkGet {
+        /// The edge ids.
+        #[arg(required = true)]
+        ids: Vec<String>,
+    },
     /// The edges the copy holds from one item.
     List {
         /// The item the edges start from.
@@ -590,7 +651,8 @@ pub enum TypesCommand {
     /// instance lacks, where the key may.
     ///
     /// Marfa's own types need no declaring. The call is the app's whole set,
-    /// so it replaces every earlier declaration.
+    /// so it replaces every earlier declaration, and a set that names one id
+    /// twice is refused `invalid`.
     Declare {
         /// A type definition, or an array of them, as JSON.
         #[arg(
@@ -1154,6 +1216,10 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
                 || format!("purged {id}"),
             )
         }
+        DeviceCommand::Changed { since, most } => {
+            let changes = store.open(None)?.changes_since(since.as_deref(), most)?;
+            output::report(&changes, json, || changed_lines(&changes))
+        }
         DeviceCommand::Items { command } => {
             let core = store.open(None)?;
             match command {
@@ -1192,6 +1258,9 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
                     Some((item, shown)) => output::item(&item, &shown, json),
                     None => Err(CliError::NotHeld(id)),
                 },
+                ItemsCommand::BulkGet { ids, include_bin } => {
+                    output::listing(core.get_items_shown(&ids, include_bin)?, json)
+                }
                 ItemsCommand::Create(args) => {
                     let draft = Draft {
                         r#type: args.type_,
@@ -1279,6 +1348,19 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
                 ItemsCommand::Links { id } => {
                     let links = core.body_links(&id)?;
                     output::report(&links, json, || output::body_links(&links))
+                }
+                ItemsCommand::BulkLinks { ids } => {
+                    let links = core.body_links_of(&ids)?;
+                    output::report(&links, json, || {
+                        ids.iter()
+                            .filter_map(|id| {
+                                links
+                                    .get(id)
+                                    .map(|links| format!("{id}\n{}", output::body_links(links)))
+                            })
+                            .collect::<Vec<_>>()
+                            .join("\n\n")
+                    })
                 }
                 ItemsCommand::Embed { id, file } => {
                     let text = core.embed_text(&id, &file)?;
@@ -1467,6 +1549,11 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
         DeviceCommand::Edges { command } => {
             let core = store.open(None)?;
             match command {
+                EdgesCommand::Get { id } => match core.get_edge(&id)? {
+                    Some(edge) => edge_one(&edge, json),
+                    None => Err(CliError::NotHeld(id)),
+                },
+                EdgesCommand::BulkGet { ids } => edge_list(&core.get_edges(&ids)?, json),
                 EdgesCommand::List { item } => edge_list(&core.edges_from(&item)?, json),
                 EdgesCommand::To { item } => edge_list(&core.edges_to(&item)?, json),
                 EdgesCommand::Create {
@@ -1928,17 +2015,35 @@ fn edge_type_line(held: &marfa_core::EdgeType) -> String {
 
 fn edge_list(edges: &[marfa_core::Edge], json: bool) -> Result<(), CliError> {
     output::report(&edges, json, || {
-        edges
-            .iter()
-            .map(|edge| {
-                format!(
-                    "{}  {} -> {}  {}  v{}",
-                    edge.id, edge.source_id, edge.target_id, edge.edge_type, edge.version
-                )
-            })
-            .collect::<Vec<_>>()
-            .join("\n")
+        edges.iter().map(edge_line).collect::<Vec<_>>().join("\n")
     })
+}
+
+fn changed_lines(changes: &marfa_core::CopyChanges) -> String {
+    let mut lines = vec![format!("cursor {}", changes.cursor)];
+    if changes.everything {
+        lines.push("everything: read the whole copy again".into());
+    }
+    for (label, ids) in [
+        ("item", &changes.items),
+        ("removed item", &changes.removed_items),
+        ("edge", &changes.edges),
+        ("removed edge", &changes.removed_edges),
+    ] {
+        lines.extend(ids.iter().map(|id| format!("{label}  {id}")));
+    }
+    lines.join("\n")
+}
+
+fn edge_one(edge: &marfa_core::Edge, json: bool) -> Result<(), CliError> {
+    output::report(edge, json, || edge_line(edge))
+}
+
+fn edge_line(edge: &marfa_core::Edge) -> String {
+    format!(
+        "{}  {} -> {}  {}  v{}",
+        edge.id, edge.source_id, edge.target_id, edge.edge_type, edge.version
+    )
 }
 
 fn blocked_reason() -> impl clap::builder::TypedValueParser<Value = marfa_core::BlockedReason> {

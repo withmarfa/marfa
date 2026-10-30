@@ -73,7 +73,7 @@ impl Selection {
     pub(super) fn begin(&self, folder: &Folder) -> Result<Pick> {
         let conn = folder.core.conn()?;
         Ok(Pick {
-            change: crate::store::last_change(&conn)?,
+            change: crate::store::last_change(&conn, crate::store::Changes::Items)?,
             generation: crate::reach::generation(&conn)?,
             bound: state::every_bound(&conn)?
                 .into_iter()
@@ -105,7 +105,12 @@ impl Selection {
         };
         let changed = {
             let conn = folder.core.conn()?;
-            crate::store::changed_since(&conn, last.change, MOST_CHANGED)?
+            crate::store::changed_since(
+                &conn,
+                crate::store::Changes::Items,
+                last.change,
+                MOST_CHANGED,
+            )?
         };
         let Some(mut changed) = changed else {
             return Ok(());

@@ -45,7 +45,7 @@ impl Paths for Placements {
     }
 
     fn of(&self, conn: &Connection, id: &str) -> Result<Vec<String>> {
-        let mut statement = conn.prepare(
+        let mut statement = conn.prepare_cached(
             "SELECT json_extract(properties, '$.path') FROM edges
               WHERE edge_type = ?1 AND source_id = ?2
                 AND CASE WHEN json_valid(properties) THEN json_type(properties, '$.path') END = 'text'
@@ -223,22 +223,29 @@ fn pick(candidates: &[Candidate], host_paths: &[String], name: &str, by_name: bo
 
 /// How a body's embeds are read against the copy, the held file items
 /// loaded only for an embed its attachments do not answer.
+/// `files` may be shared by the bodies of many hosts read against one
+/// catalog.
 struct Embeds<'c> {
     conn: &'c Connection,
     catalog: &'c Catalog,
     host_paths: Vec<String>,
     attachments: Vec<Candidate>,
-    files: OnceCell<Vec<Candidate>>,
+    files: &'c OnceCell<Vec<Candidate>>,
 }
 
 impl<'c> Embeds<'c> {
-    fn of(conn: &'c Connection, catalog: &'c Catalog, host: &str) -> Result<Embeds<'c>> {
+    fn of(
+        conn: &'c Connection,
+        catalog: &'c Catalog,
+        files: &'c OnceCell<Vec<Candidate>>,
+        host: &str,
+    ) -> Result<Embeds<'c>> {
         Ok(Embeds {
             conn,
             catalog,
             host_paths: Placements.of(conn, host)?,
             attachments: attachments(conn, catalog, host)?,
-            files: OnceCell::new(),
+            files,
         })
     }
 
@@ -423,7 +430,7 @@ fn row_of(row: &rusqlite::Row<'_>) -> rusqlite::Result<Row> {
 }
 
 fn rows_of(conn: &Connection, host: &str) -> Result<Vec<Row>> {
-    let mut statement = conn.prepare(&format!(
+    let mut statement = conn.prepare_cached(&format!(
         "SELECT {ROW_COLUMNS} FROM body_names WHERE item_id = ?1"
     ))?;
     let rows = statement.query_map([host], row_of)?;
@@ -601,7 +608,8 @@ fn read_against(
     }
     let embeds = text::embeds(body);
     if !embeds.is_empty() {
-        let reader = Embeds::of(conn, catalog, host)?;
+        let files = OnceCell::new();
+        let reader = Embeds::of(conn, catalog, &files, host)?;
         for embed in &embeds {
             let raw = embed.raw().to_string();
             match reader.offline(embed)? {
@@ -1241,7 +1249,8 @@ fn embed_online(
 ) -> Result<Option<(Resolved, i64)>> {
     let (local, name) = {
         let conn = core.conn()?;
-        let reader = Embeds::of(&conn, catalog, host)?;
+        let files = OnceCell::new();
+        let reader = Embeds::of(&conn, catalog, &files, host)?;
         let Some((name, by_name)) = read_as(embed) else {
             return Ok(None);
         };
@@ -1564,9 +1573,44 @@ pub(crate) fn read(conn: &Connection, id: &str) -> Result<BodyLinks> {
         });
     };
     let catalog = Catalog::load(conn)?;
-    let body = body_of(&catalog, &item);
+    Bodies::new(conn, &catalog).read(&item)
+}
+
+/// Reads the links of many bodies against one catalog, loading the file
+/// items an embed may name at most once for all of them.
+pub(crate) struct Bodies<'c> {
+    conn: &'c Connection,
+    catalog: &'c Catalog,
+    files: OnceCell<Vec<Candidate>>,
+}
+
+impl<'c> Bodies<'c> {
+    pub(crate) fn new(conn: &'c Connection, catalog: &'c Catalog) -> Bodies<'c> {
+        Bodies {
+            conn,
+            catalog,
+            files: OnceCell::new(),
+        }
+    }
+
+    /// `read` for an item already read from the copy.
+    pub(crate) fn read(&self, item: &Item) -> Result<BodyLinks> {
+        read_body(self.conn, self.catalog, &self.files, item)
+    }
+}
+
+fn read_body(
+    conn: &Connection,
+    catalog: &Catalog,
+    files: &OnceCell<Vec<Candidate>>,
+    item: &Item,
+) -> Result<BodyLinks> {
+    let id = item.id.as_str();
+    let body = body_of(catalog, item);
     let mut links = BodyLinks::default();
-    if body.is_empty() {
+    let names = text::links(body);
+    let embeds = text::embeds(body);
+    if names.is_empty() && embeds.is_empty() {
         return Ok(links);
     }
     let recorded = recorded(conn, id)?;
@@ -1589,34 +1633,38 @@ pub(crate) fn read(conn: &Connection, id: &str) -> Result<BodyLinks> {
             },
         }
     };
-    let references = Others::load(conn, &catalog, &Placements, &references_of(conn, id)?)?;
-    for raw in text::links(body) {
-        let typed = Typed::new(&raw);
-        let resolved = link_offline(
-            conn,
-            id,
-            &typed,
-            &references,
-            &recorded,
-            Reading::Written(None),
-        )?;
-        links.links.push(BodyName {
-            text: text::render_link(&raw),
-            target: target(Kind::Link, &raw, resolved),
-            name: typed.name,
-        });
+    if !names.is_empty() {
+        let references = Others::load(conn, catalog, &Placements, &references_of(conn, id)?)?;
+        for raw in names {
+            let typed = Typed::new(&raw);
+            let resolved = link_offline(
+                conn,
+                id,
+                &typed,
+                &references,
+                &recorded,
+                Reading::Written(None),
+            )?;
+            links.links.push(BodyName {
+                text: text::render_link(&raw),
+                target: target(Kind::Link, &raw, resolved),
+                name: typed.name,
+            });
+        }
     }
-    let reader = Embeds::of(conn, &catalog, id)?;
-    for embed in text::embeds(body) {
-        let Some((name, resolved)) = reader.offline(&embed)? else {
-            continue;
-        };
-        let resolved = or_made_to(conn, &recorded, Kind::Embed, id, embed.raw(), resolved)?;
-        links.embeds.push(BodyName {
-            text: embed.raw().to_string(),
-            target: target(Kind::Embed, embed.raw(), resolved),
-            name,
-        });
+    if !embeds.is_empty() {
+        let reader = Embeds::of(conn, catalog, files, id)?;
+        for embed in embeds {
+            let Some((name, resolved)) = reader.offline(&embed)? else {
+                continue;
+            };
+            let resolved = or_made_to(conn, &recorded, Kind::Embed, id, embed.raw(), resolved)?;
+            links.embeds.push(BodyName {
+                text: embed.raw().to_string(),
+                target: target(Kind::Embed, embed.raw(), resolved),
+                name,
+            });
+        }
     }
     Ok(links)
 }
@@ -1662,7 +1710,8 @@ pub(crate) fn embed_text(conn: &Connection, host: &str, file: &str) -> Result<St
             "{file} is not a file item, so there are no bytes to embed; link to it as [[{file}]] instead"
         )));
     }
-    let reader = Embeds::of(conn, &catalog, host)?;
+    let files = OnceCell::new();
+    let reader = Embeds::of(conn, &catalog, &files, host)?;
     if !reader.attachments.iter().any(|held| held.id == file) {
         return Err(CoreError::Invalid(format!(
             "{file} is not attached to {host}; attach it first, so its embed names it among the item's attachments"

@@ -39,6 +39,16 @@ import {
 
 const run = promisify(execFile);
 
+/** What `device changed` answers. */
+export interface CopyChanges {
+  cursor: string;
+  everything: boolean;
+  items: string[];
+  removed_items: string[];
+  edges: string[];
+  removed_edges: string[];
+}
+
 /**
  * The `marfa` binary, driven as the device under test.
  *
@@ -940,6 +950,52 @@ export class CliDevice implements DeviceUnderTest {
    *  (`device/body-links-read`). */
   async bodyLinks(id: string): Promise<Outcome<BodyLinks>> {
     return this.json<BodyLinks>(["items", "links", id]);
+  }
+
+  /** `bodyLinks` for many items in one read, by item id
+   *  (`device/bulk-links-same`). */
+  async bulkLinks(ids: string[]): Promise<Outcome<Record<string, BodyLinks>>> {
+    return this.json<Record<string, BodyLinks>>([
+      "items",
+      "bulk-links",
+      "--",
+      ...ids,
+    ]);
+  }
+
+  /** Many items by id from one read of the copy (`device/bulk-get-order`). */
+  async bulkGet(
+    ids: string[],
+    options: { includeBin?: boolean } = {},
+  ): Promise<Outcome<Listing>> {
+    return this.json<Listing>([
+      "items",
+      "bulk-get",
+      ...(options.includeBin === true ? ["--include-bin"] : []),
+      "--",
+      ...ids,
+    ]);
+  }
+
+  /** One edge by id (`device/edge-get`). */
+  async edge(id: string): Promise<Outcome<Edge>> {
+    return this.json<Edge>(["edges", "get", id]);
+  }
+
+  /** Many edges by id (`device/edge-bulk-get`). */
+  async bulkGetEdges(ids: string[]): Promise<Outcome<Edge[]>> {
+    return this.json<Edge[]>(["edges", "bulk-get", "--", ...ids]);
+  }
+
+  /** What changed in the copy since a cursor (`device/changed-names`). */
+  async changed(
+    options: { since?: string; most?: number } = {},
+  ): Promise<Outcome<CopyChanges>> {
+    return this.json<CopyChanges>([
+      "changed",
+      ...(options.since === undefined ? [] : ["--since", options.since]),
+      ...(options.most === undefined ? [] : ["--most", String(options.most)]),
+    ]);
   }
 
   /** The text that embeds a file item in an item's body (`device/embed-text`). */

@@ -38,7 +38,13 @@ CREATE TABLE IF NOT EXISTS items (
 CREATE INDEX IF NOT EXISTS items_type_created ON items (type, created_at);
 CREATE INDEX IF NOT EXISTS items_type_updated ON items (type, updated_at);
 CREATE INDEX IF NOT EXISTS items_type_occurred_at ON items (type, occurred_at);
-CREATE INDEX IF NOT EXISTS items_state ON items (state);
+-- A list's default order, newest created first with the id breaking ties,
+-- read in index order rather than sorted, so a list of the whole copy needs
+-- no sort that spills to disk. The second also narrows by state, which
+-- every list does unless it asks for all states.
+CREATE INDEX IF NOT EXISTS items_created ON items (created_at, id);
+CREATE INDEX IF NOT EXISTS items_state_created ON items (state, created_at, id);
+DROP INDEX IF EXISTS items_state;
 CREATE INDEX IF NOT EXISTS items_tier ON items (tier);
 
 CREATE TABLE IF NOT EXISTS edges (
@@ -578,4 +584,35 @@ CREATE TRIGGER IF NOT EXISTS queue_change_delete AFTER DELETE ON queue BEGIN
     SELECT id, (SELECT coalesce(max(seq), 0) + 1 FROM copy_changes)
     FROM (SELECT OLD.item_id AS id UNION SELECT OLD.target_id) WHERE id IS NOT NULL
     ON CONFLICT (item_id) DO UPDATE SET seq = excluded.seq;
+END;
+
+-- Each edge a change to the copy touched, numbered by its latest change, so
+-- an app rereads only the edges changed since it last read
+-- (`Core::changes_since`). `copy_changes` names an edge's ends, not the edge,
+-- and so cannot name an edge that has gone. A table of its own because a
+-- store already holds `copy_changes` in its present shape. One row an edge;
+-- the writer, as it opens the store, deletes the rows of edges it no longer
+-- holds past the latest changes it keeps once there are twice that many, and
+-- records where (`store::prune_edge_changes`).
+CREATE TABLE IF NOT EXISTS edge_changes (
+  edge_id TEXT PRIMARY KEY,
+  seq INTEGER NOT NULL
+) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS edge_changes_seq ON edge_changes (seq);
+
+CREATE TRIGGER IF NOT EXISTS edges_edge_change_insert AFTER INSERT ON edges BEGIN
+  INSERT INTO edge_changes (edge_id, seq)
+    VALUES (NEW.id, (SELECT coalesce(max(seq), 0) + 1 FROM edge_changes))
+    ON CONFLICT (edge_id) DO UPDATE SET seq = excluded.seq;
+END;
+CREATE TRIGGER IF NOT EXISTS edges_edge_change_update AFTER UPDATE ON edges BEGIN
+  INSERT INTO edge_changes (edge_id, seq)
+    SELECT id, (SELECT coalesce(max(seq), 0) + 1 FROM edge_changes)
+    FROM (SELECT OLD.id AS id UNION SELECT NEW.id) WHERE id IS NOT NULL
+    ON CONFLICT (edge_id) DO UPDATE SET seq = excluded.seq;
+END;
+CREATE TRIGGER IF NOT EXISTS edges_edge_change_delete AFTER DELETE ON edges BEGIN
+  INSERT INTO edge_changes (edge_id, seq)
+    VALUES (OLD.id, (SELECT coalesce(max(seq), 0) + 1 FROM edge_changes))
+    ON CONFLICT (edge_id) DO UPDATE SET seq = excluded.seq;
 END;
