@@ -785,7 +785,11 @@ impl Core {
     /// keep the rows, queue and files the copy holds, it is refused
     /// `CopyExpired` with the reason before anything is cleared, and the copy
     /// stays as it was. The reasons are `not_stale`, `instance_changed`,
-    /// `reach_changed`, `slice_changed` and `head_past_log`.
+    /// `reach_changed`, `slice_changed` and `head_past_log`. A refusal of the
+    /// credential or the reach by the server still ends a stale copy,
+    /// keeping the queue (`device/refill-in-place-only-server-ends`), and
+    /// can also carry `reach_changed`: the copy's `hydration` then reads
+    /// `Expired`, where a refused fill leaves it `Stale`.
     pub fn hydrate_in_place_only(
         &self,
         types: &[String],

@@ -2245,8 +2245,12 @@ impl Core {
     /// changed, the server was restored to an earlier point, or the copy is
     /// not stale, it is refused `copy_expired` with the reason
     /// (`instance_changed`, `reach_changed`, `slice_changed`,
-    /// `head_past_log` or `not_stale`), and the copy, its queue and its files
-    /// stay as they were.
+    /// `head_past_log` or `not_stale`) before it changes anything, and the
+    /// copy, its queue and its files stay as they were. Where the server
+    /// refuses the credential or the reach, the stale copy still ends,
+    /// keeping its queue, which can also carry `reach_changed`: read
+    /// `status().hydration` before offering to keep the copy stale, since a refused
+    /// fill leaves it `stale` and an ended copy is `expired`.
     #[uniffi::method(default(in_place_only = false))]
     pub fn hydrate_with(
         &self,

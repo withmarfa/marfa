@@ -74,8 +74,11 @@ pub enum DeviceCommand {
         /// the instance, the key's reach or the slice has changed, the
         /// server was restored to an earlier point, or the copy is not
         /// waiting to be filled again, the hydration is refused
-        /// copy_expired with the reason, and the copy, its queue and its
-        /// files stay as they were.
+        /// copy_expired with the reason before it changes anything, and the
+        /// copy, its queue and its files stay as they were. Where the
+        /// server refuses the key or its reach, the stale copy still ends,
+        /// keeping the queue: `device status` then shows its hydration as
+        /// expired, where a refused fill leaves it stale.
         #[arg(long)]
         in_place_only: bool,
     },

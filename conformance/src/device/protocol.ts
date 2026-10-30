@@ -586,7 +586,10 @@ export interface DeviceUnderTest {
   readonly store: string;
 
   /** With `inPlaceOnly`, a fill that is refused `copy_expired`, leaving the
-   *  copy as it was, wherever it could not fill a stale copy in place. */
+   *  copy as it was, wherever it could not fill a stale copy in place
+   *  (`device/refill-in-place-only`). A refusal of the credential or the
+   *  reach by the server still ends a stale copy
+   *  (`device/refill-in-place-only-server-ends`). */
   hydrate(
     types: string[],
     tier: SliceTier,

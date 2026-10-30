@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   catchupTooOld,
@@ -1039,15 +1040,34 @@ describe("a fill asked to happen only in place", () => {
       status.value.file_cache.budget = null;
     }
     const listed = await h.device.listAnswer();
-    return {
-      status,
-      listed,
-      queue: await h.device.queue(),
-    };
+    const queue = await h.device.queue();
+    const held = listed.ok ? listed.value.items.map((item) => item.id) : [];
+    // Refused on a stale copy, whose status counts its edges instead.
+    const edges = await Promise.all(
+      held.map(async (id) => ({
+        id,
+        from: await h.device.edgesFrom(id),
+        to: await h.device.edgesTo(id),
+      })),
+    );
+    const blobs = queue.ok
+      ? queue.value.flatMap((write) => (write.blob ? [write.blob] : []))
+      : [];
+    const files = await Promise.all(
+      blobs.map(async (hash) => {
+        const at = await h.device.blob(hash);
+        return {
+          hash,
+          bytes: at.ok ? readFileSync(at.value.path).toString("base64") : at,
+        };
+      }),
+    );
+    return { status, listed, queue, edges, files };
   }
 
   /** That an in-place fill was refused `copy_expired` with `reason`,
-   *  leaving the copy, its state and its queue as they were. */
+   *  leaving the copy, its edges, its state, its queue and its files as they
+   *  were. */
   async function refusedInPlace(
     h: Harness,
     reason: string,
@@ -1063,18 +1083,33 @@ describe("a fill asked to happen only in place", () => {
     expect(refused.ok ? "" : refused.refusal.raw).toContain(reason);
     expect(
       await kept(h),
-      "a refused in-place fill changed the copy, its state or its queue",
+      "a refused in-place fill changed the copy, its edges, its state, its queue or its files",
     ).toEqual(before);
   }
 
-  /** A stale copy holding `a` and `b`, with an edit and a create queued. */
+  /** A stale copy holding `a` and `b`, linked, with an edit, a create and
+   *  a file attached to `b` queued. */
   async function staleWithWrites(
     label: string,
     options: Parameters<typeof agedOut>[2] = {},
   ): Promise<Awaited<ReturnType<typeof agedOut>> & { rows: Rows }> {
+    const link = {
+      id: "a-b",
+      source_id: "a",
+      target_id: "b",
+      edge_type: "references",
+    };
     const rows: Rows = {
       "core.note": [
-        { item: { id: "a", properties: { title: "server", body: "a" } } },
+        {
+          item: {
+            id: "a",
+            properties: { title: "server", body: "a" },
+            edges: {
+              references: { data: [wireEdge(link)], next_cursor: null },
+            },
+          },
+        },
         { item: { id: "b" } },
       ],
     };
@@ -1089,31 +1124,36 @@ describe("a fill asked to happen only in place", () => {
       properties: { title: "new", body: "new" },
     });
     expect(created.ok, JSON.stringify(created)).toBe(true);
+    const attached = await aged.h.device.attach(
+      "b",
+      fileOf("kept.bin", "kept bytes"),
+    );
+    expect(attached.ok, JSON.stringify(attached)).toBe(true);
+    // The file's row is the copy's own create, held pinned outside the
+    // slice, which the server does not hold yet.
+    aged.h.server.copyAnswer(
+      "GET",
+      /^\/items\/[^/]+$/,
+      refusal(404, "not_found", "No such item"),
+    );
+    // A stale copy refuses edge reads, so its status counts the edges kept.
+    const status = await aged.h.device.status();
+    expect(
+      status.ok && status.value.edges,
+      "the stale copy holds no edge, so nothing below shows one kept",
+    ).toBeGreaterThan(0);
     expect(await hydration(aged.h)).toBe("stale");
     return { ...aged, rows };
   }
 
   it("fills a stale copy in place, keeping its queue and its files", async () => {
     const { h, rows } = await staleWithWrites("in-place-only-fills");
-    const attached = await h.device.attach(
-      "b",
-      fileOf("kept.bin", "kept bytes"),
-    );
-    expect(attached.ok, JSON.stringify(attached)).toBe(true);
     const queued = await h.device.queue();
     expect(queued.ok && queued.value).toHaveLength(5);
     const upload = queued.ok
       ? queued.value.find((write) => write.kind === "upload_blob")
       : undefined;
     expect(upload?.blob, "no upload was queued with the file").toBeTruthy();
-    // The file's row is the copy's own create, held pinned outside the
-    // slice, which the server does not hold yet.
-    h.server.copyAnswer(
-      "GET",
-      /^\/items\/[^/]+$/,
-      refusal(404, "not_found", "No such item"),
-    );
-
     rows["core.note"] = [
       {
         item: {
@@ -1206,6 +1246,10 @@ describe("a fill asked to happen only in place", () => {
     });
     reach = "b".repeat(64);
     await refusedInPlace(h, "reach_changed");
+    expect(
+      await hydration(h),
+      "the refused copy no longer reads stale, so an app cannot tell it was kept",
+    ).toBe("stale");
 
     // The witness: asked for any fill, the same hydration ends the stale
     // copy before it reads a page.
@@ -1231,6 +1275,77 @@ describe("a fill asked to happen only in place", () => {
     const replaced = await h.device.hydrate(["core.note"], "library");
     expect(replaced.ok, JSON.stringify(replaced)).toBe(true);
     expect(replaced.ok && replaced.value.in_place).toBe(false);
+  });
+
+  it("refuses to fill a copy whose interrupted refill the log fell behind, leaving the copy as it was", async () => {
+    let dropping = false;
+    const { h, head, rows } = await staleWithWrites("in-place-only-restart", {
+      pageSize: 1,
+      drop: () => {
+        if (!dropping) return false;
+        dropping = false;
+        return true;
+      },
+    });
+    rows["core.note"] = [{ item: { id: "a" } }, { item: { id: "b" } }];
+    dropping = true;
+    const interrupted = await h.device.hydrate(["core.note"], "library", {
+      inPlaceOnly: true,
+    });
+    expect(
+      interrupted.ok ? "filled" : interrupted.refusal.code,
+      "the in-place fill was not interrupted, so nothing below is about one that was",
+    ).not.toBe("filled");
+    expect(await hydration(h)).toBe("stale");
+    // The interrupted refill started from the head the aged-out catch-up
+    // read, 900. A log ending at 50 is past the cursor the copy held when it
+    // went stale, 10, but behind where that refill started.
+    head.now = "50";
+    await refusedInPlace(h, "head_past_log");
+
+    // The witness: asked for any fill, the same hydration clears the copy.
+    const replaced = await h.device.hydrate(["core.note"], "library");
+    expect(replaced.ok, JSON.stringify(replaced)).toBe(true);
+    expect(replaced.ok && replaced.value.restarted).toBe("head_past_log");
+    expect(replaced.ok && replaced.value.in_place).toBe(false);
+  });
+
+  it("ends the stale copy when the server refuses the credential or the reach to a fill only in place", async () => {
+    for (const [door, answer, reason] of [
+      [
+        "head",
+        refusal(401, "unauthorized", "Invalid or missing credential"),
+        "credential_ended",
+      ],
+      [
+        "types",
+        refusal(409, "reach_changed", "the reach has changed"),
+        "reach_changed",
+      ],
+    ] as const) {
+      const { h, refuse } = await staleWithWrites(`in-place-only-${reason}`);
+      const queued = await h.device.queue();
+      expect(queued.ok && queued.value.length).toBeGreaterThan(0);
+      refuse[door] = answer;
+      const refused = await h.device.hydrate(["core.note"], "library", {
+        inPlaceOnly: true,
+      });
+      expect(
+        refused.ok ? "filled" : refused.refusal.code,
+        `${reason}: the fill was not refused copy_expired`,
+      ).toBe("copy_expired");
+      expect(refused.ok ? "" : refused.refusal.raw).toContain(reason);
+      expect(
+        await hydration(h),
+        `${reason}: the copy stayed stale, answering rows the server may no longer let the credential read`,
+      ).toBe("expired");
+      expect(
+        await h.device.queue(),
+        `${reason}: the queue was not kept`,
+      ).toEqual(queued);
+      await h.stop();
+      harness = undefined;
+    }
   });
 
   it("refuses to fill a copy a drain expired for another instance, naming the instance", async () => {
