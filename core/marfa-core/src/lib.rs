@@ -281,7 +281,8 @@ const INCOMING_GRACE: Duration = Duration::from_secs(3600);
 
 /// The deepest a queued write's body may nest, counting each array or object
 /// inside another and no bracket inside a string: the server refuses a request
-/// body nested deeper (`items/json-depth`), so the core refuses it first.
+/// body nested deeper (`items/json-depth`), so the core refuses it first. A
+/// row whose stored properties nest deeper reads as unreadable.
 pub const MAX_JSON_DEPTH: usize = 64;
 
 /// The tag the server gives a conflicted copy (`versions/copy-written`).

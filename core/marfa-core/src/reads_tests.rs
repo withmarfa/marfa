@@ -139,6 +139,54 @@ fn get_items_kept_keeps_a_row_it_cannot_read_where_shown_refuses_it() {
     assert!(store::unreadable(&refused), "{refused:?}");
 }
 
+/// Stored properties that nest `levels` deep, counting the properties object.
+fn nested(levels: usize) -> String {
+    let inner = (1..levels).fold("null".to_string(), |inner, _| format!("[{inner}]"));
+    format!(r#"{{"deep":{inner}}}"#)
+}
+
+#[test]
+fn a_row_nested_past_the_depth_limit_is_unreadable_on_every_read_and_a_row_at_it_is_not() {
+    let server = Scripted::start();
+    let core = notes(&server);
+    let conn = core.conn().unwrap();
+    for (id, levels) in [("a", crate::MAX_JSON_DEPTH), ("b", 70)] {
+        conn.execute(
+            "UPDATE items SET properties = ?1 WHERE id = ?2",
+            [nested(levels).as_str(), id],
+        )
+        .unwrap();
+    }
+    conn.execute(
+        "UPDATE edges SET properties = ?1 WHERE id = 'ab'",
+        [nested(70)],
+    )
+    .unwrap();
+    drop(conn);
+
+    let listed = core
+        .list_kept(&crate::ListFilters::default(), None)
+        .unwrap();
+    assert_eq!(listed.rows.len(), 3, "one deep row takes down the listing");
+    let row = |id: &str| listed.rows.iter().find(|(item, _)| item.id == id).unwrap();
+    assert_eq!(row("a").0.properties.len(), 1);
+    assert_eq!(row("a").1.unreadable_properties, None);
+    assert!(row("b").0.properties.is_empty());
+    assert!(row("b").1.unreadable_properties.is_some());
+    assert_eq!(
+        Some(row("b").clone()),
+        core.get_kept("b").unwrap(),
+        "the listing answered the row otherwise than a read of it"
+    );
+    let batch = core.get_items_kept(&ids(&["a", "b"]), false).unwrap();
+    assert_eq!(batch.rows[1], row("b").clone());
+    assert!(store::unreadable(&core.get_shown("b").unwrap_err()));
+
+    let (edge, why) = core.get_edge_kept("ab").unwrap().unwrap();
+    assert!(edge.properties.is_empty());
+    assert!(why.is_some());
+}
+
 #[test]
 fn get_edges_answers_each_held_edge_once_and_where_it_was_moved() {
     let server = Scripted::start();
