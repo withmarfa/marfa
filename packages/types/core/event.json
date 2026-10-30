@@ -77,7 +77,7 @@
     "attendees": {
       "type": "array",
       "items_type": "object",
-      "description": "The people invited, one entry each, in the order written. An entry names a person by name, email or both, and holds no item ID: an app finds the person behind an entry by its email, in the emails of a person. response is the reply, from the participation status of RFC 5545; needs_action means no reply yet.",
+      "description": "The people invited, one entry each, in the order written. An entry names a person by name, email or both, and holds no item ID: an app finds the person behind an entry by matching its email to the email addresses a person holds. response is the reply, from the participation status of RFC 5545; needs_action means no reply yet.",
       "items_fields": {
         "name": {
           "type": "string",
