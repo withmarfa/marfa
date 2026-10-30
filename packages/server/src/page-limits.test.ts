@@ -7,7 +7,7 @@ import {
 import type { TestContext } from "./test-utils.js";
 import {
   DEFAULT_PAGE_LIMIT,
-  MAX_PAGE_LIMIT,
+  MAX_LISTING_LIMIT,
   MIN_PAGE_LIMIT,
 } from "./page-limits.js";
 
@@ -43,7 +43,7 @@ describe("the page bound", () => {
     const res = await request(
       ctx.app,
       "GET",
-      `/items?limit=${String(MAX_PAGE_LIMIT + 1)}`,
+      `/items?limit=${String(MAX_LISTING_LIMIT + 1)}`,
       { key: ctx.workingKey },
     );
     expect(res.status).toBe(400);
@@ -53,7 +53,7 @@ describe("the page bound", () => {
     const res = await request(
       ctx.app,
       "GET",
-      `/items?limit=${String(MAX_PAGE_LIMIT)}`,
+      `/items?limit=${String(MAX_LISTING_LIMIT)}`,
       { key: ctx.workingKey },
     );
     expect(res.status).toBe(200);
