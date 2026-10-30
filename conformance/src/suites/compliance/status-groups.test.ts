@@ -323,6 +323,35 @@ describe("a status field down a chain", () => {
     expect(onParent.error?.error.code).toBe("invalid_properties");
     expect(errorFields(onParent)).toContain("stage");
   });
+
+  it("refuses a move into a type that does not declare the item's word, and keeps the item", async () => {
+    const blocked = await create(child, { title: "Stuck", stage: "blocked" });
+    expect(blocked.status, JSON.stringify(blocked.error)).toBe(201);
+    const moved = await client.updateItem(blocked.data.item.id, {
+      type: parent,
+      retype: true,
+      version: blocked.data.item.version,
+    });
+    expect(moved.status).toBe(400);
+    expect(moved.error?.error.code).toBe("invalid_properties");
+    expect(errorFields(moved)).toContain("stage");
+    const kept = await client.getItem(blocked.data.item.id);
+    expect(kept.data.item).toMatchObject({
+      type: child,
+      version: blocked.data.item.version,
+    });
+
+    // The witness: an item holding a word the parent declares moves.
+    const open = await create(child, { title: "Open", stage: "todo" });
+    expect(open.status, JSON.stringify(open.error)).toBe(201);
+    const taken = await client.updateItem(open.data.item.id, {
+      type: parent,
+      retype: true,
+      version: open.data.item.version,
+    });
+    expect(taken.status, JSON.stringify(taken.error)).toBe(200);
+    expect(taken.data.item.type).toBe(parent);
+  });
 });
 
 describe("writing a status field", () => {
@@ -415,7 +444,7 @@ describe("writing a status field", () => {
     expect(bulkUpsert.data.results[1]?.outcome).toBe("updated");
   });
 
-  it("leaves a stored word the type no longer declares until a write sets it", async () => {
+  it("leaves a stored word the type no longer declares until a write changes it", async () => {
     const created = await create(type, { title: "Held", stage: "waiting" });
     expect(created.status).toBe(201);
     const id = created.data.item.id;
@@ -436,13 +465,35 @@ describe("writing a status field", () => {
     expect(retitled.status, JSON.stringify(retitled.error)).toBe(200);
     expect(retitled.data.item.properties.stage).toBe("waiting");
 
+    // A whole-properties write, as a synced file sends, names the stored
+    // word unchanged.
     const restated = await client.updateItem(id, {
       properties: { title: "Held, again", stage: "waiting" },
+      properties_mode: "replace",
       version: retitled.data.item.version,
     });
-    expect(restated.status).toBe(400);
-    expect(restated.error?.error.code).toBe("invalid_properties");
-    expect(errorFields(restated)).toContain("stage");
+    expect(restated.status, JSON.stringify(restated.error)).toBe(200);
+    expect(restated.data.item.properties.stage).toBe("waiting");
+
+    // A stale write, merged against the version it read, echoes it too.
+    const stale = await client.updateItem(id, {
+      properties: { stage: "waiting" },
+      version: retitled.data.item.version,
+    });
+    expect(stale.status, JSON.stringify(stale.error)).toBe(200);
+    expect(stale.data.item.properties).toMatchObject({
+      title: "Held, again",
+      stage: "waiting",
+    });
+
+    const changed = await client.updateItem(id, {
+      properties: { title: "Held, again", stage: "pending" },
+      properties_mode: "replace",
+      version: stale.data.item.version,
+    });
+    expect(changed.status).toBe(400);
+    expect(changed.error?.error.code).toBe("invalid_properties");
+    expect(errorFields(changed)).toContain("stage");
   });
 });
 

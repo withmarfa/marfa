@@ -97,7 +97,7 @@ function undeclared(outcome: Outcome<unknown>, list: string) {
 const TASK_WORDS = "todo, doing, done, dropped";
 
 describe("a working copy reads status words through the groups every type shares", () => {
-  it("refuses a write that sets a status word the type does not declare, and not one that leaves a stored word alone", async () => {
+  it("refuses a write that changes a status word to one the type does not declare, and not one that leaves a stored word alone", async () => {
     const { device, server } = await hydrated("status-groups-writes");
     const queued = await device.queue();
     const calls = server.requests.length;
@@ -117,19 +117,21 @@ describe("a working copy reads status words through the groups every type shares
     undeclared(
       await device.update(pending, {
         version: 1,
-        properties: { stage: "pending" },
+        properties: { stage: "waiting" },
       }),
       TASK_WORDS,
     );
     expect(await device.queue(), "a refused write was queued").toEqual(queued);
     expect(server.requests.length).toBe(calls);
-    // The witnesses: the same row takes an edit that leaves its word alone,
-    // and each type takes the words its chain declares.
+    // The witnesses: the same row takes an edit that names its word
+    // unchanged, as a synced file sends every property, and each type takes
+    // the words its chain declares.
     expect(
       (
         await device.update(pending, {
           version: 1,
-          properties: { title: "renamed" },
+          properties: { title: "renamed", stage: "pending" },
+          replace: true,
         })
       ).ok,
       "an edit that left a stored undeclared word alone was refused",
@@ -145,6 +147,26 @@ describe("a working copy reads status words through the groups every type shares
         `${type} refused ${String(stage)}`,
       ).toBe(true);
     }
+  });
+
+  it("refuses a move into a type that does not declare the row's status word", async () => {
+    const { device, server } = await hydrated("status-groups-move");
+    const queued = await device.queue();
+    const calls = server.requests.length;
+    const waiting = rows[TASK][6]!.item.id;
+    undeclared(
+      await device.update(waiting, { version: 1, type: TASK, properties: {} }),
+      TASK_WORDS,
+    );
+    expect(await device.queue(), "a refused move was queued").toEqual(queued);
+    expect(server.requests.length).toBe(calls);
+    // The witness: a row holding a word the type declares moves.
+    const done = rows[TASK][7]!.item.id;
+    expect(
+      (await device.update(done, { version: 1, type: TASK, properties: {} }))
+        .ok,
+      "a move into a type declaring the row's word was refused",
+    ).toBe(true);
   });
 
   it("answers status_group by each type's own words, and takes only a group", async () => {

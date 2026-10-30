@@ -513,17 +513,17 @@ When `GET /types` lists a type, the server MUST answer its `status` field with t
 
 ### `types/status-write-refused`
 
-If a write of an item's properties, by a create, an update, an upsert or an entry of a bulk write, sets a `status` field to a value that is not a word the item's type gives the field, its own or inherited, then the server MUST answer `400 invalid_properties` with `details.errors` naming the field.
+If a write of an item's properties, by a create, an update, an upsert or an entry of a bulk write, sets a `status` field to a value that is not a word the item's type gives the field, its own or inherited, and on an update changes the stored value or moves the item to another type, then the server MUST answer `400 invalid_properties` with `details.errors` naming the field.
 
-**Tests:** `compliance/status-groups.test.ts › refuses a word the type does not declare, naming the field`, `› takes a subtype's word on its own items and refuses it on the parent's`, `› refuses an undeclared word in a bulk entry, an upsert by natural key and a bulk upsert`.
+**Tests:** `compliance/status-groups.test.ts › refuses a word the type does not declare, naming the field`, `› takes a subtype's word on its own items and refuses it on the parent's`, `› refuses an undeclared word in a bulk entry, an upsert by natural key and a bulk upsert`, `› refuses a move into a type that does not declare the item's word, and keeps the item`.
 
 ### `types/status-word-held`
 
-If an item holds a `status` value that its type no longer declares, then the server MUST NOT refuse an update of the item for that value unless the update's properties name the field.
+If an item holds a `status` value that its type no longer declares, then the server MUST NOT refuse an update of the item for that value unless the update changes the field's value or moves the item to another type.
 
-**Reason:** a type can stop declaring a word while its items still hold it, and an edit to an item's title is not the write that has to move it to a word the type declares. The value is in no group (`search-and-filters/status-group-none`).
+**Reason:** a type can stop declaring a word while its items still hold it, and an edit to an item's title is not the write that has to move it to a word the type declares. A synced file and a whole-properties write send every property back, the stored word among them, so naming the field unchanged is not a change. The value is in no group (`search-and-filters/status-group-none`).
 
-**Tests:** `compliance/status-groups.test.ts › leaves a stored word the type no longer declares until a write sets it`.
+**Tests:** `compliance/status-groups.test.ts › leaves a stored word the type no longer declares until a write changes it`, `› refuses a move into a type that does not declare the item's word, and keeps the item`.
 
 ## Thumbnails
 

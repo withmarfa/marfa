@@ -2230,19 +2230,19 @@ When a device judges an array property against a field of the held catalog, a de
 
 ### `queue-and-verdicts/check-status-word`
 
-If a caller queues an item create or update whose properties set a `status` field to a value that is not a word the held catalog gives the item's type for that field, its own or inherited, then a device MUST refuse it in the `validation` class with the server's code `invalid_properties` and a message naming the property, changing neither the copy nor the queue and sending nothing.
+If a caller queues an item create or update whose properties set a `status` field to a value that is not a word the held catalog gives the item's type for that field, its own or inherited, and an update or an upsert onto a held row changes the row's value or moves the row to another type, then a device MUST refuse it in the `validation` class with the server's code `invalid_properties` and a message naming the property, changing neither the copy nor the queue and sending nothing.
 
 **Reason:** the server refuses the same write (`types/status-write-refused`).
 
-**Tests:** `device/status-groups.test.ts › refuses a write that sets a status word the type does not declare, and not one that leaves a stored word alone`.
+**Tests:** `device/status-groups.test.ts › refuses a write that changes a status word to one the type does not declare, and not one that leaves a stored word alone`, `› refuses a move into a type that does not declare the row's status word`.
 
 ### `queue-and-verdicts/check-status-held`
 
-If a row in the copy holds a `status` value that its type, as the held catalog declares it, does not declare, then a device MUST NOT refuse an update of the row for that value unless the update's properties name the field.
+If a row in the copy holds a `status` value that its type, as the held catalog declares it, does not declare, then a device MUST NOT refuse an update of the row for that value unless the update changes the field's value or moves the row to another type.
 
-**Reason:** the server takes the same update (`types/status-word-held`).
+**Reason:** the server takes the same update (`types/status-word-held`), and a synced file sends every property back on any edit.
 
-**Tests:** `device/status-groups.test.ts › refuses a write that sets a status word the type does not declare, and not one that leaves a stored word alone`.
+**Tests:** `device/status-groups.test.ts › refuses a write that changes a status word to one the type does not declare, and not one that leaves a stored word alone`.
 
 ### `queue-and-verdicts/check-inherited-nearest`
 

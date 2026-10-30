@@ -316,7 +316,7 @@ fn task(properties: serde_json::Value) -> crate::Draft {
 }
 
 #[test]
-fn a_status_word_the_type_does_not_declare_is_refused_only_where_a_write_sets_it() {
+fn a_status_word_the_type_does_not_declare_is_refused_only_where_a_write_changes_it() {
     let core = copy(&Scripted::start());
     let undeclared = |error: CoreError| {
         matches!(&error, CoreError::Validation { code, message }
@@ -341,29 +341,98 @@ fn a_status_word_the_type_does_not_declare_is_refused_only_where_a_write_sets_it
     let id = uuid::Uuid::now_v7().to_string();
     {
         let conn = core.conn().unwrap();
-        let held = crate::store::testing::wire_item(
+        let mut held = crate::store::testing::wire_item(
             &id,
             "core.task",
             "active",
             "2026-01-01T00:00:00.000Z",
             serde_json::json!({ "title": "Old", "status": "pending" }),
         );
+        held.source_id = Some("old-task".into());
         store::upsert_item(&conn, &held, None, &crate::catalog::Indexing::default()).unwrap();
     }
+    // A create naming the row's natural key is an update of it.
+    let keyed = |properties: serde_json::Value| crate::Draft {
+        source: Some("test".into()),
+        source_id: Some("old-task".into()),
+        base_version: Some(1),
+        ..task(properties)
+    };
+    assert!(undeclared(
+        core.create_item(&keyed(
+            serde_json::json!({ "title": "Old", "status": "waiting" })
+        ))
+        .unwrap_err()
+    ));
+    core.create_item(&keyed(
+        serde_json::json!({ "title": "Old", "status": "pending" }),
+    ))
+    .unwrap();
     let edit = |properties: serde_json::Value| crate::Edit {
         properties: properties.as_object().unwrap().clone(),
         base_version: Some(1),
         ..Default::default()
     };
     assert!(undeclared(
-        core.update_item(&id, &edit(serde_json::json!({ "status": "pending" })))
+        core.update_item(&id, &edit(serde_json::json!({ "status": "waiting" })))
             .unwrap_err()
     ));
-    core.update_item(&id, &edit(serde_json::json!({ "title": "Renamed" })))
-        .unwrap();
+    // A synced file sends every property, the stored word among them.
+    core.update_item(
+        &id,
+        &crate::Edit {
+            replace_properties: true,
+            ..edit(serde_json::json!({ "title": "Renamed", "status": "pending" }))
+        },
+    )
+    .unwrap();
     let held = core.get(&id).unwrap().unwrap();
     assert_eq!(held.properties["title"], "Renamed");
     assert_eq!(held.properties["status"], "pending");
+}
+
+#[test]
+fn a_move_into_a_type_that_does_not_declare_the_status_word_is_refused() {
+    let core = copy(&Scripted::start());
+    core.declare_types(&[serde_json::json!({
+        "id": "acme.chore",
+        "parent": "core.task",
+        "fields": { "status": { "type": "status", "status_values": [
+            { "value": "waiting", "group": "in_progress" }
+        ] } }
+    })])
+    .unwrap();
+    let held = |status: &str| {
+        let id = uuid::Uuid::now_v7().to_string();
+        let conn = core.conn().unwrap();
+        let row = crate::store::testing::wire_item(
+            &id,
+            "acme.chore",
+            "active",
+            "2026-01-01T00:00:00.000Z",
+            serde_json::json!({ "title": "Sweep", "status": status }),
+        );
+        store::upsert_item(&conn, &row, None, &crate::catalog::Indexing::default()).unwrap();
+        id
+    };
+    let to_task = crate::Edit {
+        r#type: Some("core.task".into()),
+        base_version: Some(1),
+        ..Default::default()
+    };
+    let waiting = held("waiting");
+    let queued = core.queue().unwrap().len();
+    let Err(CoreError::Validation { code, message }) = core.update_item(&waiting, &to_task) else {
+        panic!("a move into a type that does not declare the row's word was taken");
+    };
+    assert_eq!(code, "invalid_properties");
+    assert!(message.starts_with("status: "), "{message}");
+    assert_eq!(core.queue().unwrap().len(), queued);
+    assert_eq!(core.get(&waiting).unwrap().unwrap().r#type, "acme.chore");
+    // The witness: a row holding a word the type declares moves.
+    let open = held("completed");
+    core.update_item(&open, &to_task).unwrap();
+    assert_eq!(core.get(&open).unwrap().unwrap().r#type, "core.task");
 }
 
 #[test]

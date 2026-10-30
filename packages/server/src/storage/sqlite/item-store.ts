@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from "node:util";
 import { safeJsonParse } from "../json-utils.js";
 import {
   DEFAULT_PAGE_LIMIT,
@@ -661,11 +662,14 @@ function withoutKeys(
  * up as, at the current version and a stale one alike. Judged only where the
  * write carries properties or a move: a type may gain a required field while
  * rows that lack it stand, and a write that changes nothing a schema has an
- * opinion about is not the write that has to satisfy it.
+ * opinion about is not the write that has to satisfy it. A status word is
+ * judged where the write changes it or moves the row, so a word the type no
+ * longer declares stands through a write that sends it back unchanged.
  */
 function judgeResult(
   input: StoredUpdateItemInput,
   rowType: string,
+  current: Record<string, unknown>,
   result: Record<string, unknown>,
 ): Record<string, unknown> {
   if (
@@ -684,9 +688,15 @@ function judgeResult(
       Object.entries(result).filter(([key]) => Object.hasOwn(fields, key)),
     );
   }
-  const validation = validateProperties(resultingType, result, {
-    written: input.properties ?? {},
-  });
+  const written =
+    resultingType === rowType
+      ? Object.fromEntries(
+          Object.entries(result).filter(
+            ([key, value]) => !isDeepStrictEqual(value, current[key]),
+          ),
+        )
+      : result;
+  const validation = validateProperties(resultingType, result, { written });
   if (validation.success) return result;
   const detail = validation.errors
     .map((e) => `${e.field}: ${e.message}`)
@@ -1675,6 +1685,7 @@ export class SqliteItemStore implements ItemStore {
         const merged = judgeResult(
           input,
           row.type,
+          currentProps,
           withoutKeys(
             mergeUpdateProperties(
               currentProps,
@@ -1918,7 +1929,12 @@ export class SqliteItemStore implements ItemStore {
         resolvedFields = result.changedFields;
       }
 
-      resolvedProperties = judgeResult(input, row.type, resolvedProperties);
+      resolvedProperties = judgeResult(
+        input,
+        row.type,
+        currentProps,
+        resolvedProperties,
+      );
 
       // Same invariant as the fast path above: the version being left behind
       // is snapshotted so a later stale write can merge against it.

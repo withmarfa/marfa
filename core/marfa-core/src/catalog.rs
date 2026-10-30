@@ -713,10 +713,10 @@ impl Catalog {
         self.validate_merged(type_id, properties, complete, properties)
     }
 
-    /// Refuses the item a write leaves, `properties`, where the server would,
-    /// judging a status word only where `written`, the write's own
-    /// properties, sets it: a stored word the type does not declare does not
-    /// refuse a write that leaves it alone.
+    /// Refuses `properties` where the server would, judging a status word
+    /// only where `written`, the properties the write changes, sets it: a
+    /// stored word the type does not declare does not refuse a write that
+    /// leaves it alone or sends it back unchanged.
     pub(crate) fn validate_merged(
         &self,
         type_id: &str,

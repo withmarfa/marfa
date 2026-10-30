@@ -912,7 +912,7 @@ function valueToZod(
       return boundedString(field);
     case "status":
       // Whether the word is one the type declares is judged only for a value
-      // a write sets (`statusIssues`), so a stored word the type no longer
+      // a write changes (`statusIssues`), so a stored word the type no longer
       // declares does not refuse a write that leaves it alone.
       return boundedString({});
     case "array":
@@ -1053,8 +1053,9 @@ export function validateProperties(
 
 /**
  * The issue a write raises by setting the type's status field to a word the
- * type does not declare. `written` is what the write itself names, so a word
- * already stored is judged only when a write sets it again.
+ * type does not declare. `written` is what the write changes: a write that
+ * sends a stored word back unchanged leaves it alone, and one that moves the
+ * item to another type changes every property it holds.
  */
 export function statusIssues(
   typeId: string,
