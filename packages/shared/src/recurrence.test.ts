@@ -8,6 +8,7 @@ import {
   RecurrenceMeter,
   RecurrenceRuleError,
   scheduleProblem,
+  taskScheduleIssues,
   wholeDaySpan,
 } from "./recurrence.js";
 import type { RecurrenceSchedule } from "./recurrence.js";
@@ -617,6 +618,40 @@ describe("the schedule fields an event write is held to", () => {
       eventScheduleIssues({ title: "x", recurrence: ["RRULE:FREQ=DAILY"] })[0]
         ?.message,
     ).toMatch(/starts_at/);
+  });
+
+  it.each([...NEVER.map((rule) => `RRULE:${rule}`), "RRULE:FREQ=NOPE"])(
+    "judges a task's rule as it judges an event's: %s",
+    (line) => {
+      const at = "2026-01-15T09:00:00Z";
+      expect(taskScheduleIssues({ due_at: at, recurrence: [line] })).toEqual(
+        eventScheduleIssues(event({ recurrence: [line] })),
+      );
+    },
+  );
+
+  it("starts a task's rule at its due_at, else its starts_at, else refuses it", () => {
+    const rule = ["RRULE:FREQ=YEARLY;BYMONTH=2;BYMONTHDAY=29;COUNT=1"];
+    expect(
+      taskScheduleIssues({
+        starts_at: "2026-01-15T09:00:00Z",
+        recurrence: rule,
+      }),
+    ).toEqual([]);
+    expect(
+      taskScheduleIssues({ due_at: "2026-01-15T09:00:00Z", recurrence: rule }),
+    ).toEqual([]);
+    expect(
+      taskScheduleIssues({
+        due_at: "not a date",
+        starts_at: "2026-01-15T09:00:00Z",
+        recurrence: ["RRULE:FREQ=DAILY"],
+      })[0]?.message,
+    ).toMatch(/cannot be read/);
+    expect(
+      taskScheduleIssues({ recurrence: ["RRULE:FREQ=DAILY"] })[0]?.message,
+    ).toMatch(/due_at or starts_at/);
+    expect(taskScheduleIssues({ title: "x" })).toEqual([]);
   });
 
   it.each(["Europe/Berlim", "UTC+1", "+01:00", "", "Pacific Standard Time"])(

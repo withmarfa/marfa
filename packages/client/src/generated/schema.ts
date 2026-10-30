@@ -31096,7 +31096,7 @@ export interface operations {
             };
             /**
              * @description - `validation_error`: the body isn't a valid archive, lacks one of its four files (`details.entries`), repeats an entry, is at another version, has an invalid row, or has a file over 64 MiB.
-             *     - `invalid_properties`: a `core` or `system` item breaks its type, an event's schedule can't unfold, or `strict_mode` refuses a property.
+             *     - `invalid_properties`: a `core` or `system` item breaks its type or its schedule can't unfold, or `strict_mode` refuses a property.
              *     - `invalid_schema`: an archived type is invalid or has an unknown key.
              */
             400: {

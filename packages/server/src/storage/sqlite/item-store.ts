@@ -784,8 +784,8 @@ function restoreHoldsShape(type: string): boolean {
  * What a restore refuses of an item line before it reads the database: a type
  * that is no identifier and properties that are no object. A row of a `core`
  * or `system` type this build ships is then judged as a create is. Any other
- * row is refused only a malformed id or `occurred_at` and a schedule no
- * calendar read can unfold. Its properties come back as the archive holds
+ * row is refused only a malformed id or `occurred_at` and an event's schedule
+ * or a task's `recurrence` that no read can unfold. Its properties come back as the archive holds
  * them, whatever shape its type has now and whether or not the type is
  * registered, even as a platform row the build retired, because a type may
  * gain a required field or be force-deleted while its rows stand
@@ -1898,20 +1898,26 @@ export class SqliteItemStore implements ItemStore {
           // The copy is a new item, so a status word it holds that the write
           // changed is judged as a create's would be, and refusing it refuses
           // the whole write. A stored word the write leaves alone is kept.
+          // Its schedule is judged whole, as a create's is, so that a rule
+          // the losing writer set cannot be stored here when every other
+          // door refuses it.
           const siblingProperties = conflictedSiblingProperties({
             clientProperties: clientProps,
             currentProperties: currentProps,
             keepBothFields: plan.keepBothFields,
             clearedProperties,
           });
-          const errors = statusIssues(
-            row.type,
-            Object.fromEntries(
-              Object.entries(siblingProperties).filter(
-                ([name, value]) => !Object.is(value, currentProps[name]),
+          const errors = [
+            ...statusIssues(
+              row.type,
+              Object.fromEntries(
+                Object.entries(siblingProperties).filter(
+                  ([name, value]) => !Object.is(value, currentProps[name]),
+                ),
               ),
             ),
-          );
+            ...scheduleIssues(row.type, siblingProperties),
+          ];
           if (errors.length > 0) {
             throw new MarfaError(
               ErrorCode.INVALID_PROPERTIES,

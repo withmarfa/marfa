@@ -1231,6 +1231,300 @@ describe("what a write may store", () => {
   });
 });
 
+describe("a task's recurrence", () => {
+  const WEEKLY = ["RRULE:FREQ=WEEKLY;BYDAY=MO"];
+
+  async function createTask(
+    properties: Record<string, unknown>,
+    type = "core.task",
+  ) {
+    return client.createItem({
+      type,
+      source: ctx.source,
+      properties: { title: `task recurrence ${ctx.runId}`, ...properties },
+    });
+  }
+
+  it("takes a weekly rule on a task with a due_at, or with only a starts_at, and reads it back unchanged", async () => {
+    for (const dates of [
+      { due_at: "2041-03-04T09:00:00.000Z" },
+      { starts_at: "2041-03-04T09:00:00.000Z" },
+    ]) {
+      const r = await createTask({ ...dates, recurrence: WEEKLY });
+      expect(r.status, JSON.stringify(r.error)).toBe(201);
+      trackItem(ctx, r.data.item.id);
+      const read = await client.getItem(r.data.item.id);
+      expect(read.data.item.properties.recurrence).toEqual(WEEKLY);
+    }
+  });
+
+  const DUE = { due_at: "2041-03-04T09:00:00.000Z" };
+  const REFUSED: [string, Record<string, unknown>][] = [
+    ["no due_at and no starts_at", { recurrence: WEEKLY }],
+    [
+      "a line that cannot be read",
+      { ...DUE, recurrence: ["RRULE:INTERVAL=2"] },
+    ],
+    [
+      "two RRULEs",
+      { ...DUE, recurrence: ["RRULE:FREQ=DAILY", "RRULE:FREQ=WEEKLY"] },
+    ],
+    [
+      "an EXRULE",
+      {
+        ...DUE,
+        recurrence: ["RRULE:FREQ=DAILY;COUNT=3", "EXRULE:FREQ=WEEKLY"],
+      },
+    ],
+    [
+      "an RDATE period",
+      { ...DUE, recurrence: ["RDATE;VALUE=PERIOD:20410401T090000Z/PT1H"] },
+    ],
+    [
+      "a part the frequency does not define",
+      { ...DUE, recurrence: ["RRULE:FREQ=WEEKLY;BYDAY=2TU"] },
+    ],
+    [
+      "a rule that names no date that exists",
+      { ...DUE, recurrence: ["RRULE:FREQ=YEARLY;BYMONTH=2;BYMONTHDAY=30"] },
+    ],
+    [
+      "a rule no read can unfold",
+      { ...DUE, recurrence: ["RRULE:FREQ=HOURLY;INTERVAL=24;BYHOUR=5"] },
+    ],
+    [
+      "more added dates than a series may carry",
+      { ...DUE, recurrence: [TOO_MANY_DATES] },
+    ],
+    [
+      "more than 40,000 characters in all",
+      { ...DUE, recurrence: [" ".repeat(40_000) + "RRULE:FREQ=DAILY;COUNT=2"] },
+    ],
+  ];
+
+  it.each(REFUSED)(
+    "refuses a task with %s, naming recurrence",
+    async (_label, bad) => {
+      const r = await createTask(bad);
+      expect(r.status).toBe(400);
+      expect(r.error?.error.code).toBe("invalid_properties");
+      expect(fields(r.error?.error.details)).toEqual(["recurrence"]);
+    },
+  );
+
+  it("refuses a task's rule on a bulk write, a bulk-action patch and a restored archive", async () => {
+    const bad = ["RRULE:FREQ=YEARLY;BYMONTH=2;BYMONTHDAY=30"];
+    const bulk = await client.bulkItems({
+      atomic: false,
+      items: [
+        {
+          type: "core.task",
+          source: ctx.source,
+          properties: { title: `bulk ${ctx.runId}`, ...DUE, recurrence: bad },
+        },
+      ],
+    });
+    expect(bulk.status).toBe(200);
+    const entry = (
+      bulk.data as unknown as {
+        results: { outcome: string; error?: { code: string } }[];
+      }
+    ).results[0];
+    expect(entry?.outcome).toBe("errored");
+    expect(entry?.error?.code).toBe("invalid_properties");
+
+    const tag = `task-recurrence-${ctx.runId}`;
+    const made = await client.createItem({
+      type: "core.task",
+      source: ctx.source,
+      properties: { title: `patched ${ctx.runId}`, ...DUE },
+      tags: [tag],
+    });
+    expect(made.status, JSON.stringify(made.error)).toBe(201);
+    trackItem(ctx, made.data.item.id);
+    const queued = await client.bulkAction({
+      action: "update_properties",
+      patch: { recurrence: bad },
+      filter: { tags: [tag] },
+    });
+    expect(queued.status, JSON.stringify(queued.error)).toBe(202);
+    const job = await client.pollBulkActionToTerminal(
+      (queued.data as { id: string }).id,
+    );
+    expect(job.result?.succeeded).toBe(0);
+    expect(job.result?.errors?.[0]?.code).toBe("invalid_properties");
+
+    const archivedId = uuidv7();
+    const archived = (recurrence: string[]) =>
+      itemsArchive([
+        {
+          id: archivedId,
+          type: "core.task",
+          source: ctx.source,
+          properties: { title: `archived ${ctx.runId}`, ...DUE, recurrence },
+        },
+      ]);
+    const owner = getOwnerClient();
+    const refused = await owner.restoreArchive(archived(bad));
+    expect(refused.status).toBe(400);
+    expect(fields(refused.error?.error.details)).toEqual(["recurrence"]);
+    // The witness: the same archive with an ordinary rule restores.
+    const taken = await owner.restoreArchive(archived(WEEKLY));
+    expect(taken.status, JSON.stringify(taken.error)).toBe(200);
+    trackItem(ctx, archivedId);
+  });
+
+  it("holds a type under core.task to the same rules, on a create and on an update", async () => {
+    const declared = `task-recurrence-${ctx.runId}.chore`;
+    const registered = await client.registerType({
+      id: declared,
+      parent: "core.task",
+      fields: {},
+    });
+    expect(registered.status, JSON.stringify(registered.error)).toBe(201);
+
+    const refused = await createTask({ recurrence: WEEKLY }, declared);
+    expect(refused.status).toBe(400);
+    expect(fields(refused.error?.error.details)).toEqual(["recurrence"]);
+
+    const made = await createTask(
+      { due_at: "2041-03-04T09:00:00.000Z" },
+      declared,
+    );
+    expect(made.status, JSON.stringify(made.error)).toBe(201);
+    trackItem(ctx, made.data.item.id);
+    const patch = await client.updateItem(made.data.item.id, {
+      version: made.data.item.version,
+      properties: {
+        recurrence: ["RRULE:FREQ=MONTHLY;BYMONTH=2;BYMONTHDAY=30"],
+      },
+    });
+    expect(patch.status).toBe(400);
+    expect(patch.error?.error.code).toBe("invalid_properties");
+    expect(fields(patch.error?.error.details)).toEqual(["recurrence"]);
+  });
+
+  it("refuses a task's rule removed from its dates by a replacing write, naming recurrence", async () => {
+    const made = await createTask({ ...DUE, recurrence: WEEKLY });
+    expect(made.status, JSON.stringify(made.error)).toBe(201);
+    trackItem(ctx, made.data.item.id);
+
+    const refused = await client.updateItem(made.data.item.id, {
+      version: made.data.item.version,
+      properties: { title: `task recurrence ${ctx.runId}`, recurrence: WEEKLY },
+      properties_mode: "replace",
+    });
+    expect(refused.status).toBe(400);
+    expect(refused.error?.error.code).toBe("invalid_properties");
+    expect(fields(refused.error?.error.details)).toEqual(["recurrence"]);
+
+    // The witness: the same replacing write that keeps the date is taken.
+    const taken = await client.updateItem(made.data.item.id, {
+      version: made.data.item.version,
+      properties: {
+        title: `task recurrence ${ctx.runId}`,
+        ...DUE,
+        recurrence: WEEKLY,
+      },
+      properties_mode: "replace",
+    });
+    expect(taken.status, JSON.stringify(taken.error)).toBe(200);
+  });
+
+  it("holds the conflicted copy of a stale write to the same rule, on a task and an event", async () => {
+    const bad = ["RRULE:FREQ=YEARLY;BYMONTH=2;BYMONTHDAY=30"];
+    for (const [parent, dates] of [
+      ["core.task", DUE],
+      ["core.event", { starts_at: "2041-03-04T09:00:00.000Z" }],
+    ] as const) {
+      const type = `task-recurrence-${ctx.runId}.${parent.slice(5)}-copy`;
+      const registered = await client.registerType({
+        id: type,
+        parent,
+        fields: {},
+        merge_policy: { fields: { recurrence: "keep_both_copies" } },
+      });
+      expect(registered.status, JSON.stringify(registered.error)).toBe(201);
+
+      const listed = async () => {
+        const items = await client.listItems({ type, limit: 100 });
+        expect(items.status).toBe(200);
+        return items.data.data.map((item) => item.id).sort();
+      };
+      const collide = async (stale: string[]) => {
+        const made = await client.createItem({
+          type,
+          source: ctx.source,
+          properties: {
+            title: `copy ${ctx.runId}`,
+            ...dates,
+            recurrence: WEEKLY,
+          },
+        });
+        expect(made.status, JSON.stringify(made.error)).toBe(201);
+        trackItem(ctx, made.data.item.id);
+        const { id, version } = made.data.item;
+        const moved = await client.updateItem(id, {
+          version,
+          properties: { recurrence: ["RRULE:FREQ=DAILY;COUNT=5"] },
+        });
+        expect(moved.status, JSON.stringify(moved.error)).toBe(200);
+        const before = await listed();
+        const r = await client.rawRequest<{
+          conflict_resolution?: { conflicted_copy_id?: string };
+        }>(`/items/${id}?conflict=auto`, {
+          method: "PATCH",
+          body: { properties: { recurrence: stale }, version },
+        });
+        return { id, moved, r, before };
+      };
+
+      const refused = await collide(bad);
+      expect(
+        refused.r.status,
+        `${parent}: ${JSON.stringify(refused.r.data)}`,
+      ).toBe(400);
+      expect(refused.r.error?.error.code).toBe("invalid_properties");
+      expect(fields(refused.r.error?.error.details)).toEqual(["recurrence"]);
+      expect(await listed(), "a copy was written").toEqual(refused.before);
+      const kept = await client.getItem(refused.id);
+      expect(kept.data.item.version).toBe(refused.moved.data.item.version);
+
+      // The witness: a rule that can be unfolded makes the copy.
+      const taken = await collide(["RRULE:FREQ=WEEKLY;BYDAY=TU"]);
+      expect(taken.r.status, JSON.stringify(taken.r.data)).toBe(200);
+      const copyId = taken.r.data.conflict_resolution?.conflicted_copy_id;
+      expect(copyId, `${parent}: no copy was written`).toBeTruthy();
+      trackItem(ctx, String(copyId));
+    }
+  });
+
+  it("leaves a repeating task out of GET /occurrences, which answers the event beside it", async () => {
+    const from = "2041-03-04T00:00:00Z";
+    const to = "2041-03-12T00:00:00Z";
+    const task = await createTask({
+      due_at: "2041-03-04T09:00:00.000Z",
+      starts_at: "2041-03-04T09:00:00.000Z",
+      recurrence: WEEKLY,
+    });
+    expect(task.status, JSON.stringify(task.error)).toBe(201);
+    trackItem(ctx, task.data.item.id);
+    const meeting = await event({
+      starts_at: "2041-03-04T09:00:00.000Z",
+      recurrence: WEEKLY,
+    });
+
+    for (const type of [undefined, "core.task"]) {
+      const r = await client.listOccurrences({ from, to, type });
+      expect(r.status, JSON.stringify(r.error)).toBe(200);
+      const ids = r.data.data.map((o) => o.item.id);
+      expect(ids).not.toContain(task.data.item.id);
+      // The witness: the same rule on an event is unfolded in this window.
+      if (type === undefined) expect(ids).toContain(meeting);
+    }
+  });
+});
+
 describe("a series with more occurrences in the window than it may unfold", () => {
   const MAY_UNFOLD = 2000;
 

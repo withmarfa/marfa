@@ -1,6 +1,6 @@
 # Occurrences and recurring events
 
-An occurrence is one time an event happens. A recurring event is one `core.event` item, a series, that carries RFC 5545 rule lines in `recurrence`. The server computes its occurrences when a window is read. `GET /occurrences` answers them, and this chapter states how a series unfolds, what a window includes and what a write may store.
+An occurrence is one time an event happens. A recurring event is one `core.event` item, a series, that carries RFC 5545 rule lines in `recurrence`. The server computes its occurrences when a window is read. `GET /occurrences` answers them, and this chapter states how a series unfolds, what a window includes and what a write may store. A `core.task` item can carry the same `recurrence`: the server checks it on a write and never unfolds it, so `GET /occurrences` answers events only.
 
 ## The calendar operation
 
@@ -69,6 +69,14 @@ When `GET /occurrences` answers a credential whose type map reads some event typ
 When `GET /occurrences` names a `type`, the server MUST answer the events of that type and of the types under it, a type declared under `core.event` included, and of no other type.
 
 **Tests:** `compliance/occurrences.test.ts › answers the events of the type it names, a type declared under core.event included`.
+
+### `occurrences/no-tasks`
+
+The server MUST NOT answer a task in `GET /occurrences`, whatever the task's `recurrence`, `due_at` or `starts_at` and whether or not the request names a `type` that the task is of.
+
+**Reason:** the server stores a task's `recurrence` and checks it on a write (`occurrences/schedule-task-start`), but does not unfold it for a read. `GET /occurrences` is the calendar of events.
+
+**Tests:** `compliance/recurrence.test.ts › leaves a repeating task out of GET /occurrences, which answers the event beside it`.
 
 ### `occurrences/type-names-move`
 
@@ -442,45 +450,45 @@ When the server leaves a series out of `data`, the server MUST answer the rest o
 
 ## What a write may store
 
-An event's schedule is judged on every operation that writes an item's properties, `POST /items`, `PATCH /items/{id}`, `POST /items/bulk`, `POST /items/bulk-actions` with `update_properties` and `POST /restore`, and each refuses as it refuses any other property (`items/property-invalid`). A refusal is `400 invalid_properties` with `details.errors` naming the field.
+An event's schedule and a task's `recurrence` are judged on every operation that writes an item's properties, `POST /items`, `PATCH /items/{id}`, `POST /items/bulk`, `POST /items/bulk-actions` with `update_properties`, `POST /restore` and the conflicted copy that a `PATCH /items/{id}` with `conflict=auto` writes, and each refuses as it refuses any other property (`items/property-invalid`). A refusal is `400 invalid_properties` with `details.errors` naming the field. A task is any item of `core.task` or of a type under it. A task's rule starts at its `due_at`, or at its `starts_at` when it has no `due_at`, and advances in UTC because a task has no `timezone`; a rule the rules below judge against "the start" is judged against that first date.
 
 ### `occurrences/schedule-unreadable`
 
-If an event's `recurrence` holds a line that cannot be read, such as a rule with no `FREQ`, a `COUNT` with an `UNTIL` or a part that is not defined, then the server MUST refuse the write and name `recurrence`.
+If the `recurrence` of an event or a task holds a line that cannot be read, such as a rule with no `FREQ`, a `COUNT` with an `UNTIL` or a part that is not defined, then the server MUST refuse the write and name `recurrence`.
 
-**Tests:** `compliance/recurrence.test.ts › refuses %s, naming the field`.
+**Tests:** `compliance/recurrence.test.ts › refuses %s, naming the field`, `› refuses a task with %s, naming recurrence`.
 
 ### `occurrences/schedule-exrule`
 
-If an event's `recurrence` holds an `EXRULE`, then the server MUST refuse the write and name `recurrence`.
+If the `recurrence` of an event or a task holds an `EXRULE`, then the server MUST refuse the write and name `recurrence`.
 
 **Reason:** the server does not apply an `EXRULE`, and a rule that is not applied as written is refused.
 
-**Tests:** `compliance/recurrence.test.ts › refuses %s, naming the field`.
+**Tests:** `compliance/recurrence.test.ts › refuses %s, naming the field`, `› refuses a task with %s, naming recurrence`.
 
 ### `occurrences/schedule-period`
 
-If an event's `recurrence` holds an `RDATE` period, then the server MUST refuse the write and name `recurrence`.
+If the `recurrence` of an event or a task holds an `RDATE` period, then the server MUST refuse the write and name `recurrence`.
 
-**Tests:** `compliance/recurrence.test.ts › refuses %s, naming the field`.
+**Tests:** `compliance/recurrence.test.ts › refuses %s, naming the field`, `› refuses a task with %s, naming recurrence`.
 
 ### `occurrences/schedule-part`
 
-If an event's `recurrence` holds a part that RFC 5545 does not define for the rule's frequency, such as a numbered weekday on a weekly rule, then the server MUST refuse the write and name `recurrence`.
+If the `recurrence` of an event or a task holds a part that RFC 5545 does not define for the rule's frequency, such as a numbered weekday on a weekly rule, then the server MUST refuse the write and name `recurrence`.
 
-**Tests:** `compliance/recurrence.test.ts › refuses %s, naming the field`.
+**Tests:** `compliance/recurrence.test.ts › refuses %s, naming the field`, `› refuses a task with %s, naming recurrence`.
 
 ### `occurrences/schedule-no-date`
 
-If an event's `recurrence` names no date that exists after the start, such as the 30th of February, then the server MUST refuse the write and name `recurrence`, even where the rule counts more than one occurrence.
+If the `recurrence` of an event or a task names no date that exists after the start, such as the 30th of February, then the server MUST refuse the write and name `recurrence`, even where the rule counts more than one occurrence.
 
-**Tests:** `compliance/recurrence.test.ts › refuses %s, naming the field`.
+**Tests:** `compliance/recurrence.test.ts › refuses %s, naming the field`, `› refuses a task with %s, naming recurrence`.
 
 ### `occurrences/schedule-no-unfold`
 
-If an event's `recurrence` produces no occurrence after the start within the bound that a read unfolds a rule to, then the server MUST refuse the write and name `recurrence`.
+If the `recurrence` of an event or a task produces no occurrence after the start within the bound that a read unfolds a rule to, then the server MUST refuse the write and name `recurrence`.
 
-**Tests:** `compliance/recurrence.test.ts › refuses %s, naming the field`.
+**Tests:** `compliance/recurrence.test.ts › refuses %s, naming the field`, `› refuses a task with %s, naming recurrence`.
 
 ### `occurrences/schedule-no-start`
 
@@ -488,29 +496,41 @@ If an event carries a `recurrence` and no `starts_at` to unfold it from, then th
 
 **Tests:** `compliance/recurrence.test.ts › refuses %s, naming the field`.
 
+### `occurrences/schedule-task-start`
+
+If a task carries a `recurrence` and neither a `due_at` nor a `starts_at` to start it from, then the server MUST refuse the write and name `recurrence`.
+
+**Tests:** `compliance/recurrence.test.ts › refuses a task with %s, naming recurrence`, `› refuses a task's rule removed from its dates by a replacing write, naming recurrence`.
+
 ### `occurrences/schedule-second-rule`
 
-If an event's `recurrence` holds a second `RRULE`, then the server MUST refuse the write and name `recurrence`.
+If the `recurrence` of an event or a task holds a second `RRULE`, then the server MUST refuse the write and name `recurrence`.
 
-**Tests:** `compliance/recurrence.test.ts › refuses %s, naming the field`.
+**Tests:** `compliance/recurrence.test.ts › refuses %s, naming the field`, `› refuses a task with %s, naming recurrence`.
 
 ### `occurrences/schedule-dates`
 
-If an event's `recurrence` adds and removes more than 1,000 dates together, then the server MUST refuse the write and name `recurrence`.
+If the `recurrence` of an event or a task adds and removes more than 1,000 dates together, then the server MUST refuse the write and name `recurrence`.
 
-**Tests:** `compliance/recurrence.test.ts › refuses %s, naming the field`.
+**Tests:** `compliance/recurrence.test.ts › refuses %s, naming the field`, `› refuses a task with %s, naming recurrence`.
 
 ### `occurrences/schedule-text`
 
-If an event's `recurrence` is longer than 40,000 characters in all, then the server MUST refuse the write and name `recurrence`, before it reads any line.
+If the `recurrence` of an event or a task is longer than 40,000 characters in all, then the server MUST refuse the write and name `recurrence`, before it reads any line.
 
-**Tests:** `compliance/recurrence.test.ts › refuses a recurrence over 40,000 characters in all and takes one of exactly 40,000`.
+**Tests:** `compliance/recurrence.test.ts › refuses a recurrence over 40,000 characters in all and takes one of exactly 40,000`, `› refuses a task with %s, naming recurrence`.
 
 ### `occurrences/schedule-text-taken`
 
 The server MUST take an event whose `recurrence` is exactly 40,000 characters in all.
 
 **Tests:** `compliance/recurrence.test.ts › refuses a recurrence over 40,000 characters in all and takes one of exactly 40,000`.
+
+### `occurrences/schedule-task-taken`
+
+Where no rule above refuses a task's `recurrence`, the server MUST take the task whether it carries a `due_at`, or a `starts_at` and no `due_at`, and answer `recurrence` unchanged when the task is read.
+
+**Tests:** `compliance/recurrence.test.ts › takes a weekly rule on a task with a due_at, or with only a starts_at, and reads it back unchanged`.
 
 ### `occurrences/schedule-zone`
 
@@ -558,26 +578,34 @@ Where no rule above refuses an event's schedule, the server MUST take the event 
 
 ### `occurrences/schedule-update`
 
-If a `PATCH /items/{id}` adds a schedule that the rules above refuse, then the server MUST refuse it as `POST /items` does.
+If a `PATCH /items/{id}` adds a schedule or a task's `recurrence` that the rules above refuse, then the server MUST refuse it as `POST /items` does.
 
-**Tests:** `compliance/recurrence.test.ts › refuses the same rule added by an update or a bulk write, and stores none of it`.
+**Tests:** `compliance/recurrence.test.ts › refuses the same rule added by an update or a bulk write, and stores none of it`, `› holds a type under core.task to the same rules, on a create and on an update`.
+
+### `occurrences/schedule-conflicted-copy`
+
+If a `PATCH /items/{id}` with `conflict=auto` would write a conflicted copy whose schedule or task `recurrence` the rules above refuse, then the server MUST refuse the write as `400 invalid_properties`, name `recurrence`, and write neither the copy nor the change.
+
+**Reason:** a type under `core.event` or `core.task` can set `merge_policy` to `keep_both_copies` for `recurrence`, and the copy is a new item that every reader unfolds as it unfolds any other.
+
+**Tests:** `compliance/recurrence.test.ts › holds the conflicted copy of a stale write to the same rule, on a task and an event`.
 
 ### `occurrences/schedule-bulk`
 
-If a `POST /items/bulk` entry of a page under `atomic: false` adds a schedule that the rules above refuse, then the server MUST report that entry `errored` with the code `invalid_properties`.
+If a `POST /items/bulk` entry of a page under `atomic: false` adds a schedule or a task's `recurrence` that the rules above refuse, then the server MUST report that entry `errored` with the code `invalid_properties`.
 
 **Reason:** the refusal is the row's and not the page's.
 
-**Tests:** `compliance/recurrence.test.ts › refuses the same rule added by an update or a bulk write, and stores none of it`.
+**Tests:** `compliance/recurrence.test.ts › refuses the same rule added by an update or a bulk write, and stores none of it`, `› refuses a task's rule on a bulk write, a bulk-action patch and a restored archive`.
 
 ### `occurrences/schedule-bulk-action`
 
-If a `POST /items/bulk-actions` job with `update_properties` writes a schedule that the rules above refuse, then the server MUST record the refusal in that row's entry of the job's `errors` with the code `invalid_properties`.
+If a `POST /items/bulk-actions` job with `update_properties` writes a schedule or a task's `recurrence` that the rules above refuse, then the server MUST record the refusal in that row's entry of the job's `errors` with the code `invalid_properties`.
 
-**Tests:** `compliance/recurrence.test.ts › refuses it on a bulk-action patch per row, and in a restored archive`.
+**Tests:** `compliance/recurrence.test.ts › refuses it on a bulk-action patch per row, and in a restored archive`, `› refuses a task's rule on a bulk write, a bulk-action patch and a restored archive`.
 
 ### `occurrences/schedule-restore`
 
-If an archive holds an event with a schedule that the rules above refuse, then the server MUST refuse the archive `400 invalid_properties` naming `recurrence`.
+If an archive holds an event or a task with a schedule that the rules above refuse, then the server MUST refuse the archive `400 invalid_properties` naming `recurrence`.
 
-**Tests:** `compliance/recurrence.test.ts › refuses it on a bulk-action patch per row, and in a restored archive`, `compliance/restore-archive.test.ts › leaves no row, type, edge type, blob, event or audit record behind when a later row is refused`.
+**Tests:** `compliance/recurrence.test.ts › refuses it on a bulk-action patch per row, and in a restored archive`, `compliance/restore-archive.test.ts › leaves no row, type, edge type, blob, event or audit record behind when a later row is refused`, `compliance/recurrence.test.ts › refuses a task's rule on a bulk write, a bulk-action patch and a restored archive`.

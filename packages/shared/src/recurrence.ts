@@ -1229,53 +1229,87 @@ export function eventScheduleIssues(
       });
     }
   }
-  const recurrence = properties.recurrence;
-  if (recurrence === undefined || recurrence === null) return issues;
-  if (!Array.isArray(recurrence)) return issues;
-  if (recurrence.length === 0) return issues;
+  issues.push(
+    ...recurrenceIssues(properties.recurrence, properties.starts_at, {
+      // A schedule the zone or the length already fails is not read further:
+      // the rule would be refused for the same reason under its own name.
+      unfold: !issues.some(
+        (i) => i.field === "timezone" || i.field === "duration",
+      ),
+      missingStart: "A recurrence rule needs starts_at to unfold from",
+      schedule: {
+        ...(typeof properties.ends_at === "string"
+          ? { ends_at: properties.ends_at }
+          : {}),
+        ...(typeof properties.duration === "number"
+          ? { duration: properties.duration }
+          : {}),
+        all_day: properties.all_day === true,
+        ...(typeof properties.timezone === "string"
+          ? { timezone: properties.timezone }
+          : {}),
+      },
+    }),
+  );
+  return issues;
+}
+
+/**
+ * The issues the schedule fields of a task raise, each naming its field. A
+ * task's rule starts at its `due_at`, or at its `starts_at` when it has no
+ * `due_at`, and advances in UTC, since a task has no zone.
+ */
+export function taskScheduleIssues(
+  properties: Record<string, unknown>,
+): { field: string; message: string }[] {
+  return recurrenceIssues(
+    properties.recurrence,
+    properties.due_at ?? properties.starts_at,
+    {
+      missingStart:
+        "A recurrence rule needs due_at or starts_at to unfold from",
+    },
+  );
+}
+
+/**
+ * The issues a `recurrence` list raises when unfolded from `startsAt`, none
+ * when it is absent or empty. The one check an event's rule and a task's
+ * both pass.
+ */
+function recurrenceIssues(
+  recurrence: unknown,
+  startsAt: unknown,
+  how: {
+    unfold?: boolean;
+    missingStart: string;
+    schedule?: Omit<RecurrenceSchedule, "starts_at" | "recurrence">;
+  },
+): { field: string; message: string }[] {
+  if (!Array.isArray(recurrence) || recurrence.length === 0) return [];
   if (!recurrence.every((line) => typeof line === "string")) {
-    issues.push({
-      field: "recurrence",
-      message: "Expected every entry to be an RFC 5545 property line",
-    });
-    return issues;
+    return [
+      {
+        field: "recurrence",
+        message: "Expected every entry to be an RFC 5545 property line",
+      },
+    ];
   }
-  // A schedule the zone or the length already fails is not read further:
-  // the rule would be refused for the same reason under its own name.
-  if (issues.some((i) => i.field === "timezone" || i.field === "duration")) {
-    return issues;
-  }
-  const startsAt = properties.starts_at;
+  if (how.unfold === false) return [];
   if (typeof startsAt !== "string") {
-    issues.push({
-      field: "recurrence",
-      message: "A recurrence rule needs starts_at to unfold from",
-    });
-    return issues;
+    return [{ field: "recurrence", message: how.missingStart }];
   }
   try {
-    const compiled = compileSchedule({
-      starts_at: startsAt,
-      ...(typeof properties.ends_at === "string"
-        ? { ends_at: properties.ends_at }
-        : {}),
-      ...(typeof properties.duration === "number"
-        ? { duration: properties.duration }
-        : {}),
-      all_day: properties.all_day === true,
-      ...(typeof properties.timezone === "string"
-        ? { timezone: properties.timezone }
-        : {}),
-      recurrence,
-    });
-    const problem = scheduleProblem(compiled);
-    if (problem !== undefined)
-      issues.push({ field: "recurrence", message: capitalize(problem) });
+    const problem = scheduleProblem(
+      compileSchedule({ starts_at: startsAt, ...how.schedule, recurrence }),
+    );
+    return problem === undefined
+      ? []
+      : [{ field: "recurrence", message: capitalize(problem) }];
   } catch (err) {
     if (!(err instanceof RecurrenceRuleError)) throw err;
-    issues.push({ field: "recurrence", message: capitalize(err.message) });
+    return [{ field: "recurrence", message: capitalize(err.message) }];
   }
-  return issues;
 }
 
 /**

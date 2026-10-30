@@ -198,6 +198,7 @@ const coreTask: TypeSchema = {
     precision: { type: "enum", description: "Temporal precision", enum_values: ["year", "month", "day", "time"] },
     url: { type: "url", description: "Related link" },
     notes: { type: "string", description: "Personal annotations" },
+    recurrence: { type: "array", description: "RFC 5545 recurrence property lines (RRULE, RDATE, EXDATE) for a task that repeats. The series starts at due_at, or at starts_at when the task has no due_at, and advances in UTC because a task has no timezone. The server keeps and checks the rule but does not unfold it: GET /occurrences answers events only. A write is refused when a line cannot be read or is not applied (EXRULE, an RDATE period), when it carries more than one RRULE, more than 40,000 characters in all or more than 1,000 added and removed dates, when the rule names no date that exists after the start, when it produces no occurrence within the bound a read unfolds a rule to, or when the task has neither due_at nor starts_at.", items_type: "string" },
   },
   display_hints: { title_field: "title", body_field: "body", icon: "lucide:square-check-big" },
   merge_policy: { fields: { body: "keep_both_copies", notes: "keep_both_copies" }, default: "last_writer_wins" },
@@ -2151,6 +2152,10 @@ export const SHIPPED_TYPE_SHAPES = {
           "urgent"
         ],
         "type": "enum"
+      },
+      "recurrence": {
+        "items_type": "string",
+        "type": "array"
       },
       "starts_at": {
         "type": "datetime"
