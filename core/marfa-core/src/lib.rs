@@ -39,6 +39,11 @@ mod priority;
 mod query;
 mod reach;
 #[cfg(test)]
+mod read_bench_tests;
+mod reads;
+#[cfg(test)]
+mod reads_tests;
+#[cfg(test)]
 mod refusal_tests;
 #[cfg(test)]
 mod relocation_tests;
@@ -108,6 +113,7 @@ pub use model::{
     Shown, SliceTier, Sort, SortDirection, SortField, Status, Thumbnail, Tier, UnregisteredType,
     Verdict, WriteKind,
 };
+pub use reads::CopyChanges;
 pub use scaffold::{ScaffoldField, scaffold_type};
 pub use store::CEILING;
 pub use views::{VIEW_TYPE, ViewGroup, ViewRow};
@@ -698,9 +704,15 @@ impl Core {
         for definition in types {
             rows.push(catalog::declaration(definition, &known)?);
         }
-        store::clear_declared_types(&tx)?;
-        for (id, json) in &rows {
-            store::declare_type(&tx, id, json)?;
+        // The same set again writes nothing, so a declaration at each launch
+        // is no change to the copy (`changes_since`).
+        let mut sorted = rows.clone();
+        sorted.sort();
+        if store::declared_type_rows(&tx)? != sorted {
+            store::clear_declared_types(&tx)?;
+            for (id, json) in &rows {
+                store::declare_type(&tx, id, json)?;
+            }
         }
         if store::never_synced(&tx)? {
             store::hold_local_catalog(&tx)?;

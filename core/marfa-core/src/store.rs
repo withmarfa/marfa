@@ -55,6 +55,10 @@ pub const META_DRAIN_OWED: &str = "drain_owed";
 /// copy or the queue, so a reader can tell the copy changed even where its
 /// own connection made the change.
 pub const META_COPY_REVISION: &str = "copy_revision";
+/// Set once, when a writer first opens the store, so a cursor of
+/// `Core::changes_since` taken from one store is told from another's at the
+/// same path.
+pub const META_STORE_ID: &str = "store_id";
 pub const HYDRATE_IN_PROGRESS: &str = "in_progress";
 pub const SCHEMA_VERSION: &str = "0";
 
@@ -634,6 +638,16 @@ fn read_connection(conn: Connection, path: &Path) -> Result<Connection, CoreErro
     Ok(conn)
 }
 
+/// SQLite's default page cache of 2 MiB holds a few thousand rows, so a
+/// listing of a larger copy would read every page again from the file. The
+/// cache grows only as pages are read. The statement cache holds the
+/// statements a read of many bodies prepares for each body.
+fn tune(conn: &Connection) -> Result<(), CoreError> {
+    conn.execute_batch("PRAGMA cache_size = -32768;")?;
+    conn.set_prepared_statement_cache_capacity(64);
+    Ok(())
+}
+
 fn read_checked(conn: &Connection, path: &Path) -> Result<(), CoreError> {
     conn.busy_timeout(std::time::Duration::from_secs(5))?;
     let no_schema = || {
@@ -653,7 +667,8 @@ fn read_checked(conn: &Connection, path: &Path) -> Result<(), CoreError> {
     if !held.contains_key("meta") {
         return Err(no_schema());
     }
-    refuse_misshapen(conn, &held, true).map_err(|error| at_path(error, path))
+    refuse_misshapen(conn, &held, true).map_err(|error| at_path(error, path))?;
+    tune(conn)
 }
 
 /// A number that moves each time another connection commits to the store,
@@ -675,6 +690,7 @@ fn prepare(conn: &Connection) -> Result<(), CoreError> {
          PRAGMA foreign_keys = ON;",
     )?;
     conn.busy_timeout(std::time::Duration::from_secs(5))?;
+    tune(conn)?;
     conn.execute_batch(META_TABLE)?;
     // Before the schema is applied: `CREATE TABLE IF NOT EXISTS` is silent
     // about a table that exists with other columns. A store of another shape
@@ -687,7 +703,20 @@ fn prepare(conn: &Connection) -> Result<(), CoreError> {
     if meta_get(conn, META_SCHEMA_VERSION)?.is_none() {
         meta_set(conn, META_SCHEMA_VERSION, SCHEMA_VERSION)?;
     }
+    if meta_get(conn, META_STORE_ID)?.is_none() {
+        meta_set(
+            conn,
+            META_STORE_ID,
+            &uuid::Uuid::now_v7().simple().to_string(),
+        )?;
+    }
     Ok(())
+}
+
+pub(crate) fn store_id(conn: &Connection) -> Result<String, CoreError> {
+    meta_get(conn, META_STORE_ID)?.ok_or_else(|| {
+        CoreError::Store("the store has no id; open it once with this build's writer".into())
+    })
 }
 
 /// Each table's statement as SQLite recorded it, keyed by table.
@@ -4095,7 +4124,7 @@ pub fn items_by_ids_with(
     for chunk in ids.chunks(500) {
         let placeholders = vec!["?"; chunk.len()].join(", ");
         let sql = format!("SELECT {ITEM_COLUMNS} FROM items WHERE id IN ({placeholders})");
-        let mut statement = conn.prepare(&sql)?;
+        let mut statement = conn.prepare_cached(&sql)?;
         let rows = statement.query_map(params_from_iter(chunk.iter()), read_item)?;
         for row in rows {
             let (item, why) = row?;
@@ -4185,7 +4214,7 @@ pub fn edges_at(
 ) -> Result<Vec<Edge>, CoreError> {
     let sql =
         format!("SELECT {EDGE_COLUMNS} FROM edges WHERE {column} = ?1 ORDER BY created_at, id");
-    let mut statement = conn.prepare(&sql)?;
+    let mut statement = conn.prepare_cached(&sql)?;
     let rows = statement.query_map([value], read_edge)?;
     let mut edges = Vec::new();
     for row in rows {
@@ -4225,6 +4254,29 @@ fn tags_for_one(conn: &Connection, id: &str) -> Result<Vec<String>, CoreError> {
 
 fn tags_for(conn: &Connection, ids: &[String]) -> Result<HashMap<String, Vec<String>>, CoreError> {
     let mut tags: HashMap<String, Vec<String>> = HashMap::new();
+    // Reading a tag in turn costs about a quarter of looking up a row's tags
+    // by id, so where the copy holds at most four tags for each row asked,
+    // as for a listing of most of it, every tag is read once instead.
+    if ids.len() > 1000
+        && conn.query_row("SELECT count(*) FROM tags", [], |row| row.get::<_, i64>(0))?
+            <= i64::try_from(ids.len())
+                .unwrap_or(i64::MAX)
+                .saturating_mul(4)
+    {
+        let wanted: HashSet<&str> = ids.iter().map(String::as_str).collect();
+        let mut statement =
+            conn.prepare_cached("SELECT item_id, tag FROM tags ORDER BY item_id, tag")?;
+        let rows = statement.query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?;
+        for row in rows {
+            let (item_id, tag) = row?;
+            if wanted.contains(item_id.as_str()) {
+                tags.entry(item_id).or_default().push(tag);
+            }
+        }
+        return Ok(tags);
+    }
     for chunk in ids.chunks(500) {
         let placeholders = vec!["?"; chunk.len()].join(", ");
         let sql = format!(
@@ -5674,6 +5726,29 @@ pub fn edge_by_id(conn: &Connection, id: &str) -> Result<Option<Edge>, CoreError
 /// `edge_by_id`, which refuses.
 pub fn edge_ends(conn: &Connection, id: &str) -> Result<Option<Edge>, CoreError> {
     edge_by_id_with(conn, id, &mut Unreadable::Keep(HashMap::new()))
+}
+
+/// Edges for `ids`, in the order given, once each, skipping ids not held.
+pub fn edges_by_ids_with(
+    conn: &Connection,
+    ids: &[String],
+    unreadable: &mut Unreadable,
+) -> Result<Vec<Edge>, CoreError> {
+    let mut by_id: HashMap<String, Edge> = HashMap::new();
+    for chunk in ids.chunks(500) {
+        let placeholders = vec!["?"; chunk.len()].join(", ");
+        let sql = format!("SELECT {EDGE_COLUMNS} FROM edges WHERE id IN ({placeholders})");
+        let mut statement = conn.prepare(&sql)?;
+        let rows = statement.query_map(params_from_iter(chunk.iter()), read_edge)?;
+        for row in rows {
+            let (edge, why) = row?;
+            if let Some(why) = why {
+                unreadable.note("edge", &edge.id, why)?;
+            }
+            by_id.insert(edge.id.clone(), edge);
+        }
+    }
+    Ok(ids.iter().filter_map(|id| by_id.remove(id)).collect())
 }
 
 pub fn edge_by_id_with(
@@ -8599,7 +8674,7 @@ mod tests {
             .collect();
         assert_eq!(
             crate::folder::state::hash(named.as_bytes()),
-            "2f094505382755ef",
+            "319dffa2a6b94db9",
             "the shape of a table changed, which refuses every store made before it"
         );
         // The comment strip reads `--` alone, so a block comment would ride

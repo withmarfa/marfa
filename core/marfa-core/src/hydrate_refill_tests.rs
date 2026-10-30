@@ -56,7 +56,7 @@ fn no_pins() -> Answer {
     scripted::certified(scripted::json(200, &body.to_string()))
 }
 
-fn head(cursor: &str) -> Answer {
+pub(crate) fn head(cursor: &str) -> Answer {
     head_under(cursor, scripted::FENCE)
 }
 
@@ -67,14 +67,14 @@ fn head_under(cursor: &str, fence: &str) -> Answer {
     )
 }
 
-fn replay(events: Vec<String>, live: &str) -> Answer {
+pub(crate) fn replay(events: Vec<String>, live: &str) -> Answer {
     let mut frames = vec![scripted::copy_marker("stream_cursor", live)];
     frames.extend(events);
     frames.push(scripted::copy_marker("stream_live", live));
     scripted::stream(frames, Then::End)
 }
 
-fn hydrate(core: &Core) -> crate::Result<HydrateReport> {
+pub(crate) fn hydrate(core: &Core) -> crate::Result<HydrateReport> {
     core.hydrate_until(
         &["core.note".into()],
         SliceTier::Library,
@@ -122,7 +122,7 @@ fn put(core: &Core, rows: &[Value]) {
 /// A whole copy of `kept`, `changed`, `gone` and `pinned`, each at version 1,
 /// with the edges `stays` from `kept` and `dropped` from `changed`, whose
 /// catch-up then found the log aged past its cursor.
-fn aged_out(server: &Scripted) -> Arc<Core> {
+pub(crate) fn aged_out(server: &Scripted) -> Arc<Core> {
     aged_out_on(server, copy(server))
 }
 
@@ -163,7 +163,7 @@ fn aged_out_after(server: &Scripted, core: Arc<Core>, before: impl FnOnce(&Core)
 
 /// The pages a refill reads: `kept` as it was, `changed` at version 2 without
 /// the edge it had, and `added`; the pinned row read by id.
-fn refill_pages() -> Vec<Answer> {
+pub(crate) fn refill_pages() -> Vec<Answer> {
     vec![
         page(
             vec![
@@ -176,7 +176,7 @@ fn refill_pages() -> Vec<Answer> {
     ]
 }
 
-fn pinned_row() -> Answer {
+pub(crate) fn pinned_row() -> Answer {
     let rows = [row("pinned", 1, &[])];
     let body = json!({
         "items": rows.iter().map(|row| row["item"].clone()).collect::<Vec<_>>(),
