@@ -3223,11 +3223,39 @@ pub fn catalog_held(conn: &Connection) -> Result<bool, CoreError> {
 /// The catalog of a copy that has never held a server's: the types and edge
 /// types Marfa ships, and the types the app declared. The same tables a
 /// server's catalog goes in, so every read of a type reads this the same way
-/// until a hydration replaces it. Left alone where a server's is held.
+/// until a hydration replaces it. Left alone where a server's is held, and
+/// written only where it changes.
 pub fn hold_local_catalog(conn: &Connection) -> Result<(), CoreError> {
     if catalog_version(conn)?.is_some() {
         return Ok(());
     }
+    let (types, edge_types) = local_catalog(conn)?;
+    catalog_scope(conn, |conn| {
+        replace_types(conn, &types)?;
+        replace_edge_types(conn, &edge_types)?;
+        if meta_get(conn, META_LOCAL_CATALOG)?.as_deref() != Some("1") {
+            meta_set(conn, META_LOCAL_CATALOG, "1")?;
+        }
+        Ok(())
+    })
+}
+
+/// `hold_local_catalog` for a connection in no transaction, as an open is.
+/// It reads first, so an open with nothing to change takes no write lock.
+/// Where it changes something it takes the write lock before it reads: in
+/// WAL mode a read transaction that turns into a write while another
+/// connection writes is refused at once, without the busy timeout.
+pub fn hold_local_catalog_alone(conn: &Connection) -> Result<(), CoreError> {
+    if catalog_version(conn)?.is_some() || local_catalog_held(conn)? {
+        return Ok(());
+    }
+    let tx = rusqlite::Transaction::new_unchecked(conn, rusqlite::TransactionBehavior::Immediate)?;
+    hold_local_catalog(&tx)?;
+    tx.commit()?;
+    Ok(())
+}
+
+fn local_catalog(conn: &Connection) -> Result<(Vec<WireType>, Vec<Value>), CoreError> {
     let shipped = crate::builtin::catalog()?;
     let mut types = shipped.types;
     for (id, json) in declared_type_rows(conn)? {
@@ -3235,11 +3263,15 @@ pub fn hold_local_catalog(conn: &Connection) -> Result<(), CoreError> {
             CoreError::Store(format!("the declared type {id} cannot be read: {error}"))
         })?);
     }
-    catalog_scope(conn, |conn| {
-        replace_types(conn, &types)?;
-        replace_edge_types(conn, &shipped.edge_types)?;
-        meta_set(conn, META_LOCAL_CATALOG, "1")
-    })
+    Ok((types, shipped.edge_types))
+}
+
+/// Whether `hold_local_catalog` would write nothing.
+fn local_catalog_held(conn: &Connection) -> Result<bool, CoreError> {
+    let (types, edge_types) = local_catalog(conn)?;
+    Ok(meta_get(conn, META_LOCAL_CATALOG)?.as_deref() == Some("1")
+        && held_type_rows(conn)? == type_rows_of(&types)
+        && edge_type_rows(conn)? == edge_rows_of(&edge_types)?)
 }
 
 /// The types the app declared, by id, each as the JSON the server lists a
