@@ -404,7 +404,7 @@ While a hydration has started and not completed, or its copy is stale, a device 
 
 **Reason:** each of these reads joins rows that may arrive on different pages, and none of their answers can say which part is missing or out of date.
 
-**Tests:** `device/working-copy.test.ts › refuses a read of edges part way through a hydration, and answers it once the copy is whole`, `device/refill.test.ts › fills again in place, changing, adding and sweeping rows`.
+**Tests:** `device/working-copy.test.ts › refuses a read of edges part way through a hydration, and answers it once the copy is whole`, `device/refill.test.ts › fills again in place, changing, adding and sweeping rows`, `device/batch-reads.test.ts › refuses a read of edges by id part way through a hydration`.
 
 ### `device/stale-kept`
 
@@ -1723,6 +1723,130 @@ When a local list names `beneath` an item, a device MUST NOT take a `references`
 When a `parent-of` cycle the copy holds lies beneath an item, a device MUST end the walk there and answer each item on it once.
 
 **Tests:** `device/working-copy.test.ts › ends beneath on a parent-of cycle, answering each row once`.
+
+## Reads of many rows, and what changed
+
+An app that keeps what it shows in memory reads many rows in one call, and rereads only the rows that changed since it last read.
+
+### `device/bulk-get-order`
+
+When a caller reads many items by id, a device MUST answer each item its copy holds that the caller named, once each, in the order the caller first named it.
+
+**Reason:** an app places what it reads by position, and one read in place of one for each id keeps a large screen quick to fill. The CLI reads them with `device items bulk-get`.
+
+**Tests:** `device/batch-reads.test.ts › answers each item held once, in the order named, and the bin only when asked`.
+
+### `device/bulk-get-same`
+
+When a caller reads many items by id, a device MUST answer each item as a local read of that item alone answers it.
+
+**Tests:** `device/batch-reads.test.ts › answers each item held once, in the order named, and the bin only when asked`.
+
+### `device/bulk-get-bin`
+
+Where a read of many items by id does not ask for the bin, a device MUST leave out each item named that its copy holds in the bin.
+
+**Tests:** `device/batch-reads.test.ts › answers each item held once, in the order named, and the bin only when asked`.
+
+### `device/bulk-get-partial`
+
+While a hydration that is not a refill has started and not completed, a device MUST answer a read of many items by id from the rows its copy holds, marked `partial`.
+
+**Reason:** an item left out may be one still to arrive, and a read by id of one item refuses it `hydration_incomplete` (`device/read-partial-unheld-refused`) where a read of many cannot refuse the rest.
+
+**Tests:** `device/batch-reads.test.ts › answers what has arrived part way through a hydration, saying the answer is partial`.
+
+### `device/edge-get`
+
+When a caller reads an edge by id that its copy holds, a device MUST answer the edge at the ends and version its copy holds now.
+
+**Reason:** an app that learns an edge changed reads that edge alone, which may have moved to another item. The CLI reads it with `device edges get`.
+
+**Tests:** `device/batch-reads.test.ts › answers one edge, many in the order named, and refuses one not held`, `› answers an edge at the ends a catch-up moved it to`.
+
+### `device/edge-get-unheld`
+
+If a read of one edge by id names an edge its copy does not hold, then the CLI MUST refuse it `not_held`.
+
+**Tests:** `device/batch-reads.test.ts › answers one edge, many in the order named, and refuses one not held`.
+
+### `device/edge-bulk-get`
+
+When a caller reads many edges by id, a device MUST answer each edge its copy holds that the caller named, once each, in the order the caller first named it.
+
+**Reason:** the CLI reads them with `device edges bulk-get`.
+
+**Tests:** `device/batch-reads.test.ts › answers one edge, many in the order named, and refuses one not held`, `› answers an edge at the ends a catch-up moved it to`.
+
+### `device/bulk-links-same`
+
+When a caller reads the links and embeds of many items, a device MUST answer, for each item named that its copy holds outside the bin and can read, what a read of that item's links and embeds answers (`device/body-links-read`).
+
+**Reason:** an app that shows the links of every row on screen reads them in one call, against one catalog. The CLI reads them with `device items bulk-links`.
+
+**Tests:** `device/batch-reads.test.ts › answers for each item what a read of its links answers, leaving out one in the bin or not held`.
+
+### `device/bulk-links-left-out`
+
+When a caller reads the links and embeds of many items, a device MUST leave out each item named that its copy does not hold, holds in the bin, or whose stored properties it cannot read, and answer the rest.
+
+**Reason:** a read of one such item alone is refused, and one item must not refuse the read of the others.
+
+**Tests:** `device/batch-reads.test.ts › answers for each item what a read of its links answers, leaving out one in the bin or not held`.
+
+### `device/changed-cursor`
+
+When a caller asks what changed in its copy, a device MUST answer a cursor that a later ask names to learn what changed after this one.
+
+**Reason:** the CLI asks with `device changed`, and names the cursor with `--since`.
+
+**Tests:** `device/batch-reads.test.ts › names the items and edges a catch-up changed, moved and purged`.
+
+### `device/changed-names`
+
+When a caller asks what changed in its copy since a cursor the same store answered, a device MUST name each item and each edge added, changed or removed in the copy since that cursor, or answer `everything`.
+
+**Reason:** an app rereads only what it is told changed, so a change left unnamed stays wrong on screen until the app reads everything again.
+
+**Tests:** `device/batch-reads.test.ts › names the items and edges a catch-up changed, moved and purged`, `› names what a hydration that replaces the copy holds, and what it took out`.
+
+### `device/changed-edge-ends`
+
+When an edge in a copy is added, changed or removed, a device MUST name as changed each item at either end of the edge, before and after the change, in its next answer to what changed.
+
+**Reason:** an item's edges are part of what an app shows of it, and an edge moved away from an item changes that item too.
+
+**Tests:** `device/batch-reads.test.ts › names the items and edges a catch-up changed, moved and purged`.
+
+### `device/changed-removed`
+
+When a caller asks what changed in its copy since a cursor, a device MUST name each item and each edge its copy no longer holds as removed, apart from those it holds.
+
+**Reason:** an app drops a removed row without asking for it, where a read of it would answer nothing.
+
+**Tests:** `device/batch-reads.test.ts › names the items and edges a catch-up changed, moved and purged`, `› names what a hydration that replaces the copy holds, and what it took out`.
+
+### `device/changed-everything`
+
+If a caller asks what changed with no cursor, with a cursor from another store or from beyond what its copy has recorded, then a device MUST answer `everything` and name no row.
+
+**Reason:** a device cannot name the changes since a point it never recorded, and an app told `everything` reads its whole copy again.
+
+**Tests:** `device/batch-reads.test.ts › names the items and edges a catch-up changed, moved and purged`, `› answers everything for a cursor it cannot follow one by one`.
+
+### `device/changed-most`
+
+If more items or more edges changed since a cursor than the caller would take, then a device MUST answer `everything` and name no row.
+
+**Reason:** past some number of changes a whole read is cheaper than a reread of each, and the caller says where that is. The CLI takes it as `--most`, 1000 unless named.
+
+**Tests:** `device/batch-reads.test.ts › answers everything for a cursor it cannot follow one by one`.
+
+### `device/changed-malformed`
+
+If a caller asks what changed since text that is not a cursor a device answered, then a device MUST refuse it `invalid`.
+
+**Tests:** `device/batch-reads.test.ts › answers everything for a cursor it cannot follow one by one`.
 
 ## Edges a copy holds
 

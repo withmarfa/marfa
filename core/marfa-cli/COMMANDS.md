@@ -2643,6 +2643,23 @@ marfa device changes [OPTIONS]
 
 Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 
+### marfa device changed
+
+The items and edges that changed in the copy since a cursor this command printed, and the cursor to pass next.
+
+Without `--since`, with a cursor from another store or from before a change to the types, or where more than `--most` items or edges changed, it names none and answers `everything: true`: read the whole copy again. An item is named where its row, tags, edges, pin or a queued write to it changed; one whose body links read differently only because another item changed is not. Take the cursor before reading what it covers.
+
+```text
+marfa device changed [OPTIONS]
+```
+
+| Option | Description |
+| --- | --- |
+| `--since <CURSOR>` | A cursor an earlier run printed. |
+| `--most <MOST>` | The most items, and the most edges, to name before answering `everything` instead. Default: `1000`. |
+
+Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
+
 ### marfa device items
 
 Read items from the local copy.
@@ -2698,6 +2715,26 @@ marfa device items get [OPTIONS] <ID>
 | Argument | Description |
 | --- | --- |
 | `<ID>` | The item id. |
+
+Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
+
+### marfa device items bulk-get
+
+Many items by id, read from one snapshot of the copy, each once and in the order named.
+
+An id the copy does not hold is left out, and so is an item in the bin unless `--include-bin`. Under --json the answer is `items` beside `completeness`, as `items list` answers; while a hydration fills the copy it is `partial`, since an item left out may be still to arrive.
+
+```text
+marfa device items bulk-get [OPTIONS] <IDS>...
+```
+
+| Argument | Description |
+| --- | --- |
+| `<IDS>...` | The item ids. |
+
+| Option | Description |
+| --- | --- |
+| `--include-bin` | Answer items in the bin too. |
 
 Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 
@@ -2890,6 +2927,20 @@ marfa device items links [OPTIONS] <ID>
 | Argument | Description |
 | --- | --- |
 | `<ID>` | The item id. |
+
+Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
+
+### marfa device items bulk-links
+
+The links and embeds of files in the bodies of many items, read against one catalog, by item id: what `items links` answers for each. An item the copy does not hold, one in the bin and one whose properties cannot be read are left out.
+
+```text
+marfa device items bulk-links [OPTIONS] <IDS>...
+```
+
+| Argument | Description |
+| --- | --- |
+| `<IDS>...` | The item ids. |
 
 Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 
@@ -3329,6 +3380,34 @@ Edges between items, each its own write.
 ```text
 marfa device edges [OPTIONS] <COMMAND>
 ```
+
+Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
+
+### marfa device edges get
+
+One edge by id.
+
+```text
+marfa device edges get [OPTIONS] <ID>
+```
+
+| Argument | Description |
+| --- | --- |
+| `<ID>` | The edge id. |
+
+Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
+
+### marfa device edges bulk-get
+
+Many edges by id, each once and in the order named; an id the copy does not hold is left out.
+
+```text
+marfa device edges bulk-get [OPTIONS] <IDS>...
+```
+
+| Argument | Description |
+| --- | --- |
+| `<IDS>...` | The edge ids. |
 
 Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 
