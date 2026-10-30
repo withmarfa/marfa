@@ -134,6 +134,54 @@ function validateParentChain(
 // Schemas
 // ---------------------------------------------------------------------------
 
+const RANGE_BOUND = "A `number` or `integer` field takes it.";
+
+/**
+ * One member of a list entry. The kinds it may take are narrower than a
+ * field's, and the validator refuses the rest as `invalid_schema`, naming the
+ * member.
+ */
+const EntryMemberSchema = z
+  .looseObject({
+    type: z
+      .enum(FIELD_TYPES as unknown as [string, ...string[]])
+      .describe(
+        "The member's type: `string`, `email`, `url`, `enum`, `boolean`, `integer`, `number`, `date` or `datetime`.",
+      ),
+    description: z.string().optional().describe("What the member holds."),
+    required: z
+      .boolean()
+      .optional()
+      .describe("`true` if every entry must have the member."),
+    enum_values: z
+      .array(z.string())
+      .optional()
+      .describe("The values an `enum` member allows."),
+    format: z
+      .enum(FIELD_FORMATS as unknown as [string, ...string[]])
+      .optional()
+      .describe("A refinement of a `string` member, as a field's `format`."),
+    maxLength: z
+      .number()
+      .int()
+      .optional()
+      .describe("The longest value a `string` or `enum` member allows."),
+    minimum: z
+      .number()
+      .optional()
+      .describe(
+        `The lowest value the member allows, itself included. ${RANGE_BOUND}`,
+      ),
+    maximum: z
+      .number()
+      .optional()
+      .describe(
+        `The highest value the member allows, itself included. ${RANGE_BOUND}`,
+      ),
+  })
+  .describe("One member of the entries of an `array` field.")
+  .openapi("EntryMember");
+
 /**
  * One field of a type, as `validateTypeSchema` takes it.
  *
@@ -183,11 +231,17 @@ const FieldDefinitionSchema = z
       .describe(
         "The type of each element of an `array` field. A write is refused if an element is not a value of that type.",
       ),
+    items_fields: z
+      .record(z.string(), EntryMemberSchema)
+      .optional()
+      .describe(
+        "The members of each entry of an `array` field whose `items_type` is `object`, by name. A write is refused if an entry has another member, lacks a required one, holds a value a member does not take, or has none.",
+      ),
     format: z
       .enum(FIELD_FORMATS as unknown as [string, ...string[]])
       .optional()
       .describe(
-        "A refinement of a `string` field, or of an array of strings. `url`, `email`, `datetime`, `date` and `thumbnail` become the field's `type`, and all but `thumbnail` an array's `items_type`. `bcp47` and `iso3166` stay as `format`.",
+        "A refinement of a `string` field or an array of strings. `url`, `email`, `datetime`, `date` and `thumbnail` become the `type` or `items_type`. `bcp47`, `iso3166` and `currency` stay as `format`; a `currency` is three capital letters, such as `GBP`.",
       ),
     searchable: z
       .boolean()
@@ -205,6 +259,18 @@ const FieldDefinitionSchema = z
       .int()
       .optional()
       .describe("The most elements an `array` field allows."),
+    minimum: z
+      .number()
+      .optional()
+      .describe(
+        `The lowest value the field allows, itself included. ${RANGE_BOUND} A subtype may raise it, never lower or drop it.`,
+      ),
+    maximum: z
+      .number()
+      .optional()
+      .describe(
+        `The highest value the field allows, itself included. ${RANGE_BOUND} A subtype may lower it, never raise or drop it.`,
+      ),
   })
   .describe("One field of a type: its type, and how items may fill it.")
   .openapi("FieldDefinition");

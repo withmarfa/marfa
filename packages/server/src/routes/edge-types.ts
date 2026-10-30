@@ -81,7 +81,7 @@ const EdgePropertyFormatSchema = z
     message: "An edge never carries a thumbnail",
   })
   .describe(
-    "A refinement of a `string` property. `url`, `email`, `date` and `datetime` store it as that type. `bcp47` and `iso3166` only label it. It can't be `thumbnail`.",
+    "A refinement of a `string` property. `url`, `email`, `date` and `datetime` store it as that type. `bcp47` and `iso3166` only label it, and `currency` limits it to three capital letters. It can't be `thumbnail`.",
   );
 
 /** One property an edge of the type carries, as registration takes it and

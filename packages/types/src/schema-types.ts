@@ -50,12 +50,19 @@ export interface StatusValue {
  * Semantic refinements on top of a `FieldType`. Those with a first-class
  * `FieldType` of the same name normalize into `type`, so `{ type: "string",
  * format: "url" }` and `{ type: "url" }` are the same declaration. The rest
- * (`bcp47`, `iso3166`) annotate a `string` field whose contents follow a
- * published standard but which has no dedicated `FieldType`; they survive
- * normalization as `format`.
+ * (`bcp47`, `iso3166`, `currency`) annotate a `string` field whose contents
+ * follow a published standard but which has no dedicated `FieldType`; they
+ * survive normalization as `format`.
  */
 export type FieldFormat =
-  "url" | "email" | "datetime" | "date" | "thumbnail" | "bcp47" | "iso3166";
+  | "url"
+  | "email"
+  | "datetime"
+  | "date"
+  | "thumbnail"
+  | "bcp47"
+  | "iso3166"
+  | "currency";
 
 export interface FieldDefinition {
   type: FieldType;
@@ -71,11 +78,12 @@ export interface FieldDefinition {
   items_type?: string;
   /**
    * Semantic refinement of a `string` field. Only the annotation-only formats
-   * (`bcp47`, `iso3166`) survive here — the formats that have a matching
-   * `FieldType` normalize into `type`, or into an array of strings'
-   * `items_type`, so there is exactly one way to read a field's shape. Carried through the registry and the type diff so a
-   * schema round-trips unchanged; value-level enforcement of the annotation
-   * formats is not applied at write time.
+   * (`bcp47`, `iso3166`, `currency`) survive here — the formats that have a
+   * matching `FieldType` normalize into `type`, or into an array of strings'
+   * `items_type`, so there is exactly one way to read a field's shape. Carried
+   * through the registry and the type diff so a schema round-trips unchanged.
+   * Only `currency` is enforced at write time: a value is three capital
+   * letters, A to Z.
    */
   format?: FieldFormat;
   /**
@@ -103,7 +111,34 @@ export interface FieldDefinition {
    * alongside the global request-body cap.
    */
   maxItems?: number;
+  /** Lowest value a `number` or `integer` field takes; the bound itself is allowed. */
+  minimum?: number;
+  /** Highest value a `number` or `integer` field takes; the bound itself is allowed. */
+  maximum?: number;
+  /**
+   * The members of each entry of an `array` whose `items_type` is `object`.
+   * An entry holds only these members, every `required` one among them, and
+   * each value is judged as a field of that member's definition is.
+   */
+  items_fields?: Record<string, EntryMember>;
 }
+
+/**
+ * One member of a list entry: a plain value, so a definition without the
+ * keys that need a field of its own (`status_values`, `items_type`,
+ * `items_fields`, `searchable`, `maxItems`).
+ */
+export type EntryMember = Pick<
+  FieldDefinition,
+  | "type"
+  | "description"
+  | "required"
+  | "enum_values"
+  | "format"
+  | "maxLength"
+  | "minimum"
+  | "maximum"
+>;
 
 export interface VersionPolicy {
   recent_days?: number;

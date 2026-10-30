@@ -187,6 +187,25 @@ describe("a field's definition", () => {
       expect(registered.status, JSON.stringify(registered.error)).toBe(201);
     },
   );
+
+  it("takes a required entry naming a field only an ancestor declares", async () => {
+    const parent = nextId();
+    expect(
+      (
+        await client.registerType({
+          id: parent,
+          fields: { x: { type: "string" } },
+        })
+      ).status,
+    ).toBe(201);
+    const child = await client.registerType({
+      id: nextId(),
+      parent,
+      fields: { y: { type: "string" } },
+      required: ["x"],
+    } as never);
+    expect(child.status, JSON.stringify(child.error)).toBe(201);
+  });
 });
 
 describe("a datetime or a date field", () => {

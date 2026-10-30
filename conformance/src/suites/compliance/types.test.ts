@@ -575,14 +575,21 @@ describe("type registration and listing", () => {
         mended: { fields, required: ["title"] },
       },
       {
-        what: "a bound on an integer field",
+        what: "an exclusive bound on an integer field",
         bad: {
           fields: {
             ...fields,
-            serves: { type: "integer", minimum: 1, maximum: 12 },
+            serves: {
+              type: "integer",
+              exclusiveMinimum: 0,
+              exclusiveMaximum: 13,
+            },
           },
         },
-        paths: ["fields.serves.minimum", "fields.serves.maximum"],
+        paths: [
+          "fields.serves.exclusiveMinimum",
+          "fields.serves.exclusiveMaximum",
+        ],
         mended: { fields },
       },
       {
@@ -644,7 +651,7 @@ describe("type registration and listing", () => {
     expect(registered.status).toBe(201);
 
     const refused = await client.replaceType(id, {
-      fields: { serves: { type: "integer", minimum: 1 } },
+      fields: { serves: { type: "integer", exclusiveMinimum: 1 } },
       lable: "Recipe",
     });
     expect(refused.status).toBe(400);
@@ -653,7 +660,7 @@ describe("type registration and listing", () => {
       { field: string }[] | undefined;
     expect(errors?.map((e) => e.field)).toEqual([
       "lable",
-      "fields.serves.minimum",
+      "fields.serves.exclusiveMinimum",
     ]);
     expect((await client.getType(id)).data.fields).toEqual(fields);
 

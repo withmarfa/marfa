@@ -3,6 +3,7 @@ export type {
   EdgeCardinality,
   EdgeCascade,
   EdgeTypeSchema,
+  EntryMember,
   FieldDefinition,
   FieldFormat,
   FieldType,

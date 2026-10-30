@@ -225,6 +225,9 @@ function fieldLiteral(field: FieldDefinition): string {
     parts.push(`status_values: [${words.join(", ")}]`);
   }
   if (field.items_type) parts.push(`items_type: ${quote(field.items_type)}`);
+  if (field.items_fields) {
+    parts.push(`items_fields: ${JSON.stringify(field.items_fields)}`);
+  }
   if (field.format) parts.push(`format: ${quote(field.format)}`);
   if (field.searchable === false) parts.push("searchable: false");
   if (field.maxLength !== undefined) {
@@ -232,6 +235,12 @@ function fieldLiteral(field: FieldDefinition): string {
   }
   if (field.maxItems !== undefined) {
     parts.push(`maxItems: ${String(field.maxItems)}`);
+  }
+  if (field.minimum !== undefined) {
+    parts.push(`minimum: ${String(field.minimum)}`);
+  }
+  if (field.maximum !== undefined) {
+    parts.push(`maximum: ${String(field.maximum)}`);
   }
   return `{ ${parts.join(", ")} }`;
 }
@@ -365,7 +374,7 @@ const PROSE_KEYS = new Set(["label", "reverse_label", "description", "id"]);
  * can be called `description` or `label`, so these keys are kept whatever
  * they read, and only the definitions under them lose their prose.
  */
-const NAMED_MAPS = new Set(["fields", "property_schema"]);
+const NAMED_MAPS = new Set(["fields", "property_schema", "items_fields"]);
 
 function namedMap(value: unknown): unknown {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {

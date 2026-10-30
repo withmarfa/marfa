@@ -37,6 +37,7 @@ import {
 } from "@withmarfa/types";
 import type {
   DisplayHints,
+  EntryMember,
   FieldDefinition,
   FieldFormat,
   FieldType,
@@ -866,6 +867,71 @@ const thumbnail = z.string().superRefine((value, ctx) => {
   }
 });
 
+/** Whether ISO 4217 assigns the code is left alone: that list changes. */
+const CURRENCY_CODE = z
+  .string()
+  .regex(/^[A-Z]{3}$/, "Must be a currency code of three capital letters");
+
+const bounded = (
+  schema: z.ZodNumber,
+  { minimum, maximum }: Pick<FieldDefinition, "minimum" | "maximum">,
+): z.ZodType => {
+  let out = schema;
+  if (minimum !== undefined) out = out.gte(minimum);
+  if (maximum !== undefined) out = out.lte(maximum);
+  return out;
+};
+
+/**
+ * The schema of one entry of a list whose `items_fields` names its members: a
+ * non-empty object holding only those members, each required one and each
+ * value a field of the member's definition takes. A member with no value is
+ * left out; a `null` is no value.
+ */
+function entryToZod(members: Readonly<Record<string, EntryMember>>): z.ZodType {
+  const checks = new Map(
+    Object.entries(members).map(([name, member]) => [
+      name,
+      valueToZod(member.type, member) ?? z.unknown(),
+    ]),
+  );
+  return z.record(z.string(), z.unknown()).superRefine((entry, ctx) => {
+    const given = Object.keys(entry);
+    if (given.length === 0) {
+      ctx.addIssue({
+        code: "custom",
+        message: "Must have at least one member",
+      });
+      return;
+    }
+    for (const name of given) {
+      if (!checks.has(name)) {
+        ctx.addIssue({
+          code: "custom",
+          path: [name],
+          message: "Is not a member of the entry",
+        });
+      }
+    }
+    for (const [name, member] of Object.entries(members)) {
+      if (!Object.hasOwn(entry, name)) {
+        if (member.required) {
+          ctx.addIssue({
+            code: "custom",
+            path: [name],
+            message: "Required",
+          });
+        }
+        continue;
+      }
+      const verdict = checks.get(name)?.safeParse(entry[name]);
+      for (const found of verdict?.error?.issues ?? []) {
+        ctx.addIssue({ ...found, path: [name, ...found.path] });
+      }
+    }
+  });
+}
+
 /**
  * The schema a value of `type` must satisfy, with no `required` or `null`
  * handling: a field's own value and each element of an array share it, so an
@@ -873,15 +939,20 @@ const thumbnail = z.string().superRefine((value, ctx) => {
  */
 function valueToZod(
   type: string,
-  field: Pick<FieldDefinition, "enum_values" | "maxLength" | "maxItems">,
+  field: Pick<
+    FieldDefinition,
+    "enum_values" | "maxLength" | "maxItems" | "format" | "minimum" | "maximum"
+  >,
 ): z.ZodType | undefined {
   switch (type) {
     case "string":
-      return boundedString(field);
+      // `currency` is the one format whose value is judged: a code is three
+      // capital letters, and a device applies the same test.
+      return field.format === "currency" ? CURRENCY_CODE : boundedString(field);
     case "number":
-      return z.number();
+      return bounded(z.number(), field);
     case "integer":
-      return z.number().int();
+      return bounded(z.number().int(), field);
     case "boolean":
       return z.boolean();
     case "url":
@@ -937,9 +1008,12 @@ function fieldToZod(field: FieldDefinition): z.ZodType {
   // registered schema may name none; those elements are not checked, since
   // refusing the name would stop a stored type loading.
   if (field.type === "array") {
-    const element = field.items_type
-      ? valueToZod(field.items_type, { enum_values: field.enum_values })
-      : undefined;
+    const element =
+      field.items_type === "object" && field.items_fields
+        ? entryToZod(field.items_fields)
+        : field.items_type
+          ? valueToZod(field.items_type, { enum_values: field.enum_values })
+          : undefined;
     const bound = field.maxItems ?? DEFAULT_MAX_ARRAY_ITEMS;
     schema = (element ? z.array(element) : z.array(z.unknown())).max(bound);
   }

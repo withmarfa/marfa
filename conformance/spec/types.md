@@ -277,9 +277,23 @@ The server MUST let a subtype add fields, redeclare an inherited field unchanged
 
 ### `types/child-shape`
 
-If a type would give a field another `type`, `format`, `items_type`, `searchable`, `maxLength`, `maxItems` or `enum_values` than a type in its chain gives it, or a status field's words in a way `types/status-inherit` does not take, or make an inherited required field optional, then the server MUST answer `400 inheritance_violation` naming the field.
+If a type would give a field another `type`, `format`, `items_type`, `items_fields`, `searchable`, `maxLength`, `maxItems` or `enum_values` than a type in its chain gives it, or a status field's words in a way `types/status-inherit` does not take, or make an inherited required field optional, then the server MUST answer `400 inheritance_violation` naming the field.
 
-**Tests:** `compliance/type-inheritance.test.ts › rejects a child type that changes an inherited field shape (inheritance_violation)`, `› rejects a parent gaining a field whose shape differs from one its child declares`, `› lets a child tighten an inherited field to required, and refuses one that loosens it`, `› refuses a replacement of a child that changes an inherited field's shape`, `compliance/thumbnails.test.ts › refuses a parent gaining a thumbnail under a name its child declares as text, and takes one its child declares as a thumbnail`, `compliance/status-groups.test.ts › refuses the inherited status field redeclared as another kind`.
+**Tests:** `compliance/type-inheritance.test.ts › rejects a child type that changes an inherited field shape (inheritance_violation)`, `› rejects a parent gaining a field whose shape differs from one its child declares`, `› lets a child tighten an inherited field to required, and refuses one that loosens it`, `› refuses a replacement of a child that changes an inherited field's shape`, `compliance/thumbnails.test.ts › refuses a parent gaining a thumbnail under a name its child declares as text, and takes one its child declares as a thumbnail`, `compliance/status-groups.test.ts › refuses the inherited status field redeclared as another kind`, `compliance/field-rules.test.ts › refuses a child that changes the members of an inherited list`.
+
+### `types/child-range`
+
+The server MUST let a subtype add a `minimum` or a `maximum` to an inherited `number` or `integer` field that has none, and narrow an inherited range by raising its `minimum` or lowering its `maximum`.
+
+**Reason:** a parent's items must stay valid as the parent's own, so a reader that relies on the parent's range is never surprised by a child.
+
+**Tests:** `compliance/field-rules.test.ts › takes a child that tightens an inherited range, and refuses one that loosens it`.
+
+### `types/child-range-refused`
+
+If a type would give a `number` or `integer` field a `minimum` below, or a `maximum` above, the one a type in its chain gives it, or no `minimum` or `maximum` where that type gives one, or a replacement of a type would leave a subtype's range looser than the type's own, then the server MUST answer `400 inheritance_violation` naming the field.
+
+**Tests:** `compliance/field-rules.test.ts › takes a child that tightens an inherited range, and refuses one that loosens it`, `› refuses a parent replacement that leaves a child's range looser`.
 
 ### `types/listing-subtree`
 
@@ -292,6 +306,30 @@ When a listing names a type, the server MUST answer the items of that type, of e
 When a type names `compatible_with`, the server MUST take it only where the type requires every field the target requires, its own or inherited, and every target field the type declares or inherits is readable as the target's: the same type, or `url`, `email`, `datetime`, `date`, `thumbnail`, `enum` or `status` where the target's is `string`, or `integer` where it is `number`; for an `array`, the same `items_type`; for an `enum`, values drawn from the target's; for a `status`, words the target's status field also holds, each in the same group; and, where both name a `format`, the same one.
 
 **Tests:** `compliance/type-inheritance.test.ts › accepts compatible_with: core.note when fields satisfy the structural superset`, `› takes a compatible_with claim whose fields are readable as the target's, and refuses one that is not`, `compliance/thumbnails.test.ts › is read as the target's by a type claiming compatibility, and refused as text`, `compliance/status-groups.test.ts › reads a status field as a string, and as a status field holding its words in the same groups`.
+
+### `types/compatible-with-range`
+
+Where a type names `compatible_with` and the target's `number` or `integer` field has a `minimum` or a `maximum`, the server MUST take the claim only where the type's field has a `minimum` no lower, and a `maximum` no higher, than the target's.
+
+**Reason:** a reader of the target relies on every value being inside its range, and a looser range lets a value through that the reader never expects. A target with no range is read from any range.
+
+**Tests:** `compliance/field-rules.test.ts › reads a range as the target's only where it is inside the target's`.
+
+### `types/compatible-with-currency`
+
+Where a type names `compatible_with` and the target's field has the `format` `currency`, the server MUST take the claim only where the type's field has that `format`; a `string` field with the `format` `currency` is readable as a `string` field with no `format`.
+
+**Reason:** `currency` is the one string format whose value is checked, so a plain string holds values a reader of a currency field never expects, while a currency string is a string.
+
+**Tests:** `compliance/field-rules.test.ts › reads a currency string as a string, and a string not as a currency`.
+
+### `types/compatible-with-items-fields`
+
+Where a type names `compatible_with` and the target's `array` field names `items_fields`, or the type's does, the server MUST take the claim only where both name the same members, each defined alike.
+
+**Reason:** a list of entries means what its members say, and two lists whose members differ hold entries a reader of the other would misread.
+
+**Tests:** `compliance/field-rules.test.ts › reads a list of entries as the target's only where the members are identical`.
 
 ### `types/compatible-with-refused`
 
@@ -331,17 +369,47 @@ If a `merge_policy` names a field the type does not declare or inherit, or a str
 
 ### `types/field-grammar`
 
-If a type names a field definition with an unknown `type` or `format`, an `enum` whose `enum_values` is missing or empty or holds a value that is not a string, a status field `types/status-refused` refuses, an `array` with no `items_type`, or a `maxLength` or `maxItems` that is not a whole number of at least 1 or on a type it does not apply to, or the type names `states`, `default_state` or `transitions`, a `required` entry naming a field it does not declare, a role other than `container`, or a `display_hints` `title_field` or `body_field` naming a field neither it nor an ancestor declares, then the server MUST answer `400 invalid_schema` naming the member.
+If a type names a field definition with an unknown `type` or `format`, an `enum` whose `enum_values` is missing or empty or holds a value that is not a string, a status field `types/status-refused` refuses, an `array` with no `items_type`, or a `maxLength` or `maxItems` that is not a whole number of at least 1 or on a type it does not apply to, or a `minimum`, `maximum` or `items_fields` that `types/range-refused` or `types/items-fields-refused` refuses, or the type names `states`, `default_state` or `transitions`, a `required` entry naming a field that neither the type nor an ancestor declares, a role other than `container`, or a `display_hints` `title_field` or `body_field` naming a field neither it nor an ancestor declares, then the server MUST answer `400 invalid_schema` naming the member.
 
-**Tests:** `compliance/field-types.test.ts › refuses a field definition the grammar does not take`.
+**Tests:** `compliance/field-types.test.ts › refuses a field definition the grammar does not take`, `› takes a required entry naming a field only an ancestor declares`.
 
 ### `types/unknown-key`
 
-If `POST /types` or `PUT /types/{id}` names a key the type schema does not define, at the top level, in a field definition (which takes only `type`, `description`, `required`, `enum_values`, `status_values`, `items_type`, `format`, `searchable`, `maxLength` and `maxItems`), or in `display_hints`, `version_policy`, `merge_policy` or `retention_policy`, then the server MUST answer `400 invalid_schema` with `details.errors` naming the path of each such key.
+If `POST /types` or `PUT /types/{id}` names a key the type schema does not define, at the top level, in a field definition (which takes only `type`, `description`, `required`, `enum_values`, `status_values`, `items_type`, `items_fields`, `format`, `searchable`, `maxLength`, `maxItems`, `minimum` and `maximum`), in a member of `items_fields` (which takes only `type`, `description`, `required`, `enum_values`, `format`, `maxLength`, `minimum` and `maximum`), or in `display_hints`, `version_policy`, `merge_policy` or `retention_policy`, then the server MUST answer `400 invalid_schema` with `details.errors` naming the path of each such key.
 
-**Reason:** a key the server ignored would let a misspelled rule, or a `minimum` on an `integer` field, register as though it held, and the type would then accept what its author meant it to refuse. No field definition has a `minimum` or a `maximum`.
+**Reason:** a key the server ignored would let a misspelled rule, or a `searchable` on a member of `items_fields`, register as though it held, and the type would then accept what its author meant it to refuse.
 
 **Tests:** `compliance/types.test.ts › refuses a key the type schema does not define, at the top level, in a field and in a block, naming each path`, `› refuses a key the type schema does not define on a replacement, and keeps the type as it was`.
+
+### `types/range`
+
+When a type names a `minimum`, a `maximum` or both on a `number` or `integer` field, or on a member of `items_fields` of those kinds, the server MUST store them and answer them on `GET /types/{id}`.
+
+**Reason:** a type that means "a whole number from 1 to 5" says so once, and every app gets the same refusal instead of each app checking for itself (`types/range-value-refused`). Both bounds are inclusive, as JSON Schema defines them.
+
+**Tests:** `compliance/field-rules.test.ts › registers a range, a currency format and a list of entries, and answers them`.
+
+### `types/range-refused`
+
+If a field or a member of `items_fields` names a `minimum` or `maximum` on a type other than `number` or `integer`, one that is not a finite number, one that is not a whole number on an `integer` field, or a `minimum` above the `maximum`, then the server MUST answer `400 invalid_schema` naming the member.
+
+**Tests:** `compliance/field-rules.test.ts › refuses $what with invalid_schema, naming the member`.
+
+### `types/items-fields`
+
+When a type names `items_fields` on an `array` field whose `items_type` is `object`, the server MUST store the members and answer them on `GET /types/{id}`.
+
+**Reason:** a type can then promise that each entry in a list has a given shape, as a list of contacts or of attendees needs. A member takes `type`, `description`, `required`, `enum_values`, `format`, `maxLength`, `minimum` and `maximum`.
+
+**Tests:** `compliance/field-rules.test.ts › registers a range, a currency format and a list of entries, and answers them`.
+
+### `types/items-fields-refused`
+
+If a type names `items_fields` on a field that is not an `array` whose `items_type` is `object`, names no member in it, or names a member that is not a `string`, `email`, `url`, `enum`, `boolean`, `integer`, `number`, `date` or `datetime`, or whose definition the field grammar refuses, then the server MUST answer `400 invalid_schema` naming the member.
+
+**Reason:** a flat entry keeps the check simple and is enough for contact lists and attendees. A member that is a list, an object, a `status` or a `thumbnail` would need nesting the entry does not have.
+
+**Tests:** `compliance/field-rules.test.ts › refuses $what with invalid_schema, naming the member`.
 
 ### `types/format-collapses`
 
@@ -363,15 +431,15 @@ If a field names a type-naming `format` on a type other than `string`, the type 
 
 ### `types/format-string-only`
 
-When a `string` field names a `format` of `bcp47` or `iso3166`, the server MUST store the field as a `string` with that `format`.
+When a `string` field names a `format` of `bcp47`, `iso3166` or `currency`, the server MUST store the field as a `string` with that `format`.
 
-**Tests:** `compliance/types.test.ts › keeps bcp47 and iso3166 as formats of a string, and refuses them on any other type`.
+**Tests:** `compliance/types.test.ts › keeps bcp47 and iso3166 as formats of a string, and refuses them on any other type`, `compliance/field-rules.test.ts › registers a range, a currency format and a list of entries, and answers them`.
 
 ### `types/format-string-only-refused`
 
-If a field of a type other than `string` names a `format` of `bcp47` or `iso3166`, then the server MUST answer `400 invalid_schema`.
+If a field of a type other than `string` names a `format` of `bcp47`, `iso3166` or `currency`, then the server MUST answer `400 invalid_schema`.
 
-**Tests:** `compliance/types.test.ts › keeps bcp47 and iso3166 as formats of a string, and refuses them on any other type`.
+**Tests:** `compliance/types.test.ts › keeps bcp47 and iso3166 as formats of a string, and refuses them on any other type`, `compliance/field-rules.test.ts › refuses $what with invalid_schema, naming the member`.
 
 ### `types/datetime-value`
 
@@ -448,6 +516,44 @@ Where an `array` field's `items_type` names no field type, the server MUST NOT c
 **Reason:** the grammar requires `items_type` to be a string and no more, so a type registered or stored with another name keeps loading and keeps taking writes.
 
 **Tests:** `compliance/field-types.test.ts › leaves the elements of an array unchecked where items_type names no field type`.
+
+### `types/range-value-refused`
+
+If a write of an item's properties, by a create, an update, an upsert or an entry of a bulk write, leaves a `number` or `integer` field, or a member of an entry of a list, holding a value below its `minimum` or above its `maximum`, then the server MUST answer `400 invalid_properties` with `details.errors` naming the field in `field`, and for a member the field, the entry's position and the member, as `ratings.1.score`.
+
+**Reason:** a bound includes the number it names, so a value equal to it is taken. The check holds at every door and on the properties the item would stand with after the write, as `types/array-items-refused` does, so a value stored before a type gained its range also refuses a write that leaves it in place. A device refuses the same writes (`device/range-checked`).
+
+**Tests:** `compliance/field-rules.test.ts › takes a value at each bound and refuses one past it`, `› checks the range on an update and a bulk entry, and on a value stored before the type had one`.
+
+### `types/currency-value`
+
+When a write names a value for a `string` field whose `format` is `currency`, the server MUST take it only where it is three characters, each a capital letter from A to Z, whether or not ISO 4217 assigns the code.
+
+**Reason:** the list of codes changes as currencies are introduced and withdrawn, so a fixed list would refuse a valid code or go stale. Of the string formats, only `currency` has its value checked; `bcp47` and `iso3166` label a field and check nothing. A device judges the same value (`device/currency-checked`).
+
+**Tests:** `compliance/field-rules.test.ts › takes the currency %s`, `› refuses the currency %j, naming the field`.
+
+### `types/currency-value-refused`
+
+If a write leaves a `string` field whose `format` is `currency` holding a value that `types/currency-value` does not take, then the server MUST answer `400 invalid_properties` naming the field.
+
+**Tests:** `compliance/field-rules.test.ts › takes the currency %s`, `› refuses the currency %j, naming the field`.
+
+### `types/array-entries`
+
+When an item names an `array` field whose `items_fields` names members, the server MUST take each entry that is an object with at least one member, only members the field declares, every member it requires, and for each member a value that a field of the member's definition takes.
+
+**Reason:** a list of contacts or attendees promises its readers a shape for every entry. A member with no value is left out, and a `null` is no value a member takes. An entry that is not an object is refused as `types/array-items-refused` refuses it.
+
+**Tests:** `compliance/field-rules.test.ts › takes entries that match their members`.
+
+### `types/array-entries-refused`
+
+If a write of an item's properties, by a create, an update, an upsert or an entry of a bulk write, leaves an `array` field holding an entry with a member its `items_fields` does not declare, without a member it requires, with a member value its definition refuses, or with no member at all, then the server MUST answer `400 invalid_properties` with `details.errors` naming the field, the entry's position and, except for an entry with no member, the member in `field`, as `emails.1.value`.
+
+**Reason:** this holds at every door and on the properties the item would stand with after the write, as `types/array-items-refused` does, so an entry stored before the field declared its members refuses a write that leaves it in place. A device refuses the same writes (`device/entries-checked`).
+
+**Tests:** `compliance/field-rules.test.ts › refuses %s, naming the field, the position and the member`, `› checks the entries on an update and a bulk entry, naming the member, and on entries stored before the field declared its members`.
 
 ### `types/searchable-false`
 
@@ -1124,6 +1230,14 @@ The server MUST ship `core.note`, `core.media.article` and `core.message` with `
 **Reason:** a note can be only a title, an article can be saved before its text is fetched, and a message can be only a photo or a file. A type requires only what it means nothing without.
 
 **Tests:** `compliance/optional-body.test.ts › declares body as optional on core.note, core.media.article and core.message`, `› keeps the title of an article and the sender of a message required`, `› requires no field of a note`, `› creates with no properties at all`, `› creates with only a title, and takes a body later`, `› updates a note that has no body, leaving it without one`, `› creates through the bulk door`, `› still refuses a body of the wrong kind, naming it`, `› creates with only a title`, `› still refuses an article with no title, naming it`, `› creates with only a sender`, `› still refuses a message with no sender, naming it`.
+
+### `types/article-doi`
+
+The server MUST ship `core.media.article` with an optional `doi`, a `string` described as a Digital Object Identifier.
+
+**Reason:** a DOI is how a paper or a journal article is cited, so an app that saves one can keep the identifier with it, as `core.media.book` keeps an `isbn`. The value is not checked for shape.
+
+**Tests:** `compliance/field-rules.test.ts › lists doi as an optional string on core.media.article and keeps what an article writes`.
 
 ### `types/highlight`
 

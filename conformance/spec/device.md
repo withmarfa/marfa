@@ -4402,6 +4402,30 @@ If a write names a `url` value of a special scheme whose host has a code point t
 
 **Tests:** `device/property-validation-live.test.ts › refuses the url %j on the device where the server takes it`.
 
+### `device/range-checked`
+
+If a write names a value for a `number` or `integer` field, or for such a member of an entry in a list, that is below the field's `minimum` or above its `maximum`, then a device MUST refuse `validation` the write naming the field, and queue nothing.
+
+**Reason:** the server refuses the value (`types/range-value-refused`), so a write kept would come back refused. A value equal to a bound is taken on both.
+
+**Tests:** `device/property-validation-live.test.ts › matches the server on a range, a currency and the entries of a list`.
+
+### `device/currency-checked`
+
+If a write names, for a `string` field whose `format` is `currency`, a value that is not three characters, each a capital letter from A to Z, then a device MUST refuse `validation` the write naming the field, and queue nothing.
+
+**Reason:** the server refuses the value (`types/currency-value-refused`). A device reads no other `format` of a `string` field.
+
+**Tests:** `device/property-validation-live.test.ts › matches the server on a range, a currency and the entries of a list`.
+
+### `device/entries-checked`
+
+If a write names, for an `array` field whose `items_fields` names members, an entry with an undeclared member, without a required member, with a member value its definition refuses, with no member, or that is not an object, then a device MUST refuse `validation` the write naming the field, and queue nothing.
+
+**Reason:** the server refuses the entry (`types/array-entries-refused`), and a list a device kept would come back refused.
+
+**Tests:** `device/property-validation-live.test.ts › matches the server on a range, a currency and the entries of a list`.
+
 ### `device/unknown-type-write`
 
 If a write names a type the copy was never told of, then a device MUST refuse it `unknown_type`.
