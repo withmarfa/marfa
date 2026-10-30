@@ -1146,6 +1146,10 @@
      "type": "thumbnail",
      "description": "A small preview of the work, supplied by the writer"
     },
+    "doi": {
+     "type": "string",
+     "description": "Digital Object Identifier, such as 10.1000/182"
+    },
     "section": {
      "type": "string",
      "description": "Section of the publication"
