@@ -47,7 +47,7 @@ const ROWS = positiveInteger("MARFA_HYDRATION_ROWS", 2_000);
 const BATCH = 250;
 /** Rows sharing a tag, so a clean-up bulk action stays under the 50,000 a bulk action may match. */
 const GROUP = 25_000;
-/** The rows in a page of a hydration, `PAGE_LIMIT` in `core/marfa-core/src/http.rs`. */
+/** The rows in a page of a hydration, `ITEM_PAGE_LIMIT` in `core/marfa-core/src/http.rs`. */
 const PAGE = 200;
 /** Pages read to measure the server, from the first. */
 const SERVER_PAGES = 10;

@@ -11166,12 +11166,11 @@
             "schema": {
               "type": "integer",
               "minimum": 1,
-              "maximum": 200,
               "default": 50,
-              "description": "The maximum number of results to return."
+              "description": "The maximum number of results to return. Up to 500; a larger value is read as 500."
             },
             "required": false,
-            "description": "The maximum number of results to return.",
+            "description": "The maximum number of results to return. Up to 500; a larger value is read as 500.",
             "name": "limit",
             "in": "query"
           },
@@ -24691,11 +24690,10 @@
             "schema": {
               "type": "integer",
               "minimum": 1,
-              "maximum": 500,
-              "description": "The maximum number of results to return."
+              "description": "The maximum number of results to return. Up to 500; a larger value is read as 500."
             },
             "required": false,
-            "description": "The maximum number of results to return.",
+            "description": "The maximum number of results to return. Up to 500; a larger value is read as 500.",
             "name": "limit",
             "in": "query"
           },
@@ -27264,11 +27262,10 @@
             "schema": {
               "type": "integer",
               "minimum": 1,
-              "maximum": 500,
-              "description": "The maximum number of results to return."
+              "description": "The maximum number of results to return. Up to 500; a larger value is read as 500."
             },
             "required": false,
-            "description": "The maximum number of results to return.",
+            "description": "The maximum number of results to return. Up to 500; a larger value is read as 500.",
             "name": "limit",
             "in": "query"
           },
@@ -27646,11 +27643,10 @@
             "schema": {
               "type": "integer",
               "minimum": 1,
-              "maximum": 500,
-              "description": "The maximum number of results to return."
+              "description": "The maximum number of results to return. Up to 500; a larger value is read as 500."
             },
             "required": false,
-            "description": "The maximum number of results to return.",
+            "description": "The maximum number of results to return. Up to 500; a larger value is read as 500.",
             "name": "limit",
             "in": "query"
           },

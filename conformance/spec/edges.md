@@ -229,15 +229,23 @@ When a key pages `GET /edges`, `GET /items/{id}/edges` or `GET /items/{id}/backr
 
 ### `edges/list-limit`
 
-When `GET /edges`, `GET /items/{id}/edges` or `GET /items/{id}/backrefs` names a `limit` of 500 or less, the server MUST answer a page of at most that many edges.
+When `GET /edges`, `GET /items/{id}/edges` or `GET /items/{id}/backrefs` names a `limit` from 1 to 500, the server MUST answer a page of at most that many edges.
 
-**Tests:** `compliance/edge-listings.test.ts › takes a limit of 500 and refuses 501 and 0, on both listings`, `compliance/edge-gaps.test.ts › takes a limit of 500 and refuses 501 and 0`.
+**Tests:** `compliance/edge-listings.test.ts › takes a limit of 500, reads 501 as 500 and refuses 0, on every edge listing`, `compliance/edge-gaps.test.ts › takes a limit of 500 and of 501, and refuses 0`.
+
+### `edges/list-limit-capped`
+
+When `GET /edges`, `GET /items/{id}/edges` or `GET /items/{id}/backrefs` names a `limit` above 500, the server MUST answer a page of at most 500 edges.
+
+**Reason:** a client built for a larger page keeps working against a server whose page is smaller, because a client walks a listing by `next_cursor`, not by the length of a page.
+
+**Tests:** `compliance/edge-listings.test.ts › takes a limit of 500, reads 501 as 500 and refuses 0, on every edge listing`.
 
 ### `edges/list-limit-refused`
 
-If `GET /edges`, `GET /items/{id}/edges` or `GET /items/{id}/backrefs` names a `limit` above 500 or below 1, then the server MUST answer `400 validation_error` naming `limit`.
+If `GET /edges`, `GET /items/{id}/edges` or `GET /items/{id}/backrefs` names a `limit` below 1, then the server MUST answer `400 validation_error` naming `limit`.
 
-**Tests:** `compliance/edge-listings.test.ts › takes a limit of 500 and refuses 501 and 0, on both listings`, `compliance/edge-gaps.test.ts › takes a limit of 500 and refuses 501 and 0`.
+**Tests:** `compliance/edge-listings.test.ts › takes a limit of 500, reads 501 as 500 and refuses 0, on every edge listing`, `compliance/edge-gaps.test.ts › takes a limit of 500 and of 501, and refuses 0`.
 
 ### `edges/list-unknown-key`
 

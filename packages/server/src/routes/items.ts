@@ -17,7 +17,7 @@ import { faultsArmed, holdAt } from "../control/faults.js";
 import { createRoute, z } from "@hono/zod-openapi";
 import {
   DEFAULT_PAGE_LIMIT,
-  MAX_PAGE_LIMIT,
+  MAX_LISTING_LIMIT,
   pageLimit,
   pageCursor,
 } from "../page-limits.js";
@@ -599,7 +599,11 @@ const listItemsRoute = createRoute({
         ),
       direction: z.enum(["asc", "desc"]).optional().describe("Sort direction"),
       ...listingBoundKeys,
-      limit: pageLimit({ max: MAX_PAGE_LIMIT, default: DEFAULT_PAGE_LIMIT }),
+      limit: pageLimit({
+        max: MAX_LISTING_LIMIT,
+        default: DEFAULT_PAGE_LIMIT,
+        capped: true,
+      }),
       cursor: pageCursor(),
       include: z
         .string()

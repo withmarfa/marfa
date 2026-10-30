@@ -73,7 +73,7 @@ async function makeEdge(
 }
 
 describe("the edge listings", () => {
-  it("takes a limit of 500 and refuses 501 and 0, on both listings", async () => {
+  it("takes a limit of 500, reads 501 as 500 and refuses 0, on every edge listing", async () => {
     const edgeType = await registerEdgeType("limit");
     const source = await makeItem("limit-source");
     const seeded = await client.bulkItems({
@@ -95,6 +95,16 @@ describe("the edge listings", () => {
     });
     expect(edges.status, JSON.stringify(edges.error)).toBe(200);
     expect(edges.data.counts.created).toBe(MAX_LIMIT + 1);
+    const inbound = await registerEdgeType("limit-in");
+    const backrefs = await client.bulkEdges({
+      edges: targets.map((target) => ({
+        source_id: target,
+        target_id: source,
+        edge_type: inbound,
+      })),
+    });
+    expect(backrefs.status, JSON.stringify(backrefs.error)).toBe(200);
+    expect(backrefs.data.counts.created).toBe(MAX_LIMIT + 1);
 
     const doors: {
       name: string;
@@ -109,6 +119,11 @@ describe("the edge listings", () => {
         list: (limit) =>
           client.listItemEdges(source, { edge_type: edgeType, limit }),
       },
+      {
+        name: "GET /items/{id}/backrefs",
+        list: (limit) =>
+          client.listItemBackrefs(source, { edge_type: inbound, limit }),
+      },
     ];
     for (const door of doors) {
       // More edges are held than the largest page, so a page of 500 is the
@@ -122,15 +137,17 @@ describe("the edge listings", () => {
       expect(narrowest.status, door.name).toBe(200);
       expect(narrowest.data.data, door.name).toHaveLength(1);
 
-      for (const limit of [MAX_LIMIT + 1, 0]) {
-        const refused = await door.list(limit);
-        expect(refused.status, `${door.name} limit ${String(limit)}`).toBe(400);
-        expect(refused.error?.error.code, door.name).toBe("validation_error");
-        expect(
-          refused.error?.error.details?.errors,
-          `${door.name} limit ${String(limit)}`,
-        ).toMatchObject([{ path: "limit" }]);
-      }
+      const over = await door.list(MAX_LIMIT + 1);
+      expect(over.status, door.name).toBe(200);
+      expect(over.data.data, door.name).toHaveLength(MAX_LIMIT);
+      expect(over.data.next_cursor, door.name).not.toBeNull();
+
+      const refused = await door.list(0);
+      expect(refused.status, door.name).toBe(400);
+      expect(refused.error?.error.code, door.name).toBe("validation_error");
+      expect(refused.error?.error.details?.errors, door.name).toMatchObject([
+        { path: "limit" },
+      ]);
     }
   });
 

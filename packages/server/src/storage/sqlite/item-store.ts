@@ -1,6 +1,7 @@
 import { safeJsonParse } from "../json-utils.js";
 import {
   DEFAULT_PAGE_LIMIT,
+  MAX_LISTING_LIMIT,
   MAX_PAGE_LIMIT,
   MIN_PAGE_LIMIT,
 } from "../../page-limits.js";
@@ -1351,7 +1352,7 @@ export class SqliteItemStore implements ItemStore {
     const cursorKey: CursorSortKey = cursorSortKey("items", sort, dir);
     const limit = Math.max(
       MIN_PAGE_LIMIT,
-      Math.min(filters.limit ?? DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT),
+      Math.min(filters.limit ?? DEFAULT_PAGE_LIMIT, MAX_LISTING_LIMIT),
     );
 
     // For a property sort, the ORDER BY / cursor comparison runs against a

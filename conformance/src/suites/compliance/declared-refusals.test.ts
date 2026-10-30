@@ -1017,7 +1017,7 @@ describe("a query key no door declares", () => {
       ["/search", "missing_required_field"],
       ["/search?q=note&limit=101", "validation_error"],
       ["/export?format=zip", "validation_error"],
-      ["/edges?limit=501", "validation_error"],
+      ["/edges?limit=0", "validation_error"],
     ];
     for (const [path, code] of cases) {
       const own = await fetch(`${apiUrl}${path}`, {

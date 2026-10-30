@@ -1817,7 +1817,7 @@ describe("the scripted answers match the server's", () => {
     // The query a hydration sends, so a key the server refuses is one the
     // device would meet too.
     const page = await client.rawRequest(
-      "/edges?edge_type=parent-of&limit=200",
+      "/edges?edge_type=parent-of&limit=500",
     );
     expect(page.ok, JSON.stringify(page.error)).toBe(true);
     const listed = (page.data as { data: { id: string }[] }).data;

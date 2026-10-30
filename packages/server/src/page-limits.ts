@@ -1,8 +1,8 @@
 import { z } from "@hono/zod-openapi";
 
 /**
- * The page bound, in one place, so every route schema, description and
- * storage clamp reads the same number.
+ * The page bounds, in one place, so every route schema, description and
+ * storage clamp reads the same numbers.
  *
  * **The floor is load-bearing.** `ItemStore.list` guards its pagination with
  * `throw new Error("unreachable: hasMore but data is empty")`, and a `limit`
@@ -18,8 +18,18 @@ import { z } from "@hono/zod-openapi";
  * not.
  */
 
-/** Largest page any item, audit, connector or webhook door will return. */
+/**
+ * Largest page any item, audit, connector or webhook door but the item
+ * listing will return.
+ */
 export const MAX_PAGE_LIMIT = 200;
+
+/**
+ * Largest page `GET /items` will return. A device fills its copy from this
+ * listing one page per round trip, so over a link with a long round trip the
+ * number of pages, not the bytes, sets how long a first sync takes.
+ */
+export const MAX_LISTING_LIMIT = 500;
 
 /** What a door returns when the caller names no limit. */
 export const DEFAULT_PAGE_LIMIT = 50;
@@ -42,38 +52,62 @@ const CURSOR_DESCRIPTION =
  * The `limit` query parameter of a paginated route, described the same way
  * everywhere. A route that names no `default` leaves the page size to its
  * handler.
+ *
+ * A listing a device walks to fill its copy is `capped`: it reads a `limit`
+ * above `max` as `max` rather than refusing it, so a device built to ask for
+ * a larger page than a server allows still walks the listing by
+ * `next_cursor`. Every other door refuses it.
  */
 export function pageLimit(options: {
   max: number;
   default: number;
+  capped?: boolean;
 }): ReturnType<typeof limitWithDefault>;
 export function pageLimit(options: {
   max: number;
+  capped?: boolean;
 }): ReturnType<typeof limitWithoutDefault>;
-export function pageLimit(options: { max: number; default?: number }) {
+export function pageLimit(options: {
+  max: number;
+  default?: number;
+  capped?: boolean;
+}) {
+  const capped = options.capped ?? false;
   return options.default === undefined
-    ? limitWithoutDefault(options.max)
-    : limitWithDefault(options.max, options.default);
+    ? limitWithoutDefault(options.max, capped)
+    : limitWithDefault(options.max, options.default, capped);
 }
 
-function limitWithDefault(max: number, fallback: number) {
-  return z.coerce
-    .number()
-    .int()
-    .min(MIN_PAGE_LIMIT)
-    .max(max)
-    .default(fallback)
-    .describe(LIMIT_DESCRIPTION);
+function bounded(max: number, capped: boolean) {
+  // A capped limit is checked as an integer only after the cap, since `int()`
+  // also refuses a number past the safe-integer range, which is still "above".
+  return capped
+    ? z.coerce
+        .number()
+        .min(MIN_PAGE_LIMIT)
+        .transform((value) => Math.min(value, max))
+        .pipe(z.number().int())
+        .openapi({ type: "integer", minimum: MIN_PAGE_LIMIT })
+    : z.coerce.number().int().min(MIN_PAGE_LIMIT).max(max);
 }
 
-function limitWithoutDefault(max: number) {
-  return z.coerce
-    .number()
-    .int()
-    .min(MIN_PAGE_LIMIT)
-    .max(max)
-    .optional()
-    .describe(LIMIT_DESCRIPTION);
+function described(max: number, capped: boolean): string {
+  return capped
+    ? `${LIMIT_DESCRIPTION} Up to ${String(max)}; a larger value is read as ${String(max)}.`
+    : LIMIT_DESCRIPTION;
+}
+
+function limitWithDefault(max: number, fallback: number, capped: boolean) {
+  const limit = bounded(max, capped).default(fallback);
+  // The capped schema names its type for the document by hand, which hides
+  // the default from it.
+  return (capped ? limit.openapi({ default: fallback }) : limit).describe(
+    described(max, capped),
+  );
+}
+
+function limitWithoutDefault(max: number, capped: boolean) {
+  return bounded(max, capped).optional().describe(described(max, capped));
 }
 
 /** The `cursor` query parameter of a paginated route. */

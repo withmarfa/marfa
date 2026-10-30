@@ -18,7 +18,17 @@ use crate::wire::{
     WireMetadata, WirePage, WireType,
 };
 
-pub const PAGE_LIMIT: u32 = 200;
+/// The page asked of the item listing (`search-and-filters/limit-listing`).
+/// A larger page fills a copy in fewer round trips, but a server that refuses
+/// a `limit` above its bound, rather than reading it as the bound
+/// (`search-and-filters/limit-listing-capped`), refuses one above 200, and
+/// the contract version does not tell it from one that takes more.
+pub const ITEM_PAGE_LIMIT: u32 = 200;
+
+/// The page asked of the edge listings, the most they answer
+/// (`edges/list-limit`). A hydration reads a page per round trip, so a larger
+/// page fills a copy sooner over a slow link.
+pub const EDGE_PAGE_LIMIT: u32 = 500;
 
 /// The most ids `POST /items/bulk-get` takes in one request
 /// (`items/bulk-get-cap`).
@@ -82,7 +92,7 @@ pub struct Http {
     renewed: Arc<OnceLock<Renewed>>,
     /// Held while a renewal runs, so two calls refused at once renew once.
     renewing: Arc<Mutex<()>>,
-    /// Raised by `let_go`: no renewal starts after it.
+    /// Raised by `let_go`: no request or renewal starts after it.
     let_go: Arc<AtomicBool>,
     relocation: Arc<OnceLock<Mutex<Relocation>>>,
     reach: Option<String>,
@@ -456,10 +466,11 @@ impl Http {
         }
     }
 
-    /// Starts no renewal after this, and returns once a renewal already
-    /// under way has finished: a refresh token is spent when the server
-    /// answers it, so a process that ended between that answer and keeping
-    /// the new one would be signed out.
+    /// Starts no request or renewal after this, and returns once a renewal
+    /// already under way has finished: a refresh token is spent when the
+    /// server answers it, so a process that ended between that answer and
+    /// keeping the new one would be signed out. A request already sent runs
+    /// to its answer, which nobody reads.
     pub(crate) fn let_go(&self) {
         self.let_go.store(true, Ordering::SeqCst);
         drop(
@@ -568,8 +579,11 @@ impl Http {
         Ok(())
     }
 
+    /// A read run on a thread of its own, such as a hydration's next page and
+    /// the edges past its rows' blocks, may send several requests; once its
+    /// caller has let it go, none after the one in flight is sent.
     fn refuse_if_let_go(&self) -> Result<(), CoreError> {
-        if self.relocation.get().is_some() && self.let_go.load(Ordering::SeqCst) {
+        if self.let_go.load(Ordering::SeqCst) {
             Err(CoreError::Canceled)
         } else {
             Ok(())
@@ -714,7 +728,7 @@ impl Http {
         &self,
         query: &ItemsQuery<'_>,
     ) -> Result<WirePage<WireItemWithMetadata>, CoreError> {
-        let limit = PAGE_LIMIT.to_string();
+        let limit = ITEM_PAGE_LIMIT.to_string();
         let mut params: Vec<(&str, &str)> = query
             .r#type
             .map(|declared| ("type", declared))
@@ -794,7 +808,7 @@ impl Http {
         edge_type: &str,
         cursor: Option<&str>,
     ) -> Result<WirePage<WireEdge>, CoreError> {
-        let limit = PAGE_LIMIT.to_string();
+        let limit = EDGE_PAGE_LIMIT.to_string();
         let mut params: Vec<(&str, &str)> = vec![("edge_type", edge_type), ("limit", &limit)];
         if let Some(cursor) = cursor {
             params.push(("cursor", cursor));
@@ -807,7 +821,7 @@ impl Http {
         edge_type: &str,
         cursor: Option<&str>,
     ) -> Result<WirePage<WireEdge>, CoreError> {
-        let limit = PAGE_LIMIT.to_string();
+        let limit = EDGE_PAGE_LIMIT.to_string();
         let mut params: Vec<(&str, &str)> = vec![("edge_type", edge_type), ("limit", &limit)];
         if let Some(cursor) = cursor {
             params.push(("cursor", cursor));
@@ -967,7 +981,7 @@ impl Http {
         // written; the caller matches the whole name after.
         let searched = text.trim_end_matches('\\').replace('"', "\\\"");
         let filter = format!("properties.{field} contains \"{searched}\"");
-        let limit = PAGE_LIMIT.to_string();
+        let limit = ITEM_PAGE_LIMIT.to_string();
         let mut found = Vec::new();
         let mut cursor: Option<String> = None;
         for _ in 0..pages {
@@ -2725,6 +2739,45 @@ mod tests {
         assert!(http.edge_types().unwrap().is_empty());
         assert_eq!(server.seen("/types")[0].query, "");
         assert_eq!(server.seen("/edge-types")[0].query, "");
+    }
+
+    #[test]
+    fn each_listing_asks_for_a_page_every_server_takes() {
+        let server = crate::scripted::Scripted::start();
+        let empty = || {
+            vec![crate::scripted::json(
+                200,
+                r#"{"data":[],"next_cursor":null}"#,
+            )]
+        };
+        for path in ["/items", "/edges", "/items/n1/edges"] {
+            server.on(path, empty());
+        }
+        let http = Http::new(&server.url(), "k").unwrap();
+        http.items_page(&ItemsQuery {
+            r#type: None,
+            tier: SliceTier::All,
+            cursor: None,
+        })
+        .unwrap();
+        http.items_containing("title", "a", 1).unwrap();
+        http.edges_page("parent-of", None).unwrap();
+        http.item_edges_page("n1", "parent-of", None).unwrap();
+        let limits = |path: &str| -> Vec<String> {
+            server
+                .seen(path)
+                .iter()
+                .map(|seen| {
+                    url::form_urlencoded::parse(seen.query.as_bytes())
+                        .find(|(name, _)| name == "limit")
+                        .map(|(_, value)| value.into_owned())
+                        .unwrap_or_default()
+                })
+                .collect()
+        };
+        assert_eq!(limits("/items"), ["200", "200"]);
+        assert_eq!(limits("/edges"), ["500"]);
+        assert_eq!(limits("/items/n1/edges"), ["500"]);
     }
 
     #[test]

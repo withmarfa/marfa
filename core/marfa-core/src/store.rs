@@ -648,11 +648,40 @@ fn read_connection(conn: Connection, path: &Path) -> Result<Connection, CoreErro
 /// SQLite's default page cache of 2 MiB holds a few thousand rows, so a
 /// listing of a larger copy would read every page again from the file. The
 /// cache grows only as pages are read. The statement cache holds the
-/// statements a read of many bodies prepares for each body.
+/// statements a read of many bodies prepares for each body, and those a
+/// hydration runs for each row it writes.
 fn tune(conn: &Connection) -> Result<(), CoreError> {
     conn.execute_batch("PRAGMA cache_size = -32768;")?;
     conn.set_prepared_statement_cache_capacity(64);
     Ok(())
+}
+
+/// `write` in a transaction whose statement journals are held in memory.
+///
+/// Every write to an indexed table inside a transaction keeps a statement
+/// journal. SQLite moves one past 64 KiB to a temporary file, where every
+/// later statement in the transaction writes its pages again, which is nearly
+/// a third of the time a hydration spends writing a page. In memory, a
+/// statement journal is let go when its statement ends. It holds every page
+/// its statement changes, which for one row is small, and for a statement
+/// that clears a large copy could be most of it, so the connection takes up
+/// the default again once the transaction ends. SQLite reads the setting
+/// when the transaction starts to write, and cannot change it inside one.
+pub(crate) fn with_journals_in_memory<T>(
+    conn: &mut Connection,
+    write: impl FnOnce(&rusqlite::Transaction) -> Result<T, CoreError>,
+) -> Result<T, CoreError> {
+    conn.execute_batch("PRAGMA temp_store = MEMORY;")?;
+    let written = (|| -> Result<T, CoreError> {
+        let tx = conn.transaction()?;
+        let written = write(&tx)?;
+        tx.commit()?;
+        Ok(written)
+    })();
+    let restored = conn.execute_batch("PRAGMA temp_store = DEFAULT;");
+    let written = written?;
+    restored?;
+    Ok(written)
 }
 
 fn read_checked(conn: &Connection, path: &Path) -> Result<(), CoreError> {
@@ -1018,11 +1047,11 @@ pub fn meta_get(conn: &Connection, key: &str) -> Result<Option<String>, CoreErro
 }
 
 pub fn meta_set(conn: &Connection, key: &str, value: &str) -> Result<(), CoreError> {
-    conn.execute(
+    conn.prepare_cached(
         "INSERT INTO meta (key, value) VALUES (?1, ?2)
          ON CONFLICT (key) DO UPDATE SET value = excluded.value",
-        params![key, value],
-    )?;
+    )?
+    .execute(params![key, value])?;
     Ok(())
 }
 
@@ -1039,7 +1068,8 @@ pub fn set_drain_owed(conn: &Connection, owed: bool) -> Result<(), CoreError> {
 }
 
 pub fn meta_delete(conn: &Connection, key: &str) -> Result<(), CoreError> {
-    conn.execute("DELETE FROM meta WHERE key = ?1", [key])?;
+    conn.prepare_cached("DELETE FROM meta WHERE key = ?1")?
+        .execute([key])?;
     Ok(())
 }
 
@@ -1432,16 +1462,15 @@ pub fn stamp(conn: &Connection, subject: Subject, id: &str) -> Result<Option<Sta
         Subject::Edge => "edges",
     };
     Ok(conn
-        .query_row(
-            &format!("SELECT version, updated_at FROM {table} WHERE id = ?1"),
-            [id],
-            |row| {
-                Ok(Stamp {
-                    version: row.get(0)?,
-                    updated_at: row.get(1)?,
-                })
-            },
-        )
+        .prepare_cached(&format!(
+            "SELECT version, updated_at FROM {table} WHERE id = ?1"
+        ))?
+        .query_row([id], |row| {
+            Ok(Stamp {
+                version: row.get(0)?,
+                updated_at: row.get(1)?,
+            })
+        })
         .optional()?)
 }
 
@@ -1604,29 +1633,24 @@ fn subject_name(subject: Subject) -> &'static str {
 }
 
 fn set_beneath(conn: &Connection, subject: Subject, id: &str, row: &str) -> Result<(), CoreError> {
-    conn.execute(
+    conn.prepare_cached(
         "INSERT INTO beneath (subject, id, row) VALUES (?1, ?2, ?3)
          ON CONFLICT (subject, id) DO UPDATE SET row = excluded.row",
-        params![subject_name(subject), id, row],
-    )?;
+    )?
+    .execute(params![subject_name(subject), id, row])?;
     Ok(())
 }
 
 fn drop_beneath(conn: &Connection, subject: Subject, id: &str) -> Result<(), CoreError> {
-    conn.execute(
-        "DELETE FROM beneath WHERE subject = ?1 AND id = ?2",
-        params![subject_name(subject), id],
-    )?;
+    conn.prepare_cached("DELETE FROM beneath WHERE subject = ?1 AND id = ?2")?
+        .execute(params![subject_name(subject), id])?;
     Ok(())
 }
 
 fn beneath_row(conn: &Connection, subject: Subject, id: &str) -> Result<Option<String>, CoreError> {
     Ok(conn
-        .query_row(
-            "SELECT row FROM beneath WHERE subject = ?1 AND id = ?2",
-            params![subject_name(subject), id],
-            |row| row.get(0),
-        )
+        .prepare_cached("SELECT row FROM beneath WHERE subject = ?1 AND id = ?2")?
+        .query_row(params![subject_name(subject), id], |row| row.get(0))
         .optional()?)
 }
 
@@ -1797,10 +1821,8 @@ pub fn owed_read_backs(conn: &Connection) -> Result<Vec<Owed>, CoreError> {
 }
 
 pub fn settle_read_back(conn: &Connection, subject: Subject, id: &str) -> Result<(), CoreError> {
-    conn.execute(
-        "DELETE FROM read_backs WHERE subject = ?1 AND id = ?2",
-        params![subject_name(subject), id],
-    )?;
+    conn.prepare_cached("DELETE FROM read_backs WHERE subject = ?1 AND id = ?2")?
+        .execute(params![subject_name(subject), id])?;
     Ok(())
 }
 
@@ -2999,7 +3021,7 @@ fn read_writes(
     filter: &str,
     values: impl rusqlite::Params,
 ) -> Result<Vec<QueuedWrite>, CoreError> {
-    let mut statement = conn.prepare(&format!(
+    let mut statement = conn.prepare_cached(&format!(
         "SELECT {QUEUE_COLUMNS} FROM queue {filter} ORDER BY seq ASC"
     ))?;
     // Positional, in `QUEUE_COLUMNS` order: two columns of the same type
@@ -3570,21 +3592,22 @@ fn index_row(
 ) -> Result<(), CoreError> {
     let tags = tags_for_one(conn, id)?;
     let text = fts_text(properties, indexing);
-    conn.execute("DELETE FROM items_fts WHERE rowid = ?1", [seq])?;
+    conn.prepare_cached("DELETE FROM items_fts WHERE rowid = ?1")?
+        .execute([seq])?;
     if ItemState::from_str_checked(state)? != ItemState::Trashed {
-        conn.execute(
+        conn.prepare_cached(
             "INSERT INTO items_fts (rowid, title, body, description, name, extra, tags)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-            params![
-                seq,
-                text.title,
-                text.body,
-                text.description,
-                text.name,
-                text.extra,
-                tags.join(" ")
-            ],
-        )?;
+        )?
+        .execute(params![
+            seq,
+            text.title,
+            text.body,
+            text.description,
+            text.name,
+            text.extra,
+            tags.join(" ")
+        ])?;
     }
     Ok(())
 }
@@ -3682,7 +3705,7 @@ pub fn upsert_item(
     crate::body::rule::rows_changed(conn)?;
     crate::body::rule::item_changing(conn, &item.id, Some(item))?;
     let before = attachments_before(conn, &[&item.id])?;
-    conn.execute(
+    conn.prepare_cached(
         "INSERT INTO items (id, type, state, tier, version, schema_version, source, source_id, occurred_at, created_at, updated_at, properties, capture_latitude, capture_longitude)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
          ON CONFLICT (id) DO UPDATE SET
@@ -3693,7 +3716,8 @@ pub fn upsert_item(
            updated_at = excluded.updated_at, properties = excluded.properties,
            capture_latitude = excluded.capture_latitude,
            capture_longitude = excluded.capture_longitude",
-        params![
+    )?
+    .execute(params![
             item.id,
             item.r#type,
             item.state,
@@ -3708,19 +3732,19 @@ pub fn upsert_item(
             js::json(&Value::Object(js::object_order(&item.properties))),
             item.capture_latitude,
             item.capture_longitude,
-        ],
-    )?;
+    ])?;
     if let Some(tags) = tags {
-        conn.execute("DELETE FROM tags WHERE item_id = ?1", [&item.id])?;
+        conn.prepare_cached("DELETE FROM tags WHERE item_id = ?1")?
+            .execute([&item.id])?;
         let mut insert =
             conn.prepare_cached("INSERT OR IGNORE INTO tags (item_id, tag) VALUES (?1, ?2)")?;
         for tag in tags {
             insert.execute(params![item.id, tag])?;
         }
     }
-    let seq: i64 = conn.query_row("SELECT seq FROM items WHERE id = ?1", [&item.id], |row| {
-        row.get(0)
-    })?;
+    let seq: i64 = conn
+        .prepare_cached("SELECT seq FROM items WHERE id = ?1")?
+        .query_row([&item.id], |row| row.get(0))?;
     index_row(conn, seq, &item.id, &item.state, &item.properties, indexing)?;
     attachments_changed(conn, &[&item.id], before)
 }
@@ -4180,7 +4204,7 @@ pub fn upsert_edge(conn: &Connection, edge: &WireEdge) -> Result<(), CoreError> 
     ends.push(edge.source_id.clone());
     let ends: Vec<&str> = ends.iter().map(String::as_str).collect();
     let before = attachments_before(conn, &ends)?;
-    conn.execute(
+    conn.prepare_cached(
         "INSERT INTO edges (id, source_id, target_id, edge_type, properties, version, created_at, updated_at)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
          ON CONFLICT (id) DO UPDATE SET
@@ -4188,7 +4212,8 @@ pub fn upsert_edge(conn: &Connection, edge: &WireEdge) -> Result<(), CoreError> 
            edge_type = excluded.edge_type, properties = excluded.properties,
            version = excluded.version, created_at = excluded.created_at,
            updated_at = excluded.updated_at",
-        params![
+    )?
+    .execute(params![
             edge.id,
             edge.source_id,
             edge.target_id,
@@ -4197,8 +4222,7 @@ pub fn upsert_edge(conn: &Connection, edge: &WireEdge) -> Result<(), CoreError> 
             edge.version,
             edge.created_at,
             edge.updated_at,
-        ],
-    )?;
+    ])?;
     attachments_changed(conn, &ends, before)
 }
 
@@ -6054,6 +6078,31 @@ pub(crate) mod testing {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn statement_journals_are_held_in_memory_only_while_a_page_is_written() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut conn = super::open(&temp.path().join("core.sqlite")).unwrap();
+        let read = |conn: &rusqlite::Connection| {
+            conn.query_row("PRAGMA temp_store", [], |row| row.get::<_, i64>(0))
+                .unwrap()
+        };
+        let (default, memory) = (0, 2);
+        assert_eq!(read(&conn), default);
+        let inside = super::with_journals_in_memory(&mut conn, |tx| Ok(read(tx))).unwrap();
+        assert_eq!(inside, memory);
+        assert_eq!(read(&conn), default);
+        let failed = super::with_journals_in_memory(&mut conn, |tx| {
+            assert_eq!(read(tx), memory);
+            Err::<(), _>(super::CoreError::Canceled)
+        });
+        assert!(matches!(failed, Err(super::CoreError::Canceled)));
+        assert_eq!(
+            read(&conn),
+            default,
+            "a failed write left journals in memory"
+        );
+    }
+
     #[test]
     fn the_stated_size_is_the_largest_whole_number_an_item_states_for_the_bytes() {
         let temp = tempfile::tempdir().unwrap();

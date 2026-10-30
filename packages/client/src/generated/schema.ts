@@ -6431,7 +6431,7 @@ export interface operations {
                 updated_after?: string;
                 /** @description Only return items changed before this time. It doesn't change the ordering, so it works with any `sort`. */
                 updated_before?: string;
-                /** @description The maximum number of results to return. */
+                /** @description The maximum number of results to return. Up to 500; a larger value is read as 500. */
                 limit?: number;
                 /** @description The `next_cursor` from the previous page. Leave it out to get the first page. */
                 cursor?: string;
@@ -13242,7 +13242,7 @@ export interface operations {
                 updated_after?: string;
                 /** @description Only return edges that changed before this RFC 3339 time. It doesn't change the order. */
                 updated_before?: string;
-                /** @description The maximum number of results to return. */
+                /** @description The maximum number of results to return. Up to 500; a larger value is read as 500. */
                 limit?: number;
                 /** @description The `next_cursor` from the previous page. Leave it out to get the first page. */
                 cursor?: string;
@@ -14492,7 +14492,7 @@ export interface operations {
             query?: {
                 /** @description Only return edges of these edge types, comma-separated, up to 10. */
                 edge_type?: string;
-                /** @description The maximum number of results to return. */
+                /** @description The maximum number of results to return. Up to 500; a larger value is read as 500. */
                 limit?: number;
                 /** @description The `next_cursor` from the previous page. Leave it out to get the first page. */
                 cursor?: string;
@@ -14672,7 +14672,7 @@ export interface operations {
             query?: {
                 /** @description Only return edges of these edge types, comma-separated, up to 10. */
                 edge_type?: string;
-                /** @description The maximum number of results to return. */
+                /** @description The maximum number of results to return. Up to 500; a larger value is read as 500. */
                 limit?: number;
                 /** @description The `next_cursor` from the previous page. Leave it out to get the first page. */
                 cursor?: string;
