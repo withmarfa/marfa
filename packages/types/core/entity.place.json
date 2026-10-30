@@ -45,6 +45,6 @@
   },
   "required": [],
   "display_hints": {
-    "icon": "map-pin"
+    "icon": "lucide:map-pin"
   }
 }

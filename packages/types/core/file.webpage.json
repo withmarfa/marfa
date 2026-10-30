@@ -7,6 +7,6 @@
   "fields": {},
   "display_hints": {
     "title_field": "title",
-    "icon": "globe"
+    "icon": "lucide:globe"
   }
 }

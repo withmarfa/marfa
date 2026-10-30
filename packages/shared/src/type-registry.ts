@@ -22,6 +22,7 @@ import {
   TYPE_ROLES,
   iconNameIssue,
   isRoleConstraint,
+  lucideIconId,
   normalizeEdgeProperties,
   roleFromConstraint,
   unreadKeys,
@@ -84,6 +85,7 @@ export {
   TYPE_ROLES,
   iconNameIssue,
   isRoleConstraint,
+  lucideIconId,
   roleFromConstraint,
 };
 

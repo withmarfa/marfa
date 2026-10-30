@@ -55,7 +55,7 @@
    "display_hints": {
     "title_field": "title",
     "body_field": "body",
-    "icon": "bookmark"
+    "icon": "lucide:bookmark"
    },
    "merge_policy": {
     "fields": {
@@ -84,7 +84,7 @@
    "display_hints": {
     "title_field": "title",
     "body_field": "description",
-    "icon": "layers"
+    "icon": "lucide:layers"
    },
    "merge_policy": {
     "default": "last_writer_wins"
@@ -143,7 +143,7 @@
    },
    "display_hints": {
     "title_field": "name",
-    "icon": "shapes"
+    "icon": "lucide:shapes"
    },
    "merge_policy": {
     "default": "last_writer_wins"
@@ -243,7 +243,7 @@
     }
    },
    "display_hints": {
-    "icon": "user"
+    "icon": "lucide:user"
    },
    "merge_policy": {
     "default": "last_writer_wins"
@@ -336,7 +336,7 @@
     }
    },
    "display_hints": {
-    "icon": "map-pin"
+    "icon": "lucide:map-pin"
    },
    "merge_policy": {
     "default": "last_writer_wins"
@@ -433,7 +433,7 @@
    "display_hints": {
     "title_field": "title",
     "body_field": "description",
-    "icon": "calendar"
+    "icon": "lucide:calendar"
    },
    "merge_policy": {
     "fields": {
@@ -502,7 +502,7 @@
    },
    "display_hints": {
     "title_field": "title",
-    "icon": "file"
+    "icon": "lucide:file"
    },
    "merge_policy": {
     "default": "last_writer_wins"
@@ -572,7 +572,7 @@
     }
    },
    "display_hints": {
-    "icon": "file-music"
+    "icon": "lucide:file-music"
    },
    "merge_policy": {
     "default": "last_writer_wins"
@@ -662,7 +662,7 @@
     }
    },
    "display_hints": {
-    "icon": "file-image"
+    "icon": "lucide:file-image"
    },
    "merge_policy": {
     "default": "last_writer_wins"
@@ -752,7 +752,7 @@
     }
    },
    "display_hints": {
-    "icon": "file-video-camera"
+    "icon": "lucide:file-video-camera"
    },
    "merge_policy": {
     "default": "last_writer_wins"
@@ -819,7 +819,7 @@
    },
    "display_hints": {
     "title_field": "title",
-    "icon": "globe"
+    "icon": "lucide:globe"
    },
    "merge_policy": {
     "default": "last_writer_wins"
@@ -876,7 +876,7 @@
    "display_hints": {
     "title_field": "text",
     "body_field": "note",
-    "icon": "highlighter"
+    "icon": "lucide:highlighter"
    },
    "merge_policy": {
     "fields": {
@@ -941,7 +941,7 @@
    "display_hints": {
     "title_field": "title",
     "body_field": "body",
-    "icon": "library-big"
+    "icon": "lucide:library-big"
    },
    "merge_policy": {
     "fields": {
@@ -1014,7 +1014,7 @@
     }
    },
    "display_hints": {
-    "icon": "disc-3"
+    "icon": "lucide:disc-3"
    },
    "merge_policy": {
     "fields": {
@@ -1090,7 +1090,7 @@
     }
    },
    "display_hints": {
-    "icon": "newspaper"
+    "icon": "lucide:newspaper"
    },
    "merge_policy": {
     "fields": {
@@ -1167,7 +1167,7 @@
     }
    },
    "display_hints": {
-    "icon": "book-open"
+    "icon": "lucide:book-open"
    },
    "merge_policy": {
     "fields": {
@@ -1263,7 +1263,7 @@
     }
    },
    "display_hints": {
-    "icon": "circle-play"
+    "icon": "lucide:circle-play"
    },
    "merge_policy": {
     "fields": {
@@ -1348,7 +1348,7 @@
     }
    },
    "display_hints": {
-    "icon": "film"
+    "icon": "lucide:film"
    },
    "merge_policy": {
     "fields": {
@@ -1433,7 +1433,7 @@
     }
    },
    "display_hints": {
-    "icon": "tv"
+    "icon": "lucide:tv"
    },
    "merge_policy": {
     "fields": {
@@ -1525,7 +1525,7 @@
     }
    },
    "display_hints": {
-    "icon": "audio-lines"
+    "icon": "lucide:audio-lines"
    },
    "merge_policy": {
     "fields": {
@@ -1558,7 +1558,7 @@
    },
    "display_hints": {
     "body_field": "body",
-    "icon": "message-square"
+    "icon": "lucide:message-square"
    },
    "merge_policy": {
     "fields": {
@@ -1594,7 +1594,7 @@
    "display_hints": {
     "title_field": "title",
     "body_field": "body",
-    "icon": "sticky-note"
+    "icon": "lucide:sticky-note"
    },
    "merge_policy": {
     "fields": {
@@ -1675,7 +1675,7 @@
    "display_hints": {
     "title_field": "title",
     "body_field": "body",
-    "icon": "square-check-big"
+    "icon": "lucide:square-check-big"
    },
    "merge_policy": {
     "fields": {

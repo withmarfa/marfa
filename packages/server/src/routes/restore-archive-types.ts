@@ -69,7 +69,7 @@ export interface ArchiveTypeResult {
 }
 
 /** The owner's icon for a type, as an archive carries it. An `icon` that is
- *  not a name in the pinned Lucide release is `undefined`, and skipped. */
+ *  not the ID of an icon in a pinned set is `undefined`, and skipped. */
 export interface ArchiveTypeIcon {
   typeId: string;
   icon: string | undefined;
@@ -310,8 +310,8 @@ function parseTypeEntries(entries: ArchiveTypeEntry[]): {
         );
       }
       // A line without a string icon is damaged and refused. A string that
-      // names no icon of this release is a well-formed line from a build with
-      // another release: it is skipped and counted, as an edge that cannot be
+      // names no icon of the pinned sets is a well-formed line from a build
+      // that pins others: it is skipped and counted, as an edge that cannot be
       // restored is.
       const refused = iconNameIssue(raw.icon, "type_icon.icon");
       if (typeof raw.icon !== "string" && refused) {

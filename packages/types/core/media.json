@@ -57,7 +57,7 @@
   "display_hints": {
     "title_field": "title",
     "body_field": "body",
-    "icon": "library-big"
+    "icon": "lucide:library-big"
   },
   "merge_policy": {
     "fields": {

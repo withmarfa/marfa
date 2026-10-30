@@ -251,7 +251,7 @@ describe("starting on a database at schema version 1", () => {
 
     const copies = backups(path);
     expect(copies).toHaveLength(1);
-    expect(copies[0]).toMatch(/^marfa\.db\.backup-schema-1-to-2-\d{8}T\d{9}Z$/);
+    expect(copies[0]).toMatch(/^marfa\.db\.backup-schema-1-to-3-\d{8}T\d{9}Z$/);
     expect(await contents(join(path, "..", copies[0] ?? ""))).toEqual(found);
   });
 
@@ -354,25 +354,131 @@ describe("starting on a database at schema version 1", () => {
   });
 });
 
+/** A file at schema version 2, holding `types` and `type_icons` rows. */
+async function versionTwo(
+  path: string,
+  types: Record<string, unknown>,
+  icons: Record<string, string>,
+): Promise<void> {
+  const client = createClient({ url: `file:${path}` });
+  await client.executeMultiple(BASELINE_SQL);
+  await MIGRATIONS[0]?.apply(client);
+  const at = "2026-10-01T00:00:00.000Z";
+  for (const [id, schema] of Object.entries(types)) {
+    await client.execute({
+      sql: "INSERT INTO types (id, schema, origin, created_at, updated_at) VALUES (?, ?, 'user', ?, ?)",
+      args: [
+        id,
+        typeof schema === "string" ? schema : JSON.stringify(schema),
+        at,
+        at,
+      ],
+    });
+  }
+  for (const [id, icon] of Object.entries(icons)) {
+    await client.execute({
+      sql: "INSERT INTO type_icons (type_id, icon, updated_at) VALUES (?, ?, ?)",
+      args: [id, icon, at],
+    });
+  }
+  await client.execute("PRAGMA user_version = 2");
+  client.close();
+}
+
+describe("starting on a database at schema version 2", () => {
+  it("writes each stored icon as a Lucide icon ID, and drops one Lucide does not have", async () => {
+    const path = scratch();
+    const fields = { name: { type: "string" } };
+    const definition = (display_hints?: Record<string, string>) => ({
+      id: "user.x",
+      version: 1,
+      fields,
+      ...(display_hints && { display_hints }),
+    });
+    await versionTwo(
+      path,
+      {
+        "user.bare": definition({ title_field: "name", icon: "star" }),
+        "user.gone": definition({ title_field: "name", icon: "no-such-icon" }),
+        "user.only": definition({ icon: "github" }),
+        "user.prefixed": definition({ icon: "simple-icons:github" }),
+        "user.plain": definition(),
+        "user.damaged": "not json",
+      },
+      {
+        "user.bare": "heart",
+        "user.gone": "Heart",
+        "user.prefixed": "lucide:moon",
+      },
+    );
+
+    await open(path);
+
+    const client = createClient({ url: `file:${path}` });
+    const types = Object.fromEntries(
+      (
+        await client.execute("SELECT id, schema, updated_at FROM types")
+      ).rows.map((row) => [row.id as string, row]),
+    );
+    const icons = Object.fromEntries(
+      (await client.execute("SELECT type_id, icon FROM type_icons")).rows.map(
+        (row) => [row.type_id as string, row.icon],
+      ),
+    );
+    const version = await client.execute("PRAGMA user_version");
+    client.close();
+    const hints = (id: string) =>
+      (JSON.parse(types[id]?.schema as string) as { display_hints?: unknown })
+        .display_hints;
+
+    expect(version.rows[0]?.user_version).toBe(SCHEMA_VERSION);
+    expect(hints("user.bare")).toEqual({
+      title_field: "name",
+      icon: "lucide:star",
+    });
+    expect(hints("user.gone")).toEqual({ title_field: "name" });
+    expect(hints("user.only")).toBeUndefined();
+    expect(types["user.only"]?.schema).toBe(JSON.stringify(definition()));
+    expect(hints("user.prefixed")).toEqual({ icon: "simple-icons:github" });
+    expect(types["user.plain"]?.schema).toBe(JSON.stringify(definition()));
+    expect(types["user.damaged"]?.schema).toBe("not json");
+    expect(types["user.bare"]?.updated_at).toBe("2026-10-01T00:00:00.000Z");
+    expect(icons).toEqual({
+      "user.bare": "lucide:heart",
+      "user.prefixed": "lucide:moon",
+    });
+  });
+});
+
 describe("starting on a database at this build's schema version", () => {
-  it("stamps an unstamped one without a copy or an update", async () => {
+  it("updates an unstamped one from the last version a build left unstamped", async () => {
+    // Schema version 3 changed rows and not tables, so an unstamped file of
+    // this shape is at version 2: every build since stamps what it writes.
+    expect(Math.max(...UNSTAMPED_VERSIONS)).toBe(2);
     const path = scratch();
     const client = createClient({ url: `file:${path}` });
     await client.executeMultiple(SCHEMA_SQL);
     await client.executeMultiple(CREATE_FTS);
     await fill(client);
     client.close();
-    const tables = ownTables(await currentShape());
+    // The fixture's icons are bare names no icon set has, which the update
+    // to version 3 removes; every other row stays.
+    const tables = ownTables(await currentShape()).filter(
+      (table) => table !== "type_icons",
+    );
     const before = await rowsOf(path, tables);
 
     await open(path);
 
     const check = createClient({ url: `file:${path}` });
     const version = await check.execute("PRAGMA user_version");
+    const icons = await check.execute("SELECT * FROM type_icons");
     check.close();
     expect(version.rows[0]?.user_version).toBe(SCHEMA_VERSION);
     expect(await rowsOf(path, tables)).toEqual(before);
-    expect(backups(path)).toEqual([]);
+    expect(icons.rows).toEqual([]);
+    expect(backups(path)).toHaveLength(1);
+    expect(backups(path)[0]).toMatch(/-schema-2-to-3-/);
   });
 });
 
@@ -514,7 +620,7 @@ describe("an update that cannot reach the file or the copy", () => {
     try {
       vi.setSystemTime(new Date("2026-10-27T10:15:00.123Z"));
       writeFileSync(
-        `${path}.backup-schema-1-to-2-20261027T101500123Z`,
+        `${path}.backup-schema-1-to-3-20261027T101500123Z`,
         "in the way",
       );
 

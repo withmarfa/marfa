@@ -31,6 +31,6 @@
     }
   },
   "display_hints": {
-    "icon": "file-image"
+    "icon": "lucide:file-image"
   }
 }

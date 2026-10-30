@@ -186,7 +186,11 @@ describe("resolveTypeSchema display_hints", () => {
     id: "acme.shelf",
     version: 1,
     fields: { name: { type: "string" }, text: { type: "string" } },
-    display_hints: { title_field: "name", body_field: "text", icon: "box" },
+    display_hints: {
+      title_field: "name",
+      body_field: "text",
+      icon: "lucide:box",
+    },
   };
 
   it("takes each hint from the nearest type that sets that hint", () => {
@@ -197,7 +201,7 @@ describe("resolveTypeSchema display_hints", () => {
         version: 1,
         fields: {},
         parent: "acme.shelf",
-        display_hints: { icon: "star" },
+        display_hints: { icon: "lucide:star" },
       },
       {
         id: "acme.shelf.a.b",
@@ -210,11 +214,15 @@ describe("resolveTypeSchema display_hints", () => {
     expect(resolveTypeSchema("acme.shelf.a", resolver)?.display_hints).toEqual({
       title_field: "name",
       body_field: "text",
-      icon: "star",
+      icon: "lucide:star",
     });
     expect(
       resolveTypeSchema("acme.shelf.a.b", resolver)?.display_hints,
-    ).toEqual({ title_field: "label", body_field: "text", icon: "star" });
+    ).toEqual({
+      title_field: "label",
+      body_field: "text",
+      icon: "lucide:star",
+    });
   });
 
   it("shows a parent's title and the child's own icon together", () => {
@@ -225,12 +233,12 @@ describe("resolveTypeSchema display_hints", () => {
         version: 1,
         fields: {},
         parent: "acme.shelf",
-        display_hints: { icon: "star" },
+        display_hints: { icon: "lucide:star" },
       },
     ]);
     expect(resolveTypeSchema("acme.shelf.a", resolver)?.display_hints).toEqual({
       title_field: "name",
-      icon: "star",
+      icon: "lucide:star",
     });
   });
 

@@ -1,7 +1,7 @@
 /**
  * The owner's icons travel with an archive: an export writes one line for
  * each, a restore adds the ones the target has none for and replaces nothing,
- * and a line that names no Lucide icon or no type refuses the archive before
+ * and a line that names no type, or holds no icon string, refuses the archive before
  * anything is written.
  */
 import { unregisterTypeSchema } from "@withmarfa/shared";
@@ -69,14 +69,14 @@ async function iconedSource(): Promise<{
     body: {
       id: custom,
       fields: { title: { type: "string" } },
-      display_hints: { icon: "star" },
+      display_hints: { icon: "lucide:star" },
     },
   });
   expect(registered.status, await registered.clone().text()).toBe(201);
-  expect((await ownerSetIcon(source, custom, "box")).status).toBe(200);
-  expect((await ownerSetIcon(source, "core.note", "notebook-pen")).status).toBe(
-    200,
-  );
+  expect((await ownerSetIcon(source, custom, "lucide:box")).status).toBe(200);
+  expect(
+    (await ownerSetIcon(source, "core.note", "lucide:notebook-pen")).status,
+  ).toBe(200);
   return { source, custom, archive: await exportArchive(source) };
 }
 
@@ -98,8 +98,8 @@ describe("the owner's icons in an archive", () => {
       .map((line) => line.type_icon);
     expect(lines).toEqual(
       expect.arrayContaining([
-        { type_id: custom, icon: "box" },
-        { type_id: "core.note", icon: "notebook-pen" },
+        { type_id: custom, icon: "lucide:box" },
+        { type_id: "core.note", icon: "lucide:notebook-pen" },
       ]),
     );
     expect(lines).toHaveLength(2);
@@ -113,7 +113,9 @@ describe("the owner's icons in an archive", () => {
     const { custom, archive } = await iconedSource();
     unregisterTypeSchema(custom);
     const target = await newContext();
-    expect((await ownerSetIcon(target, "core.note", "heart")).status).toBe(200);
+    expect(
+      (await ownerSetIcon(target, "core.note", "lucide:heart")).status,
+    ).toBe(200);
 
     const restored = await restore(target, archive);
     expect(restored.status, await restored.clone().text()).toBe(200);
@@ -122,8 +124,8 @@ describe("the owner's icons in an archive", () => {
       type_icons_skipped: 1,
       type_icons_skipped_reasons: { already_set: 1 },
     });
-    expect(await iconOn(target, custom)).toBe("box");
-    expect(await iconOn(target, "core.note")).toBe("heart");
+    expect(await iconOn(target, custom)).toBe("lucide:box");
+    expect(await iconOn(target, "core.note")).toBe("lucide:heart");
 
     // Restoring the same archive again changes nothing.
     const again = await restore(target, archive);
@@ -134,14 +136,14 @@ describe("the owner's icons in an archive", () => {
     });
   });
 
-  it("skips and counts an icon outside the pinned Lucide release, and restores the rest", async () => {
+  it("skips and counts an icon outside the pinned sets, and restores the rest", async () => {
     const { custom, archive } = await iconedSource();
     const entries = await extractArchive(archive);
     const lines = entries.get("types.ndjson")!.toString();
     const bad = await repack(entries, {
       "types.ndjson":
         lines +
-        `${JSON.stringify({ type_icon: { type_id: "core.task", icon: "Not-An-Icon" } })}\n`,
+        `${JSON.stringify({ type_icon: { type_id: "core.task", icon: "star" } })}\n`,
     });
     unregisterTypeSchema(custom);
     const target = await newContext();
@@ -152,9 +154,9 @@ describe("the owner's icons in an archive", () => {
       type_icons_skipped: 1,
       type_icons_skipped_reasons: { unknown_icon: 1 },
     });
-    expect(await iconOn(target, custom)).toBe("box");
-    expect(await iconOn(target, "core.note")).toBe("notebook-pen");
-    expect(await iconOn(target, "core.task")).not.toBe("Not-An-Icon");
+    expect(await iconOn(target, custom)).toBe("lucide:box");
+    expect(await iconOn(target, "core.note")).toBe("lucide:notebook-pen");
+    expect(await iconOn(target, "core.task")).not.toBe("star");
     expect((await target.storage.types.icons()).has("core.task")).toBe(false);
   });
 
@@ -165,7 +167,7 @@ describe("the owner's icons in an archive", () => {
     for (const line of [
       { type_icon: { type_id: "core.task" } },
       { type_icon: { type_id: "core.task", icon: 7 } },
-      { type_icon: { icon: "box" } },
+      { type_icon: { icon: "lucide:box" } },
     ]) {
       const bad = await repack(entries, {
         "types.ndjson": `${lines}${JSON.stringify(line)}\n`,
@@ -184,7 +186,7 @@ describe("the owner's icons in an archive", () => {
     const bad = await repack(entries, {
       "types.ndjson":
         entries.get("types.ndjson")!.toString() +
-        `${JSON.stringify({ type_icon: { type_id: "user.nothing_here", icon: "box" } })}\n`,
+        `${JSON.stringify({ type_icon: { type_id: "user.nothing_here", icon: "lucide:box" } })}\n`,
     });
     unregisterTypeSchema(custom);
     const target = await newContext();

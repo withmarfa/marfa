@@ -63,6 +63,32 @@ function clearIcon(who: MarfaClient, id: string) {
   });
 }
 
+/**
+ * Values no door takes as an icon: a bare name, a set the contract does not
+ * accept, a name outside its set's pinned list, an alias, and malformed IDs.
+ * `lucide:alert-circle` is an alias of `lucide:circle-alert` in the pinned
+ * Lucide data.
+ */
+const REFUSED_ICONS = [
+  "star",
+  "github",
+  "mdi:star",
+  "lucide:not-an-icon",
+  "lucide:github",
+  "simple-icons:star",
+  "lucide:alert-circle",
+  "lucide:Star",
+  "Lucide:star",
+  "lucide:",
+  ":star",
+  "lucide:star:filled",
+  " lucide:star",
+  "",
+];
+
+/** The witnesses: an icon from each accepted set. */
+const ACCEPTED_ICONS = ["lucide:star", "simple-icons:github"];
+
 async function iconOf(id: string): Promise<string | undefined> {
   const read = await client.getType(id);
   expect(read.ok).toBe(true);
@@ -70,11 +96,31 @@ async function iconOf(id: string): Promise<string | undefined> {
 }
 
 describe("a type's icon", () => {
-  it("refuses a display_hints.icon that is not a Lucide name on every door that takes a definition", async () => {
-    const id = await register({ display_hints: { icon: "star" } });
-    expect(await iconOf(id)).toBe("star");
+  it("refuses a display_hints.icon that is not an icon ID from a pinned set on every door that takes a definition", async () => {
+    for (const icon of ACCEPTED_ICONS) {
+      const taken = await register({ display_hints: { icon } });
+      expect(await iconOf(taken)).toBe(icon);
+      const fields = { heading: { type: "string" as const } };
+      const replaced = await client.replaceType(taken, {
+        id: taken,
+        fields,
+        display_hints: { icon },
+      });
+      expect(replaced.status, `PUT /types/{id} with ${icon}`).toBe(200);
+      const normalized = await client.rawRequest("/types/normalize", {
+        method: "POST",
+        body: {
+          id: `user.icons-norm-${ctx.runId}`,
+          fields,
+          display_hints: { icon },
+        },
+      });
+      expect(normalized.status, `POST /types/normalize with ${icon}`).toBe(200);
+    }
+    const id = await register({ display_hints: { icon: "lucide:star" } });
+    expect(await iconOf(id)).toBe("lucide:star");
 
-    for (const bad of ["Star", "STAR", "not-a-lucide-icon", "github", ""]) {
+    for (const bad of REFUSED_ICONS) {
       const fields = { heading: { type: "string" as const } };
       const posted = await client.registerType({
         id: `user.icons-bad-${ctx.runId}`,
@@ -106,7 +152,7 @@ describe("a type's icon", () => {
       expect(JSON.stringify(normalized.error)).toContain("display_hints.icon");
     }
     // The refused replacements left the type as it was.
-    expect(await iconOf(id)).toBe("star");
+    expect(await iconOf(id)).toBe("lucide:star");
   });
 
   it("stores a body field's value as sent, whatever Markdown it holds", async () => {
@@ -131,7 +177,7 @@ describe("a type's icon", () => {
 
   it("lists the hints a type declares and not those it inherits", async () => {
     const parent = await register({
-      display_hints: { title_field: "heading", icon: "star" },
+      display_hints: { title_field: "heading", icon: "lucide:star" },
     });
     minted += 1;
     const child = `${parent}.child`;
@@ -152,35 +198,35 @@ describe("a type's icon", () => {
     expect((await client.getType(child)).data.display_hints).toEqual({
       title_field: "heading",
       body_field: "text",
-      icon: "star",
+      icon: "lucide:star",
     });
   });
 });
 
 describe("the owner's icon for a type", () => {
   it("sets the owner's icon for a type and reads it back", async () => {
-    const id = await register({ display_hints: { icon: "star" } });
-    const set = await setIcon(owner, id, "heart");
+    const id = await register({ display_hints: { icon: "lucide:star" } });
+    const set = await setIcon(owner, id, "lucide:heart");
     expect(set.status, JSON.stringify(set.error)).toBe(200);
     await expectMatchesSchema("PUT", "/types/{id}/icon", 200, set.data);
-    expect(set.data.type.display_hints?.icon).toBe("heart");
-    expect(await iconOf(id)).toBe("heart");
+    expect(set.data.type.display_hints?.icon).toBe("lucide:heart");
+    expect(await iconOf(id)).toBe("lucide:heart");
   });
 
   it("clears the owner's icon, and clearing again changes nothing", async () => {
-    const id = await register({ display_hints: { icon: "star" } });
-    expect((await setIcon(owner, id, "heart")).status).toBe(200);
+    const id = await register({ display_hints: { icon: "lucide:star" } });
+    expect((await setIcon(owner, id, "lucide:heart")).status).toBe(200);
     const cleared = await clearIcon(owner, id);
     expect(cleared.status, JSON.stringify(cleared.error)).toBe(200);
     await expectMatchesSchema("DELETE", "/types/{id}/icon", 200, cleared.data);
-    expect(cleared.data.type.display_hints?.icon).toBe("star");
+    expect(cleared.data.type.display_hints?.icon).toBe("lucide:star");
     const again = await clearIcon(owner, id);
     expect(again.status).toBe(200);
-    expect(await iconOf(id)).toBe("star");
+    expect(await iconOf(id)).toBe("lucide:star");
   });
 
   it("answers the owner's icon in place of the author's, on the read, the list and a subtype", async () => {
-    const parent = await register({ display_hints: { icon: "star" } });
+    const parent = await register({ display_hints: { icon: "lucide:star" } });
     const inheriting = `${parent}.inheriting`;
     const own = `${parent}.own`;
     expect(
@@ -192,55 +238,55 @@ describe("the owner's icon for a type", () => {
           id: own,
           parent,
           fields: {},
-          display_hints: { icon: "moon" },
+          display_hints: { icon: "lucide:moon" },
         })
       ).ok,
     ).toBe(true);
-    expect((await setIcon(owner, parent, "heart")).status).toBe(200);
+    expect((await setIcon(owner, parent, "lucide:heart")).status).toBe(200);
 
-    expect(await iconOf(parent)).toBe("heart");
+    expect(await iconOf(parent)).toBe("lucide:heart");
     const listed = await client.listTypes();
     expect(
       listed.data.data.find((type) => type.id === parent)?.display_hints?.icon,
-    ).toBe("heart");
+    ).toBe("lucide:heart");
     // A child with no icon of its own follows its parent's, and one with its
     // own keeps it.
-    expect(await iconOf(inheriting)).toBe("heart");
-    expect(await iconOf(own)).toBe("moon");
+    expect(await iconOf(inheriting)).toBe("lucide:heart");
+    expect(await iconOf(own)).toBe("lucide:moon");
     // The owner's icon for the child itself beats both.
-    expect((await setIcon(owner, own, "sun")).status).toBe(200);
-    expect(await iconOf(own)).toBe("sun");
+    expect((await setIcon(owner, own, "lucide:sun")).status).toBe(200);
+    expect(await iconOf(own)).toBe("lucide:sun");
   });
 
   it("keeps the owner's icon through a replacement of the type", async () => {
-    const id = await register({ display_hints: { icon: "star" } });
-    expect((await setIcon(owner, id, "heart")).status).toBe(200);
+    const id = await register({ display_hints: { icon: "lucide:star" } });
+    expect((await setIcon(owner, id, "lucide:heart")).status).toBe(200);
     const replaced = await client.replaceType(id, {
       id,
       version: 2,
       fields: { heading: { type: "string" }, text: { type: "string" } },
-      display_hints: { icon: "moon" },
+      display_hints: { icon: "lucide:moon" },
     });
     expect(replaced.ok, JSON.stringify(replaced.error)).toBe(true);
-    expect(await iconOf(id)).toBe("heart");
+    expect(await iconOf(id)).toBe("lucide:heart");
     // The replacement did not copy the choice into the definition.
     expect((await clearIcon(owner, id)).status).toBe(200);
-    expect(await iconOf(id)).toBe("moon");
+    expect(await iconOf(id)).toBe("lucide:moon");
   });
 
   it("does not bake the owner's icon into the definition when a read is written back", async () => {
-    const id = await register({ display_hints: { icon: "box" } });
-    expect((await setIcon(owner, id, "package")).status).toBe(200);
+    const id = await register({ display_hints: { icon: "lucide:box" } });
+    expect((await setIcon(owner, id, "lucide:package")).status).toBe(200);
     const read = await client.getType(id);
     expect(read.ok).toBe(true);
-    expect(read.data.display_hints?.icon).toBe("package");
+    expect(read.data.display_hints?.icon).toBe("lucide:package");
     const written = await client.replaceType(id, read.data);
     expect(written.ok, JSON.stringify(written.error)).toBe(true);
     expect((await clearIcon(owner, id)).status).toBe(200);
-    expect(await iconOf(id)).toBe("box");
+    expect(await iconOf(id)).toBe("lucide:box");
 
     const bare = await register();
-    expect((await setIcon(owner, bare, "package")).status).toBe(200);
+    expect((await setIcon(owner, bare, "lucide:package")).status).toBe(200);
     const bareRead = await client.getType(bare);
     const bareWritten = await client.replaceType(bare, bareRead.data);
     expect(bareWritten.ok, JSON.stringify(bareWritten.error)).toBe(true);
@@ -250,7 +296,7 @@ describe("the owner's icon for a type", () => {
 
   it("does not freeze the hints a subtype inherits when its read is written back", async () => {
     const parent = await register({
-      display_hints: { title_field: "heading", icon: "folder" },
+      display_hints: { title_field: "heading", icon: "lucide:folder" },
     });
     const child = `${parent}.kid`;
     const made = await client.registerType({
@@ -259,13 +305,13 @@ describe("the owner's icon for a type", () => {
       fields: {},
     });
     expect(made.ok, JSON.stringify(made.error)).toBe(true);
-    expect((await setIcon(owner, parent, "package")).status).toBe(200);
+    expect((await setIcon(owner, parent, "lucide:package")).status).toBe(200);
 
     const read = await client.getType(child);
     expect(read.ok).toBe(true);
     expect(read.data.display_hints).toEqual({
       title_field: "heading",
-      icon: "package",
+      icon: "lucide:package",
     });
     const written = await client.replaceType(child, read.data);
     expect(written.ok, JSON.stringify(written.error)).toBe(true);
@@ -274,29 +320,29 @@ describe("the owner's icon for a type", () => {
     const parentRead = await client.getType(parent);
     const changed = await client.replaceType(parent, {
       ...parentRead.data,
-      display_hints: { title_field: "text", icon: "folder" },
+      display_hints: { title_field: "text", icon: "lucide:folder" },
     });
     expect(changed.ok, JSON.stringify(changed.error)).toBe(true);
     const after = await client.getType(child);
     expect(after.data.display_hints).toEqual({
       title_field: "text",
-      icon: "folder",
+      icon: "lucide:folder",
     });
   });
 
   it("keeps a hint a subtype sets differently from its parent when its read is written back", async () => {
     const parent = await register({
-      display_hints: { title_field: "heading", icon: "folder" },
+      display_hints: { title_field: "heading", icon: "lucide:folder" },
     });
     const child = `${parent}.own`;
     const made = await client.registerType({
       id: child,
       parent,
       fields: {},
-      display_hints: { title_field: "text", icon: "star" },
+      display_hints: { title_field: "text", icon: "lucide:star" },
     });
     expect(made.ok, JSON.stringify(made.error)).toBe(true);
-    expect((await setIcon(owner, parent, "package")).status).toBe(200);
+    expect((await setIcon(owner, parent, "lucide:package")).status).toBe(200);
 
     const read = await client.getType(child);
     const written = await client.replaceType(child, read.data);
@@ -304,13 +350,13 @@ describe("the owner's icon for a type", () => {
     expect((await clearIcon(owner, parent)).status).toBe(200);
     expect((await client.getType(child)).data.display_hints).toEqual({
       title_field: "text",
-      icon: "star",
+      icon: "lucide:star",
     });
   });
 
   it("normalizes on the author's side, with the author's icon in resolved_type", async () => {
-    const id = await register({ display_hints: { icon: "box" } });
-    expect((await setIcon(owner, id, "package")).status).toBe(200);
+    const id = await register({ display_hints: { icon: "lucide:box" } });
+    expect((await setIcon(owner, id, "lucide:package")).status).toBe(200);
     const normalized = await client.rawRequest<{
       resolved_type: TypeSchema | null;
     }>("/types/normalize", {
@@ -318,17 +364,27 @@ describe("the owner's icon for a type", () => {
       body: { id, fields: { heading: { type: "string" } } },
     });
     expect(normalized.status).toBe(200);
-    expect(normalized.data.resolved_type?.display_hints?.icon).toBe("box");
-    expect(await iconOf(id)).toBe("package");
+    expect(normalized.data.resolved_type?.display_hints?.icon).toBe(
+      "lucide:box",
+    );
+    expect(await iconOf(id)).toBe("lucide:package");
   });
 
-  it("refuses a name outside the pinned release and a type nothing registered, and keeps the earlier choice", async () => {
-    const id = await register({ display_hints: { icon: "star" } });
-    expect((await setIcon(owner, id, "heart")).status).toBe(200);
-    for (const bad of ["Heart", "not-a-lucide-icon", "github", ""]) {
+  it("refuses an icon outside the pinned sets and a type nothing registered, and keeps the earlier choice", async () => {
+    const id = await register({ display_hints: { icon: "lucide:star" } });
+    for (const icon of ACCEPTED_ICONS) {
+      const set = await setIcon(owner, id, icon);
+      expect(set.status, icon).toBe(200);
+      expect(await iconOf(id)).toBe(icon);
+    }
+    expect((await setIcon(owner, id, "lucide:heart")).status).toBe(200);
+    for (const bad of REFUSED_ICONS) {
       const refused = await setIcon(owner, id, bad);
       expect(refused.status, JSON.stringify(bad)).toBe(400);
       expect(refused.error?.error.code).toBe("invalid_schema");
+      expect(JSON.stringify(refused.error?.error.details)).toContain(
+        '"field":"icon"',
+      );
     }
     // A body with no string icon is not a name at all.
     for (const bad of [7, null]) {
@@ -336,14 +392,12 @@ describe("the owner's icon for a type", () => {
       expect(refused.status, JSON.stringify(bad)).toBe(400);
       expect(refused.error?.error.code).toBe("validation_error");
     }
-    const refused = await setIcon(owner, id, "Heart");
-    expect(JSON.stringify(refused.error)).toContain("icon");
-    expect(await iconOf(id)).toBe("heart");
+    expect(await iconOf(id)).toBe("lucide:heart");
 
     const missing = await setIcon(
       owner,
       `user.icons-missing-${ctx.runId}`,
-      "heart",
+      "lucide:heart",
     );
     expect(missing.status).toBe(404);
     expect(missing.error?.error.code).toBe("type_not_found");
@@ -379,15 +433,15 @@ describe("the owner's icon for a type", () => {
       type_permissions: { "core.note": "write" },
     });
 
-    expect((await setIcon(allowed, id, "heart")).status).toBe(200);
-    expect(await iconOf(id)).toBe("heart");
+    expect((await setIcon(allowed, id, "lucide:heart")).status).toBe(200);
+    expect(await iconOf(id)).toBe("lucide:heart");
     for (const refused of [noPermission, wrongType]) {
-      const set = await setIcon(refused, id, "sun");
+      const set = await setIcon(refused, id, "lucide:sun");
       expect(set.status).toBe(403);
       const cleared = await clearIcon(refused, id);
       expect(cleared.status).toBe(403);
     }
-    expect(await iconOf(id)).toBe("heart");
+    expect(await iconOf(id)).toBe("lucide:heart");
     expect((await clearIcon(allowed, id)).status).toBe(200);
 
     // A key a connector is registered under is held to the same rule: it
@@ -397,8 +451,8 @@ describe("the owner's icon for a type", () => {
     });
     expect(registered.status).toBe(201);
     try {
-      expect((await setIcon(allowed, id, "moon")).status).toBe(200);
-      expect(await iconOf(id)).toBe("moon");
+      expect((await setIcon(allowed, id, "lucide:moon")).status).toBe(200);
+      expect(await iconOf(id)).toBe("lucide:moon");
       expect((await clearIcon(allowed, id)).status).toBe(200);
       expect(await iconOf(id)).toBeUndefined();
     } finally {
@@ -408,7 +462,7 @@ describe("the owner's icon for a type", () => {
 
   it("carries the owner's icons in an archive and adds back those the instance lacks, replacing none", async () => {
     const id = await register();
-    expect((await setIcon(owner, id, "box")).status).toBe(200);
+    expect((await setIcon(owner, id, "lucide:box")).status).toBe(200);
     const archive = await client.exportArchive({ source: ctx.source });
     expect(archive.status).toBe(200);
     const lines = (readTarGzEntry(archive.data, "types.ndjson") ?? "")
@@ -418,7 +472,7 @@ describe("the owner's icon for a type", () => {
     const carried = lines.filter((line) => "type_icon" in line);
     expect(carried.map((line) => line.type_icon)).toContainEqual({
       type_id: id,
-      icon: "box",
+      icon: "lucide:box",
     });
     const manifest = JSON.parse(
       readTarGzEntry(archive.data, "manifest.json") ?? "{}",
@@ -426,22 +480,22 @@ describe("the owner's icon for a type", () => {
     expect(manifest.type_icon_count).toBe(carried.length);
 
     // An icon the owner chose since the export stays.
-    expect((await setIcon(owner, id, "sun")).status).toBe(200);
+    expect((await setIcon(owner, id, "lucide:sun")).status).toBe(200);
     const kept = await owner.restoreArchive(archive.data);
     expect(kept.ok, JSON.stringify(kept.error)).toBe(true);
     expect(kept.data.type_icons_skipped).toBeGreaterThanOrEqual(1);
-    expect(await iconOf(id)).toBe("sun");
+    expect(await iconOf(id)).toBe("lucide:sun");
 
     // With none chosen, the archive's is added.
     expect((await clearIcon(owner, id)).status).toBe(200);
     const added = await owner.restoreArchive(archive.data);
     expect(added.ok, JSON.stringify(added.error)).toBe(true);
     expect(added.data.type_icons_added).toBeGreaterThanOrEqual(1);
-    expect(await iconOf(id)).toBe("box");
+    expect(await iconOf(id)).toBe("lucide:box");
     expect((await clearIcon(owner, id)).status).toBe(200);
   });
 
-  it("skips and counts an icon outside the pinned release, and refuses a line that names no type or no icon string, writing nothing", async () => {
+  it("skips and counts an icon outside the pinned sets, and refuses a line that names no type or no icon string, writing nothing", async () => {
     const id = await register();
     const archive = await client.exportArchive({ source: ctx.source });
     expect(archive.status).toBe(200);
@@ -457,15 +511,26 @@ describe("the owner's icon for a type", () => {
         })),
       );
 
-    const skipped = await owner.restoreArchive(
-      withLine({ type_id: id, icon: "Not-An-Icon" }),
+    for (const icon of REFUSED_ICONS) {
+      const skipped = await owner.restoreArchive(
+        withLine({ type_id: id, icon }),
+      );
+      expect(skipped.ok, JSON.stringify(skipped.error)).toBe(true);
+      expect(skipped.data.type_icons_skipped_reasons.unknown_icon, icon).toBe(
+        1,
+      );
+      expect(await iconOf(id)).toBeUndefined();
+    }
+    // The witness: the same line with an icon from a pinned set is restored.
+    const restored = await owner.restoreArchive(
+      withLine({ type_id: id, icon: "simple-icons:github" }),
     );
-    expect(skipped.ok, JSON.stringify(skipped.error)).toBe(true);
-    expect(skipped.data.type_icons_skipped_reasons.unknown_icon).toBe(1);
-    expect(await iconOf(id)).toBeUndefined();
+    expect(restored.ok, JSON.stringify(restored.error)).toBe(true);
+    expect(await iconOf(id)).toBe("simple-icons:github");
+    expect((await clearIcon(owner, id)).status).toBe(200);
 
     for (const line of [
-      { type_id: `user.icons-nowhere-${ctx.runId}`, icon: "box" },
+      { type_id: `user.icons-nowhere-${ctx.runId}`, icon: "lucide:box" },
       { type_id: id, icon: 7 },
       { type_id: id },
     ]) {
@@ -477,8 +542,8 @@ describe("the owner's icon for a type", () => {
   });
 
   it("discards the owner's icon with the type", async () => {
-    const id = await register({ display_hints: { icon: "star" } });
-    expect((await setIcon(owner, id, "heart")).status).toBe(200);
+    const id = await register({ display_hints: { icon: "lucide:star" } });
+    expect((await setIcon(owner, id, "lucide:heart")).status).toBe(200);
     const removed = await client.deleteType(id);
     expect(removed.ok, JSON.stringify(removed.error)).toBe(true);
     const again = await client.registerType({
@@ -491,7 +556,7 @@ describe("the owner's icon for a type", () => {
 
   it("records the owner's icon change in the audit log", async () => {
     const id = await register();
-    expect((await setIcon(owner, id, "heart")).status).toBe(200);
+    expect((await setIcon(owner, id, "lucide:heart")).status).toBe(200);
     expect((await clearIcon(owner, id)).status).toBe(200);
     const rows = await client.listAudit({
       resource_type: "type",

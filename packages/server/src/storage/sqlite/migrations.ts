@@ -10,6 +10,7 @@ import {
 } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { createClient, type Client, type Transaction } from "@libsql/client";
+import { lucideIconId } from "@withmarfa/shared";
 import * as clock from "../../clock.js";
 import { errorMessage } from "../../error-text.js";
 import { log } from "../../middleware/logger.js";
@@ -74,7 +75,58 @@ export const MIGRATIONS: readonly Migration[] = [
           ");",
       ),
   },
+  { to: 3, changes: ["types", "type_icons"], apply: iconsAsIconifyIds },
 ];
+
+/**
+ * Stores every type icon as an Iconify ID, `<set>:<name>`. A bare name, held
+ * as an owner's icon or in a definition's `display_hints.icon`, becomes
+ * `lucide:<name>` where the pinned Lucide set has it; where it does not, the
+ * owner's icon or the hint is removed, since no app can draw it. A value with
+ * a colon is already an ID and is left.
+ */
+async function iconsAsIconifyIds(db: Writer): Promise<void> {
+  const owned = await db.execute("SELECT type_id, icon FROM type_icons");
+  for (const row of owned.rows) {
+    const icon = row.icon as string;
+    if (icon.includes(":")) continue;
+    const id = lucideIconId(icon);
+    await db.execute(
+      id === undefined
+        ? {
+            sql: "DELETE FROM type_icons WHERE type_id = ?",
+            args: [row.type_id as string],
+          }
+        : {
+            sql: "UPDATE type_icons SET icon = ? WHERE type_id = ?",
+            args: [id, row.type_id as string],
+          },
+    );
+  }
+
+  const defined = await db.execute(
+    "SELECT id, schema FROM types WHERE json_valid(schema) AND json_type(schema, '$.display_hints.icon') = 'text'",
+  );
+  for (const row of defined.rows) {
+    const schema = JSON.parse(row.schema as string) as {
+      display_hints: Record<string, unknown>;
+    };
+    const icon = String(schema.display_hints.icon);
+    if (icon.includes(":")) continue;
+    const id = lucideIconId(icon);
+    if (id !== undefined) schema.display_hints.icon = id;
+    else {
+      delete schema.display_hints.icon;
+      if (Object.keys(schema.display_hints).length === 0) {
+        delete (schema as { display_hints?: unknown }).display_hints;
+      }
+    }
+    await db.execute({
+      sql: "UPDATE types SET schema = ? WHERE id = ?",
+      args: [JSON.stringify(schema), row.id as string],
+    });
+  }
+}
 
 /** The schema version this build writes, held in `PRAGMA user_version`. */
 export const SCHEMA_VERSION = BASELINE_VERSION + MIGRATIONS.length;

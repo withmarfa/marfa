@@ -631,7 +631,7 @@ pub struct ItemType {
     pub fields: Vec<TypeField>,
     pub title_field: Option<String>,
     pub body_field: Option<String>,
-    /// The Lucide icon name, kebab-case.
+    /// The Iconify icon ID, `<set>:<name>`, such as `lucide:book-open`.
     pub icon: Option<String>,
     pub link_field: Option<String>,
     pub roles: Vec<String>,

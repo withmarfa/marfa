@@ -6620,7 +6620,7 @@ mod tests {
         let version = catalog_version(&conn).unwrap();
 
         let mut icon_only = original.clone();
-        icon_only.types[0].display_hints.as_mut().unwrap().icon = Some("sticky-note".into());
+        icon_only.types[0].display_hints.as_mut().unwrap().icon = Some("lucide:sticky-note".into());
         emptied();
         assert_eq!(
             replace_catalog(&conn, &icon_only).unwrap(),
@@ -6628,7 +6628,7 @@ mod tests {
         );
         assert_eq!(indexed(), 0, "no row was reindexed");
         assert_ne!(catalog_version(&conn).unwrap(), version);
-        assert!(type_rows(&conn).unwrap()[0].1.contains("sticky-note"));
+        assert!(type_rows(&conn).unwrap()[0].1.contains("lucide:sticky-note"));
 
         let mut cleared = icon_only.clone();
         cleared.types[0].display_hints.as_mut().unwrap().icon = None;
@@ -6668,7 +6668,7 @@ mod tests {
         );
 
         let mut icon_only = original.clone();
-        icon_only.types[0].display_hints.as_mut().unwrap().icon = Some("sticky-note".into());
+        icon_only.types[0].display_hints.as_mut().unwrap().icon = Some("lucide:sticky-note".into());
         assert_eq!(
             replace_catalog(&conn, &icon_only).unwrap(),
             CatalogChange::IconsOnly

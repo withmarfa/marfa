@@ -2555,7 +2555,7 @@ export interface components {
             title_field?: string;
             /** @description The field that holds an item's body for display. The field holds Markdown. */
             body_field?: string;
-            /** @description The icon that stands for the type, as the kebab-case name of an icon in the Lucide release Marfa pins, such as `calendar-days`. On a type read back, the owner's own choice replaces the author's. */
+            /** @description The icon that stands for the type, as an Iconify ID, `<set>:<name>`, from a set and version Marfa pins: `lucide` or `simple-icons`, such as `lucide:calendar-days` or `simple-icons:github`. On a type read back, the owner's own choice replaces the author's. */
             icon?: string;
         } & {
             [key: string]: unknown;
@@ -4219,7 +4219,7 @@ export interface components {
         };
         /** @description The icon to show for a type. */
         TypeIconRequest: {
-            /** @description The kebab-case name of an icon in the Lucide release Marfa pins, such as `calendar-days`. */
+            /** @description An Iconify ID, `<set>:<name>`, from a set and version Marfa pins: `lucide` or `simple-icons`, such as `lucide:calendar-days` or `simple-icons:github`. */
             icon: string;
         };
         /** @description An error response. */
@@ -16304,7 +16304,7 @@ export interface operations {
                 };
             };
             /**
-             * @description `invalid_schema`: `icon` isn't the name of an icon in the pinned Lucide release (`details.errors` names it).
+             * @description `invalid_schema`: `icon` isn't the ID of an icon in a pinned set (`details.errors` names it).
              *     - `validation_error`: the query has a parameter this endpoint doesn't take.
              */
             400: {
@@ -31075,7 +31075,7 @@ export interface operations {
                         type_icons_added: number;
                         /** @description How many of the owner's type icons Marfa skipped. */
                         type_icons_skipped: number;
-                        /** @description How many of the owner's type icons Marfa skipped for each reason: `already_set` when the instance already has an owner icon for the type, `unknown_icon` when the name is not an icon of the Lucide release Marfa pins. */
+                        /** @description How many of the owner's type icons Marfa skipped for each reason: `already_set` when the instance already has an owner icon for the type, `unknown_icon` when the icon isn't the ID of an icon in a set Marfa pins. */
                         type_icons_skipped_reasons: {
                             [key: string]: number;
                         };

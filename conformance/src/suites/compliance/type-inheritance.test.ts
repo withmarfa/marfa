@@ -428,7 +428,7 @@ describe("type inheritance rule", () => {
           id: iconOnly,
           parent: parentId,
           fields: {},
-          display_hints: { icon: "star" },
+          display_hints: { icon: "lucide:star" },
         })
       ).ok,
     ).toBe(true);
@@ -456,12 +456,12 @@ describe("type inheritance rule", () => {
     expect((await client.getType(iconOnly)).data.display_hints).toEqual({
       title_field: "heading",
       body_field: "text",
-      icon: "star",
+      icon: "lucide:star",
     });
     expect((await client.getType(grandchild)).data.display_hints).toEqual({
       title_field: "summary",
       body_field: "text",
-      icon: "star",
+      icon: "lucide:star",
     });
   });
 

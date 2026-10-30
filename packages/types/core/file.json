@@ -59,7 +59,7 @@
   "required": ["blob_ref", "mime_type"],
   "display_hints": {
     "title_field": "title",
-    "icon": "file"
+    "icon": "lucide:file"
   },
   "merge_policy": {
     "default": "last_writer_wins"

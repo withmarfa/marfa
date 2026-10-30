@@ -16,7 +16,8 @@ export type {
 } from "./schema-types.js";
 export { TYPE_ROLES } from "./schema-types.js";
 
-export { LUCIDE_ICON_NAMES, LUCIDE_VERSION } from "./lucide-icons.js";
+export type { IconSet } from "./icon-sets.js";
+export { ICON_SETS, lucideIconId } from "./icon-sets.js";
 
 export type {
   SchemaValidationIssue,

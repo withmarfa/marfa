@@ -894,7 +894,7 @@
           },
           "icon": {
             "type": "string",
-            "description": "The icon that stands for the type, as the kebab-case name of an icon in the Lucide release Marfa pins, such as `calendar-days`. On a type read back, the owner's own choice replaces the author's."
+            "description": "The icon that stands for the type, as an Iconify ID, `<set>:<name>`, from a set and version Marfa pins: `lucide` or `simple-icons`, such as `lucide:calendar-days` or `simple-icons:github`. On a type read back, the owner's own choice replaces the author's."
           }
         },
         "additionalProperties": {},
@@ -5031,7 +5031,7 @@
         "properties": {
           "icon": {
             "type": "string",
-            "description": "The kebab-case name of an icon in the Lucide release Marfa pins, such as `calendar-days`."
+            "description": "An Iconify ID, `<set>:<name>`, from a set and version Marfa pins: `lucide` or `simple-icons`, such as `lucide:calendar-days` or `simple-icons:github`."
           }
         },
         "required": [
@@ -30964,7 +30964,7 @@
             }
           },
           "400": {
-            "description": "`invalid_schema`: `icon` isn't the name of an icon in the pinned Lucide release (`details.errors` names it).\n- `validation_error`: the query has a parameter this endpoint doesn't take.",
+            "description": "`invalid_schema`: `icon` isn't the ID of an icon in a pinned set (`details.errors` names it).\n- `validation_error`: the query has a parameter this endpoint doesn't take.",
             "content": {
               "application/json": {
                 "schema": {
@@ -61086,7 +61086,7 @@
                       "additionalProperties": {
                         "type": "number"
                       },
-                      "description": "How many of the owner's type icons Marfa skipped for each reason: `already_set` when the instance already has an owner icon for the type, `unknown_icon` when the name is not an icon of the Lucide release Marfa pins."
+                      "description": "How many of the owner's type icons Marfa skipped for each reason: `already_set` when the instance already has an owner icon for the type, `unknown_icon` when the icon isn't the ID of an icon in a set Marfa pins."
                     }
                   },
                   "required": [

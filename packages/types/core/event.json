@@ -84,7 +84,7 @@
   "display_hints": {
     "title_field": "title",
     "body_field": "description",
-    "icon": "calendar"
+    "icon": "lucide:calendar"
   },
   "merge_policy": {
     "fields": {

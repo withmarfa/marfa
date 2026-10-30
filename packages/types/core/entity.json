@@ -52,7 +52,7 @@
   "required": ["name"],
   "display_hints": {
     "title_field": "name",
-    "icon": "shapes"
+    "icon": "lucide:shapes"
   },
   "merge_policy": {
     "default": "last_writer_wins"

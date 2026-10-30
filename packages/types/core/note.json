@@ -25,7 +25,7 @@
   "display_hints": {
     "title_field": "title",
     "body_field": "body",
-    "icon": "sticky-note"
+    "icon": "lucide:sticky-note"
   },
   "merge_policy": {
     "fields": {
