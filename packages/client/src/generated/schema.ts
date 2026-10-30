@@ -3953,7 +3953,7 @@ export interface components {
         /** @description One field of a type: its type, and how items may fill it. */
         FieldDefinition: {
             /**
-             * @description The field's type. A `thumbnail` holds an image of at most 16 KiB, as a base64 `data:` URI of type `image/png`, `image/jpeg` or `image/webp`. A type has at most one, never as an array's `items_type` or under `title`, `body`, `description` or `name`. A `status` holds one of the words in `status_values`. A type has at most one, never as an array's `items_type`.
+             * @description The field's type. A `thumbnail` is a base64 `data:` URI of a PNG, JPEG or WebP image up to 16 KiB, never `title`, `body`, `description` or `name`; a `status` is a word from `status_values`. A type has at most one of each, never as `items_type`.
              * @enum {string}
              */
             type: "string" | "number" | "integer" | "boolean" | "url" | "email" | "datetime" | "date" | "enum" | "array" | "object" | "thumbnail" | "status";
@@ -3963,7 +3963,7 @@ export interface components {
             required?: boolean;
             /** @description The values an `enum` field allows. */
             enum_values?: string[];
-            /** @description The words a `status` field takes, each in one of the four fixed groups: `not_started`, `in_progress`, `completed` and `canceled`. A subtype lists only the words it adds to the field it inherits. A type read answers every word, inherited ones first; the type list answers the words the type declares itself. */
+            /** @description The words a `status` field takes, each in a group: `not_started`, `in_progress`, `completed` or `canceled`. A subtype lists only the words it adds. A type read answers every word, inherited first; the type list answers the type's own. */
             status_values?: components["schemas"]["StatusValue"][];
             /** @description The type of each element of an `array` field. A write is refused if an element is not a value of that type. */
             items_type?: string;
@@ -6429,7 +6429,7 @@ export interface operations {
                 tier?: "library" | "feed" | "all";
                 /** @description Comma-separated tags. Only return items that carry all of them. */
                 tags?: string;
-                /** @description A filter expression. A term naming an edge type, `edge[<type>]` or `backref[<type>]`, matches by relationship and needs read on that edge type. `edge[<type>]=<id>` also works as a query parameter of its own. `status_group`, such as `status_group neq "completed"`, matches by the group of the word in each item's status field: `not_started`, `in_progress`, `completed` or `canceled`. */
+                /** @description A filter expression. A term naming an edge type, `edge[<type>]` or `backref[<type>]`, needs read on that edge type; `edge[<type>]=<id>` also works as a query parameter. `status_group`, such as `status_group neq "completed"`, matches by status group. */
                 filter?: string;
                 /** @description Field to sort by: `created_at`, `updated_at`, `occurred_at` or `properties.<field>`, such as `properties.due_at`. Properties sort by stored value, so an enum property sorts alphabetically, not by meaning. */
                 sort?: string;
@@ -9423,7 +9423,7 @@ export interface operations {
                 tier?: "library" | "feed" | "all";
                 /** @description Comma-separated tags. Only return items that carry all of them. */
                 tags?: string;
-                /** @description A filter expression. A term naming an edge type, `edge[<type>]` or `backref[<type>]`, matches by relationship and needs read on that edge type. `edge[<type>]=<id>` also works as a query parameter of its own. `status_group`, such as `status_group neq "completed"`, matches by the group of the word in each item's status field: `not_started`, `in_progress`, `completed` or `canceled`. */
+                /** @description A filter expression. A term naming an edge type, `edge[<type>]` or `backref[<type>]`, needs read on that edge type; `edge[<type>]=<id>` also works as a query parameter. `status_group`, such as `status_group neq "completed"`, matches by status group. */
                 filter?: string;
                 /** @description Only return items whose own time (`occurred_at`, else `created_at`) is after this time. For the modification time, use `updated_after`. */
                 occurred_after?: string;
