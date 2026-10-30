@@ -219,7 +219,8 @@ function fieldLiteral(field: FieldDefinition): string {
   }
   if (field.status_values) {
     const words = field.status_values.map(
-      (entry) => `{ value: ${quote(entry.value)}, group: ${quote(entry.group)} }`,
+      (entry) =>
+        `{ value: ${quote(entry.value)}, group: ${quote(entry.group)} }`,
     );
     parts.push(`status_values: [${words.join(", ")}]`);
   }

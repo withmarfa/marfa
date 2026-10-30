@@ -29,7 +29,8 @@ export type FieldType =
  * names its own words and puts each in one of these, so a reader that knows
  * the groups can fold and filter any type's statuses without knowing the type.
  */
-export type StatusGroup = "not_started" | "in_progress" | "completed" | "canceled";
+export type StatusGroup =
+  "not_started" | "in_progress" | "completed" | "canceled";
 
 /** Every status group, in the order work moves through them. */
 export const STATUS_GROUPS = [

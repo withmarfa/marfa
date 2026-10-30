@@ -598,7 +598,9 @@ function validateStatusValues(
         issue({
           field: at,
           expected: 'an object with exactly "value" and "group"',
-          actual: record ? `an object with keys ${keys || "none"}` : describe(entry),
+          actual: record
+            ? `an object with keys ${keys || "none"}`
+            : describe(entry),
           hint: 'Write each word as { "value": "blocked", "group": "in_progress" }.',
         }),
       );
@@ -920,7 +922,6 @@ export function validateTypeSchema(
         );
       }
     }
-
   }
 
   const requiredNames = collectRequiredNames(obj);
