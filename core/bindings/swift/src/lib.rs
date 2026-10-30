@@ -12,6 +12,7 @@ mod folder_settings;
 mod folders;
 mod instance;
 mod json;
+mod reads;
 mod renewal;
 mod views;
 
@@ -1084,6 +1085,15 @@ pub struct BodyName {
 pub struct BodyLinks {
     pub links: Vec<BodyName>,
     pub embeds: Vec<BodyName>,
+}
+
+impl From<marfa_core::BodyLinks> for BodyLinks {
+    fn from(links: marfa_core::BodyLinks) -> BodyLinks {
+        BodyLinks {
+            links: links.links.into_iter().map(Into::into).collect(),
+            embeds: links.embeds.into_iter().map(Into::into).collect(),
+        }
+    }
 }
 
 impl From<marfa_core::BodyName> for BodyName {
@@ -2681,11 +2691,7 @@ impl Core {
     /// names or why it names none yet, from the copy alone. An item the copy
     /// does not hold throws `NotFound`.
     pub fn body_links(&self, id: String) -> Result<BodyLinks, MarfaError> {
-        let links = self.inner.body_links(&id)?;
-        Ok(BodyLinks {
-            links: links.links.into_iter().map(Into::into).collect(),
-            embeds: links.embeds.into_iter().map(Into::into).collect(),
-        })
+        Ok(self.inner.body_links(&id)?.into())
     }
 
     /// The text that embeds the file item `file` in the body of `id`, which
