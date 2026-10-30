@@ -663,11 +663,12 @@ fn a_stop_ends_a_call_whose_first_request_waits_on_a_silent_server() {
 }
 
 #[test]
-fn a_stopped_read_finishes_a_renewal_under_way_and_starts_none_after() {
+fn a_stopped_read_finishes_a_renewal_under_way_and_sends_nothing_after() {
     use std::sync::atomic::AtomicUsize;
     let server = Scripted::start();
-    // The catalog is read in two requests, each refused once: the first
-    // renews while the stop is raised, and the second would renew again.
+    // The catalog is read in two requests. The first is refused once and
+    // renews while the stop is raised; it would then be sent again, and the
+    // second would follow.
     server.on(
         "/types",
         vec![
@@ -675,7 +676,7 @@ fn a_stopped_read_finishes_a_renewal_under_way_and_starts_none_after() {
             scripted::types(&[("core.note", None)]),
         ],
     );
-    server.on("/edge-types", vec![scripted::refusal(401, "unauthorized")]);
+    server.on("/edge-types", vec![scripted::edge_types(&[])]);
     let http = crate::http::Http::new(&server.url(), "k").unwrap();
     let (started, kept) = (
         Arc::new(AtomicUsize::new(0)),
@@ -703,11 +704,52 @@ fn a_stopped_read_finishes_a_renewal_under_way_and_starts_none_after() {
         kept.load(Ordering::SeqCst),
         "the call ended while a renewal it started was still under way"
     );
-    server.wait_for("/edge-types", 1, WAIT);
+    std::thread::sleep(Duration::from_millis(600));
+    assert_eq!(
+        server.seen("/types").len(),
+        1,
+        "the refused request was sent again after the stop"
+    );
+    assert!(
+        server.seen("/edge-types").is_empty(),
+        "a request was sent after the stop"
+    );
+    assert_eq!(started.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn a_stopped_read_whose_request_in_flight_is_refused_starts_no_renewal() {
+    use std::sync::atomic::AtomicUsize;
+    let server = Scripted::start();
+    let answer = Arc::new(AtomicBool::new(false));
+    server.on(
+        "/types",
+        vec![Answer::WaitFor {
+            ready: answer.clone(),
+            answer: Box::new(scripted::refusal(401, "unauthorized")),
+        }],
+    );
+    let http = crate::http::Http::new(&server.url(), "k").unwrap();
+    let started = Arc::new(AtomicUsize::new(0));
+    let renewing = started.clone();
+    http.renew_with(Box::new(move |_| {
+        renewing.fetch_add(1, Ordering::SeqCst);
+        Ok("fresh".into())
+    }));
+    let stop = AtomicBool::new(false);
+    let result = std::thread::scope(|scope| {
+        scope.spawn(|| {
+            server.wait_for("/types", 1, WAIT);
+            stop.store(true, Ordering::Relaxed);
+        });
+        crate::catch_up::ask_unless_stopped(&stop, &http, crate::http::Http::catalog)
+    });
+    assert!(matches!(result, Err(CoreError::Canceled)));
+    answer.store(true, Ordering::SeqCst);
     std::thread::sleep(Duration::from_millis(600));
     assert_eq!(
         started.load(Ordering::SeqCst),
-        1,
+        0,
         "a renewal began after the stop"
     );
 }

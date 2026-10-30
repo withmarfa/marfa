@@ -359,58 +359,59 @@ fn attempt(
                 http,
                 stop,
                 from,
-                with_overflow(http, first)?,
+                with_overflow(http, stop, first)?,
                 |(page, _)| page.next_cursor.clone(),
-                move |http, cursor| with_overflow(http, read(http, Some(cursor))?),
+                // Ended by the transport's `let_go` once the walk stops waiting.
+                move |http, cursor| {
+                    with_overflow(http, &crate::NEVER_STOPPED, read(http, Some(cursor))?)
+                },
                 |(page, overflow)| {
                     *pages += 1;
                     pages_total += 1;
-                    let mut conn = core.conn()?;
-                    let tx = conn.transaction()?;
-                    context.check(&tx)?;
-                    // The expected count is of the slice's listings, so pinned
-                    // rows and queued creates, which `items` also counts, stay
-                    // out of this one. A row two listings bring counts once.
-                    let mut listed: u64 = store::meta_get(&tx, store::META_ITEMS_LISTED)?
-                        .and_then(|count| count.parse().ok())
-                        .unwrap_or(0);
-                    for row in &page.data {
-                        if !crate::reach::answered(&tx, &row.item.id)? {
-                            listed += 1;
-                        }
-                        crate::reach::set_listed(
-                            &tx,
-                            &row.item.id,
-                            row.listed.ok_or_else(crate::reach::invalid)?,
-                        )?;
-                        store::take_server_item(
-                            &tx,
-                            &row.item,
-                            Some(&row.metadata.tags),
-                            &catalog,
-                        )?;
-                        for block in row.item.edges.iter().flat_map(|blocks| blocks.values()) {
-                            for edge in &block.data {
-                                store::put_server_edge(&tx, edge)?;
+                    store::with_journals_in_memory(&mut *core.conn()?, |tx| {
+                        context.check(tx)?;
+                        // The expected count is of the slice's listings, so pinned
+                        // rows and queued creates, which `items` also counts, stay
+                        // out of this one. A row two listings bring counts once.
+                        let mut listed: u64 = store::meta_get(tx, store::META_ITEMS_LISTED)?
+                            .and_then(|count| count.parse().ok())
+                            .unwrap_or(0);
+                        for row in &page.data {
+                            if !crate::reach::answered(tx, &row.item.id)? {
+                                listed += 1;
+                            }
+                            crate::reach::set_listed(
+                                tx,
+                                &row.item.id,
+                                row.listed.ok_or_else(crate::reach::invalid)?,
+                            )?;
+                            store::take_server_item(
+                                tx,
+                                &row.item,
+                                Some(&row.metadata.tags),
+                                &catalog,
+                            )?;
+                            for block in row.item.edges.iter().flat_map(|blocks| blocks.values()) {
+                                for edge in &block.data {
+                                    store::put_server_edge(tx, edge)?;
+                                }
                             }
                         }
-                    }
-                    for edge in &overflow {
-                        store::put_server_edge(&tx, edge)?;
-                    }
-                    store::meta_set(&tx, store::META_ITEMS_LISTED, &listed.to_string())?;
-                    match page.next_cursor {
-                        Some(next) => Reached {
-                            phase: Phase::Items,
-                            listing: Some(declared.clone()),
-                            cursor: Some(next),
-                            pages: pages_total,
-                        },
-                        None => Reached::after_items(types, edge_types, index + 1, pages_total),
-                    }
-                    .keep(&tx)?;
-                    tx.commit()?;
-                    Ok(())
+                        for edge in &overflow {
+                            store::put_server_edge(tx, edge)?;
+                        }
+                        store::meta_set(tx, store::META_ITEMS_LISTED, &listed.to_string())?;
+                        match page.next_cursor {
+                            Some(next) => Reached {
+                                phase: Phase::Items,
+                                listing: Some(declared.clone()),
+                                cursor: Some(next),
+                                pages: pages_total,
+                            },
+                            None => Reached::after_items(types, edge_types, index + 1, pages_total),
+                        }
+                        .keep(tx)
+                    })
                 },
             )?;
         }
@@ -440,24 +441,22 @@ fn attempt(
                 |page| {
                     *pages += 1;
                     pages_total += 1;
-                    let mut conn = core.conn()?;
-                    let tx = conn.transaction()?;
-                    context.check(&tx)?;
-                    for edge in &page.data {
-                        store::put_server_edge(&tx, edge)?;
-                    }
-                    match page.next_cursor {
-                        Some(next) => Reached {
-                            phase: Phase::Edges,
-                            listing: Some(edge_type.clone()),
-                            cursor: Some(next),
-                            pages: pages_total,
-                        },
-                        None => Reached::after_edges(edge_types, index + 1, pages_total),
-                    }
-                    .keep(&tx)?;
-                    tx.commit()?;
-                    Ok(())
+                    store::with_journals_in_memory(&mut *core.conn()?, |tx| {
+                        context.check(tx)?;
+                        for edge in &page.data {
+                            store::put_server_edge(tx, edge)?;
+                        }
+                        match page.next_cursor {
+                            Some(next) => Reached {
+                                phase: Phase::Edges,
+                                listing: Some(edge_type.clone()),
+                                cursor: Some(next),
+                                pages: pages_total,
+                            },
+                            None => Reached::after_edges(edge_types, index + 1, pages_total),
+                        }
+                        .keep(tx)
+                    })
                 },
             )?;
         }
@@ -484,29 +483,35 @@ fn attempt(
                 let mut overflow: Vec<WireEdge> = Vec::new();
                 for row in &rows {
                     for (edge_type, block) in row.item.edges.iter().flatten() {
-                        overflow.extend(fetch_overflow(http, &row.item.id, edge_type, block)?);
+                        overflow.extend(fetch_overflow(
+                            http,
+                            stop,
+                            &row.item.id,
+                            edge_type,
+                            block,
+                        )?);
                     }
                 }
-                let mut conn = core.conn()?;
-                let tx = conn.transaction()?;
-                context.check(&tx)?;
-                for row in &rows {
-                    crate::reach::set_listed(
-                        &tx,
-                        &row.item.id,
-                        row.listed.ok_or_else(crate::reach::invalid)?,
-                    )?;
-                    store::take_server_item(&tx, &row.item, Some(&row.metadata.tags), &catalog)?;
-                    for block in row.item.edges.iter().flat_map(|blocks| blocks.values()) {
-                        for edge in &block.data {
-                            store::put_server_edge(&tx, edge)?;
+                store::with_journals_in_memory(&mut *core.conn()?, |tx| {
+                    context.check(tx)?;
+                    for row in &rows {
+                        crate::reach::set_listed(
+                            tx,
+                            &row.item.id,
+                            row.listed.ok_or_else(crate::reach::invalid)?,
+                        )?;
+                        store::take_server_item(tx, &row.item, Some(&row.metadata.tags), &catalog)?;
+                        for block in row.item.edges.iter().flat_map(|blocks| blocks.values()) {
+                            for edge in &block.data {
+                                store::put_server_edge(tx, edge)?;
+                            }
                         }
                     }
-                }
-                for edge in &overflow {
-                    store::put_server_edge(&tx, edge)?;
-                }
-                tx.commit()?;
+                    for edge in &overflow {
+                        store::put_server_edge(tx, edge)?;
+                    }
+                    Ok(())
+                })?;
             }
             let conn = core.conn()?;
             context.check(&conn)?;
@@ -1219,7 +1224,13 @@ pub(crate) fn read_with_edges(
     let mut edges = Vec::new();
     for (edge_type, block) in read.item.edges.iter().flatten() {
         edges.extend(block.data.iter().cloned());
-        edges.extend(fetch_overflow(http, id, edge_type, block)?);
+        edges.extend(fetch_overflow(
+            http,
+            &crate::NEVER_STOPPED,
+            id,
+            edge_type,
+            block,
+        )?);
     }
     Ok(Some((read, edges)))
 }
@@ -1289,22 +1300,25 @@ where
 /// `page` with the edges its rows' blocks hold past their first page.
 fn with_overflow(
     http: &Http,
+    stop: &AtomicBool,
     page: WirePage<WireItemWithMetadata>,
 ) -> Result<(WirePage<WireItemWithMetadata>, Vec<WireEdge>)> {
     let mut overflow = Vec::new();
     for row in &page.data {
         if let Some(blocks) = &row.item.edges {
             for (edge_type, block) in blocks {
-                overflow.extend(fetch_overflow(http, &row.item.id, edge_type, block)?);
+                overflow.extend(fetch_overflow(http, stop, &row.item.id, edge_type, block)?);
             }
         }
     }
     Ok((page, overflow))
 }
 
-/// Fetched before any write so no transaction waits on the network.
+/// Fetched before any write so no transaction waits on the network. Ended
+/// with `Canceled` before the next request once `stop` is raised.
 pub(crate) fn fetch_overflow(
     http: &Http,
+    stop: &AtomicBool,
     item_id: &str,
     edge_type: &str,
     block: &WireEdgeBlock,
@@ -1316,6 +1330,7 @@ pub(crate) fn fetch_overflow(
         if !seen.insert(asked_for.clone()) {
             return Err(crate::reach::invalid());
         }
+        crate::catch_up::refuse_if_stopped(stop)?;
         let page = http.item_edges_page(item_id, edge_type, Some(&asked_for))?;
         edges.extend(page.data);
         // A repeated cursor would loop forever.
@@ -2249,6 +2264,69 @@ mod tests {
             "the stop waited on the request for the next page"
         );
         assert_eq!(core.status().unwrap().items_listed, Some(1));
+    }
+
+    #[test]
+    fn a_hydration_stopped_while_it_writes_a_page_asks_for_no_more_edges_of_the_next() {
+        let server = Scripted::start();
+        let core = copy(&server);
+        let ready = std::sync::Arc::new(AtomicBool::new(false));
+        let edges_ready = std::sync::Arc::new(AtomicBool::new(false));
+        // Each row of the second page holds edges past its block's first page.
+        let Answer::Json { body, .. } = page(&["a", "b", "c"], None) else {
+            unreachable!()
+        };
+        let mut overflowing: Value = serde_json::from_str(&body).unwrap();
+        for row in overflowing["data"].as_array_mut().unwrap() {
+            row["item"]["edges"] = json!({"references": {"data": [], "next_cursor": "more"}});
+        }
+        server.on(
+            "/items",
+            vec![
+                Answer::WaitFor {
+                    ready: std::sync::Arc::clone(&ready),
+                    answer: Box::new(page(&["first"], Some("2"))),
+                },
+                scripted::certified(scripted::json(200, &overflowing.to_string())),
+            ],
+        );
+        let no_more =
+            || scripted::certified(scripted::json(200, r#"{"data":[],"next_cursor":null}"#));
+        server.on(
+            "/items/a/edges",
+            vec![Answer::WaitFor {
+                ready: std::sync::Arc::clone(&edges_ready),
+                answer: Box::new(no_more()),
+            }],
+        );
+        server.on("/items/b/edges", vec![no_more()]);
+        server.on("/items/c/edges", vec![no_more()]);
+        let stop = std::sync::Arc::new(AtomicBool::new(false));
+        let hydrating = {
+            let (core, stop) = (std::sync::Arc::clone(&core), std::sync::Arc::clone(&stop));
+            std::thread::spawn(move || {
+                core.hydrate_until(&["core.note".into()], SliceTier::Library, &[], &stop)
+            })
+        };
+        server.wait_for("/items", 1, std::time::Duration::from_secs(10));
+        let store = core.conn().unwrap();
+        ready.store(true, Ordering::SeqCst);
+        server.wait_for("/items/a/edges", 1, std::time::Duration::from_secs(5));
+        stop.store(true, Ordering::SeqCst);
+        drop(store);
+        assert_eq!(hydrating.join().unwrap(), Err(CoreError::Canceled));
+        edges_ready.store(true, Ordering::SeqCst);
+        // The first row's edges were asked for while the hydration ran; the
+        // second's would follow at once if the read ahead carried on.
+        let until = std::time::Instant::now() + std::time::Duration::from_millis(500);
+        while std::time::Instant::now() < until {
+            assert!(
+                server.seen("/items/b/edges").is_empty(),
+                "the page read ahead kept asking for edges after the hydration stopped"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(server.seen("/items/c/edges").is_empty());
     }
 
     #[test]

@@ -82,7 +82,7 @@ pub struct Http {
     renewed: Arc<OnceLock<Renewed>>,
     /// Held while a renewal runs, so two calls refused at once renew once.
     renewing: Arc<Mutex<()>>,
-    /// Raised by `let_go`: no renewal starts after it.
+    /// Raised by `let_go`: no request or renewal starts after it.
     let_go: Arc<AtomicBool>,
     relocation: Arc<OnceLock<Mutex<Relocation>>>,
     reach: Option<String>,
@@ -456,10 +456,11 @@ impl Http {
         }
     }
 
-    /// Starts no renewal after this, and returns once a renewal already
-    /// under way has finished: a refresh token is spent when the server
-    /// answers it, so a process that ended between that answer and keeping
-    /// the new one would be signed out.
+    /// Starts no request or renewal after this, and returns once a renewal
+    /// already under way has finished: a refresh token is spent when the
+    /// server answers it, so a process that ended between that answer and
+    /// keeping the new one would be signed out. A request already sent runs
+    /// to its answer, which nobody reads.
     pub(crate) fn let_go(&self) {
         self.let_go.store(true, Ordering::SeqCst);
         drop(
@@ -568,8 +569,11 @@ impl Http {
         Ok(())
     }
 
+    /// A read run on a thread of its own, such as a hydration's next page and
+    /// the edges past its rows' blocks, may send several requests; once its
+    /// caller has let it go, none after the one in flight is sent.
     fn refuse_if_let_go(&self) -> Result<(), CoreError> {
-        if self.relocation.get().is_some() && self.let_go.load(Ordering::SeqCst) {
+        if self.let_go.load(Ordering::SeqCst) {
             Err(CoreError::Canceled)
         } else {
             Ok(())

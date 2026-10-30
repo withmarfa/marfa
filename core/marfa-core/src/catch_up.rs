@@ -674,10 +674,11 @@ pub(crate) fn refuse_another_instance_until(
 /// `Canceled` as soon as `stop` is raised, so a call stopped while a request
 /// waits on a server that does not answer, one still being connected to
 /// among them, ends then rather than when the request gives up. The request
-/// may still reach the server after the call has ended, and its answer is
-/// dropped: only for a read, or a write the caller marked sent first that
-/// its idempotency key, or its content, lets it send again. A credential
-/// renewal the request started is finished first, and none starts after.
+/// in flight may still reach the server after the call has ended, and its
+/// answer is dropped: only for a read, or a write the caller marked sent
+/// first that its idempotency key, or its content, lets it send again. No
+/// request starts after the stop. A credential renewal the request started
+/// is finished first, and none starts after.
 pub(crate) fn ask_unless_stopped<T: Send + 'static>(
     stop: &AtomicBool,
     http: &Http,
