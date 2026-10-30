@@ -12,6 +12,7 @@ mod folder_settings;
 mod folders;
 mod instance;
 mod json;
+mod packed;
 mod reads;
 mod renewal;
 mod views;
@@ -70,6 +71,7 @@ pub enum SortDirection {
 
 /// An item as the copy holds it.
 #[derive(Debug, Clone, uniffi::Record)]
+#[cfg_attr(test, derive(PartialEq))]
 pub struct Item {
     pub id: String,
     pub r#type: String,
@@ -381,8 +383,18 @@ impl From<marfa_core::Completeness> for Completeness {
 /// The items a local list answers, and whether the copy was whole.
 #[derive(Debug, Clone, uniffi::Record)]
 pub struct Listing {
-    pub items: Vec<Item>,
+    /// Each `Item`, in order, in the layout `packed.rs` states: a whole
+    /// copy's listing read as records costs Swift several microseconds an
+    /// item.
+    pub rows: Vec<u8>,
     pub completeness: Completeness,
+}
+
+#[cfg(test)]
+impl Listing {
+    pub(crate) fn items(&self) -> Vec<Item> {
+        packed::unpack(&self.rows)
+    }
 }
 
 /// The hits a local search answers, best match first, and whether the copy
@@ -1613,13 +1625,14 @@ impl From<marfa_core::ItemState> for ItemState {
 }
 
 pub(crate) fn listing(listed: marfa_core::Rows<(marfa_core::Item, marfa_core::Shown)>) -> Listing {
+    let items: Vec<Item> = listed
+        .rows
+        .into_iter()
+        .map(|(held, shown)| item(held, shown))
+        .collect();
     Listing {
         completeness: listed.completeness.into(),
-        items: listed
-            .rows
-            .into_iter()
-            .map(|(held, shown)| item(held, shown))
-            .collect(),
+        rows: packed::pack(&items),
     }
 }
 
@@ -4470,7 +4483,7 @@ mod tests {
                 }),
             )
             .unwrap()
-            .items;
+            .items();
         assert_eq!(listed[0].body.as_deref(), Some("Daily"));
     }
 
@@ -4629,7 +4642,7 @@ mod tests {
                 }),
             )
             .unwrap()
-            .items;
+            .items();
         assert_eq!(listed[0].properties, wanted);
         // An integer the server would serve back with other digits is refused.
         for value in ["9007199254740993", "-9223372036854775808"] {
@@ -4816,7 +4829,7 @@ mod tests {
         let listed = core
             .list(ListFilters::default(), Some(by_creation))
             .unwrap()
-            .items;
+            .items();
         assert_eq!(listed.len(), 3);
         assert_eq!(listed[0].unreadable_properties, None);
         assert_eq!(text(&listed[0].properties), r#"{"title":"kept zebra"}"#);
@@ -4856,7 +4869,7 @@ mod tests {
                 }),
             )
             .unwrap()
-            .items;
+            .items();
         assert_eq!(
             filtered.iter().map(|i| i.id.clone()).collect::<Vec<_>>(),
             [ids[0].clone()]
