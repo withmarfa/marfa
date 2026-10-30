@@ -229,7 +229,7 @@ When a key pages `GET /edges`, `GET /items/{id}/edges` or `GET /items/{id}/backr
 
 ### `edges/list-limit`
 
-When `GET /edges`, `GET /items/{id}/edges` or `GET /items/{id}/backrefs` names a `limit` of 500 or less, the server MUST answer a page of at most that many edges.
+When `GET /edges`, `GET /items/{id}/edges` or `GET /items/{id}/backrefs` names a `limit` from 1 to 500, the server MUST answer a page of at most that many edges.
 
 **Tests:** `compliance/edge-listings.test.ts › takes a limit of 500, reads 501 as 500 and refuses 0, on every edge listing`, `compliance/edge-gaps.test.ts › takes a limit of 500 and of 501, and refuses 0`.
 

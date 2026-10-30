@@ -79,10 +79,16 @@ export function pageLimit(options: {
 }
 
 function bounded(max: number, capped: boolean) {
-  const limit = z.coerce.number().int().min(MIN_PAGE_LIMIT);
+  // A capped limit is checked as an integer only after the cap, since `int()`
+  // also refuses a number past the safe-integer range, which is still "above".
   return capped
-    ? limit.transform((value) => Math.min(value, max))
-    : limit.max(max);
+    ? z.coerce
+        .number()
+        .min(MIN_PAGE_LIMIT)
+        .transform((value) => Math.min(value, max))
+        .pipe(z.number().int())
+        .openapi({ type: "integer", minimum: MIN_PAGE_LIMIT })
+    : z.coerce.number().int().min(MIN_PAGE_LIMIT).max(max);
 }
 
 function described(max: number, capped: boolean): string {
@@ -92,9 +98,12 @@ function described(max: number, capped: boolean): string {
 }
 
 function limitWithDefault(max: number, fallback: number, capped: boolean) {
-  return bounded(max, capped)
-    .default(fallback)
-    .describe(described(max, capped));
+  const limit = bounded(max, capped).default(fallback);
+  // The capped schema names its type for the document by hand, which hides
+  // the default from it.
+  return (capped ? limit.openapi({ default: fallback }) : limit).describe(
+    described(max, capped),
+  );
 }
 
 function limitWithoutDefault(max: number, capped: boolean) {

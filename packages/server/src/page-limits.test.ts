@@ -69,13 +69,14 @@ describe("the page bound", () => {
       expect(linked.status, await linked.clone().text()).toBe(200);
     }
 
-    const over = String(MAX_LISTING_LIMIT + 1);
-    for (const path of [
+    // Past the safe-integer range too, where an integer check refuses.
+    const overs = [String(MAX_LISTING_LIMIT + 1), "18446744073709551615"];
+    for (const path of overs.flatMap((over) => [
       `/items?tags=page-bound-cap&limit=${over}`,
       `/edges?edge_type=about&limit=${over}`,
       `/items/${hub}/edges?edge_type=about&limit=${over}`,
       `/items/${hub}/backrefs?edge_type=about&limit=${over}`,
-    ]) {
+    ])) {
       const res = await request(ctx.app, "GET", path, {
         key: ctx.workingKey,
       });
