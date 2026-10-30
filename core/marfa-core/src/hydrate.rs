@@ -1244,7 +1244,6 @@ pub(crate) fn hold_row(
     Ok(())
 }
 
-/// Fetched before any write so no transaction waits on the network.
 /// Walks a listing from `first`, the page `from` brought, writing each page
 /// with `write` while `read` asks for the one after it, so a page's transfer
 /// and the write of the page before it overlap.
@@ -1303,6 +1302,7 @@ fn with_overflow(
     Ok((page, overflow))
 }
 
+/// Fetched before any write so no transaction waits on the network.
 pub(crate) fn fetch_overflow(
     http: &Http,
     item_id: &str,

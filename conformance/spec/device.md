@@ -702,7 +702,7 @@ If a listing a hydration walks answers a `next_cursor` the hydration has already
 
 When a device asks for a page of a listing a hydration walks, a device MUST send an `Accept-Encoding` header that accepts `gzip`.
 
-**Reason:** the server compresses a JSON answer only for a request that accepts it (`instance/gzip-json`), and over a slow link a hydration's time is mostly its pages' bytes.
+**Reason:** the server compresses a JSON answer for a request that accepts gzip (`instance/gzip-json`), and over a slow link a hydration's time is mostly its pages' bytes.
 
 **Tests:** `device/hydration.test.ts › says it accepts gzip for each listing page and takes the rows of one sent compressed`.
 

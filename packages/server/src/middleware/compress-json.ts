@@ -20,10 +20,9 @@ const gzip = compress({
  * away (BREACH). A browser attaches no `Authorization` header to a request
  * another site makes, since Marfa uses no HTTP authentication a browser would remember.
  *
- * A request with a body is answered as it is too. When a handler refuses one
- * before reading its body, as a `413` does, `@hono/node-server` drains that
- * body so the connection can carry the next request; a compressed answer left
- * it undrained, and the next request on the connection failed.
+ * A request with a body is answered as it is too. A compressed `413` to an
+ * upload the server had not read made a client's next request on the same
+ * connection fail with a reset.
  */
 export function compressJson(): MiddlewareHandler {
   return (c, next) =>

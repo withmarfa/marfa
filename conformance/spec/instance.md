@@ -1,6 +1,6 @@
 # The instance
 
-What one deployment says about itself, and what happens to it as an owner runs it: the identity it answers to, the features and contract version it advertises, backing up, health, upgrading, stopping, the pages it renders, the configuration operations and the settings that stop it from starting. The credential chapters state what a key may reach and the registry chapters state what the data plane holds.
+What one deployment says about itself, and what happens to it as an owner runs it: the identity it answers to, the features and contract version it advertises, how it compresses its answers, backing up, health, upgrading, stopping, the pages it renders, the configuration operations and the settings that stop it from starting. The credential chapters state what a key may reach and the registry chapters state what the data plane holds.
 
 `GET /` answers one of two things. The description is the JSON object with `name`, `version`, `instance_id`, `contract` and `features`, and with `release` when the build is a numbered release. A page is the HTML a browser is given instead.
 
@@ -276,7 +276,7 @@ The server MUST send `X-Marfa-Contract`, with the number the root answers as `co
 
 ### `instance/gzip-json`
 
-When a `GET` request carries an `Authorization` header and an `Accept-Encoding` header that accepts `gzip`, the server MUST send an answer whose body is JSON with `Content-Encoding: gzip`.
+When a `GET` request carries an `Authorization` header and an `Accept-Encoding` header that accepts `gzip`, the server MUST send a JSON answer with `Content-Encoding: gzip`.
 
 **Reason:** the pages a hydration reads are mostly item bodies, which compress several times over, and over a slow link their bytes are most of the time a device waits.
 
