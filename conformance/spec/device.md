@@ -4410,9 +4410,11 @@ If a write names a type the copy was never told of, then a device MUST refuse it
 
 ### `device/declaration-refused`
 
-If an app declares a type whose identifier breaks the type grammar or uses a reserved root, that names a type Marfa ships, that has a field with no known type, that names a parent the copy does not know, or that the same declaration names already, then a device MUST refuse the declaration `invalid`.
+If an app declares a type whose identifier breaks the type grammar or uses a reserved root, that names a type Marfa ships, that has a field with no known type, that names a parent the copy does not know, that declares a `status` field with an empty `status_values` or with no words anywhere in its chain of declared and shipped types, or that the same declaration names already, then a device MUST refuse the declaration `invalid`.
 
-**Tests:** `device/save-before-sync.test.ts › refuses a declaration that names a type of Marfa's, one it cannot read, a parent it does not know, or one type twice`.
+**Reason:** the server refuses such a status field when the type is registered (`types/status-refused`, `types/status-parent-wordless`), and a status field with no words takes no value.
+
+**Tests:** `device/save-before-sync.test.ts › refuses a declaration that names a type of Marfa's, one it cannot read, a parent it does not know, or one type twice`, `› refuses a declaration whose status field has no words in its chain, naming the field`.
 
 ### `device/declaration-refused-whole`
 

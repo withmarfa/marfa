@@ -514,6 +514,64 @@ fn a_subtype_adds_status_words_after_the_ones_it_inherits() {
 }
 
 #[test]
+fn a_status_field_with_no_words_in_its_chain_is_refused() {
+    let core = copy(&Scripted::start());
+    let declare = |types: Vec<serde_json::Value>| core.declare_types(&types);
+    let ticket = |extra: serde_json::Value| {
+        let mut definition = serde_json::json!({
+            "id": "acme.ticket",
+            "fields": { "stage": { "type": "status" } }
+        });
+        definition
+            .as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        definition
+    };
+    let words = serde_json::json!({ "stage": { "type": "status", "status_values": [
+        { "value": "open", "group": "not_started" }
+    ] } });
+    for (types, case) in [
+        (vec![ticket(serde_json::json!({}))], "no parent"),
+        (
+            vec![
+                ticket(serde_json::json!({ "parent": "acme.base" })),
+                serde_json::json!({ "id": "acme.base", "fields": {} }),
+            ],
+            "a declared parent without the field",
+        ),
+        (
+            vec![
+                ticket(serde_json::json!({ "parent": "acme.base" })),
+                serde_json::json!({ "id": "acme.base", "fields": { "stage": { "type": "status" } } }),
+            ],
+            "a declared parent also without words",
+        ),
+        (
+            vec![ticket(serde_json::json!({ "parent": "core.note" }))],
+            "a shipped parent without the field",
+        ),
+    ] {
+        let Err(CoreError::Invalid(message)) = declare(types) else {
+            panic!("{case}: a status field with no words was declared");
+        };
+        assert!(message.contains("stage"), "{case}: {message}");
+    }
+    // The witnesses: a chain that gives the field its words, declared or shipped.
+    declare(vec![
+        serde_json::json!({ "id": "acme.base", "fields": words }),
+        ticket(serde_json::json!({ "parent": "acme.base" })),
+    ])
+    .unwrap();
+    declare(vec![serde_json::json!({
+        "id": "acme.chore",
+        "parent": "core.task",
+        "fields": { "status": { "type": "status", "description": "Where it stands" } }
+    })])
+    .unwrap();
+}
+
+#[test]
 fn a_status_field_declared_with_words_the_server_refuses_is_refused() {
     let core = copy(&Scripted::start());
     for (status_values, refused) in [

@@ -290,6 +290,86 @@ pub(crate) fn declaration(
     Ok((id.to_string(), Value::Object(row).to_string()))
 }
 
+/// Refuses a declared type whose `status` field has no words anywhere in its
+/// chain, the declared set's and the shipped types', as the server refuses
+/// such a registration (`types/status-refused`, `types/status-parent-wordless`).
+pub(crate) fn refuse_wordless_status(types: &[Value]) -> Result<(), CoreError> {
+    let shipped = crate::builtin::catalog()?;
+    // Each type's parent and the fields it declares itself.
+    type Link<'a> = (Option<&'a str>, Option<&'a Map<String, Value>>);
+    let mut chain: HashMap<&str, Link> = shipped
+        .types
+        .iter()
+        .map(|held| {
+            (
+                held.id.as_str(),
+                (
+                    held.parent.as_deref(),
+                    held.rest.get("fields").and_then(Value::as_object),
+                ),
+            )
+        })
+        .collect();
+    for definition in types {
+        if let Some(id) = definition.get("id").and_then(Value::as_str) {
+            chain.insert(
+                id,
+                (
+                    definition.get("parent").and_then(Value::as_str),
+                    definition.get("fields").and_then(Value::as_object),
+                ),
+            );
+        }
+    }
+    let has_words = |definition: &Value| {
+        definition.get("type").and_then(Value::as_str) == Some("status")
+            && definition
+                .get("status_values")
+                .and_then(Value::as_array)
+                .is_some_and(|words| !words.is_empty())
+    };
+    for definition in types {
+        let Some(id) = definition.get("id").and_then(Value::as_str) else {
+            continue;
+        };
+        let Some((name, _)) = definition
+            .get("fields")
+            .and_then(Value::as_object)
+            .into_iter()
+            .flatten()
+            .find(|(_, field)| field.get("type").and_then(Value::as_str) == Some("status"))
+        else {
+            continue;
+        };
+        let mut current = Some(id);
+        let mut walked = 0;
+        let mut found = false;
+        while let Some(at) = current {
+            let Some((parent, fields)) = chain.get(at) else {
+                break;
+            };
+            if fields
+                .and_then(|fields| fields.get(name))
+                .is_some_and(has_words)
+            {
+                found = true;
+                break;
+            }
+            walked += 1;
+            if walked > MAX_PARENT_WALK || *parent == Some(at) {
+                break;
+            }
+            current = *parent;
+        }
+        if !found {
+            return Err(CoreError::Invalid(format!(
+                "{id} declares {name} as status with no status_values, and no type above it gives the field its words"
+            )));
+        }
+    }
+    Ok(())
+}
+
 /// The groups every status word belongs to one of, fixed for every type.
 pub const STATUS_GROUPS: [&str; 4] = ["not_started", "in_progress", "completed", "canceled"];
 
@@ -306,8 +386,7 @@ pub(crate) fn status_word(text: &str) -> bool {
 /// is not `status`, a list that is not `{ value, group }` pairs naming each
 /// word once in one of the four groups, `enum_values` on a status field, or
 /// `status` as an array's element type. A status field that leaves its words
-/// out is left to the server, which takes it only where the parent's chain
-/// gives the field its words.
+/// out is judged against its chain by [`refuse_wordless_status`].
 pub(crate) fn status_declaration(kind: &str, definition: &Value) -> Option<String> {
     if definition.get("items_type").and_then(Value::as_str) == Some("status") {
         return Some(

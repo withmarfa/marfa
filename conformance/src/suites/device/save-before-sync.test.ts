@@ -254,6 +254,68 @@ describe("a copy no server has been named for", () => {
     expect(value(await device.declaredTypes())).toHaveLength(1);
   });
 
+  it("refuses a declaration whose status field has no words in its chain, naming the field", async () => {
+    const device = await offline("save-declare-wordless-status");
+    const wordless = { type: "status" };
+    const words = {
+      type: "status",
+      status_values: [{ value: "open", group: "not_started" }],
+    };
+    for (const declaration of [
+      [{ id: "app.ticket.entry", fields: { stage: wordless } }],
+      [
+        {
+          id: "app.ticket.entry",
+          fields: { stage: { type: "status", status_values: [] } },
+        },
+      ],
+      [
+        {
+          id: "app.ticket.entry",
+          parent: "core.note",
+          fields: { stage: wordless },
+        },
+      ],
+      [
+        {
+          id: "app.ticket.entry",
+          parent: "app.base.entry",
+          fields: { stage: wordless },
+        },
+        { id: "app.base.entry", fields: { stage: wordless } },
+      ],
+    ]) {
+      const refused = await device.declareTypes(declaration);
+      expect(
+        refused.ok ? "declared" : refused.refusal.code,
+        `${JSON.stringify(declaration)} was declared`,
+      ).toBe("invalid");
+      if (!refused.ok) expect(refused.refusal.raw).toContain("stage");
+    }
+    expect(value(await device.declaredTypes())).toEqual([]);
+    // The witnesses: a chain that gives the field its words, declared or shipped.
+    value(
+      await device.declareTypes([
+        {
+          id: "app.ticket.entry",
+          parent: "app.base.entry",
+          fields: { stage: wordless },
+        },
+        { id: "app.base.entry", fields: { stage: words } },
+      ]),
+    );
+    value(
+      await device.declareTypes([
+        {
+          id: "app.chore.entry",
+          parent: "core.task",
+          fields: { status: wordless },
+        },
+      ]),
+    );
+    expect(value(await device.declaredTypes())).toHaveLength(1);
+  });
+
   it("refuses a read of the server's catalog with no_server, answering no types from its own", async () => {
     // A run that names a server through the environment would answer the read.
     vi.stubEnv("MARFA_API_URL", "");
