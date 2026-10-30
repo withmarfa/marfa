@@ -4462,7 +4462,7 @@ If a write names, for an `array` field whose `items_fields` names members, an en
 
 **Reason:** the server refuses the entry (`types/array-entries-refused`), and a list a device kept would come back refused. A create and an update are judged alike.
 
-**Tests:** `device/property-validation-live.test.ts › matches the server on a range, a currency and the entries of a list`, `› refuses an update that sets a bad entry on both paths, naming the field, the position and the member`.
+**Tests:** `device/property-validation-live.test.ts › matches the server on a range, a currency and the entries of a list`, `› refuses an update that sets a bad entry on both paths, naming the field, the position and the member`, `device/attendees-live.test.ts › refuses on the device the attendee the server refuses`.
 
 ### `device/unknown-type-write`
 
