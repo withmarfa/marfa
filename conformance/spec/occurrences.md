@@ -1,6 +1,6 @@
 # Occurrences and recurring events
 
-An occurrence is one time an event happens. A recurring event is one `core.event` item, a series, that carries RFC 5545 rule lines in `recurrence`. The server computes its occurrences when a window is read. `GET /occurrences` answers them, and this chapter states how a series unfolds, what a window includes and what a write may store.
+An occurrence is one time an event happens. A recurring event is one `core.event` item, a series, that carries RFC 5545 rule lines in `recurrence`. The server computes its occurrences when a window is read. `GET /occurrences` answers them, and this chapter states how a series unfolds, what a window includes and what a write may store. A `core.task` item can carry the same `recurrence`: the server checks it on a write and never unfolds it, so `GET /occurrences` answers events only.
 
 ## The calendar operation
 
@@ -74,7 +74,7 @@ When `GET /occurrences` names a `type`, the server MUST answer the events of tha
 
 The server MUST NOT answer a task in `GET /occurrences`, whatever the task's `recurrence`, `due_at` or `starts_at` and whether or not the request names a `type` that the task is of.
 
-**Reason:** the server stores and checks a task's `recurrence` (`occurrences/schedule-task-start`) and does not unfold it. `GET /occurrences` is the calendar of events.
+**Reason:** the server stores a task's `recurrence` and checks it on a write (`occurrences/schedule-task-start`), but does not unfold it for a read. `GET /occurrences` is the calendar of events.
 
 **Tests:** `compliance/recurrence.test.ts › leaves a repeating task out of GET /occurrences, which answers the event beside it`.
 
@@ -450,7 +450,7 @@ When the server leaves a series out of `data`, the server MUST answer the rest o
 
 ## What a write may store
 
-An event's schedule, and a task's `recurrence`, is judged on every operation that writes an item's properties, `POST /items`, `PATCH /items/{id}`, `POST /items/bulk`, `POST /items/bulk-actions` with `update_properties` and `POST /restore`, and each refuses as it refuses any other property (`items/property-invalid`). A refusal is `400 invalid_properties` with `details.errors` naming the field. A task is any item of `core.task` or of a type under it. A task's rule starts at its `due_at`, or at its `starts_at` when it has no `due_at`, and advances in UTC because a task has no `timezone`; a rule the rules below judge against "the start" is judged against that first date.
+An event's schedule and a task's `recurrence` are judged on every operation that writes an item's properties, `POST /items`, `PATCH /items/{id}`, `POST /items/bulk`, `POST /items/bulk-actions` with `update_properties` and `POST /restore`, and each refuses as it refuses any other property (`items/property-invalid`). A refusal is `400 invalid_properties` with `details.errors` naming the field. A task is any item of `core.task` or of a type under it. A task's rule starts at its `due_at`, or at its `starts_at` when it has no `due_at`, and advances in UTC because a task has no `timezone`; a rule the rules below judge against "the start" is judged against that first date.
 
 ### `occurrences/schedule-unreadable`
 

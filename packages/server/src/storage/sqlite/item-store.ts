@@ -784,8 +784,8 @@ function restoreHoldsShape(type: string): boolean {
  * What a restore refuses of an item line before it reads the database: a type
  * that is no identifier and properties that are no object. A row of a `core`
  * or `system` type this build ships is then judged as a create is. Any other
- * row is refused only a malformed id or `occurred_at` and a schedule no
- * calendar read can unfold. Its properties come back as the archive holds
+ * row is refused only a malformed id or `occurred_at` and an event's schedule
+ * or a task's `recurrence` that no read can unfold. Its properties come back as the archive holds
  * them, whatever shape its type has now and whether or not the type is
  * registered, even as a platform row the build retired, because a type may
  * gain a required field or be force-deleted while its rows stand
