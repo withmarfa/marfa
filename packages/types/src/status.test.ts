@@ -262,6 +262,61 @@ describe("a status field down a chain", () => {
     );
   });
 
+  it("refuses a parent change that leaves a subtype's status field without words", () => {
+    const bug = schema({
+      id: "acme.bug",
+      parent: "acme.work",
+      required: ["stage"],
+      fields: { stage: { type: "status", required: true } },
+    });
+    const small = schema({
+      id: "acme.bug.small",
+      parent: "acme.bug",
+      fields: {},
+    });
+    const ctx = registryWith(workItem, bug, small);
+    for (const stage of [undefined, { type: "string" }]) {
+      const fields: Record<string, unknown> = { title: { type: "string" } };
+      if (stage) fields.stage = stage;
+      const errors = refuse({ ...workItem, fields }, ctx);
+      expect(errors, JSON.stringify(stage)).toContainEqual(
+        expect.objectContaining({
+          field: "fields.stage",
+          code: "inheritance_violation",
+        }),
+      );
+      expect(
+        errors.filter((e) => e.field === "fields.stage").length,
+        "one refusal for the subtype that declares the field",
+      ).toBe(1);
+    }
+
+    // The witnesses: the parent keeps its words, or the subtype holds its own.
+    accept(
+      {
+        ...workItem,
+        fields: {
+          ...workItem.fields,
+          stage: {
+            type: "status",
+            status_values: WORDS,
+            description: "Where it stands",
+          },
+        },
+      },
+      ctx,
+    );
+    const worded = schema({
+      id: "acme.bug",
+      parent: "acme.work",
+      fields: { stage: { type: "status", status_values: WORDS } },
+    });
+    accept(
+      { ...workItem, fields: { title: { type: "string" } } },
+      registryWith(workItem, worded, small),
+    );
+  });
+
   it("refuses a parent status field beside a subtype's own under another name", () => {
     const plain = schema({
       id: "acme.plain",

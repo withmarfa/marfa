@@ -469,7 +469,9 @@ When a type declares a `status` field whose `status_values` holds one or more en
 
 ### `types/status-refused`
 
-If a type declares a `status` field with no `status_values`, an empty one, an entry other than an object of exactly `value` and `group`, a word outside `^[a-z][a-z0-9_]{0,63}$` or held twice, a group outside the four, or `enum_values`, or declares `status_values` on a field of another type, or an `array` whose `items_type` is `status`, then the server MUST answer `400 invalid_schema` naming the member.
+If a type declares a `status` field it does not inherit with no `status_values`, any `status` field with an empty `status_values`, an entry other than an object of exactly `value` and `group`, a word outside `^[a-z][a-z0-9_]{0,63}$` or held twice, a group outside the four, or `enum_values`, or declares `status_values` on a field of another type, or an `array` whose `items_type` is `status`, then the server MUST answer `400 invalid_schema` naming the member.
+
+**Reason:** a subtype may declare the field it inherits without `status_values`, because its chain gives the words (`types/child-adds`).
 
 **Tests:** `compliance/status-groups.test.ts › refuses %s with invalid_schema, naming the member`.
 
@@ -502,6 +504,14 @@ If a type would declare a word that a type in its chain already gives the same `
 **Reason:** a word means one group down a chain, so a filter by group answers the same item the same way on the type and on each of its parents.
 
 **Tests:** `compliance/status-groups.test.ts › refuses an inherited word declared again, in any group`, `› refuses a parent change that adds a word a subtype already declares`.
+
+### `types/status-parent-wordless`
+
+If a change to a type would leave a type inheriting from it that declares a `status` field without `status_values` with no word for that field in its chain, by removing the field or by giving it another kind, then the server MUST answer `400 inheritance_violation` naming the field.
+
+**Reason:** the subtype's declaration was taken because its chain gave the words (`types/child-adds`), and a status field with no words takes no value.
+
+**Tests:** `compliance/status-groups.test.ts › refuses a parent change that leaves a subtype's status field without words`.
 
 ### `types/list-declared-status`
 

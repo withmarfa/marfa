@@ -273,6 +273,46 @@ describe("a status field down a chain", () => {
     expect(taken.status, JSON.stringify(taken.error)).toBe(200);
   });
 
+  it("refuses a parent change that leaves a subtype's status field without words", async () => {
+    const top = nextId();
+    await register({
+      id: top,
+      fields: {
+        title: { type: "string" },
+        stage: { type: "status", status_values: WORDS },
+      },
+    });
+    await register({
+      id: `${top}.bug`,
+      parent: top,
+      required: ["stage"],
+      fields: { stage: { type: "status" } },
+    });
+    for (const fields of [
+      { title: { type: "string" } },
+      { title: { type: "string" }, stage: { type: "string" } },
+    ]) {
+      const refused = await client.replaceType(top, { id: top, fields });
+      expect(refused.status, JSON.stringify(fields)).toBe(400);
+      expect(refused.error?.error.code).toBe("inheritance_violation");
+      expect(errorFields(refused)).toContain("fields.stage");
+    }
+
+    // The witness: the same parent keeping its words is taken.
+    const taken = await client.replaceType(top, {
+      id: top,
+      fields: {
+        title: { type: "string" },
+        stage: {
+          type: "status",
+          status_values: WORDS,
+          description: "Where it stands",
+        },
+      },
+    });
+    expect(taken.status, JSON.stringify(taken.error)).toBe(200);
+  });
+
   it("refuses the inherited status field redeclared as another kind", async () => {
     const refused = await client.registerType({
       id: `${parent}.kind`,

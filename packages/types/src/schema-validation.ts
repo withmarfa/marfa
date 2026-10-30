@@ -1355,6 +1355,23 @@ function validateStatusFields(
         }
       }
     }
+    // A subtype may redeclare the field without words only while a type
+    // above it gives the words.
+    if (
+      name !== undefined &&
+      words.size === 0 &&
+      child.fields[name]?.type === "status"
+    ) {
+      errors.push(
+        issue({
+          field: `fields.${name}`,
+          code: "inheritance_violation",
+          expected: `a status field with words for "${child.id}", which declares "${name}" without its own`,
+          actual: `no word for "${name}" in "${child.id}" or above it`,
+          hint: `Keep "${name}" as a status field with words here, or give "${child.id}" its own words first.`,
+        }),
+      );
+    }
   }
 }
 
