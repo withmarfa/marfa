@@ -109,7 +109,6 @@ describe("edge cardinality enforcement", () => {
 
     for (const edgeType of [
       "about",
-      "authored-by",
       "derived-from",
       "attached-to",
       "references",

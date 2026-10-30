@@ -3,7 +3,7 @@
  *
  * The gallery snapshots are the copy review for the screens they preview,
  * and what they can review is decided by a hand-written fixture. The edge
- * scopes in that fixture were `edge.authored-by` and `edge.references`, both
+ * scopes in that fixture were `edge.about` and `edge.references`, both
  * curated; `edge.in-collection` was not in it, had no curated copy, and fell
  * through to the edge registry's containment-model rationale — which reached
  * a device approval screen as a row, with no preview and no snapshot to move.

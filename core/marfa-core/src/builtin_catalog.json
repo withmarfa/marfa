@@ -1838,23 +1838,6 @@
    "shipped": true
   },
   {
-   "id": "authored-by",
-   "label": "Authored by",
-   "reverse_label": "Author of",
-   "description": "Source was authored by the target (usually a core.entity.person).",
-   "cardinality": "many-to-many",
-   "source_type_constraints": [
-    "*"
-   ],
-   "target_type_constraints": [
-    "*"
-   ],
-   "cascade_on_delete": "orphan",
-   "written_at": "source",
-   "property_schema": {},
-   "shipped": true
-  },
-  {
    "id": "derived-from",
    "label": "Derived from",
    "reverse_label": "Basis for",

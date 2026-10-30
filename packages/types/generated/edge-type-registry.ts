@@ -30,19 +30,6 @@ const attachedTo: EdgeTypeSchema = {
   property_schema: {},
 };
 
-const authoredBy: EdgeTypeSchema = {
-  id: "authored-by",
-  label: "Authored by",
-  reverse_label: "Author of",
-  description: "Source was authored by the target (usually a core.entity.person).",
-  cardinality: "many-to-many",
-  source_type_constraints: ["*"],
-  target_type_constraints: ["*"],
-  cascade_on_delete: "orphan",
-  written_at: "source",
-  property_schema: {},
-};
-
 const derivedFrom: EdgeTypeSchema = {
   id: "derived-from",
   label: "Derived from",
@@ -144,7 +131,6 @@ const supersedes: EdgeTypeSchema = {
 export const ALL_EDGE_TYPES: EdgeTypeSchema[] = [
   about,
   attachedTo,
-  authoredBy,
   derivedFrom,
   inCollection,
   inFolder,
@@ -172,18 +158,6 @@ export const SHIPPED_EDGE_TYPE_SHAPES = {
     "cascade_on_delete": "orphan",
     "property_schema": {},
     "reverse_name": "has-attachment",
-    "source_type_constraints": [
-      "*"
-    ],
-    "target_type_constraints": [
-      "*"
-    ],
-    "written_at": "source"
-  },
-  "authored-by": {
-    "cardinality": "many-to-many",
-    "cascade_on_delete": "orphan",
-    "property_schema": {},
     "source_type_constraints": [
       "*"
     ],

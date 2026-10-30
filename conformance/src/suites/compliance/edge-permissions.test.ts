@@ -175,7 +175,7 @@ describe("per-edge-type permissions", () => {
     for (const edgeType of [
       "about",
       "parent-of",
-      "authored-by",
+      "derived-from",
       "attached-to",
     ]) {
       const target = await scopedItem(wildClient, `w-t-${edgeType}`);

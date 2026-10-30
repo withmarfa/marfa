@@ -1,6 +1,6 @@
 # Edges
 
-An edge is a typed, directed relationship from a source item to a target item, with its own id, properties and version. An edge type says how edges of that type behave: how many an item holds, which item types they join and what a delete does to the other end. Ten edge types ship, and a key registers more. Every edge type names both ends: its `label` names the source end and its `reverse_label` the target end.
+An edge is a typed, directed relationship from a source item to a target item, with its own id, properties and version. An edge type says how edges of that type behave: how many an item holds, which item types they join and what a delete does to the other end. Nine edge types ship, and a key registers more. Every edge type names both ends: its `label` names the source end and its `reverse_label` the target end.
 
 ## Shipped edge types
 
@@ -12,7 +12,6 @@ Every instance ships these edge types, each a row of the table below, which is w
 | --------------- | ------------- | --------------- | ---------------- | ------------ | --------- | ------------ | ---------------------------------- |
 | `about`         | About         | Subject of      | None             | many-to-many | orphan    | Any type     | Any type                           |
 | `attached-to`   | Attached to   | Attachments     | `has-attachment` | many-to-many | orphan    | Any type     | Any type                           |
-| `authored-by`   | Authored by   | Author of       | None             | many-to-many | orphan    | Any type     | Any type                           |
 | `derived-from`  | Derived from  | Basis for       | None             | many-to-many | orphan    | Any type     | Any type                           |
 | `in-collection` | In collection | Contents        | None             | many-to-many | orphan    | Any type     | Any type with the role `container` |
 | `in-folder`     | In folder     | Folder contents | None             | many-to-many | orphan    | Any type     | `system.folder`                    |
@@ -1211,19 +1210,19 @@ When `POST /edge-types` meets more than one of the answers this chapter gives it
 
 ### `edges/types-shipped`
 
-When a credential sends `GET /edge-types`, the server MUST list the ten shipped edge types `about`, `parent-of`, `in-thread`, `attached-to`, `authored-by`, `derived-from`, `supersedes`, `references`, `in-collection` and `in-folder`.
+When a credential sends `GET /edge-types`, the server MUST list the nine shipped edge types `about`, `parent-of`, `in-thread`, `attached-to`, `derived-from`, `supersedes`, `references`, `in-collection` and `in-folder`.
 
 **Tests:** `compliance/edge-types.test.ts › lists the shipped edge types and a registered one`.
 
 ### `edges/types-shipped-cardinality`
 
-When a credential sends `GET /edge-types`, the server MUST list `parent-of` as `one-to-many`, `in-thread` as `many-to-one`, `supersedes` as `one-to-one` and the other seven shipped types as `many-to-many`.
+When a credential sends `GET /edge-types`, the server MUST list `parent-of` as `one-to-many`, `in-thread` as `many-to-one`, `supersedes` as `one-to-one` and the other six shipped types as `many-to-many`.
 
 **Tests:** `device/fidelity.test.ts › matches the edge types a working copy holds and a folder reads its frontmatter lines by`, `compliance/edge-types.test.ts › core-first resolution: edge_type="about" always routes to core semantics`.
 
 ### `edges/types-shipped-cascade`
 
-When a credential sends `GET /edge-types`, the server MUST list `parent-of` with `cascade_on_delete` `cascade` and the other nine shipped types with `orphan`.
+When a credential sends `GET /edge-types`, the server MUST list `parent-of` with `cascade_on_delete` `cascade` and the other eight shipped types with `orphan`.
 
 **Tests:** `device/fidelity.test.ts › matches the edge types a working copy holds and a folder reads its frontmatter lines by`.
 

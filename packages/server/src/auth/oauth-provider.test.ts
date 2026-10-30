@@ -142,6 +142,15 @@ describe("liveAllowedScopes", () => {
     expect(live).toContain("edge.about:read");
     expect(live).not.toContain("about.*:read");
   });
+
+  it("offers no scope for an edge type the code no longer ships", () => {
+    // The witness: a shipped edge type's scope is offered.
+    expect(liveAllowedScopes()).toContain("edge.about:write");
+    expect(EDGE_TYPE_REGISTRY.has("authored-by")).toBe(false);
+    for (const scope of liveAllowedScopes()) {
+      expect(scope).not.toMatch(/^edge\.authored-by:/);
+    }
+  });
 });
 
 describe("a bundle is not a way around the scope grammar", () => {

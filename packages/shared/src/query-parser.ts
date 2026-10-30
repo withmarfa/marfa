@@ -111,7 +111,7 @@ const PROPERTY_PATH_RE = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
 /**
  * Edge field references take the form `edge[<type>]` (outbound) or
  * `backref[<type>]` (inbound). The type segment is lax — it accepts the core
- * edge-type identifiers (`parent-of`, `in-thread`, `authored-by`, etc.) and
+ * edge-type identifiers (`parent-of`, `in-thread`, `derived-from`, etc.) and
  * custom namespaced ones (`karakeep.list-member`).
  */
 const EDGE_REF_RE = /^(edge|backref)\[([^\]\s]+)\]$/;

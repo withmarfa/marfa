@@ -35,7 +35,7 @@ describe("edge response hydration + pagination", () => {
     const subject = await makeItem("subject");
     const t1 = await makeItem("t1");
     const t2 = await makeItem("t2");
-    const author = await makeItem("author");
+    const basis = await makeItem("basis");
 
     const eA = await client.createEdge({
       source_id: subject,
@@ -51,13 +51,13 @@ describe("edge response hydration + pagination", () => {
     });
     expect(eB.ok).toBe(true);
     trackEdge(ctx, eB.data.edge.id);
-    const eAuthor = await client.createEdge({
+    const eDerived = await client.createEdge({
       source_id: subject,
-      target_id: author,
-      edge_type: "authored-by",
+      target_id: basis,
+      edge_type: "derived-from",
     });
-    expect(eAuthor.ok).toBe(true);
-    trackEdge(ctx, eAuthor.data.edge.id);
+    expect(eDerived.ok).toBe(true);
+    trackEdge(ctx, eDerived.data.edge.id);
 
     const fetched = await client.getItem(subject);
     expect(fetched.ok).toBe(true);
@@ -65,10 +65,10 @@ describe("edge response hydration + pagination", () => {
     const edges = fetched.data.item.edges;
     expect(edges).toBeDefined();
     expect(Object.keys(edges!).sort()).toContain("about");
-    expect(Object.keys(edges!).sort()).toContain("authored-by");
+    expect(Object.keys(edges!).sort()).toContain("derived-from");
     expect(edges!.about.data.length).toBe(2);
     expect(edges!.about.next_cursor).toBeNull();
-    expect(edges!["authored-by"].data.length).toBe(1);
+    expect(edges!["derived-from"].data.length).toBe(1);
   });
 
   it("per-type hydration caps a block and carries a next_cursor when over the limit", async () => {

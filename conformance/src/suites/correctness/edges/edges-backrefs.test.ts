@@ -46,7 +46,7 @@ describe("edge backrefs", () => {
     const eB = await client.createEdge({
       source_id: srcB,
       target_id: target,
-      edge_type: "authored-by",
+      edge_type: "derived-from",
     });
     expect(eB.ok).toBe(true);
     trackEdge(ctx, eB.data.edge.id);
@@ -71,13 +71,13 @@ describe("edge backrefs", () => {
     });
     expect(about.ok).toBe(true);
     trackEdge(ctx, about.data.edge.id);
-    const authored = await client.createEdge({
+    const derived = await client.createEdge({
       source_id: s2,
       target_id: target,
-      edge_type: "authored-by",
+      edge_type: "derived-from",
     });
-    expect(authored.ok).toBe(true);
-    trackEdge(ctx, authored.data.edge.id);
+    expect(derived.ok).toBe(true);
+    trackEdge(ctx, derived.data.edge.id);
 
     const filtered = await client.listItemBackrefs(target, {
       edge_type: "about",
@@ -86,7 +86,7 @@ describe("edge backrefs", () => {
     expect(filtered.data.data.every((e) => e.edge_type === "about")).toBe(true);
     const ids = filtered.data.data.map((e) => e.id);
     expect(ids).toContain(about.data.edge.id);
-    expect(ids).not.toContain(authored.data.edge.id);
+    expect(ids).not.toContain(derived.data.edge.id);
   });
 
   it("paginates via cursor across many inbound edges", async () => {
