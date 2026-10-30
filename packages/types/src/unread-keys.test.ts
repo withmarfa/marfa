@@ -100,19 +100,20 @@ describe("unreadKeys", () => {
   });
 
   it("names a key inside a field by its path, whatever the field's type", () => {
-    // `minimum` and `maximum` are no part of a field definition: nothing
-    // enforces them, so a schema carrying them says something that is false.
+    // `exclusiveMinimum` and `exclusiveMaximum` are no part of a field
+    // definition: nothing enforces them, so a schema carrying them says
+    // something that is false.
     const bad = {
       ...type,
       fields: {
         title: { type: "string", max_length: 10 },
-        serves: { type: "integer", minimum: 1, maximum: 12 },
+        serves: { type: "integer", exclusiveMinimum: 1, exclusiveMaximum: 12 },
       },
     };
     expect(refusedPaths(validateTypeSchema(bad, context))).toEqual([
       "fields.title.max_length",
-      "fields.serves.minimum",
-      "fields.serves.maximum",
+      "fields.serves.exclusiveMinimum",
+      "fields.serves.exclusiveMaximum",
     ]);
   });
 
@@ -136,6 +137,12 @@ describe("unreadKeys", () => {
         },
         tags: { type: "array", items_type: "string", maxItems: 3 },
         lang: { type: "string", format: "bcp47" },
+        serves: { type: "integer", minimum: 1, maximum: 12 },
+        authors: {
+          type: "array",
+          items_type: "object",
+          items_fields: { name: { type: "string", required: true } },
+        },
       },
     };
     expect(
@@ -167,7 +174,7 @@ describe("unreadKeys", () => {
     );
     expect(found?.hint).toContain('"maxLength"');
     const [other] = unreadKeys(
-      { ...type, fields: { title: { type: "string", minimum: 1 } } },
+      { ...type, fields: { title: { type: "string", exclusiveMinimum: 1 } } },
       "type",
     );
     expect(other?.hint).not.toContain("Write");
@@ -271,9 +278,15 @@ describe("unreadKeys", () => {
     expect(sorted(EDGE_PROPERTY_KEYS)).toEqual(
       sorted(FIELD_DEFINITION_KEYS).filter(
         (key) =>
-          !["maxItems", "maxLength", "searchable", "status_values"].includes(
-            key,
-          ),
+          ![
+            "items_fields",
+            "maxItems",
+            "maxLength",
+            "maximum",
+            "minimum",
+            "searchable",
+            "status_values",
+          ].includes(key),
       ),
     );
   });

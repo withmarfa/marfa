@@ -1123,7 +1123,7 @@ describe("archives carry type registrations", () => {
 
     const cases: [string, Record<string, unknown>, Record<string, unknown>][] =
       [
-        ["a type", typeLine({ minimum: 1 }), typeLine({})],
+        ["a type", typeLine({ exclusiveMinimum: 1 }), typeLine({})],
         ["an edge type", edgeLine({ minimum: 1 }), edgeLine({})],
       ];
     for (const [what, bad, mended] of cases) {
@@ -1153,7 +1153,7 @@ describe("archives carry type registrations", () => {
         what,
       ).toEqual([
         what === "a type"
-          ? "fields.serves.minimum"
+          ? "fields.serves.exclusiveMinimum"
           : "property_schema.rank.minimum",
       ]);
       expect(await destination.storage.edgeTypes.list(), what).toHaveLength(0);
