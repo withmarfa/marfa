@@ -211,7 +211,7 @@ mod tests {
         );
         assert!(core.view("absent".into()).unwrap().is_none());
         let listed = core.list_in_view("view".into(), Some(1), Some(1)).unwrap();
-        assert_eq!(listed.items[0].id, "a");
+        assert_eq!(listed.items()[0].id, "a");
         let groups = core
             .view_groups("view".into(), Some("Europe/London".into()))
             .unwrap();

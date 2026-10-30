@@ -4547,9 +4547,18 @@ impl Unreadable {
     }
 }
 
-/// The stored properties, or none and why they could not be read.
+/// The stored properties, or none and why they could not be read. Properties
+/// nested deeper than `MAX_JSON_DEPTH` are unreadable, so that no reader of
+/// what the core answers, such as a binding's packed listing, meets them.
 fn split_properties(text: &str) -> (Map<String, Value>, Option<String>) {
     match serde_json::from_str::<Value>(text) {
+        Ok(value) if deeper_than(&value, crate::MAX_JSON_DEPTH) => (
+            Map::new(),
+            Some(format!(
+                "the stored text nests deeper than {} levels",
+                crate::MAX_JSON_DEPTH
+            )),
+        ),
         Ok(Value::Object(map)) => (map, None),
         Ok(_) => (
             Map::new(),
@@ -4559,6 +4568,17 @@ fn split_properties(text: &str) -> (Map<String, Value>, Option<String>) {
             Map::new(),
             Some(format!("the stored text is not JSON ({error})")),
         ),
+    }
+}
+
+/// Whether `value` nests arrays and objects more than `levels` deep, counting
+/// its own level. The parse refuses nesting past its own limit, so the
+/// recursion is bounded.
+fn deeper_than(value: &Value, levels: usize) -> bool {
+    match value {
+        Value::Array(values) => levels == 0 || values.iter().any(|v| deeper_than(v, levels - 1)),
+        Value::Object(map) => levels == 0 || map.values().any(|v| deeper_than(v, levels - 1)),
+        _ => false,
     }
 }
 

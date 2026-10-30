@@ -146,10 +146,10 @@ mod tests {
             .get_items(ids(&["b", "gone", "binned", "a"]), false)
             .unwrap();
         assert_eq!(listed.completeness, Completeness::Complete);
-        let held: Vec<&str> = listed.items.iter().map(|item| item.id.as_str()).collect();
+        let held: Vec<String> = listed.items().into_iter().map(|item| item.id).collect();
         assert_eq!(held, ["b", "a"]);
         let with_bin = core.get_items(ids(&["binned"]), true).unwrap();
-        assert_eq!(with_bin.items[0].id, "binned");
+        assert_eq!(with_bin.items()[0].id, "binned");
 
         assert_eq!(core.edge("ab".into()).unwrap().unwrap().target_id, "b");
         assert!(core.edge("gone".into()).unwrap().is_none());

@@ -12,6 +12,7 @@ mod folder_settings;
 mod folders;
 mod instance;
 mod json;
+mod packed;
 mod reads;
 mod renewal;
 mod views;
@@ -70,6 +71,7 @@ pub enum SortDirection {
 
 /// An item as the copy holds it.
 #[derive(Debug, Clone, uniffi::Record)]
+#[cfg_attr(test, derive(PartialEq))]
 pub struct Item {
     pub id: String,
     pub r#type: String,
@@ -381,8 +383,18 @@ impl From<marfa_core::Completeness> for Completeness {
 /// The items a local list answers, and whether the copy was whole.
 #[derive(Debug, Clone, uniffi::Record)]
 pub struct Listing {
-    pub items: Vec<Item>,
+    /// Each `Item`, in order, in the layout `packed.rs` states: a whole
+    /// copy's listing read as records costs Swift several microseconds an
+    /// item.
+    pub rows: Vec<u8>,
     pub completeness: Completeness,
+}
+
+#[cfg(test)]
+impl Listing {
+    pub(crate) fn items(&self) -> Vec<Item> {
+        packed::unpack(&self.rows)
+    }
 }
 
 /// The hits a local search answers, best match first, and whether the copy
@@ -1615,11 +1627,7 @@ impl From<marfa_core::ItemState> for ItemState {
 pub(crate) fn listing(listed: marfa_core::Rows<(marfa_core::Item, marfa_core::Shown)>) -> Listing {
     Listing {
         completeness: listed.completeness.into(),
-        items: listed
-            .rows
-            .into_iter()
-            .map(|(held, shown)| item(held, shown))
-            .collect(),
+        rows: packed::pack(&listed.rows),
     }
 }
 
@@ -4470,7 +4478,7 @@ mod tests {
                 }),
             )
             .unwrap()
-            .items;
+            .items();
         assert_eq!(listed[0].body.as_deref(), Some("Daily"));
     }
 
@@ -4629,7 +4637,7 @@ mod tests {
                 }),
             )
             .unwrap()
-            .items;
+            .items();
         assert_eq!(listed[0].properties, wanted);
         // An integer the server would serve back with other digits is refused.
         for value in ["9007199254740993", "-9223372036854775808"] {
@@ -4784,6 +4792,38 @@ mod tests {
     }
 
     #[test]
+    fn a_row_nested_past_the_depth_limit_crosses_flagged_in_a_listing_as_in_a_read_of_it() {
+        let (_dir, path, core) = copy_with_entries();
+        let mut ids = Vec::new();
+        for title in ["kept", "deep"] {
+            ids.push(
+                core.create_item(draft(
+                    "app.test.entry",
+                    &format!(r#"{{"title":"{title}"}}"#),
+                ))
+                .unwrap()
+                .item_id
+                .unwrap(),
+            );
+        }
+        let deep = (1..70).fold("null".to_string(), |inner, _| format!("[{inner}]"));
+        rusqlite::Connection::open(&path)
+            .unwrap()
+            .execute(
+                "UPDATE items SET properties = ?1 WHERE id = ?2",
+                [format!(r#"{{"deep":{deep}}}"#).as_str(), ids[1].as_str()],
+            )
+            .unwrap();
+
+        let listed = core.list(ListFilters::default(), None).unwrap().items();
+        assert_eq!(listed.len(), 2, "one deep row takes down the listing");
+        let held = listed.iter().find(|item| item.id == ids[1]).unwrap();
+        assert!(held.properties.members.is_empty());
+        assert!(held.unreadable_properties.is_some());
+        assert_eq!(Some(held), core.get(ids[1].clone()).unwrap().as_ref());
+    }
+
+    #[test]
     fn a_row_with_unreadable_properties_crosses_flagged_and_does_not_fail_a_list_or_a_search() {
         let (_dir, path, core) = copy_with_entries();
         let mut ids = Vec::new();
@@ -4816,7 +4856,7 @@ mod tests {
         let listed = core
             .list(ListFilters::default(), Some(by_creation))
             .unwrap()
-            .items;
+            .items();
         assert_eq!(listed.len(), 3);
         assert_eq!(listed[0].unreadable_properties, None);
         assert_eq!(text(&listed[0].properties), r#"{"title":"kept zebra"}"#);
@@ -4856,7 +4896,7 @@ mod tests {
                 }),
             )
             .unwrap()
-            .items;
+            .items();
         assert_eq!(
             filtered.iter().map(|i| i.id.clone()).collect::<Vec<_>>(),
             [ids[0].clone()]
