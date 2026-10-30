@@ -5,6 +5,7 @@ import {
   createTestContext,
   trackItem,
   trackView,
+  trackEdgeType,
   cleanup,
 } from "../../utils/setup.js";
 
@@ -88,6 +89,16 @@ describe("a status field's definition", () => {
       "fields.stage.status_values.1.value",
     ],
     [
+      "enum_values on a status field",
+      { type: "status", status_values: WORDS, enum_values: ["todo"] },
+      "fields.stage.enum_values",
+    ],
+    [
+      "an array of status words",
+      { type: "array", items_type: "status" },
+      "fields.stage.items_type",
+    ],
+    [
       "words on a field of another kind",
       { type: "string", status_values: WORDS },
       "fields.stage.status_values",
@@ -109,6 +120,20 @@ describe("a status field's definition", () => {
     },
   );
 
+  it("refuses a second status field in one type", async () => {
+    const id = nextId();
+    const refused = await client.registerType({
+      id,
+      fields: {
+        stage: { type: "status", status_values: WORDS },
+        phase: { type: "status", status_values: WORDS },
+      },
+    } as never);
+    expect(refused.status).toBe(400);
+    expect(refused.error?.error.code).toBe("invalid_schema");
+    expect(errorFields(refused)).toContain("fields.phase.type");
+  });
+
   it("takes words in the four groups and answers each with its group", async () => {
     const id = nextId();
     await register({ id, fields: { stage: { type: "status", status_values: WORDS } } });
@@ -120,11 +145,26 @@ describe("a status field's definition", () => {
   });
 
   it("refuses a status property on an edge type", async () => {
+    const id = `user.status-edge-${ctx.runId}`;
     const refused = await client.registerEdgeType({
-      id: `user.status-edge-${ctx.runId}`,
-      properties: { stage: { type: "status", status_values: WORDS } },
+      label: "Status edge",
+      id,
+      cardinality: "many-to-many",
+      property_schema: { stage: { type: "status", status_values: WORDS } },
     } as never);
     expect(refused.status).toBe(400);
+    expect(refused.error?.error.code).toBe("validation_error");
+    expect(JSON.stringify(refused.error)).toContain("property_schema.stage");
+
+    // The witness: the same edge type with a string property registers.
+    const taken = await client.registerEdgeType({
+      label: "Status edge",
+      id,
+      cardinality: "many-to-many",
+      property_schema: { stage: { type: "string" } },
+    });
+    expect(taken.status, JSON.stringify(taken.error)).toBe(201);
+    trackEdgeType(ctx, id);
   });
 });
 
@@ -195,6 +235,39 @@ describe("a status field down a chain", () => {
     } as never);
     expect(refused.status).toBe(400);
     expect(refused.error?.error.code).toBe("inheritance_violation");
+  });
+
+  it("refuses a parent gaining a status field beside a subtype's own under another name", async () => {
+    const plain = nextId();
+    await register({ id: plain, fields: { title: { type: "string" } } });
+    await register({
+      id: `${plain}.child`,
+      parent: plain,
+      fields: { phase: { type: "status", status_values: WORDS } },
+    });
+    const refused = await client.replaceType(plain, {
+      id: plain,
+      fields: {
+        title: { type: "string" },
+        stage: { type: "status", status_values: WORDS },
+      },
+    });
+    expect(refused.status).toBe(400);
+    expect(refused.error?.error.code).toBe("inheritance_violation");
+    expect(errorFields(refused)).toContain("fields.stage");
+
+    // The witness: the same field under the subtype's name is taken.
+    const taken = await client.replaceType(plain, {
+      id: plain,
+      fields: {
+        title: { type: "string" },
+        phase: {
+          type: "status",
+          status_values: [{ value: "parked", group: "not_started" }],
+        },
+      },
+    });
+    expect(taken.status, JSON.stringify(taken.error)).toBe(200);
   });
 
   it("refuses the inherited status field redeclared as another kind", async () => {
@@ -281,6 +354,50 @@ describe("writing a status field", () => {
     expect(errorFields(changed)).toContain("stage");
   });
 
+  it("refuses an undeclared word in a bulk entry, an upsert by natural key and a bulk upsert", async () => {
+    const key = `status-${ctx.runId}`;
+    const bulk = await client.bulkItems({
+      mode: "create_only",
+      atomic: false,
+      items: [
+        { type, source_id: `${key}-a`, properties: { title: "a", stage: "todo" } },
+        { type, source_id: `${key}-b`, properties: { title: "b", stage: "pending" } },
+      ],
+    });
+    expect(bulk.status, JSON.stringify(bulk.error)).toBe(200);
+    expect(bulk.data.results[0]?.outcome).toBe("created");
+    expect(bulk.data.results[1]).toMatchObject({
+      outcome: "errored",
+      error: { code: "invalid_properties" },
+    });
+    trackItem(ctx, String(bulk.data.results[0]?.id));
+
+    // A create naming the natural key of a live item is an update.
+    const upsert = await client.createItem({
+      type,
+      source: ctx.source,
+      source_id: `${key}-a`,
+      properties: { title: "a", stage: "pending" },
+    });
+    expect(upsert.status).toBe(400);
+    expect(upsert.error?.error.code).toBe("invalid_properties");
+
+    const bulkUpsert = await client.bulkItems({
+      mode: "upsert",
+      atomic: false,
+      items: [
+        { type, source_id: `${key}-a`, properties: { stage: "pending" } },
+        { type, source_id: `${key}-a`, properties: { stage: "done" } },
+      ],
+    });
+    expect(bulkUpsert.status, JSON.stringify(bulkUpsert.error)).toBe(200);
+    expect(bulkUpsert.data.results[0]).toMatchObject({
+      outcome: "errored",
+      error: { code: "invalid_properties" },
+    });
+    expect(bulkUpsert.data.results[1]?.outcome).toBe("updated");
+  });
+
   it("leaves a stored word the type no longer declares until a write sets it", async () => {
     const created = await create(type, { title: "Held", stage: "waiting" });
     expect(created.status).toBe(201);
@@ -314,11 +431,12 @@ describe("writing a status field", () => {
 
 describe("filtering by status_group", () => {
   let tag: string;
+  let parent: string;
   const made: Record<string, string> = {};
 
   beforeAll(async () => {
     tag = `status-group-${ctx.runId}`;
-    const parent = nextId();
+    parent = nextId();
     const child = `${parent}.bug`;
     const plain = nextId();
     await register({
@@ -412,7 +530,7 @@ describe("filtering by status_group", () => {
     const filter = 'status_group neq "completed" AND status_group neq "canceled"';
     const view = await client.createView({
       title: "Open work",
-      query: { filter, tags: [tag] },
+      query: { filter, types: [parent] },
     });
     expect(view.status, JSON.stringify(view.error)).toBe(201);
     trackView(ctx, view.data.item.id);
@@ -461,7 +579,7 @@ describe("compatible_with and a status field", () => {
       fields: { stage },
       compatible_with: [narrow],
     } as never);
-    expect(regrouped.status).toBe(400);
+    expect(regrouped.status).toBe(422);
     expect(regrouped.error?.error.code).toBe("compatible_with_violation");
 
     const loose = await client.registerType({
@@ -469,7 +587,7 @@ describe("compatible_with and a status field", () => {
       fields: { stage: { type: "string" } },
       compatible_with: [wide],
     } as never);
-    expect(loose.status).toBe(400);
+    expect(loose.status).toBe(422);
     expect(loose.error?.error.code).toBe("compatible_with_violation");
   });
 });

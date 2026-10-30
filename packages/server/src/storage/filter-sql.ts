@@ -317,7 +317,9 @@ function statusGroupSql(
   );
   const matched =
     clauses.length === 0 ? sql`1=0` : sql`(${sql.join(clauses, sql` OR `)})`;
-  return op === "not_exists" ? sql`NOT ${matched}` : matched;
+  // A row whose type matches but holds no value compares as NULL, which
+  // `not_exists` must count as absent.
+  return op === "not_exists" ? sql`NOT COALESCE(${matched}, 0)` : matched;
 }
 
 /**
