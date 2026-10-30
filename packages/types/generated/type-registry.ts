@@ -143,6 +143,7 @@ const coreMedia: TypeSchema = {
     published_at: { type: "datetime", description: "When originally published or released" },
     image_url: { type: "url", description: "Cover art, poster, or thumbnail" },
     language: { type: "string", description: "BCP 47 language code", format: "bcp47" },
+    progress: { type: "status", description: "Where the owner is with the work: want to read, watch, listen to or play it, started, finished, or gave up", status_values: [{ value: "planned", group: "not_started" }, { value: "started", group: "in_progress" }, { value: "finished", group: "completed" }, { value: "abandoned", group: "canceled" }] },
     notes: { type: "string", description: "Personal annotations" },
     thumbnail: { type: "thumbnail", description: "A small preview of the work, supplied by the writer" },
   },
@@ -391,6 +392,7 @@ const coreMediaAlbum: TypeSchema = {
     published_at: { type: "datetime", description: "When originally published or released" },
     image_url: { type: "url", description: "Cover art, poster, or thumbnail" },
     language: { type: "string", description: "BCP 47 language code", format: "bcp47" },
+    progress: { type: "status", description: "Where the owner is with the work: want to read, watch, listen to or play it, started, finished, or gave up", status_values: [{ value: "planned", group: "not_started" }, { value: "started", group: "in_progress" }, { value: "finished", group: "completed" }, { value: "abandoned", group: "canceled" }] },
     notes: { type: "string", description: "Personal annotations" },
     thumbnail: { type: "thumbnail", description: "A small preview of the work, supplied by the writer" },
     release_type: { type: "string", description: "Recommended values: album, ep, single" },
@@ -417,6 +419,7 @@ const coreMediaArticle: TypeSchema = {
     published_at: { type: "datetime", description: "When originally published or released" },
     image_url: { type: "url", description: "Cover art, poster, or thumbnail" },
     language: { type: "string", description: "BCP 47 language code", format: "bcp47" },
+    progress: { type: "status", description: "Where the owner is with the work: want to read, watch, listen to or play it, started, finished, or gave up", status_values: [{ value: "planned", group: "not_started" }, { value: "started", group: "in_progress" }, { value: "finished", group: "completed" }, { value: "abandoned", group: "canceled" }] },
     notes: { type: "string", description: "Personal annotations" },
     thumbnail: { type: "thumbnail", description: "A small preview of the work, supplied by the writer" },
     section: { type: "string", description: "Section of the publication" },
@@ -442,6 +445,7 @@ const coreMediaBook: TypeSchema = {
     published_at: { type: "datetime", description: "When originally published or released" },
     image_url: { type: "url", description: "Cover art, poster, or thumbnail" },
     language: { type: "string", description: "BCP 47 language code", format: "bcp47" },
+    progress: { type: "status", description: "Where the owner is with the work: want to read, watch, listen to or play it, started, finished, or gave up", status_values: [{ value: "planned", group: "not_started" }, { value: "started", group: "in_progress" }, { value: "finished", group: "completed" }, { value: "abandoned", group: "canceled" }] },
     notes: { type: "string", description: "Personal annotations" },
     thumbnail: { type: "thumbnail", description: "A small preview of the work, supplied by the writer" },
     isbn: { type: "string", description: "International Standard Book Number (ISO 2108)" },
@@ -468,6 +472,7 @@ const coreMediaEpisode: TypeSchema = {
     published_at: { type: "datetime", description: "When originally published or released" },
     image_url: { type: "url", description: "Cover art, poster, or thumbnail" },
     language: { type: "string", description: "BCP 47 language code", format: "bcp47" },
+    progress: { type: "status", description: "Where the owner is with the work: want to read, watch, listen to or play it, started, finished, or gave up", status_values: [{ value: "planned", group: "not_started" }, { value: "started", group: "in_progress" }, { value: "finished", group: "completed" }, { value: "abandoned", group: "canceled" }] },
     notes: { type: "string", description: "Personal annotations" },
     thumbnail: { type: "thumbnail", description: "A small preview of the work, supplied by the writer" },
     medium: { type: "enum", description: "What the episode is made of.", enum_values: ["tv", "podcast", "radio", "video", "mixed"] },
@@ -497,6 +502,7 @@ const coreMediaFilm: TypeSchema = {
     published_at: { type: "datetime", description: "When originally published or released" },
     image_url: { type: "url", description: "Cover art, poster, or thumbnail" },
     language: { type: "string", description: "BCP 47 language code", format: "bcp47" },
+    progress: { type: "status", description: "Where the owner is with the work: want to read, watch, listen to or play it, started, finished, or gave up", status_values: [{ value: "planned", group: "not_started" }, { value: "started", group: "in_progress" }, { value: "finished", group: "completed" }, { value: "abandoned", group: "canceled" }] },
     notes: { type: "string", description: "Personal annotations" },
     thumbnail: { type: "thumbnail", description: "A small preview of the work, supplied by the writer" },
     duration: { type: "number", description: "Runtime in seconds" },
@@ -525,6 +531,7 @@ const coreMediaSeries: TypeSchema = {
     published_at: { type: "datetime", description: "When originally published or released" },
     image_url: { type: "url", description: "Cover art, poster, or thumbnail" },
     language: { type: "string", description: "BCP 47 language code", format: "bcp47" },
+    progress: { type: "status", description: "Where the owner is with the work: want to read, watch, listen to or play it, started, finished, or gave up", status_values: [{ value: "planned", group: "not_started" }, { value: "started", group: "in_progress" }, { value: "finished", group: "completed" }, { value: "abandoned", group: "canceled" }] },
     notes: { type: "string", description: "Personal annotations" },
     thumbnail: { type: "thumbnail", description: "A small preview of the work, supplied by the writer" },
     medium: { type: "enum", description: "What the series is made of.", enum_values: ["tv", "podcast", "radio", "video", "mixed"] },
@@ -551,6 +558,7 @@ const coreMediaSong: TypeSchema = {
     published_at: { type: "datetime", description: "When originally published or released" },
     image_url: { type: "url", description: "Cover art, poster, or thumbnail" },
     language: { type: "string", description: "BCP 47 language code", format: "bcp47" },
+    progress: { type: "status", description: "Where the owner is with the work: want to read, watch, listen to or play it, started, finished, or gave up", status_values: [{ value: "planned", group: "not_started" }, { value: "started", group: "in_progress" }, { value: "finished", group: "completed" }, { value: "abandoned", group: "canceled" }] },
     notes: { type: "string", description: "Personal annotations" },
     thumbnail: { type: "thumbnail", description: "A small preview of the work, supplied by the writer" },
     duration: { type: "number", description: "Track length in seconds" },
@@ -1391,6 +1399,27 @@ export const SHIPPED_TYPE_SHAPES = {
       "notes": {
         "type": "string"
       },
+      "progress": {
+        "status_values": [
+          {
+            "group": "not_started",
+            "value": "planned"
+          },
+          {
+            "group": "in_progress",
+            "value": "started"
+          },
+          {
+            "group": "completed",
+            "value": "finished"
+          },
+          {
+            "group": "canceled",
+            "value": "abandoned"
+          }
+        ],
+        "type": "status"
+      },
       "published_at": {
         "type": "datetime"
       },
@@ -1443,6 +1472,27 @@ export const SHIPPED_TYPE_SHAPES = {
       },
       "num_tracks": {
         "type": "integer"
+      },
+      "progress": {
+        "status_values": [
+          {
+            "group": "not_started",
+            "value": "planned"
+          },
+          {
+            "group": "in_progress",
+            "value": "started"
+          },
+          {
+            "group": "completed",
+            "value": "finished"
+          },
+          {
+            "group": "canceled",
+            "value": "abandoned"
+          }
+        ],
+        "type": "status"
       },
       "published_at": {
         "type": "datetime"
@@ -1500,6 +1550,27 @@ export const SHIPPED_TYPE_SHAPES = {
       },
       "notes": {
         "type": "string"
+      },
+      "progress": {
+        "status_values": [
+          {
+            "group": "not_started",
+            "value": "planned"
+          },
+          {
+            "group": "in_progress",
+            "value": "started"
+          },
+          {
+            "group": "completed",
+            "value": "finished"
+          },
+          {
+            "group": "canceled",
+            "value": "abandoned"
+          }
+        ],
+        "type": "status"
       },
       "published_at": {
         "type": "datetime"
@@ -1566,6 +1637,27 @@ export const SHIPPED_TYPE_SHAPES = {
       },
       "page_count": {
         "type": "integer"
+      },
+      "progress": {
+        "status_values": [
+          {
+            "group": "not_started",
+            "value": "planned"
+          },
+          {
+            "group": "in_progress",
+            "value": "started"
+          },
+          {
+            "group": "completed",
+            "value": "finished"
+          },
+          {
+            "group": "canceled",
+            "value": "abandoned"
+          }
+        ],
+        "type": "status"
       },
       "published_at": {
         "type": "datetime"
@@ -1640,6 +1732,27 @@ export const SHIPPED_TYPE_SHAPES = {
       "notes": {
         "type": "string"
       },
+      "progress": {
+        "status_values": [
+          {
+            "group": "not_started",
+            "value": "planned"
+          },
+          {
+            "group": "in_progress",
+            "value": "started"
+          },
+          {
+            "group": "completed",
+            "value": "finished"
+          },
+          {
+            "group": "canceled",
+            "value": "abandoned"
+          }
+        ],
+        "type": "status"
+      },
       "published_at": {
         "type": "datetime"
       },
@@ -1709,6 +1822,27 @@ export const SHIPPED_TYPE_SHAPES = {
       "notes": {
         "type": "string"
       },
+      "progress": {
+        "status_values": [
+          {
+            "group": "not_started",
+            "value": "planned"
+          },
+          {
+            "group": "in_progress",
+            "value": "started"
+          },
+          {
+            "group": "completed",
+            "value": "finished"
+          },
+          {
+            "group": "canceled",
+            "value": "abandoned"
+          }
+        ],
+        "type": "status"
+      },
       "published_at": {
         "type": "datetime"
       },
@@ -1769,6 +1903,27 @@ export const SHIPPED_TYPE_SHAPES = {
       },
       "notes": {
         "type": "string"
+      },
+      "progress": {
+        "status_values": [
+          {
+            "group": "not_started",
+            "value": "planned"
+          },
+          {
+            "group": "in_progress",
+            "value": "started"
+          },
+          {
+            "group": "completed",
+            "value": "finished"
+          },
+          {
+            "group": "canceled",
+            "value": "abandoned"
+          }
+        ],
+        "type": "status"
       },
       "published_at": {
         "type": "datetime"
@@ -1846,6 +2001,27 @@ export const SHIPPED_TYPE_SHAPES = {
       },
       "notes": {
         "type": "string"
+      },
+      "progress": {
+        "status_values": [
+          {
+            "group": "not_started",
+            "value": "planned"
+          },
+          {
+            "group": "in_progress",
+            "value": "started"
+          },
+          {
+            "group": "completed",
+            "value": "finished"
+          },
+          {
+            "group": "canceled",
+            "value": "abandoned"
+          }
+        ],
+        "type": "status"
       },
       "published_at": {
         "type": "datetime"

@@ -271,13 +271,13 @@ If `POST /types`, or a `PUT /types/{id}` from a key holding `schema.write` that 
 
 ### `types/child-adds`
 
-The server MUST let a subtype add fields, redeclare an inherited field unchanged or with a new `description`, make an inherited field required, and redeclare an inherited `status` field with only the words it adds or none.
+The server MUST let a subtype add fields, redeclare an inherited field unchanged or with a new `description`, make an inherited field required, and redeclare an inherited status field with only the words it adds or none.
 
 **Tests:** `compliance/type-inheritance.test.ts › accepts a child type that adds a field not present on the parent`, `› accepts a child that redeclares an inherited field without changing it`, `› lets a child tighten an inherited field to required, and refuses one that loosens it`.
 
 ### `types/child-shape`
 
-If a type would give a field another `type`, `format`, `items_type`, `searchable`, `maxLength`, `maxItems` or `enum_values` than a type in its chain gives it, or a `status` field's words in a way `types/status-inherit` does not take, or make an inherited required field optional, then the server MUST answer `400 inheritance_violation` naming the field.
+If a type would give a field another `type`, `format`, `items_type`, `searchable`, `maxLength`, `maxItems` or `enum_values` than a type in its chain gives it, or a status field's words in a way `types/status-inherit` does not take, or make an inherited required field optional, then the server MUST answer `400 inheritance_violation` naming the field.
 
 **Tests:** `compliance/type-inheritance.test.ts › rejects a child type that changes an inherited field shape (inheritance_violation)`, `› rejects a parent gaining a field whose shape differs from one its child declares`, `› lets a child tighten an inherited field to required, and refuses one that loosens it`, `› refuses a replacement of a child that changes an inherited field's shape`, `compliance/thumbnails.test.ts › refuses a parent gaining a thumbnail under a name its child declares as text, and takes one its child declares as a thumbnail`, `compliance/status-groups.test.ts › refuses the inherited status field redeclared as another kind`.
 
@@ -289,7 +289,7 @@ When a listing names a type, the server MUST answer the items of that type, of e
 
 ### `types/compatible-with`
 
-When a type names `compatible_with`, the server MUST take it only where the type requires every field the target requires, its own or inherited, and every target field the type declares or inherits is readable as the target's: the same type, or `url`, `email`, `datetime`, `date`, `thumbnail`, `enum` or `status` where the target's is `string`, or `integer` where it is `number`; for an `array`, the same `items_type`; for an `enum`, values drawn from the target's; for a `status`, words the target's `status` field also holds, each in the same group; and, where both name a `format`, the same one.
+When a type names `compatible_with`, the server MUST take it only where the type requires every field the target requires, its own or inherited, and every target field the type declares or inherits is readable as the target's: the same type, or `url`, `email`, `datetime`, `date`, `thumbnail`, `enum` or `status` where the target's is `string`, or `integer` where it is `number`; for an `array`, the same `items_type`; for an `enum`, values drawn from the target's; for a `status`, words the target's status field also holds, each in the same group; and, where both name a `format`, the same one.
 
 **Tests:** `compliance/type-inheritance.test.ts › accepts compatible_with: core.note when fields satisfy the structural superset`, `› takes a compatible_with claim whose fields are readable as the target's, and refuses one that is not`, `compliance/thumbnails.test.ts › is read as the target's by a type claiming compatibility, and refused as text`, `compliance/status-groups.test.ts › reads a status field as a string, and as a status field holding its words in the same groups`.
 
@@ -331,7 +331,7 @@ If a `merge_policy` names a field the type does not declare or inherit, or a str
 
 ### `types/field-grammar`
 
-If a type names a field definition with an unknown `type` or `format`, an `enum` whose `enum_values` is missing or empty or holds a value that is not a string, a `status` field `types/status-refused` refuses, an `array` with no `items_type`, or a `maxLength` or `maxItems` that is not a whole number of at least 1 or on a type it does not apply to, or the type names `states`, `default_state` or `transitions`, a `required` entry naming a field it does not declare, a role other than `container`, or a `display_hints` `title_field` or `body_field` naming a field neither it nor an ancestor declares, then the server MUST answer `400 invalid_schema` naming the member.
+If a type names a field definition with an unknown `type` or `format`, an `enum` whose `enum_values` is missing or empty or holds a value that is not a string, a status field `types/status-refused` refuses, an `array` with no `items_type`, or a `maxLength` or `maxItems` that is not a whole number of at least 1 or on a type it does not apply to, or the type names `states`, `default_state` or `transitions`, a `required` entry naming a field it does not declare, a role other than `container`, or a `display_hints` `title_field` or `body_field` naming a field neither it nor an ancestor declares, then the server MUST answer `400 invalid_schema` naming the member.
 
 **Tests:** `compliance/field-types.test.ts › refuses a field definition the grammar does not take`.
 
@@ -457,11 +457,11 @@ When a field declares `searchable: false`, the server MUST leave its value out o
 
 ## Status fields
 
-A `status` field holds one word from a list the type declares in `status_values`, and each word belongs to one of four fixed groups, so an app can tell what is open, active or finished on any type without knowing its words.
+A status field is a field of the `status` kind, whatever its name: `core.task` calls it `status`, and `core.media` calls it `progress`. It holds one word from a list the type declares in `status_values`, and each word belongs to one of four fixed groups, so an app can tell what is open, active or finished on any type without knowing its words.
 
 ### `types/status-groups`
 
-When a type declares a `status` field whose `status_values` holds one or more entries, each an object of exactly a `value` matching `^[a-z][a-z0-9_]{0,63}$` that no other entry holds and a `group` of `not_started`, `in_progress`, `completed` or `canceled`, the server MUST take it and answer the entries, in order, on `GET /types/{id}`.
+When a type declares a status field whose `status_values` holds one or more entries, each an object of exactly a `value` matching `^[a-z][a-z0-9_]{0,63}$` that no other entry holds and a `group` of `not_started`, `in_progress`, `completed` or `canceled`, the server MUST take it and answer the entries, in order, on `GET /types/{id}`.
 
 **Reason:** the groups are fixed so that a filter, a view or an app reads the same four meanings on every type; a word is a type's own name for where its item stands.
 
@@ -469,7 +469,7 @@ When a type declares a `status` field whose `status_values` holds one or more en
 
 ### `types/status-refused`
 
-If a type declares a `status` field it does not inherit with no `status_values`, any `status` field with an empty `status_values`, an entry other than an object of exactly `value` and `group`, a word outside `^[a-z][a-z0-9_]{0,63}$` or held twice, a group outside the four, or `enum_values`, or declares `status_values` on a field of another type, or an `array` whose `items_type` is `status`, then the server MUST answer `400 invalid_schema` naming the member.
+If a type declares a status field it does not inherit with no `status_values`, any status field with an empty `status_values`, an entry other than an object of exactly `value` and `group`, a word outside `^[a-z][a-z0-9_]{0,63}$` or held twice, a group outside the four, or `enum_values`, or declares `status_values` on a field of another type, or an `array` whose `items_type` is `status`, then the server MUST answer `400 invalid_schema` naming the member.
 
 **Reason:** a subtype may declare the field it inherits without `status_values`, because its chain gives the words (`types/child-adds`).
 
@@ -477,7 +477,7 @@ If a type declares a `status` field it does not inherit with no `status_values`,
 
 ### `types/status-one`
 
-If a type declares two `status` fields, then the server MUST answer `400 invalid_schema` naming the second.
+If a type declares two status fields, then the server MUST answer `400 invalid_schema` naming the second.
 
 **Reason:** a type has one place where its items stand, so "the item's status" and a `status_group` term each read one field.
 
@@ -485,13 +485,13 @@ If a type declares two `status` fields, then the server MUST answer `400 invalid
 
 ### `types/status-one-chain`
 
-If a type would declare a `status` field under a name other than the `status` field a type in its chain declares, then the server MUST answer `400 inheritance_violation` naming the field, whether the type is the subtype or the parent being registered or replaced.
+If a type would declare a status field under a name other than the one a type in its chain gives its status field, then the server MUST answer `400 inheritance_violation` naming the field, whether the type is the subtype or the parent being registered or replaced.
 
 **Tests:** `compliance/status-groups.test.ts › refuses a second status field under another name`, `› refuses a parent gaining a status field beside a subtype's own under another name`.
 
 ### `types/status-inherit`
 
-When a subtype declares the `status` field it inherits, the server MUST take the words it adds and answer the field on `GET /types/{id}` with every word its chain declares, the root's first and its own last, each with its group.
+When a subtype declares the status field it inherits, the server MUST take the words it adds and answer the field on `GET /types/{id}` with every word its chain declares, the root's first and its own last, each with its group.
 
 **Reason:** a subtype can refine where its items stand, such as adding `blocked` under `in_progress`, and still hold every word its parent's items can hold. A subtype may also declare the field without `status_values`, to require it or describe it (`types/child-adds`).
 
@@ -499,7 +499,7 @@ When a subtype declares the `status` field it inherits, the server MUST take the
 
 ### `types/status-word-redeclared`
 
-If a type would declare a word that a type in its chain already gives the same `status` field, in any group, then the server MUST answer `400 inheritance_violation` naming `fields.<name>.status_values`, whether the type is the subtype or the parent being replaced.
+If a type would declare a word that a type in its chain already gives the same status field, in any group, then the server MUST answer `400 inheritance_violation` naming `fields.<name>.status_values`, whether the type is the subtype or the parent being replaced.
 
 **Reason:** a word means one group down a chain, so a filter by group answers the same item the same way on the type and on each of its parents.
 
@@ -507,7 +507,7 @@ If a type would declare a word that a type in its chain already gives the same `
 
 ### `types/status-parent-wordless`
 
-If a change to a type would leave no word in the chain of a type below it that declares a `status` field without `status_values`, by removing the field or by giving it another kind, then the server MUST answer `400 inheritance_violation` naming the field.
+If a change to a type would leave no word in the chain of a type below it that declares a status field without `status_values`, by removing the field or by giving it another kind, then the server MUST answer `400 inheritance_violation` naming the field.
 
 **Reason:** the subtype's declaration was taken because its chain gave the words (`types/child-adds`), and a status field with no words takes no value.
 
@@ -515,7 +515,7 @@ If a change to a type would leave no word in the chain of a type below it that d
 
 ### `types/list-declared-status`
 
-When `GET /types` lists a type, the server MUST answer its `status` field with the words the type itself declares, and none it only inherits.
+When `GET /types` lists a type, the server MUST answer its status field with the words the type itself declares, and none it only inherits.
 
 **Reason:** `GET /types/{id}` answers every word the type's items can hold (`types/status-inherit`); the listing shows what each registration says.
 
@@ -523,17 +523,25 @@ When `GET /types` lists a type, the server MUST answer its `status` field with t
 
 ### `types/status-write-refused`
 
-If a create, an update, an upsert or an entry of a bulk write would leave an item, or a conflicted copy it makes, holding a `status` value that is not a word the item's type gives the field, its own or inherited, and the write is a create that names the value, changes the stored value, or moves the item to another type, then the server MUST answer `400 invalid_properties` with `details.errors` naming the field.
+If a create, an update, an upsert or an entry of a bulk write would leave an item, or a conflicted copy it makes, holding a value in its status field that is not a word the item's type gives the field, its own or inherited, and the write is a create that names the value, changes the stored value, or moves the item to another type, then the server MUST answer `400 invalid_properties` with `details.errors` naming the field.
 
 **Tests:** `compliance/status-groups.test.ts › refuses a word the type does not declare, naming the field`, `› takes a subtype's word on its own items and refuses it on the parent's`, `› refuses an undeclared word in a bulk entry, an upsert by natural key and a bulk upsert`, `› refuses a move into a type that does not declare the item's word, and keeps the item`, `› refuses a stale write whose conflicted copy would hold an undeclared word, writing nothing`, `› makes the copy when the stale write leaves an undeclared stored word alone`.
 
 ### `types/status-word-held`
 
-If an item holds a `status` value that its type no longer declares, then the server MUST NOT refuse an update of the item for that value unless the update changes the field's value or moves the item to another type.
+If an item holds a value in its status field that its type no longer declares, then the server MUST NOT refuse an update of the item for that value unless the update changes the field's value or moves the item to another type.
 
 **Reason:** a type can stop declaring a word while its items still hold it, and an edit to an item's title is not the write that has to move it to a word the type declares. A synced file and a whole-properties write send every property back, the stored word among them, so naming the field unchanged is not a change. A conflicted copy is a new item, so a value the stale write changed is judged as a create's is (`types/status-write-refused`), and a stored value the write leaves alone is kept in the copy. The value is in no group (`search-and-filters/status-group-none`).
 
 **Tests:** `compliance/status-groups.test.ts › leaves a stored word the type no longer declares until a write changes it`, `› refuses a move into a type that does not declare the item's word, and keeps the item`, `› makes the copy when the stale write leaves an undeclared stored word alone`.
+
+### `types/shipped-progress`
+
+The server MUST ship `core.media` declaring an optional field named `progress` of the `status` kind, with the words `planned` in the `not_started` group, `started` in `in_progress`, `finished` in `completed` and `abandoned` in `canceled`, which every subtype of `core.media` inherits.
+
+**Reason:** `progress` is where the owner is with the work: want to read, watch, listen to or play it, started, finished, or gave up. It is not named `status`, because `core.media.series` declares `status` as an `enum` for whether the series is still producing episodes, and a subtype cannot give an inherited field another kind (`types/child-shape`). A series holds both, and `status_group` reads `progress` on every media type (`types/status-one`).
+
+**Tests:** `compliance/media-progress.test.ts › is an optional status field on %s`, `› sits beside a series' own status enum`, `› takes a book started and puts it in the in_progress group`, `› refuses a word the type does not declare, naming progress`, `› finds a finished film by its group, and leaves a planned one out`.
 
 ## Thumbnails
 
