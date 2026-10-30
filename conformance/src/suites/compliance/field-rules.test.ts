@@ -647,7 +647,7 @@ describe("an article's DOI", () => {
     const read = await client.getType("core.media.article");
     expect(read.data.fields?.doi).toMatchObject({
       type: "string",
-      description: "Digital Object Identifier, such as 10.1000/182",
+      description: "Digital Object Identifier (ISO 26324)",
     });
     expect(read.data.fields?.doi?.required).not.toBe(true);
 
