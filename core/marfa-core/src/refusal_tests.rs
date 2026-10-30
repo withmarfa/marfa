@@ -392,6 +392,45 @@ fn a_status_word_the_type_does_not_declare_is_refused_only_where_a_write_changes
 }
 
 #[test]
+fn a_stale_keyed_create_judges_the_status_word_against_the_row_it_lands_on() {
+    let core = copy(&Scripted::start());
+    let id = uuid::Uuid::now_v7().to_string();
+    {
+        let conn = core.conn().unwrap();
+        let mut held = crate::store::testing::wire_item(
+            &id,
+            "core.task",
+            "active",
+            "2026-01-01T00:00:00.000Z",
+            serde_json::json!({ "title": "Old", "status": "pending" }),
+        );
+        held.source_id = Some("old-task".into());
+        held.version = 3;
+        store::upsert_item(&conn, &held, None, &crate::catalog::Indexing::default()).unwrap();
+    }
+    // Read at an earlier version, so the server merges it as a stale upsert.
+    let keyed = |properties: serde_json::Value| crate::Draft {
+        source: Some("test".into()),
+        source_id: Some("old-task".into()),
+        base_version: Some(1),
+        ..task(properties)
+    };
+    let Err(CoreError::Validation { code, message }) = core.create_item(&keyed(
+        serde_json::json!({ "title": "Old", "status": "waiting" }),
+    )) else {
+        panic!("a stale keyed create changing the word to an undeclared one was taken");
+    };
+    assert_eq!(code, "invalid_properties");
+    assert!(message.starts_with("status: "), "{message}");
+    assert!(core.queue().unwrap().is_empty());
+    core.create_item(&keyed(
+        serde_json::json!({ "title": "Renamed", "status": "pending" }),
+    ))
+    .unwrap();
+    assert_eq!(core.queue().unwrap().len(), 1);
+}
+
+#[test]
 fn a_move_into_a_type_that_does_not_declare_the_status_word_is_refused() {
     let core = copy(&Scripted::start());
     core.declare_types(&[serde_json::json!({

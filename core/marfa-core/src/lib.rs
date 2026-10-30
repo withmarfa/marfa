@@ -3394,8 +3394,9 @@ fn queue_create(
         draft.properties.clone()
     };
     // Landing on a held row, the create is an update of it, and a status
-    // word it sends back unchanged is not judged (`types/status-word-held`).
-    let written = match current {
+    // word it sends back unchanged is not judged (`types/status-word-held`),
+    // whether or not the copy can judge its merged result.
+    let written = match target.as_ref().filter(|held| held.r#type == draft.r#type) {
         Some(held) => changed_properties(&draft.properties, &held.properties),
         None => draft.properties.clone(),
     };
