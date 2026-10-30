@@ -599,7 +599,11 @@ const listItemsRoute = createRoute({
         ),
       direction: z.enum(["asc", "desc"]).optional().describe("Sort direction"),
       ...listingBoundKeys,
-      limit: pageLimit({ max: MAX_LISTING_LIMIT, default: DEFAULT_PAGE_LIMIT }),
+      limit: pageLimit({
+        max: MAX_LISTING_LIMIT,
+        default: DEFAULT_PAGE_LIMIT,
+        capped: true,
+      }),
       cursor: pageCursor(),
       include: z
         .string()

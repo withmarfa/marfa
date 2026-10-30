@@ -72,7 +72,7 @@ So each operation, parameter, field and response says what it needs to on its ow
 - **Put fixed facts in the schema, not the text**: type, range, default and allowed values go in `minimum`, `maximum`, `default` and `enum`. The text gives a default only when it depends on something, such as "Defaults to your `default_tier`".
 - A comma-separated list says so and names its values.
 - **(checked: at most 250 characters)**
-- **Take `limit` and `cursor` from `pageLimit` and `pageCursor` in `packages/server/src/page-limits.ts`.** `Idempotency-Key` and `X-Marfa-Reach` come from `openapi-finalize.ts`. So each has one text everywhere. **(checked: one text per parameter name)** Share a parameter only where it means the same thing; where it means something else on one operation, define it there with its own text.
+- **Take `limit` and `cursor` from `pageLimit` and `pageCursor` in `packages/server/src/page-limits.ts`.** `Idempotency-Key` and `X-Marfa-Reach` come from `openapi-finalize.ts`. So each has one text everywhere. **(checked: one text per parameter name)** Share a parameter only where it means the same thing; where it means something else on one operation, define it there with its own text. A listing a device walks to fill its copy takes `pageLimit({ capped: true })`, which reads a larger `limit` as the bound instead of refusing it, has no `maximum`, and says the bound in a text that every such listing shares.
 
 ## Objects and fields
 

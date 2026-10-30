@@ -570,13 +570,21 @@ The rows of one page and the key that continues them are in `search-and-filters/
 
 When `GET /items` names a `limit` from 1 to 500, the server MUST answer a page of at most that many items.
 
-**Tests:** `correctness/pagination.test.ts › takes a limit of 500 and refuses 501 and 0, on the listing`, `› basic pagination: limit restricts result count and signals more`.
+**Tests:** `correctness/pagination.test.ts › takes a limit of 500, reads 501 as 500 and refuses 0, on the listing`, `› basic pagination: limit restricts result count and signals more`.
+
+### `search-and-filters/limit-listing-capped`
+
+When `GET /items` names a `limit` above 500, the server MUST answer a page of at most 500 items.
+
+**Reason:** a client built for a larger page keeps working against a server whose page is smaller, because a client walks a listing by `next_cursor`, not by the length of a page.
+
+**Tests:** `correctness/pagination.test.ts › takes a limit of 500, reads 501 as 500 and refuses 0, on the listing`.
 
 ### `search-and-filters/limit-listing-refused`
 
-If `GET /items` names a `limit` above 500 or below 1, then the server MUST answer `400 validation_error` naming `limit`.
+If `GET /items` names a `limit` below 1, then the server MUST answer `400 validation_error` naming `limit`.
 
-**Tests:** `correctness/pagination.test.ts › takes a limit of 500 and refuses 501 and 0, on the listing`.
+**Tests:** `correctness/pagination.test.ts › takes a limit of 500, reads 501 as 500 and refuses 0, on the listing`.
 
 ### `search-and-filters/limit-search`
 

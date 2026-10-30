@@ -269,9 +269,16 @@ describe("the API description follows API-STYLE.md", () => {
         )
           continue;
         if (ownMeaning.has(`${key} ${name}`)) continue;
-        const set = texts.get(name) ?? new Set<string>();
+        // A listing a device walks reads a larger `limit` as its bound
+        // instead of refusing it, so its `limit` has a text of its own.
+        const schema = parameter.schema as Json | undefined;
+        const kind =
+          name === "limit" && schema?.maximum === undefined
+            ? "limit, read as its bound above it"
+            : name;
+        const set = texts.get(kind) ?? new Set<string>();
         set.add(String(parameter.description));
-        texts.set(name, set);
+        texts.set(kind, set);
       }
     }
     for (const [name, set] of texts) {

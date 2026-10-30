@@ -260,7 +260,7 @@ const listEdgesRoute = createRoute({
         .describe(
           "Only return edges that changed before this RFC 3339 time. It doesn't change the order.",
         ),
-      limit: pageLimit({ max: 500 }),
+      limit: pageLimit({ max: 500, capped: true }),
       cursor: pageCursor(),
     }),
   },
@@ -1015,7 +1015,7 @@ const listFromSourceRoute = createRoute({
         .describe(
           "Only return edges of these edge types, comma-separated, up to 10.",
         ),
-      limit: pageLimit({ max: 500 }),
+      limit: pageLimit({ max: 500, capped: true }),
       cursor: pageCursor(),
     }),
   },
@@ -1078,7 +1078,7 @@ const listBackrefsRoute = createRoute({
         .describe(
           "Only return edges of these edge types, comma-separated, up to 10.",
         ),
-      limit: pageLimit({ max: 500 }),
+      limit: pageLimit({ max: 500, capped: true }),
       cursor: pageCursor(),
     }),
   },

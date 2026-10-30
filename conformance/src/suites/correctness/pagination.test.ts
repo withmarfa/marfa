@@ -192,7 +192,7 @@ describe("the page limit", () => {
     for (const result of seeded.data.results) trackItem(ctx, String(result.id));
   });
 
-  it("takes a limit of 500 and refuses 501 and 0, on the listing", async () => {
+  it("takes a limit of 500, reads 501 as 500 and refuses 0, on the listing", async () => {
     const path = (limit: number) =>
       `/items?source=${encodeURIComponent(wideSource)}&limit=${String(limit)}`;
     // More rows are held than the largest page, so a full page is the limit
@@ -209,14 +209,22 @@ describe("the page limit", () => {
     expect(narrowest.status).toBe(200);
     expect(narrowest.data.data).toHaveLength(1);
 
-    for (const limit of [LISTING_MAX + 1, 0]) {
-      const refused = await wide.rawRequest<unknown>(path(limit));
-      expect(refused.status, `limit ${String(limit)}`).toBe(400);
-      expect(refused.error?.error.code).toBe("validation_error");
-      expect(refused.error?.error.details?.errors).toMatchObject([
-        { path: "limit" },
-      ]);
-    }
+    // A client built for a larger page reads the bound and walks on by the
+    // cursor, so a larger limit is read as the bound and not refused.
+    const over = await wide.rawRequest<{
+      data: unknown[];
+      next_cursor: string | null;
+    }>(path(LISTING_MAX + 1));
+    expect(over.status, JSON.stringify(over.error)).toBe(200);
+    expect(over.data.data).toHaveLength(LISTING_MAX);
+    expect(over.data.next_cursor).not.toBeNull();
+
+    const refused = await wide.rawRequest<unknown>(path(0));
+    expect(refused.status).toBe(400);
+    expect(refused.error?.error.code).toBe("validation_error");
+    expect(refused.error?.error.details?.errors).toMatchObject([
+      { path: "limit" },
+    ]);
   });
 
   it("takes a limit of 100 and refuses 101 and 0, on the search", async () => {

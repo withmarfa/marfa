@@ -52,38 +52,53 @@ const CURSOR_DESCRIPTION =
  * The `limit` query parameter of a paginated route, described the same way
  * everywhere. A route that names no `default` leaves the page size to its
  * handler.
+ *
+ * A listing a device walks to fill its copy is `capped`: it reads a `limit`
+ * above `max` as `max` rather than refusing it, so a device built to ask for
+ * a larger page than a server allows still walks the listing by
+ * `next_cursor`. Every other door refuses it.
  */
 export function pageLimit(options: {
   max: number;
   default: number;
+  capped?: boolean;
 }): ReturnType<typeof limitWithDefault>;
 export function pageLimit(options: {
   max: number;
+  capped?: boolean;
 }): ReturnType<typeof limitWithoutDefault>;
-export function pageLimit(options: { max: number; default?: number }) {
+export function pageLimit(options: {
+  max: number;
+  default?: number;
+  capped?: boolean;
+}) {
+  const capped = options.capped ?? false;
   return options.default === undefined
-    ? limitWithoutDefault(options.max)
-    : limitWithDefault(options.max, options.default);
+    ? limitWithoutDefault(options.max, capped)
+    : limitWithDefault(options.max, options.default, capped);
 }
 
-function limitWithDefault(max: number, fallback: number) {
-  return z.coerce
-    .number()
-    .int()
-    .min(MIN_PAGE_LIMIT)
-    .max(max)
+function bounded(max: number, capped: boolean) {
+  const limit = z.coerce.number().int().min(MIN_PAGE_LIMIT);
+  return capped
+    ? limit.transform((value) => Math.min(value, max))
+    : limit.max(max);
+}
+
+function described(max: number, capped: boolean): string {
+  return capped
+    ? `${LIMIT_DESCRIPTION} Up to ${String(max)}; a larger value is read as ${String(max)}.`
+    : LIMIT_DESCRIPTION;
+}
+
+function limitWithDefault(max: number, fallback: number, capped: boolean) {
+  return bounded(max, capped)
     .default(fallback)
-    .describe(LIMIT_DESCRIPTION);
+    .describe(described(max, capped));
 }
 
-function limitWithoutDefault(max: number) {
-  return z.coerce
-    .number()
-    .int()
-    .min(MIN_PAGE_LIMIT)
-    .max(max)
-    .optional()
-    .describe(LIMIT_DESCRIPTION);
+function limitWithoutDefault(max: number, capped: boolean) {
+  return bounded(max, capped).optional().describe(described(max, capped));
 }
 
 /** The `cursor` query parameter of a paginated route. */

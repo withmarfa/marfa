@@ -79,7 +79,7 @@ describe("POST /edges", () => {
 });
 
 describe("GET /items/{id}/backrefs", () => {
-  it("takes a limit of 500 and refuses 501 and 0", async () => {
+  it("takes a limit of 500, reads 501 as 500 and refuses 0", async () => {
     const target = await note();
     const source = await note();
     const made = await client.createEdge({
@@ -94,13 +94,13 @@ describe("GET /items/{id}/backrefs", () => {
     expect(widest.status).toBe(200);
     expect(widest.data.data.map((e) => e.id)).toEqual([made.data.edge.id]);
 
-    for (const limit of [501, 0]) {
-      const refused = await client.listItemBackrefs(target, { limit });
-      expect(refused.status, `limit ${String(limit)}`).toBe(400);
-      expect(refused.error?.error.code, `limit ${String(limit)}`).toBe(
-        "validation_error",
-      );
-    }
+    const over = await client.listItemBackrefs(target, { limit: 501 });
+    expect(over.status).toBe(200);
+    expect(over.data.data.map((e) => e.id)).toEqual([made.data.edge.id]);
+
+    const refused = await client.listItemBackrefs(target, { limit: 0 });
+    expect(refused.status).toBe(400);
+    expect(refused.error?.error.code).toBe("validation_error");
   });
 
   it("takes 10 edge types and refuses 11", async () => {
