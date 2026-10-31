@@ -2945,6 +2945,42 @@ marfa device items bulk-links [OPTIONS] <IDS>...
 
 Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 
+### marfa device items link-parts
+
+The `[[links]]` in a text, in order and repeats included, each with its name, heading and alias and where each sits in the text, counted in UTF-16 code units. A link in code or a comment, an embed, and a `[[` followed by a line break or another `[[` before its `]]` are not links. Reads no copy.
+
+```text
+marfa device items link-parts [OPTIONS] [TEXT]
+```
+
+| Argument | Description |
+| --- | --- |
+| `[TEXT]` | The text. |
+
+| Option | Description |
+| --- | --- |
+| `--file <PATH>` | Read the text from a file, or `-` for stdin. |
+
+Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
+
+### marfa device items link-candidates
+
+What each link could name, read from the local copy: every item outside the bin whose id, title or file path its name answers to, without regard to case or Unicode form, and whether it is `bound`, `ambiguous` or `unresolved`. An item the copy does not hold is not listed.
+
+```text
+marfa device items link-candidates [OPTIONS] <TARGETS>...
+```
+
+| Argument | Description |
+| --- | --- |
+| `<TARGETS>...` | The text between each link's brackets, such as `Plan#Goals\|the plan`. |
+
+| Option | Description |
+| --- | --- |
+| `--item <ID>` | Answer each as a link in this item's body would bind, by the edges the item already has. |
+
+Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
+
 ### marfa device items embed
 
 The text that embeds a file item in an item's body, which reads back as the file's `attached-to` edge to the item.

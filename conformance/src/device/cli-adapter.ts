@@ -22,6 +22,8 @@ import {
   type HydrateReport,
   type Item,
   type ItemType,
+  type LinkCandidates,
+  type LinkParts,
   type ListFilters,
   type Listing,
   type PinReport,
@@ -963,6 +965,27 @@ export class CliDevice implements DeviceUnderTest {
    *  (`device/body-links-read`). */
   async bodyLinks(id: string): Promise<Outcome<BodyLinks>> {
     return this.json<BodyLinks>(["items", "links", id]);
+  }
+
+  /** The links in a text, split into their parts and placed in UTF-16
+   *  code units (`device/link-parts`). */
+  async linkParts(text: string): Promise<Outcome<LinkParts[]>> {
+    return this.json<LinkParts[]>(["items", "link-parts", "--", text]);
+  }
+
+  /** What each link could name, from the copy alone, read as a link in
+   *  `item`'s body where one is given (`device/link-candidates`). */
+  async linkCandidates(
+    targets: string[],
+    item?: string,
+  ): Promise<Outcome<LinkCandidates[]>> {
+    return this.json<LinkCandidates[]>([
+      "items",
+      "link-candidates",
+      ...(item === undefined ? [] : ["--item", item]),
+      "--",
+      ...targets,
+    ]);
   }
 
   /** `bodyLinks` for many items in one read, by item id

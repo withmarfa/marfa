@@ -4278,6 +4278,13 @@ pub fn item_by_id(conn: &Connection, id: &str) -> Result<Option<Item>, CoreError
     item_by_id_with(conn, id, &mut Unreadable::Refuse)
 }
 
+/// Whether the copy holds `id` in the bin. False for an id it does not hold.
+pub(crate) fn in_bin(conn: &Connection, id: &str) -> Result<bool, CoreError> {
+    Ok(conn
+        .prepare_cached("SELECT 1 FROM items WHERE id = ?1 AND state = 'trashed'")?
+        .exists([id])?)
+}
+
 pub fn item_by_id_with(
     conn: &Connection,
     id: &str,

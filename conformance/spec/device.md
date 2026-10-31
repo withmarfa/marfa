@@ -5934,6 +5934,152 @@ If a file is attached to an item under a title another of the item's attachments
 
 **Tests:** `device/body-edges-live.test.ts › keeps a title its caller gives, and answers no embed text where that title is shared`.
 
+## A link's parts and what it could name
+
+An editor shows a link's parts where they sit in its text and offers the items a link could name, read from the device so that no app keeps a copy of the link grammar.
+
+### `device/link-parts`
+
+When a caller asks for the links in a text, a device MUST answer each link in the order of the text, repeats included, with its text as written, the text between its brackets trimmed, and its name, its heading and its alias.
+
+**Reason:** an editor highlights every link it shows, including a repeat and a link to a heading of the same text, which makes no edge. The CLI reads them with `device items link-parts`.
+
+**Tests:** `device/link-parts.test.ts › splits a link into its name, heading and alias, placed in UTF-16 code units`, `› closes a link at the last opening on its line, so an unclosed one takes nothing after it`.
+
+### `device/link-parts-blank`
+
+When a caller asks for the links in a text, a device MUST NOT answer brackets that hold only white space, such as `[[ ]]`, as a link.
+
+**Reason:** blank brackets name nothing, and a body makes no edge of them.
+
+**Tests:** `device/link-parts.test.ts › reads a blank pair of brackets as no link`.
+
+### `device/link-parts-positions`
+
+When a caller asks for the links in a text, a device MUST place each link and each of its parts as a range of UTF-16 code units in the text.
+
+**Reason:** Swift's `NSString`, TextKit and a JavaScript string count text in UTF-16 code units, so an editor can use a range as it is answered.
+
+**Tests:** `device/link-parts.test.ts › splits a link into its name, heading and alias, placed in UTF-16 code units`.
+
+### `device/link-parts-split`
+
+When a caller asks for the links in a text, a device MUST read each link's name as the text before the first `|` or `#`, the heading as the text from a `#` that comes before any `|` up to the next `|`, and the alias as the text after that `|`, each trimmed, with an empty heading or alias answered as none.
+
+**Reason:** the name is what `device/body-link-forms` binds a link by, so an editor highlights the part that names the item.
+
+**Tests:** `device/link-parts.test.ts › splits a link into its name, heading and alias, placed in UTF-16 code units`, `› reads the alias as everything after a bar that comes before any hash`.
+
+### `device/link-parts-text`
+
+When a caller asks for the links in a text, a device MUST NOT answer an embed, or a link in inline code, a code block or a comment.
+
+**Reason:** these are the places `device/body-link-text` reads as text, so an editor shows as a link only what can make an edge.
+
+**Tests:** `device/link-parts.test.ts › reads a link in code, a comment or an embed as text`.
+
+### `device/link-bounds`
+
+A device MUST read a link or an embed, in a body or in a text a caller asks about, as running from the last `[[` before its `]]` on the same line, so that a `[[` with no `]]` after it on its line opens nothing.
+
+**Reason:** a `[[` typed and not yet closed would otherwise take the text after it, and the links in it, into one name. An embed is bounded the same way, so one span of text is never read as both an embed and a link.
+
+**Tests:** `device/link-parts.test.ts › closes a link at the last opening on its line, so an unclosed one takes nothing after it`, `› reads a long text with many unclosed links`, `› reads a body's edges by the same bounds, so an unclosed link takes nothing after it`.
+
+### `device/link-bounds-pairs`
+
+A device MUST read the `[` characters of a line as pairs from the start of the line, so that a `[` left over after a `[[` is part of the link's name: `[[[b]]` names `[b`.
+
+**Reason:** an opening is found where a pair starts, not at every `[`, so a run of three brackets opens once.
+
+**Tests:** `device/link-parts.test.ts › closes a link at the last opening on its line, so an unclosed one takes nothing after it`.
+
+### `device/link-bounds-code`
+
+A device MUST read a link's name, heading and alias from the text as written, code included, between brackets found outside inline code, code blocks and comments, so a name that holds a code span keeps that code span, and a closing pair of brackets inside a code span closes no link.
+
+**Reason:** the brackets follow `device/body-link-text`, while the name is what the person typed between them.
+
+**Tests:** `device/link-parts.test.ts › finds the brackets outside code but takes the name with the code in it`.
+
+### `device/link-backslash`
+
+A device MUST read a backslash in a link, or before its brackets, as part of the text.
+
+**Reason:** Marfa defines no escape in a link, so an editor and the edges read `\[[name]]` alike.
+
+**Tests:** `device/link-parts.test.ts › keeps a backslash as part of the text`.
+
+### `device/link-parts-no-copy`
+
+When a caller asks for the links in a text, a device MUST answer without a working copy.
+
+**Tests:** `device/link-parts.test.ts › splits a link into its name, heading and alias, placed in UTF-16 code units`.
+
+### `device/link-candidates`
+
+When a caller asks what a link could name, a device MUST answer every item the copy holds outside the bin that the link's name answers to by id, title or file path, without regard to case or Unicode normalization form.
+
+**Reason:** an editor offers the items a link could name as it is typed, and as `folders/edge-name-normalization` reads a name. The CLI asks with `device items link-candidates`.
+
+**Tests:** `device/link-parts.test.ts › lists every item a name answers to, without regard to case or Unicode form`, `› binds an id the copy holds, and lists no item the copy does not hold`.
+
+### `device/link-candidates-whole`
+
+When a caller asks what a link with a heading or an alias could name, a device MUST answer the items its whole text answers to as well as those its name answers to.
+
+**Reason:** the whole text naming another item makes the link ambiguous (`folders/body-link-ambiguity`).
+
+**Tests:** `device/link-parts.test.ts › lists both readings where the whole text and the name before a mark each answer`.
+
+### `device/link-candidates-ambiguous`
+
+When more than one item the copy holds answers to a link a caller asks about, and none binds it, a device MUST answer the link `ambiguous`.
+
+**Tests:** `device/link-parts.test.ts › lists every item a name answers to, without regard to case or Unicode form`, `› lists both readings where the whole text and the name before a mark each answer`.
+
+### `device/link-candidates-bound`
+
+When a caller asks what a link in an item's body could name, a device MUST answer the link `bound`, with the item, where saving the link in that body would bind it to that item without asking the server, making its edge or keeping the one it has.
+
+**Reason:** an editor shows a link as followable only where the device binds it without the server, by `device/body-link-by-id`, `device/body-link-id-first` and the item's existing `references` edges.
+
+**Tests:** `device/link-parts.test.ts › answers a link in an item's body as saving it there would bind it`.
+
+### `device/link-candidates-id`
+
+When a caller asks what a link by the id of an item the copy holds outside the bin could name, a device MUST answer the link `bound`, with that item.
+
+**Tests:** `device/link-parts.test.ts › binds an id the copy holds, and lists no item the copy does not hold`.
+
+### `device/link-candidates-unresolved`
+
+If no item binds a link a caller asks about and at most one item the copy holds answers to it, then a device MUST answer the link `unresolved`.
+
+**Reason:** the copy holds a slice, so it cannot tell that an item it holds is the only one, and an item outside the slice is not listed; the server's lookup decides once the link is saved (`device/body-link-by-title`).
+
+**Tests:** `device/link-parts.test.ts › lists every item a name answers to, without regard to case or Unicode form`, `› binds an id the copy holds, and lists no item the copy does not hold`.
+
+### `device/link-candidates-bin`
+
+When a caller asks what a link could name, a device MUST NOT answer an item in the bin, by id, title or file path, or as the item the link's existing edge names.
+
+**Reason:** the server's lookup names no item in the bin, so a link never binds one, and saving a body never binds a link to one either.
+
+**Tests:** `device/link-parts.test.ts › never lists an item in the bin`.
+
+### `device/link-candidates-offline`
+
+When a caller asks what a link could name, a device MUST answer from the copy alone.
+
+**Tests:** `device/link-parts.test.ts › lists every item a name answers to, without regard to case or Unicode form`, `› answers a link in an item's body as saving it there would bind it`.
+
+### `device/link-candidates-host`
+
+If a caller asks what a link in the body of an item the copy does not hold could name, then a device MUST refuse `not_found`.
+
+**Tests:** `device/link-parts.test.ts › answers a link in an item's body as saving it there would bind it`.
+
 ## Ids a caller names
 
 ### `device/id-format`

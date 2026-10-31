@@ -1,5 +1,9 @@
 //! A body's links and embeds, read as Obsidian shows them.
 
+use std::ops::Range;
+
+use serde::Serialize;
+
 /// What was typed inside `[[ ]]`, in a body's link or a frontmatter line,
 /// and the name it is read as, which is what comes before a `|` or a `#`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -13,44 +17,218 @@ impl Typed {
         let raw = raw.trim();
         Typed {
             raw: raw.to_string(),
-            name: raw
-                .split(['|', '#'])
-                .next()
-                .unwrap_or_default()
-                .trim()
-                .to_string(),
+            name: raw[split(raw).name].to_string(),
         }
     }
 }
 
-/// An embed, `![[target]]`, is not a link.
-pub(crate) fn links(body: &str) -> Vec<String> {
-    let body = without_code(body);
-    let mut found = Vec::new();
-    let bytes = body.as_bytes();
-    let mut at = 0usize;
-    while let Some(start) = body[at..].find("[[") {
-        let open = at + start + 2;
-        let Some(end) = body[open..].find("]]") else {
-            break;
+/// Byte ranges into the text between a link's brackets: the name up to the
+/// first `|` or `#`; where `#` comes first, a heading up to the next `|`; and
+/// an alias after the first `|`. Each is trimmed, and an empty heading or
+/// alias is none.
+struct Split {
+    name: Range<usize>,
+    heading: Option<Range<usize>>,
+    alias: Option<Range<usize>>,
+}
+
+fn split(inner: &str) -> Split {
+    let present =
+        |range: Range<usize>| Some(trimmed(inner, range)).filter(|range| !range.is_empty());
+    let Some(at) = inner.find(['|', '#']) else {
+        return Split {
+            name: trimmed(inner, 0..inner.len()),
+            heading: None,
+            alias: None,
         };
-        let embedded = at + start > 0 && bytes[at + start - 1] == b'!';
-        let target = body[open..open + end].trim();
-        // A heading without a note stays within this document, so it is no edge.
-        if !embedded
-            && !target.is_empty()
+    };
+    let name = trimmed(inner, 0..at);
+    if inner.as_bytes()[at] == b'|' {
+        return Split {
+            name,
+            heading: None,
+            alias: present(at + 1..inner.len()),
+        };
+    }
+    match inner[at + 1..].find('|') {
+        Some(bar) => Split {
+            name,
+            heading: present(at + 1..at + 1 + bar),
+            alias: present(at + 2 + bar..inner.len()),
+        },
+        None => Split {
+            name,
+            heading: present(at + 1..inner.len()),
+            alias: None,
+        },
+    }
+}
+
+/// `range` of `text` without the white space `str::trim` takes off; an
+/// empty range where nothing is left, at its start.
+fn trimmed(text: &str, range: Range<usize>) -> Range<usize> {
+    let part = &text[range.clone()];
+    let start = range.start + (part.len() - part.trim_start().len());
+    let end = range.end - (part.len() - part.trim_end().len());
+    if start >= end {
+        range.start..range.start
+    } else {
+        start..end
+    }
+}
+
+/// A `[[`…`]]` in a body outside code and comments: its byte range, the
+/// `!` of an embed included, and the range between its brackets.
+struct Bracketed {
+    whole: Range<usize>,
+    inner: Range<usize>,
+    embed: bool,
+}
+
+/// Each `[[`…`]]` and `![[`…`]]` in `body` outside code and comments, in one
+/// pass. One holds no line break and no `[[`: the last `[[` before a `]]` on
+/// its line opens it, so a bracket left open never takes in the link after
+/// it. The brackets are found with code and comments blanked, so a `]]` in a
+/// code span closes nothing; the caller reads what they hold from `body`.
+fn bracketed(body: &str) -> Vec<Bracketed> {
+    let text = without_code(body);
+    let bytes = text.as_bytes();
+    let mut found = Vec::new();
+    let mut open: Option<usize> = None;
+    let mut at = 0;
+    while at < bytes.len() {
+        match bytes[at] {
+            b'[' if bytes.get(at + 1) == Some(&b'[') => {
+                open = Some(at);
+                at += 2;
+            }
+            b']' if bytes.get(at + 1) == Some(&b']') && open.is_some() => {
+                let start = open.take().expect("checked above");
+                let embed = start > 0 && bytes[start - 1] == b'!';
+                found.push(Bracketed {
+                    whole: if embed { start - 1 } else { start }..at + 2,
+                    inner: start + 2..at,
+                    embed,
+                });
+                at += 2;
+            }
+            b'\n' => {
+                open = None;
+                at += 1;
+            }
+            _ => at += 1,
+        }
+    }
+    found
+}
+
+/// The links of `body`: each `[[`…`]]` that is not an embed.
+fn link_ranges(body: &str) -> impl Iterator<Item = (Range<usize>, Range<usize>)> {
+    bracketed(body)
+        .into_iter()
+        .filter(|found| !found.embed)
+        .map(|found| (found.whole, found.inner))
+}
+
+/// The text of each link in a body that names another item, without its
+/// brackets, in order and once each. A link naming only a heading stays
+/// within this document, so it is no edge.
+pub(crate) fn links(body: &str) -> Vec<String> {
+    let mut found: Vec<String> = Vec::new();
+    for (_, inner) in link_ranges(body) {
+        let target = body[inner].trim();
+        if !target.is_empty()
             && !target.starts_with('#')
-            && !target.contains('\n')
             && !found.iter().any(|held| held == target)
         {
             found.push(target.to_string());
         }
-        at = open + end + 2;
-        if at >= bytes.len() {
-            break;
-        }
     }
     found
+}
+
+/// A link in a text, as `link_parts` reads it. Every position is a range of
+/// UTF-16 code units in the text, as an editor counts them.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct LinkParts {
+    /// As it appears in the text, brackets included.
+    pub text: String,
+    pub start: u64,
+    pub end: u64,
+    /// The text between the brackets, trimmed, which is what a link is bound
+    /// by and what `link_candidates` takes.
+    pub target: String,
+    /// What the link names. Empty for a link to a heading of the same text.
+    pub name: LinkPart,
+    pub heading: Option<LinkPart>,
+    pub alias: Option<LinkPart>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct LinkPart {
+    pub text: String,
+    pub start: u64,
+    pub end: u64,
+}
+
+/// Every link in `text` in order, repeats included: each that the edges of a
+/// body are read from, and each naming only a heading.
+pub fn link_parts(text: &str) -> Vec<LinkParts> {
+    let mut units = Utf16::new(text);
+    let mut found = Vec::new();
+    for (whole, inner) in link_ranges(text) {
+        let content = &text[inner.clone()];
+        let target = trimmed(content, 0..content.len());
+        if target.is_empty() {
+            continue;
+        }
+        let parts = split(content);
+        let base = inner.start;
+        let start = units.at(whole.start);
+        let mut part = |range: Range<usize>| LinkPart {
+            text: text[base + range.start..base + range.end].to_string(),
+            start: units.at(base + range.start),
+            end: units.at(base + range.end),
+        };
+        let name = part(parts.name);
+        let heading = parts.heading.map(&mut part);
+        let alias = parts.alias.map(&mut part);
+        found.push(LinkParts {
+            text: text[whole.clone()].to_string(),
+            start,
+            end: units.at(whole.end),
+            target: content[target].to_string(),
+            name,
+            heading,
+            alias,
+        });
+    }
+    found
+}
+
+/// Byte offsets as UTF-16 offsets, asked in increasing order, in one pass
+/// over the text.
+struct Utf16<'a> {
+    text: &'a str,
+    byte: usize,
+    unit: u64,
+}
+
+impl<'a> Utf16<'a> {
+    fn new(text: &'a str) -> Utf16<'a> {
+        Utf16 {
+            text,
+            byte: 0,
+            unit: 0,
+        }
+    }
+
+    fn at(&mut self, byte: usize) -> u64 {
+        debug_assert!(byte >= self.byte, "offsets are asked in order");
+        self.unit += self.text[self.byte..byte].encode_utf16().count() as u64;
+        self.byte = byte;
+        self.unit
+    }
 }
 
 pub(crate) fn render_link(target: &str) -> String {
@@ -78,29 +256,33 @@ impl Embed {
 
 pub(crate) fn embeds(body: &str) -> Vec<Embed> {
     let text = without_code(body);
+    let mut named = bracketed(body)
+        .into_iter()
+        .filter(|found| found.embed)
+        .peekable();
     let mut found: Vec<Embed> = Vec::new();
     let mut at = 0usize;
     while let Some(start) = text[at..].find("![") {
         let open = at + start;
         let rest = &text[open + 2..];
-        let (embed, used) = match rest.strip_prefix('[') {
-            Some(inner) => match inner.find("]]") {
-                Some(end) if !inner[..end].contains('\n') => {
-                    let name = inner[..end]
-                        .split(['|', '#'])
-                        .next()
-                        .unwrap_or_default()
-                        .trim();
-                    let used = 3 + end + 2;
+        while named
+            .next_if(|bracket| bracket.whole.start < open)
+            .is_some()
+        {}
+        let (embed, used) = if rest.starts_with('[') {
+            match named.next_if(|bracket| bracket.whole.start == open) {
+                Some(bracket) => {
+                    let name = Typed::new(&body[bracket.inner]).name;
                     let embed = (!name.is_empty()).then(|| Embed::Named {
-                        raw: body[open..open + used].to_string(),
-                        name: name.to_string(),
+                        raw: body[bracket.whole.clone()].to_string(),
+                        name,
                     });
-                    (embed, used)
+                    (embed, bracket.whole.len())
                 }
-                _ => (None, 3),
-            },
-            None => match image(rest) {
+                None => (None, 3),
+            }
+        } else {
+            match image(rest) {
                 Some(Image::Path(path, length)) => {
                     let used = 2 + length;
                     let path = (!is_address(&path)).then(|| local(&path));
@@ -121,7 +303,7 @@ pub(crate) fn embeds(body: &str) -> Vec<Embed> {
                     (embed, used)
                 }
                 None => (None, 2),
-            },
+            }
         };
         if let Some(embed) = embed
             && !found.contains(&embed)
@@ -316,6 +498,153 @@ mod tests {
             "an embed was read as a link, so a picture shown in a note became a reference"
         );
         assert_eq!(render_link("abc"), "[[abc]]");
+    }
+
+    #[test]
+    fn an_unclosed_or_reopened_link_does_not_swallow_the_next() {
+        assert_eq!(links("[[open\n[[next]]"), ["next"]);
+        assert_eq!(links("[[outer [[inner]] after"), ["inner"]);
+        assert_eq!(links("[[unclosed and [[a]] then [[b]]"), ["a", "b"]);
+        assert_eq!(
+            links("[[[b]] [[[[c]]"),
+            ["[b", "c"],
+            "pairs of `[` are read from the start of the line, a lone `[` after a pair \
+             being part of the name"
+        );
+    }
+
+    #[test]
+    fn an_embed_is_bounded_as_a_link_is_so_a_span_is_read_once() {
+        assert_eq!(links("![[a [[b]]"), ["b"]);
+        assert!(
+            embeds("![[a [[b]]").is_empty(),
+            "an embed took in a link, so one span was read as both"
+        );
+        assert_eq!(
+            embeds("![[open\n![[x.png]] [[a]] ![[a ![[y.png|20]]"),
+            vec![
+                Embed::Named {
+                    raw: "![[x.png]]".into(),
+                    name: "x.png".into()
+                },
+                Embed::Named {
+                    raw: "![[y.png|20]]".into(),
+                    name: "y.png".into()
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn code_inside_a_link_neither_closes_it_nor_leaves_its_name() {
+        assert_eq!(
+            links("[[a `b` c]]"),
+            ["a `b` c"],
+            "a code span inside a link was blanked out of its name"
+        );
+        assert_eq!(
+            links("[[a `]]` c]]"),
+            ["a `]]` c"],
+            "a `]]` inside a code span closed a link"
+        );
+        let parts = link_parts("x [[a `]]` c|al]]");
+        assert_eq!(parts.len(), 1);
+        assert_eq!(parts[0].name.text, "a `]]` c");
+        assert_eq!(parts[0].alias.as_ref().unwrap().text, "al");
+        assert_eq!(
+            embeds("![[a `]]` b.png]]"),
+            vec![Embed::Named {
+                raw: "![[a `]]` b.png]]".into(),
+                name: "a `]]` b.png".into()
+            }]
+        );
+    }
+
+    fn shown(parts: &LinkParts) -> (String, Option<String>, Option<String>) {
+        (
+            parts.name.text.clone(),
+            parts.heading.as_ref().map(|part| part.text.clone()),
+            parts.alias.as_ref().map(|part| part.text.clone()),
+        )
+    }
+
+    #[test]
+    fn link_parts_split_a_link_as_its_edge_is_read() {
+        let text = "[[ Plan # Goals | the plan ]] [[Plan|C#]] [[#local]] [[a#]] [[|bare]] [[Plan]]";
+        let parts = link_parts(text);
+        let some = |text: &str| Some(text.to_string());
+        assert_eq!(
+            parts.iter().map(shown).collect::<Vec<_>>(),
+            vec![
+                ("Plan".into(), some("Goals"), some("the plan")),
+                ("Plan".into(), None, some("C#")),
+                (String::new(), some("local"), None),
+                ("a".into(), None, None),
+                (String::new(), None, some("bare")),
+                ("Plan".into(), None, None),
+            ]
+        );
+        for part in &parts {
+            assert_eq!(part.name.text, Typed::new(&part.target).name);
+        }
+        assert_eq!(parts[0].target, "Plan # Goals | the plan");
+        assert_eq!(
+            links(text),
+            ["Plan # Goals | the plan", "Plan|C#", "a#", "|bare", "Plan"],
+            "the links a body's edges are read from are not the links read for their parts"
+        );
+    }
+
+    #[test]
+    fn link_parts_place_each_part_in_utf16_units() {
+        let text = "é😀 [[Café 😀#Über|naïve]] then [[x]]";
+        let parts = link_parts(text);
+        let utf16: Vec<u16> = text.encode_utf16().collect();
+        let at = |start: u64, end: u64| {
+            String::from_utf16(&utf16[start as usize..end as usize]).unwrap()
+        };
+        let first = &parts[0];
+        assert_eq!(at(first.start, first.end), "[[Café 😀#Über|naïve]]");
+        assert_eq!(
+            first.start, 4,
+            "an offset was counted in bytes or characters, not UTF-16 units"
+        );
+        assert_eq!(at(first.name.start, first.name.end), "Café 😀");
+        let heading = first.heading.as_ref().unwrap();
+        assert_eq!(at(heading.start, heading.end), "Über");
+        let alias = first.alias.as_ref().unwrap();
+        assert_eq!(at(alias.start, alias.end), "naïve");
+        assert_eq!(at(parts[1].start, parts[1].end), "[[x]]");
+        assert_eq!(at(parts[1].name.start, parts[1].name.end), "x");
+    }
+
+    #[test]
+    fn link_parts_leave_out_code_comments_embeds_and_what_never_closes() {
+        let text = "`[[inline]]` <!-- [[html]] --> %% [[comment]] %% ![[embed.png]] [[ ]] [[a\nb]] \\[[escaped]] [[x\\]] [[open\n```\n[[fenced]]\n```\n[[seen]] [[seen]]";
+        let parts = link_parts(text);
+        assert_eq!(
+            parts
+                .iter()
+                .map(|part| part.text.as_str())
+                .collect::<Vec<_>>(),
+            ["[[escaped]]", "[[x\\]]", "[[seen]]", "[[seen]]"],
+            "a link in code, a comment or an embed was read, a backslash was read as an escape, \
+             or a repeat was dropped where an editor needs every place a link is"
+        );
+    }
+
+    #[test]
+    fn link_parts_read_a_long_text_in_one_pass() {
+        let opened = "[[".repeat(200_000);
+        let started = std::time::Instant::now();
+        assert_eq!(link_parts(&format!("{opened}tail]]")).len(), 1);
+        let many = "[[a]] ".repeat(100_000);
+        assert_eq!(link_parts(&many).len(), 100_000);
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(5),
+            "reading took {:?}, so a long text is not read in one pass",
+            started.elapsed()
+        );
     }
 
     #[test]

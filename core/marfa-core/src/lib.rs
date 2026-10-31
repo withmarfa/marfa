@@ -88,7 +88,9 @@ use rusqlite::Connection;
 use serde_json::{Map, Value};
 
 pub use blob::{file_type_for, mime_type_for};
-pub use body::{BodyLinks, BodyName, BodyTarget};
+pub use body::{
+    BodyLinks, BodyName, BodyTarget, LinkCandidates, LinkPart, LinkParts, LinkState, link_parts,
+};
 pub use catalog::{EdgeType, End, ItemType, ServerCatalog, TypeField, WrittenAt};
 pub use catch_up::{Change, ChangeEvent, FollowReport};
 pub use display::ItemDisplay;
@@ -1832,6 +1834,19 @@ impl Core {
         let conn = self.conn()?;
         store::refuse_unless_usable(&conn)?;
         body::rule::read(&conn, id)
+    }
+
+    /// What each link target, the text between a link's brackets, could
+    /// name, from the copy alone: in `item`'s body where one is given, as
+    /// saving the link there would bind it.
+    pub fn link_candidates(
+        &self,
+        item: Option<&str>,
+        targets: &[String],
+    ) -> Result<Vec<LinkCandidates>> {
+        let conn = self.conn()?;
+        store::refuse_unless_usable(&conn)?;
+        body::rule::candidates(&conn, item, targets)
     }
 
     /// The text that embeds the file item `file` in `host`'s body, which

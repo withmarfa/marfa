@@ -1156,6 +1156,96 @@ impl From<marfa_core::BodyName> for BodyName {
     }
 }
 
+/// A link in a text, as `link_parts` reads it. Every position is a range of
+/// UTF-16 code units in the text, as `NSString` and TextKit count them.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct LinkParts {
+    /// As it appears in the text, brackets included.
+    pub text: String,
+    pub start: u64,
+    pub end: u64,
+    /// The text between the brackets, trimmed: what the link is bound by and
+    /// what `link_candidates` takes.
+    pub target: String,
+    /// What the link names. Empty for a link to a heading of the same text.
+    pub name: LinkPart,
+    pub heading: Option<LinkPart>,
+    pub alias: Option<LinkPart>,
+}
+
+/// One part of a link, trimmed, and where it sits in the text.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct LinkPart {
+    pub text: String,
+    pub start: u64,
+    pub end: u64,
+}
+
+impl From<marfa_core::LinkPart> for LinkPart {
+    fn from(part: marfa_core::LinkPart) -> LinkPart {
+        LinkPart {
+            text: part.text,
+            start: part.start,
+            end: part.end,
+        }
+    }
+}
+
+impl From<marfa_core::LinkParts> for LinkParts {
+    fn from(link: marfa_core::LinkParts) -> LinkParts {
+        LinkParts {
+            text: link.text,
+            start: link.start,
+            end: link.end,
+            target: link.target,
+            name: link.name.into(),
+            heading: link.heading.map(Into::into),
+            alias: link.alias.map(Into::into),
+        }
+    }
+}
+
+/// Whether a link names one item.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum LinkState {
+    /// Saving the link in the item's body would make its edge to `item`.
+    Bound,
+    /// More than one item the copy holds answers to it.
+    Ambiguous,
+    /// No item, or one the copy cannot tell is the only one, since it holds a
+    /// slice: the server's lookup decides.
+    Unresolved,
+}
+
+/// The items a link could name, from the copy alone.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct LinkCandidates {
+    /// The link's text between its brackets, as asked.
+    pub target: String,
+    pub state: LinkState,
+    /// The item it names, where `state` is `Bound`.
+    pub item: Option<String>,
+    /// Every item outside the bin the copy holds that answers to the link's
+    /// name, by id, title or file path, without regard to case or Unicode
+    /// form; and the bound item.
+    pub candidates: Vec<String>,
+}
+
+impl From<marfa_core::LinkCandidates> for LinkCandidates {
+    fn from(link: marfa_core::LinkCandidates) -> LinkCandidates {
+        LinkCandidates {
+            target: link.target,
+            state: match link.state {
+                marfa_core::LinkState::Bound => LinkState::Bound,
+                marfa_core::LinkState::Ambiguous => LinkState::Ambiguous,
+                marfa_core::LinkState::Unresolved => LinkState::Unresolved,
+            },
+            item: link.item,
+            candidates: link.candidates,
+        }
+    }
+}
+
 /// What became of one write a drain answered, sent or not.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct DrainVerdict {
@@ -2781,6 +2871,24 @@ impl Core {
         Ok(self.inner.body_links(&id)?.into())
     }
 
+    /// What each of `targets`, the text between a link's brackets as
+    /// `link_parts` gives it, could name from the copy alone, in order. With
+    /// `item`, each is read as a link in that item's body: `Bound` where
+    /// saving it there would make its edge. An item the copy does not hold
+    /// throws `NotFound`.
+    pub fn link_candidates(
+        &self,
+        item: Option<String>,
+        targets: Vec<String>,
+    ) -> Result<Vec<LinkCandidates>, MarfaError> {
+        Ok(self
+            .inner
+            .link_candidates(item.as_deref(), &targets)?
+            .into_iter()
+            .map(Into::into)
+            .collect())
+    }
+
     /// The text that embeds the file item `file` in the body of `id`, which
     /// names that file alone; throws `Invalid` where no embed can.
     pub fn embed_text(&self, id: String, file: String) -> Result<String, MarfaError> {
@@ -2916,6 +3024,16 @@ impl Core {
 #[uniffi::export]
 pub fn remove_store(path: String, unsent: u64) -> Result<(), MarfaError> {
     Ok(marfa_core::Core::remove_store(path, unsent)?)
+}
+
+/// Every link in `text` in order, repeats included, split as Marfa reads
+/// it, with each part's place in the text. Needs no store.
+#[uniffi::export]
+pub fn link_parts(text: String) -> Vec<LinkParts> {
+    marfa_core::link_parts(&text)
+        .into_iter()
+        .map(Into::into)
+        .collect()
 }
 
 #[cfg(test)]
@@ -3485,6 +3603,66 @@ mod tests {
         drop(held);
         assert_eq!(core.trim_files().unwrap(), bytes.len() as u64);
         assert!(!blobs.join(hex).exists());
+    }
+
+    #[test]
+    fn a_links_parts_and_candidates_cross_the_swift_boundary() {
+        // An emoji is two UTF-16 units: positions count what NSString counts.
+        let parts = link_parts("\u{1F600} [[Plan#Goals|the plan]]".into());
+        assert_eq!(parts.len(), 1);
+        assert_eq!((parts[0].start, parts[0].end), (3, 26));
+        assert_eq!(parts[0].target, "Plan#Goals|the plan");
+        assert_eq!(
+            parts[0].name,
+            LinkPart {
+                text: "Plan".into(),
+                start: 5,
+                end: 9
+            }
+        );
+        assert_eq!(parts[0].heading.as_ref().unwrap().text, "Goals");
+        assert_eq!(parts[0].alias.as_ref().unwrap().text, "the plan");
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("core.sqlite").display().to_string();
+        let core = Core::open(path, None, None, None).unwrap();
+        let note = |title: &str| {
+            core.create_item(Draft {
+                state: None,
+                capture_latitude: None,
+                capture_longitude: None,
+                edges: HashMap::new(),
+                r#type: "core.note".into(),
+                properties: object(serde_json::json!({ "title": title })),
+                id: None,
+                tags: Vec::new(),
+                tier: None,
+                source: None,
+                source_id: None,
+                occurred_at: None,
+                base_version: None,
+            })
+            .unwrap()
+            .item_id
+            .unwrap()
+        };
+        let mut both = vec![note("Plan"), note("PLAN")];
+        both.sort();
+        let answers = core
+            .link_candidates(None, vec!["plan".into(), both[0].clone(), "Café".into()])
+            .unwrap();
+        assert_eq!(answers[0].state, LinkState::Ambiguous);
+        let mut listed = answers[0].candidates.clone();
+        listed.sort();
+        assert_eq!(listed, both);
+        assert_eq!(answers[1].state, LinkState::Bound);
+        assert_eq!(answers[1].item.as_ref(), Some(&both[0]));
+        assert_eq!(answers[2].state, LinkState::Unresolved);
+        assert!(answers[2].candidates.is_empty());
+        assert!(matches!(
+            core.link_candidates(Some("00000000-0000-4000-8000-000000000000".into()), vec![]),
+            Err(MarfaError::NotFound { .. })
+        ));
     }
 
     #[test]

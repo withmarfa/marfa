@@ -6,4 +6,5 @@ pub(crate) mod resolve;
 pub(crate) mod rule;
 pub(crate) mod text;
 
-pub use rule::{BodyLinks, BodyName, BodyTarget};
+pub use rule::{BodyLinks, BodyName, BodyTarget, LinkCandidates, LinkState};
+pub use text::{LinkPart, LinkParts, link_parts};
