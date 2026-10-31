@@ -719,24 +719,44 @@ describe("an object is stored key for key as given", () => {
       unknown
     >;
     const rows = JSON.parse('[{"__proto__": {"y": 2}, "k": 2}]') as unknown[];
-    const created = await client.createItem({
+    // The transport's own parser drops a `__proto__` key from what it reads,
+    // so each answer is read with `JSON.parse`, which keeps it.
+    type Answer = {
+      item: {
+        id: string;
+        version: number;
+        properties: Record<string, unknown>;
+      };
+    };
+    const call = (
+      path: string,
+      method: string,
+      body?: Record<string, unknown>,
+    ) =>
+      client.rawRequest<Answer>(path, {
+        method,
+        body,
+        parseResponse: JSON.parse,
+      });
+    const created = await call("/items", "POST", {
       type: typeId,
       source: ctx.source,
       properties: { title: "t", meta, rows },
     });
-    expect(created.status, JSON.stringify(created.error)).toBe(201);
+    expect(created.status, JSON.stringify(created.data)).toBe(201);
     const { id, version } = created.data.item;
     trackItem(ctx, id);
 
-    const updated = await client.updateItem(id, {
+    const updated = await call(`/items/${id}`, "PATCH", {
       properties: { title: "t2" },
       version,
     });
-    expect(updated.status, JSON.stringify(updated.error)).toBe(200);
+    expect(updated.status, JSON.stringify(updated.data)).toBe(200);
 
     for (const properties of [
       created.data.item.properties,
-      (await client.getItem(id)).data.item.properties,
+      updated.data.item.properties,
+      (await call(`/items/${id}`, "GET")).data.item.properties,
     ]) {
       expect(Object.hasOwn(properties.meta as object, "__proto__")).toBe(true);
       expect(properties.meta).toEqual(meta);
