@@ -6,7 +6,8 @@
  * edges_imported, edges_skipped, edges_skipped_reasons, blobs_imported,
  * blobs_missing, types_registered, types_skipped, edge_types_registered,
  * edge_types_skipped, type_icons_added, type_icons_skipped,
- * type_icons_skipped_reasons}`. Enforces the manifest version 0 contract and
+ * type_icons_skipped_reasons, sources_added, sources_skipped,
+ * sources_skipped_reasons}`. Enforces the manifest version 0 contract and
  * blob-hash verification, and checks every row before writing any. Memory does not
  * grow with the archive: entries it does not read are skipped, the rest are
  * read one line at a time, and no row is held past its line. It writes in a
@@ -185,6 +186,19 @@ const restoreArchiveRoute = createRoute({
               .record(z.string(), z.number())
               .describe(
                 "How many of the owner's type icons Marfa skipped for each reason: `already_set` when the instance already has an owner icon for the type, `unknown_icon` when the icon isn't the ID of an icon in a set Marfa pins.",
+              ),
+            sources_added: z
+              .number()
+              .describe(
+                "How many source names and marks Marfa added, for sources the instance names nothing yet.",
+              ),
+            sources_skipped: z
+              .number()
+              .describe("How many source names and marks Marfa skipped."),
+            sources_skipped_reasons: z
+              .record(z.string(), z.number())
+              .describe(
+                "How many source names and marks Marfa skipped for each reason: `already_set` when the instance already has a name or mark for the source, `unknown_mark` when the mark isn't the ID of an icon in a set Marfa pins.",
               ),
           }),
         },
@@ -790,6 +804,9 @@ async function restoreRows(
         type_icons_added: result.types.typeIconsAdded,
         type_icons_skipped: result.types.typeIconsSkipped,
         type_icons_skipped_reasons: result.types.typeIconsSkippedReasons,
+        sources_added: result.types.sourcesAdded,
+        sources_skipped: result.types.sourcesSkipped,
+        sources_skipped_reasons: result.types.sourcesSkippedReasons,
         edge_types_registered: result.types.edgeTypesRegistered,
         edge_types_skipped: result.types.edgeTypesSkipped,
         total_items: restore.totalItems,
@@ -924,6 +941,9 @@ export function restoreArchiveRoutes(
               type_icons_added: result.types.typeIconsAdded,
               type_icons_skipped: result.types.typeIconsSkipped,
               type_icons_skipped_reasons: result.types.typeIconsSkippedReasons,
+              sources_added: result.types.sourcesAdded,
+              sources_skipped: result.types.sourcesSkipped,
+              sources_skipped_reasons: result.types.sourcesSkippedReasons,
               edge_types_registered: result.types.edgeTypesRegistered,
               edge_types_skipped: result.types.edgeTypesSkipped,
             },

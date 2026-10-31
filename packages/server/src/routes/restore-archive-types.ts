@@ -38,12 +38,16 @@ import {
   refuseUnreadEdgeTypeKeys,
 } from "./edge-types.js";
 import { assertParentChain } from "./_parent-chain.js";
+import { usableSignInName } from "../auth/sign-in-names.js";
+import { restoredSource } from "./restore-archive-rows.js";
 
 export interface ArchiveTypeEntry {
   type?: unknown;
   edge_type?: unknown;
   /** One owner icon: `{ type_id, icon }`. */
   type_icon?: unknown;
+  /** One source's name and mark: `{ source, name, mark }`. */
+  source?: unknown;
   /** Provenance for the `type` on the same line. Optional because a line
    *  can be hand-written or damaged, not because any archive this build
    *  reads omits it. */
@@ -67,6 +71,20 @@ export interface ArchiveTypeResult {
   /** How many icons were skipped for each reason: `already_set` or
    *  `unknown_icon`. */
   typeIconsSkippedReasons: Record<string, number>;
+  sourcesAdded: number;
+  sourcesSkipped: number;
+  /** How many source lines were skipped for each reason: `already_set` or
+   *  `unknown_mark`. */
+  sourcesSkippedReasons: Record<string, number>;
+}
+
+/** A source's name and mark, as an archive carries it, under the code the
+ *  restore writes. A `mark` that is not the ID of an icon in a pinned set is
+ *  `undefined`, and the line is skipped. */
+export interface ArchiveSourceNaming {
+  source: string;
+  name: string | null;
+  mark: string | null | undefined;
 }
 
 /** The owner's icon for a type, as an archive carries it. An `icon` that is
@@ -211,8 +229,10 @@ function parseTypeEntries(entries: ArchiveTypeEntry[]): {
   types: PendingType[];
   edgeTypes: EdgeTypeSchema[];
   typeIcons: ArchiveTypeIcon[];
+  sources: ArchiveSourceNaming[];
 } {
   const types: PendingType[] = [];
+  const sources = new Map<string, ArchiveSourceNaming>();
   const edgeTypes: EdgeTypeSchema[] = [];
   const typeIcons = new Map<string, string | undefined>();
   const edgeNamesTaken = new Map<string, string>();
@@ -332,6 +352,18 @@ function parseTypeEntries(entries: ArchiveTypeEntry[]): {
       continue;
     }
 
+    if (entry.source !== undefined) {
+      const naming = archiveSourceNaming(entry.source);
+      if (sources.has(naming.source)) {
+        throw new MarfaError(
+          ErrorCode.VALIDATION_ERROR,
+          `Archive carries more than one name for source "${naming.source}"`,
+        );
+      }
+      sources.set(naming.source, naming);
+      continue;
+    }
+
     // A line naming neither key is refused rather than skipped.
     //
     // Every refusal this function exists for — a reserved namespace, a
@@ -343,7 +375,7 @@ function parseTypeEntries(entries: ArchiveTypeEntry[]): {
     // archive that genuinely carried none.
     throw new MarfaError(
       ErrorCode.VALIDATION_ERROR,
-      `Archive carries a types.ndjson line naming none of "type", "edge_type" or "type_icon": {${Object.keys(entry).join(", ")}}`,
+      `Archive carries a types.ndjson line naming none of "type", "edge_type", "type_icon" or "source": {${Object.keys(entry).join(", ")}}`,
     );
   }
 
@@ -351,6 +383,60 @@ function parseTypeEntries(entries: ArchiveTypeEntry[]): {
     types,
     edgeTypes,
     typeIcons: [...typeIcons].map(([typeId, icon]) => ({ typeId, icon })),
+    sources: [...sources.values()],
+  };
+}
+
+/**
+ * One `source` line, refused where it is damaged: a code no key could hold,
+ * a name a source could not be given, a mark that is not a string, or a line
+ * that names nothing. A string mark outside the pinned sets is a line from a
+ * build that pins others, and is skipped.
+ */
+function archiveSourceNaming(line: unknown): ArchiveSourceNaming {
+  const raw: { source?: unknown; name?: unknown; mark?: unknown } | null =
+    typeof line === "object" ? (line as object | null) : null;
+  const code = raw?.source;
+  if (
+    typeof code !== "string" ||
+    code.length === 0 ||
+    code.length > 200 ||
+    code !== code.trim()
+  ) {
+    throw new MarfaError(
+      ErrorCode.VALIDATION_ERROR,
+      "Archive carries a source line with an invalid source code",
+    );
+  }
+  const name = raw?.name ?? null;
+  if (
+    name !== null &&
+    (typeof name !== "string" || usableSignInName(name) !== name)
+  ) {
+    throw new MarfaError(
+      ErrorCode.VALIDATION_ERROR,
+      `Archive carries an invalid name for source "${code}"`,
+    );
+  }
+  const mark = raw?.mark ?? null;
+  const refused = mark === null ? undefined : iconNameIssue(mark, "source.mark");
+  if (mark !== null && typeof mark !== "string" && refused) {
+    throw new MarfaError(
+      ErrorCode.INVALID_SCHEMA,
+      `Archive carries an invalid mark for source "${code}"`,
+      { errors: [refused] },
+    );
+  }
+  if (name === null && mark === null) {
+    throw new MarfaError(
+      ErrorCode.VALIDATION_ERROR,
+      `Archive carries a source line for "${code}" with neither a name nor a mark`,
+    );
+  }
+  return {
+    source: restoredSource(code) ?? code,
+    name,
+    mark: refused ? undefined : (mark as string | null),
   };
 }
 
@@ -358,6 +444,7 @@ function parseTypeEntries(entries: ArchiveTypeEntry[]): {
 export interface ArchiveTypeBaseline {
   types: Pick<Storage["types"], "listRegistered" | "icons">;
   edgeTypes: Pick<Storage["edgeTypes"], "list">;
+  sources: Pick<Storage["sources"], "list">;
 }
 
 /** The registrations an archive adds, decided before anything is written. */
@@ -370,6 +457,9 @@ export interface ArchiveTypePlan {
   /** The owner's icons for types the target has none for. */
   typeIcons: ArchiveTypeIcon[];
   typeIconsSkippedReasons: Record<string, number>;
+  /** The source names and marks for codes the target has none for. */
+  sources: ArchiveSourceNaming[];
+  sourcesSkippedReasons: Record<string, number>;
 }
 
 /**
@@ -385,7 +475,7 @@ export async function planArchiveTypes(
   storage: ArchiveTypeBaseline,
   entries: ArchiveTypeEntry[],
 ): Promise<ArchiveTypePlan> {
-  const { types, edgeTypes, typeIcons } = parseTypeEntries(entries);
+  const { types, edgeTypes, typeIcons, sources } = parseTypeEntries(entries);
 
   // What is registered is a question about this database,
   // not about the in-memory registry: the registry is process state
@@ -457,6 +547,22 @@ export async function planArchiveTypes(
     } else iconsToWrite.push(entry);
   }
 
+  // A source is named only where the target names it nothing yet.
+  const namedSources = new Set(
+    (await storage.sources.list()).map((row) => row.source),
+  );
+  const sourcesToWrite: ArchiveSourceNaming[] = [];
+  const sourcesSkippedReasons: Record<string, number> = {};
+  for (const entry of sources) {
+    if (entry.mark === undefined) {
+      sourcesSkippedReasons.unknown_mark =
+        (sourcesSkippedReasons.unknown_mark ?? 0) + 1;
+    } else if (namedSources.has(entry.source)) {
+      sourcesSkippedReasons.already_set =
+        (sourcesSkippedReasons.already_set ?? 0) + 1;
+    } else sourcesToWrite.push(entry);
+  }
+
   if (conflicts.length > 0) {
     throw new MarfaError(
       ErrorCode.CONFLICT,
@@ -472,6 +578,8 @@ export async function planArchiveTypes(
     edgeTypesSkipped,
     typeIcons: iconsToWrite,
     typeIconsSkippedReasons,
+    sources: sourcesToWrite,
+    sourcesSkippedReasons,
   };
 }
 
@@ -561,7 +669,28 @@ export async function writeArchiveTypes(
     typeIconsAdded += 1;
   }
 
+  // Checked again where it is written, as an icon is: a name set since the
+  // plan was read is kept.
+  let sourcesAdded = 0;
+  const sourcesSkippedReasons = { ...plan.sourcesSkippedReasons };
+  for (const { source, name, mark } of plan.sources) {
+    if (mark === undefined) continue;
+    if (await storage.sources.get(source)) {
+      sourcesSkippedReasons.already_set =
+        (sourcesSkippedReasons.already_set ?? 0) + 1;
+      continue;
+    }
+    await storage.sources.set(source, name, mark);
+    sourcesAdded += 1;
+  }
+
   return {
+    sourcesAdded,
+    sourcesSkipped: Object.values(sourcesSkippedReasons).reduce(
+      (sum, n) => sum + n,
+      0,
+    ),
+    sourcesSkippedReasons,
     typeIconsAdded,
     typeIconsSkipped: Object.values(typeIconsSkippedReasons).reduce(
       (sum, n) => sum + n,

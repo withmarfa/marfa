@@ -62235,6 +62235,21 @@
                         "type": "number"
                       },
                       "description": "How many of the owner's type icons Marfa skipped for each reason: `already_set` when the instance already has an owner icon for the type, `unknown_icon` when the icon isn't the ID of an icon in a set Marfa pins."
+                    },
+                    "sources_added": {
+                      "type": "number",
+                      "description": "How many source names and marks Marfa added, for sources the instance names nothing yet."
+                    },
+                    "sources_skipped": {
+                      "type": "number",
+                      "description": "How many source names and marks Marfa skipped."
+                    },
+                    "sources_skipped_reasons": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "number"
+                      },
+                      "description": "How many source names and marks Marfa skipped for each reason: `already_set` when the instance already has a name or mark for the source, `unknown_mark` when the mark isn't the ID of an icon in a set Marfa pins."
                     }
                   },
                   "required": [
@@ -62251,7 +62266,10 @@
                     "edge_types_skipped",
                     "type_icons_added",
                     "type_icons_skipped",
-                    "type_icons_skipped_reasons"
+                    "type_icons_skipped_reasons",
+                    "sources_added",
+                    "sources_skipped",
+                    "sources_skipped_reasons"
                   ]
                 }
               }

@@ -342,6 +342,7 @@ export async function runArchiveValidation(
             icons: () => Promise.resolve(new Map()),
           },
           edgeTypes: { list: () => Promise.resolve([]) },
+          sources: { list: () => Promise.resolve([]) },
         },
         await archiveTypeEntries(input.lineFiles["types.ndjson"], pace),
       );

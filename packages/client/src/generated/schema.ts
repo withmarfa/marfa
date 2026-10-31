@@ -31670,6 +31670,14 @@ export interface operations {
                         type_icons_skipped_reasons: {
                             [key: string]: number;
                         };
+                        /** @description How many source names and marks Marfa added, for sources the instance names nothing yet. */
+                        sources_added: number;
+                        /** @description How many source names and marks Marfa skipped. */
+                        sources_skipped: number;
+                        /** @description How many source names and marks Marfa skipped for each reason: `already_set` when the instance already has a name or mark for the source, `unknown_mark` when the mark isn't the ID of an icon in a set Marfa pins. */
+                        sources_skipped_reasons: {
+                            [key: string]: number;
+                        };
                     };
                 };
             };
