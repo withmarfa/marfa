@@ -1104,21 +1104,29 @@ If an entry of `POST /edges/bulk`, or `POST /items` with an inline edge, names a
 
 ## Moving an item that holds edges
 
-A move to another type keeps every edge at the item, so the server holds each one to the type the item enters, as it would hold a new edge.
+A move to another type keeps every edge at the item, so the server holds each one to the type the item enters, as it would hold a new edge. A move is any write that changes an item's type: `PATCH /items/{id}` with `retype`, a `POST /items/bulk` entry with `retype` whether it names the item by `id` or by `source` and `source_id`, and each item a `POST /types/{id}/move` job moves.
 
 ### `edges/retype-endpoint`
 
-If a move names a type that the constraint of an edge at the item does not admit on the item's side, on `PATCH /items/{id}` or a `POST /items/bulk` entry, then the server MUST refuse it `edge_constraint_violation` with `details` naming the `edge_type`, the `source_type` or `target_type` the item would take, and the types `allowed`, and move nothing.
+If a move names a type that the constraint of an edge at the item does not admit on the item's side, then the server MUST refuse that item's move `edge_constraint_violation` with `details` naming the `edge_type`, the `source_type` or `target_type` the item would take, and the types `allowed`, and leave the item as it was.
 
-**Reason:** an edge the server would refuse to write must not come to stand by a move. The refusal names the item's own side alone, since the writer may not be able to read the other end.
+**Reason:** an edge the server would refuse to write must not come to stand by a move, whichever door makes it. The refusal names the item's own side alone, since the writer may not be able to read the other end. A move job reports the refused item among its `errors` and goes on with the others, as it does for any item it cannot move.
 
-**Tests:** `correctness/edges/edges-type-constraints.test.ts › refuses a move into a type an edge at the item does not admit, on either side`.
+**Tests:** `correctness/edges/edges-type-constraints.test.ts › refuses a move into a type an edge at the item does not admit, on either side`, `› refuses a natural-key upsert and a type move job that would move an item out of what its edges admit`.
 
 ### `edges/retype-nesting`
 
-If a move names a type that the `target_type_constraints` of a `flat` edge type admit, and the item is the source of an edge of that type, then the server MUST refuse it `edge_constraint_violation` with `details.constraint` `nesting`, naming the `source_id` and `source_type`.
+If a move names a type that the `target_type_constraints` of a `flat` edge type admit, and the item is the source of an edge of that type, then the server MUST refuse that item's move `edge_constraint_violation` with `details.constraint` `nesting`, naming the `source_id` and `source_type`, and leave the item as it was.
 
-**Tests:** `correctness/edges/edges-type-constraints.test.ts › refuses a move that makes a collection member a container, as nesting`.
+**Tests:** `correctness/edges/edges-type-constraints.test.ts › refuses a move that makes a collection member a container, as nesting`, `› refuses a natural-key upsert and a type move job that would move an item out of what its edges admit`.
+
+### `edges/retype-replaced-edges`
+
+When a move also sends inline `edges` that replace the item's outbound edges of an edge type, the server MUST hold to the type the item enters only the outbound edges of that type the write keeps, and not those it removes (`edges/retype-endpoint` and `edges/retype-nesting`).
+
+**Reason:** an owner can move an item out of what its edges admit by removing those edges in the same write, with no moment where the item holds an edge its type does not admit. Inbound edges are written at the other end and stay held.
+
+**Tests:** `correctness/edges/edges-type-constraints.test.ts › moves an item whose edges the same write removes, on PATCH and on a bulk entry`.
 
 ## Deleting an item that holds edges
 
