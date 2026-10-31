@@ -2464,7 +2464,8 @@ impl Core {
     /// Three writes, each with its own verdict, each waiting on the one
     /// before it: the upload, a file item naming the bytes, and an
     /// `attached-to` edge from the file to the item. Answers the text that
-    /// embeds the file in the item's body, which reads back as that edge.
+    /// embeds the file in the item's body, which reads back as the item's
+    /// `references` edge to the file beside that edge.
     pub fn attach(&self, target: &str, path: &Path, attachment: &Attachment) -> Result<Attached> {
         self.lock.refuse_unless_writer()?;
         {

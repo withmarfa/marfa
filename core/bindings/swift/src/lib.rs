@@ -1118,8 +1118,9 @@ pub struct Attached {
     pub upload: QueuedWrite,
     pub item: QueuedWrite,
     pub edge: QueuedWrite,
-    /// `![[title]]`, which reads back as `edge` once written into the item's
-    /// body; none where its title cannot name it alone in an embed.
+    /// `![[title]]`, which reads back as the item's `references` edge to the
+    /// file once written into the item's body; none where its title cannot
+    /// name it alone in an embed.
     pub embed: Option<String>,
 }
 

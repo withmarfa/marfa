@@ -2985,7 +2985,7 @@ Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 
 ### marfa device items embed
 
-The text that embeds a file item in an item's body, which reads back as the file's `attached-to` edge to the item.
+The text that embeds a file item in an item's body, which reads back as the item's `references` edge to the file.
 
 ```text
 marfa device items embed [OPTIONS] <ID> <FILE>
