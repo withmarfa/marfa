@@ -242,11 +242,11 @@ describe("a local read naming several states", () => {
 describe("the limit on a local read", () => {
   it("counts only the rows the type and state lists keep", async () => {
     const device = await seeded("read-limit-after-filter");
-    // The newest row, the bookmark, is one the lists leave out, and the
-    // archived event is the newest they keep: a limit applied before the
-    // filter answers an empty page or the bookmark.
+    // The newest row, the bookmark, is one the type list leaves out, and the
+    // next, the archived event, is one the state list leaves out: a limit
+    // applied before either list answers an empty page or the wrong row.
     const page = await device.list({
-      state: ["archived", "trashed"],
+      state: ["active", "trashed"],
       type: ["core.event", "core.note"],
       sort: "created_at",
       direction: "desc",
@@ -255,7 +255,7 @@ describe("the limit on a local read", () => {
     expect(
       page.ok ? page.value.map((item) => item.id) : page,
       "a page of one did not hold the newest row the lists keep",
-    ).toEqual(["filed-event"]);
+    ).toEqual(["live-event"]);
 
     const hits = await device.search(
       WORD,
