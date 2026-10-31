@@ -1,6 +1,7 @@
 import { writeFileSync } from "node:fs";
 import { describe, it, expect, afterEach } from "vitest";
 import {
+  SCRIPTED_INSTANCE,
   answers,
   refusal,
   wireItem,
@@ -9,8 +10,14 @@ import {
   writeAnswers,
 } from "../../device/marfa-answers.js";
 import type { DrainReport, QueuedWrite } from "../../device/protocol.js";
-import type { Answer } from "../../device/scripted-server.js";
-import { hydratedHarness, queuedEdit, scriptWrites } from "./harness.js";
+import { BUILT_FOR, type Answer } from "../../device/scripted-server.js";
+import {
+  hydratedHarness,
+  queuedEdit,
+  scriptHydration,
+  scriptWrites,
+  startHarness,
+} from "./harness.js";
 import type { Harness, ScriptedWrites } from "./harness.js";
 
 let harness: Harness | undefined;
@@ -31,7 +38,7 @@ afterEach(async () => {
 
 const HELD = { id: "01a00000-0000-7000-8000-00000000000a", version: 3 };
 
-/** The six, as the contract names them (`queue-and-verdicts/blocked-reasons-five`). */
+/** The seven, as the contract names them (`queue-and-verdicts/blocked-reasons-five`). */
 const BLOCKED_REASONS = [
   "credential_refused",
   "key_spent",
@@ -39,6 +46,7 @@ const BLOCKED_REASONS = [
   "conflict_unresolved",
   "awaiting_dependency",
   "failing_alone",
+  "instance_changed",
 ] as const;
 
 function held() {
@@ -1036,11 +1044,11 @@ describe("the ceiling, and releasing what it stopped", () => {
     ).toBe(0);
   });
 
-  it("reports one of the six blocked reasons and no other", async () => {
+  it("reports one of the seven blocked reasons and no other", async () => {
     // Every answer that blocks, each in its own store, and the set of
-    // reasons they produce compared against the six. Both directions: a
-    // reason outside the six is a store no later build reads, and a reason
-    // in the six that nothing produces is a promise the device cannot keep.
+    // reasons they produce compared against the seven. Both directions: a
+    // reason outside the seven is a store no later build reads, and a reason
+    // in the seven that nothing produces is a promise the device cannot keep.
     const reached = new Set<string>();
     const blocking: ScriptedWrites[] = [
       { update: [refusal(401, "unauthorized", "revoked")] },
@@ -1154,9 +1162,43 @@ describe("the ceiling, and releasing what it stopped", () => {
       await failing.stop();
     }
 
+    // The seventh comes from a hydration: a write queued against one
+    // instance, and the copy built again from another now at the address.
+    const moved = await startHarness("class-reasons-instance-changed");
+    try {
+      let instance = SCRIPTED_INSTANCE;
+      moved.server.copyAnswer("GET", "/", () =>
+        answers.root(Number(BUILT_FOR), instance),
+      );
+      scriptHydration(moved.server, {
+        head: "10",
+        rows: held(),
+        instance: () => instance,
+      });
+      expect((await moved.device.hydrate(["core.note"], "library")).ok).toBe(
+        true,
+      );
+      const queued = await moved.device.create({
+        type: "core.note",
+        properties: { title: "queued", body: "queued" },
+      });
+      expect(queued.ok).toBe(true);
+      instance = "00000000-0000-7000-8000-0000000000ff";
+      expect((await moved.device.hydrate(["core.note"], "library")).ok).toBe(
+        true,
+      );
+      const row = (await queueOf(moved)).find(
+        (row) => queued.ok && row.id === queued.value.id,
+      );
+      expect(row?.reason).not.toBeNull();
+      if (row?.reason != null) reached.add(row.reason);
+    } finally {
+      await moved.stop();
+    }
+
     expect(
       [...reached].sort(),
-      "the reasons this device can reach are not the six the contract names: a reason outside them is one the store refuses to record, and one inside them that nothing produces is a promise nothing keeps",
+      "the reasons this device can reach are not the seven the contract names: a reason outside them is one the store refuses to record, and one inside them that nothing produces is a promise nothing keeps",
     ).toEqual([...BLOCKED_REASONS].sort());
   });
 

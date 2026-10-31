@@ -25,6 +25,7 @@ mod folder_settings;
 /// Public for the call shapes it shares with the binary's own transport.
 pub mod http;
 mod hydrate;
+use hydrate::Fill;
 #[cfg(test)]
 mod hydrate_refill_tests;
 #[cfg(test)]
@@ -776,10 +777,41 @@ impl Core {
         edge_types: &[String],
         stop: &AtomicBool,
     ) -> Result<HydrateReport> {
+        self.hydrate_filling(types, tier, edge_types, Fill::Any, stop)
+    }
+
+    /// `hydrate_until` for a copy that must only ever be filled again in
+    /// place (`device/refill-in-place-only`): wherever the fill could not
+    /// keep the rows, queue and files the copy holds, it is refused
+    /// `CopyExpired` with the reason before anything is cleared, and the copy
+    /// stays as it was. The reasons are `not_stale`, `instance_changed`,
+    /// `reach_changed`, `slice_changed` and `head_past_log`. A refusal of the
+    /// credential or the reach by the server still ends a stale copy,
+    /// keeping the queue (`device/refill-in-place-only-server-ends`), and
+    /// can also carry `reach_changed`: the copy's `hydration` then reads
+    /// `Expired`, where a refused fill leaves a stale copy `Stale`.
+    pub fn hydrate_in_place_only(
+        &self,
+        types: &[String],
+        tier: SliceTier,
+        edge_types: &[String],
+        stop: &AtomicBool,
+    ) -> Result<HydrateReport> {
+        self.hydrate_filling(types, tier, edge_types, Fill::InPlaceOnly, stop)
+    }
+
+    fn hydrate_filling(
+        &self,
+        types: &[String],
+        tier: SliceTier,
+        edge_types: &[String],
+        fill: Fill,
+        stop: &AtomicBool,
+    ) -> Result<HydrateReport> {
         self.lock.refuse_unless_writer()?;
         let mut taken = self.watch.take()?;
         let _streaming = self.claim_stream(Mover::Hydration)?;
-        let report = hydrate::hydrate(self, self.http()?, types, tier, edge_types, stop)?;
+        let report = hydrate::hydrate(self, self.http()?, types, tier, edge_types, fill, stop)?;
         taken.reached();
         self.settle_bodies(stop)?;
         Ok(report)
@@ -1577,7 +1609,7 @@ impl Core {
     }
 
     /// Answers `false` for any row not blocked `ancestor_unavailable`,
-    /// `conflict_unresolved` or `failing_alone`. Everything it puts back is read from the server
+    /// `conflict_unresolved`, `failing_alone` or `instance_changed`. Everything it puts back is read from the server
     /// before anything changes, so a withdraw that cannot read leaves the
     /// queue and the copy as they were.
     pub fn withdraw(&self, id: &str) -> Result<bool> {
@@ -6959,6 +6991,17 @@ mod tests {
                     .unwrap_err(),
             ),
             (
+                "hydrate_in_place_only",
+                reader
+                    .hydrate_in_place_only(
+                        &["core.note".into()],
+                        SliceTier::Library,
+                        &[],
+                        &std::sync::atomic::AtomicBool::new(false),
+                    )
+                    .unwrap_err(),
+            ),
+            (
                 "drain_until",
                 reader
                     .drain_until(&std::sync::atomic::AtomicBool::new(false))
@@ -7029,7 +7072,7 @@ mod tests {
         );
         assert_eq!(
             refusals.len(),
-            49,
+            50,
             "an entry has gone from the list above, and a door dropped from \
              it is a door nothing here covers"
         );
@@ -7078,6 +7121,7 @@ mod tests {
                     "write_update",
                     "catch_up_pass",
                     "follow_from",
+                    "hydrate_filling",
                     // Makes a core rather than taking one, so no reading
                     // handle can reach it; `replace_tests` claims the role
                     // first and is refused.

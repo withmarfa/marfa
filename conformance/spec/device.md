@@ -330,6 +330,14 @@ While a folder's copy is expired, a device MUST send no status report for the fo
 
 **Tests:** `device/folder-health.test.ts › sends no status report after another instance refuses a write, and sends it once the copy is built again`.
 
+### `device/queue-other-instance-held`
+
+When a device hydrates a copy from an instance other than the one the copy was last built from, a device MUST give every queued write still waiting the verdict `blocked` with the reason `instance_changed`.
+
+**Reason:** each write was made against rows the other instance held, and the instance now at the address may never have held them. Held, nothing is sent to a server the person did not make it for; a caller releases a write to send it to the instance now there, or withdraws it.
+
+**Tests:** `device/queue.test.ts › holds the writes queued against another instance once hydrated from the one now there, sending none until released`, `device/classification.test.ts › reports one of the seven blocked reasons and no other`.
+
 ### `device/late-answer`
 
 If an answer to a request made under a copy arrives after a hydration has begun replacing that copy, then a device MUST NOT let the answer expire or change the new copy.
@@ -885,6 +893,36 @@ If the head a refill reads is behind the cursor its copy held when it went stale
 When a hydration completes, a device MUST report whether it was a refill as `in_place`.
 
 **Tests:** `device/refill.test.ts › fills again in place, changing, adding and sweeping rows`, `› refuses reads and clears before it fills again`, `› takes writes to the rows it holds and new ones, sending none until it is whole`.
+
+### `device/refill-in-place-only`
+
+If a caller asks a hydration to fill its copy only in place, and the hydration would not be a refill, or would remove the rows and edges of the copy under `device/refill-restart-clears` or `device/refill-restored-clears`, then a device MUST end the hydration `copy_expired` before it removes anything, with the reason `instance_changed` for a copy built from another instance, `not_stale` for any other copy that is not stale, `reach_changed` for another reach, `slice_changed` for other types, tier or edge types, and `head_past_log` for a server restored behind the copy.
+
+**Reason:** an app that refills a stale copy by itself can ask for a fill only in place, so that a copy is never emptied, or its queued writes sent to another server, without a person seeing why. The reason says what the person decides between: hydrate the copy afresh, or keep it stale.
+
+**Tests:** `device/refill.test.ts › refuses to fill from another instance, leaving the copy as it was`, `› refuses to fill under another reach, leaving the copy as it was`, `› refuses to fill another slice, leaving the copy as it was`, `› refuses to fill a copy whose server was restored, leaving the copy as it was`, `› refuses to fill a copy whose interrupted refill the log fell behind, leaving the copy as it was`, `› refuses to fill a copy that is not stale, leaving it as it was`, `› refuses to fill a copy a drain expired for another instance, naming the instance`.
+
+### `device/refill-in-place-only-keeps`
+
+When a device ends a hydration asked to fill only in place `copy_expired` under `device/refill-in-place-only`, a device MUST leave the copy's rows, edges, cursor state, hydration state, queue and files as they were before the hydration.
+
+**Reason:** the refusal asks the person a question, so nothing they could lose by the answer goes before it. A stale copy refused this way still reports its hydration as `stale`, which is how an app tells it from a copy the server's refusal ended (`device/refill-in-place-only-server-ends`).
+
+**Tests:** `device/refill.test.ts › refuses to fill from another instance, leaving the copy as it was`, `› refuses to fill under another reach, leaving the copy as it was`, `› refuses to fill another slice, leaving the copy as it was`, `› refuses to fill a copy whose server was restored, leaving the copy as it was`, `› refuses to fill a copy whose interrupted refill the log fell behind, leaving the copy as it was`, `› refuses to fill a copy that is not stale, leaving it as it was`, `› refuses to fill a copy a drain expired for another instance, naming the instance`.
+
+### `device/refill-in-place-only-server-ends`
+
+Where a caller asks a hydration to fill its copy only in place, if the server refuses that hydration of a stale copy because the credential has ended or the reach has changed before it reads a listing page, then a device MUST end the stale copy, as `device/stale-ends-refused` does for any hydration, keeping its queue.
+
+**Reason:** a fill only in place guards against the device's own choice to clear the copy, not against the server saying the credential may no longer read what the copy holds. Both a refusal under `device/refill-in-place-only` and this one can carry the reason `reach_changed`, so an app reads the copy's hydration state before it offers to keep the copy stale: `stale` means kept, and `expired` means ended, so that only a hydration that does not ask for a fill in place can follow.
+
+**Tests:** `device/refill.test.ts › ends the stale copy when the server refuses the credential or the reach to a fill only in place`.
+
+### `device/refill-in-place-only-fills`
+
+When a caller asks a hydration to fill its copy only in place, and the hydration is a refill, a device MUST fill the copy as `device/refill-in-place` says, keeping its queue and its files, and carry on an interrupted fill in place.
+
+**Tests:** `device/refill.test.ts › fills a stale copy in place, keeping its queue and its files`, `› carries on an interrupted in-place fill in place`.
 
 ### `device/hydrate-report`
 

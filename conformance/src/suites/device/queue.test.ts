@@ -2459,13 +2459,118 @@ describe("offline, reconnect and re-hydration", () => {
     const status = await device.status();
     expect(status.ok ? status.value.hydration : status).toBe("expired");
 
-    // The witness: hydrated from the instance now there, the same queue is
-    // sent to it, so the refusal above was about the instance.
+    // The witness: hydrated from the instance now there and released, the
+    // same queue is sent to it, so the refusal above was about the instance.
     expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
     const named = await device.status();
     expect(named.ok ? named.value.instance_id : named).toBe(replaced);
+    expect(await device.release({ reason: "instance_changed" })).toEqual({
+      ok: true,
+      value: 1,
+    });
     expect((await device.drain()).ok).toBe(true);
     expect(creates(harness)).toEqual([queued.value.item_id]);
+  });
+
+  it("holds the writes queued against another instance once hydrated from the one now there, sending none until released", async () => {
+    harness = await startHarness("queue-held-for-instance");
+    const { server, device } = harness;
+    const replaced = "00000000-0000-7000-8000-0000000000ff";
+    let instance = SCRIPTED_INSTANCE;
+    server.copyAnswer("GET", "/", () =>
+      answers.root(Number(BUILT_FOR), instance),
+    );
+    scriptHydration(server, {
+      head: "10",
+      rows: held(),
+      instance: () => instance,
+    });
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    const created = await device.create({
+      type: "core.note",
+      properties: { title: "waiting", body: "waiting" },
+    });
+    const edited = await device.update(HELD.id, {
+      version: HELD.version,
+      properties: { title: "edited" },
+    });
+    expect(created.ok && edited.ok, JSON.stringify([created, edited])).toBe(
+      true,
+    );
+    if (!created.ok || !edited.ok) return;
+    const readBack = (request: { pathname: string }): Answer =>
+      answers.updated(wireItem({ id: request.pathname.split("/")[2] }));
+    scriptWrites(server, {
+      read: [readBack],
+      create: [answers.created(wireItem({ id: created.value.item_id ?? "a" }))],
+      update: [answers.updated(wireItem({ id: HELD.id, version: 4 }))],
+    });
+
+    // Another instance takes the address, and the copy is built from it
+    // without a drain first learning of it.
+    instance = replaced;
+    const rebuilt = await device.hydrate(["core.note"], "library");
+    expect(rebuilt.ok, JSON.stringify(rebuilt)).toBe(true);
+    const named = await device.status();
+    expect(named.ok ? named.value.instance_id : named).toBe(replaced);
+
+    const queue = await queueOf(device);
+    expect(
+      queue.map((row) => [row.id, row.verdict, row.reason]),
+      "the writes made against the other instance were not kept, blocked for the instance change",
+    ).toEqual([
+      [created.value.id, "blocked", "instance_changed"],
+      [edited.value.id, "blocked", "instance_changed"],
+    ]);
+    const drained = await device.drain();
+    expect(drained.ok, JSON.stringify(drained)).toBe(true);
+    expect(
+      server.requests.filter(isWrite),
+      "a write queued against one instance was sent to another",
+    ).toEqual([]);
+
+    // A write made against the instance now there is sent as any other.
+    const fresh = await device.create({
+      type: "core.note",
+      properties: { title: "fresh", body: "fresh" },
+    });
+    expect(fresh.ok, JSON.stringify(fresh)).toBe(true);
+    if (!fresh.ok) return;
+    scriptWrites(server, {
+      read: [readBack],
+      create: [answers.created(wireItem({ id: fresh.value.item_id ?? "a" }))],
+    });
+    expect((await device.drain()).ok).toBe(true);
+    expect(creates(harness)).toEqual([fresh.value.item_id]);
+
+    // A held write can be withdrawn instead of sent.
+    expect(await device.withdraw(edited.value.id)).toEqual({
+      ok: true,
+      value: true,
+    });
+
+    // The witness: released, the held write left is sent to the instance
+    // now there, so the block was all that held it.
+    expect(await device.release({ reason: "instance_changed" })).toEqual({
+      ok: true,
+      value: 1,
+    });
+    scriptWrites(server, {
+      read: [readBack],
+      create: [answers.created(wireItem({ id: created.value.item_id ?? "a" }))],
+      update: [answers.updated(wireItem({ id: HELD.id, version: 4 }))],
+    });
+    expect((await device.drain()).ok).toBe(true);
+    expect(creates(harness)).toEqual([
+      fresh.value.item_id,
+      created.value.item_id,
+    ]);
+    expect(
+      server.requests.filter(
+        (request) => request.method === "PATCH" && isWrite(request),
+      ),
+      "the withdrawn edit was sent",
+    ).toEqual([]);
   });
 
   it("names the copy's instance on each write a drain sends, an upload among them", async () => {

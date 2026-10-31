@@ -216,7 +216,7 @@ export class CliDevice implements DeviceUnderTest {
   async hydrate(
     types: string[],
     tier: SliceTier,
-    options: { edgeTypes?: string[] } = {},
+    options: { edgeTypes?: string[]; inPlaceOnly?: boolean } = {},
   ): Promise<Outcome<HydrateReport>> {
     return this.json<HydrateReport>([
       "hydrate",
@@ -226,6 +226,7 @@ export class CliDevice implements DeviceUnderTest {
       "--tier",
       tier,
       ...(options.edgeTypes ?? []).flatMap((type) => ["--edge-type", type]),
+      ...(options.inPlaceOnly === true ? ["--in-place-only"] : []),
     ]);
   }
 

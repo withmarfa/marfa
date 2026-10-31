@@ -1232,15 +1232,22 @@ fn send_queue(
             }
             Readiness::Held => {
                 // Decided on the verdicts read when the pass began, which a
-                // withdraw or a discard since may have answered: their
-                // refusal stands.
+                // withdraw or a discard since may have answered, or a
+                // hydration from another instance blocked
+                // (`device/queue-other-instance-held`): their verdict stands.
+                #[cfg(debug_assertions)]
+                crate::fault::hold(|| format!("drain-holding:{}", row.id));
                 let mut conn = core.conn()?;
                 let tx = conn.transaction()?;
                 let now = store::queued_write(&tx, &row.id)?;
-                match now.as_ref().map(|now| now.verdict) {
+                match now.as_ref().map(|now| (now.verdict, now.reason.as_deref())) {
                     None => continue,
-                    Some(None | Some(Verdict::Blocked)) => {}
-                    Some(answered) => {
+                    Some((None, _))
+                    | Some((Some(Verdict::Blocked), Some(crate::model::AWAITING_DEPENDENCY))) => {}
+                    Some((answered, _)) => {
+                        if answered == Some(Verdict::Blocked) {
+                            waiting.insert(row.id.clone());
+                        }
                         answers.insert(row.id.clone(), answered);
                         continue;
                     }
@@ -1459,8 +1466,8 @@ fn send_queue(
         let answer = match answer {
             // Ahead of the classification, which would refuse the write for
             // good. The copy is built again from the instance now at the
-            // origin, which has seen no attempt of this write, so it is judged
-            // there afresh.
+            // origin, which holds the write until a person releases it, and
+            // has seen no attempt of it, so it is judged there afresh.
             Err(CoreError::CopyExpired { reason }) if reason == INSTANCE_CHANGED => {
                 let mut conn = core.conn()?;
                 let tx = conn.transaction()?;
@@ -3973,6 +3980,85 @@ mod tests {
         core.drain_until(&AtomicBool::new(false)).unwrap();
         assert!(!server.seen("/items/a").is_empty());
         held_in_the_bin(&core, "a", 1);
+    }
+
+    /// A pass that holds a write behind its dependency decides on the queue
+    /// it read when it began. A hydration from another instance that blocks
+    /// the write meanwhile must keep its reason, which only a person clears,
+    /// rather than see it turned into one the next pass clears by itself.
+    #[cfg(debug_assertions)]
+    #[test]
+    fn a_write_a_hydration_held_for_another_instance_mid_pass_keeps_its_reason() {
+        let server = crate::scripted::Scripted::start();
+        let (_dir, core) = deleting(&server, &["a", "b"]);
+        let queue = core.queue().unwrap();
+        let (ahead, behind) = (queue[0].id.clone(), queue[1].id.clone());
+        {
+            let conn = core.conn().unwrap();
+            conn.execute(
+                "UPDATE queue SET depends_on = ?2 WHERE id = ?1",
+                rusqlite::params![behind, serde_json::to_string(&[&ahead]).unwrap()],
+            )
+            .unwrap();
+            store::record_verdict(
+                &conn,
+                &ahead,
+                &store::Answered {
+                    verdict: Verdict::Blocked,
+                    reason: Some(crate::model::BlockedReason::ConflictUnresolved.as_str()),
+                    answer: None,
+                    conflicted_copy_id: None,
+                },
+            )
+            .unwrap();
+        }
+        let reason = |core: &Core| {
+            let row = store::queued_write(&core.conn().unwrap(), &behind)
+                .unwrap()
+                .unwrap();
+            (row.verdict, row.reason)
+        };
+
+        // The witness: with no hydration between, the pass holds it as
+        // waiting on its dependency.
+        core.drain().unwrap();
+        assert_eq!(
+            reason(&core),
+            (
+                Some(Verdict::Blocked),
+                Some(crate::model::AWAITING_DEPENDENCY.to_string())
+            )
+        );
+
+        let point = format!("drain-holding:{behind}");
+        crate::fault::arm(&point);
+        std::thread::scope(|scope| {
+            let drain = scope.spawn(|| core.drain());
+            let waited = std::time::Instant::now();
+            while crate::fault::waiting(&point) == 0 {
+                assert!(
+                    waited.elapsed() < std::time::Duration::from_secs(10),
+                    "the drain never held the write behind its dependency"
+                );
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            // What a hydration from another instance commits as it begins.
+            store::block_for_another_instance(&core.conn().unwrap()).unwrap();
+            crate::fault::release(&point);
+            drain.join().unwrap().unwrap();
+        });
+        assert_eq!(
+            reason(&core),
+            (
+                Some(Verdict::Blocked),
+                Some(
+                    crate::model::BlockedReason::InstanceChanged
+                        .as_str()
+                        .to_string()
+                )
+            ),
+            "the drain turned a write held for another instance into one waiting on its dependency"
+        );
     }
 
     #[test]

@@ -3083,7 +3083,7 @@ fn read_writes(
                 .parse::<BlockedReason>()
                 .map_err(|_| {
                     CoreError::Store(format!(
-                        "queued write {} is blocked for a reason outside the five a caller can name: {:?}",
+                        "queued write {} is blocked for a reason outside the six a caller can name: {:?}",
                         raw.id, raw.reason
                     ))
                 })?;
@@ -4901,6 +4901,21 @@ pub fn block_unanswered(conn: &Connection, reason: BlockedReason) -> Result<usiz
         "UPDATE queue SET verdict = ?1, reason = ?2, answered_at = ?3
           WHERE verdict IS NULL",
         params![Verdict::Blocked.as_str(), reason.as_str(), now_iso()],
+    )?)
+}
+
+/// For a copy about to be built from an instance other than the one its
+/// writes were queued against: every write a drain or a release could still
+/// send is held until a caller releases it, so none reaches rows the copy
+/// never held. A refused write stays refused. Answers how many it held.
+pub fn block_for_another_instance(conn: &Connection) -> Result<usize, CoreError> {
+    Ok(conn.execute(
+        &format!("UPDATE queue SET verdict = ?1, reason = ?2, answered_at = ?3 WHERE {WAITING}"),
+        params![
+            Verdict::Blocked.as_str(),
+            BlockedReason::InstanceChanged.as_str(),
+            now_iso()
+        ],
     )?)
 }
 

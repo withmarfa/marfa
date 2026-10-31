@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   catchupTooOld,
@@ -8,6 +9,8 @@ import {
   cursorAhead,
   edgesPage,
   answers,
+  SCRIPTED_INSTANCE,
+  SCRIPTED_REACH,
   writeAnswers,
   refusal,
   typeCatalog,
@@ -17,7 +20,11 @@ import {
   type WireEdgeOptions,
   type WireItemOptions,
 } from "../../device/marfa-answers.js";
-import type { Answer, ScriptedServer } from "../../device/scripted-server.js";
+import {
+  BUILT_FOR,
+  type Answer,
+  type ScriptedServer,
+} from "../../device/scripted-server.js";
 import {
   fileOf,
   scriptHydration,
@@ -51,6 +58,9 @@ async function agedOut(
     /** The instance every read of the log names, the scripted one unless
      *  named. */
     instance?: () => string;
+    /** The reach every read of the log's head names, the scripted one
+     *  unless named. */
+    reach?: () => string;
   } = {},
 ): Promise<{
   h: Harness;
@@ -73,21 +83,23 @@ async function agedOut(
     instance: options.instance,
   });
   const named = (answer: Answer): Answer =>
-    options.instance === undefined || answer.kind !== "sse"
+    (options.instance === undefined && options.reach === undefined) ||
+    answer.kind !== "sse"
       ? answer
       : {
           ...answer,
-          frames: answer.frames.map((frame) =>
-            frame.event === "stream_cursor" || frame.event === "stream_live"
-              ? {
-                  ...frame,
-                  data: {
-                    ...(frame.data as Record<string, unknown>),
-                    instance_id: options.instance?.(),
-                  },
-                }
-              : frame,
-          ),
+          frames: answer.frames.map((frame) => {
+            if (
+              frame.event !== "stream_cursor" &&
+              frame.event !== "stream_live"
+            )
+              return frame;
+            const data = { ...(frame.data as Record<string, unknown>) };
+            if (options.instance !== undefined)
+              data.instance_id = options.instance();
+            if (options.reach !== undefined) data.reach = options.reach();
+            return { ...frame, data };
+          }),
         };
   h.server.copyAnswer("GET", "/events", (request) => {
     const cursor = request.headers["last-event-id"];
@@ -1015,5 +1027,375 @@ describe("a copy a first hydration is filling", () => {
     const whole = await device.hydrate(["core.note", "core.file"], "library");
     expect(whole.ok, JSON.stringify(whole)).toBe(true);
     expect(await device.queue()).toEqual(queued);
+  });
+});
+
+describe("a fill asked to happen only in place", () => {
+  /** What a refused fill must leave exactly as it was. */
+  async function kept(h: Harness): Promise<unknown> {
+    const status = await h.device.status();
+    // The default budget follows the volume's free bytes, which other
+    // processes change between the two reads.
+    if (status.ok && status.value.file_cache.setting === "default") {
+      status.value.file_cache.budget = null;
+    }
+    const listed = await h.device.listAnswer();
+    const queue = await h.device.queue();
+    const held = listed.ok ? listed.value.items.map((item) => item.id) : [];
+    // Refused on a stale copy, whose status counts its edges instead.
+    const edges = await Promise.all(
+      held.map(async (id) => ({
+        id,
+        from: await h.device.edgesFrom(id),
+        to: await h.device.edgesTo(id),
+      })),
+    );
+    const blobs = queue.ok
+      ? queue.value.flatMap((write) => (write.blob ? [write.blob] : []))
+      : [];
+    const files = await Promise.all(
+      blobs.map(async (hash) => {
+        const at = await h.device.blob(hash);
+        return {
+          hash,
+          bytes: at.ok ? readFileSync(at.value.path).toString("base64") : at,
+        };
+      }),
+    );
+    return { status, listed, queue, edges, files };
+  }
+
+  /** That an in-place fill was refused `copy_expired` with `reason`,
+   *  leaving the copy, its edges, its state, its queue and its files as they
+   *  were. */
+  async function refusedInPlace(
+    h: Harness,
+    reason: string,
+    types: string[] = ["core.note"],
+    tier: "library" | "feed" | "all" = "library",
+  ): Promise<void> {
+    const before = await kept(h);
+    const refused = await h.device.hydrate(types, tier, { inPlaceOnly: true });
+    expect(
+      refused.ok ? "filled" : refused.refusal.code,
+      `an in-place fill went ahead where it could not be in place: ${JSON.stringify(refused)}`,
+    ).toBe("copy_expired");
+    expect(refused.ok ? "" : refused.refusal.raw).toContain(reason);
+    expect(
+      await kept(h),
+      "a refused in-place fill changed the copy, its edges, its state, its queue or its files",
+    ).toEqual(before);
+  }
+
+  /** A stale copy holding `a` and `b`, linked, with an edit, a create and
+   *  a file attached to `b` queued. */
+  async function staleWithWrites(
+    label: string,
+    options: Parameters<typeof agedOut>[2] = {},
+  ): Promise<Awaited<ReturnType<typeof agedOut>> & { rows: Rows }> {
+    const link = {
+      id: "a-b",
+      source_id: "a",
+      target_id: "b",
+      edge_type: "references",
+    };
+    const rows: Rows = {
+      "core.note": [
+        {
+          item: {
+            id: "a",
+            properties: { title: "server", body: "a" },
+            edges: {
+              references: { data: [wireEdge(link)], next_cursor: null },
+            },
+          },
+        },
+        { item: { id: "b" } },
+      ],
+    };
+    const aged = await agedOut(label, rows, options);
+    const edit = await aged.h.device.update("a", {
+      version: 1,
+      properties: { title: "mine" },
+    });
+    expect(edit.ok, JSON.stringify(edit)).toBe(true);
+    const created = await aged.h.device.create({
+      type: "core.note",
+      properties: { title: "new", body: "new" },
+    });
+    expect(created.ok, JSON.stringify(created)).toBe(true);
+    const attached = await aged.h.device.attach(
+      "b",
+      fileOf("kept.bin", "kept bytes"),
+    );
+    expect(attached.ok, JSON.stringify(attached)).toBe(true);
+    // The file's row is the copy's own create, held pinned outside the
+    // slice, which the server does not hold yet.
+    aged.h.server.copyAnswer(
+      "GET",
+      /^\/items\/[^/]+$/,
+      refusal(404, "not_found", "No such item"),
+    );
+    // A stale copy refuses edge reads, so its status counts the edges kept.
+    const status = await aged.h.device.status();
+    expect(
+      status.ok && status.value.edges,
+      "the stale copy holds no edge, so nothing below shows one kept",
+    ).toBeGreaterThan(0);
+    expect(await hydration(aged.h)).toBe("stale");
+    return { ...aged, rows };
+  }
+
+  it("fills a stale copy in place, keeping its queue and its files", async () => {
+    const { h, rows } = await staleWithWrites("in-place-only-fills");
+    const queued = await h.device.queue();
+    expect(queued.ok && queued.value).toHaveLength(5);
+    const upload = queued.ok
+      ? queued.value.find((write) => write.kind === "upload_blob")
+      : undefined;
+    expect(upload?.blob, "no upload was queued with the file").toBeTruthy();
+    rows["core.note"] = [
+      {
+        item: {
+          id: "a",
+          version: 2,
+          properties: { title: "server", body: "newer" },
+        },
+      },
+      { item: { id: "b" } },
+    ];
+    const filled = await h.device.hydrate(["core.note"], "library", {
+      inPlaceOnly: true,
+    });
+    expect(filled.ok, JSON.stringify(filled)).toBe(true);
+    expect(filled.ok && filled.value.in_place).toBe(true);
+    expect(await h.device.queue()).toEqual(queued);
+    const shown = await h.device.get("a");
+    expect(shown.ok && shown.value.properties.title).toBe("mine");
+    expect(shown.ok && shown.value.properties.body).toBe("newer");
+    const bytes = await h.device.blob(upload?.blob ?? "");
+    expect(
+      bytes.ok,
+      `the file's bytes were not kept: ${JSON.stringify(bytes)}`,
+    ).toBe(true);
+    expect(
+      h.server.requests.filter((request) =>
+        request.pathname.startsWith("/blobs"),
+      ),
+      "the in-place fill sent the queued upload",
+    ).toEqual([]);
+  });
+
+  it("carries on an interrupted in-place fill in place", async () => {
+    let dropping = false;
+    const { h, rows } = await staleWithWrites("in-place-only-resumed", {
+      pageSize: 1,
+      drop: () => {
+        if (!dropping) return false;
+        dropping = false;
+        return true;
+      },
+    });
+    const queued = await h.device.queue();
+    rows["core.note"] = [
+      { item: { id: "a", version: 2 } },
+      { item: { id: "b" } },
+    ];
+    dropping = true;
+    const interrupted = await h.device.hydrate(["core.note"], "library", {
+      inPlaceOnly: true,
+    });
+    expect(
+      interrupted.ok ? "filled" : interrupted.refusal.code,
+      "the in-place fill was not interrupted, so nothing below is about one that was",
+    ).not.toBe("filled");
+    expect(interrupted.ok ? "" : interrupted.refusal.code).not.toBe(
+      "copy_expired",
+    );
+    expect(await hydration(h)).toBe("stale");
+    expect((await ids(h)).ids).toContain("b");
+
+    const carried = await h.device.hydrate(["core.note"], "library", {
+      inPlaceOnly: true,
+    });
+    expect(carried.ok, JSON.stringify(carried)).toBe(true);
+    expect(carried.ok && carried.value.resumed).toBe(true);
+    expect(carried.ok && carried.value.in_place).toBe(true);
+    expect(await h.device.queue()).toEqual(queued);
+    expect(await hydration(h)).toBe("complete");
+  });
+
+  it("refuses to fill from another instance, leaving the copy as it was", async () => {
+    let instance = "01900000-0000-7000-8000-00000000aaaa";
+    const { h } = await staleWithWrites("in-place-only-instance", {
+      instance: () => instance,
+    });
+    instance = "01900000-0000-7000-8000-00000000bbbb";
+    await refusedInPlace(h, "instance_changed");
+
+    // The witness: asked for any fill, the same hydration replaces the copy.
+    const replaced = await h.device.hydrate(["core.note"], "library");
+    expect(replaced.ok, JSON.stringify(replaced)).toBe(true);
+    expect(replaced.ok && replaced.value.in_place).toBe(false);
+  });
+
+  it("refuses to fill under another reach, leaving the copy as it was", async () => {
+    let reach = SCRIPTED_REACH;
+    const { h } = await staleWithWrites("in-place-only-reach", {
+      reach: () => reach,
+    });
+    reach = "b".repeat(64);
+    await refusedInPlace(h, "reach_changed");
+    expect(
+      await hydration(h),
+      "the refused copy no longer reads stale, so an app cannot tell it was kept",
+    ).toBe("stale");
+
+    // The witness: asked for any fill, the same hydration ends the stale
+    // copy before it reads a page.
+    await h.device.hydrate(["core.note"], "library");
+    expect(await hydration(h)).not.toBe("stale");
+  });
+
+  it("refuses to fill another slice, leaving the copy as it was", async () => {
+    const { h } = await staleWithWrites("in-place-only-slice");
+    await refusedInPlace(h, "slice_changed", ["core.note"], "all");
+
+    // The witness: asked for any fill, the same slice replaces the copy.
+    const replaced = await h.device.hydrate(["core.note"], "all");
+    expect(replaced.ok, JSON.stringify(replaced)).toBe(true);
+    expect(replaced.ok && replaced.value.in_place).toBe(false);
+  });
+
+  it("refuses to fill a copy whose server was restored, leaving the copy as it was", async () => {
+    const { h, head } = await staleWithWrites("in-place-only-restored");
+    head.now = "2";
+    await refusedInPlace(h, "head_past_log");
+
+    const replaced = await h.device.hydrate(["core.note"], "library");
+    expect(replaced.ok, JSON.stringify(replaced)).toBe(true);
+    expect(replaced.ok && replaced.value.in_place).toBe(false);
+  });
+
+  it("refuses to fill a copy whose interrupted refill the log fell behind, leaving the copy as it was", async () => {
+    let dropping = false;
+    const { h, head, rows } = await staleWithWrites("in-place-only-restart", {
+      pageSize: 1,
+      drop: () => {
+        if (!dropping) return false;
+        dropping = false;
+        return true;
+      },
+    });
+    rows["core.note"] = [{ item: { id: "a" } }, { item: { id: "b" } }];
+    dropping = true;
+    const interrupted = await h.device.hydrate(["core.note"], "library", {
+      inPlaceOnly: true,
+    });
+    expect(
+      interrupted.ok ? "filled" : interrupted.refusal.code,
+      "the in-place fill was not interrupted, so nothing below is about one that was",
+    ).not.toBe("filled");
+    expect(await hydration(h)).toBe("stale");
+    // The interrupted refill started from the head the aged-out catch-up
+    // read, 900. A log ending at 50 is past the cursor the copy held when it
+    // went stale, 10, but behind where that refill started.
+    head.now = "50";
+    await refusedInPlace(h, "head_past_log");
+
+    // The witness: asked for any fill, the same hydration clears the copy.
+    const replaced = await h.device.hydrate(["core.note"], "library");
+    expect(replaced.ok, JSON.stringify(replaced)).toBe(true);
+    expect(replaced.ok && replaced.value.restarted).toBe("head_past_log");
+    expect(replaced.ok && replaced.value.in_place).toBe(false);
+  });
+
+  it("ends the stale copy when the server refuses the credential or the reach to a fill only in place", async () => {
+    for (const [door, answer, reason] of [
+      [
+        "head",
+        refusal(401, "unauthorized", "Invalid or missing credential"),
+        "credential_ended",
+      ],
+      [
+        "types",
+        refusal(409, "reach_changed", "the reach has changed"),
+        "reach_changed",
+      ],
+    ] as const) {
+      const { h, refuse } = await staleWithWrites(`in-place-only-${reason}`);
+      const queued = await h.device.queue();
+      expect(queued.ok && queued.value.length).toBeGreaterThan(0);
+      refuse[door] = answer;
+      const refused = await h.device.hydrate(["core.note"], "library", {
+        inPlaceOnly: true,
+      });
+      expect(
+        refused.ok ? "filled" : refused.refusal.code,
+        `${reason}: the fill was not refused copy_expired`,
+      ).toBe("copy_expired");
+      expect(refused.ok ? "" : refused.refusal.raw).toContain(reason);
+      expect(
+        await hydration(h),
+        `${reason}: the copy stayed stale, answering rows the server may no longer let the credential read`,
+      ).toBe("expired");
+      expect(
+        await h.device.queue(),
+        `${reason}: the queue was not kept`,
+      ).toEqual(queued);
+      await h.stop();
+      harness = undefined;
+    }
+  });
+
+  it("refuses to fill a copy a drain expired for another instance, naming the instance", async () => {
+    harness = await startHarness("in-place-only-drain-instance");
+    const h = harness;
+    let instance = SCRIPTED_INSTANCE;
+    h.server.copyAnswer("GET", "/", () =>
+      answers.root(Number(BUILT_FOR), instance),
+    );
+    scriptHydration(h.server, {
+      head: "10",
+      rows: { "core.note": [{ item: { id: "a" } }] },
+      instance: () => instance,
+    });
+    expect((await h.device.hydrate(["core.note"], "library")).ok).toBe(true);
+    const created = await h.device.create({
+      type: "core.note",
+      properties: { title: "new", body: "new" },
+    });
+    expect(created.ok, JSON.stringify(created)).toBe(true);
+    instance = "00000000-0000-7000-8000-0000000000ff";
+    const drained = await h.device.drain();
+    expect(drained.ok ? "drained" : drained.refusal.code).toBe("copy_expired");
+    await refusedInPlace(h, "instance_changed");
+
+    // The witness: asked for any fill, the same hydration replaces the copy.
+    const replaced = await h.device.hydrate(["core.note"], "library");
+    expect(replaced.ok, JSON.stringify(replaced)).toBe(true);
+    expect(replaced.ok && replaced.value.in_place).toBe(false);
+  });
+
+  it("refuses to fill a copy that is not stale, leaving it as it was", async () => {
+    harness = await startHarness("in-place-only-whole");
+    const h = harness;
+    scriptHydration(h.server, {
+      head: "10",
+      rows: { "core.note": [{ item: { id: "a" } }] },
+    });
+    await refusedInPlace(h, "not_stale");
+    expect((await h.device.hydrate(["core.note"], "library")).ok).toBe(true);
+    const created = await h.device.create({
+      type: "core.note",
+      properties: { title: "new", body: "new" },
+    });
+    expect(created.ok, JSON.stringify(created)).toBe(true);
+    await refusedInPlace(h, "not_stale");
+
+    // The witness: asked for any fill, the same hydration replaces the copy.
+    const replaced = await h.device.hydrate(["core.note"], "library");
+    expect(replaced.ok, JSON.stringify(replaced)).toBe(true);
+    expect(replaced.ok && replaced.value.in_place).toBe(false);
   });
 });

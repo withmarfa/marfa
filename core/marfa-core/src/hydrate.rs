@@ -20,15 +20,25 @@ use crate::{Core, Result};
 const HEAD_ATTEMPTS: usize = 3;
 const HEAD_READ_TIMEOUT: Duration = Duration::from_secs(15);
 
+/// Whether a hydration may clear the copy to fill it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Fill {
+    Any,
+    /// Refused, leaving the copy as it was, where a stale copy cannot be
+    /// filled again in place (`device/refill-in-place-only`).
+    InPlaceOnly,
+}
+
 pub(crate) fn hydrate(
     core: &Core,
     http: &Http,
     types: &[String],
     tier: SliceTier,
     edge_types: &[String],
+    fill: Fill,
     stop: &AtomicBool,
 ) -> Result<HydrateReport> {
-    let result = hydrate_inner(core, http, types, tier, edge_types, stop);
+    let result = hydrate_inner(core, http, types, tier, edge_types, fill, stop);
     crate::catch_up::unless_stopped(result, stop)
 }
 
@@ -38,6 +48,7 @@ fn hydrate_inner(
     types: &[String],
     tier: SliceTier,
     edge_types: &[String],
+    fill: Fill,
     stop: &AtomicBool,
 ) -> Result<HydrateReport> {
     let types = declared_types(types)?;
@@ -52,6 +63,7 @@ fn hydrate_inner(
             &types,
             tier,
             &edge_types,
+            fill,
             restart,
             &mut pages,
             stop,
@@ -59,6 +71,13 @@ fn hydrate_inner(
         .map_err(|error| before.failed(core, error).unwrap_or_else(|error| error))?
         {
             Attempt::Done(report) => return Ok(*report),
+            // Not through `failed`, which would end the stale copy this
+            // refusal keeps.
+            Attempt::NotInPlace(reason) => {
+                return Err(CoreError::CopyExpired {
+                    reason: reason.into(),
+                });
+            }
             // Only an attempt that would resume asks to start again, and one
             // that starts again never resumes, so this goes round at most
             // twice.
@@ -70,6 +89,9 @@ fn hydrate_inner(
 enum Attempt {
     Done(Box<HydrateReport>),
     Again(HydrateRestart),
+    /// A fill asked to happen only in place that cannot, with the reason,
+    /// before the attempt changed the copy.
+    NotInPlace(&'static str),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -180,6 +202,7 @@ fn attempt(
     types: &[String],
     tier: SliceTier,
     edge_types: &[String],
+    fill: Fill,
     restart: Option<HydrateRestart>,
     pages: &mut u64,
     stop: &AtomicBool,
@@ -188,6 +211,27 @@ fn attempt(
     // raised before then leaves it as it was.
     crate::catch_up::refuse_if_stopped(stop)?;
     let (mut instance, mut cursor, mut fence) = read_head(http, stop)?;
+    let refusal = |instance: &str, cursor: &str, fence: &str| -> Result<Option<&'static str>> {
+        if fill == Fill::Any {
+            return Ok(None);
+        }
+        not_in_place(
+            &*core.conn()?,
+            &Built {
+                instance,
+                cursor,
+                fence,
+                types,
+                tier,
+                edge_types,
+            },
+        )
+    };
+    // Before `expire_if_built_elsewhere`, which ends a stale copy built
+    // under another instance or reach.
+    if let Some(reason) = refusal(&instance, &cursor, &fence)? {
+        return Ok(Attempt::NotInPlace(reason));
+    }
     let mut ended = expire_if_built_elsewhere(core, &instance, &fence)?;
     let mut under_reach = http.for_reach(&fence);
     crate::catch_up::refuse_if_stopped(stop)?;
@@ -198,6 +242,9 @@ fn attempt(
         // certifies, so the head and the catalog read before it are of a reach
         // that has gone.
         (instance, cursor, fence) = read_head(http, stop)?;
+        if let Some(reason) = refusal(&instance, &cursor, &fence)? {
+            return Ok(Attempt::NotInPlace(reason));
+        }
         ended = ended.or(expire_if_built_elsewhere(core, &instance, &fence)?);
         under_reach = http.for_reach(&fence);
         catalog_rows = under_reach.catalog()?;
@@ -209,6 +256,11 @@ fn attempt(
         Some(reason) => Start::Fresh(Some(reason)),
         None => resume_point(core, http, &instance, &fence, types, tier, edge_types, stop)?,
     };
+    if fill == Fill::InPlaceOnly
+        && let Start::Fresh(Some(HydrateRestart::HeadPastLog)) = start
+    {
+        return Ok(Attempt::NotInPlace(HydrateRestart::HeadPastLog.as_str()));
+    }
     let (reached, restarted) = match start {
         Start::Reread(reason) => return Ok(Attempt::Again(reason)),
         // Rows already taken were indexed by the catalog the copy holds, and
@@ -254,16 +306,31 @@ fn attempt(
             // before the cursor the copy held when it went stale, is a server
             // restored to an earlier point, whose rows the later versions held
             // would refuse.
-            let in_place = restarted != Some(HydrateRestart::HeadPastLog)
-                && store::refill(&tx)?.is_some_and(|refill| {
-                    refill.instance == instance
-                        && refill.reach == fence
-                        && not_behind(&cursor, &refill.cursor)
-                })
-                && store::meta_get(&tx, store::META_SLICE_TYPES)?
-                    == Some(serde_json::to_string(types)?)
-                && store::meta_get(&tx, store::META_SLICE_TIER)?.as_deref() == Some(tier.as_str())
-                && store::whole_edge_types(&tx)? == edge_types;
+            let built = Built {
+                instance: &instance,
+                cursor: &cursor,
+                fence: &fence,
+                types,
+                tier,
+                edge_types,
+            };
+            let not_in_place = match restarted {
+                Some(HydrateRestart::HeadPastLog) => Some(HydrateRestart::HeadPastLog.as_str()),
+                _ => not_in_place(&tx, &built)?,
+            };
+            if fill == Fill::InPlaceOnly
+                && let Some(reason) = not_in_place
+            {
+                return Ok(Attempt::NotInPlace(reason));
+            }
+            let in_place = not_in_place.is_none();
+            // Writes queued against another instance would land on rows
+            // the copy never held (`device/queue-other-instance-held`).
+            if store::meta_get(&tx, store::META_INSTANCE_ID)?
+                .is_some_and(|built| !built.is_empty() && built != instance)
+            {
+                store::block_for_another_instance(&tx)?;
+            }
             crate::reach::advance_generation(&tx)?;
             store::meta_set(&tx, store::META_HYDRATE_STATE, store::HYDRATE_IN_PROGRESS)?;
             store::attachments_start_growing(&tx)?;
@@ -582,6 +649,59 @@ fn attempt(
     })();
     result.map_err(|error| context.failed(core, error).unwrap_or_else(|error| error))
 }
+
+/// What a hydration reads the copy against: the server's head and the slice
+/// it is asked for.
+struct Built<'a> {
+    instance: &'a str,
+    cursor: &'a str,
+    fence: &'a str,
+    types: &'a [String],
+    tier: SliceTier,
+    edge_types: &'a [String],
+}
+
+/// `None` where a fill of the copy under `built` would be in place: a stale
+/// copy whose cursor aged out, built under the same instance and reach and
+/// holding the same slice. A copy whose cursor aged out is filled again over
+/// what it holds only then; anything else may hold rows the key no longer
+/// reads, so it is cleared first. A log that ends before the cursor the copy
+/// held when it went stale is a server restored to an earlier point, whose
+/// rows the later versions held would refuse. Otherwise why not, as a
+/// `copy_expired` reason.
+fn not_in_place(conn: &rusqlite::Connection, built: &Built<'_>) -> Result<Option<&'static str>> {
+    let Some(refill) = store::refill(conn)? else {
+        // An expiry keeps the instance a copy was built from, so a copy that
+        // is whole, or was expired by a drain that met another instance, is
+        // still told apart from one that is merely not stale.
+        let elsewhere = store::meta_get(conn, store::META_INSTANCE_ID)?
+            .is_some_and(|held| !held.is_empty() && held != built.instance);
+        return Ok(Some(if elsewhere {
+            HydrateRestart::InstanceChanged.as_str()
+        } else {
+            NOT_STALE
+        }));
+    };
+    Ok(if refill.instance != built.instance {
+        Some(HydrateRestart::InstanceChanged.as_str())
+    } else if refill.reach != built.fence {
+        Some(HydrateRestart::ReachChanged.as_str())
+    } else if store::meta_get(conn, store::META_SLICE_TYPES)?
+        != Some(serde_json::to_string(built.types)?)
+        || store::meta_get(conn, store::META_SLICE_TIER)?.as_deref() != Some(built.tier.as_str())
+        || store::whole_edge_types(conn)? != built.edge_types
+    {
+        Some(HydrateRestart::SliceChanged.as_str())
+    } else if !not_behind(built.cursor, &refill.cursor) {
+        Some(HydrateRestart::HeadPastLog.as_str())
+    } else {
+        None
+    })
+}
+
+/// The `copy_expired` reason a fill asked to happen only in place gives a
+/// copy that is not waiting to be filled again.
+pub(crate) const NOT_STALE: &str = "not_stale";
 
 /// Whether the head `head` is at or past the cursor `held`: a log that ends
 /// before the cursor a copy held is a server restored to an earlier point.
