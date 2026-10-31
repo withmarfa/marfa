@@ -45,7 +45,10 @@ async function read(item: MarfaItem): Promise<MarfaItem> {
   return found!;
 }
 
-const STORED: Record<string, { type: string; properties: object }> = {
+const STORED: Record<
+  string,
+  { type: string; properties: Record<string, unknown> }
+> = {
   moved: {
     type: "core.entity.person",
     properties: {
