@@ -1228,14 +1228,16 @@ function withoutMadeValues(read: TypeSchema): TypeSchema {
   expect(Object.values(read.fields).every((f) => f.label !== undefined)).toBe(
     true,
   );
-  const { plural: _plural, ...rest } = read;
+  const rest: TypeSchema = { ...read };
+  delete rest.plural;
   return {
     ...rest,
     fields: Object.fromEntries(
-      Object.entries(read.fields).map(([name, { label: _label, ...field }]) => [
-        name,
-        field,
-      ]),
+      Object.entries(read.fields).map(([name, field]) => {
+        const kept = { ...field };
+        delete kept.label;
+        return [name, kept];
+      }),
     ),
   };
 }
