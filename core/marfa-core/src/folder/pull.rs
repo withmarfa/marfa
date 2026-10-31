@@ -1963,7 +1963,7 @@ impl Folder {
                 return Ok(None);
             };
             let typed = document::read(text);
-            if typed.commented()
+            if typed.holds_unread_text()
                 || typed.front.iter().any(|(name, value)| {
                     value.is_null() && item.properties.get(name) != Some(&Value::Null)
                 })

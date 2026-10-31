@@ -29,12 +29,22 @@ fn parse(source: &str) -> Result<tree_sitter::Tree> {
     Ok(tree)
 }
 
-/// Whether YAML holds a comment, or cannot be parsed well enough to say.
-pub(super) fn commented(source: &str) -> bool {
+/// Whether YAML holds text its values leave out, a comment or a document
+/// after the first, or cannot be parsed well enough to say.
+pub(super) fn holds_unread_text(source: &str) -> bool {
     let Ok(tree) = parse(source) else {
         return true;
     };
-    let mut nodes = vec![tree.root_node()];
+    let root = tree.root_node();
+    if root
+        .named_children(&mut root.walk())
+        .filter(|node| node.kind() == "document")
+        .count()
+        > 1
+    {
+        return true;
+    }
+    let mut nodes = vec![root];
     while let Some(node) = nodes.pop() {
         if node.kind() == "comment" {
             return true;

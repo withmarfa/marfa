@@ -34,14 +34,14 @@ impl Document {
         }
     }
 
-    /// Whether the frontmatter holds a comment, or cannot be read well
-    /// enough to say it holds none.
-    pub(super) fn commented(&self) -> bool {
+    /// Whether the frontmatter holds text its values leave out, a comment or
+    /// a second YAML document, or cannot be read well enough to say.
+    pub(super) fn holds_unread_text(&self) -> bool {
         self.unreadable.is_some()
             || self
                 .source
                 .as_ref()
-                .is_some_and(|source| super::preserve::commented(&source.yaml))
+                .is_some_and(|source| super::preserve::holds_unread_text(&source.yaml))
     }
 }
 

@@ -5037,7 +5037,7 @@ mod tests {
 
     #[test]
     fn a_pull_keeps_a_found_file_the_person_commented_or_left_an_empty_property_in_once_binned() {
-        let edits: [(&str, Edit, (usize, usize)); 3] = [
+        let edits: [(&str, Edit, (usize, usize)); 4] = [
             // The witness: the same file unchanged is removed.
             ("unchanged", |text| text, (1, 0)),
             (
@@ -5048,6 +5048,14 @@ mod tests {
             (
                 "an empty property",
                 |text| text.replacen("---\n", "---\ndue:\n", 1),
+                (0, 1),
+            ),
+            (
+                "a second YAML document",
+                |text| {
+                    let end = text[4..].find("---\n").unwrap() + 4;
+                    format!("{}...\nnote: ring Sam\n{}", &text[..end], &text[end..])
+                },
                 (0, 1),
             ),
         ];
