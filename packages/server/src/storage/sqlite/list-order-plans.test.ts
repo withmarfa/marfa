@@ -193,6 +193,14 @@ const LISTINGS: Record<string, ItemFilters> = {
     types: ["user.docs"],
     source_filter: { types: ["user.docs.b"], sources: ["one"] },
   },
+  "a type and a list of states": {
+    types: ["user.docs"],
+    states: ["active", "archived"],
+  },
+  "grants and a list of states": {
+    allowed_types: ["user.docs.*", "user.other"],
+    states: ["archived", "active"],
+  },
 };
 
 describe("a typed listing in a system order", () => {
@@ -315,6 +323,8 @@ describe("an untyped listing in a system order", () => {
         {},
         { tier: "feed" },
         { source: "one" },
+        { states: ["active", "archived"] },
+        { states: ["trashed", "active"] },
       ] satisfies ItemFilters[]) {
         const plan = await planOf({ ...extra, sort, direction });
         expect(text(plan), JSON.stringify({ extra, direction })).not.toContain(

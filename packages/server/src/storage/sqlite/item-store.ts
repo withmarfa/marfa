@@ -524,10 +524,21 @@ function itemFilterConditions(
   // An ordered read of the active state never wants the state index either:
   // it holds nearly every item, and walking it leaves a sort of all of them,
   // where the sort column's index would stop at the page.
+  // A list that holds `active` is just as broad, so it is steered the same
+  // way; the unary `+` keeps the term off the state index.
+  const steerOff = (values: readonly string[]): boolean =>
+    (narrowsByType || ordered) && values.includes("active");
   const stateIs = (value: string): SQL =>
-    (narrowsByType || ordered) && value === "active"
+    steerOff([value])
       ? sql`+${items.state} = ${value}`
       : eq(items.state, value);
+  const stateIn = (values: readonly string[]): SQL =>
+    steerOff(values)
+      ? sql`+${items.state} IN (${sql.join(
+          values.map((value) => sql`${value}`),
+          sql`, `,
+        )})`
+      : inArray(items.state, [...values]);
 
   const states = filters.states;
   if (states !== undefined) {
@@ -538,7 +549,7 @@ function itemFilterConditions(
         ? stateIs(states[0] as string)
         : states.length === 0
           ? sql`0`
-          : inArray(items.state, [...states]),
+          : stateIn(states),
     );
   } else if (!filters.all_states) {
     // The default is the active state. A listing answers what the reader
