@@ -135,6 +135,7 @@ describe("one envelope for every list and search", () => {
     { template: "/types", path: () => "/types" },
     { template: "/edge-types", path: () => "/edge-types" },
     { template: "/keys", path: () => "/keys" },
+    { template: "/sources", path: () => "/sources" },
     { template: "/webhooks", path: () => "/webhooks" },
     {
       template: "/webhooks/{id}/deliveries",
@@ -197,12 +198,12 @@ describe("one envelope for every list and search", () => {
   const credentialOf = (door: (typeof doors)[number]) =>
     door.owner ? ownerCookie : door.operator ? managementKey : apiKey;
 
-  it("names thirty-one doors, every one the document publishes as a page", async () => {
+  it("names thirty-two doors, every one the document publishes as a page", async () => {
     // The derived set holds the rows to the document, so a door that starts
     // answering a page without a row here turns this red. The count holds
     // both to the number the specification states, so a new page added with
     // a row beside it turns this red too.
-    expect(doors).toHaveLength(31);
+    expect(doors).toHaveLength(32);
     expect(doors.map((door) => `GET ${door.template}`).sort()).toEqual(
       pageDoors(await servedDocument()).sort(),
     );
@@ -221,7 +222,7 @@ describe("one envelope for every list and search", () => {
             parameter.in === "query" && parameter.name === "cursor",
         ),
     );
-    expect(whole).toHaveLength(16);
+    expect(whole).toHaveLength(17);
     for (const door of whole) {
       const body = (await read(door.path(), credentialOf(door))) as Record<
         string,

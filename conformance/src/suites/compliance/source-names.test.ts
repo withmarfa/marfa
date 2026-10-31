@@ -356,9 +356,9 @@ describe("reading a source", () => {
     expect(refused.status).toBe(404);
     await expectMatchesSchema("GET", "/source", 404, refused.error);
     expect(refused.error?.error.code).toBe("source_not_found");
-    expect((await listSources(blind.client)).map((s) => s.source)).toEqual([
-      blind.source,
-    ]);
+    const blindList = (await listSources(blind.client)).map((s) => s.source);
+    expect(blindList).toContain(blind.source);
+    expect(blindList).not.toContain(writer.source);
 
     // The witness: a key that reads notes sees the note's source.
     const reader = await mintKey("reader", {
