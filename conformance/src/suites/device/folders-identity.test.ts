@@ -1404,6 +1404,11 @@ describe("what a pull does with a file whose item stops matching", () => {
     expect(rendered).toContain(departed.id);
     const added = await departure(label, { "going.md": rendered });
     scriptFolderWrites(added);
+    const scanned = await added.folder.scan();
+    expect(scanned.ok).toBe(true);
+    if (scanned.ok) {
+      expect([scanned.value.created, scanned.value.unchanged]).toEqual([0, 1]);
+    }
     const first = await added.folder.pull();
     expect(first.ok).toBe(true);
     if (first.ok) {
