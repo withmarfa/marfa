@@ -50,8 +50,14 @@ describe("job limits", () => {
     for (const [id, job] of jobsOf(file)) {
       if (job.uses !== undefined) continue;
       const limit = job["timeout-minutes"];
-      expect(limit, `${file}: ${id}`).toBeTypeOf("number");
-      expect(limit, `${file}: ${id}`).toBeLessThanOrEqual(100);
+      // A limit is a number, or an expression whose numbers are the limits.
+      const numbers =
+        typeof limit === "number" ? [limit] : String(limit).match(/\d+/g);
+      expect(numbers, `${file}: ${id}`).not.toBeNull();
+      expect(
+        Math.max(...(numbers ?? []).map(Number)),
+        `${file}: ${id}`,
+      ).toBeLessThanOrEqual(100);
     }
   });
 

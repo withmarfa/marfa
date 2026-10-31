@@ -452,11 +452,11 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
   // budget.
   [
     /^core\/marfa-core\/src\/contract\.rs$/,
-    [...RUST_LINUX, "clients-freshness", "workspace"],
+    [...RUST_LINUX, "core", "clients-freshness", "workspace"],
   ],
   [
     /^core\/marfa-core\/src\/builtin_catalog\.json$/,
-    [...RUST_LINUX, "clients-freshness", "workspace"],
+    [...RUST_LINUX, "core", "clients-freshness", "workspace"],
   ],
   [/^core\/Cargo\.toml$/, [...RUST, "workspace"]],
   [/^core\/Cargo\.lock$/, RUST],
@@ -501,17 +501,26 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
   // side (a keychain, a watched folder) that nothing here names, so a Mac
   // runs them too.
   [/^core\/[^/]+\/tests\//, ["core-checks", "core-checks-linux", "core"]],
+  // Every crate's manifest: a dependency bump or a macOS-only dependency
+  // (`core-foundation`, `xattr`) can break an Apple build.
+  [/^core\/[^/]+\/Cargo\.toml$/, RUST],
   // The parts of the core with a macOS-only side, which only a Mac runs: the
   // command line, with its login keychain, key files by path and launchd
   // autostart, and the core's folder watching and what it reads and writes,
-  // which FSEvents, name case and Finder packages change. The manifests and
-  // the lockfile are above: a dependency bump can break an Apple build.
+  // which FSEvents, name case and Finder packages change, and the files with
+  // an Apple-only `cfg` block. `ci/ci-required.test.ts` searches `core/` for
+  // `target_os = "macos"`, `"ios"` and `target_vendor = "apple"` and requires
+  // every file it finds here.
   [
-    /^core\/(marfa-cli\/|marfa-core\/src\/(folder\/|watch\.rs$|file_cache\.rs$|lock\.rs$|directory[^/]*$))/,
+    /^core\/(marfa-cli\/|marfa-core\/src\/(folder\/|watch\.rs$|file_cache\.rs$|lock\.rs$|priority\.rs$|blob\.rs$|lib\.rs$|stop_tests\.rs$|directory[^/]*$))/,
     RUST,
   ],
+  // The core's other source is what the live tests (`tests/live*.rs`) run
+  // against, and only the `core` job runs them, so it stays on a pull
+  // request.
+  [/^core\/marfa-core\/src\//, [...RUST_LINUX, "core"]],
   // Any other crate can be one the binary is built from, and Linux builds,
-  // lints and tests all of them.
+  // lints and tests the rest of the core's Rust, but not the live tests.
   [/^core\//, RUST_LINUX],
 
   // The server's tests, the clients, the core's tests and the offline lane
@@ -637,7 +646,8 @@ export function forDraft(answer: Record<Job, boolean>): Record<Job, boolean> {
  * `main` already runs the rest on Linux. The device fixtures drive the
  * `marfa` binary on macOS's file watching, name case, Finder packages and
  * keychain, the CLI scenarios drive it as a person does, the core's checks run
- * its macOS-only code and the control socket has macOS-only behavior.
+ * its macOS-only code, the control socket has macOS-only behavior and the
+ * Swift package builds only on a Mac.
  * `core.yml` runs the core's live checks on the same night.
  */
 export const NIGHTLY_JOBS: readonly Job[] = [
@@ -645,6 +655,7 @@ export const NIGHTLY_JOBS: readonly Job[] = [
   "cli-scenarios",
   "core-checks",
   "control-socket",
+  "swift-package",
 ];
 
 /** The nightly's answer: `NIGHTLY_JOBS` and nothing else. */

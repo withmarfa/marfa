@@ -103,11 +103,11 @@ describe("Full CI", () => {
       "%s cancels the run once %s has failed, and only then",
       (id, after) => {
         const job = jobs[id];
-        expect(needsOf(job)).toEqual([after]);
+        expect(needsOf(job)).toEqual(["changes", after]);
         // Never on `main`, a nightly or a dispatch, and never for a draft,
         // which runs no slow job.
         expect(job?.if).toBe(
-          "${{ failure() && github.event_name == 'pull_request' && !github.event.pull_request.draft }}",
+          "${{ failure() && needs.changes.result == 'success' && github.event_name == 'pull_request' && !github.event.pull_request.draft }}",
         );
         expect(job?.permissions).toEqual({ actions: "write" });
         expect(job?.steps).toHaveLength(1);

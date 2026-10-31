@@ -240,7 +240,7 @@ describe("what a change runs", () => {
     [
       "the catalog the core carries",
       ["core/marfa-core/src/builtin_catalog.json"],
-      [...RUST_LINUX, "clients-freshness", "workspace", "ci-sqlite"],
+      [...RUST_LINUX, "core", "clients-freshness", "workspace", "ci-sqlite"],
     ],
     [
       "a client-only change, which the server imports at runtime",
@@ -257,7 +257,7 @@ describe("what a change runs", () => {
     [
       "a Rust-only change",
       ["core/marfa-core/src/store.rs"],
-      [...RUST_LINUX, "ci-sqlite"],
+      [...RUST_LINUX, "core", "ci-sqlite"],
     ],
     [
       "the core's folder watching, which FSEvents, name case and Finder packages change",
@@ -619,7 +619,7 @@ describe("what a change runs", () => {
     [
       "a crate manifest, which this test reads",
       ["core/marfa-core/Cargo.toml"],
-      ["ci-sqlite", ...RUST_LINUX, "version-fields"],
+      ["ci-sqlite", ...RUST, "version-fields"],
     ],
     [
       "ci.yml, which defines every job it runs, the call of core-live.yml among them",
@@ -759,6 +759,28 @@ describe("what a change runs", () => {
         jobs.some((job) => job.endsWith("-freshness")),
         `${tree}: ${jobs.join(", ")}`,
       ).toBe(true);
+    }
+  });
+});
+
+describe("the core's Apple-only code", () => {
+  it("runs the macOS jobs for every file with an Apple-only cfg", () => {
+    const found = execFileSync(
+      "grep",
+      [
+        "-rlE",
+        'target_os = "(macos|ios)"|target_vendor = "apple"',
+        "core",
+        "--exclude-dir=target",
+        "--exclude-dir=node_modules",
+      ],
+      { cwd: ROOT, encoding: "utf8" },
+    )
+      .split("\n")
+      .filter(Boolean);
+    expect(found.length).toBeGreaterThan(0);
+    for (const path of found) {
+      expect([...affected(path)], path).toContain("core-checks");
     }
   });
 });
@@ -1857,6 +1879,7 @@ describe("the classifier as CI runs it", () => {
       "cli-scenarios",
       "core-checks",
       "control-socket",
+      "swift-package",
     ]);
     expect(
       (

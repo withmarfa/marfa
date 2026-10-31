@@ -158,11 +158,13 @@ jobs:
   # ready for review, each of these stops the run the moment its quick job
   # fails. The run ends as cancelled, and `Full CI` still reports and fails,
   # because the gate runs after a cancel and fails for the failed job. A
-  # draft runs no slow job, and a push to `main` is never stopped.
+  # draft runs no slow job, and a push to `main` is never stopped. A failed
+  # classifier stops nothing: it is not a quick check, and `Full CI` fails
+  # for it as a need of the gate.
   stop-after-format:
-    name: Stop the run after a failed format check
-    needs: ci-sqlite
-    if: ${{ failure() && github.event_name == 'pull_request' && !github.event.pull_request.draft }}
+    name: Stop the run after a failed quick check
+    needs: [changes, ci-sqlite]
+    if: ${{ failure() && needs.changes.result == 'success' && github.event_name == 'pull_request' && !github.event.pull_request.draft }}
     runs-on: ubuntu-latest
     timeout-minutes: 3
     permissions:
@@ -174,8 +176,8 @@ jobs:
 
   stop-after-typecheck:
     name: Stop the run after a failed typecheck
-    needs: typecheck
-    if: ${{ failure() && github.event_name == 'pull_request' && !github.event.pull_request.draft }}
+    needs: [changes, typecheck]
+    if: ${{ failure() && needs.changes.result == 'success' && github.event_name == 'pull_request' && !github.event.pull_request.draft }}
     runs-on: ubuntu-latest
     timeout-minutes: 3
     permissions:
@@ -187,8 +189,8 @@ jobs:
 
   stop-after-lint:
     name: Stop the run after a failed lint
-    needs: lint
-    if: ${{ failure() && github.event_name == 'pull_request' && !github.event.pull_request.draft }}
+    needs: [changes, lint]
+    if: ${{ failure() && needs.changes.result == 'success' && github.event_name == 'pull_request' && !github.event.pull_request.draft }}
     runs-on: ubuntu-latest
     timeout-minutes: 3
     permissions:
@@ -365,7 +367,8 @@ jobs:
     needs: changes
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.conformance-shards != '[]') }}
     name: Conformance shard (${{ matrix.name }})
-    timeout-minutes: 20
+    # A device shard on macOS (the nightly, or `inputs.macos`) runs slower.
+    timeout-minutes: ${{ matrix.device && (github.event_name == 'schedule' || inputs.macos) && 30 || 20 }}
     runs-on: ${{ matrix.device && (github.event_name == 'schedule' || inputs.macos) && 'macos-26' || 'ubuntu-latest' }}
     strategy:
       # Every shard reports, so one failure shows all the others there are.
@@ -511,9 +514,10 @@ jobs:
 
       # Warns, and never fails, when a file takes much longer or shorter than
       # the weight `shard-weights.ts` gives it, and lists the slow files in the
-      # job summary. Only a split group has weights to compare.
+      # job summary. Only a split group has weights to compare, and the
+      # weights are Linux times, so a macOS shard is not compared.
       - name: Compare each file's time with its weight
-        if: ${{ !cancelled() && contains(matrix.args, '--shard') }}
+        if: ${{ !cancelled() && contains(matrix.args, '--shard') && !(matrix.device && (github.event_name == 'schedule' || inputs.macos)) }}
         working-directory: conformance
         run: pnpm check:shard-drift "$RUNNER_TEMP/shard-times.json"
 
