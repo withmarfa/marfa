@@ -1295,7 +1295,7 @@ export class SqliteItemStore implements ItemStore {
       );
     const conditions = itemFilterConditions({
       ...(filters.state
-        ? { state: filters.state }
+        ? { states: [filters.state] }
         : { exclude_states: ["trashed" as const] }),
       exclude_system_types: true,
       source_filter: filters.source_filter,
