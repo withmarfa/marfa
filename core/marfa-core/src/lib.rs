@@ -3917,7 +3917,7 @@ fn refuse_unqueueable_edge(conn: &Connection, draft: &EdgeDraft) -> Result<()> {
     )
 }
 
-/// It waits on its ends' creates and on `after`.
+/// Queues an edge, which waits on its ends' creates and on `after`.
 fn queue_edge(tx: &Connection, draft: &EdgeDraft, after: &[String]) -> Result<QueuedWrite> {
     refuse_unqueueable_edge(tx, draft)?;
     let id = draft
