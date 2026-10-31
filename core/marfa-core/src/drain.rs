@@ -1245,6 +1245,9 @@ fn send_queue(
                     Some((None, _))
                     | Some((Some(Verdict::Blocked), Some(crate::model::AWAITING_DEPENDENCY))) => {}
                     Some((answered, _)) => {
+                        if answered == Some(Verdict::Blocked) {
+                            waiting.insert(row.id.clone());
+                        }
                         answers.insert(row.id.clone(), answered);
                         continue;
                     }

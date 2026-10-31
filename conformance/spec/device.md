@@ -912,7 +912,7 @@ When a device ends a hydration asked to fill only in place `copy_expired` under 
 
 ### `device/refill-in-place-only-server-ends`
 
-Where a caller asks a hydration to fill its copy only in place, if the server refuses that hydration of a stale copy because the credential has ended or the reach has changed, then a device MUST end the stale copy, as `device/stale-ends-refused` does for any hydration, keeping its queue.
+Where a caller asks a hydration to fill its copy only in place, if the server refuses that hydration of a stale copy because the credential has ended or the reach has changed before it reads a listing page, then a device MUST end the stale copy, as `device/stale-ends-refused` does for any hydration, keeping its queue.
 
 **Reason:** a fill only in place guards against the device's own choice to clear the copy, not against the server saying the credential may no longer read what the copy holds. Both a refusal under `device/refill-in-place-only` and this one can carry the reason `reach_changed`, so an app reads the copy's hydration state before it offers to keep the copy stale: `stale` means kept, and `expired` means ended, so that only a hydration that does not ask for a fill in place can follow.
 
