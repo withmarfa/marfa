@@ -2,7 +2,7 @@ import { DiskReserve } from "../storage/disk-space.js";
 import { createRoute, z } from "@hono/zod-openapi";
 import { resolveEnforcement } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
-import { assertTypeFilter } from "./_type-filter.js";
+import { parseTypeFilter } from "./_type-filter.js";
 import { withPreparedHeaders } from "../prepared-headers.js";
 import { authorityId } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
@@ -65,13 +65,13 @@ const exportRoute = createRoute({
         .string()
         .optional()
         .describe(
-          "Only export items of this type or a subtype. A wildcard such as `core.*` matches every type under that prefix.",
+          "Only export items of these types and their subtypes: a comma-separated list of up to 10, such as `core.note,app.*`. A wildcard such as `core.*` matches every type under that prefix.",
         ),
       state: z
         .string()
         .optional()
         .describe(
-          `Only export items in this lifecycle state. Without it, you get every state but \`trashed\`. Send \`${ALL_STATES}\` to include trashed items too.`,
+          `Only export items in these lifecycle states: one state or a comma-separated list, such as \`active,archived\`. Without it, you get every state but \`trashed\`. Send \`${ALL_STATES}\` on its own to include trashed items too.`,
         ),
       source: z
         .string()
@@ -204,13 +204,16 @@ export function exportRoutes(
     // Pattern grammar, matching `GET /items` and `/search`: the parameter
     // means the type and everything under it on all three, so the explicit
     // `parent.*` spelling has to be accepted on all three too.
-    const type = query.type;
-    assertTypeFilter(c, type, reader.owner ? reader.reads : undefined);
+    const types = parseTypeFilter(
+      c,
+      query.type,
+      reader.owner ? reader.reads : undefined,
+    );
 
     // Same resolution as `GET /items`, sentinel included: `any` means the
     // same thing on every door that reads items. What this door does not
     // share is the default, which `EXPORT_EXCLUDED_STATES` states.
-    const { state, all_states: allStates } = resolveStateFilter(query.state);
+    const { states, all_states: allStates } = resolveStateFilter(query.state);
 
     // Read here rather than left to the store, because this door answers by
     // streaming: the 200 and its headers are flushed before the first page
@@ -254,8 +257,8 @@ export function exportRoutes(
         blobs,
         instanceId,
         {
-          type,
-          state,
+          types,
+          states,
           all_states: allStates,
           source,
           exclude_states: EXPORT_EXCLUDED_STATES,
@@ -294,8 +297,8 @@ export function exportRoutes(
           async () => {
             const page = await withStatementFault("export-read", () =>
               storage.items.list({
-                type,
-                state,
+                types,
+                states,
                 all_states: allStates,
                 exclude_states: EXPORT_EXCLUDED_STATES,
                 source,

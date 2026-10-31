@@ -212,12 +212,12 @@ test("a hydration given a stop that is raised in flight ends canceled and leaves
   assert.equal(server.seen.filter((line) => line === "GET /items").length, 1);
   assert.notEqual(core.status().hydration, Hydration.Complete);
   assert.throws(() => core.get("x"), /hydration_incomplete/);
-  assert.equal(core.list({ type: "core.note" }).completeness, Completeness.Partial);
+  assert.equal(core.list({ types: ["core.note"] }).completeness, Completeness.Partial);
   assert.equal(core.search("x").completeness, Completeness.Partial);
   // The witness: the same copy hydrates when it is not stopped.
   await core.hydrate(["core.note"], SliceTier.Library);
   assert.equal(core.status().hydration, Hydration.Complete);
-  assert.equal(core.list({ type: "core.note" }).completeness, Completeness.Complete);
+  assert.equal(core.list({ types: ["core.note"] }).completeness, Completeness.Complete);
   assert.equal(core.search("x").completeness, Completeness.Complete);
 });
 

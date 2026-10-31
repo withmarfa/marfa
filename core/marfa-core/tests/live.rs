@@ -67,7 +67,7 @@ fn hydrate_list_search_and_catch_up_against_a_live_server() {
     let notes = core
         .list(
             &ListFilters {
-                r#type: Some("core.note".into()),
+                types: Some(vec!["core.note".into()]),
                 ..Default::default()
             },
             Sort::default(),
@@ -83,7 +83,7 @@ fn hydrate_list_search_and_catch_up_against_a_live_server() {
     let files = core
         .list(
             &ListFilters {
-                r#type: Some("core.file".into()),
+                types: Some(vec!["core.file".into()]),
                 ..Default::default()
             },
             Sort::default(),

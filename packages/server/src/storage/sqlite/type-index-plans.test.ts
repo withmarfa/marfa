@@ -139,9 +139,9 @@ const lookups: Record<string, () => Promise<unknown>> = {
   listInactiveAppGrants: () =>
     storage.items.listInactiveAppGrants("2025-01-01T00:00:00.000Z"),
   "items.list with a type and a state": () =>
-    storage.items.list({ type: "system.connection", state: "active" }),
+    storage.items.list({ types: ["system.connection"], states: ["active"] }),
   "items.list with a type and the default state": () =>
-    storage.items.list({ type: "system.connection" }),
+    storage.items.list({ types: ["system.connection"] }),
   listActiveAppGrants: () => listActiveAppGrants(storage),
 };
 
@@ -225,7 +225,7 @@ describe("a lookup of active items of one type", () => {
       [NOW, NOW, NOW],
     );
     for (const filter of ["probe.root", "probe.root.*"]) {
-      const page = await storage.items.list({ type: filter });
+      const page = await storage.items.list({ types: [filter] });
       expect(page.data.map((item) => item.type).sort()).toEqual([
         "probe.root",
         "probe.root.child",
@@ -233,8 +233,8 @@ describe("a lookup of active items of one type", () => {
       ]);
     }
     const archived = await storage.items.list({
-      type: "probe.root",
-      state: "archived",
+      types: ["probe.root"],
+      states: ["archived"],
     });
     expect(archived.data.map((item) => item.id)).toEqual(["probe-archived"]);
   });
@@ -264,7 +264,7 @@ describe("a lookup of active items of one type", () => {
 
   it("counts a typed subset through a type index", async () => {
     for (const plan of await planOf(() =>
-      storage.items.stats({ type: "system.connection" }),
+      storage.items.stats({ types: ["system.connection"] }),
     )) {
       expect(plan).toMatch(/USING (COVERING )?INDEX idx_items_type/);
       expect(plan).not.toMatch(/idx_items_state/);
@@ -278,18 +278,20 @@ describe("a lookup of active items of one type", () => {
     it.each([
       [
         "items.list",
-        () => storage.items.list({ type: "core.note", state: "archived" }),
+        () =>
+          storage.items.list({ types: ["core.note"], states: ["archived"] }),
       ],
       [
         "items.stats",
-        () => storage.items.stats({ type: "core.note", state: "archived" }),
+        () =>
+          storage.items.stats({ types: ["core.note"], states: ["archived"] }),
       ],
       [
         "items.list under a permission map",
         () =>
           storage.items.list({
             allowed_types: ["core.note.*"],
-            state: "archived",
+            states: ["archived"],
           }),
       ],
     ])("%s searches the state index", async (_name, call) => {
@@ -301,8 +303,8 @@ describe("a lookup of active items of one type", () => {
 
     it("finds the archived note", async () => {
       const page = await storage.items.list({
-        type: "core.note",
-        state: "archived",
+        types: ["core.note"],
+        states: ["archived"],
       });
       expect(page.data.map((item) => item.id)).toEqual(["note-archived"]);
     });

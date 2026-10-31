@@ -260,12 +260,18 @@ impl Edge {
     }
 }
 
-/// Leaving `state` unset answers the active state, as the server does;
-/// `all_states` lifts that, and a named state wins.
+/// Leaving `states` unset answers the active state, as the server does;
+/// `all_states` lifts that.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct ListFilters {
-    pub r#type: Option<String>,
-    pub state: Option<ItemState>,
+    /// Only the rows of these types, each with its subtree, as the server's
+    /// `type` list reads them. `None` narrows nothing; an empty list, a blank
+    /// entry or more than ten entries is refused `validation`.
+    pub types: Option<Vec<String>>,
+    /// Only the rows in these states, as the server's `state` list reads
+    /// them. `None` is the active state unless `all_states` is set; an empty
+    /// list, or a list beside `all_states`, is refused `validation`.
+    pub states: Option<Vec<ItemState>>,
     pub all_states: bool,
     pub tier: Option<Tier>,
     /// Only the rows stamped with this source.
@@ -295,9 +301,15 @@ pub struct ListFilters {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SearchFilters {
-    pub state: Option<ItemState>,
+    /// Only the rows of these types, each with its subtree, as the server's
+    /// `type` list reads them. `None` narrows nothing; an empty list, a blank
+    /// entry or more than ten entries is refused `validation`.
+    pub types: Option<Vec<String>>,
+    /// Only the rows in these states, as the server's `state` list reads
+    /// them. `None` is the active state unless `all_states` is set; an empty
+    /// list, or a list beside `all_states`, is refused `validation`.
+    pub states: Option<Vec<ItemState>>,
     pub all_states: bool,
-    pub r#type: Option<String>,
     pub tier: Option<Tier>,
     pub tags: Vec<String>,
     /// Both ends of the own-time range are exclusive.

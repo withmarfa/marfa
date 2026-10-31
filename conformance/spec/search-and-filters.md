@@ -112,7 +112,7 @@ If a credential that the operation admits sends `POST /items/bulk-actions` with 
 
 ## The type filter
 
-A `type` names a type and every type under it, as `types/listing-subtree` says of a listing. A wildcard ends in `.*`.
+A `type` names a type and every type under it, as `types/listing-subtree` says of a listing. A wildcard ends in `.*`. On `GET /items`, `GET /items/stats`, `GET /search`, `GET /export` and `GET /events`, a `type` is one entry or a comma-separated list of entries, and each rule below holds for every entry.
 
 ### `search-and-filters/type-subtree`
 
@@ -126,6 +126,22 @@ When a `type` filter of `GET /items`, `GET /items/stats`, `GET /search`, `GET /e
 
 **Tests:** `compliance/unreadable-type-filter.test.ts › GET /items, /export and /search leave out what the key may not read`, `› GET /items/stats counts only what the key may read`, `› GET /items/stats answers an object with no counts for a wildcard over types the key reads none of`, `› GET /occurrences reads a wildcard as a wildcard`, `› GET /events streams the readable types a wildcard matches and withholds the rest`, `compliance/types.test.ts › selects with a type the types declared under it, as with its own name`.
 
+### `search-and-filters/type-list`
+
+When the `type` of `GET /items`, `GET /items/stats`, `GET /search` or `GET /export` is a comma-separated list, the server MUST select the items that any entry of the list selects.
+
+**Reason:** a client that shows several types at once asks for them in one read, so a page and its limit count the rows of all of them together.
+
+**Tests:** `compliance/filter-lists.test.ts › answers the items of any type it names, on every door`, `› combines with a type list`.
+
+### `search-and-filters/type-list-max`
+
+If the `type` of `GET /items`, `GET /items/stats`, `GET /search`, `GET /export` or `GET /events` is a list of more than 10 distinct entries that are not blank, then the server MUST answer `400 validation_error`.
+
+**Reason:** one bound on every door that takes the list, so a client learns it once. A blank entry, as a trailing comma leaves, names nothing, and a repeat names nothing new, so neither counts toward the bound or narrows the answer.
+
+**Tests:** `compliance/filter-lists.test.ts › refuses more than ten entries`, `› drops blank entries and repeats before it counts the list`.
+
 ### `search-and-filters/type-grammar-refused`
 
 If the `type` of `GET /items`, `GET /items/stats`, `GET /search`, `GET /export` or `GET /occurrences`, or the `filter.type` of `POST /items/bulk-actions`, holds a value that is neither a type identifier nor a wildcard ending in `.*` over one, then the server MUST answer `400 validation_error` naming the field in `details.errors`.
@@ -134,11 +150,11 @@ If the `type` of `GET /items`, `GET /items/stats`, `GET /search`, `GET /export` 
 
 ### `search-and-filters/type-unknown`
 
-If a credential that reaches some type sends a `type` filter naming a well-formed concrete type that nothing registers, then the server MUST answer `400 unknown_type` on `GET /items`, `GET /items/stats`, `GET /search`, `GET /export`, `GET /occurrences` and each entry of the `type` list of `GET /events`.
+If a credential that reaches some type sends a `type` filter with an entry naming a well-formed concrete type that nothing registers, then the server MUST answer `400 unknown_type` on `GET /items`, `GET /items/stats`, `GET /search`, `GET /export`, `GET /occurrences` and `GET /events`.
 
 **Reason:** an empty page is the one answer a client cannot tell from a quiet instance, so a mistyped name, a type registered under another handle and a type deleted since the client last read the registry would all read as nothing here. A wildcard is not refused, because what it names may be nothing (`search-and-filters/type-wildcard-none`).
 
-**Tests:** `compliance/unreadable-type-filter.test.ts › $name answers 400 unknown_type, whatever the key reads`, `› GET /events holds each entry of a list to the rule`, `correctness/pagination.test.ts › a nonexistent type is refused rather than answered with an empty page`, `compliance/item-stats.test.ts › counts the rows a listing's filters match`.
+**Tests:** `compliance/unreadable-type-filter.test.ts › $name answers 400 unknown_type, whatever the key reads`, `› GET /events holds each entry of a list to the rule`, `correctness/pagination.test.ts › a nonexistent type is refused rather than answered with an empty page`, `compliance/item-stats.test.ts › counts the rows a listing's filters match`, `compliance/filter-lists.test.ts › refuses the list for an entry it would refuse alone`.
 
 ### `search-and-filters/type-bulk-unregistered`
 
@@ -230,6 +246,30 @@ When `GET /items`, `GET /items/stats`, `GET /search` or `GET /export` names a `s
 
 **Tests:** `compliance/state-default.test.ts › a named state and the sentinel still reach every row`, `› a search that names no state answers the active state`, `compliance/export.test.ts › filters by state`, `correctness/lifecycle-transitions.test.ts › state filter works on listItems`, `compliance/item-stats.test.ts › counts the rows a listing's filters match`.
 
+### `search-and-filters/state-list`
+
+When the `state` of `GET /items`, `GET /items/stats`, `GET /search` or `GET /export` is a comma-separated list of lifecycle states, the server MUST select the rows in any state the list names.
+
+**Reason:** a client that shows live and filed items together, such as `active,archived`, reads them in one page rather than merging two.
+
+**Tests:** `compliance/filter-lists.test.ts › answers the rows in any state it names, on every door`, `› combines with a type list`.
+
+### `search-and-filters/state-any-alone`
+
+If the `state` of `GET /items`, `GET /items/stats`, `GET /search` or `GET /export` is a list that holds `any` and another entry, then the server MUST answer `400 validation_error`.
+
+**Reason:** `any` already reaches every state the door reaches, so a list beside it says two things at once.
+
+**Tests:** `compliance/filter-lists.test.ts › refuses any beside another state, and a list with no state in it`.
+
+### `search-and-filters/state-empty`
+
+If `GET /items`, `GET /items/stats`, `GET /search` or `GET /export` names a `state` holding no value, only blanks, or a list of blank entries, then the server MUST answer `400 validation_error`.
+
+**Reason:** a caller who sends the key means to narrow, so reading a state that names nothing as the default would serve a selection the caller did not make.
+
+**Tests:** `compliance/filter-lists.test.ts › refuses any beside another state, and a list with no state in it`.
+
 ### `search-and-filters/state-search-default`
 
 When `GET /search` names no `state`, the server MUST match only rows in the `active` state.
@@ -250,15 +290,15 @@ The server MUST NOT match a row in the bin on `GET /search`, whatever `state` th
 
 **Reason:** the index holds no row in the bin, so `state=trashed` and `state=any` alike leave it unmatched, however the row came to be there.
 
-**Tests:** `compliance/state-default.test.ts › a search reads across states under the sentinel, except the bin`, `› a search does not reach a row born in the bin either`, `compliance/enrichment-search.test.ts › leaves a file in the bin unmatched, and matches it again once restored`.
+**Tests:** `compliance/state-default.test.ts › a search reads across states under the sentinel, except the bin`, `› a search does not reach a row born in the bin either`, `compliance/enrichment-search.test.ts › leaves a file in the bin unmatched, and matches it again once restored`, `compliance/filter-lists.test.ts › never matches the bin on the search door, even when the list names it`.
 
 ### `search-and-filters/state-invalid`
 
-If `GET /items`, `GET /items/stats`, `GET /search` or `GET /export` names a `state` that is neither a lifecycle state nor `any`, then the server MUST answer `400 validation_error`.
+If `GET /items`, `GET /items/stats`, `GET /search` or `GET /export` names a `state` with an entry that is neither a lifecycle state nor `any`, then the server MUST answer `400 validation_error`.
 
 **Reason:** a typo in a filter must not be served as a successful selection.
 
-**Tests:** `compliance/state-default.test.ts › refuses a state that is not a state, on every door that reads items`, `compliance/export.test.ts › refuses an unknown state filter`, `compliance/item-stats.test.ts › refuses what the listing refuses in a filter: a state outside the enum, a bound that is not an instant and a number no double holds`.
+**Tests:** `compliance/state-default.test.ts › refuses a state that is not a state, on every door that reads items`, `compliance/export.test.ts › refuses an unknown state filter`, `compliance/item-stats.test.ts › refuses what the listing refuses in a filter: a state outside the enum, a bound that is not an instant and a number no double holds`, `compliance/filter-lists.test.ts › refuses a list holding a value that is not a state`.
 
 ### `search-and-filters/source-narrows`
 
@@ -653,6 +693,14 @@ If `GET /items` names a `limit` below 1, then the server MUST answer `400 valida
 When `GET /search` names a `limit` from 1 to 100, the server MUST answer a page of at most that many hits.
 
 **Tests:** `correctness/pagination.test.ts › takes a limit of 100 and refuses 101 and 0, on the search`, `› search respects limit parameter`.
+
+### `search-and-filters/limit-after-filter`
+
+When `GET /items` or `GET /search` names a `limit` with a `type` or `state` filter, the server MUST fill the page with the rows that the filters select, up to the limit.
+
+**Reason:** a limit applied before the filters would answer a short or empty page while matching rows remain.
+
+**Tests:** `compliance/filter-lists.test.ts › counts only the rows the state and type lists keep`.
 
 ### `search-and-filters/limit-search-refused`
 

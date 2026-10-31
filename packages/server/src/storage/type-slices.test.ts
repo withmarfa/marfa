@@ -91,7 +91,7 @@ describe("the slices of a type filter", () => {
   it.each(["probe.root", "probe.root.*", "probe.root.b", "probe.declared"])(
     "hold each type the filter %s answers once, and no other",
     (filter) => {
-      const slices = typeSlices({ type: filter })!;
+      const slices = typeSlices({ types: [filter] })!;
       expect(slices).toBeDefined();
       for (const probe of PROBES) {
         expect({
@@ -106,7 +106,7 @@ describe("the slices of a type filter", () => {
   );
 
   it("make a point of each registered type under the root and of each declared descendant", () => {
-    const slices = typeSlices({ type: "probe.root" })!;
+    const slices = typeSlices({ types: ["probe.root"] })!;
     const points = slices.flatMap((slice) =>
       "point" in slice ? [slice.point] : [],
     );
@@ -120,7 +120,7 @@ describe("the slices of a type filter", () => {
   });
 
   it("make a range of the types between the registered ones, so a type nothing registers is still read", () => {
-    const slices = typeSlices({ type: "probe.root" })!;
+    const slices = typeSlices({ types: ["probe.root"] })!;
     expect(slicesHolding(slices, "probe.root.ghost.leaf")).toBe(1);
     const range = slices.find((slice) =>
       inSlice("probe.root.ghost.leaf", slice),
@@ -130,7 +130,7 @@ describe("the slices of a type filter", () => {
   });
 
   it("order a name with a multibyte character by its bytes", () => {
-    const slices = typeSlices({ type: "probe.root" })!;
+    const slices = typeSlices({ types: ["probe.root"] })!;
     for (const probe of [
       "probe.root.é",
       "probe.root.～",
@@ -167,7 +167,7 @@ describe("the slices of a permission map", () => {
 
   it("hold a type both the filter and the grants name no more than once", () => {
     const slices = typeSlices({
-      type: "probe.root",
+      types: ["probe.root"],
       allowed_types: ["probe.root.b.*"],
     })!;
     for (const probe of PROBES) {
@@ -181,7 +181,7 @@ describe("the slices of a permission map", () => {
 describe("a type filter that is not sliced", () => {
   it("is every type, for no restriction, the global wildcard or a global grant", () => {
     expect(typeSlices({})).toBeUndefined();
-    expect(typeSlices({ type: "*" })).toBeUndefined();
+    expect(typeSlices({ types: ["*"] })).toBeUndefined();
     expect(typeSlices({ allowed_types: ["*"] })).toBeUndefined();
     expect(
       typeSlices({ allowed_types: ["probe.root.*", "*"] }),
@@ -206,15 +206,15 @@ describe("a type filter that is not sliced", () => {
           fields: {},
         } as unknown as TypeSchema);
       }
-      expect(typeSlices({ type: "probe.root" })).toBeUndefined();
+      expect(typeSlices({ types: ["probe.root"] })).toBeUndefined();
     } finally {
       for (const id of ids) unregisterTypeSchema(id);
     }
   });
 
   it("is nothing for an empty type, which restricts nothing", () => {
-    expect(typeSlices({ type: "" })).toBeUndefined();
-    expect(typeSlices({ type: "", allowed_types: ["probe.root.*"] })).toEqual(
+    expect(typeSlices({ types: [] })).toBeUndefined();
+    expect(typeSlices({ types: [], allowed_types: ["probe.root.*"] })).toEqual(
       typeSlices({ allowed_types: ["probe.root.*"] }),
     );
   });

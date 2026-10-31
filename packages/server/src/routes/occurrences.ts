@@ -442,7 +442,7 @@ type EventScanNarrowing = Pick<ItemFilters, "hasProperty" | "spanOverlaps">;
  *  `GET /items` narrows a listing. */
 type EventScanScope = Pick<
   ItemFilters,
-  "type" | "allowed_types" | "excluded_types" | "source_filter"
+  "types" | "allowed_types" | "excluded_types" | "source_filter"
 >;
 
 /**
@@ -483,7 +483,7 @@ async function scanEvents<T>(
   do {
     const page = await storage.items.list({
       ...scope,
-      state: "active",
+      states: ["active"],
       limit: EVENT_PAGE_SIZE,
       ...narrowing,
       ...(cursor !== undefined ? { cursor } : {}),
@@ -666,7 +666,7 @@ export async function gatherSeriesSeeds(
 ): Promise<RecurrenceSeries[]> {
   const scanned = await scanEvents(
     storage,
-    { type },
+    { types: [type] },
     { scanned: 0 },
     { hasProperty: "recurrence" },
     projectSeries,
@@ -1068,7 +1068,7 @@ export function occurrenceRoutes(
       c.get("apiKey"),
     );
     const scope: EventScanScope = {
-      type: EVENT_TYPE,
+      types: [EVENT_TYPE],
       allowed_types: typeFilter.allowed,
       excluded_types: typeFilter.excluded,
       source_filter: enforcement.source_filter,
@@ -1117,7 +1117,7 @@ export function occurrenceRoutes(
     // above, so this is the one pass whose size a caller can influence.
     const windowSeeds = await scanEvents(
       storage,
-      { ...scope, type: query.type ?? EVENT_TYPE },
+      { ...scope, types: [query.type ?? EVENT_TYPE] },
       budget,
       { spanOverlaps: { from: from.toISOString(), to: to.toISOString() } },
       noting(projectWindow),

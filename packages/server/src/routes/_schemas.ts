@@ -117,24 +117,55 @@ export const ALL_STATES = "any";
 /**
  * Resolve a `?state=` parameter into the pair the storage filter takes.
  *
- * One implementation for every door that reads items — the listing, the
- * search and the export — so `any` means the same thing on all of them.
- * What each door does with a caller who named nothing is the door's own,
- * and this function decides only what a named value resolves to.
+ * One implementation for every door that reads items (the listing, the
+ * count, the search and the export), so a list and `any` mean the same thing
+ * on all of them. What each door does with a caller who named nothing is the
+ * door's own, and this function decides only what a named value resolves to.
  *
- * The sentinel is resolved before the membership check rather than after.
- * Cast first and it would be validated as a lifecycle value and refused
- * for not being one.
+ * The value is one lifecycle state or a comma-separated list of them, read
+ * as the `type` list is read: blank entries are dropped and a repeated entry
+ * counts once. A value with no entry left is refused rather than read as no
+ * filter, because a caller who sent the key meant to narrow. `any` widens
+ * rather than names a state, so it stands alone: in a list it would say two
+ * things at once.
  */
 export function resolveStateFilter(raw: string | undefined): {
-  state: ItemState | undefined;
+  states: ItemState[] | undefined;
   all_states: boolean;
 } {
-  if (raw === ALL_STATES) return { state: undefined, all_states: true };
-  if (raw !== undefined && !(ITEM_STATES as readonly string[]).includes(raw)) {
-    throw new MarfaError(ErrorCode.VALIDATION_ERROR, `Invalid state: ${raw}`);
+  if (raw === undefined) return { states: undefined, all_states: false };
+  const entries = [
+    ...new Set(
+      raw
+        .split(",")
+        .map((entry) => entry.trim())
+        .filter((entry) => entry.length > 0),
+    ),
+  ];
+  if (entries.length === 0) {
+    throw new MarfaError(
+      ErrorCode.VALIDATION_ERROR,
+      "The state filter names no state. Send a lifecycle state, a comma-separated list of them, or any.",
+    );
   }
-  return { state: raw as ItemState | undefined, all_states: false };
+  if (entries.includes(ALL_STATES)) {
+    if (entries.length > 1) {
+      throw new MarfaError(
+        ErrorCode.VALIDATION_ERROR,
+        `The state filter names ${ALL_STATES} with other states. ${ALL_STATES} already reaches every state, so send it alone.`,
+      );
+    }
+    return { states: undefined, all_states: true };
+  }
+  for (const entry of entries) {
+    if (!(ITEM_STATES as readonly string[]).includes(entry)) {
+      throw new MarfaError(
+        ErrorCode.VALIDATION_ERROR,
+        `Invalid state: ${entry}`,
+      );
+    }
+  }
+  return { states: entries as ItemState[], all_states: false };
 }
 
 /** The three fields that name an edge, worded once for every door that

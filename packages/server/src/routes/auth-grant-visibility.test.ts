@@ -150,7 +150,7 @@ async function allGrantRows(c: TestContext) {
   // count the revoked grant row as absent and the assertion would pass on exactly
   // the resurrection it exists to rule out.
   const listed = await c.storage.items.list({
-    type: "system.connection",
+    types: ["system.connection"],
     all_states: true,
   });
   return listed.data;

@@ -57,7 +57,7 @@ it("shows active folder totals on Home and does not guess when counting fails", 
   const failed = vi
     .spyOn(ctx.storage.items, "stats")
     .mockImplementation((filters, by) =>
-      filters.type === "system.folder"
+      filters.types?.includes("system.folder")
         ? Promise.reject(new Error("unavailable"))
         : stats(filters, by),
     );
@@ -66,8 +66,8 @@ it("shows active folder totals on Home and does not guess when counting fails", 
     "Folders Folders kept in step with Marfa, and their reported copies Unknown",
   );
   expect(failed).toHaveBeenCalledWith({
-    type: "system.folder",
-    state: "active",
+    types: ["system.folder"],
+    states: ["active"],
   });
   failed.mockRestore();
   vi.restoreAllMocks();

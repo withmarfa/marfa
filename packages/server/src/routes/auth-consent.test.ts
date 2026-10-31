@@ -710,8 +710,8 @@ describe("POST /auth/authorize/decision (consent decision proxy)", () => {
 
     // No projection should have been written — confirm via items list.
     const items = await ctx.storage.items.list({
-      type: "system.connection",
-      state: "active",
+      types: ["system.connection"],
+      states: ["active"],
     });
     expect(items.data.length).toBe(0);
 
@@ -776,8 +776,8 @@ describe("POST /auth/authorize/decision (consent decision proxy)", () => {
 
     const grantedScopes = async (c: TestContext): Promise<string[]> => {
       const grants = await c.storage.items.list({
-        type: "system.connection",
-        state: "active",
+        types: ["system.connection"],
+        states: ["active"],
       });
       return (grants.data[0]?.properties.scopes as string[] | undefined) ?? [];
     };
@@ -876,8 +876,8 @@ describe("POST /auth/authorize/decision (consent decision proxy)", () => {
       /** The app disconnected from another tab. */
       async function disconnect(c: TestContext): Promise<void> {
         const grants = await c.storage.items.list({
-          type: "system.connection",
-          state: "active",
+          types: ["system.connection"],
+          states: ["active"],
         });
         const res = await request(
           c.app,
@@ -892,7 +892,7 @@ describe("POST /auth/authorize/decision (consent decision proxy)", () => {
       /** What the app holds now: nothing once it is disconnected. */
       async function standing(c: TestContext): Promise<string[]> {
         const grant = (
-          await c.storage.items.list({ type: "system.connection" })
+          await c.storage.items.list({ types: ["system.connection"] })
         ).data[0];
         return grant && grant.properties.status !== "revoked"
           ? ((grant.properties.scopes as string[] | undefined) ?? [])
@@ -1029,8 +1029,8 @@ describe("POST /auth/authorize/decision (consent decision proxy)", () => {
       expect(first.status).toBe(302);
 
       const beforeItems = await ctx.storage.items.list({
-        type: "system.connection",
-        state: "active",
+        types: ["system.connection"],
+        states: ["active"],
       });
       expect(beforeItems.data.length).toBe(1);
       const grantBefore = beforeItems.data[0]!;
@@ -1179,8 +1179,8 @@ describe("POST /auth/authorize/decision (consent decision proxy)", () => {
     // Projection should exist for the REAL client_id (from oauth_query),
     // not "ATTACKER_CONTROLLED_VALUE".
     const items = await ctx.storage.items.list({
-      type: "system.connection",
-      state: "active",
+      types: ["system.connection"],
+      states: ["active"],
     });
     expect(items.data.length).toBe(1);
     const grant = items.data[0];
@@ -1221,8 +1221,8 @@ describe("POST /auth/authorize/decision (consent decision proxy)", () => {
     });
     expect(r1.status).toBe(302);
     let items = await ctx.storage.items.list({
-      type: "system.connection",
-      state: "active",
+      types: ["system.connection"],
+      states: ["active"],
     });
     expect(items.data.length).toBe(1);
     const grantId = items.data[0]!.id;
@@ -1263,8 +1263,8 @@ describe("POST /auth/authorize/decision (consent decision proxy)", () => {
 
     // Single projection row — re-consent updated in place, didn't insert.
     items = await ctx.storage.items.list({
-      type: "system.connection",
-      state: "active",
+      types: ["system.connection"],
+      states: ["active"],
     });
     expect(items.data.length).toBe(1);
   });
@@ -1294,8 +1294,8 @@ describe("POST /auth/authorize/decision (consent decision proxy)", () => {
     expect(r1.status).toBe(302);
 
     const items1 = await ctx.storage.items.list({
-      type: "system.connection",
-      state: "active",
+      types: ["system.connection"],
+      states: ["active"],
     });
     expect(items1.data.length).toBe(1);
     const authUserId = items1.data[0]!.properties.user_id as string;
@@ -1324,8 +1324,8 @@ describe("POST /auth/authorize/decision (consent decision proxy)", () => {
       await ctx.storage.oauthProvider?.validateAccessToken(tokenHash),
     ).not.toBeNull();
     const after = await ctx.storage.items.list({
-      type: "system.connection",
-      state: "active",
+      types: ["system.connection"],
+      states: ["active"],
     });
     expect(new Set(after.data[0]!.properties.scopes as string[])).toEqual(
       new Set(wide),
@@ -1363,8 +1363,8 @@ describe("POST /auth/authorize/decision (consent decision proxy)", () => {
     expect(r1.status).toBe(302);
 
     const items1 = await ctx.storage.items.list({
-      type: "system.connection",
-      state: "active",
+      types: ["system.connection"],
+      states: ["active"],
     });
     const authUserId = items1.data[0]!.properties.user_id as string;
 
@@ -1444,8 +1444,8 @@ describe("POST /auth/authorize/decision (consent decision proxy)", () => {
     expect(r1.status).toBe(302);
 
     const items1 = await ctx.storage.items.list({
-      type: "system.connection",
-      state: "active",
+      types: ["system.connection"],
+      states: ["active"],
     });
     const authUserId = items1.data[0]!.properties.user_id as string;
 
@@ -1547,8 +1547,8 @@ describe("POST /auth/authorize/decision (consent decision proxy)", () => {
     expect(res.headers.get("location")).toBeNull();
 
     const items = await ctx.storage.items.list({
-      type: "system.connection",
-      state: "active",
+      types: ["system.connection"],
+      states: ["active"],
     });
     expect(items.data[0]?.properties.scopes).toEqual([
       "openid",
@@ -1594,8 +1594,8 @@ describe("POST /auth/authorize/decision (Origin/Referer CSRF guard)", () => {
 
     // The guard runs before the projection — no grant row written.
     const items = await ctx.storage.items.list({
-      type: "system.connection",
-      state: "active",
+      types: ["system.connection"],
+      states: ["active"],
     });
     expect(items.data.length).toBe(0);
   });
@@ -1621,8 +1621,8 @@ describe("POST /auth/authorize/decision (Origin/Referer CSRF guard)", () => {
     expect(res.status).toBe(403);
 
     const items = await ctx.storage.items.list({
-      type: "system.connection",
-      state: "active",
+      types: ["system.connection"],
+      states: ["active"],
     });
     expect(items.data.length).toBe(0);
   });
@@ -1648,8 +1648,8 @@ describe("POST /auth/authorize/decision (Origin/Referer CSRF guard)", () => {
     });
     expect(res.status).toBe(302);
     const items = await ctx.storage.items.list({
-      type: "system.connection",
-      state: "active",
+      types: ["system.connection"],
+      states: ["active"],
     });
     expect(items.data.length).toBe(1);
   });
@@ -1677,8 +1677,8 @@ describe("POST /auth/authorize/decision (Origin/Referer CSRF guard)", () => {
     });
     expect(res.status).toBe(403);
     const items = await ctx.storage.items.list({
-      type: "system.connection",
-      state: "active",
+      types: ["system.connection"],
+      states: ["active"],
     });
     expect(items.data.length).toBe(0);
   });
@@ -1709,8 +1709,8 @@ describe("POST /auth/authorize/decision (Origin/Referer CSRF guard)", () => {
     // top-level navigation has no origin to forward, so it stamps the
     // issuer's own. See `routes/forward-headers.ts`.)
     const items = await ctx.storage.items.list({
-      type: "system.connection",
-      state: "active",
+      types: ["system.connection"],
+      states: ["active"],
     });
     expect(items.data.length).toBe(0);
     expect(res.status).toBe(403);
@@ -1780,8 +1780,8 @@ describe("an off-by-default bundle grants nothing without a tick", () => {
       expect(res.status).toBe(302);
 
       const items = await ctx.storage.items.list({
-        type: "system.connection",
-        state: "active",
+        types: ["system.connection"],
+        states: ["active"],
       });
       expect(items.data.length).toBe(1);
       const granted = items.data[0]!.properties.scopes as string[];
@@ -1859,8 +1859,8 @@ describe("an off-by-default bundle grants nothing without a tick", () => {
       expect(second.status).toBe(302);
 
       const items = await ctx.storage.items.list({
-        type: "system.connection",
-        state: "active",
+        types: ["system.connection"],
+        states: ["active"],
       });
       expect(items.data.length).toBe(1);
       const granted = items.data[0]!.properties.scopes as string[];
@@ -1920,8 +1920,8 @@ describe("a scope named twice is stored once", () => {
     expect(res.status).toBe(302);
 
     const items = await ctx.storage.items.list({
-      type: "system.connection",
-      state: "active",
+      types: ["system.connection"],
+      states: ["active"],
     });
     expect(items.data.length).toBe(1);
     const granted = items.data[0]!.properties.scopes as string[];
@@ -1950,8 +1950,8 @@ describe("a scope named twice is stored once", () => {
     expect(res.status).toBe(302);
 
     const items = await ctx.storage.items.list({
-      type: "system.connection",
-      state: "active",
+      types: ["system.connection"],
+      states: ["active"],
     });
     expect(items.data.length).toBe(1);
     expect(items.data[0]!.properties.scopes).toEqual(["core.note:read"]);

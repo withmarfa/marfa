@@ -18,21 +18,10 @@ pub(crate) fn search(
 ) -> Result<Vec<SearchHit>> {
     let mut clauses: Vec<String> = Vec::new();
     let mut values: Vec<Value> = Vec::new();
-    // The same three-way rule the list takes: a named state wins, the
-    // widening suppresses the narrowing, and a caller who said neither is
-    // answered the active state.
-    match filters.state {
-        Some(state) => {
-            clauses.push("items.state = ?".into());
-            values.push(Value::String(state.as_str().into()));
-        }
-        None if !filters.all_states => clauses.push("items.state = 'active'".into()),
-        None => {}
-    }
-    query::refuse_unknown_type(catalog, filters.r#type.as_deref())?;
-    query::narrow_by_type(
-        catalog,
-        filters.r#type.as_deref(),
+    query::narrow_by_types(catalog, filters.types.as_deref(), &mut clauses, &mut values)?;
+    query::narrow_by_states(
+        filters.states.as_deref(),
+        filters.all_states,
         &mut clauses,
         &mut values,
     )?;
@@ -282,7 +271,7 @@ mod tests {
         );
 
         let filed = SearchFilters {
-            state: Some(ItemState::Archived),
+            states: Some(vec![ItemState::Archived]),
             ..Default::default()
         };
         let ids: Vec<String> = search(&conn, &Catalog::load(&conn).unwrap(), "zeb", &filed, 10)

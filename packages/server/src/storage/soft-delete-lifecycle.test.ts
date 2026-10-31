@@ -125,14 +125,13 @@ describe("deleting an item obeys its lifecycle", () => {
     await itemWrites(ctx.storage).delete(ids[0]!);
     await itemWrites(ctx.storage).delete(ids[1]!);
 
-    // One query per state, because the filter takes one — which is itself
-    // part of why this went unnoticed: the convenient query is the default
-    // one, and the default one cannot see the rows.
+    // The default query cannot see these rows, which is part of why this
+    // went unnoticed.
     const offending: string[] = [];
-    for (const state of ["archived", "trashed"] as const) {
+    {
       const rows = await ctx.storage.items.list({
-        type: "system.connection",
-        state,
+        types: ["system.connection"],
+        states: ["archived", "trashed"],
         limit: 500,
       });
       offending.push(...rows.data.map((r) => `${r.id}:${r.state}`));

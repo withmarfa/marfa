@@ -140,7 +140,7 @@ describe("the cross-origin guard on Marfa's /auth doors", () => {
     });
     expect(forged.status).toBe(403);
     const grantsAfterForgery = await c.storage.items.list({
-      type: "system.connection",
+      types: ["system.connection"],
     });
     expect(grantsAfterForgery.data).toHaveLength(0);
 
@@ -149,7 +149,7 @@ describe("the cross-origin guard on Marfa's /auth doors", () => {
       headers: { origin: ORIGIN, cookie },
     });
     expect(approved.status).toBe(200);
-    const grants = await c.storage.items.list({ type: "system.connection" });
+    const grants = await c.storage.items.list({ types: ["system.connection"] });
     expect(grants.data).toHaveLength(1);
   });
 });

@@ -219,8 +219,8 @@ describe("the instant columns on the write path", () => {
     });
 
     const page = await ctx.storage.items.list({
-      type: "core.event",
-      state: "active",
+      types: ["core.event"],
+      states: ["active"],
       spanOverlaps: {
         from: "2028-01-01T00:00:00.000Z",
         to: "2028-01-02T00:00:00.000Z",
@@ -249,8 +249,8 @@ describe("the instant columns on the write path", () => {
     });
 
     const page = await ctx.storage.items.list({
-      type: "core.event",
-      state: "active",
+      types: ["core.event"],
+      states: ["active"],
       hasProperty: "recurrence",
     });
     const ids = page.data.map((item) => item.id);

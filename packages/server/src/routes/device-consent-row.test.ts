@@ -163,7 +163,7 @@ async function consentRows(
 }
 
 async function onlyGrant(c: TestContext) {
-  const items = await c.storage.items.list({ type: "system.connection" });
+  const items = await c.storage.items.list({ types: ["system.connection"] });
   expect(items.data.length).toBe(1);
   return items.data[0]!;
 }
@@ -408,7 +408,7 @@ it("keeps the device pending and creates neither grant half on a native approval
   expect((await approve()).status).toBe(500);
   expect(await consentRows(ctx, clientId, userId)).toHaveLength(0);
   expect(
-    (await ctx.storage.items.list({ type: "system.connection" })).data,
+    (await ctx.storage.items.list({ types: ["system.connection"] })).data,
   ).toHaveLength(0);
   expect(
     await db.__sqliteAll("SELECT status FROM auth_oauth_device_code"),

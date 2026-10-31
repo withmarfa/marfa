@@ -3,7 +3,7 @@ import { buildCopyStream, copyStreamRequest } from "./events-copy.js";
 import { trackStream } from "./open-streams.js";
 import { invalidReachRequest } from "../middleware/reach.js";
 import { OpenAPIHono } from "@hono/zod-openapi";
-import { type Context, type MiddlewareHandler } from "hono";
+import { type MiddlewareHandler } from "hono";
 import { EventQuerySchema, eventStreamRoute } from "./events-schema.js";
 import {
   ErrorCode,
@@ -11,7 +11,7 @@ import {
   matchesTypeFilter,
   resolveEnforcement,
 } from "@withmarfa/shared";
-import { assertTypeFilter } from "./_type-filter.js";
+import { parseTypeFilter } from "./_type-filter.js";
 import type { AppEnv } from "../middleware/auth.js";
 import { withPreparedHeaders } from "../prepared-headers.js";
 import { refuseEmptyNarrowingValues } from "../middleware/empty-narrowing-values.js";
@@ -201,16 +201,6 @@ const STREAM_CURSOR_EVENT = "stream_cursor";
 const STREAM_LIVE_EVENT = "stream_live";
 
 /**
- * Most types one `?type=` may name.
- *
- * Ten, the same as the edge-type filter on `GET /edges`, and the same
- * number deliberately: a client filtering a stream and a client filtering
- * a listing are the same client, and a limit it has to look up twice is
- * one it will get wrong once.
- */
-const MAX_TYPE_FILTER_ENTRIES = 10;
-
-/**
  * What `?edges=` may say, and what it means when it says nothing.
  *
  * `all` is the default because an edge is the half of a change a
@@ -338,50 +328,6 @@ export function edgeFrameFor(
   apiKey: ApiKey,
 ): string {
   return JSON.stringify(frameFor(stored, (type) => mayReadType(apiKey, type)));
-}
-
-/**
- * Read `?type=` as one type or several.
- *
- * Returned as an array in both cases so the two delivery paths cannot
- * take different shapes from the same parameter. `undefined` means no
- * filter; a value that trims to nothing is that rather than a filter
- * admitting nothing, so `?type=` and `?type=,` open an unfiltered stream
- * instead of a silent, permanent one.
- *
- * **Each entry is held to the rule `/items`, `/search` and `/export` hold
- * this parameter to (`assertTypeFilter`), and refused on the same terms.** A
- * stream that accepted any string and then matched nothing with it would give
- * the worst answer a filter can give: a 200 and an empty stream, which a
- * client cannot tell from a quiet instance. A spelling, an unregistered type
- * or a type the credential may not read reaches the caller as the refusal
- * the list surfaces give, rather than as silence. A pattern is the part
- * that is never refused: it streams the types it matches that the credential
- * may read.
- *
- * The global wildcard is refused for the reason it is refused on those
- * surfaces rather than because it is hard to honor: "everything" is this
- * stream with no `type` at all, and a filter matching every type would
- * slip past the per-type levers keyed off this parameter.
- */
-function parseTypeFilter(
-  c: Context<AppEnv>,
-  raw: string | undefined,
-): string[] | undefined {
-  if (raw === undefined) return undefined;
-  const parts = raw
-    .split(",")
-    .map((p) => p.trim())
-    .filter((p) => p.length > 0);
-  if (parts.length === 0) return undefined;
-  if (parts.length > MAX_TYPE_FILTER_ENTRIES) {
-    throw new MarfaError(
-      ErrorCode.VALIDATION_ERROR,
-      `Too many types in filter (max ${String(MAX_TYPE_FILTER_ENTRIES)})`,
-    );
-  }
-  for (const part of parts) assertTypeFilter(c, part);
-  return parts;
 }
 
 /** A stored edge event, decoded: the frame, its edge and what it carries

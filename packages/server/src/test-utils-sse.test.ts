@@ -72,6 +72,18 @@ describe("readSse", () => {
     ).rejects.toThrow(/did not reach its condition.*"only\\n"/s);
   });
 
+  it("says the stream closed when it closed before its condition held", async () => {
+    // A stream the server ended early is a different fault from one that
+    // went quiet, and a message naming the budget sends the reader after
+    // the wrong one.
+    await expect(
+      readSse(pacedResponse(["only\n"], 10), {
+        until: (t) => t.includes("never-arrives"),
+        timeoutMs: 5_000,
+      }),
+    ).rejects.toThrow(/the stream closed after \d+ms; read so far: "only\\n"/);
+  });
+
   it("throws rather than reporting a stream stayed open when it closed", async () => {
     await expect(
       readSse(pacedResponse(["hello\n"], 10, false), {

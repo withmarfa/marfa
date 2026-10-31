@@ -383,8 +383,8 @@ async function countAudit(c: TestContext, action: string): Promise<number> {
 /** The user id on the single projected grant row. */
 async function grantUserId(c: TestContext): Promise<string> {
   const items = await c.storage.items.list({
-    type: "system.connection",
-    state: "active",
+    types: ["system.connection"],
+    states: ["active"],
   });
   expect(items.data.length).toBe(1);
   return items.data[0]!.properties.user_id as string;
@@ -481,8 +481,8 @@ describe("GET /auth/authorize (consent skip)", () => {
 
       expectCodeRedirect(res, redirectUri);
       const projected = await ctx.storage.items.list({
-        type: "system.connection",
-        state: "active",
+        types: ["system.connection"],
+        states: ["active"],
       });
       expect(projected.data.length).toBe(1);
     },
@@ -1150,8 +1150,8 @@ describe("GET /auth/authorize (consent skip) — audit and grant records", () =>
     ]);
 
     const before = await ctx.storage.items.list({
-      type: "system.connection",
-      state: "active",
+      types: ["system.connection"],
+      states: ["active"],
     });
     expect(before.data.length).toBe(1);
     const grantBefore = before.data[0]!;
@@ -1229,8 +1229,8 @@ describe("GET /auth/authorize (consent skip) — audit and grant records", () =>
     ]);
 
     const projected = await ctx.storage.items.list({
-      type: "system.connection",
-      state: "active",
+      types: ["system.connection"],
+      states: ["active"],
     });
     expect(projected.data[0]!.properties.scopes).toEqual([
       "openid",
@@ -1420,8 +1420,8 @@ describe("GET /auth/authorize (consent skip) — concurrent grant changes", () =
       "core.task:read",
     ]);
     const grants = await c.storage.items.list({
-      type: "system.connection",
-      state: "active",
+      types: ["system.connection"],
+      states: ["active"],
     });
     const grantItemId = grants.data[0]!.id;
     const authUserId = grants.data[0]!.properties.user_id as string;
@@ -1525,8 +1525,8 @@ describe("a scope named twice is stored once on the skip path", () => {
     // afterwards. So the stored grant is not where a duplicate would land
     // here, and asserting on it would pass whatever the parse did.
     const items = await ctx.storage.items.list({
-      type: "system.connection",
-      state: "active",
+      types: ["system.connection"],
+      states: ["active"],
     });
     expect(items.data.length).toBe(1);
     expect(items.data[0]!.properties.scopes).toEqual(["openid", "core.*:read"]);

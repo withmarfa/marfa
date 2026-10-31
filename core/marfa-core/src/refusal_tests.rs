@@ -152,7 +152,7 @@ fn a_type_name_is_held_to_the_servers_grammar_before_anything_is_read() {
     let listed = |r#type: &str| {
         core.list(
             &ListFilters {
-                r#type: Some(r#type.into()),
+                types: Some(vec![r#type.into()]),
                 ..Default::default()
             },
             Sort::default(),
@@ -172,7 +172,7 @@ fn a_type_name_is_held_to_the_servers_grammar_before_anything_is_read() {
             core.search(
                 "a",
                 &crate::SearchFilters {
-                    r#type: Some(malformed.into()),
+                    types: Some(vec![malformed.into()]),
                     ..Default::default()
                 },
                 10,

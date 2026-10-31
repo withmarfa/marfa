@@ -5,7 +5,7 @@ use crate::Result;
 use crate::catalog::Catalog;
 use crate::error::CoreError;
 use crate::filter;
-use crate::model::{Item, ListFilters, Sort, SortField};
+use crate::model::{Item, ItemState, ListFilters, Sort, SortField};
 use crate::store::{self, Unreadable};
 
 pub(crate) fn list(
@@ -28,21 +28,13 @@ pub(crate) fn list_with(
     let mut values: Vec<Value> = Vec::new();
     let sort = ordered(filters, sort)?;
 
-    refuse_unknown_type(catalog, filters.r#type.as_deref())?;
-    narrow_by_type(
-        catalog,
-        filters.r#type.as_deref(),
+    narrow_by_types(catalog, filters.types.as_deref(), &mut clauses, &mut values)?;
+    narrow_by_states(
+        filters.states.as_deref(),
+        filters.all_states,
         &mut clauses,
         &mut values,
     )?;
-    match filters.state {
-        Some(state) => {
-            clauses.push("state = ?".into());
-            values.push(Value::String(state.as_str().into()));
-        }
-        None if !filters.all_states => clauses.push("state = 'active'".into()),
-        None => {}
-    }
     if let Some(tier) = filters.tier {
         clauses.push("tier = ?".into());
         values.push(Value::String(tier.as_str().into()));
@@ -208,6 +200,98 @@ fn property_sort_expression(name: &str) -> String {
     )
 }
 
+/// The most entries a `type` list may name, as on the server
+/// (`search-and-filters/type-list-max`).
+const MAX_TYPE_ENTRIES: usize = 10;
+
+/// A `type` list, as the server reads one (`search-and-filters/type-list`): a
+/// row matches when any entry selects it. Entries are trimmed, blank ones
+/// dropped and repeats removed before the list is counted, and each entry left
+/// is refused as it would be alone, in the order given. `*` is no type filter
+/// at all and is refused, as on the server; every type is the list left unset.
+pub(crate) fn narrow_by_types(
+    catalog: &Catalog,
+    types: Option<&[String]>,
+    clauses: &mut Vec<String>,
+    values: &mut Vec<Value>,
+) -> Result<()> {
+    let Some(types) = types else {
+        return Ok(());
+    };
+    let mut entries: Vec<&str> = Vec::new();
+    for entry in types.iter().map(|entry| entry.trim()) {
+        if !entry.is_empty() && !entries.contains(&entry) {
+            entries.push(entry);
+        }
+    }
+    if entries.is_empty() {
+        return Err(CoreError::Validation {
+            code: "validation_error".into(),
+            message: "The type filter names no type. Name a type, or leave the filter out.".into(),
+        });
+    }
+    if entries.len() > MAX_TYPE_ENTRIES {
+        return Err(CoreError::Validation {
+            code: "validation_error".into(),
+            message: format!("Too many types in filter (max {MAX_TYPE_ENTRIES})"),
+        });
+    }
+    let mut alternatives = Vec::new();
+    for declared in entries {
+        if declared == crate::store::EVERY_TYPE {
+            return Err(CoreError::Validation {
+                code: "validation_error".into(),
+                message: format!("Invalid type identifier: {declared}"),
+            });
+        }
+        narrow_by_type(catalog, Some(declared), &mut alternatives, values)?;
+        refuse_unknown_type(catalog, Some(declared))?;
+    }
+    clauses.push(format!("({})", alternatives.join(" OR ")));
+    Ok(())
+}
+
+/// A `state` list, as the server reads one (`search-and-filters/state-list`).
+/// Unset, the active state unless `all_states` lifts it. An empty list names
+/// nothing and is refused, as the server refuses a `state` with no entry
+/// (`search-and-filters/state-empty`), and so is a list beside `all_states`,
+/// as the server refuses `any` beside a state (`search-and-filters/state-any-alone`).
+pub(crate) fn narrow_by_states(
+    states: Option<&[ItemState]>,
+    all_states: bool,
+    clauses: &mut Vec<String>,
+    values: &mut Vec<Value>,
+) -> Result<()> {
+    match states {
+        None if all_states => {}
+        None => clauses.push("items.state = 'active'".into()),
+        Some([]) => {
+            return Err(CoreError::Validation {
+                code: "validation_error".into(),
+                message: "The state filter names no state. Name a state, or leave the filter out."
+                    .into(),
+            });
+        }
+        Some(_) if all_states => {
+            return Err(CoreError::Validation {
+                code: "validation_error".into(),
+                message: "The state filter names states beside every state. Name the states, or ask for every state, not both.".into(),
+            });
+        }
+        Some(states) => {
+            let mut named: Vec<&str> = states.iter().map(|state| state.as_str()).collect();
+            named.sort_unstable();
+            named.dedup();
+            clauses.push(format!(
+                "items.state IN ({})",
+                vec!["?"; named.len()].join(", ")
+            ));
+            values.extend(named.into_iter().map(|state| Value::String(state.into())));
+        }
+    }
+    Ok(())
+}
+
 /// A concrete type the copy's catalog does not hold is refused `unknown_type`,
 /// as the server refuses one nothing registers (`device/type-unknown`). A
 /// wildcard is never refused: what it names may be nothing. A name outside the
@@ -219,7 +303,7 @@ pub(crate) fn refuse_unknown_type(catalog: &Catalog, declared: Option<&str>) -> 
     let Some(declared) = declared else {
         return Ok(());
     };
-    if declared == "*" || declared.ends_with(".*") || !crate::hydrate::type_pattern(declared)? {
+    if declared.ends_with(".*") || !crate::hydrate::type_pattern(declared)? {
         return Ok(());
     }
     if catalog.known(declared) {
@@ -392,12 +476,12 @@ mod tests {
     fn a_type_selects_its_subtree_by_name_and_by_declared_parent() {
         let conn = seeded();
         let filters = ListFilters {
-            r#type: Some("core.note".into()),
+            types: Some(vec!["core.note".into()]),
             ..Default::default()
         };
         assert_eq!(ids(&conn, filters, Sort::default()), vec!["f", "c", "a"]);
         let filters = ListFilters {
-            r#type: Some("core.note.*".into()),
+            types: Some(vec!["core.note.*".into()]),
             all_states: true,
             ..Default::default()
         };
@@ -406,15 +490,11 @@ mod tests {
             vec!["f", "e", "c", "b", "a"]
         );
         let filters = ListFilters {
-            r#type: Some("core.fil.*".into()),
+            types: Some(vec!["core.fil.*".into()]),
             ..Default::default()
         };
         assert!(ids(&conn, filters, Sort::default()).is_empty());
-        let filters = ListFilters {
-            r#type: Some("*".into()),
-            ..Default::default()
-        };
-        assert_eq!(ids(&conn, filters, Sort::default()).len(), 4);
+        assert_eq!(ids(&conn, ListFilters::default(), Sort::default()).len(), 4);
     }
 
     #[test]
@@ -422,7 +502,7 @@ mod tests {
         let conn = seeded();
         let catalog = Catalog::load(&conn).unwrap();
         let named = |name: &str| ListFilters {
-            r#type: Some(name.into()),
+            types: Some(vec![name.into()]),
             ..Default::default()
         };
         // The witnesses: a held type answers, and a wildcard that names
@@ -451,7 +531,7 @@ mod tests {
         let conn = seeded();
         let catalog = Catalog::load(&conn).unwrap();
         let filters = ListFilters {
-            r#type: Some(String::new()),
+            types: Some(vec![String::new()]),
             ..Default::default()
         };
         let refused = list(&conn, &catalog, &filters, None).unwrap_err();
@@ -469,12 +549,12 @@ mod tests {
             vec!["f", "d", "c", "a"]
         );
         let named = ListFilters {
-            state: Some(ItemState::Archived),
+            states: Some(vec![ItemState::Archived]),
             ..Default::default()
         };
         assert_eq!(ids(&conn, named, Sort::default()), vec!["b"]);
         let named = ListFilters {
-            state: Some(ItemState::Trashed),
+            states: Some(vec![ItemState::Trashed]),
             ..Default::default()
         };
         assert_eq!(ids(&conn, named, Sort::default()), vec!["e"]);
@@ -483,6 +563,125 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(ids(&conn, everything, Sort::default()).len(), 6);
+    }
+
+    #[test]
+    fn a_type_list_answers_what_any_entry_selects() {
+        let conn = seeded();
+        let both = ListFilters {
+            types: Some(vec!["acme.memo".into(), "core.file".into()]),
+            ..Default::default()
+        };
+        assert_eq!(ids(&conn, both, Sort::default()), vec!["d", "c"]);
+    }
+
+    #[test]
+    fn the_global_wildcard_is_refused_alone_or_in_a_list() {
+        let conn = seeded();
+        let catalog = Catalog::load(&conn).unwrap();
+        for types in [vec!["*"], vec!["core.file", "*"], vec![" * ", "acme.memo"]] {
+            let filters = ListFilters {
+                types: Some(types.iter().map(|entry| entry.to_string()).collect()),
+                ..Default::default()
+            };
+            assert!(
+                matches!(
+                    list(&conn, &catalog, &filters, None),
+                    Err(CoreError::Validation { ref code, .. }) if code == "validation_error"
+                ),
+                "{types:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_type_list_drops_blank_entries_and_repeats_before_it_is_counted() {
+        let conn = seeded();
+        let catalog = Catalog::load(&conn).unwrap();
+        let named = |types: Vec<&str>| ListFilters {
+            types: Some(types.into_iter().map(String::from).collect()),
+            ..Default::default()
+        };
+        assert_eq!(
+            ids(&conn, named(vec!["core.file", ""]), Sort::default()),
+            vec!["d"]
+        );
+        assert_eq!(
+            ids(&conn, named(vec!["core.file"; 11]), Sort::default()),
+            vec!["d"]
+        );
+        // The witness: eleven different entries are refused, so the repeats
+        // above were counted once.
+        let eleven: Vec<String> = (0..11).map(|i| format!("acme{i}.*")).collect();
+        let refused = ListFilters {
+            types: Some(eleven),
+            ..Default::default()
+        };
+        assert!(matches!(
+            list(&conn, &catalog, &refused, None),
+            Err(CoreError::Validation { ref code, .. }) if code == "validation_error"
+        ));
+        assert!(list(&conn, &catalog, &named(vec!["", " "]), None).is_err());
+    }
+
+    #[test]
+    fn a_state_list_answers_rows_in_any_state_it_names() {
+        let conn = seeded();
+        let filed_and_binned = ListFilters {
+            states: Some(vec![ItemState::Trashed, ItemState::Archived]),
+            ..Default::default()
+        };
+        assert_eq!(
+            ids(&conn, filed_and_binned, Sort::default()),
+            vec!["e", "b"]
+        );
+    }
+
+    #[test]
+    fn a_list_naming_nothing_or_too_much_is_refused() {
+        let conn = seeded();
+        let catalog = Catalog::load(&conn).unwrap();
+        let eleven: Vec<String> = (0..11).map(|i| format!("acme{i}.*")).collect();
+        let ten = ListFilters {
+            types: Some(eleven[..10].to_vec()),
+            ..Default::default()
+        };
+        assert!(list(&conn, &catalog, &ten, None).unwrap().is_empty());
+        for refused in [
+            ListFilters {
+                types: Some(vec![]),
+                ..Default::default()
+            },
+            ListFilters {
+                states: Some(vec![]),
+                ..Default::default()
+            },
+            ListFilters {
+                types: Some(eleven),
+                ..Default::default()
+            },
+            ListFilters {
+                states: Some(vec![ItemState::Active]),
+                all_states: true,
+                ..Default::default()
+            },
+        ] {
+            assert!(
+                matches!(
+                    list(&conn, &catalog, &refused, None),
+                    Err(crate::error::CoreError::Validation { ref code, .. }) if code == "validation_error"
+                ),
+                "{refused:?} was answered"
+            );
+        }
+        let unknown = ListFilters {
+            types: Some(vec!["core.note".into(), "core.nosuch".into()]),
+            ..Default::default()
+        };
+        assert!(matches!(
+            list(&conn, &catalog, &unknown, None),
+            Err(crate::error::CoreError::UnknownType { .. })
+        ));
     }
 
     #[test]

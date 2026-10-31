@@ -542,7 +542,7 @@ export class BulkActionWorker {
               : ((
                   await this.storage.items.stats(
                     {
-                      type: input.from,
+                      types: [input.from],
                       all_states: true,
                       source_filter: sourceFilter,
                     },

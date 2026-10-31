@@ -174,13 +174,13 @@ const sliced = ({ sql }: { sql: string }) => /union all/i.test(sql);
 
 describe("a listing whose filters repeat in every slice", () => {
   it("has the slices the cases below depend on", () => {
-    expect(typeSlices({ type: WIDE })?.length).toBeGreaterThan(120);
-    expect(typeSlices({ type: DEEP })?.length).toBeGreaterThan(80);
+    expect(typeSlices({ types: [WIDE] })?.length).toBeGreaterThan(120);
+    expect(typeSlices({ types: [DEEP] })?.length).toBeGreaterThan(80);
   });
 
   it("reads a few tags in slices", async () => {
     const { ids, statements } = await walk({
-      type: WIDE,
+      types: [WIDE],
       tags: TAGS.slice(0, 3),
     });
     expect(ids).toEqual(idsOf([...WIDE_TYPES, `${WIDE}.ghost`], (i) => i <= 2));
@@ -188,7 +188,7 @@ describe("a listing whose filters repeat in every slice", () => {
   });
 
   it("answers many tags over many slices, which would bind more values than a statement may", async () => {
-    const { ids, statements } = await walk({ type: WIDE, tags: TAGS });
+    const { ids, statements } = await walk({ types: [WIDE], tags: TAGS });
     expect(ids).toEqual(
       idsOf([...WIDE_TYPES, `${WIDE}.ghost`], (i) => i === 1),
     );
@@ -206,7 +206,7 @@ describe("a listing whose filters repeat in every slice", () => {
       () => "backref[about] not_exists",
     ).join(" AND ");
     const query: ItemFilters = {
-      type: DEEP,
+      types: [DEEP],
       allowed_types: grants,
       readable_sources: reach,
       filter,

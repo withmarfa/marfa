@@ -1,4 +1,4 @@
-import { sql, type SQL, type SQLWrapper } from "drizzle-orm";
+import { inArray, sql, type SQL, type SQLWrapper } from "drizzle-orm";
 import { alias } from "drizzle-orm/sqlite-core";
 import {
   ErrorCode,
@@ -20,7 +20,7 @@ import {
   sourceColumnSql,
   sourceFilterToSql,
   typeFilterSql,
-  typeSubtreeSql,
+  typesSql,
 } from "../filter-sql.js";
 import { items } from "./schema.js";
 import type { DrizzleDb } from "./connection.js";
@@ -251,8 +251,12 @@ export class SqliteSearchStore implements SearchStore {
     const i = alias(items, "i");
     const conditions: SQL[] = [];
 
-    if (filters.state) {
-      conditions.push(sql`${i.state} = ${filters.state}`);
+    if (filters.states !== undefined) {
+      conditions.push(
+        filters.states.length === 0
+          ? sql`0`
+          : inArray(i.state, [...filters.states]),
+      );
     } else if (!filters.all_states) {
       // The same default the listing grammar gives, because a search that
       // answered rows a listing hides is two answers to one question.
@@ -261,9 +265,7 @@ export class SqliteSearchStore implements SearchStore {
 
     // Subtree, not an exact identifier: the same reading `GET /items` gives
     // the parameter, through the same compiler.
-    const typeClause = filters.type
-      ? typeSubtreeSql(i.type, filters.type)
-      : undefined;
+    const typeClause = typesSql(i.type, filters.types);
     if (typeClause) conditions.push(typeClause);
 
     if (filters.tier !== undefined) {

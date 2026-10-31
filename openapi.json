@@ -11149,20 +11149,20 @@
           {
             "schema": {
               "type": "string",
-              "description": "Only return items of this type or a subtype. A wildcard such as `core.*` matches every type under that prefix."
+              "description": "Only return items of these types and their subtypes: a comma-separated list of up to 10, such as `core.note,app.*`. A wildcard such as `core.*` matches every type under that prefix."
             },
             "required": false,
-            "description": "Only return items of this type or a subtype. A wildcard such as `core.*` matches every type under that prefix.",
+            "description": "Only return items of these types and their subtypes: a comma-separated list of up to 10, such as `core.note,app.*`. A wildcard such as `core.*` matches every type under that prefix.",
             "name": "type",
             "in": "query"
           },
           {
             "schema": {
               "type": "string",
-              "description": "Only return items in this lifecycle state. Without it, you get `active` items. Send `any` to get every state."
+              "description": "Only return items in these lifecycle states: one state or a comma-separated list, such as `active,archived`. Without it, you get `active` items. Send `any` on its own to get every state."
             },
             "required": false,
-            "description": "Only return items in this lifecycle state. Without it, you get `active` items. Send `any` to get every state.",
+            "description": "Only return items in these lifecycle states: one state or a comma-separated list, such as `active,archived`. Without it, you get `active` items. Send `any` on its own to get every state.",
             "name": "state",
             "in": "query"
           },
@@ -16798,20 +16798,20 @@
           {
             "schema": {
               "type": "string",
-              "description": "Only return items of this type or a subtype. A wildcard such as `core.*` matches every type under that prefix."
+              "description": "Only return items of these types and their subtypes: a comma-separated list of up to 10, such as `core.note,app.*`. A wildcard such as `core.*` matches every type under that prefix."
             },
             "required": false,
-            "description": "Only return items of this type or a subtype. A wildcard such as `core.*` matches every type under that prefix.",
+            "description": "Only return items of these types and their subtypes: a comma-separated list of up to 10, such as `core.note,app.*`. A wildcard such as `core.*` matches every type under that prefix.",
             "name": "type",
             "in": "query"
           },
           {
             "schema": {
               "type": "string",
-              "description": "Only count items in this lifecycle state. Without it, every state is counted, as with `any`."
+              "description": "Only count items in these lifecycle states: one state or a comma-separated list, such as `active,archived`. Without it, every state is counted, as with `any`."
             },
             "required": false,
-            "description": "Only count items in this lifecycle state. Without it, every state is counted, as with `any`.",
+            "description": "Only count items in these lifecycle states: one state or a comma-separated list, such as `active,archived`. Without it, every state is counted, as with `any`.",
             "name": "state",
             "in": "query"
           },
@@ -28081,20 +28081,20 @@
           {
             "schema": {
               "type": "string",
-              "description": "Only return items of this type or a subtype. A wildcard such as `core.*` matches every type under that prefix."
+              "description": "Only return items of these types and their subtypes: a comma-separated list of up to 10, such as `core.note,app.*`. A wildcard such as `core.*` matches every type under that prefix."
             },
             "required": false,
-            "description": "Only return items of this type or a subtype. A wildcard such as `core.*` matches every type under that prefix.",
+            "description": "Only return items of these types and their subtypes: a comma-separated list of up to 10, such as `core.note,app.*`. A wildcard such as `core.*` matches every type under that prefix.",
             "name": "type",
             "in": "query"
           },
           {
             "schema": {
               "type": "string",
-              "description": "Only return items in this lifecycle state. Without it, you get `active` items. `any` searches every state, but trashed items are never searchable."
+              "description": "Only return items in these lifecycle states: one state or a comma-separated list, such as `active,archived`. Without it, you get `active` items. `any` on its own searches every state. Trashed items are never searchable."
             },
             "required": false,
-            "description": "Only return items in this lifecycle state. Without it, you get `active` items. `any` searches every state, but trashed items are never searchable.",
+            "description": "Only return items in these lifecycle states: one state or a comma-separated list, such as `active,archived`. Without it, you get `active` items. `any` on its own searches every state. Trashed items are never searchable.",
             "name": "state",
             "in": "query"
           },
@@ -60752,20 +60752,20 @@
           {
             "schema": {
               "type": "string",
-              "description": "Only export items of this type or a subtype. A wildcard such as `core.*` matches every type under that prefix."
+              "description": "Only export items of these types and their subtypes: a comma-separated list of up to 10, such as `core.note,app.*`. A wildcard such as `core.*` matches every type under that prefix."
             },
             "required": false,
-            "description": "Only export items of this type or a subtype. A wildcard such as `core.*` matches every type under that prefix.",
+            "description": "Only export items of these types and their subtypes: a comma-separated list of up to 10, such as `core.note,app.*`. A wildcard such as `core.*` matches every type under that prefix.",
             "name": "type",
             "in": "query"
           },
           {
             "schema": {
               "type": "string",
-              "description": "Only export items in this lifecycle state. Without it, you get every state but `trashed`. Send `any` to include trashed items too."
+              "description": "Only export items in these lifecycle states: one state or a comma-separated list, such as `active,archived`. Without it, you get every state but `trashed`. Send `any` on its own to include trashed items too."
             },
             "required": false,
-            "description": "Only export items in this lifecycle state. Without it, you get every state but `trashed`. Send `any` to include trashed items too.",
+            "description": "Only export items in these lifecycle states: one state or a comma-separated list, such as `active,archived`. Without it, you get every state but `trashed`. Send `any` on its own to include trashed items too.",
             "name": "state",
             "in": "query"
           },

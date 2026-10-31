@@ -35,7 +35,7 @@ import { log } from "../middleware/logger.js";
 import { credentialIdempotencyKey } from "../middleware/idempotency.js";
 import type { Context } from "hono";
 import type { AppEnv } from "../middleware/auth.js";
-import { assertTypeFilter } from "./_type-filter.js";
+import { parseTypeFilter } from "./_type-filter.js";
 import {
   requireWritableRow,
   checkTypeAccess,
@@ -423,13 +423,13 @@ export const listingNarrowingKeys = {
     .string()
     .optional()
     .describe(
-      "Only return items of this type or a subtype. A wildcard such as `core.*` matches every type under that prefix.",
+      "Only return items of these types and their subtypes: a comma-separated list of up to 10, such as `core.note,app.*`. A wildcard such as `core.*` matches every type under that prefix.",
     ),
   state: z
     .string()
     .optional()
     .describe(
-      "Only return items in this lifecycle state. Without it, you get `active` items. Send `any` to get every state.",
+      "Only return items in these lifecycle states: one state or a comma-separated list, such as `active,archived`. Without it, you get `active` items. Send `any` on its own to get every state.",
     ),
   source: z
     .string()
@@ -520,7 +520,7 @@ const getItemStatsRoute = createRoute({
         .string()
         .optional()
         .describe(
-          "Only count items in this lifecycle state. Without it, every state is counted, as with `any`.",
+          "Only count items in these lifecycle states: one state or a comma-separated list, such as `active,archived`. Without it, every state is counted, as with `any`.",
         ),
       ...listingBoundKeys,
       include: z
@@ -1601,14 +1601,17 @@ export function itemRoutes(storage: Storage) {
     includeSet: ReadonlySet<string>,
     reader?: OwnerItemRead,
   ): Promise<ItemFilters> {
-    const type = query.type;
     // Grammar, the global wildcard and an unknown concrete type, decided once
     // for every list surface; the reasoning is at `assertTypeFilter`.
-    assertTypeFilter(c, type, reader?.owner ? reader.reads : undefined);
+    const types = parseTypeFilter(
+      c,
+      query.type,
+      reader?.owner ? reader.reads : undefined,
+    );
 
     // `any` is a widening, not a state, so it never reaches the column
     // comparison. Shared with `GET /export`, which reads the same filter.
-    const { state, all_states: allStates } = resolveStateFilter(query.state);
+    const { states, all_states: allStates } = resolveStateFilter(query.state);
 
     const tagsParam = query.tags;
     const tags = tagsParam
@@ -1670,7 +1673,7 @@ export function itemRoutes(storage: Storage) {
     // system.* is excluded by default and opted back in by the token or by a
     // type filter that names the namespace. Through the shared rule rather
     // than restated here, so no door matches rows its siblings hide.
-    const excludeSystemTypes = excludesSystemTypes(includeSet, type);
+    const excludeSystemTypes = excludesSystemTypes(includeSet, types);
 
     const callerKeyForRead = c.get("apiKey");
     const instanceConfigForRead = await readInstanceConfig(storage.settings);
@@ -1680,8 +1683,8 @@ export function itemRoutes(storage: Storage) {
     );
     const typeFilterForList = reader?.types ?? getTypeFilter(c);
     return {
-      type,
-      state,
+      types,
+      states,
       all_states: allStates,
       source: query.source,
       // The lever is decided per row from the row's own type, not from the

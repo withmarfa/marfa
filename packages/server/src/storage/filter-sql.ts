@@ -121,6 +121,27 @@ export function typeSubtreeSql(
 }
 
 /**
+ * A `type` list as one predicate: an item matches when it matches any entry,
+ * each read as {@link typeSubtreeSql} reads it. `undefined` when the list
+ * restricts nothing: no list, or an entry that is the global wildcard.
+ */
+export function typesSql(
+  column: SQLWrapper,
+  types: readonly string[] | undefined,
+): SQL | undefined {
+  if (types === undefined || types.length === 0) return undefined;
+  const clauses: SQL[] = [];
+  for (const type of types) {
+    const clause = typeSubtreeSql(column, type);
+    if (clause === undefined) return undefined;
+    clauses.push(clause);
+  }
+  return clauses.length === 1
+    ? clauses[0]
+    : sql`(${sql.join(clauses, sql` OR `)})`;
+}
+
+/**
  * The default that keeps platform rows out of an ordinary read, decided by
  * `excludesSystemTypes`. A name test on the column, so the route's opt-in and
  * this exclusion read the same rows.
