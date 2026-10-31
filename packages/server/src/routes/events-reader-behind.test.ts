@@ -183,7 +183,7 @@ describe("a replay to a slow reader", () => {
     }
     const res = await appWith({
       maxUnsentBytes: BOUND,
-      readerStallMs: 2 * READ_BUDGET_MS,
+      readerStallMs: 300,
     }).request("/events", {
       headers: { "Last-Event-ID": String(from) },
     });
@@ -205,7 +205,7 @@ describe("a replay to a slow reader", () => {
     await backlog("steady");
     const res = await appWith({
       maxUnsentBytes: BOUND,
-      readerStallMs: 2 * READ_BUDGET_MS,
+      readerStallMs: 300,
     }).request("/events", {
       headers: { "Last-Event-ID": String(from) },
     });
