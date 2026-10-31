@@ -14,7 +14,7 @@ import {
   writeFileSync,
   appendFileSync,
 } from "node:fs";
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -1328,9 +1328,32 @@ describe("the watch run by a service manager", () => {
   // default class 31, which `ps -M` lists for each thread. The command's own
   // threads beside the watch, three as the binary is built now, stay at the
   // default.
+  //
+  // A process starts in its parent's class, and a hosted runner starts its
+  // jobs at utility or lower, which leaves nothing at 31 to tell the watch
+  // from. A sibling started the way the harness starts the watch shows what
+  // this machine can tell apart.
   it.runIf(process.platform === "darwin")(
     "runs the threads of a folder watch, and the threads they start, at utility quality of service",
-    async () => {
+    async (context) => {
+      const sibling = spawn("sleep", ["30"], { stdio: "ignore" });
+      let siblingFound: string[];
+      try {
+        const siblingPid = sibling.pid;
+        if (siblingPid === undefined) throw new Error("sleep never started");
+        siblingFound = await vi.waitFor(() => {
+          const found = threadPriorities(siblingPid);
+          expect(found).not.toEqual([]);
+          return found;
+        }, WAIT);
+      } finally {
+        sibling.kill("SIGTERM");
+      }
+      if (siblingFound.some((priority) => priority !== "31")) {
+        context.skip(
+          "this machine starts processes at utility or lower, so no thread can be shown lowered",
+        );
+      }
       const harness = await folderHarness("autostart-utility");
       made.push(harness);
       const watch = harness.folder.watchEvery();
@@ -1339,14 +1362,8 @@ describe("the watch run by a service manager", () => {
         () => expect(watch.stderr).toContain("watching every folder"),
         WAIT,
       );
-      const priorities = () =>
-        execFileSync("ps", ["-M", "-p", String(watch.pid()), "-o", "pri"], {
-          encoding: "utf8",
-        })
-          .split("\n")
-          .flatMap((line) => line.match(/(\d+)T\s*$/)?.[1] ?? []);
       await vi.waitFor(() => {
-        const found = priorities();
+        const found = threadPriorities(watch.pid());
         // The witness: ps tells the default class from the utility one, and
         // the threads the process starts for itself stay at the default.
         expect(found).toContain("31");
@@ -1567,6 +1584,14 @@ describe("the watch run by a service manager", () => {
 });
 
 /** A log path in a directory of the test's own. */
+function threadPriorities(pid: number): string[] {
+  return execFileSync("ps", ["-M", "-p", String(pid), "-o", "pri"], {
+    encoding: "utf8",
+  })
+    .split("\n")
+    .flatMap((line) => line.match(/(\d+)T\s*$/)?.[1] ?? []);
+}
+
 function logIn(label: string): string {
   const dir = mkdtempSync(
     join(realpathSync(tmpdir()), `marfa-autostart-${label}-`),
