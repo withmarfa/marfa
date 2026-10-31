@@ -1136,9 +1136,9 @@ When `GET /items/stats` names the filters of a `GET /items` listing, the server 
 
 ### `search-and-filters/stats-group`
 
-The server MUST group the counts of `GET /items/stats` by lifecycle state, or by type when the request names `by=type`.
+The server MUST group the counts of `GET /items/stats` by lifecycle state, by type when the request names `by=type`, or by source code when it names `by=source`.
 
-**Tests:** `compliance/item-stats.test.ts › counts the rows a listing's filters match`.
+**Tests:** `compliance/item-stats.test.ts › counts the rows a listing's filters match`, `compliance/source-names.test.ts › counts items by source under a listing's filters`.
 
 ### `search-and-filters/stats-every-state`
 
@@ -1606,6 +1606,44 @@ If a `type_icon` line of an archive is not an object holding a `type_id` and a s
 
 **Tests:** `compliance/type-icons.test.ts › skips and counts an icon outside the pinned sets, and refuses a line that names no type or no icon string, writing nothing`.
 
+### `search-and-filters/archive-sources`
+
+The server MUST carry in the `types.ndjson` of an archive one `source` line, holding the `source` code and its `name` and `mark` or `null` for each, for every source with a name or mark set when the owner exports and, for any other credential, for each such source of the items the archive carries, and count them in the manifest's `source_count`.
+
+**Reason:** a source's name and mark are kept beside its items and not in them, so an archive that carried only items would lose them on a move to a new instance.
+
+**Tests:** `compliance/source-names.test.ts › carries a named source in an archive and adds it back where the instance names none, replacing none`.
+
+### `search-and-filters/restore-sources`
+
+When `POST /restore` reads a `source` line, the server MUST set that name and mark on the source only if the instance has neither set on it, count each source set in `sources_added` and each line left in `sources_skipped`, and replace no name or mark the instance already has.
+
+**Reason:** a restore adds what the instance lacks and replaces nothing, and a name set here since the export is newer than the archive's.
+
+**Tests:** `compliance/source-names.test.ts › carries a named source in an archive and adds it back where the instance names none, replacing none`.
+
+### `search-and-filters/restore-sources-app`
+
+When `POST /restore` reads a `source` line whose code starts with `oauth:`, the server MUST set the name and mark on that code with `restored:` before it, the code the restore gives the rows of that source.
+
+**Reason:** a restored row keeps no app's authority (`keys-and-oauth/claims-reserved`), so its source's name follows it to the restored code.
+
+**Tests:** `compliance/source-names.test.ts › skips and counts a mark outside the pinned sets, and refuses a damaged source line, writing nothing`.
+
+### `search-and-filters/restore-sources-skipped`
+
+If a `source` line of an archive names a `mark` that `types/icon-name` refuses, then the server MUST skip that line, set nothing on the source, and count it in `sources_skipped` and under `unknown_mark` in `sources_skipped_reasons`; a line skipped because the instance has a name or mark set on the source is counted under `already_set`.
+
+**Reason:** an archive made by a build that pins other icon sets holds a well-formed mark this instance cannot draw, as `search-and-filters/restore-type-icons-skipped` says of a type's icon.
+
+**Tests:** `compliance/source-names.test.ts › skips and counts a mark outside the pinned sets, and refuses a damaged source line, writing nothing`.
+
+### `search-and-filters/restore-sources-refused`
+
+If a `source` line of an archive is not an object, holds a `source` code that is not 1 to 200 characters or has a space at either end, holds neither a `name` nor a `mark`, holds a `name` that `PATCH /source` could not store as it stands, or holds a `mark` that is not a string, then the server MUST answer `POST /restore` with `400 invalid_schema` and write nothing.
+
+**Tests:** `compliance/source-names.test.ts › skips and counts a mark outside the pinned sets, and refuses a damaged source line, writing nothing`.
+
 ### `search-and-filters/archive-history`
 
 When `GET /export?format=archive` carries an item, the server MUST carry with it every stored snapshot below the item's current version that `search-and-filters/archive-history-reach` admits, however many pages of history they fill.
@@ -1802,7 +1840,7 @@ When direct owner or local authority sends `POST /restore` with an archive that 
 
 ### `search-and-filters/restore-counts`
 
-When `POST /restore` succeeds, the server MUST carry the counts `imported`, `duplicates`, `edges_imported`, `edges_skipped`, `edges_skipped_reasons`, `blobs_imported`, `types_registered`, `types_skipped`, `edge_types_registered`, `edge_types_skipped`, `type_icons_added`, `type_icons_skipped` and `type_icons_skipped_reasons`, each for the kind of thing it counts.
+When `POST /restore` succeeds, the server MUST carry the counts `imported`, `duplicates`, `edges_imported`, `edges_skipped`, `edges_skipped_reasons`, `blobs_imported`, `types_registered`, `types_skipped`, `edge_types_registered`, `edge_types_skipped`, `type_icons_added`, `type_icons_skipped`, `type_icons_skipped_reasons`, `sources_added`, `sources_skipped` and `sources_skipped_reasons`, each for the kind of thing it counts.
 
 **Tests:** `compliance/restore-archive.test.ts › answers thirteen counts, each for the kind of thing it counts, on the first restore and on a repeat`.
 

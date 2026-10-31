@@ -404,7 +404,7 @@ function archiveSourceNaming(line: unknown): ArchiveSourceNaming {
     code !== code.trim()
   ) {
     throw new MarfaError(
-      ErrorCode.VALIDATION_ERROR,
+      ErrorCode.INVALID_SCHEMA,
       "Archive carries a source line with an invalid source code",
     );
   }
@@ -414,12 +414,13 @@ function archiveSourceNaming(line: unknown): ArchiveSourceNaming {
     (typeof name !== "string" || usableSignInName(name) !== name)
   ) {
     throw new MarfaError(
-      ErrorCode.VALIDATION_ERROR,
+      ErrorCode.INVALID_SCHEMA,
       `Archive carries an invalid name for source "${code}"`,
     );
   }
   const mark = raw?.mark ?? null;
-  const refused = mark === null ? undefined : iconNameIssue(mark, "source.mark");
+  const refused =
+    mark === null ? undefined : iconNameIssue(mark, "source.mark");
   if (mark !== null && typeof mark !== "string" && refused) {
     throw new MarfaError(
       ErrorCode.INVALID_SCHEMA,
@@ -429,7 +430,7 @@ function archiveSourceNaming(line: unknown): ArchiveSourceNaming {
   }
   if (name === null && mark === null) {
     throw new MarfaError(
-      ErrorCode.VALIDATION_ERROR,
+      ErrorCode.INVALID_SCHEMA,
       `Archive carries a source line for "${code}" with neither a name nor a mark`,
     );
   }

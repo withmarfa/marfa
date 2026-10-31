@@ -104,6 +104,19 @@ const UpdateSourceBody = z.strictObject({
     .openapi({ example: "simple-icons:github" }),
 });
 
+const badCode = {
+  content: {
+    "application/json": {
+      schema: makeErrorResponseSchema([
+        "missing_required_field",
+        "validation_error",
+      ]),
+    },
+  },
+  description:
+    "- `missing_required_field`: `source` is missing.\n- `validation_error`: `source` isn't 1 to 200 characters or starts or ends with a space, or the query has a parameter this endpoint doesn't take.",
+};
+
 const unauthorized = {
   content: {
     "application/json": { schema: makeErrorResponseSchema(["unauthorized"]) },
@@ -165,6 +178,7 @@ const getSourceRoute = createRoute({
       content: { "application/json": { schema: SourceSchema } },
       description: "Returns the source.",
     },
+    400: badCode,
     401: unauthorized,
     404: notFound,
   },
@@ -197,11 +211,15 @@ const updateSourceRoute = createRoute({
     400: {
       content: {
         "application/json": {
-          schema: makeErrorResponseSchema(["invalid_schema"]),
+          schema: makeErrorResponseSchema([
+            "missing_required_field",
+            "validation_error",
+            "invalid_schema",
+          ]),
         },
       },
       description:
-        "`invalid_schema`: `mark` isn't the ID of an icon in a pinned set (`details.errors` names it).",
+        "- `missing_required_field`: `source` is missing.\n- `validation_error`: `source` isn't 1 to 200 characters or starts or ends with a space, `name` is empty, too long or holds a control character, the body has a field this endpoint doesn't take, or the query has a parameter it doesn't take.\n- `invalid_schema`: `mark` isn't the ID of an icon in a pinned set (`details.errors` names it).",
     },
     401: unauthorized,
     403: {

@@ -93,7 +93,11 @@ describe("source names in an archive", () => {
     const ctx = await namedInstance();
     const entries = await extractArchive(await ownerExport(ctx));
     expect(sourceLines(entries)).toEqual([
-      { source: "archive-carried", name: "Carried", mark: "simple-icons:github" },
+      {
+        source: "archive-carried",
+        name: "Carried",
+        mark: "simple-icons:github",
+      },
       { source: "archive-idle", name: "Idle", mark: null },
       { source: "oauth:client:user", name: null, mark: "lucide:box" },
     ]);
@@ -190,6 +194,13 @@ describe("source names in an archive", () => {
       const target = await newContext();
       const refused = await restore(target, bad);
       expect(refused.status, JSON.stringify(line)).toBe(400);
+      const code = ((await refused.json()) as { error: { code: string } }).error
+        .code;
+      expect(code, JSON.stringify(line)).toBe(
+        line.source instanceof Object && line.source.source === "twice"
+          ? "validation_error"
+          : "invalid_schema",
+      );
       expect(await target.storage.sources.list()).toEqual([]);
     }
   });

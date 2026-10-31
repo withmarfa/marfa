@@ -739,6 +739,9 @@ export interface RestoreArchiveResponse {
   type_icons_added: number;
   type_icons_skipped: number;
   type_icons_skipped_reasons: Record<string, number>;
+  sources_added: number;
+  sources_skipped: number;
+  sources_skipped_reasons: Record<string, number>;
 }
 
 export interface PerfResult {

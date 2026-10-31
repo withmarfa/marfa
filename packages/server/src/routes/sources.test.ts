@@ -216,7 +216,11 @@ describe("setting a source's name and mark", () => {
   it("lets a key set its own source and a source it claims", async () => {
     const own = unique("own");
     const claimed = unique("claimed-set");
-    const key = await mint({ label: "Setter", source: own, sources: [claimed] });
+    const key = await mint({
+      label: "Setter",
+      source: own,
+      sources: [claimed],
+    });
 
     const setOwn = await patchSource(key.key, own, {
       name: "  My connector  ",
@@ -333,9 +337,9 @@ describe("reading sources", () => {
       key: blind.key,
     });
     expect(listed.status).toBe(200);
-    const codes = (
-      (await listed.json()) as { data: Source[] }
-    ).data.map((s) => s.source);
+    const codes = ((await listed.json()) as { data: Source[] }).data.map(
+      (s) => s.source,
+    );
     expect(codes).toEqual([own]);
 
     // The witness: a key that reads the note's type sees its source.

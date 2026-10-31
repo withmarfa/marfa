@@ -25561,7 +25561,10 @@ export interface operations {
                     "application/json": components["schemas"]["Source"];
                 };
             };
-            /** @description - `validation_error`: the query has a parameter this endpoint doesn't take. */
+            /**
+             * @description - `missing_required_field`: `source` is missing.
+             *     - `validation_error`: `source` isn't 1 to 200 characters or starts or ends with a space, or the query has a parameter this endpoint doesn't take.
+             */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -25573,7 +25576,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ValidationErrorRefusal"];
+                    "application/json": components["schemas"]["MissingRequiredFieldOrValidationErrorRefusal"];
                 };
             };
             /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
@@ -25714,8 +25717,9 @@ export interface operations {
                 };
             };
             /**
-             * @description `invalid_schema`: `mark` isn't the ID of an icon in a pinned set (`details.errors` names it).
-             *     - `validation_error`: the query has a parameter this endpoint doesn't take.
+             * @description - `missing_required_field`: `source` is missing.
+             *     - `validation_error`: `source` isn't 1 to 200 characters or starts or ends with a space, `name` is empty, too long or holds a control character, the body has a field this endpoint doesn't take, or the query has a parameter it doesn't take.
+             *     - `invalid_schema`: `mark` isn't the ID of an icon in a pinned set (`details.errors` names it).
              */
             400: {
                 headers: {
@@ -25728,7 +25732,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["InvalidSchemaOrValidationErrorRefusal"];
+                    "application/json": components["schemas"]["InvalidSchemaOrMissingRequiredFieldOrValidationErrorRefusal"];
                 };
             };
             /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
