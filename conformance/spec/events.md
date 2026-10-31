@@ -463,6 +463,14 @@ The server MUST send an item event as `item.created`, `item.updated`, `item.dele
 
 **Tests:** `sync/identity.test.ts › keeps the id a client mints for an item, on the row and on the event`, `sync/post-commit.test.ts › a write that rolls back announces nothing, while one that commits does`, `compliance/cascade-marks.test.ts › marks a row a cascade trashed with the row named, and no row trashed on its own`, `compliance/events-contract.test.ts › announces item.restored when a trashed item comes back`, `› announces item.state_changed on a lifecycle transition`, `sync/deletions.test.ts › announces a purge, so a client offline across it learns the row is gone`, `compliance/events-contract.test.ts › names the event in event_type on an item frame and on an edge frame`.
 
+### `events/deleted-trashed-at`
+
+When the server sends `item.deleted`, the server MUST set the `trashed_at` of the frame's `item` to the time the move to the bin recorded on that row, for the row a delete or a transition named and for each row a cascade took with it.
+
+**Reason:** a working copy holds the frame's item as its row (`device/bin-held-event`), and orders its bin by that row's `trashed_at` (`device/bin-local-order`). A frame still holding the row as it was before the move says `null`, so a copy that heard another client bin a row could not place it in the bin.
+
+**Tests:** `compliance/cascade-marks.test.ts › holds the time the listing answers, for the row named and the row a cascade took, by DELETE and by transition`.
+
 ### `events/metadata-event`
 
 When a tag write or an extension write commits, the server MUST send `metadata.changed` carrying `item` and `metadata`, whatever the extension's namespace.

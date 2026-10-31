@@ -1284,7 +1284,14 @@ async function trash(
   for (const id of toTrash) {
     await itemWrites(storage).delete(id, id === row.id ? undefined : root, by);
   }
-  return taken;
+  // Each row as the move left it, so its `item.deleted` carries the
+  // `trashed_at` the move recorded and not the null it held before.
+  return Promise.all(
+    taken.map(
+      async (snap) =>
+        (await storage.items.getIncludingTrashed(snap.id)) ?? snap,
+    ),
+  );
 }
 
 /**
@@ -1485,7 +1492,8 @@ async function deleteRow(
   const stale = staleAgainst(row, write.version);
   if (stale) return stale;
   const trashed = await trash(storage, writer, row);
-  return moved(row, row.state, { trashed });
+  const now = await storage.items.getIncludingTrashed(row.id);
+  return moved(now ?? row, row.state, { trashed });
 }
 
 async function transitionRow(

@@ -264,6 +264,62 @@ function frame(
   return found?.data as FrameData | undefined;
 }
 
+describe("an item.deleted frame carries when the row went to the bin", () => {
+  it("holds the time the listing answers, for the row named and the row a cascade took, by DELETE and by transition", async ({
+    signal,
+  }) => {
+    const tag = `deleted-at-${ctx.runId}`;
+    const doors: [string, (id: string) => Promise<void>][] = [
+      [
+        "DELETE",
+        async (id) => {
+          expect((await client.deleteItem(id)).ok).toBe(true);
+        },
+      ],
+      [
+        "transition",
+        async (id) => {
+          const moved = await client.transitionItem(id, "trashed");
+          expect(moved.status, JSON.stringify(moved.error)).toBe(200);
+        },
+      ],
+    ];
+    const rows: [string, string, string][] = [];
+    for (const [door] of doors) {
+      const parent = await note(`${door} parent`, tag);
+      const child = await note(`${door} child`, tag);
+      await edge(parent, child, "parent-of");
+      rows.push([door, parent, child]);
+    }
+
+    const paths = await framesOf(
+      tag,
+      async () => {
+        for (const [door, parent] of rows) {
+          await doors.find(([name]) => name === door)?.[1](parent);
+        }
+      },
+      signal,
+    );
+    const binned = await listed(tag, "trashed");
+    for (const [path, events] of paths) {
+      for (const [door, parent, child] of rows) {
+        for (const id of [parent, child]) {
+          const stored = binned.get(id)?.trashed_at;
+          expect(
+            stored,
+            `${door}: ${id} is in the bin with a time`,
+          ).toBeTruthy();
+          expect(
+            frame(events, "item.deleted", id)?.item?.trashed_at,
+            `${path}: ${door}: item.deleted for ${id}`,
+          ).toBe(stored);
+        }
+      }
+    }
+  });
+});
+
 describe("a cascaded trash names its root", () => {
   it("marks a row a cascade trashed with the row named, and no row trashed on its own", async ({
     signal,
