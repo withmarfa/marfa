@@ -133,7 +133,7 @@ if (phase === "hydrate") {
   );
   const local = core.search(
     "node",
-    { type: "core.note", tags: ["favorite"] },
+    { types: ["core.note"], tags: ["favorite"] },
     10,
   ).hits;
   const found = local.map((hit) => title(hit.item));
