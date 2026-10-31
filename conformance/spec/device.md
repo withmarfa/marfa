@@ -5946,6 +5946,14 @@ When a caller asks for the links in a text, a device MUST answer each link in th
 
 **Tests:** `device/link-parts.test.ts › splits a link into its name, heading and alias, placed in UTF-16 code units`, `› closes a link at the last opening on its line, so an unclosed one takes nothing after it`.
 
+### `device/link-parts-blank`
+
+When a caller asks for the links in a text, a device MUST NOT answer brackets that hold only white space, such as `[[ ]]`, as a link.
+
+**Reason:** blank brackets name nothing, and a body makes no edge of them.
+
+**Tests:** `device/link-parts.test.ts › reads a blank pair of brackets as no link`.
+
 ### `device/link-parts-positions`
 
 When a caller asks for the links in a text, a device MUST place each link and each of its parts as a range of UTF-16 code units in the text.
@@ -5972,11 +5980,27 @@ When a caller asks for the links in a text, a device MUST NOT answer an embed, o
 
 ### `device/link-bounds`
 
-A device MUST read a link, in a body or in a text a caller asks about, as running from the last `[[` before its `]]` on the same line, so that a `[[` with no `]]` after it on its line opens no link.
+A device MUST read a link or an embed, in a body or in a text a caller asks about, as running from the last `[[` before its `]]` on the same line, so that a `[[` with no `]]` after it on its line opens nothing.
 
-**Reason:** a `[[` typed and not yet closed would otherwise take the text after it, and the links in it, into one name.
+**Reason:** a `[[` typed and not yet closed would otherwise take the text after it, and the links in it, into one name. An embed is bounded the same way, so one span of text is never read as both an embed and a link.
 
-**Tests:** `device/link-parts.test.ts › closes a link at the last opening on its line, so an unclosed one takes nothing after it`, `› reads a long text with many unclosed links`.
+**Tests:** `device/link-parts.test.ts › closes a link at the last opening on its line, so an unclosed one takes nothing after it`, `› reads a long text with many unclosed links`, `› reads a body's edges by the same bounds, so an unclosed link takes nothing after it`.
+
+### `device/link-bounds-pairs`
+
+A device MUST read the `[` characters of a line as pairs from the start of the line, so that a `[` left over after a `[[` is part of the link's name: `[[[b]]` names `[b`.
+
+**Reason:** an opening is found where a pair starts, not at every `[`, so a run of three brackets opens once.
+
+**Tests:** `device/link-parts.test.ts › closes a link at the last opening on its line, so an unclosed one takes nothing after it`.
+
+### `device/link-bounds-code`
+
+A device MUST read a link's name, heading and alias from the text as written, code included, between brackets found outside inline code, code blocks and comments: ``[[a `b` c]]`` names ``a `b` c``, and a `]]` inside a code span closes no link.
+
+**Reason:** the brackets follow `device/body-link-text`, while the name is what the person typed between them.
+
+**Tests:** `device/link-parts.test.ts › finds the brackets outside code but takes the name with the code in it`.
 
 ### `device/link-backslash`
 
@@ -6016,7 +6040,7 @@ When more than one item the copy holds answers to a link a caller asks about, an
 
 ### `device/link-candidates-bound`
 
-When a caller asks what a link in an item's body could name, a device MUST answer the link `bound`, with the item, where saving the link in that body would queue its edge to that item as the write is saved.
+When a caller asks what a link in an item's body could name, a device MUST answer the link `bound`, with the item, where saving the link in that body would bind it to that item without asking the server, making its edge or keeping the one it has.
 
 **Reason:** an editor shows a link as followable only where the device binds it without the server, by `device/body-link-by-id`, `device/body-link-id-first` and the item's existing `references` edges.
 
@@ -6038,9 +6062,9 @@ If no item binds a link a caller asks about and at most one item the copy holds 
 
 ### `device/link-candidates-bin`
 
-When a caller asks what a link could name, a device MUST NOT answer an item in the bin, by id, title or file path.
+When a caller asks what a link could name, a device MUST NOT answer an item in the bin, by id, title or file path, or as the item the link's existing edge names.
 
-**Reason:** the server's lookup names no item in the bin, so a link never binds one.
+**Reason:** the server's lookup names no item in the bin, so a link never binds one, and saving a body never binds a link to one either.
 
 **Tests:** `device/link-parts.test.ts › never lists an item in the bin`.
 

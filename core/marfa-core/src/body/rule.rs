@@ -534,7 +534,8 @@ fn recorded(conn: &Connection, host: &str) -> Result<Recorded> {
 }
 
 /// The item a name was resolved to when its edge was made, while that edge
-/// stands: renaming the item does not make the body's link name nothing.
+/// stands and the item is out of the bin: renaming the item does not make the
+/// body's link name nothing, and the server's lookup names no item in the bin.
 fn made_to(
     conn: &Connection,
     recorded: &Recorded,
@@ -549,6 +550,9 @@ fn made_to(
     else {
         return Ok(None);
     };
+    if store::in_bin(conn, &other)? {
+        return Ok(None);
+    }
     Ok((!held_edges(conn, kind, host, &other)?.is_empty()).then_some(other))
 }
 
@@ -3418,6 +3422,57 @@ mod tests {
             );
             assert_eq!(answer.state, LinkState::Unresolved);
         }
+    }
+
+    #[test]
+    fn a_link_recorded_as_naming_an_item_never_binds_it_once_it_is_in_the_bin() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = copy(&dir);
+        let (host, plan) = plan_from_another_device(&core, "see [[Plan]]");
+        edit(&core, &plan, serde_json::json!({ "title": "Plan v2" }));
+        assert_eq!(
+            recorded_texts(&core, &host),
+            ["Plan"],
+            "the rename recorded no row, so this does not test a recorded row"
+        );
+        // The witness: the recorded row binds the link while Plan is out of the bin.
+        let answer = candidates_of(&core, Some(&host), "Plan");
+        assert_eq!(
+            (answer.state, answer.item.as_deref()),
+            (LinkState::Bound, Some(plan.as_str()))
+        );
+        core.delete_item(&plan).unwrap();
+        assert!(store::in_bin(&core.conn().unwrap(), &plan).unwrap());
+        let answer = candidates_of(&core, Some(&host), "Plan");
+        assert_eq!(
+            answer.state,
+            LinkState::Unresolved,
+            "a link was bound to an item in the bin"
+        );
+        assert!(
+            !answer.candidates.contains(&plan),
+            "an item in the bin was a candidate"
+        );
+        assert_ne!(
+            targets(&core.body_links(&host).unwrap().links),
+            vec![BodyTarget::Item { id: plan.clone() }],
+            "the body's link read as naming an item in the bin"
+        );
+        edit(
+            &core,
+            &host,
+            serde_json::json!({ "body": "see [[Plan]] again" }),
+        );
+        assert_ne!(
+            targets(&core.body_links(&host).unwrap().links),
+            vec![BodyTarget::Item { id: plan.clone() }],
+            "saving the body bound its link to an item in the bin"
+        );
+        let id_link = candidates_of(&core, Some(&host), &plan);
+        assert!(
+            id_link.state != LinkState::Bound && id_link.candidates.is_empty(),
+            "a link by the id of a referenced item in the bin was bound"
+        );
     }
 
     #[test]

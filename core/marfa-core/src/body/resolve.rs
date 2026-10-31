@@ -359,7 +359,8 @@ pub(crate) fn answers_to(
 
 /// The items at the other end of edges already held, each with the names it
 /// answers to, so a name keeps naming what it already names whatever else
-/// takes the same name.
+/// takes the same name. An item in the bin answers to nothing, by id
+/// included; one outside the copy's slice still answers to its id.
 pub(crate) struct Others {
     named: Vec<(String, BTreeSet<String>)>,
 }
@@ -386,7 +387,9 @@ impl Others {
     ) -> Result<Others> {
         let mut named = Vec::new();
         for other in others {
-            if named.iter().any(|(held, _): &(String, _)| held == other) {
+            if named.iter().any(|(held, _): &(String, _)| held == other)
+                || store::in_bin(conn, other)?
+            {
                 continue;
             }
             let mut names = BTreeSet::new();

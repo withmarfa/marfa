@@ -134,6 +134,43 @@ describe("a link's parts", () => {
     expect(await names("[[a]]]] and [[[b]]")).toEqual(["a", "[b"]);
   });
 
+  it("reads a body's edges by the same bounds, so an unclosed link takes nothing after it", async () => {
+    harness = await hydratedHarness("link-bounds-body");
+    const { device } = harness;
+    const first = await note(device, "First");
+    const second = await note(device, "Second");
+    const host = await create(device, {
+      type: "core.note",
+      properties: {
+        title: "Host",
+        body: `[[open\n[[${first}]] and [[outer [[${second}]] after`,
+      },
+    });
+    const links = value(await device.bodyLinks(host)).links;
+    expect(links.map((link) => [link.text, link.target])).toEqual([
+      [`[[${first}]]`, { state: "item", id: first }],
+      [`[[${second}]]`, { state: "item", id: second }],
+    ]);
+    const edges = value(await device.queue())
+      .filter((write) => write.kind === "create_edge" && write.item_id === host)
+      .map((write) => write.target_id);
+    expect(sorted(edges as string[])).toEqual(sorted([first, second]));
+  });
+
+  it("finds the brackets outside code but takes the name with the code in it", async () => {
+    harness = await startHarness("link-parts-code-inside");
+    const found = await parts(harness.device, "[[a `b` c]] [[d `]]` e|f]]");
+    expect(found.map((link) => [link.name.text, link.alias?.text])).toEqual([
+      ["a `b` c", undefined],
+      ["d `]]` e", "f"],
+    ]);
+  });
+
+  it("reads a blank pair of brackets as no link", async () => {
+    harness = await startHarness("link-parts-blank");
+    expect(await parts(harness.device, "[[ ]] [[]] [[x]]")).toHaveLength(1);
+  });
+
   it("keeps a backslash as part of the text", async () => {
     harness = await startHarness("link-parts-backslash");
     const found = await parts(harness.device, "\\[[escaped]] [[x\\]]");
