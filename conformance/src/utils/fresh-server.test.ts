@@ -32,12 +32,16 @@ describe("the fixture server's script runner", () => {
 describe("fixture listener ownership", () => {
   it("rejects an occupied IPv4 port without trusting its health or an earlier boot log", async () => {
     let requests = 0;
-    const squatter = createServer((_request, response) => {
-      requests++;
+    let port = 0;
+    const squatter = createServer((request, response) => {
+      // Another process on a shared machine can probe a local port as
+      // `localhost:<port>`; only a request addressed as the harness
+      // addresses it counts.
+      if (request.headers.host === `127.0.0.1:${String(port)}`) requests++;
       response.end("healthy impostor");
     });
     await new Promise<void>((done) => squatter.listen(0, "127.0.0.1", done));
-    const port = (squatter.address() as { port: number }).port;
+    port = (squatter.address() as { port: number }).port;
     const state = mkdtempSync(join(tmpdir(), "marfa-occupied-port-"));
     // The impostor really does answer health before the harness is asked.
     await (await fetch(`http://127.0.0.1:${port}/health`)).text();

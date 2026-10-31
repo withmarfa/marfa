@@ -353,6 +353,16 @@ export class ScriptedServer {
   }
 
   private handle(request: IncomingMessage, response: ServerResponse): void {
+    // The device is given `url`, so its requests carry exactly this Host.
+    // Another process on a shared machine probing local ports arrives as
+    // `localhost:<port>`; counting it would fail a test that asserts the
+    // device asked nothing.
+    if (request.headers.host !== `127.0.0.1:${String(this.port)}`) {
+      request.resume();
+      response.writeHead(421, { "content-type": "text/plain" });
+      response.end("misdirected request");
+      return;
+    }
     const chunks: Buffer[] = [];
     request.on("data", (chunk: Buffer) => chunks.push(chunk));
     request.on("end", () => {
