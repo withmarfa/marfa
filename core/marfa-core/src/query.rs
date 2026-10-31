@@ -205,8 +205,10 @@ fn property_sort_expression(name: &str) -> String {
 const MAX_TYPE_ENTRIES: usize = 10;
 
 /// A `type` list, as the server reads one (`search-and-filters/type-list`): a
-/// row matches when any entry selects it. Each entry is refused as it would be
-/// alone, in the order given; `*` among them narrows nothing.
+/// row matches when any entry selects it. Entries are trimmed, blank ones
+/// dropped and repeats removed before the list is counted, and each entry left
+/// is refused as it would be alone, in the order given. `*` is no type filter
+/// at all and is refused, as on the server; every type is the list left unset.
 pub(crate) fn narrow_by_types(
     catalog: &Catalog,
     types: Option<&[String]>,
@@ -216,35 +218,36 @@ pub(crate) fn narrow_by_types(
     let Some(types) = types else {
         return Ok(());
     };
-    if types.is_empty() {
+    let mut entries: Vec<&str> = Vec::new();
+    for entry in types.iter().map(|entry| entry.trim()) {
+        if !entry.is_empty() && !entries.contains(&entry) {
+            entries.push(entry);
+        }
+    }
+    if entries.is_empty() {
         return Err(CoreError::Validation {
             code: "validation_error".into(),
             message: "The type filter names no type. Name a type, or leave the filter out.".into(),
         });
     }
-    if types.len() > MAX_TYPE_ENTRIES {
+    if entries.len() > MAX_TYPE_ENTRIES {
         return Err(CoreError::Validation {
             code: "validation_error".into(),
             message: format!("Too many types in filter (max {MAX_TYPE_ENTRIES})"),
         });
     }
     let mut alternatives = Vec::new();
-    let mut entry_values = Vec::new();
-    let mut every_type = false;
-    for declared in types {
-        if declared == "*" {
-            every_type = true;
-            continue;
+    for declared in entries {
+        if declared == crate::store::EVERY_TYPE {
+            return Err(CoreError::Validation {
+                code: "validation_error".into(),
+                message: format!("Invalid type identifier: {declared}"),
+            });
         }
-        let mut entry = Vec::new();
-        narrow_by_type(catalog, Some(declared), &mut entry, &mut entry_values)?;
+        narrow_by_type(catalog, Some(declared), &mut alternatives, values)?;
         refuse_unknown_type(catalog, Some(declared))?;
-        alternatives.extend(entry);
     }
-    if !every_type {
-        clauses.push(format!("({})", alternatives.join(" OR ")));
-        values.extend(entry_values);
-    }
+    clauses.push(format!("({})", alternatives.join(" OR ")));
     Ok(())
 }
 
@@ -300,7 +303,7 @@ pub(crate) fn refuse_unknown_type(catalog: &Catalog, declared: Option<&str>) -> 
     let Some(declared) = declared else {
         return Ok(());
     };
-    if declared == "*" || declared.ends_with(".*") || !crate::hydrate::type_pattern(declared)? {
+    if declared.ends_with(".*") || !crate::hydrate::type_pattern(declared)? {
         return Ok(());
     }
     if catalog.known(declared) {
@@ -491,11 +494,7 @@ mod tests {
             ..Default::default()
         };
         assert!(ids(&conn, filters, Sort::default()).is_empty());
-        let filters = ListFilters {
-            types: Some(vec!["*".into()]),
-            ..Default::default()
-        };
-        assert_eq!(ids(&conn, filters, Sort::default()).len(), 4);
+        assert_eq!(ids(&conn, ListFilters::default(), Sort::default()).len(), 4);
     }
 
     #[test]
@@ -574,14 +573,55 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(ids(&conn, both, Sort::default()), vec!["d", "c"]);
-        let with_every = ListFilters {
-            types: Some(vec!["core.file".into(), "*".into()]),
+    }
+
+    #[test]
+    fn the_global_wildcard_is_refused_alone_or_in_a_list() {
+        let conn = seeded();
+        let catalog = Catalog::load(&conn).unwrap();
+        for types in [vec!["*"], vec!["core.file", "*"], vec![" * ", "acme.memo"]] {
+            let filters = ListFilters {
+                types: Some(types.iter().map(|entry| entry.to_string()).collect()),
+                ..Default::default()
+            };
+            assert!(
+                matches!(
+                    list(&conn, &catalog, &filters, None),
+                    Err(CoreError::Validation { ref code, .. }) if code == "validation_error"
+                ),
+                "{types:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_type_list_drops_blank_entries_and_repeats_before_it_is_counted() {
+        let conn = seeded();
+        let catalog = Catalog::load(&conn).unwrap();
+        let named = |types: Vec<&str>| ListFilters {
+            types: Some(types.into_iter().map(String::from).collect()),
             ..Default::default()
         };
         assert_eq!(
-            ids(&conn, with_every, Sort::default()),
-            vec!["f", "d", "c", "a"]
+            ids(&conn, named(vec!["core.file", ""]), Sort::default()),
+            vec!["d"]
         );
+        assert_eq!(
+            ids(&conn, named(vec!["core.file"; 11]), Sort::default()),
+            vec!["d"]
+        );
+        // The witness: eleven different entries are refused, so the repeats
+        // above were counted once.
+        let eleven: Vec<String> = (0..11).map(|i| format!("acme{i}.*")).collect();
+        let refused = ListFilters {
+            types: Some(eleven),
+            ..Default::default()
+        };
+        assert!(matches!(
+            list(&conn, &catalog, &refused, None),
+            Err(CoreError::Validation { ref code, .. }) if code == "validation_error"
+        ));
+        assert!(list(&conn, &catalog, &named(vec!["", " "]), None).is_err());
     }
 
     #[test]

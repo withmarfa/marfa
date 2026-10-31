@@ -156,6 +156,38 @@ describe("a local read naming several types", () => {
       );
     }
   });
+
+  it("drops blank entries and repeats before it counts the list", async () => {
+    const device = await seeded("read-type-list-blanks");
+    for (const type of [
+      ["core.note", ""],
+      Array.from({ length: 11 }, () => "core.note"),
+    ]) {
+      expect(
+        await listed(device, { type }),
+        `${JSON.stringify(type)} did not answer exactly the active note`,
+      ).toEqual(["live-note"]);
+      expect(
+        await searched(device, { type }),
+        `a search naming ${JSON.stringify(type)} did not match exactly the active note`,
+      ).toEqual(["live-note"]);
+    }
+  });
+
+  it("refuses the global wildcard, alone or in a list", async () => {
+    const device = await seeded("read-type-list-wildcard");
+    for (const type of [["*"], ["core.note", "*"]]) {
+      for (const outcome of [
+        await device.list({ type }),
+        await device.search(WORD, { type }),
+      ]) {
+        expect(
+          refusedWith(outcome),
+          `${type.join(",")} was answered, where the server refuses the global wildcard`,
+        ).toBe("validation/validation_error");
+      }
+    }
+  });
 });
 
 describe("a local read naming several states", () => {

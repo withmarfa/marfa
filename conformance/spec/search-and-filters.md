@@ -136,11 +136,11 @@ When the `type` of `GET /items`, `GET /items/stats`, `GET /search` or `GET /expo
 
 ### `search-and-filters/type-list-max`
 
-If the `type` of `GET /items`, `GET /items/stats`, `GET /search`, `GET /export` or `GET /events` is a list of more than 10 entries, then the server MUST answer `400 validation_error`.
+If the `type` of `GET /items`, `GET /items/stats`, `GET /search`, `GET /export` or `GET /events` is a list of more than 10 distinct entries that are not blank, then the server MUST answer `400 validation_error`.
 
-**Reason:** one bound on every door that takes the list, so a client learns it once.
+**Reason:** one bound on every door that takes the list, so a client learns it once. A blank entry, as a trailing comma leaves, names nothing, and a repeat names nothing new, so neither counts toward the bound or narrows the answer.
 
-**Tests:** `compliance/filter-lists.test.ts › refuses more than ten entries`.
+**Tests:** `compliance/filter-lists.test.ts › refuses more than ten entries`, `› drops blank entries and repeats before it counts the list`.
 
 ### `search-and-filters/type-grammar-refused`
 

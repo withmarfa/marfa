@@ -199,6 +199,16 @@ describe("a type list", () => {
     expect(res.ok, "a list of eleven types was answered").toBe(false);
     expect(res.error?.error.code).toBe("validation_error");
   });
+
+  it("drops blank entries and repeats before it counts the list", async () => {
+    const eleven = Array.from({ length: 11 }, () => "core.note").join(",");
+    for (const type of ["core.note,", ",core.note, ", eleven]) {
+      expect(
+        sorted(await listed({ type })),
+        `${type} did not answer exactly the active note`,
+      ).toEqual([liveNote.id]);
+    }
+  });
 });
 
 describe("a state list", () => {

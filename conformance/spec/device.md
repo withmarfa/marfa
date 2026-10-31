@@ -1576,15 +1576,15 @@ When a local list or a local search names several types, a device MUST answer th
 
 ### `device/read-type-list-max`
 
-If a local list or a local search names more than 10 types, then a device MUST refuse it `validation` with the code `validation_error`.
+If a local list or a local search names more than 10 distinct types that are not blank, then a device MUST refuse it `validation` with the code `validation_error`.
 
-**Reason:** the server's bound (`search-and-filters/type-list-max`), so a call the copy answers offline is never refused online.
+**Reason:** the server's bound (`search-and-filters/type-list-max`), so a call the copy answers offline is never refused online. The server drops a blank entry and a repeat before it counts the list, so the copy does too: a list it refused for them would be answered online.
 
-**Tests:** `device/read-lists.test.ts › refuses more than ten types`.
+**Tests:** `device/read-lists.test.ts › refuses more than ten types`, `› drops blank entries and repeats before it counts the list`.
 
 ### `device/read-list-empty`
 
-If a local list or a local search names a type list or a state list that holds no entry, then a device MUST refuse it `validation` with the code `validation_error`.
+If a local list or a local search names a type list that holds no entry that is not blank, or a state list that holds no entry, then a device MUST refuse it `validation` with the code `validation_error`.
 
 **Reason:** a caller who names a list means to narrow, so reading an empty one as the default would answer a selection the caller did not make. The server refuses a filter that names nothing the same way (`search-and-filters/empty-narrowing` and `search-and-filters/state-empty`). A list left unset is not empty: it narrows nothing, or, for states, answers the active state.
 
@@ -5926,7 +5926,7 @@ If a local list or search names a `type`, or a type list with an entry, outside 
 
 **Reason:** a local read that answered an empty list would say the type holds nothing where the server says the name is no type at all, so a mistyped name would go unnoticed offline and fail only online. One bad entry refuses the whole list, as on the server (`search-and-filters/type-list`).
 
-**Tests:** `device/local-refusals.test.ts › refuses a list or a search naming a type outside the server's grammar`, `device/read-lists.test.ts › refuses the list for an entry it would refuse alone`.
+**Tests:** `device/local-refusals.test.ts › refuses a list or a search naming a type outside the server's grammar`, `device/read-lists.test.ts › refuses the list for an entry it would refuse alone`, `› refuses the global wildcard, alone or in a list`.
 
 ### `device/type-unknown`
 
