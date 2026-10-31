@@ -149,6 +149,12 @@ const EntryMemberSchema = z
       .describe(
         "The member's type: `string`, `email`, `url`, `enum`, `boolean`, `integer`, `number`, `date` or `datetime`.",
       ),
+    label: z
+      .string()
+      .optional()
+      .describe(
+        "A name for people to read, up to 100 characters. Leave it out and a type read answers the nearest one a type above names, else one made from the member's name, such as `Due At` for `due_at`. The type list answers only the declared label.",
+      ),
     description: z.string().optional().describe("What the member holds."),
     required: z
       .boolean()
@@ -197,6 +203,12 @@ const FieldDefinitionSchema = z
       .describe(
         "The field's type. A `thumbnail` is a base64 `data:` URI of a PNG, JPEG or WebP image up to 16 KiB, never `title`, `body`, `description` or `name`; a `status` is a word from `status_values`. A type has at most one of each, never as `items_type`.",
       ),
+    label: z
+      .string()
+      .optional()
+      .describe(
+        "A name for people to read, up to 100 characters. Leave it out and a type read answers the nearest one a type above names, else one made from the field's name, such as `Due At` for `due_at`. The type list answers only the declared label.",
+      ),
     description: z.string().optional().describe("What the field holds."),
     required: z
       .boolean()
@@ -242,7 +254,7 @@ const FieldDefinitionSchema = z
       .enum(FIELD_FORMATS as unknown as [string, ...string[]])
       .optional()
       .describe(
-        "A refinement of a `string` field or an array of strings. `url`, `email`, `datetime`, `date` and `thumbnail` become the `type` or `items_type`. `bcp47`, `iso3166` and `currency` stay as `format`; a `currency` is three capital letters, such as `GBP`.",
+        "A refinement of a `string` field or an array of strings. `url`, `email`, `datetime`, `date` and `thumbnail` become the `type` or `items_type`. `bcp47`, `iso3166`, `currency` and `phone` stay as `format`; a `currency` is three capital letters, such as `GBP`, and a `phone` is a phone number Marfa does not check.",
       ),
     searchable: z
       .boolean()
@@ -403,7 +415,13 @@ const typeDefinitionBody = {
     .string()
     .optional()
     .describe(
-      "A name for people to read. Leave it out and Marfa derives one from the last segment of the identifier.",
+      "A name for people to read, up to 100 characters. Leave it out and Marfa derives one from the last segment of the identifier.",
+    ),
+  plural: z
+    .string()
+    .optional()
+    .describe(
+      "The label's plural, up to 100 characters, such as `People`. Leave it out and Marfa adds `s`, `es` or `ies` to the label by the regular English rule.",
     ),
   description: z.string().optional().describe("What the type is for."),
   // Strings rather than the role enum the response carries, because the
@@ -586,6 +604,12 @@ const TypeSchemaResponse = z
       .string()
       .optional()
       .describe("The type's name for people to read."),
+    plural: z
+      .string()
+      .optional()
+      .describe(
+        "The type's plural name for people to read, such as `People`. Never inherited.",
+      ),
     description: z.string().optional().describe("What the type is for."),
     parent: z
       .string()
@@ -1008,7 +1032,7 @@ const replaceTypeRoute = createRoute({
   tags: ["Types"],
   summary: "Replace a type",
   description:
-    "Replaces a registered type's whole schema and returns it. A field you leave out is removed, but items keep their values for it. `metadata.types:write` alone can add optional fields and change `label`, `description`, `display_hints` or `version`.",
+    "Replaces a registered type's whole schema and returns it. A field you leave out is removed, but items keep their values for it. `metadata.types:write` alone can add optional fields and change `label`, `plural`, `description`, `display_hints`, `version`, or a kept field's `description` or `label`.",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({

@@ -9,7 +9,7 @@ import type { FieldDefinition, TypeSchema } from "@withmarfa/shared";
  * Everything not named here needs `schema.write`, so a member added to the
  * definition later is held back by default.
  *
- * - `label`, `description` and `display_hints` are presentation.
+ * - `label`, `plural`, `description` and `display_hints` are presentation.
  * - `version` is stamped on each row created afterwards as its
  *   `schema_version`, and the server decides nothing by it.
  * - `fields` is judged field by field in {@link evolutionOf}.
@@ -17,16 +17,28 @@ import type { FieldDefinition, TypeSchema } from "@withmarfa/shared";
 const FREE_MEMBERS: ReadonlySet<string> = new Set([
   "id",
   "label",
+  "plural",
   "description",
   "display_hints",
   "version",
   "fields",
 ]);
 
-/** A field as the rows see it: everything but its description. */
+/** A field as the rows see it: everything but its description and the
+ *  labels on it and its members. */
 function shapeOf(field: FieldDefinition): FieldDefinition {
   const shape = { ...field };
   delete shape.description;
+  delete shape.label;
+  if (shape.items_fields !== undefined) {
+    shape.items_fields = Object.fromEntries(
+      Object.entries(shape.items_fields).map(([name, member]) => {
+        const kept = { ...member };
+        delete kept.label;
+        return [name, kept];
+      }),
+    );
+  }
   return shape;
 }
 

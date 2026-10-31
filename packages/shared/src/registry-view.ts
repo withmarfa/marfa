@@ -1,5 +1,6 @@
 import type { EdgeTypeSchema, TypeSchema } from "@withmarfa/types";
 import type { ZodType } from "zod";
+import { labelledTypeDefinition } from "./type-label.js";
 
 const REMOVED = Symbol("removed");
 class Overlay<K, V> implements ReadonlyMap<K, V> {
@@ -157,6 +158,14 @@ export function immutableRegistrySchema<T>(value: T): T {
   freeze(detached);
   return detached;
 }
+/**
+ * A type as the registry holds it: frozen, with the label and plural a
+ * definition that names none is given, so a row stored before a type carried
+ * a plural reads as one registered now would.
+ */
+function registryTypeSchema(schema: TypeSchema): TypeSchema {
+  return immutableRegistrySchema(labelledTypeDefinition(structuredClone(schema)));
+}
 function mutate(item: boolean, fn: (view: RegistryView) => void): void {
   refuseReadMutation();
   const frame = selected();
@@ -183,7 +192,7 @@ function mutate(item: boolean, fn: (view: RegistryView) => void): void {
 }
 export function stageRegistryType(schema: TypeSchema): void {
   mutate(true, (view) => {
-    change(view.custom, schema.id, immutableRegistrySchema(schema));
+    change(view.custom, schema.id, registryTypeSchema(schema));
   });
 }
 export function removeRegistryType(id: string): void {
@@ -196,7 +205,7 @@ export function stagePlatformRegistryType(
   family: "core" | "system",
 ): void {
   mutate(true, (view) => {
-    change(view.platform, schema.id, immutableRegistrySchema(schema));
+    change(view.platform, schema.id, registryTypeSchema(schema));
     change(view.system, schema.id, family === "system" ? true : REMOVED);
   });
 }
@@ -223,7 +232,7 @@ export function seedRegistryPlatform(
     for (const id of view.platform.keys()) change(view.platform, id, REMOVED);
     for (const id of view.system.keys()) change(view.system, id, REMOVED);
     for (const { schema, family } of platform) {
-      change(view.platform, schema.id, immutableRegistrySchema(schema));
+      change(view.platform, schema.id, registryTypeSchema(schema));
       if (family === "system") change(view.system, schema.id, true);
     }
   });
@@ -291,13 +300,13 @@ export function registrySnapshotView(snapshot: RegistrySnapshot): RegistryView {
     platform: new Map(
       snapshot.platform.map((row) => [
         row.schema.id,
-        immutableRegistrySchema(row.schema),
+        registryTypeSchema(row.schema),
       ]),
     ),
     custom: new Map(
       snapshot.custom.map((schema) => [
         schema.id,
-        immutableRegistrySchema(schema),
+        registryTypeSchema(schema),
       ]),
     ),
     edges: new Map(

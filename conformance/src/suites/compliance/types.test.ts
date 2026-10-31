@@ -518,6 +518,58 @@ describe("type registration and listing", () => {
     expect((await client.getType(refusedId)).status).toBe(404);
   });
 
+  it("keeps phone as a format of a string that takes any text, and refuses it on any other type", async () => {
+    const id = `user.format-phone-${ctx.runId}`;
+    const registered = await client.registerType({
+      id,
+      fields: {
+        phone: { type: "string", format: "phone" },
+        contacts: {
+          type: "array",
+          items_type: "object",
+          items_fields: { value: { type: "string", format: "phone" } },
+        },
+      },
+    } as never);
+    expect(registered.status, JSON.stringify(registered.error)).toBe(201);
+    const read = await client.getType(id);
+    const fields = read.data.fields as Record<string, Record<string, unknown>>;
+    expect(fields.phone.type).toBe("string");
+    expect(fields.phone.format).toBe("phone");
+    expect(
+      (fields.contacts.items_fields as Record<string, Record<string, unknown>>)
+        .value.format,
+    ).toBe("phone");
+
+    // A number in any form a person or a vendor writes is kept as written.
+    for (const value of ["+44 20 7946 0958 ext. 12", "1-800-FLOWERS", "x"]) {
+      const created = await client.createItem({
+        type: id,
+        source: ctx.source,
+        properties: { phone: value, contacts: [{ value }] },
+      });
+      expect(created.status, JSON.stringify(created.error)).toBe(201);
+      trackItem(ctx, created.data.item.id);
+      expect(created.data.item.properties.phone).toBe(value);
+    }
+
+    const refusedId = `user.format-phone-refused-${ctx.runId}`;
+    for (const other of [
+      { type: "number" },
+      { type: "url" },
+      { type: "array", items_type: "string" },
+    ]) {
+      const refused = await client.registerType({
+        id: refusedId,
+        fields: { code: { ...other, format: "phone" } },
+      } as never);
+      const label = JSON.stringify(other);
+      expect(refused.status, label).toBe(400);
+      expect(refused.error?.error.code, label).toBe("invalid_schema");
+    }
+    expect((await client.getType(refusedId)).status).toBe(404);
+  });
+
   it("refuses a replacement whose property name shadows a first-class Item field, as registration does", async () => {
     const id = `user.shadow-replace-${ctx.runId}`;
     const registered = await client.registerType({

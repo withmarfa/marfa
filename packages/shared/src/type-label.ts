@@ -1,3 +1,12 @@
+import { labelFromName, pluralFromLabel } from "@withmarfa/types";
+
+export {
+  MAX_LABEL_LENGTH,
+  labelFromName,
+  pluralFromLabel,
+  withFieldLabels,
+} from "@withmarfa/types";
+
 /**
  * The label a type or edge type gets when it names none: the last segment of
  * its identifier, with each hyphen and underscore made a space and each word
@@ -8,8 +17,7 @@
  * answers.
  */
 export function labelFromId(id: string): string {
-  const last = id.split(".").at(-1) ?? id;
-  return last.replace(/[_-]/g, " ").replace(/\b\w/g, (ch) => ch.toUpperCase());
+  return labelFromName(id.split(".").at(-1) ?? id);
 }
 
 /** The label a definition names, or `undefined` where it names none: an empty
@@ -19,10 +27,13 @@ export function namedLabel(label: string | undefined): string | undefined {
 }
 
 /** Gives a definition that names no label, or an empty one, the label its
- *  identifier makes. Changes the definition it is given and returns it. */
+ *  identifier makes, and one that names no plural, or an empty one, the
+ *  plural its label makes. Changes the definition it is given and returns
+ *  it. */
 export function labelledTypeDefinition<
-  T extends { id: string; label?: string },
+  T extends { id: string; label?: string; plural?: string },
 >(schema: T): T {
   schema.label = namedLabel(schema.label) ?? labelFromId(schema.id);
+  schema.plural = namedLabel(schema.plural) ?? pluralFromLabel(schema.label);
   return schema;
 }

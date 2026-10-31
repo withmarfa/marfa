@@ -50,8 +50,8 @@ export interface StatusValue {
  * Semantic refinements on top of a `FieldType`. Those with a first-class
  * `FieldType` of the same name normalize into `type`, so `{ type: "string",
  * format: "url" }` and `{ type: "url" }` are the same declaration. The rest
- * (`bcp47`, `iso3166`, `currency`) annotate a `string` field whose contents
- * follow a published standard but which has no dedicated `FieldType`; they
+ * (`bcp47`, `iso3166`, `currency`, `phone`) annotate a `string` field whose
+ * contents follow a convention but which has no dedicated `FieldType`; they
  * survive normalization as `format`.
  */
 export type FieldFormat =
@@ -62,10 +62,20 @@ export type FieldFormat =
   | "thumbnail"
   | "bcp47"
   | "iso3166"
-  | "currency";
+  | "currency"
+  | "phone";
+
+/** The most characters a field's, a member's or a type's `plural` label holds. */
+export const MAX_LABEL_LENGTH = 100;
 
 export interface FieldDefinition {
   type: FieldType;
+  /**
+   * The field's name for people to read. A stored definition holds only the
+   * label its own type names; a type read answers the nearest one its chain
+   * names, or one made from the field's name.
+   */
+  label?: string;
   description?: string;
   required?: boolean;
   enum_values?: string[];
@@ -78,7 +88,7 @@ export interface FieldDefinition {
   items_type?: string;
   /**
    * Semantic refinement of a `string` field. Only the annotation-only formats
-   * (`bcp47`, `iso3166`, `currency`) survive here — the formats that have a
+   * (`bcp47`, `iso3166`, `currency`, `phone`) survive here — the formats that have a
    * matching `FieldType` normalize into `type`, or into an array of strings'
    * `items_type`, so there is exactly one way to read a field's shape. Carried
    * through the registry and the type diff so a schema round-trips unchanged.
@@ -131,6 +141,7 @@ export interface FieldDefinition {
 export type EntryMember = Pick<
   FieldDefinition,
   | "type"
+  | "label"
   | "description"
   | "required"
   | "enum_values"
@@ -234,6 +245,8 @@ export interface TypeSchema {
   id: string;
   parent?: string;
   label?: string;
+  /** The name for more than one item of the type, such as `People`. */
+  plural?: string;
   description?: string;
   version: number;
   fields: Record<string, FieldDefinition>;

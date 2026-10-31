@@ -13,6 +13,7 @@ import {
   MarfaError,
   MAX_RESOLUTION_DEPTH,
   mergeFieldChain,
+  withFieldLabels,
 } from "@withmarfa/shared";
 import type {
   DisplayHints,
@@ -148,8 +149,12 @@ export function resolveTypeSchema(
 
   const chain = buildChain(typeId, resolve);
 
-  // fields: root→leaf, per-key merge, a status field joining its words.
-  const fields = mergeFieldChain(chain.map((ancestor) => ancestor.fields));
+  // fields: root→leaf, per-key merge, a status field joining its words and a
+  // redeclaration keeping a label above it; then each field and member that
+  // no type in the chain names takes the label its name makes.
+  const fields = withFieldLabels(
+    mergeFieldChain(chain.map((ancestor) => ancestor.fields)),
+  );
 
   // display_hints: each hint comes from the nearest type that sets that hint,
   // so a child can set an icon and keep its parent's title. Walk root→leaf and
@@ -191,6 +196,7 @@ export function resolveTypeSchema(
     resolved.compatible_with = self.compatible_with;
   }
   if (self.label !== undefined) resolved.label = self.label;
+  if (self.plural !== undefined) resolved.plural = self.plural;
   if (self.description !== undefined) resolved.description = self.description;
   if (displayHints) resolved.display_hints = displayHints;
   // The type's own and never an ancestor's: a link identifies rows of
