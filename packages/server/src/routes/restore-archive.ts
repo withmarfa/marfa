@@ -533,7 +533,7 @@ async function restoreRows(
         const dates = {
           ...archiveDates("item", item, index),
           ...archivedRestoredAt(item, entry.restored_at, index),
-          ...archiveTrash(item, entry.trashed_at, entry.trashed_by, index),
+          ...archiveTrash(item, item.trashed_at, entry.trashed_by, index),
         };
         const writer = archiveWriter(item, entry.writer, index);
         const history = archiveVersions(

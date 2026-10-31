@@ -785,7 +785,6 @@ async function collectSelection(input: {
           versions,
           writer: writers.get(item.id) ?? null,
           restored_at: restoredAt.get(item.id) ?? null,
-          trashed_at: trashDetails.get(item.id)?.trashed_at ?? null,
           trashed_by: readsHistory(item.type)
             ? (trashDetails.get(item.id)?.trashed_by ?? null)
             : null,

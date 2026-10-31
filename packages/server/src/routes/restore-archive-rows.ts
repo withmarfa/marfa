@@ -137,7 +137,6 @@ export interface ArchivedItemLine {
   versions?: unknown;
   writer?: unknown;
   restored_at?: unknown;
-  trashed_at?: unknown;
   trashed_by?: unknown;
 }
 
@@ -253,7 +252,7 @@ export function itemRefusal(
   if (text) return text;
   archiveDates("item", item, index);
   archiveRestoredAt(item, entry.restored_at, index);
-  archiveTrash(item, entry.trashed_at, entry.trashed_by, index);
+  archiveTrash(item, item.trashed_at, entry.trashed_by, index);
   archiveWriter(item, entry.writer, index);
   const history = archiveVersions(item, entry.versions, index, seenSnapshotIds);
   const scalar = archiveScalarRefusal("item", item, index);

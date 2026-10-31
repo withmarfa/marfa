@@ -813,10 +813,15 @@ describe("complete archive round trips", () => {
     expect(trash?.trashed_by?.kind).toBe("key");
     const history = await source.storage.versions.all(item.id);
     expect(history).toHaveLength(1);
-    const response = await restore(
-      target,
-      await exported(source, "&state=any"),
-    );
+    const archive = await exported(source, "&state=any");
+    // The time is the item's own field, carried once.
+    const line = JSON.parse(
+      (await unpack(archive)).get("items.ndjson")!.toString(),
+    ) as { item: Item };
+    expect(trash?.trashed_at).toBeTruthy();
+    expect(line.item.trashed_at).toBe(trash?.trashed_at);
+    expect(line).not.toHaveProperty("trashed_at");
+    const response = await restore(target, archive);
     expect(response.status, await response.clone().text()).toBe(200);
     expect(await target.storage.items.getIncludingTrashed(item.id)).toEqual(
       archived,
