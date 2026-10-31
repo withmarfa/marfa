@@ -1600,7 +1600,7 @@ Where a copy names the instance it was hydrated from, a device MUST name that in
 
 If the server answers a write a drain sends, or the lookup it asks for a create's natural key, `409 instance_changed`, then a device MUST end the drain `copy_expired` with the reason `instance_changed`, expiring the copy.
 
-**Tests:** `device/queue.test.ts › ends the drain copy_expired where another instance refuses a write, sending nothing more and keeping the queue`, `› expires the copy where another instance refuses the lookup a keyed create asks, sending the create nowhere`, `device/edge-move.test.ts › ends at once where another instance refuses a write behind a source move the server took`.
+**Tests:** `device/queue.test.ts › ends the drain copy_expired where another instance refuses a write, sending nothing more and keeping the queue`, `› expires the copy where another instance refuses the lookup a keyed create asks, sending the create nowhere`, `device/edge-move.test.ts › ends at once where another instance refuses a write behind a source move the server took`, `device/retype-drain.test.ts › ends at once where another instance refuses a write behind a retype the server took`.
 
 ### `queue-and-verdicts/instance-changed-sends-nothing`
 
@@ -1608,7 +1608,7 @@ When the server answers a write a drain sends, or the lookup it asks for a creat
 
 **Reason:** a write behind a move or a change of type is sent as it would have been had the copy not expired (`queue-and-verdicts/edge-source-move-carries-on`), and this refusal is about the server at the address, not about the write.
 
-**Tests:** `device/queue.test.ts › ends the drain copy_expired where another instance refuses a write, sending nothing more and keeping the queue`, `› expires the copy where another instance refuses the lookup a keyed create asks, sending the create nowhere`, `device/edge-move.test.ts › ends at once where another instance refuses a write behind a source move the server took`.
+**Tests:** `device/queue.test.ts › ends the drain copy_expired where another instance refuses a write, sending nothing more and keeping the queue`, `› expires the copy where another instance refuses the lookup a keyed create asks, sending the create nowhere`, `device/edge-move.test.ts › ends at once where another instance refuses a write behind a source move the server took`, `device/retype-drain.test.ts › ends at once where another instance refuses a write behind a retype the server took`.
 
 ### `queue-and-verdicts/instance-changed-keeps-write`
 
@@ -1616,7 +1616,7 @@ When the server answers a write a drain sends `409 instance_changed`, a device M
 
 **Reason:** the instance that refused it never held the rows it was made against and did not apply it. The write is held for the person once the copy is hydrated from that instance (`device/queue-other-instance-held`).
 
-**Tests:** `device/queue.test.ts › ends the drain copy_expired where another instance refuses a write, sending nothing more and keeping the queue`, `› expires the copy where another instance refuses the lookup a keyed create asks, sending the create nowhere`, `device/edge-move.test.ts › ends at once where another instance refuses a write behind a source move the server took`.
+**Tests:** `device/queue.test.ts › ends the drain copy_expired where another instance refuses a write, sending nothing more and keeping the queue`, `› expires the copy where another instance refuses the lookup a keyed create asks, sending the create nowhere`, `device/edge-move.test.ts › ends at once where another instance refuses a write behind a source move the server took`, `device/retype-drain.test.ts › ends at once where another instance refuses a write behind a retype the server took`.
 
 ### `queue-and-verdicts/instance-changed-afresh`
 
@@ -2458,7 +2458,7 @@ If a drain meets a changed reach anywhere but in the read after the answer it ha
 
 **Reason:** only a move of a source or a change of type answered in the drain at hand is known to have changed the reach (`reach/moves-edge-source`, `reach/moves-retype`); a change from any other cause, or met by a read an earlier drain left owed, is news the drain had no part in, and the caller learns of it before more is sent.
 
-**Tests:** `device/edge-move.test.ts › ends at once where the read of a write that moves no source meets a changed reach`, `› ends at once where a read owed from an earlier drain meets a changed reach`, `› expires the copy where another client changed the reach during a drain whose moves were all refused`, `device/retype-drain.test.ts › ends at once where the read of an edit that retypes nothing meets a changed reach`.
+**Tests:** `device/edge-move.test.ts › ends at once where the read of a write that moves no source meets a changed reach`, `› ends at once where a read owed from an earlier drain meets a changed reach`, `› expires the copy where another client changed the reach during a drain whose moves were all refused`, `device/retype-drain.test.ts › ends at once where the read of an edit that retypes nothing meets a changed reach`, `› expires the copy where another client changed the reach during a drain whose retypes were all refused`.
 
 ### `queue-and-verdicts/edge-move-waits-new-end`
 

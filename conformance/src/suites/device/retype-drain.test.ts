@@ -20,6 +20,7 @@ afterEach(async () => {
 const TASK = "acme.task";
 const RETYPED = "01a00000-0000-7000-8000-0000000000a1";
 const BEHIND = "01a00000-0000-7000-8000-0000000000a2";
+const AFTER = "01a00000-0000-7000-8000-0000000000a3";
 
 function value<T>(outcome: Outcome<T>): T {
   expect(outcome.ok, JSON.stringify(outcome)).toBe(true);
@@ -33,7 +34,11 @@ async function hydrated(label: string): Promise<Harness> {
     head: "10",
     catalog: () => typeCatalog([wireType(TASK, { parent: "core.note" })]),
     rows: {
-      "core.note": [{ item: { id: RETYPED } }, { item: { id: BEHIND } }],
+      "core.note": [
+        { item: { id: RETYPED } },
+        { item: { id: BEHIND } },
+        { item: { id: AFTER } },
+      ],
       [TASK]: [],
     },
   });
@@ -148,6 +153,53 @@ describe("a drain that sends a retype of its own", () => {
     expect(itemCalls(harness, RETYPED).reads).toHaveLength(1);
   });
 
+  it("ends at once where another instance refuses a write behind a retype the server took", async () => {
+    harness = await hydrated("retype-instance");
+    const { device, server } = harness;
+    scriptWrites(
+      harness,
+      TASK,
+      refusal(409, "instance_changed", "another instance at this address"),
+    );
+    server.answer("PATCH", `/items/${AFTER}`, () =>
+      answers.updated(
+        wireItem({ id: AFTER, version: 2, properties: { rank: 3 } }),
+      ),
+    );
+    value(
+      await device.update(RETYPED, {
+        type: TASK,
+        version: 1,
+        properties: { rank: 1 },
+      }),
+    );
+    value(await device.update(BEHIND, { version: 1, properties: { rank: 2 } }));
+    value(await device.update(AFTER, { version: 1, properties: { rank: 3 } }));
+
+    const drained = await device.drain();
+    expect(drained.ok).toBe(false);
+    if (!drained.ok) {
+      expect(drained.refusal.code).toBe("copy_expired");
+      expect(
+        drained.refusal.raw,
+        "the drain ended for the retype, not for the other instance",
+      ).toContain("instance_changed");
+    }
+    expect(
+      value(await device.queue()).map((row) => [row.verdict, row.refusals]),
+      "a write was sent, or judged, after another instance refused one",
+    ).toEqual([
+      ["accepted", 0],
+      [null, 0],
+      [null, 0],
+    ]);
+    // The witness: the retype deferred the expiry and the drain carried on to
+    // the write the other instance refused.
+    expect(itemCalls(harness, BEHIND).writes).toHaveLength(1);
+    expect(itemCalls(harness, AFTER).writes).toHaveLength(0);
+    expect(value(await device.status()).hydration).toBe("expired");
+  });
+
   it("returns the report with the wait the server asked for after a retype, the copy expired", async () => {
     harness = await hydrated("retype-wait");
     const { device } = harness;
@@ -236,5 +288,38 @@ describe("a drain that sends a retype of its own", () => {
       value(await device.status()).hydration,
       "a refused retype expired the copy",
     ).toBe("complete");
+  });
+
+  it("expires the copy where another client changed the reach during a drain whose retypes were all refused", async () => {
+    harness = await hydrated("retype-refused-elsewhere");
+    const { device, server } = harness;
+    server.answer(
+      "PATCH",
+      `/items/${RETYPED}`,
+      refusal(404, "item_not_found", "no such item"),
+    );
+    // The refusal changed nothing; the read after it meets a reach that
+    // another client changed.
+    server.answer(
+      "GET",
+      `/items/${RETYPED}`,
+      refusal(409, "reach_changed", "the reach has changed"),
+    );
+    value(
+      await device.update(RETYPED, {
+        type: TASK,
+        version: 1,
+        properties: { rank: 1 },
+      }),
+    );
+
+    const drained = await device.drain();
+    expect(drained.ok).toBe(false);
+    if (!drained.ok) expect(drained.refusal.code).toBe("copy_expired");
+    expect(value(await device.queue()).map((row) => row.verdict)).toEqual([
+      "refused",
+    ]);
+    expect(itemCalls(harness, RETYPED).reads).toHaveLength(1);
+    expect(value(await device.status()).hydration).toBe("expired");
   });
 });
