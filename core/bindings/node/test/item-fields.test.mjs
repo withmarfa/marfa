@@ -121,3 +121,35 @@ test("sets and clears an item's own time through an edit", (t) => {
     }),
   );
 });
+
+test("removes the properties an edit clears and keeps every other", (t) => {
+  const core = openCopy(t);
+  const made = core.createItem({
+    type: "core.note",
+    properties: { body: "kept", notes: "gone", courier: { nested: [1] } },
+  });
+  const id = /** @type {string} */ (made.itemId);
+  const version = core.get(id)?.version ?? 0;
+  assert.throws(() =>
+    core.updateItem(id, {
+      properties: { notes: "both" },
+      baseVersion: version,
+      clearProperties: ["notes"],
+    }),
+  );
+  assert.equal(core.get(id)?.properties.notes, "gone");
+  const queued = core.updateItem(id, {
+    properties: {},
+    baseVersion: version,
+    clearProperties: ["notes", "never-held"],
+  });
+  assert.deepEqual(core.get(id)?.properties, {
+    body: "kept",
+    courier: { nested: [1] },
+  });
+  const sent = core.queue().find((row) => row.id === queued.id);
+  assert.deepEqual(
+    /** @type {Record<string, unknown>} */ (sent?.body).clear_properties,
+    ["notes", "never-held"],
+  );
+});

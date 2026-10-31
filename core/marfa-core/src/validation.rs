@@ -75,6 +75,27 @@ pub(crate) fn property_names(properties: &Map<String, Value>) -> Result<(), Core
     )
 }
 
+/// The properties an edit clears, refused as the server refuses them: an
+/// empty name, and one the same edit also sets.
+pub(crate) fn cleared_names(cleared: &[String], set: &Map<String, Value>) -> Result<(), CoreError> {
+    let mut errors = Vec::new();
+    if cleared.iter().any(String::is_empty) {
+        errors.push("clear_properties: A property name must not be empty".to_string());
+    }
+    let both: Vec<&str> = cleared
+        .iter()
+        .filter(|name| set.contains_key(*name))
+        .map(String::as_str)
+        .collect();
+    if !both.is_empty() {
+        errors.push(format!(
+            "A property can't be both set and cleared: {}",
+            both.join(", ")
+        ));
+    }
+    refuse(errors)
+}
+
 /// An id a write names, as the server's `isValidId` takes one: a lowercase
 /// UUIDv7. The server refuses any other `400 invalid_id`, and then refuses a
 /// read of it the same way, so a copy that queued one could never read the

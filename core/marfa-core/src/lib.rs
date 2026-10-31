@@ -1678,7 +1678,7 @@ impl Core {
             return Ok(false);
         }
         // With its base gone, nothing tells a property it left out from one
-        // added since, so it goes as a merge and clears nothing.
+        // added since, so it goes as a merge and clears only what it names.
         store::merge_properties(&tx, id)?;
         store::move_edit(&tx, id, held.version, None)?;
         store::release(&tx, id)?;
@@ -3656,6 +3656,7 @@ fn queue_update(
     based: Based,
 ) -> Result<QueuedWrite> {
     refuse_invalid_names(&[], &edit.properties)?;
+    validation::cleared_names(&edit.clear_properties, &edit.properties)?;
     let Some(held) = store::item_by_id(tx, id)? else {
         return Err(CoreError::NotFound {
             code: "item_not_found".into(),
@@ -3723,6 +3724,13 @@ fn queue_update(
             (false, _) => edit.occurred_at.clone(),
         },
         clear_occurred_at: false,
+        clear_properties: edit
+            .clear_properties
+            .iter()
+            .enumerate()
+            .filter(|(at, name)| !edit.clear_properties[..*at].contains(name))
+            .map(|(_, name)| name.clone())
+            .collect(),
         ..edit.clone()
     };
     if let Some(r#type) = edit.r#type.as_ref().filter(|r#type| !catalog.known(r#type)) {
@@ -3740,6 +3748,21 @@ fn queue_update(
     if let Some(r#type) = &edit.r#type {
         edge_rules::refuse_retype_breaking_edges(tx, id, r#type)?;
     }
+    // Judged on any version: whatever the server holds by then, the field
+    // ends up empty.
+    let target = edit.r#type.as_deref().unwrap_or(&held.r#type);
+    let required: Vec<String> = edit
+        .clear_properties
+        .iter()
+        .filter(|name| catalog.requires(target, name))
+        .map(|name| format!("{name}: Required"))
+        .collect();
+    if !required.is_empty() {
+        return Err(CoreError::Validation {
+            code: "invalid_properties".into(),
+            message: required.join("; "),
+        });
+    }
     let payload = edit.payload(base)?;
     let projected = catalog.projected_properties(
         edit.r#type.as_deref().unwrap_or(&held.r#type),
@@ -3755,6 +3778,7 @@ fn queue_update(
             "properties": projected
                 .keys()
                 .chain(cleared)
+                .chain(&edit.clear_properties)
                 .map(|key| (key.clone(), held.properties.get(key).cloned().unwrap_or(Value::Null)))
                 .collect::<serde_json::Map<String, Value>>(),
         })
@@ -3767,6 +3791,9 @@ fn queue_update(
         for (key, value) in &projected {
             next.properties.insert(key.clone(), value.clone());
         }
+    }
+    for name in &edit.clear_properties {
+        next.properties.shift_remove(name);
     }
     // The natural key moves on the copy too: the folder reads the copy to
     // answer "who holds this name", and the next file to take the old name
@@ -4827,6 +4854,201 @@ mod tests {
         );
         let earlier = queue_update(&conn, &catalog, "row", &edit(3), &[], Based::AsRead).unwrap();
         assert_eq!(store::read_of(&conn, &earlier.id).unwrap(), None);
+    }
+
+    fn clearing_copy() -> Core {
+        let core = held_copy();
+        let mut row = store::testing::wire_item(
+            "row",
+            "core.note",
+            "active",
+            "2026-01-01T00:00:00Z",
+            serde_json::json!({
+                "title": "server",
+                "body": "body",
+                "notes": "to clear",
+                "courier": { "nested": ["undeclared", 1] },
+            }),
+        );
+        row.version = 3;
+        store::put_server_item(
+            &core.conn().unwrap(),
+            &row,
+            None,
+            &crate::catalog::Catalog::empty(),
+        )
+        .unwrap();
+        core
+    }
+
+    fn clear(base: i64, names: &[&str]) -> Edit {
+        Edit {
+            base_version: Some(base),
+            clear_properties: names.iter().map(|name| (*name).to_string()).collect(),
+            ..Edit::default()
+        }
+    }
+
+    #[test]
+    fn a_clear_removes_only_the_properties_it_names_and_sends_them() {
+        let core = clearing_copy();
+        let queued = core
+            .update_item("row", &clear(3, &["notes", "never-held"]))
+            .unwrap();
+        assert_eq!(
+            core.get("row").unwrap().unwrap().properties,
+            properties(serde_json::json!({
+                "title": "server",
+                "body": "body",
+                "courier": { "nested": ["undeclared", 1] },
+            }))
+        );
+        let queue = core.queue().unwrap();
+        assert_eq!(queue.len(), 1);
+        assert_eq!(
+            queue[0].body,
+            serde_json::json!({
+                "properties": {},
+                "version": 3,
+                "clear_properties": ["notes", "never-held"],
+            })
+        );
+        let read: Value = serde_json::from_str(
+            &store::read_of(&core.conn().unwrap(), &queued.id)
+                .unwrap()
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            read,
+            serde_json::json!({ "properties": { "notes": "to clear", "never-held": null } })
+        );
+    }
+
+    #[test]
+    fn a_clear_beside_a_set_lays_both_and_refuses_one_name_in_both() {
+        let core = clearing_copy();
+        let both = Edit {
+            properties: properties(serde_json::json!({ "notes": "new" })),
+            ..clear(3, &["notes"])
+        };
+        let before = core.get("row").unwrap();
+        let Err(CoreError::Validation { code, message }) = core.update_item("row", &both) else {
+            panic!("a property both set and cleared was queued");
+        };
+        assert_eq!(code, "validation_error");
+        assert!(message.contains("notes"), "{message}");
+        assert_eq!(core.get("row").unwrap(), before);
+        assert!(core.queue().unwrap().is_empty());
+
+        assert!(matches!(
+            core.update_item("row", &clear(3, &[""])),
+            Err(CoreError::Validation { .. })
+        ));
+        assert!(core.queue().unwrap().is_empty());
+
+        // The witness: setting one property and clearing another is queued.
+        let apart = Edit {
+            properties: properties(serde_json::json!({ "title": "mine" })),
+            ..clear(3, &["notes"])
+        };
+        core.update_item("row", &apart).unwrap();
+        let shown = core.get("row").unwrap().unwrap().properties;
+        assert_eq!(shown.get("title"), Some(&Value::from("mine")));
+        assert!(!shown.contains_key("notes"));
+    }
+
+    #[test]
+    fn a_clear_of_a_required_field_is_refused_on_the_held_and_an_earlier_version() {
+        let core = validation_copy();
+        let mut row = store::testing::wire_item(
+            "typed",
+            "acme.child",
+            "active",
+            "2026-01-01T00:00:00Z",
+            serde_json::json!({ "title": "valid", "read": true }),
+        );
+        row.version = 3;
+        store::put_server_item(
+            &core.conn().unwrap(),
+            &row,
+            None,
+            &crate::catalog::Catalog::empty(),
+        )
+        .unwrap();
+        for (based, edit) in [
+            (Based::OnHeld, clear(3, &["title"])),
+            (Based::AsRead, clear(1, &["title"])),
+        ] {
+            let refused = match based {
+                Based::OnHeld => core.update_item("typed", &edit),
+                Based::AsRead => core.update_item_as_read("typed", &edit),
+            };
+            let Err(CoreError::Validation { code, .. }) = refused else {
+                panic!("a clear of a required field was queued: {refused:?}");
+            };
+            assert_eq!(code, "invalid_properties");
+            assert!(core.queue().unwrap().is_empty());
+        }
+        // The witness: an optional field clears.
+        core.update_item("typed", &clear(3, &["read"])).unwrap();
+        assert!(
+            !core
+                .get("typed")
+                .unwrap()
+                .unwrap()
+                .properties
+                .contains_key("read")
+        );
+    }
+
+    #[test]
+    fn a_waiting_clear_stays_shown_over_a_newer_server_row_and_keeps_what_it_did_not_name() {
+        let core = clearing_copy();
+        core.update_item("row", &clear(3, &["notes"])).unwrap();
+        let conn = core.conn().unwrap();
+        let mut newer = store::testing::wire_item(
+            "row",
+            "core.note",
+            "active",
+            "2026-01-01T00:00:00Z",
+            serde_json::json!({
+                "title": "changed elsewhere",
+                "body": "body",
+                "notes": "to clear",
+                "courier": { "nested": ["undeclared", 1] },
+                "added": "since",
+            }),
+        );
+        newer.version = 4;
+        store::put_server_item(&conn, &newer, None, &crate::catalog::Catalog::empty()).unwrap();
+        store::lay_waiting_writes_over(&conn, "row", &|_| catalog::Indexing::default()).unwrap();
+        drop(conn);
+        assert_eq!(
+            core.get("row").unwrap().unwrap().properties,
+            properties(serde_json::json!({
+                "title": "changed elsewhere",
+                "body": "body",
+                "courier": { "nested": ["undeclared", 1] },
+                "added": "since",
+            }))
+        );
+    }
+
+    #[test]
+    fn a_moved_clear_drops_a_name_it_never_read_a_value_for() {
+        let core = clearing_copy();
+        let queued = core
+            .update_item("row", &clear(3, &["notes", "never-held"]))
+            .unwrap();
+        let conn = core.conn().unwrap();
+        store::move_edit(&conn, &queued.id, 5, None).unwrap();
+        let body: Value =
+            serde_json::from_str(&store::payload_of(&conn, &queued.id).unwrap()).unwrap();
+        assert_eq!(body["version"], 5);
+        // On version 5 the server would remove a `never-held` written since,
+        // which this edit never saw.
+        assert_eq!(body["clear_properties"], serde_json::json!(["notes"]));
     }
 
     fn held_copy() -> Core {

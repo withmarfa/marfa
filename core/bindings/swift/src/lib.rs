@@ -965,7 +965,8 @@ pub struct Edit {
     /// Whole field values; a device never merges inside a field. Unless
     /// `replace_properties` is set, each property given replaces its value and
     /// the rest stay, and a `null` clears nothing: the server drops it, and
-    /// so does the copy, so the property keeps its value.
+    /// so does the copy, so the property keeps its value. To remove a
+    /// property, name it in `clear_properties`.
     #[uniffi(default)]
     pub properties: JsonObject,
     /// The properties are the item's whole properties: one left out is
@@ -973,6 +974,13 @@ pub struct Edit {
     /// `update_item_as_read`, it is merged as a merge is.
     #[uniffi(default = false)]
     pub replace_properties: bool,
+    /// Properties to remove from the item. Every other property stays as the
+    /// row holds it, one the app cannot read included, so a removal needs no
+    /// `replace_properties`. A name the item lacks is not an error; one also
+    /// in `properties`, or a field the type requires, is refused before
+    /// anything is queued.
+    #[uniffi(default)]
+    pub clear_properties: Vec<String>,
     /// The version the change was made against.
     pub base_version: i64,
     /// The natural key to move the row to.
@@ -1005,6 +1013,7 @@ impl Edit {
             occurred_at: self.occurred_at,
             clear_occurred_at: self.clear_occurred_at,
             replace_properties: self.replace_properties,
+            clear_properties: self.clear_properties,
         })
     }
 }
@@ -3783,6 +3792,7 @@ mod tests {
                 base_version: version,
                 source_id: None,
                 replace_properties: false,
+                clear_properties: Vec::new(),
                 r#type: None,
                 tier: None,
             },
@@ -4660,6 +4670,7 @@ mod tests {
             clear_occurred_at: false,
             properties: parsed(properties_json),
             replace_properties: false,
+            clear_properties: Vec::new(),
             base_version,
             source_id: None,
             r#type: None,
@@ -5085,6 +5096,30 @@ mod tests {
         assert_eq!(
             text(&core.get(id.clone()).unwrap().unwrap().properties),
             r#"{"title":"T","unknown":{"nested":[1,2.5,"x"]},"also":null}"#
+        );
+        // A clear removes what it names and no other.
+        let version = core.get(id.clone()).unwrap().unwrap().version;
+        let cleared = core
+            .update_item(
+                id.clone(),
+                Edit {
+                    clear_properties: vec!["also".into()],
+                    ..edit("{}", version)
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            text(&core.get(id.clone()).unwrap().unwrap().properties),
+            r#"{"title":"T","unknown":{"nested":[1,2.5,"x"]}}"#
+        );
+        let sent = cleared
+            .body
+            .members
+            .iter()
+            .find(|m| m.key == "clear_properties");
+        assert_eq!(
+            sent.map(|m| &m.value),
+            Some(&JsonValue::Array(vec![JsonValue::String("also".into())]))
         );
         // A whole edit clears what it leaves out, which is its meaning.
         core.update_item(

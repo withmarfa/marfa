@@ -2411,7 +2411,9 @@ fn edit_fields(conn: &Connection, row: &QueuedWrite) -> Result<HashSet<EditField
             if matches!(key.as_str(), "version" | "properties_mode" | "retype") {
                 continue;
             }
-            if key == "properties"
+            if key == "clear_properties" {
+                fields.extend(cleared(&row.body).map(|key| (true, key.to_string())));
+            } else if key == "properties"
                 && let Some(properties) = value.as_object()
             {
                 fields.extend(
@@ -5590,11 +5592,32 @@ fn retain_edit_fields(body: &mut Value, fields: &HashSet<EditField>) {
         body.retain(|key, _| {
             matches!(
                 key.as_str(),
-                "version" | "properties_mode" | "retype" | "properties"
+                "version" | "properties_mode" | "retype" | "properties" | "clear_properties"
             ) || fields.contains(&(false, key.clone()))
         });
         if let Some(properties) = body.get_mut("properties").and_then(Value::as_object_mut) {
             properties.retain(|key, _| fields.contains(&(true, key.clone())));
+        }
+        retain_cleared(body, |key| fields.contains(&(true, key.to_string())));
+    }
+}
+
+/// The properties an item edit's body clears.
+pub fn cleared(body: &Value) -> impl Iterator<Item = &str> {
+    body.get("clear_properties")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+}
+
+/// Keeps the cleared properties `keep` takes, and drops the field once it
+/// names none: the server reads an empty list as no change.
+fn retain_cleared(body: &mut Map<String, Value>, keep: impl Fn(&str) -> bool) {
+    if let Some(Value::Array(names)) = body.get_mut("clear_properties") {
+        names.retain(|name| name.as_str().is_some_and(&keep));
+        if names.is_empty() {
+            body.shift_remove("clear_properties");
         }
     }
 }
@@ -5677,6 +5700,9 @@ fn lay_write(
                     };
                     item.properties.extend(projected);
                 }
+            }
+            for name in cleared(payload) {
+                item.properties.shift_remove(name);
             }
             if let Some(Value::String(key)) = payload.get("source_id") {
                 item.source_id = Some(key.clone());
@@ -5866,6 +5892,13 @@ pub fn move_edit(
         let read: Value = serde_json::from_str(&read)?;
         let mut body: Value = serde_json::from_str(&payload_of(conn, id)?)?;
         let whole = replaces_properties(&body);
+        // A property it read no value for may have been written since by
+        // another device, and on the new version the server would clear that.
+        if let (Some(Value::Object(read)), Some(body)) =
+            (read.get("properties"), body.as_object_mut())
+        {
+            retain_cleared(body, |key| read.get(key).is_some_and(|was| !was.is_null()));
+        }
         if let (Some(Value::Object(read)), Some(Value::Object(properties))) =
             (read.get("properties").cloned(), body.get_mut("properties"))
         {

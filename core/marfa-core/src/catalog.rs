@@ -1240,6 +1240,14 @@ impl Catalog {
             .collect()
     }
 
+    /// Whether `type_id` declares or inherits `name` as a required field.
+    pub(crate) fn requires(&self, type_id: &str, name: &str) -> bool {
+        self.resolved(type_id)
+            .ok()
+            .and_then(|fields| fields.get(name).map(Self::required))
+            .unwrap_or(false)
+    }
+
     fn required(definition: &Value) -> bool {
         definition.get("required").and_then(Value::as_bool) == Some(true)
     }

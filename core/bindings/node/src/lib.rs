@@ -717,6 +717,11 @@ pub struct Edit {
     /// Gives the item no time of its own again, so it is its creation time.
     /// Refused beside `occurredAt`.
     pub clear_occurred_at: Option<bool>,
+    /// Properties to remove from the item. Every other property stays as the
+    /// row holds it. A name the item lacks is not an error; one also in
+    /// `properties`, or a field the type requires, is refused before anything
+    /// is queued.
+    pub clear_properties: Option<Vec<String>>,
 }
 
 /// An edge, before it is queued.
@@ -1356,6 +1361,7 @@ fn edit_of(edit: Edit) -> Result<marfa_core::Edit> {
         source_id: edit.source_id,
         occurred_at: edit.occurred_at,
         clear_occurred_at: edit.clear_occurred_at.unwrap_or(false),
+        clear_properties: edit.clear_properties.unwrap_or_default(),
         ..Default::default()
     })
 }
