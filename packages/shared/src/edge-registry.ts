@@ -128,9 +128,14 @@ export function edgeNameCollisions(): Record<string, string[]> {
 }
 
 /** Lists every edge type: the shipped core set plus the instance's own
- *  custom edge types. */
+ *  custom edge types. A stored registration under an identifier a later
+ *  release ships is left out, since the shipped definition is the one that
+ *  resolves. */
 export function listEdgeTypes(): EdgeTypeSchema[] {
-  return [..._coreRegistry.values(), ..._customRegistry.values()];
+  return [
+    ..._coreRegistry.values(),
+    ...[..._customRegistry.values()].filter((e) => !isCoreEdgeType(e.id)),
+  ];
 }
 
 // ---------------------------------------------------------------------------

@@ -29,6 +29,7 @@ const SHIPPED_EDGE_TYPES = [
   "in-thread",
   "attached-to",
   "derived-from",
+  "excerpt-of",
   "supersedes",
   "references",
   "in-collection",
@@ -151,33 +152,27 @@ describe("the edge listings", () => {
   });
 
   it("takes an edge_type filter of 10 types and refuses one of 11, on both listings", async () => {
-    const included = await registerEdgeType("filter");
-    const left = await registerEdgeType("filter-left");
+    const extra = await registerEdgeType("filter");
     const source = await makeItem("filter-source");
     const target = await makeItem("filter-target");
     const aboutEdge = await makeEdge(source, target, "about");
-    const includedEdge = await makeEdge(source, target, included);
-    const leftEdge = await makeEdge(source, target, left);
+    const extraEdge = await makeEdge(source, target, extra);
 
-    // The shipped types are nine, so the tenth name is a registered type.
-    expect(SHIPPED_EDGE_TYPES).toHaveLength(MAX_EDGE_TYPES - 1);
-    const ten = [...SHIPPED_EDGE_TYPES, included].join(",");
-    const eleven = [...SHIPPED_EDGE_TYPES, included, left].join(",");
+    const ten = SHIPPED_EDGE_TYPES.join(",");
+    const eleven = [...SHIPPED_EDGE_TYPES, extra].join(",");
+    expect(SHIPPED_EDGE_TYPES).toHaveLength(MAX_EDGE_TYPES);
 
     const fromSource = await client.listItemEdges(source, { edge_type: ten });
     expect(fromSource.status).toBe(200);
     // The edge of the type left out of the ten is the control: the filter
     // narrows, so it is not there.
-    expect(fromSource.data.data.map((e) => e.id).sort()).toEqual(
-      [aboutEdge.id, includedEdge.id].sort(),
-    );
+    expect(fromSource.data.data.map((e) => e.id)).toEqual([aboutEdge.id]);
 
     const all = await client.listEdges({ edge_type: ten, limit: MAX_LIMIT });
     expect(all.status).toBe(200);
     const ids = all.data.data.map((e) => e.id);
     expect(ids).toContain(aboutEdge.id);
-    expect(ids).toContain(includedEdge.id);
-    expect(ids).not.toContain(leftEdge.id);
+    expect(ids).not.toContain(extraEdge.id);
 
     const overSource = await client.listItemEdges(source, {
       edge_type: eleven,
@@ -191,8 +186,8 @@ describe("the edge listings", () => {
 
     // The eleventh name is a registered type, so the refusals above are the
     // count and not the name.
-    const alone = await client.listItemEdges(source, { edge_type: left });
-    expect(alone.data.data.map((e) => e.id)).toEqual([leftEdge.id]);
+    const alone = await client.listItemEdges(source, { edge_type: extra });
+    expect(alone.data.data.map((e) => e.id)).toEqual([extraEdge.id]);
   });
 
   it("lists edges newest created first, and an update does not move one", async () => {

@@ -2,7 +2,7 @@
   "id": "about",
   "label": "About",
   "reverse_label": "Subject of",
-  "description": "Source item is about the target item. Topical connection between items across types.",
+  "description": "Source item is about the target item. Topical connection between items across types. For a passage taken from the target use `excerpt-of`; for a mention in the source's text use `references`.",
   "cardinality": "many-to-many",
   "source_type_constraints": ["*"],
   "target_type_constraints": ["*"],

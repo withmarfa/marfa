@@ -69,6 +69,7 @@ describe("custom edge-type registration", () => {
       "in-thread",
       "attached-to",
       "derived-from",
+      "excerpt-of",
       "supersedes",
       "references",
       "in-collection",
@@ -77,7 +78,7 @@ describe("custom edge-type registration", () => {
     for (const shipped of SHIPPED) {
       expect(ids).toContain(shipped);
     }
-    // And no tenth. `toContain` per name cannot see a shipped type nobody
+    // And no eleventh. `toContain` per name cannot see a shipped type nobody
     // listed here, so the list could fall behind the registry with nothing
     // red — and a type absent from this list is a type absent from every
     // fixture that reads it.
@@ -971,6 +972,7 @@ describe("custom edge-type registration", () => {
       about: ["About", "Subject of"],
       "attached-to": ["Attached to", "Attachments"],
       "derived-from": ["Derived from", "Basis for"],
+      "excerpt-of": ["Excerpt of", "Excerpts"],
       "in-collection": ["In collection", "Contents"],
       "in-folder": ["In folder", "Folder contents"],
       "in-thread": ["In thread", "Messages"],
