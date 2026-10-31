@@ -1316,7 +1316,7 @@ When an item of `core.entity` or a type under it is written with entries in `ema
 
 When the server updates a database under `instance/upgrade-in-place` from a schema version before 4, the server MUST replace each `email`, `phone` and `place` that an item of `core.entity` or a type under it holds as a non-empty string with a one-entry list in `emails`, `phones` or `addresses`, holding the string as `value`, `value` or `street_address`, unless the type or an ancestor below `core.entity` declares the old or the new field itself.
 
-**Reason:** the update keeps what an owner wrote under the fields the type no longer declares, in the shape it declares now. An item in the bin is updated too, so it comes back in that shape. A value the update cannot move stays where it was (`types/entity-contact-upgrade-kept`).
+**Reason:** the update keeps what an owner wrote under the fields the type no longer declares, in the shape it declares now. An item in the bin is updated too, so it comes back in that shape. A type declares a field itself when it holds the field and its parent does not, or holds it with another definition; such a field means what that type says, not what `core.entity` said. A value the update cannot move stays where it was (`types/entity-contact-upgrade-kept`).
 
 **Tests:** `compliance/contact-lists-upgrade.test.ts › moves a stored email, phone and place into one-entry lists`.
 
