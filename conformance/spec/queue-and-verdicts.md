@@ -1604,9 +1604,9 @@ If the server answers a write a drain sends, or the lookup it asks for a create'
 
 ### `queue-and-verdicts/instance-changed-sends-nothing`
 
-When the server answers a write a drain sends, or the lookup it asks for a create's natural key, `409 instance_changed`, a device MUST send no further write in that drain, whether or not the server took a move of an edge's source earlier in it.
+When the server answers a write a drain sends, or the lookup it asks for a create's natural key, `409 instance_changed`, a device MUST send no further write in that drain, whether or not the server took a move of an edge's source or a retype earlier in it.
 
-**Reason:** a write behind a move is judged as it would have been had the copy not expired (`queue-and-verdicts/edge-source-move-carries-on`), and this refusal is about the server at the address, not about the write.
+**Reason:** a write behind a move or a retype is sent as it would have been had the copy not expired (`queue-and-verdicts/edge-source-move-carries-on`, `queue-and-verdicts/retype-carries-on`), and this refusal is about the server at the address, not about the write.
 
 **Tests:** `device/queue.test.ts › ends the drain copy_expired where another instance refuses a write, sending nothing more and keeping the queue`, `› expires the copy where another instance refuses the lookup a keyed create asks, sending the create nowhere`, `device/edge-move.test.ts › ends at once where another instance refuses a write behind a source move the server took`.
 

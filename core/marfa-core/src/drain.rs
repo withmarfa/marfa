@@ -3170,7 +3170,7 @@ enum Bin {
 #[derive(Default)]
 struct ReachChange {
     /// The copy as it stood when the server first said its reach had
-    /// changed under a source move, and the reason it gave.
+    /// changed under a source move or a retype, and the reason it gave.
     seen: Option<(reach::Context, String)>,
 }
 
