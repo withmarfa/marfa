@@ -59,9 +59,17 @@ struct ScanStart {
     lists: Lists,
 }
 
+/// Set once the folder has read its documents' edges again under the rule
+/// that an embed is a `references` edge, attaching only a file the query
+/// does not hold (`folders/embed-rederived`).
+pub(super) const EMBEDS_REREAD: &str = "folder_embeds_references";
+
 /// What a pass holds between its phases.
 struct ScanState {
     full: bool,
+    /// Whether this pass reads every document's edges again
+    /// (`EMBEDS_REREAD`).
+    reread_embeds: bool,
     settle: Option<Duration>,
     mode: Files,
     report: ScanReport,
@@ -214,10 +222,14 @@ impl Folder {
             ControlFlow::Break(report) => return Ok(report),
             ControlFlow::Continue(start) => start,
         };
-        let mut scan = match self.walk_for_scan(start, full, settle, mode)? {
+        // The first pass under the rule reads every file, so no document
+        // is skipped as unchanged.
+        let reread_embeds = crate::store::meta_get(&*self.core.conn()?, EMBEDS_REREAD)?.is_none();
+        let mut scan = match self.walk_for_scan(start, full || reread_embeds, settle, mode)? {
             ControlFlow::Break(report) => return Ok(report),
             ControlFlow::Continue(scan) => scan,
         };
+        scan.reread_embeds = reread_embeds;
         self.read_unchanged_and_documents(&mut scan)?;
         self.count_unchanged(&mut scan);
         self.read_rest(&mut scan)?;
@@ -235,6 +247,9 @@ impl Folder {
             ControlFlow::Continue(work) => work,
         };
         self.queue_edge_work(&mut scan, work)?;
+        if scan.reread_embeds && !scan.incomplete {
+            crate::store::meta_set(&*self.core.conn()?, EMBEDS_REREAD, "1")?;
+        }
         self.record_stats(&scan)?;
         if self.root_left(&mut scan).is_break() {
             return Ok(scan.report);
@@ -343,6 +358,7 @@ impl Folder {
         let unanswered = crate::store::items_awaiting_their_write(&*self.core.conn()?)?;
         Ok(ControlFlow::Continue(ScanState {
             full,
+            reread_embeds: false,
             settle,
             mode,
             report,
@@ -735,6 +751,7 @@ impl Folder {
         mut waiting: Waiting,
     ) -> Result<ControlFlow<(), Vec<EdgeWork>>> {
         let (mode, settle) = (scan.mode, scan.settle);
+        let reread_embeds = scan.reread_embeds;
         let by_path = bound_by_path(&scan.snapshot);
         let (settings, catalog, edge_types) = (&scan.settings, &scan.catalog, &scan.edge_types);
         let (files, walked) = (&scan.files, &scan.walked);
@@ -906,6 +923,15 @@ impl Folder {
                                 matches!(refused.change, state::Change::Edge { .. })
                                     && copy_refused(refused)
                             })
+                            // Under the earlier rule an embed attached its file
+                            // and recorded it so; read once more, it references
+                            // the file and attaches only one the query does not
+                            // hold.
+                            || (reread_embeds
+                                && bound.lines.iter().any(|line| {
+                                    line.edge_type == embeds::ATTACHMENT_EDGE
+                                        && line.end == crate::catalog::End::Target
+                                }))
                         {
                             work.push(self.edge_work(file, &item_id, Some(&bound)));
                         }

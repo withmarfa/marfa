@@ -425,8 +425,10 @@ impl Folder {
         }
         settings_file::bind(&added.core, folder)?;
         // Only a store made now has never synced: one added again over its
-        // own state keeps what it was asked.
+        // own state keeps what it was asked, and the record an earlier rule
+        // made, which its next scan reads again.
         if fresh {
+            crate::store::meta_set(&*added.core.conn()?, scan::EMBEDS_REREAD, "1")?;
             added.wait_for_confirmation()?;
         }
         if let settings_file::Wrote::Failed(reason) =
@@ -2087,7 +2089,7 @@ impl Folder {
             .and_then(Value::as_str)
             .unwrap_or_default()
             .to_string();
-        let links = self.body_links(item, &body, catalog, lines.0)?;
+        let mut links = self.body_links(item, &body, catalog, lines.0)?;
         if !carries_frontmatter(Path::new(path)) {
             return Ok(Rendered {
                 text: Ok(body),
@@ -2095,11 +2097,25 @@ impl Folder {
                 lines: Vec::new(),
             });
         }
-        let embedded: Vec<String> = self
+        // An embed is the body's reference, as a link is, and attaches a
+        // file the query does not hold.
+        let mut embedded: Vec<String> = Vec::new();
+        for id in self
             .shown_in(item, path, &body, catalog)?
             .into_iter()
             .filter_map(|shown| shown.item)
-            .collect();
+        {
+            if id != item.id && !links.contains(&id) {
+                links.push(id.clone());
+            }
+            if !embedded.contains(&id) {
+                embedded.push(id);
+            }
+        }
+        if !embedded.is_empty() {
+            let held = self.core.held_among(&self.settings()?, &embedded)?;
+            embedded.retain(|id| !held.contains(id));
+        }
         let (names, typed, recorded) = lines;
         let mut front = fields::lines_of(item, typed.map(|document| &document.front))?;
         // A file that already says when the item happened goes on saying it,
@@ -6880,6 +6896,141 @@ mod tests {
         assert!(
             scanned.as_ref().is_err_and(super::copy_changed),
             "{scanned:?}"
+        );
+    }
+
+    /// The edge writes the folder's copy has queued, placements aside: a
+    /// create as its source, type and target, and a delete as the id of the
+    /// edge it takes out.
+    fn queued_edge_writes(folder: &Folder) -> Vec<(&'static str, String, String, String)> {
+        let conn = folder.core.conn().unwrap();
+        let mut found = Vec::new();
+        for row in crate::store::waiting_writes(&conn).unwrap() {
+            match row.kind {
+                WriteKind::CreateEdge => {
+                    let end = |field: &str| row.body[field].as_str().unwrap().to_string();
+                    found.push((
+                        "create",
+                        end("source_id"),
+                        end("edge_type"),
+                        end("target_id"),
+                    ));
+                }
+                WriteKind::DeleteEdge => found.push((
+                    "delete",
+                    row.edge_id.clone().unwrap(),
+                    String::new(),
+                    String::new(),
+                )),
+                _ => {}
+            }
+        }
+        found.retain(|(_, _, edge_type, _)| edge_type != PLACEMENT_EDGE);
+        found.sort();
+        found
+    }
+
+    #[test]
+    fn a_folder_reads_its_embeds_again_once_and_keeps_only_an_outside_file_s_attachment() {
+        for (types, inside) in [
+            (serde_json::json!(["core.note"]), false),
+            (serde_json::json!(["core.note", "core.file"]), true),
+        ] {
+            let (dir, folder) =
+                scanned_folder_with(serde_json::json!({ "query": { "types": types } }), None);
+            std::fs::write(dir.path().join("photo.png"), [7, 7, 5]).unwrap();
+            std::fs::write(
+                dir.path().join("a.md"),
+                "---\ntitle: A\n---\n![](photo.png)\n",
+            )
+            .unwrap();
+            folder.scan().unwrap();
+            let (a, file) = (landed(&folder, "a.md"), landed(&folder, "photo.png"));
+            // As the earlier rule left it: the embed made the file's
+            // `attached-to` edge alone, and the record names it as a line.
+            {
+                let conn = folder.core.conn().unwrap();
+                conn.execute("DELETE FROM queue", []).unwrap();
+                conn.execute(
+                    "DELETE FROM edges WHERE edge_type IN (?1, ?2)",
+                    [LINK_EDGE, ATTACHMENT_EDGE],
+                )
+                .unwrap();
+                let edge = crate::store::testing::wire_edge("embedded", &file, &a, ATTACHMENT_EDGE);
+                crate::store::put_server_edge(&conn, &edge).unwrap();
+                let bound = state::bound_at(&conn, "a.md").unwrap().unwrap();
+                state::bind(
+                    &conn,
+                    &state::Bound {
+                        links: Vec::new(),
+                        lines: vec![state::Line {
+                            edge_type: ATTACHMENT_EDGE.into(),
+                            end: crate::catalog::End::Target,
+                            other: file.clone(),
+                        }],
+                        ..bound
+                    },
+                )
+                .unwrap();
+                crate::store::meta_delete(&conn, scan::EMBEDS_REREAD).unwrap();
+            }
+            folder.scan().unwrap();
+            let mut wanted = vec![("create", a.clone(), LINK_EDGE.to_string(), file.clone())];
+            if inside {
+                wanted.push(("delete", "embedded".into(), String::new(), String::new()));
+            }
+            wanted.sort();
+            assert_eq!(queued_edge_writes(&folder), wanted, "inside: {inside}");
+
+            // Once: a later pass over the same files reads no edge again.
+            folder
+                .core
+                .conn()
+                .unwrap()
+                .execute("DELETE FROM queue", [])
+                .unwrap();
+            folder.scan().unwrap();
+            assert_eq!(queued_edge_writes(&folder), [], "inside: {inside}");
+        }
+    }
+
+    #[test]
+    fn an_embed_taken_out_leaves_its_attachment_written_as_a_line() {
+        let (dir, folder) =
+            scanned_folder_with(serde_json::json!({ "query": { "types": ["core.note"] } }), None);
+        std::fs::write(dir.path().join("photo.png"), [7, 7, 5]).unwrap();
+        std::fs::write(
+            dir.path().join("a.md"),
+            "---\ntitle: A\n---\nsee ![](photo.png)\n",
+        )
+        .unwrap();
+        folder.scan().unwrap();
+        let (a, file) = (landed(&folder, "a.md"), landed(&folder, "photo.png"));
+        folder.pull().unwrap();
+        assert!(
+            !std::fs::read_to_string(dir.path().join("a.md"))
+                .unwrap()
+                .contains("has-attachment"),
+            "a line repeats the attachment the embed shows"
+        );
+
+        std::fs::write(dir.path().join("a.md"), "---\ntitle: A\n---\nsee\n").unwrap();
+        folder.scan().unwrap();
+        let held = |edge_type: &str, from: &str, to: &str| {
+            folder
+                .core
+                .edges_from(from)
+                .unwrap()
+                .iter()
+                .any(|edge| edge.edge_type == edge_type && edge.target_id == to)
+        };
+        assert!(!held(LINK_EDGE, &a, &file), "the embed's reference stayed");
+        assert!(held(ATTACHMENT_EDGE, &file, &a), "the attachment went with the embed");
+        folder.pull().unwrap();
+        let text = std::fs::read_to_string(dir.path().join("a.md")).unwrap();
+        assert!(
+            text.contains("has-attachment: [\"[[photo.png]]\"]"),
+            "the attachment the body no longer shows is in no line: {text}"
         );
     }
 }

@@ -158,6 +158,29 @@ impl Core {
         query::list_where(&conn, &clauses, &values, Sort::default(), None, None)
     }
 
+    /// Which of `ids` the folder's query holds, as `held_by` answers.
+    pub(crate) fn held_among(
+        &self,
+        settings: &Settings,
+        ids: &[String],
+    ) -> Result<std::collections::HashSet<String>> {
+        if ids.is_empty() {
+            return Ok(Default::default());
+        }
+        let conn = self.conn()?;
+        let catalog = catalog::Catalog::load(&conn)?;
+        let (mut clauses, mut values) = (Vec::new(), Vec::new());
+        settings.narrow(&catalog, &[], &mut clauses, &mut values)?;
+        clauses.push(format!("items.id IN ({})", vec!["?"; ids.len()].join(", ")));
+        values.extend(ids.iter().cloned().map(Value::String));
+        Ok(
+            query::list_where(&conn, &clauses, &values, Sort::default(), None, None)?
+                .into_iter()
+                .map(|item| item.id)
+                .collect(),
+        )
+    }
+
     /// `settings` must carry a `title`. Settings no folder could follow are
     /// refused before anything is sent. The same `idempotency_key` sent
     /// again is answered with the first folder, never a second.

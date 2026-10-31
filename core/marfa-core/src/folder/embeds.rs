@@ -5,7 +5,7 @@ use serde_json::Value;
 
 use super::lists::Lists;
 use super::placement::{cleaned, path_of};
-use super::{Flagged, Folder, bytes_of, fields, pull, state};
+use super::{Flagged, Folder, LINK_EDGE, bytes_of, fields, pull, state};
 use crate::Result;
 use crate::body::embed::{
     answers, carries_frontmatter, dir_of, file_like, is_note, joined, named, read_as,
@@ -155,15 +155,27 @@ impl Folder {
         Ok(paths)
     }
 
+    /// The files an embed in the host's body can name: its attachments, and
+    /// the files it references, as an embed's own edge is a reference.
     fn attachments(&self, host: &str, catalog: &Catalog) -> Result<Vec<Attachment>> {
         let mut found: Vec<Attachment> = Vec::new();
-        for edge in self.core.edges_to(host)? {
-            if edge.edge_type != ATTACHMENT_EDGE
-                || found.iter().any(|held| held.id == edge.source_id)
-            {
+        let attached = self
+            .core
+            .edges_to(host)?
+            .into_iter()
+            .filter(|edge| edge.edge_type == ATTACHMENT_EDGE)
+            .map(|edge| edge.source_id);
+        let referenced = self
+            .core
+            .edges_from(host)?
+            .into_iter()
+            .filter(|edge| edge.edge_type == LINK_EDGE)
+            .map(|edge| edge.target_id);
+        for id in attached.chain(referenced) {
+            if found.iter().any(|held| held.id == id) {
                 continue;
             }
-            let Some(item) = self.core.get(&edge.source_id)? else {
+            let Some(item) = self.core.get(&id)? else {
                 continue;
             };
             if bytes_of(&item, catalog).is_none() {

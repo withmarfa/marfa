@@ -1545,12 +1545,19 @@ impl Folder {
                 .collect();
             (Catalog::load(&conn)?, bound)
         };
-        // Only a document something is attached to can place a file.
+        // Only a document something is attached to, or one that references
+        // something as an embed does, can place a file.
         let mut documents: Vec<String> = self
             .core
             .edges_of_type(ATTACHMENT_EDGE)?
             .into_iter()
             .map(|edge| edge.target_id)
+            .chain(
+                self.core
+                    .edges_of_type(super::LINK_EDGE)?
+                    .into_iter()
+                    .map(|edge| edge.source_id),
+            )
             .filter(|id| members.contains(id) || bound.contains(id))
             .collect();
         documents.sort_unstable();
