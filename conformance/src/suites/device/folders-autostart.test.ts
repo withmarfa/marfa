@@ -1583,7 +1583,7 @@ describe("the watch run by a service manager", () => {
   });
 });
 
-/** A log path in a directory of the test's own. */
+/** The scheduling priority `ps -M` lists for each thread of a process. */
 function threadPriorities(pid: number): string[] {
   return execFileSync("ps", ["-M", "-p", String(pid), "-o", "pri"], {
     encoding: "utf8",
@@ -1592,6 +1592,7 @@ function threadPriorities(pid: number): string[] {
     .flatMap((line) => line.match(/(\d+)T\s*$/)?.[1] ?? []);
 }
 
+/** A log path in a directory of the test's own. */
 function logIn(label: string): string {
   const dir = mkdtempSync(
     join(realpathSync(tmpdir()), `marfa-autostart-${label}-`),
