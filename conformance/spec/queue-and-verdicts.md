@@ -1498,7 +1498,7 @@ If a caller names an id that no write in the queue carries, then a device MUST i
 
 When a caller takes the answered writes, a device MUST take out of the queue exactly the writes that clearing the answered writes would take out at that moment.
 
-**Reason:** a take is a read of the answers and a clear of them in one step, so a refused write that carried content stays until it is discarded (`queue-and-verdicts/clear-keeps-content`).
+**Reason:** a take is a clear that also returns what it cleared, so it keeps what a clear keeps, such as a refused write that carried content (`queue-and-verdicts/clear-keeps-content`).
 
 **Tests:** `device/binding-queue.test.ts › takes out of the queue what a clearing takes, returns each as the queue showed it, and keeps a refused write's content`.
 

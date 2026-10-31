@@ -3212,7 +3212,7 @@ impl MarfaCore {
     /// as `queue` showed it, in one step: two callers taking at once never
     /// both get one answer, and none is cleared unreturned. A refused write
     /// that carried content stays until it is discarded. Off the JavaScript
-    /// thread, because it waits while a drain records an answer.
+    /// thread, because it waits for any other call holding the store.
     #[napi(ts_return_type = "Promise<Array<QueuedWrite>>")]
     pub fn take_answered(&self) -> AsyncTask<TakeAnswered> {
         AsyncTask::new(TakeAnswered {
