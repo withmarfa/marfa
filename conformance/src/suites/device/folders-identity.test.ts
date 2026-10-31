@@ -1403,10 +1403,12 @@ describe("what a pull does with a file whose item stops matching", () => {
   async function addedOverItsRender(
     label: string,
     behind = 0,
+    edit: (text: string) => string = (text) => text,
   ): Promise<FolderHarness> {
-    const rendered = await departedAsRendered(label);
-    expect(rendered).toContain(departed.id);
-    expect(rendered).toContain("marfa_version: 1\n");
+    const written = await departedAsRendered(label);
+    expect(written).toContain(departed.id);
+    expect(written).toContain("marfa_version: 1\n");
+    const rendered = edit(written);
     const added = await departure(label, { "going.md": rendered }, 1 + behind);
     scriptFolderWrites(added);
     const scanned = await added.folder.scan();
@@ -1465,6 +1467,41 @@ describe("what a pull does with a file whose item stops matching", () => {
 
   it("removes the file of an item put in the bin that it found as its item renders at an older version line, and brings it back on restore", async () => {
     await foundGoesAndComesBack("folder-found-trashed-behind", 1);
+  });
+
+  /** A file `addedOverItsRender` leaves after `edit`, a change the item
+   *  does not hold that a render keeps, stays once its item is in the bin. */
+  async function foundAndEditedStays(
+    label: string,
+    edit: (text: string) => string,
+  ): Promise<void> {
+    harness = await addedOverItsRender(label, 0, edit);
+    const found = read(harness, "going.md");
+    expect(found.startsWith(edit("---\n")), "the edit is not in the file").toBe(
+      true,
+    );
+    const caught = await harness.folder.device().catchUp();
+    expect(caught.ok ? caught.value.applied : 0).toBe(1);
+    const pulled = await harness.folder.pull();
+    expect(pulled.ok).toBe(true);
+    if (!pulled.ok) return;
+    expect(
+      [pulled.value.removed, pulled.value.kept],
+      "the person's change was removed with the file of an item in the bin",
+    ).toEqual([0, 1]);
+    expect(read(harness, "going.md")).toBe(found);
+  }
+
+  it("keeps the file of an item put in the bin that it found as its item renders with a comment the person added", async () => {
+    await foundAndEditedStays("folder-found-commented", (text) =>
+      text.replace("---\n", "---\n# remember to ring Sam\n"),
+    );
+  });
+
+  it("keeps the file of an item put in the bin that it found as its item renders with an empty property the person added", async () => {
+    await foundAndEditedStays("folder-found-empty-property", (text) =>
+      text.replace("---\n", "---\ndue:\n"),
+    );
   });
 
   it("trashes the item of a file it found as its item renders once the person deletes it", async () => {
