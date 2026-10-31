@@ -303,20 +303,10 @@ impl FilterField {
             FilterField::Edge {
                 edge_type,
                 direction,
-            } => {
-                if edge_type.is_empty()
-                    || edge_type.contains(']')
-                    || edge_type.chars().any(js::is_space)
-                {
-                    return Err(refused(format!(
-                        "Invalid edge type \"{edge_type}\". An edge reference names a type that is not empty and holds no \"]\" and no whitespace"
-                    )));
-                }
-                match direction {
-                    EdgeDirection::Outbound => format!("edge[{edge_type}]"),
-                    EdgeDirection::Backref => format!("backref[{edge_type}]"),
-                }
-            }
+            } => match direction {
+                EdgeDirection::Outbound => format!("edge[{edge_type}]"),
+                EdgeDirection::Backref => format!("backref[{edge_type}]"),
+            },
         })
     }
 }

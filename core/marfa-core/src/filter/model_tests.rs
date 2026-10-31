@@ -245,10 +245,11 @@ fn refuses_names_the_grammar_would_read_as_something_else() {
             direction: EdgeDirection::Outbound,
         };
         let (_, message) = refusal(condition(field, FilterOperator::Exists, None).encode());
-        assert!(
-            message.starts_with("Invalid edge type"),
-            "{edge_type:?}: {message}"
-        );
+        let (_, parsed) = refusal(FilterExpression::decode(&format!(
+            "edge[{edge_type}] exists"
+        )));
+        assert_eq!(message, parsed, "{edge_type:?}");
+        assert_eq!(message, "Unexpected character '[' at position 4");
     }
 }
 
