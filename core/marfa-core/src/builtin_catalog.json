@@ -2148,7 +2148,7 @@
     },
     "query": {
      "type": "object",
-     "description": "Which items the folder holds. `types`: type identifiers, each with its subtypes; empty or absent holds every type the folder's key reads. `tier`: `library`, `feed`, or `all` for both tiers; absent is `library`. `state`: `active`, `archived` or both; absent is both. `filter`: an expression in the listing grammar's `filter`. `beneath`: an item id; the item and everything under it by `parent-of`."
+     "description": "Which items the folder holds. `types`: type identifiers, each with its subtypes; empty or absent holds every type the folder's key reads. `tier`: `library`, `feed`, or `all` for both tiers; absent is `library`. `state`: `active`, `archived` or both; absent is both. `filter`: an expression in the listing grammar's `filter`, with no `backref` condition. `beneath`: an item id; the item and everything under it by `parent-of`."
     },
     "defaults": {
      "type": "object",
@@ -2166,7 +2166,7 @@
     },
     "first_placement": {
      "type": "object",
-     "description": "Where a new item of a type made elsewhere first appears: a map from type identifier to a directory relative to the folder's root. Placement only; it never decides membership."
+     "description": "Where a new item of a type made elsewhere first appears: a map from type identifier to a directory relative to the folder's root, with no `..` name. Placement only; it never decides membership."
     },
     "removal_threshold": {
      "type": "object",
@@ -2297,7 +2297,7 @@
    "property_schema": {
     "path": {
      "type": "string",
-     "description": "The file's path relative to the folder's root, with `/` between names; required, and it may not climb out of the folder. The edge takes no other property."
+     "description": "The file's path relative to the folder's root, with `/` between names; required, with no `..` name. The edge takes no other property."
     }
    },
    "shipped": true
