@@ -28,6 +28,7 @@
     },
     "timezone": {
       "type": "string",
+      "label": "Time Zone",
       "description": "IANA timezone"
     },
     "latitude": {

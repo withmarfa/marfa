@@ -116,6 +116,9 @@ export type StatusGroup =
 
 export interface FieldDefinition {
   type: FieldType;
+  /** The name an app shows. A type read answers one for every field and
+   *  member: the nearest the chain names, else one made from the name. */
+  label?: string;
   /** One line of prose, carried through to the registry. */
   description?: string;
   required?: boolean;
@@ -137,8 +140,8 @@ export interface FieldDefinition {
   /**
    * A refinement of a string: `url`, `email`, `datetime`, `date` and
    * `thumbnail` are stored as the field type of the same name, or as the
-   * `items_type` of an array of strings, while `bcp47`, `iso3166` and
-   * `currency` annotate the string and are stored as `format`.
+   * `items_type` of an array of strings, while `bcp47`, `iso3166`,
+   * `currency` and `phone` annotate the string and are stored as `format`.
    */
   format?: string;
 }
@@ -157,6 +160,8 @@ export interface TypeSchema {
   id: string; // Type identifier: "core.note", "acme.deal"
   version?: number; // Server defaults to 0 on registration
   label?: string; // Optional human-readable display name (server auto-generates from id if omitted)
+  /** The label's plural; the server makes one from the label if omitted. */
+  plural?: string;
   description?: string;
   // Explicit parent in the inheritance chain. Dotted ids alone do not imply
   // inheritance — the server walks the `parent` reference to resolve

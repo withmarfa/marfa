@@ -2,6 +2,7 @@
   "id": "core.file.audio",
   "parent": "core.file",
   "label": "Audio",
+  "plural": "Audio",
   "description": "Recordings, music files, voice memos. Inherits all core.file fields.",
   "version": 0,
   "fields": {

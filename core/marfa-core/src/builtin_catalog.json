@@ -8,6 +8,7 @@
    "fields": {
     "url": {
      "type": "url",
+     "label": "URL",
      "description": "The saved URL"
     },
     "body": {
@@ -24,6 +25,7 @@
     },
     "source_url": {
      "type": "url",
+     "label": "Source URL",
      "description": "Where the content was sourced from"
     },
     "source_title": {
@@ -36,10 +38,12 @@
     },
     "published_at": {
      "type": "datetime",
+     "label": "Published",
      "description": "When the original content was published"
     },
     "image_url": {
      "type": "url",
+     "label": "Image URL",
      "description": "Preview image"
     },
     "language": {
@@ -63,7 +67,8 @@
      "notes": "keep_both_copies"
     },
     "default": "last_writer_wins"
-   }
+   },
+   "plural": "Bookmarks"
   },
   {
    "id": "core.collection",
@@ -91,7 +96,8 @@
    },
    "roles": [
     "container"
-   ]
+   ],
+   "plural": "Collections"
   },
   {
    "id": "core.entity",
@@ -106,6 +112,7 @@
     },
     "url": {
      "type": "url",
+     "label": "URL",
      "description": "Web address"
     },
     "description": {
@@ -119,6 +126,7 @@
      "items_fields": {
       "value": {
        "type": "email",
+       "label": "Email",
        "description": "The email address",
        "required": true
       },
@@ -130,13 +138,16 @@
     },
     "phones": {
      "type": "array",
+     "label": "Phone Numbers",
      "description": "Phone numbers. The first entry is the main one, and an entry's label is free text, such as work or home.",
      "items_type": "object",
      "items_fields": {
       "value": {
        "type": "string",
+       "label": "Number",
        "description": "The phone number, in E.164 form where known",
-       "required": true
+       "required": true,
+       "format": "phone"
       },
       "label": {
        "type": "string",
@@ -177,6 +188,7 @@
     },
     "image_url": {
      "type": "url",
+     "label": "Image URL",
      "description": "Logo or brand image"
     },
     "legal_name": {
@@ -198,12 +210,14 @@
    },
    "merge_policy": {
     "default": "last_writer_wins"
-   }
+   },
+   "plural": "Entities"
   },
   {
    "id": "core.entity.person",
    "parent": "core.entity",
    "label": "Person",
+   "plural": "People",
    "description": "Contact information for an individual. Inherits all core.entity fields.",
    "version": 0,
    "fields": {
@@ -214,6 +228,7 @@
     },
     "url": {
      "type": "url",
+     "label": "URL",
      "description": "Web address"
     },
     "description": {
@@ -227,6 +242,7 @@
      "items_fields": {
       "value": {
        "type": "email",
+       "label": "Email",
        "description": "The email address",
        "required": true
       },
@@ -238,13 +254,16 @@
     },
     "phones": {
      "type": "array",
+     "label": "Phone Numbers",
      "description": "Phone numbers. The first entry is the main one, and an entry's label is free text, such as work or home.",
      "items_type": "object",
      "items_fields": {
       "value": {
        "type": "string",
+       "label": "Number",
        "description": "The phone number, in E.164 form where known",
-       "required": true
+       "required": true,
+       "format": "phone"
       },
       "label": {
        "type": "string",
@@ -285,6 +304,7 @@
     },
     "image_url": {
      "type": "url",
+     "label": "Image URL",
      "description": "Logo or brand image"
     },
     "legal_name": {
@@ -365,6 +385,7 @@
     },
     "url": {
      "type": "url",
+     "label": "URL",
      "description": "Web address"
     },
     "description": {
@@ -378,6 +399,7 @@
      "items_fields": {
       "value": {
        "type": "email",
+       "label": "Email",
        "description": "The email address",
        "required": true
       },
@@ -389,13 +411,16 @@
     },
     "phones": {
      "type": "array",
+     "label": "Phone Numbers",
      "description": "Phone numbers. The first entry is the main one, and an entry's label is free text, such as work or home.",
      "items_type": "object",
      "items_fields": {
       "value": {
        "type": "string",
+       "label": "Number",
        "description": "The phone number, in E.164 form where known",
-       "required": true
+       "required": true,
+       "format": "phone"
       },
       "label": {
        "type": "string",
@@ -436,6 +461,7 @@
     },
     "image_url": {
      "type": "url",
+     "label": "Image URL",
      "description": "Logo or brand image"
     },
     "legal_name": {
@@ -473,6 +499,7 @@
     },
     "timezone": {
      "type": "string",
+     "label": "Time Zone",
      "description": "IANA timezone"
     },
     "latitude": {
@@ -493,7 +520,8 @@
    },
    "merge_policy": {
     "default": "last_writer_wins"
-   }
+   },
+   "plural": "Places"
   },
   {
    "id": "core.event",
@@ -512,10 +540,12 @@
     },
     "starts_at": {
      "type": "datetime",
+     "label": "Starts",
      "description": "The instant the event starts, ISO 8601. An instant carries no zone of its own however it is written; the timezone field is what anchors the event's wall-clock hour."
     },
     "ends_at": {
      "type": "datetime",
+     "label": "Ends",
      "description": "The instant the event ends, ISO 8601."
     },
     "duration": {
@@ -536,6 +566,7 @@
     },
     "url": {
      "type": "url",
+     "label": "URL",
      "description": "Event link"
     },
     "precision": {
@@ -572,10 +603,12 @@
     },
     "timezone": {
      "type": "string",
+     "label": "Time Zone",
      "description": "IANA time zone the event's schedule keeps its wall-clock hour in, e.g. Europe/Berlin. Stored times stay instants; a recurring series expands in this zone so occurrences keep their local hour across a daylight-saving transition. Absent means the rule advances in UTC. This is the start zone: an event that ends somewhere else states that in end_timezone. A write is refused unless the zone database resolves it as a named zone."
     },
     "end_timezone": {
      "type": "string",
+     "label": "End Time Zone",
      "description": "IANA time zone the event ends in, when that differs from timezone — a flight lands in a zone it did not depart from, and both ends are wall-clock facts a person reads off a ticket. Absent means the event ends in the zone it started in. Recurrence expands in timezone only; this field never anchors a rule. A write is refused unless the zone database resolves it as a named zone."
     },
     "attendees": {
@@ -605,6 +638,7 @@
     },
     "original_starts_at": {
      "type": "datetime",
+     "label": "Original Start",
      "description": "For an event that replaces one occurrence of a series, the start instant of the occurrence it replaces. Its series is named by a parent-of edge."
     }
    },
@@ -618,7 +652,8 @@
      "notes": "keep_both_copies"
     },
     "default": "last_writer_wins"
-   }
+   },
+   "plural": "Events"
   },
   {
    "id": "core.file",
@@ -628,11 +663,13 @@
    "fields": {
     "blob_ref": {
      "type": "string",
+     "label": "Blob Reference",
      "description": "Reference to the binary content (sha256:<hex>)",
      "required": true
     },
     "mime_type": {
      "type": "string",
+     "label": "MIME Type",
      "description": "MIME type",
      "required": true
     },
@@ -646,10 +683,12 @@
     },
     "url": {
      "type": "url",
+     "label": "URL",
      "description": "Web address"
     },
     "source_url": {
      "type": "url",
+     "label": "Source URL",
      "description": "Where the file was sourced from"
     },
     "author": {
@@ -675,6 +714,7 @@
     },
     "size_bytes": {
      "type": "integer",
+     "label": "Size",
      "description": "Size in bytes of the referenced blob (set by the server from the bytes the instance holds; absent where whoever named blob_ref never proved it holds them)"
     }
    },
@@ -684,22 +724,26 @@
    },
    "merge_policy": {
     "default": "last_writer_wins"
-   }
+   },
+   "plural": "Files"
   },
   {
    "id": "core.file.audio",
    "parent": "core.file",
    "label": "Audio",
+   "plural": "Audio",
    "description": "Recordings, music files, voice memos. Inherits all core.file fields.",
    "version": 0,
    "fields": {
     "blob_ref": {
      "type": "string",
+     "label": "Blob Reference",
      "description": "Reference to the binary content (sha256:<hex>)",
      "required": true
     },
     "mime_type": {
      "type": "string",
+     "label": "MIME Type",
      "description": "MIME type",
      "required": true
     },
@@ -713,10 +757,12 @@
     },
     "url": {
      "type": "url",
+     "label": "URL",
      "description": "Web address"
     },
     "source_url": {
      "type": "url",
+     "label": "Source URL",
      "description": "Where the file was sourced from"
     },
     "author": {
@@ -742,6 +788,7 @@
     },
     "size_bytes": {
      "type": "integer",
+     "label": "Size",
      "description": "Size in bytes of the referenced blob (set by the server from the bytes the instance holds; absent where whoever named blob_ref never proved it holds them)"
     },
     "duration": {
@@ -765,11 +812,13 @@
    "fields": {
     "blob_ref": {
      "type": "string",
+     "label": "Blob Reference",
      "description": "Reference to the binary content (sha256:<hex>)",
      "required": true
     },
     "mime_type": {
      "type": "string",
+     "label": "MIME Type",
      "description": "MIME type",
      "required": true
     },
@@ -783,10 +832,12 @@
     },
     "url": {
      "type": "url",
+     "label": "URL",
      "description": "Web address"
     },
     "source_url": {
      "type": "url",
+     "label": "Source URL",
      "description": "Where the file was sourced from"
     },
     "author": {
@@ -812,6 +863,7 @@
     },
     "size_bytes": {
      "type": "integer",
+     "label": "Size",
      "description": "Size in bytes of the referenced blob (set by the server from the bytes the instance holds; absent where whoever named blob_ref never proved it holds them)"
     },
     "width": {
@@ -844,7 +896,8 @@
    },
    "merge_policy": {
     "default": "last_writer_wins"
-   }
+   },
+   "plural": "Images"
   },
   {
    "id": "core.file.video",
@@ -855,11 +908,13 @@
    "fields": {
     "blob_ref": {
      "type": "string",
+     "label": "Blob Reference",
      "description": "Reference to the binary content (sha256:<hex>)",
      "required": true
     },
     "mime_type": {
      "type": "string",
+     "label": "MIME Type",
      "description": "MIME type",
      "required": true
     },
@@ -873,10 +928,12 @@
     },
     "url": {
      "type": "url",
+     "label": "URL",
      "description": "Web address"
     },
     "source_url": {
      "type": "url",
+     "label": "Source URL",
      "description": "Where the file was sourced from"
     },
     "author": {
@@ -902,6 +959,7 @@
     },
     "size_bytes": {
      "type": "integer",
+     "label": "Size",
      "description": "Size in bytes of the referenced blob (set by the server from the bytes the instance holds; absent where whoever named blob_ref never proved it holds them)"
     },
     "width": {
@@ -934,7 +992,8 @@
    },
    "merge_policy": {
     "default": "last_writer_wins"
-   }
+   },
+   "plural": "Videos"
   },
   {
    "id": "core.file.webpage",
@@ -945,11 +1004,13 @@
    "fields": {
     "blob_ref": {
      "type": "string",
+     "label": "Blob Reference",
      "description": "Reference to the binary content (sha256:<hex>)",
      "required": true
     },
     "mime_type": {
      "type": "string",
+     "label": "MIME Type",
      "description": "MIME type",
      "required": true
     },
@@ -963,10 +1024,12 @@
     },
     "url": {
      "type": "url",
+     "label": "URL",
      "description": "Web address"
     },
     "source_url": {
      "type": "url",
+     "label": "Source URL",
      "description": "Where the file was sourced from"
     },
     "author": {
@@ -992,6 +1055,7 @@
     },
     "size_bytes": {
      "type": "integer",
+     "label": "Size",
      "description": "Size in bytes of the referenced blob (set by the server from the bytes the instance holds; absent where whoever named blob_ref never proved it holds them)"
     }
    },
@@ -1001,7 +1065,8 @@
    },
    "merge_policy": {
     "default": "last_writer_wins"
-   }
+   },
+   "plural": "Web Pages"
   },
   {
    "id": "core.highlight",
@@ -1061,11 +1126,13 @@
      "note": "keep_both_copies"
     },
     "default": "last_writer_wins"
-   }
+   },
+   "plural": "Highlights"
   },
   {
    "id": "core.media",
    "label": "Media",
+   "plural": "Media",
    "description": "Content produced by someone that the user engages with — a film, podcast, book, article, song, show.",
    "version": 0,
    "fields": {
@@ -1084,6 +1151,7 @@
     },
     "url": {
      "type": "url",
+     "label": "URL",
      "description": "Web address"
     },
     "description": {
@@ -1096,10 +1164,12 @@
     },
     "published_at": {
      "type": "datetime",
+     "label": "Published",
      "description": "When originally published or released"
     },
     "image_url": {
      "type": "url",
+     "label": "Image URL",
      "description": "Cover art, poster, or thumbnail"
     },
     "language": {
@@ -1179,6 +1249,7 @@
     },
     "url": {
      "type": "url",
+     "label": "URL",
      "description": "Web address"
     },
     "description": {
@@ -1191,10 +1262,12 @@
     },
     "published_at": {
      "type": "datetime",
+     "label": "Published",
      "description": "When originally published or released"
     },
     "image_url": {
      "type": "url",
+     "label": "Image URL",
      "description": "Cover art, poster, or thumbnail"
     },
     "language": {
@@ -1244,6 +1317,7 @@
     },
     "num_tracks": {
      "type": "integer",
+     "label": "Tracks",
      "description": "Total track count"
     }
    },
@@ -1259,7 +1333,8 @@
    },
    "roles": [
     "container"
-   ]
+   ],
+   "plural": "Albums"
   },
   {
    "id": "core.media.article",
@@ -1283,6 +1358,7 @@
     },
     "url": {
      "type": "url",
+     "label": "URL",
      "description": "Web address"
     },
     "description": {
@@ -1295,10 +1371,12 @@
     },
     "published_at": {
      "type": "datetime",
+     "label": "Published",
      "description": "When originally published or released"
     },
     "image_url": {
      "type": "url",
+     "label": "Image URL",
      "description": "Cover art, poster, or thumbnail"
     },
     "language": {
@@ -1344,6 +1422,7 @@
     },
     "doi": {
      "type": "string",
+     "label": "DOI",
      "description": "Digital Object Identifier (ISO 26324)"
     },
     "section": {
@@ -1352,6 +1431,7 @@
     },
     "word_count": {
      "type": "integer",
+     "label": "Words",
      "description": "Word count"
     }
    },
@@ -1364,7 +1444,8 @@
      "notes": "keep_both_copies"
     },
     "default": "last_writer_wins"
-   }
+   },
+   "plural": "Articles"
   },
   {
    "id": "core.media.book",
@@ -1388,6 +1469,7 @@
     },
     "url": {
      "type": "url",
+     "label": "URL",
      "description": "Web address"
     },
     "description": {
@@ -1400,10 +1482,12 @@
     },
     "published_at": {
      "type": "datetime",
+     "label": "Published",
      "description": "When originally published or released"
     },
     "image_url": {
      "type": "url",
+     "label": "Image URL",
      "description": "Cover art, poster, or thumbnail"
     },
     "language": {
@@ -1449,10 +1533,12 @@
     },
     "isbn": {
      "type": "string",
+     "label": "ISBN",
      "description": "International Standard Book Number (ISO 2108)"
     },
     "page_count": {
      "type": "integer",
+     "label": "Pages",
      "description": "Number of pages"
     },
     "edition": {
@@ -1469,7 +1555,8 @@
      "notes": "keep_both_copies"
     },
     "default": "last_writer_wins"
-   }
+   },
+   "plural": "Books"
   },
   {
    "id": "core.media.episode",
@@ -1493,6 +1580,7 @@
     },
     "url": {
      "type": "url",
+     "label": "URL",
      "description": "Web address"
     },
     "description": {
@@ -1505,10 +1593,12 @@
     },
     "published_at": {
      "type": "datetime",
+     "label": "Published",
      "description": "When originally published or released"
     },
     "image_url": {
      "type": "url",
+     "label": "Image URL",
      "description": "Cover art, poster, or thumbnail"
     },
     "language": {
@@ -1577,10 +1667,12 @@
     },
     "media_url": {
      "type": "url",
+     "label": "Media URL",
      "description": "Direct address of the media file itself: an episode's audio or video enclosure, a track's audio file, a film's stream. Distinct from url, which is the web page about the work."
     },
     "mime_type": {
      "type": "string",
+     "label": "MIME Type",
      "description": "MIME type of the resource at media_url, such as audio/mpeg or video/mp4. Describes what media_url points at, not what this item is."
     }
    },
@@ -1593,7 +1685,8 @@
      "notes": "keep_both_copies"
     },
     "default": "last_writer_wins"
-   }
+   },
+   "plural": "Episodes"
   },
   {
    "id": "core.media.film",
@@ -1617,6 +1710,7 @@
     },
     "url": {
      "type": "url",
+     "label": "URL",
      "description": "Web address"
     },
     "description": {
@@ -1629,10 +1723,12 @@
     },
     "published_at": {
      "type": "datetime",
+     "label": "Published",
      "description": "When originally published or released"
     },
     "image_url": {
      "type": "url",
+     "label": "Image URL",
      "description": "Cover art, poster, or thumbnail"
     },
     "language": {
@@ -1690,10 +1786,12 @@
     },
     "media_url": {
      "type": "url",
+     "label": "Media URL",
      "description": "Direct address of the media file itself: an episode's audio or video enclosure, a track's audio file, a film's stream. Distinct from url, which is the web page about the work."
     },
     "mime_type": {
      "type": "string",
+     "label": "MIME Type",
      "description": "MIME type of the resource at media_url, such as audio/mpeg or video/mp4. Describes what media_url points at, not what this item is."
     }
    },
@@ -1706,7 +1804,8 @@
      "notes": "keep_both_copies"
     },
     "default": "last_writer_wins"
-   }
+   },
+   "plural": "Films"
   },
   {
    "id": "core.media.game",
@@ -1730,6 +1829,7 @@
     },
     "url": {
      "type": "url",
+     "label": "URL",
      "description": "Web address"
     },
     "description": {
@@ -1742,10 +1842,12 @@
     },
     "published_at": {
      "type": "datetime",
+     "label": "Published",
      "description": "When originally published or released"
     },
     "image_url": {
      "type": "url",
+     "label": "Image URL",
      "description": "Cover art, poster, or thumbnail"
     },
     "language": {
@@ -1796,11 +1898,13 @@
     },
     "min_players": {
      "type": "integer",
+     "label": "Minimum Players",
      "description": "Fewest players the game supports",
      "minimum": 1
     },
     "max_players": {
      "type": "integer",
+     "label": "Maximum Players",
      "description": "Most players the game supports",
      "minimum": 1
     }
@@ -1814,12 +1918,14 @@
      "notes": "keep_both_copies"
     },
     "default": "last_writer_wins"
-   }
+   },
+   "plural": "Games"
   },
   {
    "id": "core.media.series",
    "parent": "core.media",
    "label": "Series",
+   "plural": "Series",
    "description": "Any ongoing media container: a TV show, a podcast, a radio serial, a video series. Inherits all core.media fields. Episodes join it through the in-collection edge; containment is never part of a type name.",
    "version": 0,
    "fields": {
@@ -1838,6 +1944,7 @@
     },
     "url": {
      "type": "url",
+     "label": "URL",
      "description": "Web address"
     },
     "description": {
@@ -1850,10 +1957,12 @@
     },
     "published_at": {
      "type": "datetime",
+     "label": "Published",
      "description": "When originally published or released"
     },
     "image_url": {
      "type": "url",
+     "label": "Image URL",
      "description": "Cover art, poster, or thumbnail"
     },
     "language": {
@@ -1954,6 +2063,7 @@
     },
     "url": {
      "type": "url",
+     "label": "URL",
      "description": "Web address"
     },
     "description": {
@@ -1966,10 +2076,12 @@
     },
     "published_at": {
      "type": "datetime",
+     "label": "Published",
      "description": "When originally published or released"
     },
     "image_url": {
      "type": "url",
+     "label": "Image URL",
      "description": "Cover art, poster, or thumbnail"
     },
     "language": {
@@ -2019,6 +2131,7 @@
     },
     "isrc": {
      "type": "string",
+     "label": "ISRC",
      "description": "International Standard Recording Code (ISO 3901)"
     },
     "album": {
@@ -2031,10 +2144,12 @@
     },
     "media_url": {
      "type": "url",
+     "label": "Media URL",
      "description": "Direct address of the media file itself: an episode's audio or video enclosure, a track's audio file, a film's stream. Distinct from url, which is the web page about the work."
     },
     "mime_type": {
      "type": "string",
+     "label": "MIME Type",
      "description": "MIME type of the resource at media_url, such as audio/mpeg or video/mp4. Describes what media_url points at, not what this item is."
     }
    },
@@ -2047,7 +2162,8 @@
      "notes": "keep_both_copies"
     },
     "default": "last_writer_wins"
-   }
+   },
+   "plural": "Songs"
   },
   {
    "id": "core.message",
@@ -2079,7 +2195,8 @@
      "body": "keep_both_copies"
     },
     "default": "last_writer_wins"
-   }
+   },
+   "plural": "Messages"
   },
   {
    "id": "core.note",
@@ -2116,7 +2233,8 @@
      "notes": "keep_both_copies"
     },
     "default": "last_writer_wins"
-   }
+   },
+   "plural": "Notes"
   },
   {
    "id": "core.task",
@@ -2139,14 +2257,17 @@
     },
     "due_at": {
      "type": "datetime",
+     "label": "Due",
      "description": "Deadline"
     },
     "starts_at": {
      "type": "datetime",
+     "label": "Starts",
      "description": "When to start"
     },
     "completed_at": {
      "type": "datetime",
+     "label": "Completed",
      "description": "When completed"
     },
     "status": {
@@ -2197,6 +2318,7 @@
     },
     "url": {
      "type": "url",
+     "label": "URL",
      "description": "Related link"
     },
     "assignees": {
@@ -2235,7 +2357,8 @@
      "notes": "keep_both_copies"
     },
     "default": "last_writer_wins"
-   }
+   },
+   "plural": "Tasks"
   },
   {
    "id": "system.connection",
@@ -2286,7 +2409,8 @@
      "type": "datetime",
      "description": "When the grant was revoked, if any"
     }
-   }
+   },
+   "plural": "Connections"
   },
   {
    "id": "system.folder",
@@ -2329,7 +2453,8 @@
      "type": "datetime",
      "description": "When the folder was revoked"
     }
-   }
+   },
+   "plural": "Folders"
   },
   {
    "id": "system.view",
@@ -2355,7 +2480,8 @@
      "type": "object",
      "description": "How the view groups the items it lists: `by` (a field, or `edge[<type>]` or `backref[<type>]`), and optionally `bucket` (`day`, `week`, `month` or `year`, for a date field), `order` (the values whose groups come first) and `hidden` (the values whose groups are left out)."
     }
-   }
+   },
+   "plural": "Views"
   }
  ],
  "edge_types": [

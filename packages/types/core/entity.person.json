@@ -2,6 +2,7 @@
   "id": "core.entity.person",
   "parent": "core.entity",
   "label": "Person",
+  "plural": "People",
   "description": "Contact information for an individual. Inherits all core.entity fields.",
   "version": 0,
   "fields": {

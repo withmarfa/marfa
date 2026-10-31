@@ -19,6 +19,7 @@ import {
   RESERVED_ROOTS,
   listEdgeTypes,
   listTypes,
+  pluralOf,
 } from "../packages/shared/src/index.js";
 import { resolveRoles } from "../packages/server/src/storage/policy.js";
 
@@ -27,7 +28,8 @@ const resolve = (id: string) => listTypes().find((schema) => schema.id === id);
 const types = listTypes()
   .map((schema) => {
     const roles = resolveRoles(schema.id, resolve);
-    return roles ? { ...schema, roles } : schema;
+    const listed = { ...schema, plural: pluralOf(schema) };
+    return roles ? { ...listed, roles } : listed;
   })
   .sort((a, b) => a.id.localeCompare(b.id));
 

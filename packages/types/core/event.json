@@ -14,11 +14,13 @@
     },
     "starts_at": {
       "type": "string",
+      "label": "Starts",
       "description": "The instant the event starts, ISO 8601. An instant carries no zone of its own however it is written; the timezone field is what anchors the event's wall-clock hour.",
       "format": "datetime"
     },
     "ends_at": {
       "type": "string",
+      "label": "Ends",
       "description": "The instant the event ends, ISO 8601.",
       "format": "datetime"
     },
@@ -40,6 +42,7 @@
     },
     "url": {
       "type": "string",
+      "label": "URL",
       "description": "Event link",
       "format": "url"
     },
@@ -68,10 +71,12 @@
     },
     "timezone": {
       "type": "string",
+      "label": "Time Zone",
       "description": "IANA time zone the event's schedule keeps its wall-clock hour in, e.g. Europe/Berlin. Stored times stay instants; a recurring series expands in this zone so occurrences keep their local hour across a daylight-saving transition. Absent means the rule advances in UTC. This is the start zone: an event that ends somewhere else states that in end_timezone. A write is refused unless the zone database resolves it as a named zone."
     },
     "end_timezone": {
       "type": "string",
+      "label": "End Time Zone",
       "description": "IANA time zone the event ends in, when that differs from timezone — a flight lands in a zone it did not depart from, and both ends are wall-clock facts a person reads off a ticket. Absent means the event ends in the zone it started in. Recurrence expands in timezone only; this field never anchors a rule. A write is refused unless the zone database resolves it as a named zone."
     },
     "attendees": {
@@ -96,6 +101,7 @@
     },
     "original_starts_at": {
       "type": "string",
+      "label": "Original Start",
       "description": "For an event that replaces one occurrence of a series, the start instant of the occurrence it replaces. Its series is named by a parent-of edge.",
       "format": "datetime"
     }

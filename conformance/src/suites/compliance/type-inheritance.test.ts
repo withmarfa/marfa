@@ -370,8 +370,8 @@ describe("type inheritance rule", () => {
     expect(fetched.ok).toBe(true);
     expect(fetched.data.parent).toBe(parentId);
     expect(fetched.data.fields).toEqual({
-      url: { type: "string" },
-      supplemental: { type: "string" },
+      url: { type: "string", label: "Url" },
+      supplemental: { type: "string", label: "Supplemental" },
     });
 
     const item = await client.createItem({

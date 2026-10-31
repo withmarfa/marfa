@@ -387,7 +387,48 @@ describe("a key whose type map reaches a type evolves it", () => {
     expect((await client.getType(id)).data.fields.rank).toEqual({
       type: "integer",
       description: "Where it sits in the queue.",
+      label: "Rank",
     });
+  });
+
+  it("admits a change to the plural and to a kept field's labels on metadata.types:write alone", async () => {
+    const ns = namespace("labels");
+    const id = `${ns}.issue`;
+    const own = await connector(ns);
+    await register(own, {
+      ...issue(id),
+      fields: {
+        ...(issue(id).fields as Definition),
+        links: {
+          type: "array",
+          items_type: "object",
+          items_fields: { href: { type: "url", required: true } },
+        },
+      },
+    });
+
+    const relabelled = await own.replaceType(
+      id,
+      replaced(id, {
+        plural: "Issue Records",
+        fields: {
+          ...(issue(id).fields as Definition),
+          rank: { type: "integer", label: "Queue Position" },
+          links: {
+            type: "array",
+            items_type: "object",
+            items_fields: {
+              href: { type: "url", required: true, label: "Link" },
+            },
+          },
+        },
+      }),
+    );
+    expect(relabelled.status, JSON.stringify(relabelled.error)).toBe(200);
+    const read = (await client.getType(id)).data;
+    expect(read.plural).toBe("Issue Records");
+    expect(read.fields.rank?.label).toBe("Queue Position");
+    expect(read.fields.links?.items_fields?.href?.label).toBe("Link");
   });
 
   it("lists every change that needs schema.write, sorted", async () => {

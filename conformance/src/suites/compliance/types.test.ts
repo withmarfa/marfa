@@ -430,6 +430,7 @@ describe("type registration and listing", () => {
     for (const format of formats) {
       expect(read.data.fields[`as_${format}`], format).toEqual({
         type: format,
+        label: `As ${format[0]!.toUpperCase()}${format.slice(1)}`,
       });
     }
   });
@@ -443,6 +444,7 @@ describe("type registration and listing", () => {
     expect(registered.status, JSON.stringify(registered.error)).toBe(201);
     expect((await client.getType(id)).data.fields.home).toEqual({
       type: "url",
+      label: "Home",
     });
 
     const refusedId = `user.format-list-thumbnail-${ctx.runId}`;
@@ -485,10 +487,12 @@ describe("type registration and listing", () => {
     expect(read.data.fields.locale).toEqual({
       type: "string",
       format: "bcp47",
+      label: "Locale",
     });
     expect(read.data.fields.country).toEqual({
       type: "string",
       format: "iso3166",
+      label: "Country",
     });
 
     const refusedId = `user.format-kept-refused-${ctx.runId}`;
@@ -515,6 +519,55 @@ describe("type registration and listing", () => {
           label,
         ).toContain("fields.code.format");
       }
+    }
+    expect((await client.getType(refusedId)).status).toBe(404);
+  });
+
+  it("keeps phone as a format of a string that takes any text, and refuses it on any other type", async () => {
+    const id = `user.format-phone-${ctx.runId}`;
+    const registered = await client.registerType({
+      id,
+      fields: {
+        phone: { type: "string", format: "phone" },
+        contacts: {
+          type: "array",
+          items_type: "object",
+          items_fields: { value: { type: "string", format: "phone" } },
+        },
+      },
+    } as never);
+    expect(registered.status, JSON.stringify(registered.error)).toBe(201);
+    const read = await client.getType(id);
+    const fields = read.data.fields;
+    expect(fields.phone.type).toBe("string");
+    expect(fields.phone.format).toBe("phone");
+    expect(fields.contacts.items_fields?.value.format).toBe("phone");
+
+    // A number in any form a person or a vendor writes is kept as written.
+    for (const value of ["+44 20 7946 0958 ext. 12", "1-800-FLOWERS", "x"]) {
+      const created = await client.createItem({
+        type: id,
+        source: ctx.source,
+        properties: { phone: value, contacts: [{ value }] },
+      });
+      expect(created.status, JSON.stringify(created.error)).toBe(201);
+      trackItem(ctx, created.data.item.id);
+      expect(created.data.item.properties.phone).toBe(value);
+    }
+
+    const refusedId = `user.format-phone-refused-${ctx.runId}`;
+    for (const other of [
+      { type: "number" },
+      { type: "url" },
+      { type: "array", items_type: "string" },
+    ]) {
+      const refused = await client.registerType({
+        id: refusedId,
+        fields: { code: { ...other, format: "phone" } },
+      } as never);
+      const label = JSON.stringify(other);
+      expect(refused.status, label).toBe(400);
+      expect(refused.error?.error.code, label).toBe("invalid_schema");
     }
     expect((await client.getType(refusedId)).status).toBe(404);
   });
@@ -664,7 +717,9 @@ describe("type registration and listing", () => {
       "lable",
       "fields.serves.exclusiveMinimum",
     ]);
-    expect((await client.getType(id)).data.fields).toEqual(fields);
+    expect((await client.getType(id)).data.fields).toEqual({
+      serves: { ...fields.serves, label: "Serves" },
+    });
 
     // The witness: the same replacement without the keys is taken.
     const mended = await client.replaceType(id, {

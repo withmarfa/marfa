@@ -19,9 +19,15 @@ import {
   FIELD_FORMATS,
   malformedTypeIdentifier,
   labelledTypeDefinition,
+  namedLabel,
+  pluralOf,
   iconNameIssue,
 } from "@withmarfa/shared";
-import type { SchemaValidationIssue, TypeSchema } from "@withmarfa/shared";
+import type {
+  FieldDefinition,
+  SchemaValidationIssue,
+  TypeSchema,
+} from "@withmarfa/shared";
 import type { Context, Next } from "hono";
 import type { AppEnv } from "../middleware/auth.js";
 import {
@@ -149,6 +155,12 @@ const EntryMemberSchema = z
       .describe(
         "The member's type: `string`, `email`, `url`, `enum`, `boolean`, `integer`, `number`, `date` or `datetime`.",
       ),
+    label: z
+      .string()
+      .optional()
+      .describe(
+        "A name for people to read, up to 100 characters. Leave it out and a type read answers the nearest one a type above names, else one made from the member's name, such as `Due At` for `due_at`. The type list answers only the declared label.",
+      ),
     description: z.string().optional().describe("What the member holds."),
     required: z
       .boolean()
@@ -197,6 +209,12 @@ const FieldDefinitionSchema = z
       .describe(
         "The field's type. A `thumbnail` is a base64 `data:` URI of a PNG, JPEG or WebP image up to 16 KiB, never `title`, `body`, `description` or `name`; a `status` is a word from `status_values`. A type has at most one of each, never as `items_type`.",
       ),
+    label: z
+      .string()
+      .optional()
+      .describe(
+        "A name for people to read, up to 100 characters. Leave it out and a type read answers the nearest one a type above names, else one made from the field's name, such as `Due At` for `due_at`. The type list answers only the declared label.",
+      ),
     description: z.string().optional().describe("What the field holds."),
     required: z
       .boolean()
@@ -242,7 +260,7 @@ const FieldDefinitionSchema = z
       .enum(FIELD_FORMATS as unknown as [string, ...string[]])
       .optional()
       .describe(
-        "A refinement of a `string` field or an array of strings. `url`, `email`, `datetime`, `date` and `thumbnail` become the `type` or `items_type`. `bcp47`, `iso3166` and `currency` stay as `format`; a `currency` is three capital letters, such as `GBP`.",
+        "Refines a `string` field or an array of strings. `url`, `email`, `datetime`, `date` and `thumbnail` become the `type` or `items_type`. `bcp47`, `iso3166`, `currency` and `phone` stay as `format`; a `currency` is three capital letters, such as `GBP`.",
       ),
     searchable: z
       .boolean()
@@ -403,7 +421,13 @@ const typeDefinitionBody = {
     .string()
     .optional()
     .describe(
-      "A name for people to read. Leave it out and Marfa derives one from the last segment of the identifier.",
+      "A name for people to read, up to 100 characters. Leave it out and Marfa derives one from the last segment of the identifier.",
+    ),
+  plural: z
+    .string()
+    .optional()
+    .describe(
+      "The label's plural, up to 100 characters, such as `People`. Leave it out and Marfa adds `s`, `es` or `ies` to the label by the regular English rule.",
     ),
   description: z.string().optional().describe("What the type is for."),
   // Strings rather than the role enum the response carries, because the
@@ -586,6 +610,12 @@ const TypeSchemaResponse = z
       .string()
       .optional()
       .describe("The type's name for people to read."),
+    plural: z
+      .string()
+      .optional()
+      .describe(
+        "The type's plural name for people to read, such as `People`. Never inherited. Left out of the list of types where the type declares none.",
+      ),
     description: z.string().optional().describe("What the type is for."),
     parent: z
       .string()
@@ -634,12 +664,20 @@ const TypeSchemaResponse = z
   .openapi("TypeDefinition");
 
 const RegisteredTypeResponse = TypeSchemaResponse.extend({
+  plural: z
+    .string()
+    .describe(
+      "The type's plural name for people to read, such as `People`: the one the type declares, else one made from its label. Never inherited.",
+    ),
   provenance: TypeProvenanceSchema.describe(
     "The type's recorded origin and creator.",
   ),
 }).openapi("RegisteredType");
 
-const ListedTypeResponse = RegisteredTypeResponse.extend({
+const ListedTypeResponse = TypeSchemaResponse.extend({
+  provenance: TypeProvenanceSchema.describe(
+    "The type's recorded origin and creator.",
+  ),
   own_roles: TypeSchemaResponse.shape.roles
     .unwrap()
     .describe(
@@ -674,16 +712,16 @@ function withOwnerIcon<T extends TypeSchema>(
 const DISPLAY_HINT_KEYS = ["title_field", "body_field", "icon"] as const;
 
 /**
- * The hints the type reads as, which is what a caller that reads a type and
- * writes the answer back submits. A parent chain that cannot be walked, the
- * state a replacement exists to correct, leaves nothing to compare with.
+ * The type as it reads, which is what a caller that reads a type and writes
+ * the answer back submits. A parent chain that cannot be walked, the state a
+ * replacement exists to correct, leaves nothing to compare with.
  */
-function readDisplayHints(
+function readTypeSchema(
   id: string,
   owned: ReadonlyMap<string, string>,
-): TypeSchema["display_hints"] {
+): TypeSchema | undefined {
   try {
-    return resolveTypeSchema(id, ownerResolver(owned))?.display_hints;
+    return resolveTypeSchema(id, ownerResolver(owned));
   } catch (err) {
     if (
       err instanceof MarfaError &&
@@ -702,16 +740,73 @@ function readDisplayHints(
  * reads as, is that read-back, so it is dropped and the type goes on
  * following its ancestor. The icon the definition does set is kept when the
  * submitted one is the owner's, so clearing the owner's icon shows the
- * author's again.
+ * author's again. A plural, and a field's or member's label, that the stored
+ * definition does not name and the submission gives as read is dropped the
+ * same way, so it goes on following the label, name or ancestor it came from.
  */
 function withoutReadBack<T extends TypeSchema>(
   schema: T,
   stored: TypeSchema,
   owned: ReadonlyMap<string, string>,
 ): T {
+  const read = readTypeSchema(stored.id, owned);
+  return withoutReadBackHints(
+    read ? withoutReadBackLabels(schema, stored, read) : schema,
+    stored,
+    read,
+    owned,
+  );
+}
+
+function withoutReadBackLabels<T extends TypeSchema>(
+  schema: T,
+  stored: TypeSchema,
+  read: TypeSchema,
+): T {
+  const rest: TypeSchema = { ...schema, fields: { ...schema.fields } };
+  if (stored.plural === undefined && rest.plural === pluralOf(stored)) {
+    delete rest.plural;
+  }
+  for (const [name, field] of Object.entries(rest.fields)) {
+    const own = stored.fields[name];
+    const readField = read.fields[name];
+    if (!readField) continue;
+    const kept: FieldDefinition = { ...field };
+    if (own?.label === undefined && kept.label === readField.label) {
+      delete kept.label;
+    }
+    if (kept.items_fields) {
+      kept.items_fields = Object.fromEntries(
+        Object.entries(kept.items_fields).map(([member, definition]) => {
+          const ownMember = own?.items_fields?.[member];
+          const readMember = readField.items_fields?.[member];
+          if (
+            readMember &&
+            ownMember?.label === undefined &&
+            definition.label === readMember.label
+          ) {
+            const unlabelled = { ...definition };
+            delete unlabelled.label;
+            return [member, unlabelled];
+          }
+          return [member, definition];
+        }),
+      );
+    }
+    rest.fields[name] = kept;
+  }
+  return rest as T;
+}
+
+function withoutReadBackHints<T extends TypeSchema>(
+  schema: T,
+  stored: TypeSchema,
+  readSchema: TypeSchema | undefined,
+  owned: ReadonlyMap<string, string>,
+): T {
   const submitted = schema.display_hints;
   if (submitted === undefined) return schema;
-  const read = readDisplayHints(stored.id, owned);
+  const read = readSchema?.display_hints;
   const ownerIcon = owned.get(stored.id);
   const hints: Record<string, string> = {};
   for (const key of DISPLAY_HINT_KEYS) {
@@ -1008,7 +1103,7 @@ const replaceTypeRoute = createRoute({
   tags: ["Types"],
   summary: "Replace a type",
   description:
-    "Replaces a registered type's whole schema and returns it. A field you leave out is removed, but items keep their values for it. `metadata.types:write` alone can add optional fields and change `label`, `description`, `display_hints` or `version`.",
+    "Replaces a type's whole schema and returns it. A field left out is removed; items keep their values. `metadata.types:write` alone can add optional fields and change labels, descriptions, `plural`, `display_hints` and `version`.",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({
@@ -1299,8 +1394,10 @@ export function typeRoutes(storage: Storage) {
           .map((schema) => {
             const roles = resolveRoles(schema.id, resolve);
             const row = rows.get(schema.id);
+            const { plural, ...declared } = schema;
             return {
-              ...schema,
+              ...declared,
+              ...(namedLabel(plural) === undefined ? {} : { plural }),
               ...(roles ? { roles } : {}),
               own_roles: [...(schema.roles ?? [])].sort(),
               provenance: {
@@ -1327,7 +1424,11 @@ export function typeRoutes(storage: Storage) {
             ErrorCode.TYPE_NOT_FOUND,
             `Type "${id}" not found`,
           );
-        return { ...schema, provenance: await storage.types.provenance(id) };
+        return {
+          ...schema,
+          plural: pluralOf(schema),
+          provenance: await storage.types.provenance(id),
+        };
       },
       { signal: c.req.raw.signal },
     );
@@ -1355,7 +1456,9 @@ export function typeRoutes(storage: Storage) {
           const registered_type = stored
             ? canonicalTypeDefinition(stored)
             : null;
-          const resolved = resolveTypeSchema(type.id, getTypeSchema);
+          const resolved = resolveTypeSchema(type.id, getTypeSchema, {
+            declaredOnly: true,
+          });
           const resolved_type = resolved
             ? canonicalTypeDefinition(resolved)
             : null;
@@ -1436,6 +1539,7 @@ export function typeRoutes(storage: Storage) {
           assertCompatibleDependents([schema.id]);
           return {
             ...created,
+            plural: pluralOf(created),
             provenance: await storage.types.provenance(created.id),
           };
         },
@@ -1505,6 +1609,7 @@ export function typeRoutes(storage: Storage) {
           assertCompatibleDependents([id]);
           return {
             ...withOwnerIcon(updated, await storage.types.icons()),
+            plural: pluralOf(updated),
             provenance: await storage.types.provenance(id),
           };
         },
@@ -1540,7 +1645,11 @@ export function typeRoutes(storage: Storage) {
       throw new MarfaError(ErrorCode.TYPE_NOT_FOUND, `Type "${id}" not found`);
     }
     return {
-      type: { ...schema, provenance: await storage.types.provenance(id) },
+      type: {
+        ...schema,
+        plural: pluralOf(schema),
+        provenance: await storage.types.provenance(id),
+      },
     };
   }
 

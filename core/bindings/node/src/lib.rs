@@ -396,6 +396,9 @@ pub struct TypeField {
     #[napi(js_name = "type")]
     pub type_: String,
     pub required: bool,
+    /// The name an app shows for the field: the nearest one its type's chain
+    /// names, else one made from its name, such as `Due At` for `due_at`.
+    pub label: String,
     pub description: Option<String>,
     /// The type that declares it: the type itself, or the nearest one it
     /// inherits the field from.
@@ -410,6 +413,9 @@ pub struct TypeField {
 pub struct ItemType {
     pub id: String,
     pub label: Option<String>,
+    /// The name an app shows for more than one item of the type, such as
+    /// `People`: the type's own, else one made from its label.
+    pub plural: String,
     pub description: Option<String>,
     pub parent: Option<String>,
     pub version: i64,
@@ -489,6 +495,7 @@ fn type_field(field: marfa_core::TypeField) -> TypeField {
         name: field.name,
         type_: field.r#type,
         required: field.required,
+        label: field.label,
         description: field.description,
         declared_by: field.declared_by,
         definition: field.definition,
@@ -499,6 +506,7 @@ fn item_type(held: marfa_core::ItemType) -> ItemType {
     ItemType {
         id: held.id,
         label: held.label,
+        plural: held.plural,
         description: held.description,
         parent: held.parent,
         version: held.version,

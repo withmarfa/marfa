@@ -18,16 +18,19 @@
     },
     "due_at": {
       "type": "string",
+      "label": "Due",
       "description": "Deadline",
       "format": "datetime"
     },
     "starts_at": {
       "type": "string",
+      "label": "Starts",
       "description": "When to start",
       "format": "datetime"
     },
     "completed_at": {
       "type": "string",
+      "label": "Completed",
       "description": "When completed",
       "format": "datetime"
     },
@@ -57,6 +60,7 @@
     },
     "url": {
       "type": "string",
+      "label": "URL",
       "description": "Related link",
       "format": "url"
     },

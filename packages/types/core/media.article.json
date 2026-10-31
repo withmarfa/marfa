@@ -11,6 +11,7 @@
     },
     "doi": {
       "type": "string",
+      "label": "DOI",
       "description": "Digital Object Identifier (ISO 26324)"
     },
     "section": {
@@ -19,6 +20,7 @@
     },
     "word_count": {
       "type": "integer",
+      "label": "Words",
       "description": "Word count"
     }
   },

@@ -10,6 +10,7 @@
     },
     "url": {
       "type": "string",
+      "label": "URL",
       "description": "Web address",
       "format": "url"
     },
@@ -24,6 +25,7 @@
       "items_fields": {
         "value": {
           "type": "email",
+          "label": "Email",
           "description": "The email address",
           "required": true
         },
@@ -35,11 +37,14 @@
     },
     "phones": {
       "type": "array",
+      "label": "Phone Numbers",
       "items_type": "object",
       "description": "Phone numbers. The first entry is the main one, and an entry's label is free text, such as work or home.",
       "items_fields": {
         "value": {
           "type": "string",
+          "label": "Number",
+          "format": "phone",
           "description": "The phone number, in E.164 form where known",
           "required": true
         },
@@ -82,6 +87,7 @@
     },
     "image_url": {
       "type": "string",
+      "label": "Image URL",
       "description": "Logo or brand image",
       "format": "url"
     },

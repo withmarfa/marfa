@@ -186,7 +186,7 @@ export async function requireTypeReplacement(
     if (changes.length > 0) {
       throw new MarfaError(
         ErrorCode.FORBIDDEN,
-        `Changing ${changes.join(", ")} requires schema.write. A credential holding metadata.types:write alone may add optional fields that no stored row holds a value under, and change the label, description, display hints and version.`,
+        `Changing ${changes.join(", ")} requires schema.write. A credential holding metadata.types:write alone may add optional fields that no stored row holds a value under, and change the label, plural, description, display hints and version, and a kept field's description and labels.`,
         { required_scope: "schema.write", changes },
       );
     }

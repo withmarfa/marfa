@@ -139,6 +139,9 @@ export function wireType(
     bodyField?: string;
     /** The icon ID the type declares; absent where it declares none. */
     icon?: string;
+    /** The plural the type declares; absent where it declares none, as the
+     *  list answers it (`types/list-declared-plural`). */
+    plural?: string;
     fields?: Record<string, unknown>;
     /** Which fields collide how. What decides whether a resolution names a
      *  sibling (`queue-and-verdicts/success-conflicted`), so a scripted type without one
@@ -148,10 +151,12 @@ export function wireType(
 ): Record<string, unknown> {
   // Core and system roots are shipped; the other fixture roots model registrations.
   const shipped = id.startsWith("core.") || id.startsWith("system.");
+  const label = id.split(".").at(-1) ?? id;
   return {
     id,
     ...(options.parent === undefined ? {} : { parent: options.parent }),
-    label: id.split(".").at(-1),
+    label,
+    ...(options.plural === undefined ? {} : { plural: options.plural }),
     description: `the ${id} type`,
     version: 1,
     fields: options.fields ?? {
@@ -186,11 +191,13 @@ export function wireType(
 const FILE_FIELDS = {
   blob_ref: {
     type: "string",
+    label: "Blob Reference",
     description: "Reference to the binary content (sha256:<hex>)",
     required: true,
   },
   mime_type: {
     type: "string",
+    label: "MIME Type",
     description: "MIME type",
     required: true,
   },
@@ -204,10 +211,12 @@ const FILE_FIELDS = {
   },
   url: {
     type: "url",
+    label: "URL",
     description: "Web address",
   },
   source_url: {
     type: "url",
+    label: "Source URL",
     description: "Where the file was sourced from",
   },
   author: {
@@ -235,6 +244,7 @@ const FILE_FIELDS = {
   },
   size_bytes: {
     type: "integer",
+    label: "Size",
     description:
       "Size in bytes of the referenced blob (set by the server from the bytes the instance holds; absent where whoever named blob_ref never proved it holds them)",
   },
@@ -278,7 +288,7 @@ export const SCRIPTED_TYPES: ReadonlyArray<Record<string, unknown>> = [
     fields: {
       title: { type: "string", description: "Event name", required: true },
       description: { type: "string", description: "Event details" },
-      starts_at: { type: "string", format: "datetime" },
+      starts_at: { type: "string", format: "datetime", label: "Starts" },
     },
     mergePolicy: {
       fields: { notes: "keep_both_copies" },
@@ -351,7 +361,7 @@ export const SCRIPTED_TYPES: ReadonlyArray<Record<string, unknown>> = [
     titleField: "title",
     bodyField: "body",
     fields: {
-      url: { type: "string", format: "url" },
+      url: { type: "string", format: "url", label: "URL" },
       body: { type: "string" },
       title: { type: "string" },
       description: { type: "string" },

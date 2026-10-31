@@ -9,7 +9,7 @@ use crate::error::CoreError;
 use crate::model::{Item, Shown};
 use crate::store;
 use crate::store::Unreadable;
-use crate::wire::{WireCatalog, WireEdgeType};
+use crate::wire::{WireCatalog, WireEdgeType, label_from_id, label_from_name, plural_from_label};
 
 const TITLE_PROPERTY: &str = "title";
 
@@ -84,6 +84,10 @@ pub struct TypeField {
     #[serde(rename = "type")]
     pub r#type: String,
     pub required: bool,
+    /// The name an app shows for it: the nearest one the chain names, else
+    /// the one its name makes, as `GET /types/{id}` answers it. An edge
+    /// type's property names none, so it takes the one its name makes.
+    pub label: String,
     pub description: Option<String>,
     /// The type that declares it: the type itself, or the nearest one it
     /// inherits the field from.
@@ -119,6 +123,9 @@ pub(crate) fn served(listed: &WireCatalog) -> Result<ServerCatalog, CoreError> {
 pub struct ItemType {
     pub id: String,
     pub label: Option<String>,
+    /// The type's own plural, else the one its label makes, as the server
+    /// answers it. Never inherited.
+    pub plural: String,
     pub description: Option<String>,
     pub parent: Option<String>,
     pub version: i64,
@@ -590,6 +597,10 @@ fn field(name: &str, definition: &Value, declared_by: &str) -> Result<TypeField,
         name: name.to_string(),
         r#type: kind.to_string(),
         required: definition.get("required").and_then(Value::as_bool) == Some(true),
+        label: definition
+            .get("label")
+            .and_then(Value::as_str)
+            .map_or_else(|| label_from_name(name), str::to_string),
         description: definition
             .get("description")
             .and_then(Value::as_str)
@@ -597,6 +608,31 @@ fn field(name: &str, definition: &Value, declared_by: &str) -> Result<TypeField,
         declared_by: declared_by.to_string(),
         definition: definition.clone(),
     })
+}
+
+/// The definition with every label filled, as `GET /types/{id}` answers it:
+/// a field or a member of its entries that names none takes the one its name
+/// makes. `withFieldLabels` in `@withmarfa/types` does the same.
+fn with_labels(name: &str, definition: &Value) -> Value {
+    let mut definition = definition.clone();
+    let Value::Object(fields) = &mut definition else {
+        return definition;
+    };
+    fill_label(fields, name);
+    if let Some(Value::Object(members)) = fields.get_mut("items_fields") {
+        for (member, entry) in members.iter_mut() {
+            if let Value::Object(entry) = entry {
+                fill_label(entry, member);
+            }
+        }
+    }
+    definition
+}
+
+fn fill_label(definition: &mut Map<String, Value>, name: &str) {
+    if !definition.get("label").is_some_and(Value::is_string) {
+        definition.insert("label".into(), Value::String(label_from_name(name)));
+    }
 }
 
 /// One field's definition after a type in the chain declares it again: a
@@ -607,7 +643,7 @@ pub(crate) fn merge_field_definition(inherited: Option<&Value>, own: &Value) -> 
         return own.clone();
     };
     if status_kind(above) != Some("status") || status_kind(below) != Some("status") {
-        return own.clone();
+        return Value::Object(with_labels_above(above, below));
     }
     let words = |definition: &Map<String, Value>| {
         definition
@@ -629,6 +665,32 @@ pub(crate) fn merge_field_definition(inherited: Option<&Value>, own: &Value) -> 
     merged.extend(below.clone());
     merged.insert("status_values".into(), Value::Array(joined));
     Value::Object(merged)
+}
+
+/// A declaration that names no label keeps the one above it, for the field
+/// and for each member of its entries; `withLabelsAbove` in
+/// `@withmarfa/types` does the same.
+fn with_labels_above(above: &Map<String, Value>, below: &Map<String, Value>) -> Map<String, Value> {
+    let mut merged = below.clone();
+    if !merged.contains_key("label")
+        && let Some(label) = above.get("label")
+    {
+        merged.insert("label".into(), label.clone());
+    }
+    if let (Some(Value::Object(members)), Some(Value::Object(members_above))) =
+        (merged.get_mut("items_fields"), above.get("items_fields"))
+    {
+        for (name, member) in members.iter_mut() {
+            if let (Value::Object(member), Some(label)) = (
+                member,
+                members_above.get(name).and_then(|entry| entry.get("label")),
+            ) && !member.contains_key("label")
+            {
+                member.insert("label".into(), label.clone());
+            }
+        }
+    }
+    merged
 }
 
 fn status_kind(definition: &Map<String, Value>) -> Option<&str> {
@@ -714,9 +776,24 @@ fn resolve(
             }
         }
     }
+    for held in fields.values_mut() {
+        held.definition = with_labels(&held.name, &held.definition);
+    }
+    let label = text(own, "label");
+    let plural = text(own, "plural")
+        .filter(|plural| !plural.is_empty())
+        .unwrap_or_else(|| {
+            plural_from_label(
+                &label
+                    .clone()
+                    .filter(|label| !label.is_empty())
+                    .unwrap_or_else(|| label_from_id(id)),
+            )
+        });
     Ok(ItemType {
         id: id.to_string(),
-        label: text(own, "label"),
+        label,
+        plural,
         description: text(own, "description"),
         parent: text(own, "parent"),
         version: own.get("version").and_then(Value::as_f64).unwrap_or(0.0) as i64,
@@ -1488,6 +1565,91 @@ mod tests {
     }
 
     #[test]
+    fn a_field_reads_with_the_nearest_label_its_chain_names_and_a_type_with_its_plural() {
+        let entries = |label: Option<&str>| {
+            let mut member = serde_json::json!({ "type": "string" });
+            if let Some(label) = label {
+                member["label"] = label.into();
+            }
+            serde_json::json!({ "type": "array", "items_type": "object",
+                                "items_fields": { "phone_number": member } })
+        };
+        let conn = held(
+            serde_json::json!([
+                { "id": "acme.person", "label": "Person", "plural": "People",
+                  "fields": { "score": { "type": "integer", "label": "Given" },
+                              "due_at": { "type": "string" },
+                              "contacts": entries(Some("Given Member")) } },
+                { "id": "acme.author", "parent": "acme.person", "label": "Story",
+                  "fields": { "score": { "type": "integer", "description": "again" },
+                              "contacts": entries(None) } },
+                { "id": "acme.editor", "parent": "acme.person",
+                  "fields": { "score": { "type": "integer", "label": "Mine" },
+                              "contacts": entries(Some("My Member")) } },
+                { "id": "acme.bare", "fields": { "contacts": entries(None) } }
+            ]),
+            serde_json::json!([]),
+        );
+        let labels = |id: &str| -> Vec<(String, String, Option<String>)> {
+            item_type(&conn, id)
+                .unwrap()
+                .fields
+                .into_iter()
+                .map(|field| {
+                    let member = field.definition["items_fields"]["phone_number"]["label"]
+                        .as_str()
+                        .map(str::to_string);
+                    let defined = field.definition["label"].as_str().unwrap().to_string();
+                    assert_eq!(defined, field.label, "{id}.{}", field.name);
+                    (field.name, field.label, member)
+                })
+                .collect()
+        };
+        let row = |name: &str, label: &str, member: Option<&str>| {
+            (
+                name.to_string(),
+                label.to_string(),
+                member.map(str::to_string),
+            )
+        };
+        assert_eq!(
+            labels("acme.author"),
+            [
+                row("contacts", "Contacts", Some("Given Member")),
+                row("due_at", "Due At", None),
+                row("score", "Given", None),
+            ],
+            "a declaration that names no label keeps the one above it"
+        );
+        assert_eq!(
+            labels("acme.editor"),
+            [
+                row("contacts", "Contacts", Some("My Member")),
+                row("due_at", "Due At", None),
+                row("score", "Mine", None),
+            ]
+        );
+        assert_eq!(
+            labels("acme.person")[2],
+            row("score", "Given", None),
+            "a child's label reached its parent"
+        );
+        assert_eq!(
+            labels("acme.bare"),
+            [row("contacts", "Contacts", Some("Phone Number"))]
+        );
+
+        let plural = |id: &str| item_type(&conn, id).unwrap().plural;
+        assert_eq!(plural("acme.person"), "People");
+        assert_eq!(
+            plural("acme.author"),
+            "Stories",
+            "a plural made from its own label, not its parent's"
+        );
+        assert_eq!(plural("acme.editor"), "Editors", "a type with no label");
+    }
+
+    #[test]
     fn a_status_field_declared_again_keeps_the_words_above_it_and_adds_its_own() {
         let words = |list: &[(&str, &str)]| {
             Value::Array(
@@ -1529,7 +1691,10 @@ mod tests {
             "the chain's words were not joined root first, each word once in the group it first took"
         );
         let list = item_type(&conn, "acme.list").unwrap();
-        assert_eq!(list.fields[0].definition, json!({ "type": "string" }));
+        assert_eq!(
+            list.fields[0].definition,
+            json!({ "type": "string", "label": "Status" })
+        );
 
         let catalog = Catalog::load(&conn).unwrap();
         let fields = catalog.status_fields();

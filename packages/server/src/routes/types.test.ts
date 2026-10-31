@@ -1220,6 +1220,28 @@ describe("type versions", () => {
   });
 });
 
+/** A type as `GET /types/{id}` answers it, less the plural and field labels it
+ *  makes; the tests using it declare none, so every one is made. The read is
+ *  checked to carry them first, so the removal is shown to remove something. */
+function withoutMadeValues(read: TypeSchema): TypeSchema {
+  expect(read.plural).toBeDefined();
+  expect(Object.values(read.fields).every((f) => f.label !== undefined)).toBe(
+    true,
+  );
+  const rest: TypeSchema = { ...read };
+  delete rest.plural;
+  return {
+    ...rest,
+    fields: Object.fromEntries(
+      Object.entries(read.fields).map(([name, field]) => {
+        const kept = { ...field };
+        delete kept.label;
+        return [name, kept];
+      }),
+    ),
+  };
+}
+
 describe("POST /types/normalize", () => {
   it("normalizes without write grants, mutation or audit and compares declared and resolved forms", async () => {
     const keyRes = await request(ctx.app, "POST", "/keys", {
@@ -1291,11 +1313,13 @@ describe("POST /types/normalize", () => {
       provenance: expect.any(Object),
     }).toEqual(
       canonicalTypeDefinition(
-        (await (
-          await request(ctx.app, "GET", "/types/demo.normalize_candidate", {
-            key,
-          })
-        ).json()) as TypeSchema,
+        withoutMadeValues(
+          (await (
+            await request(ctx.app, "GET", "/types/demo.normalize_candidate", {
+              key,
+            })
+          ).json()) as TypeSchema,
+        ),
       ),
     );
   });
@@ -1398,11 +1422,13 @@ it("keeps child-owned refinements declared while resolving the registered parent
     provenance: expect.any(Object),
   }).toEqual(
     canonicalTypeDefinition(
-      (await (
-        await request(ctx.app, "GET", `/types/${candidate.id}`, {
-          key: ctx.workingKey,
-        })
-      ).json()) as TypeSchema,
+      withoutMadeValues(
+        (await (
+          await request(ctx.app, "GET", `/types/${candidate.id}`, {
+            key: ctx.workingKey,
+          })
+        ).json()) as TypeSchema,
+      ),
     ),
   );
   expect(result.resolved_type.fields).toHaveProperty("parent_only");

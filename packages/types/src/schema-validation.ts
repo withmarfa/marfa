@@ -9,7 +9,7 @@
 // `SchemaValidationContext` instead.
 
 import { ICON_SETS, isIconId, lucideIconId } from "./icon-sets.js";
-import { STATUS_GROUPS, TYPE_ROLES } from "./schema-types.js";
+import { MAX_LABEL_LENGTH, STATUS_GROUPS, TYPE_ROLES } from "./schema-types.js";
 import {
   STATUS_WORD_PATTERN,
   isStatusGroup,
@@ -79,6 +79,7 @@ export const FIELD_FORMATS: readonly FieldFormat[] = [
   "bcp47",
   "iso3166",
   "currency",
+  "phone",
 ];
 
 /**
@@ -109,8 +110,8 @@ const FIELD_FORMAT_SET: ReadonlySet<string> = new Set<string>(FIELD_FORMATS);
  * field declaring one is normalized to the equivalent `type`, and an array of
  * strings to the equivalent `items_type`, so there is exactly one
  * representation of a URL field in the registry, however it was authored. The
- * formats absent from this map (`bcp47`, `iso3166`, `currency`) annotate a `string` field
- * and survive normalization as `format`.
+ * formats absent from this map (`bcp47`, `iso3166`, `currency`, `phone`) annotate a
+ * `string` field and survive normalization as `format`.
  */
 export const FORMAT_TO_FIELD_TYPE: Readonly<
   Partial<Record<FieldFormat, FieldType>>
@@ -302,6 +303,9 @@ export function normalizeFieldDefinition(
   const type = (isList ? raw.type : (collapsed ?? raw.type)) as FieldType;
 
   const out: FieldDefinition = { type };
+  if (typeof raw.label === "string" && raw.label.length > 0) {
+    out.label = raw.label;
+  }
   if (typeof raw.description === "string" && raw.description.length > 0) {
     out.description = raw.description;
   }
@@ -370,6 +374,35 @@ function collectRequiredNames(input: Record<string, unknown>): Set<string> {
 // Field-level validation
 // ---------------------------------------------------------------------------
 
+/**
+ * Refuses a label that is not text or is longer than `MAX_LABEL_LENGTH`
+ * characters. An empty one names nothing, so it is taken and made as if
+ * absent.
+ */
+function labelIssue(
+  field: string,
+  value: unknown,
+  errors: SchemaValidationIssue[],
+  hint: string,
+): void {
+  if (value === undefined) return;
+  // Code points, as the contract counts them, rather than graphemes.
+  const length = typeof value === "string" ? Array.from(value).length : 0;
+  if (typeof value !== "string" || length > MAX_LABEL_LENGTH) {
+    errors.push(
+      issue({
+        field,
+        expected: `a string of at most ${String(MAX_LABEL_LENGTH)} characters, or nothing`,
+        actual:
+          typeof value === "string"
+            ? `a string of ${String(length)} characters`
+            : describe(value),
+        hint,
+      }),
+    );
+  }
+}
+
 function validateFieldShape(
   name: string,
   def: unknown,
@@ -391,6 +424,13 @@ function validateFieldShape(
   }
 
   const declaredFormat = typeof fd.format === "string" ? fd.format : undefined;
+
+  labelIssue(
+    `${path}.label`,
+    fd.label,
+    errors,
+    "A label is the name an app shows for it. Omit it to make one from the name.",
+  );
 
   if (typeof fd.type !== "string" || fd.type.length === 0) {
     errors.push(
@@ -887,6 +927,7 @@ function entryMembersKey(
       .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
       .map(([name, member]) => {
         const rest = { ...member };
+        delete rest.label;
         delete rest.description;
         return [name, rest];
       }),
@@ -1013,16 +1054,18 @@ export function validateTypeSchema(
     );
   }
 
-  if (obj.label !== undefined && typeof obj.label !== "string") {
-    errors.push(
-      issue({
-        field: "label",
-        expected: "a string, or nothing",
-        actual: describe(obj.label),
-        hint: "label is the human-facing name. Omit it to derive one from the id.",
-      }),
-    );
-  }
+  labelIssue(
+    "label",
+    obj.label,
+    errors,
+    "label is the human-facing name. Omit it to derive one from the id.",
+  );
+  labelIssue(
+    "plural",
+    obj.plural,
+    errors,
+    "The name for more than one item, such as People. Omit it to make one from the label.",
+  );
 
   if (obj.description !== undefined && typeof obj.description !== "string") {
     errors.push(
@@ -1288,6 +1331,9 @@ export function validateTypeSchema(
     version: typeof obj.version === "number" ? obj.version : 0,
     fields: normalizedFields,
   };
+  if (typeof obj.plural === "string" && obj.plural.length > 0) {
+    schema.plural = obj.plural;
+  }
   if (typeof obj.description === "string") schema.description = obj.description;
   if (parentId) schema.parent = parentId;
   if (Array.isArray(obj.roles) && obj.roles.length > 0) {
@@ -2721,6 +2767,7 @@ export const TYPE_SCHEMA_KEYS: ReadonlySet<string> = new Set([
     id: true,
     parent: true,
     label: true,
+    plural: true,
     description: true,
     version: true,
     fields: true,
@@ -2739,6 +2786,7 @@ export const TYPE_SCHEMA_KEYS: ReadonlySet<string> = new Set([
 export const FIELD_DEFINITION_KEYS: ReadonlySet<string> = new Set(
   Object.keys({
     type: true,
+    label: true,
     description: true,
     required: true,
     enum_values: true,
@@ -2758,6 +2806,7 @@ export const FIELD_DEFINITION_KEYS: ReadonlySet<string> = new Set(
 export const ENTRY_MEMBER_KEYS: ReadonlySet<string> = new Set(
   Object.keys({
     type: true,
+    label: true,
     description: true,
     required: true,
     enum_values: true,
@@ -2858,8 +2907,9 @@ export const EDGE_TYPE_SCHEMA_KEYS: ReadonlySet<string> = new Set(
  * Every key of a property an edge type declares. A field's definition less
  * the keys that only mean something to the items a type validates:
  * `searchable`, `maxLength`, `maxItems`, `status_values`, `minimum`, `maximum` and
- * `items_fields`. `POST /edge-types` does not
- * declare them, and an edge write does not apply them.
+ * `items_fields`, and less `label`, which names a field an app shows on an
+ * item. `POST /edge-types` does not declare them, and an edge write does not
+ * apply them.
  */
 export const EDGE_PROPERTY_KEYS: ReadonlySet<string> = new Set(
   Object.keys({
@@ -2879,6 +2929,7 @@ export const EDGE_PROPERTY_KEYS: ReadonlySet<string> = new Set(
       | "minimum"
       | "maximum"
       | "items_fields"
+      | "label"
     >,
     true
   >),

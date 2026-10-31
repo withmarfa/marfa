@@ -117,6 +117,7 @@ describe("The type catalog a working copy holds", () => {
     const recipeRead: Omit<ItemType, "fields"> = {
       id: "acme.recipe",
       label: "Family recipe",
+      plural: "Family recipes",
       description: null,
       parent: "core.note",
       version: 0,
@@ -141,14 +142,15 @@ describe("The type catalog a working copy holds", () => {
       name: "servings",
       type: "number",
       required: true,
+      label: "Servings",
       description: "How many it feeds",
       declared_by: "acme.recipe",
-      definition: RECIPE.fields.servings,
+      definition: { ...RECIPE.fields.servings, label: "Servings" },
     });
     expect(
       named.cuisine?.definition,
-      "a field's definition did not reach the caller whole",
-    ).toEqual(RECIPE.fields.cuisine);
+      "a field's definition did not reach the caller whole, with the label its name makes",
+    ).toEqual({ ...RECIPE.fields.cuisine, label: "Cuisine" });
     expect(
       named.body,
       "an inherited field does not say which type declares it",
@@ -156,10 +158,12 @@ describe("The type catalog a working copy holds", () => {
       name: "body",
       type: "string",
       required: false,
+      label: "Body",
       description: "The note text",
       declared_by: "core.note",
       definition: {
         type: "string",
+        label: "Body",
         description: "The note text",
       },
     });
@@ -197,6 +201,7 @@ describe("The type catalog a working copy holds", () => {
           name: "since",
           type: "string",
           required: false,
+          label: "Since",
           description: "When it began",
           declared_by: "mentor-of",
           definition: { type: "string", description: "When it began" },

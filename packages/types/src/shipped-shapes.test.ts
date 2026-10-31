@@ -21,7 +21,9 @@ function withoutProse(value: unknown, named = false): unknown {
       .filter(
         ([key]) =>
           named ||
-          !["label", "reverse_label", "description", "id"].includes(key),
+          !["label", "plural", "reverse_label", "description", "id"].includes(
+            key,
+          ),
       )
       .map(([key, v]) => [
         key,

@@ -143,6 +143,7 @@ describe("a status field's definition", () => {
     const read = await client.getType(id);
     expect(read.data.fields.stage).toEqual({
       type: "status",
+      label: "Stage",
       status_values: WORDS,
     });
   });

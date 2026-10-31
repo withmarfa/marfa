@@ -174,6 +174,52 @@ When `POST /types` or `PUT /types/{id}` names a non-empty `label`, the server MU
 
 **Tests:** `compliance/type-label.test.ts › register custom type with label`, `› label appears in type list`.
 
+### `types/plural`
+
+When the definition stored for a type names no `plural`, or an empty one, the server MUST answer on every `GET /types/{id}`, and in the answer to `POST /types` and `PUT /types/{id}`, a plural made from its current label: a label that ends in a lowercase consonant and `y` takes `ies` in place of the `y`, a label that ends in `s`, `x`, `z`, `ch` or `sh` takes `es`, and any other label takes `s`.
+
+**Reason:** an app names a list of a type's items, such as a sidebar's "Notes", and takes the name from Marfa rather than making its own from the identifier. `GET /types` answers only a plural a type declares (`types/list-declared-plural`). The rule is the regular English one, so `Story` makes `Stories` and `URL` makes `URLs`; a word it gets wrong, such as `Person`, is named by its type (`types/plural-kept`). A subtype's plural comes from its own label, never from its parent's plural.
+
+**Tests:** `compliance/type-label.test.ts › makes a plural from the label when a type names none`, `› keeps a plural the type names`.
+
+### `types/plural-kept`
+
+When `POST /types` or `PUT /types/{id}` names a non-empty `plural`, the server MUST store it and answer it on every read of the type, `GET /types` included.
+
+**Tests:** `compliance/type-label.test.ts › keeps a plural the type names`, `compliance/type-evolution.test.ts › admits a change to the plural and to a kept field's labels on metadata.types:write alone`.
+
+### `types/field-label`
+
+When a credential sends `GET /types/{id}` for a registered type, the server MUST answer a `label` for each field and for each member of a field's entries: the one the nearest type names, the type itself first and then its ancestors in turn, else one made from the field's or member's name as `types/label` makes one from an identifier's last segment.
+
+**Reason:** an app shows a field by a name for people, such as "Due At" for `due_at`, and takes it from Marfa so that every app shows the same one. A subtype that declares an inherited field again without a label keeps the label above it, and a subtype's own label applies to it and its subtypes, never to its parent.
+
+**Tests:** `compliance/type-label.test.ts › answers a field's own label, and one made from the name of a field or member that names none`, `› answers the nearest field label a type above names, and a child's own in its place`.
+
+### `types/list-declared-label`
+
+When `GET /types` lists a type, the server MUST answer the `label` of each field and member that the type itself declares, and none it only inherits or makes from a name.
+
+**Reason:** a working copy resolves each type from the listing as `GET /types/{id}` does (`device/catalog-type-read`), and a made or inherited label listed as the type's own could not be told from a declared one, so it would take the place of a label a type above names. `GET /types/{id}` answers the label each field is shown by (`types/field-label`).
+
+**Tests:** `compliance/type-label.test.ts › lists only the field labels a type declares`.
+
+### `types/list-declared-plural`
+
+When `GET /types` lists a type, the server MUST answer the `plural` the type itself declares, and none when it declares none.
+
+**Reason:** a working copy makes the plural of each type from the listing as `GET /types/{id}` does (`device/catalog-type-read`), and a made plural listed as the type's own could not be told from a declared one, so it would freeze at the label the type had when listed. It is the same rule as for field labels (`types/list-declared-label`). `GET /types/{id}` answers the plural a type is shown by (`types/plural`).
+
+**Tests:** `compliance/type-label.test.ts › lists only the plural a type declares`.
+
+### `types/label-refused`
+
+If `POST /types` or `PUT /types/{id}` names a `label` or `plural` for the type, or a `label` for a field or a member of a field's entries, that is not a string or is longer than 100 characters counted as Unicode code points, then the server MUST answer `400 invalid_schema` naming it.
+
+**Reason:** a label is a short name an app shows in a list, a heading or a form; a longer text is a `description`.
+
+**Tests:** `compliance/type-label.test.ts › refuses a label or plural longer than 100 characters or not text`.
+
 ## Reading the registry
 
 ### `types/read`
@@ -272,9 +318,9 @@ If `POST /types`, or a `PUT /types/{id}` from a key holding `schema.write` that 
 
 ### `types/child-adds`
 
-The server MUST let a subtype add fields, redeclare an inherited field unchanged or with a new `description`, make an inherited field required, and redeclare an inherited status field with only the words it adds or none.
+The server MUST let a subtype add fields, redeclare an inherited field unchanged or with a new `description` or `label`, make an inherited field required, and redeclare an inherited status field with only the words it adds or none.
 
-**Tests:** `compliance/type-inheritance.test.ts › accepts a child type that adds a field not present on the parent`, `› accepts a child that redeclares an inherited field without changing it`, `› lets a child tighten an inherited field to required, and refuses one that loosens it`.
+**Tests:** `compliance/type-inheritance.test.ts › accepts a child type that adds a field not present on the parent`, `› accepts a child that redeclares an inherited field without changing it`, `› lets a child tighten an inherited field to required, and refuses one that loosens it`, `compliance/type-label.test.ts › answers the nearest field label a type above names, and a child's own in its place`.
 
 ### `types/child-shape`
 
@@ -432,15 +478,15 @@ If a field names a type-naming `format` on a type other than `string`, the type 
 
 ### `types/format-string-only`
 
-When a `string` field names a `format` of `bcp47`, `iso3166` or `currency`, the server MUST store the field as a `string` with that `format`.
+When a `string` field names a `format` of `bcp47`, `iso3166`, `currency` or `phone`, the server MUST store the field as a `string` with that `format`.
 
-**Tests:** `compliance/types.test.ts › keeps bcp47 and iso3166 as formats of a string, and refuses them on any other type`, `compliance/field-rules.test.ts › registers a range, a currency format and a list of entries, and answers them`.
+**Tests:** `compliance/types.test.ts › keeps bcp47 and iso3166 as formats of a string, and refuses them on any other type`, `› keeps phone as a format of a string that takes any text, and refuses it on any other type`, `compliance/field-rules.test.ts › registers a range, a currency format and a list of entries, and answers them`.
 
 ### `types/format-string-only-refused`
 
-If a field of a type other than `string` names a `format` of `bcp47`, `iso3166` or `currency`, then the server MUST answer `400 invalid_schema`.
+If a field of a type other than `string` names a `format` of `bcp47`, `iso3166`, `currency` or `phone`, then the server MUST answer `400 invalid_schema`.
 
-**Tests:** `compliance/types.test.ts › keeps bcp47 and iso3166 as formats of a string, and refuses them on any other type`, `compliance/field-rules.test.ts › refuses $what with invalid_schema, naming the member`.
+**Tests:** `compliance/types.test.ts › keeps bcp47 and iso3166 as formats of a string, and refuses them on any other type`, `› keeps phone as a format of a string that takes any text, and refuses it on any other type`, `compliance/field-rules.test.ts › refuses $what with invalid_schema, naming the member`.
 
 ### `types/datetime-value`
 
@@ -532,9 +578,17 @@ If a write of an item's properties, by a create, an update, an upsert or an entr
 
 When a write names a value for a `string` field whose `format` is `currency`, the server MUST take it only where it is three characters, each a capital letter from A to Z, whether or not ISO 4217 assigns the code.
 
-**Reason:** the list of codes changes as currencies are introduced and withdrawn, so a fixed list would refuse a valid code or go stale. Of the string formats, only `currency` has its value checked; `bcp47` and `iso3166` label a field and check nothing. A device judges the same value (`device/currency-checked`).
+**Reason:** the list of codes changes as currencies are introduced and withdrawn, so a fixed list would refuse a valid code or go stale. Of the string formats, only `currency` has its value checked; `bcp47`, `iso3166` and `phone` label a field and check nothing (`types/phone-value`). A device judges the same value (`device/currency-checked`).
 
 **Tests:** `compliance/field-rules.test.ts › takes the currency %s`, `› refuses the currency %j, naming the field`.
+
+### `types/phone-value`
+
+When a write names a string value for a `string` field or member whose `format` is `phone`, the server MUST NOT refuse it for its form.
+
+**Reason:** phone numbers are written in many forms, with extensions, letters and national prefixes, and a vendor sends the form it holds, so a check would refuse real numbers from a connector. The format tells an app it can offer to call or message the number.
+
+**Tests:** `compliance/types.test.ts › keeps phone as a format of a string that takes any text, and refuses it on any other type`.
 
 ### `types/currency-value-refused`
 
@@ -832,11 +886,11 @@ A connector's key holds `metadata.types:write` and not `schema.write`, so that a
 
 ### `types/evolve-free`
 
-When a key holding `metadata.types:write`, without `schema.write`, sends `PUT /types/{id}` for a type registered at run time its map grants write on, the server MUST take a replacement that only adds optional fields no stored item holds a value under, or changes the `label`, `description`, `display_hints`, `version` or a kept field's `description`, including when its retained parent or compatibility targets are outside the key's write permissions.
+When a key holding `metadata.types:write`, without `schema.write`, sends `PUT /types/{id}` for a type registered at run time its map grants write on, the server MUST take a replacement that only adds optional fields no stored item holds a value under, or changes the `label`, `plural`, `description`, `display_hints`, `version`, or a kept field's `description` or the `label` of the field or of a member of its entries, including when its retained parent or compatibility targets are outside the key's write permissions.
 
 **Reason:** each release of a connector adds fields, and these change no stored item and only how the type is presented.
 
-**Tests:** `compliance/type-evolution.test.ts › adds an optional field and changes the label, description and display hints, with metadata.types:write alone`, `› admits a change to the version and to a kept field's description on metadata.types:write alone`, `compliance/type-dependency-permissions.test.ts › permits connector label and optional-field updates retaining %s without target write permission`.
+**Tests:** `compliance/type-evolution.test.ts › adds an optional field and changes the label, description and display hints, with metadata.types:write alone`, `› admits a change to the version and to a kept field's description on metadata.types:write alone`, `› admits a change to the plural and to a kept field's labels on metadata.types:write alone`, `compliance/type-dependency-permissions.test.ts › permits connector label and optional-field updates retaining %s without target write permission`.
 
 ### `types/evolve-held-name`
 
@@ -1298,11 +1352,19 @@ The server MUST ship `core.entity` requiring `name`, with `core.entity.person` a
 
 ### `types/entity-contact-lists`
 
-The server MUST ship `core.entity` with `emails`, `phones` and `addresses` as `array` fields of `object` entries and with no `email`, `phone` or `place` field, where an `emails` entry requires an `email` member `value` and takes a `string` member `label`, a `phones` entry requires a `string` member `value` and takes a `string` member `label`, and an `addresses` entry takes `label`, `street_address`, `locality`, `region`, `postal_code` and `country`, each a `string`.
+The server MUST ship `core.entity` with `emails`, `phones` and `addresses` as `array` fields of `object` entries and with no `email`, `phone` or `place` field, where an `emails` entry requires an `email` member `value` and takes a `string` member `label`, a `phones` entry requires a `string` member `value` whose `format` is `phone` and takes a `string` member `label`, and an `addresses` entry takes `label`, `street_address`, `locality`, `region`, `postal_code` and `country`, each a `string`.
 
 **Reason:** a person or an organization has more than one email address, phone number and postal address, and a `label` says which is which in the writer's own words, such as work or home. A write that names `email`, `phone` or `place` is kept as any undeclared property is (`types/strict-mode-off`).
 
 **Tests:** `compliance/contact-lists.test.ts › declares emails, phones and addresses as lists of entries, and no email, phone or place`, `› takes a person with two emails, two phones and an address`, `› refuses %s, naming the entry and the member`, `› keeps an email the type no longer declares as an undeclared property`.
+
+### `types/core-labels`
+
+The server MUST ship `core.entity.person` with the plural `People`, `core.media` with `Media`, `core.media.series` with `Series` and `core.file.audio` with `Audio`, each `url` field of a shipped type with the label `URL`, `core.entity`'s `phones` with `Phone Numbers`, and `core.task`'s `due_at` with `Due`.
+
+**Reason:** a label or plural made from a name reads badly where the name abbreviates a word, as `url` would make `Url`, or where the regular rule gets the word wrong, as `Person` would make `Persons`; Marfa names these itself so that an app need not, and names others of the kind too, such as `Image URL` and `MIME Type`.
+
+**Tests:** `compliance/type-label.test.ts › ships labels and plurals where a core field's name or type's label reads badly`.
 
 ### `types/entity-main-entry`
 
@@ -1416,7 +1478,17 @@ When an authenticated caller sends `POST /types/normalize`, the server MUST admi
 
 When a valid candidate is sent to `POST /types/normalize`, the server MUST return its canonical declared definition in `type`, the canonical declared registered definition in `registered_type` and the canonical registered definition resolved as on `GET /types/{id}`, with the author's icon and not the owner's (`types/icon-read`), in `resolved_type`, from one registry view.
 
+**Reason:** a connector compares what it would register with what is registered without write authority, so both come from one view of the registry.
+
 **Tests:** `compliance/connector-interfaces.test.ts › normalizes equivalent declarations without write authority and retains inherited refinements`, `compliance/type-icons.test.ts › normalizes on the author's side, with the author's icon in resolved_type`.
+
+### `types/normalize-declared-only`
+
+When the server answers `POST /types/normalize`, the server MUST NOT include in `type`, `registered_type` or `resolved_type` a `plural`, or a label of a field or of a member of a field's entries, that no type in the chain declares (`types/plural`, `types/label-write-back`).
+
+**Reason:** normalize answers what the server would store for a declaration, and a made plural or label is never stored. `GET /types/{id}` answers the made ones for display; a comparison of the two would otherwise find a difference no author made.
+
+**Tests:** `compliance/connector-interfaces.test.ts › normalizes equivalent declarations without write authority and retains inherited refinements`.
 
 ### `types/normalize-absent`
 
@@ -1511,6 +1583,14 @@ When the definition stored for a type sets none of a display hint (`title_field`
 **Reason:** a caller that reads a subtype and writes the answer back sends every hint the subtype takes from an ancestor, and the owner's icon an ancestor shows, as if the subtype had chosen it; storing them would stop the subtype following its ancestor (`types/read-display-hint`), and clearing the owner's icon would leave the subtype showing it. A subtype that sets a hint to a value other than the one it reads as keeps it.
 
 **Tests:** `compliance/type-icons.test.ts › does not freeze the hints a subtype inherits when its read is written back`, `compliance/type-icons.test.ts › keeps a hint a subtype sets differently from its parent when its read is written back`.
+
+### `types/label-write-back`
+
+When the definition stored for a type names no `plural`, or no `label` for a field or a member of a field's entries, and the value a caller submits for it to `PUT /types/{id}` equals the value `GET /types/{id}` answers for it, the server MUST store no value for it.
+
+**Reason:** a caller that reads a type and writes the answer back sends every plural and label the server made (`types/plural`, `types/field-label`) as if the author had chosen it; storing them would stop the plural following a later change of label and a field following a label an ancestor names. A value other than the one the type reads as is kept. So an author cannot fix a plural or label that equals the one the type already reads as: it goes on following its label, name or ancestor, and to keep it through a later change, the author names it after that change.
+
+**Tests:** `compliance/type-label.test.ts › does not freeze a made plural or field label when a read is written back`.
 
 ### `types/icon-refused`
 

@@ -167,7 +167,7 @@ describe("a retired platform type", () => {
     expect(forced.status).toBe(403);
     expect(forced.error?.error.code).toBe("core_type_immutable");
     expect((await working.getType(WITH_ITEMS)).data.fields).toEqual({
-      name: { type: "string" },
+      name: { type: "string", label: "Name" },
     });
 
     // The witness: the same forced delete takes a type registered at run

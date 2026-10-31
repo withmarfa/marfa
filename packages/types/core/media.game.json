@@ -12,11 +12,13 @@
     },
     "min_players": {
       "type": "integer",
+      "label": "Minimum Players",
       "description": "Fewest players the game supports",
       "minimum": 1
     },
     "max_players": {
       "type": "integer",
+      "label": "Maximum Players",
       "description": "Most players the game supports",
       "minimum": 1
     }

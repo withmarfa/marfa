@@ -159,20 +159,52 @@ impl WireEdgeType {
 /// `labelFromId` in `@withmarfa/shared` is the same function; a test on each
 /// side holds both to the same answers.
 pub fn label_from_id(id: &str) -> String {
-    let last = id.rsplit('.').next().unwrap_or(id);
-    let mut label = String::with_capacity(last.len());
-    let mut in_word = false;
-    for ch in last.chars() {
+    label_from_name(id.rsplit('.').next().unwrap_or(id))
+}
+
+/// The label a field or a member of a list's entries gets when nothing names
+/// one: each hyphen and underscore made a space and the first character at the
+/// start or after a space capitalized, whatever its script, so `due_at`
+/// becomes `Due At` and `résumé` becomes `Résumé`. `labelFromName` in
+/// `@withmarfa/types` is the same function; a test on each side holds both to
+/// the same answers.
+pub fn label_from_name(name: &str) -> String {
+    let mut label = String::with_capacity(name.len());
+    let mut word_start = true;
+    for ch in name.chars() {
         let ch = if ch == '-' || ch == '_' { ' ' } else { ch };
-        let is_word = ch.is_ascii_alphanumeric();
-        label.push(if is_word && !in_word {
-            ch.to_ascii_uppercase()
+        if word_start {
+            label.extend(ch.to_uppercase());
         } else {
-            ch
-        });
-        in_word = is_word;
+            label.push(ch);
+        }
+        word_start = ch == ' ';
     }
     label
+}
+
+/// The plural a type gets when it names none, made from its label by the
+/// regular English rule on lowercase letters: a consonant and `y` become
+/// `ies`, an ending of `s`, `x`, `z`, `ch` or `sh` takes `es`, and any other
+/// label takes `s`. `pluralFromLabel` in `@withmarfa/types` is the same
+/// function; a test on each side holds both to the same answers.
+pub fn plural_from_label(label: &str) -> String {
+    let mut chars = label.chars().rev();
+    let last = chars.next();
+    let before = chars.next();
+    let consonant = |ch: char| ch.is_ascii_lowercase() && !"aeiou".contains(ch);
+    match (before, last) {
+        (Some(before), Some('y')) if consonant(before) => {
+            format!("{}ies", &label[..label.len() - 1])
+        }
+        _ if ["s", "x", "z", "ch", "sh"]
+            .iter()
+            .any(|ending| label.ends_with(ending)) =>
+        {
+            format!("{label}es")
+        }
+        _ => format!("{label}s"),
+    }
 }
 
 /// Both catalogs, read together so a copy never holds one without the other.
@@ -247,7 +279,7 @@ pub struct WireEdgeAnswer {
 
 #[cfg(test)]
 mod tests {
-    use super::{WireEdgeType, WirePage, label_from_id};
+    use super::{WireEdgeType, WirePage, label_from_id, label_from_name, plural_from_label};
 
     /// The same table as `type-label.test.ts` in `@withmarfa/shared`.
     pub const LABELS: [(&str, &str); 6] = [
@@ -259,10 +291,48 @@ mod tests {
         ("acme.v2--draft", "V2  Draft"),
     ];
 
+    /// The same table as `NAMES` in `type-label.test.ts` in
+    /// `@withmarfa/shared`.
+    pub const NAMES: [(&str, &str); 6] = [
+        ("résumé", "Résumé"),
+        ("éclair", "Éclair"),
+        ("straße_nummer", "Straße Nummer"),
+        ("naïve-café", "Naïve Café"),
+        ("due__at", "Due  At"),
+        ("2nd-pass", "2nd Pass"),
+    ];
+
     #[test]
     fn a_label_is_made_from_an_id_as_the_server_makes_it() {
         for (id, label) in LABELS {
             assert_eq!(label_from_id(id), label, "{id}");
+        }
+        assert_eq!(label_from_name("due_at"), "Due At");
+        assert_eq!(label_from_name("phone-number"), "Phone Number");
+        for (name, label) in NAMES {
+            assert_eq!(label_from_name(name), label, "{name}");
+        }
+    }
+
+    /// The same table as `PLURALS` in `type-label.test.ts` in
+    /// `@withmarfa/shared`.
+    pub const PLURALS: [(&str, &str); 10] = [
+        ("Note", "Notes"),
+        ("Story", "Stories"),
+        ("Day", "Days"),
+        ("Box", "Boxes"),
+        ("Church", "Churches"),
+        ("Wish", "Wishes"),
+        ("Address", "Addresses"),
+        ("Quiz", "Quizes"),
+        ("URL", "URLs"),
+        ("Contact Entry", "Contact Entries"),
+    ];
+
+    #[test]
+    fn a_plural_is_made_from_a_label_as_the_server_makes_it() {
+        for (label, plural) in PLURALS {
+            assert_eq!(plural_from_label(label), plural, "{label}");
         }
     }
 

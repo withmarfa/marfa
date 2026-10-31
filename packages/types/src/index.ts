@@ -17,7 +17,7 @@ export type {
   TypeSchema,
   VersionPolicy,
 } from "./schema-types.js";
-export { STATUS_GROUPS, TYPE_ROLES } from "./schema-types.js";
+export { MAX_LABEL_LENGTH, STATUS_GROUPS, TYPE_ROLES } from "./schema-types.js";
 export {
   STATUS_WORD_PATTERN,
   isStatusGroup,
@@ -26,6 +26,8 @@ export {
   statusFieldName,
   statusGroupOf,
 } from "./status.js";
+
+export { labelFromName, pluralFromLabel, withFieldLabels } from "./labels.js";
 
 export type { IconSet } from "./icon-sets.js";
 export { ICON_SETS, lucideIconId } from "./icon-sets.js";

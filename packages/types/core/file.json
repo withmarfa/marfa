@@ -6,10 +6,12 @@
   "fields": {
     "blob_ref": {
       "type": "string",
+      "label": "Blob Reference",
       "description": "Reference to the binary content (sha256:<hex>)"
     },
     "mime_type": {
       "type": "string",
+      "label": "MIME Type",
       "description": "MIME type"
     },
     "title": {
@@ -22,11 +24,13 @@
     },
     "url": {
       "type": "string",
+      "label": "URL",
       "description": "Web address",
       "format": "url"
     },
     "source_url": {
       "type": "string",
+      "label": "Source URL",
       "description": "Where the file was sourced from",
       "format": "url"
     },
@@ -53,6 +57,7 @@
     },
     "size_bytes": {
       "type": "integer",
+      "label": "Size",
       "description": "Size in bytes of the referenced blob (set by the server from the bytes the instance holds; absent where whoever named blob_ref never proved it holds them)"
     }
   },
