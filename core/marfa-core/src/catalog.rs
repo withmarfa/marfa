@@ -261,6 +261,9 @@ pub(crate) fn declaration(
                 if let Some(problem) = status_declaration(&held.r#type, definition) {
                     return Err(invalid(format!("{id} declares {name} {problem}")));
                 }
+                if let Some(problem) = entries_declaration(&held.r#type, definition)? {
+                    return Err(invalid(format!("{id} declares {name} {problem}")));
+                }
             }
             let statuses = fields
                 .values()
@@ -438,6 +441,52 @@ pub(crate) fn status_declaration(kind: &str, definition: &Value) -> Option<Strin
         }
     }
     None
+}
+
+/// What the server refuses in a field's currency bound and list entries
+/// (`types/field-grammar`, `types/items-fields-refused`): a `maxLength` on a
+/// currency, `items_fields` on anything but an array of objects, no member in
+/// it, or a member that is not an object with the kind of a plain value.
+fn entries_declaration(kind: &str, definition: &Value) -> Result<Option<String>, CoreError> {
+    let currency_length = |definition: &Value| {
+        definition.get("format").and_then(Value::as_str) == Some("currency")
+            && definition.get("maxLength").is_some()
+    };
+    let bound = "with a maxLength on a currency, which is always three capital letters";
+    if currency_length(definition) {
+        return Ok(Some(bound.into()));
+    }
+    let Some(members) = definition.get("items_fields") else {
+        return Ok(None);
+    };
+    if kind != "array" || definition.get("items_type").and_then(Value::as_str) != Some("object") {
+        return Ok(Some(
+            "with items_fields, which only an array of objects takes".into(),
+        ));
+    }
+    let Some(members) = members.as_object().filter(|members| !members.is_empty()) else {
+        return Ok(Some(
+            "with items_fields that names no member; name each member of an entry".into(),
+        ));
+    };
+    let kinds = crate::builtin::entry_member_types()?;
+    for (member, held) in members {
+        let Some(held_kind) = held.get("type").and_then(Value::as_str) else {
+            return Ok(Some(format!(
+                "with the member {member} not an object that names its type"
+            )));
+        };
+        if !kinds.iter().any(|allowed| allowed == held_kind) {
+            return Ok(Some(format!(
+                "with the member {member} as {held_kind:?}, which an entry does not take: one of {}",
+                kinds.join(", ")
+            )));
+        }
+        if currency_length(held) {
+            return Ok(Some(format!("with the member {member} {bound}")));
+        }
+    }
+    Ok(None)
 }
 
 fn object(id: &str, json: &str) -> Result<Map<String, Value>, CoreError> {
@@ -902,9 +951,10 @@ impl Catalog {
             .collect()
     }
 
-    /// The properties as the server keeps them: a `url` field, or an array of
-    /// `url` elements, holds the trimmed address (`types/url-stored`). A
-    /// value the field would refuse is left for the validation to name.
+    /// The properties as the server keeps them: a `url` field, an array of
+    /// `url` elements and a `url` member of a list's entries hold the trimmed
+    /// address (`types/url-stored`). A value the field would refuse is left
+    /// for the validation to name.
     pub(crate) fn coerced_properties(
         &self,
         type_id: &str,
@@ -924,10 +974,45 @@ impl Catalog {
                         .and_then(|definition| definition.get(key))
                         .and_then(Value::as_str)
                 };
+                let members = definition
+                    .and_then(|definition| definition.get("items_fields"))
+                    .and_then(Value::as_object);
                 let coerced = match (field("type"), value) {
                     (Some("url"), _) => kept(value),
                     (Some("array"), Value::Array(values)) if field("items_type") == Some("url") => {
                         Value::Array(values.iter().map(kept).collect())
+                    }
+                    (Some("array"), Value::Array(values))
+                        if field("items_type") == Some("object") && members.is_some() =>
+                    {
+                        let members = members.into_iter().flatten();
+                        let urls: Vec<&String> = members
+                            .filter(|(_, member)| {
+                                member.get("type").and_then(Value::as_str) == Some("url")
+                            })
+                            .map(|(member, _)| member)
+                            .collect();
+                        Value::Array(
+                            values
+                                .iter()
+                                .map(|entry| match entry {
+                                    Value::Object(entry) => Value::Object(
+                                        entry
+                                            .iter()
+                                            .map(|(member, held)| {
+                                                let held = if urls.contains(&member) {
+                                                    kept(held)
+                                                } else {
+                                                    held.clone()
+                                                };
+                                                (member.clone(), held)
+                                            })
+                                            .collect(),
+                                    ),
+                                    other => other.clone(),
+                                })
+                                .collect(),
+                        )
                     }
                     _ => value.clone(),
                 };
@@ -1636,6 +1721,50 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["body", "extra"],
             "an inherited optional field kept its null, or a required or undeclared one lost it"
+        );
+    }
+
+    #[test]
+    fn a_url_member_of_an_entry_is_kept_trimmed_as_a_url_field_is() {
+        let conn = held(
+            serde_json::json!([
+                { "id": "acme.page",
+                  "fields": {
+                    "links": { "type": "array", "items_type": "object",
+                      "items_fields": { "u": { "type": "url" }, "v": { "type": "string" } } },
+                    "plain": { "type": "array", "items_type": "object" }
+                  } }
+            ]),
+            serde_json::json!([]),
+        );
+        let catalog = Catalog::load(&conn).unwrap();
+        let sent = serde_json::from_value::<Map<String, Value>>(serde_json::json!({
+            "links": [
+                { "u": "  https://example.com/b\t ", "v": "  kept  " },
+                { "u": "https://exa\nmple.com/c" },
+                { "u": "not a url" },
+                { "u": 5 },
+                { "v": "x" },
+                "text"
+            ],
+            "plain": [{ "u": " https://example.com/ " }]
+        }))
+        .unwrap();
+        let kept = catalog.coerced_properties("acme.page", &sent);
+        assert_eq!(
+            kept["links"],
+            serde_json::json!([
+                { "u": "https://example.com/b", "v": "  kept  " },
+                { "u": "https://example.com/c" },
+                { "u": "not a url" },
+                { "u": 5 },
+                { "v": "x" },
+                "text"
+            ])
+        );
+        assert_eq!(
+            kept["plain"], sent["plain"],
+            "an object the type declares no members for is kept as written"
         );
     }
 

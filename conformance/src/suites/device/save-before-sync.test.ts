@@ -316,6 +316,61 @@ describe("a copy no server has been named for", () => {
     expect(value(await device.declaredTypes())).toHaveLength(1);
   });
 
+  it("refuses a declaration of a list of entries or a currency the server refuses, naming the field", async () => {
+    const device = await offline("save-declare-entries");
+    const entries = (items_fields: unknown) => ({
+      type: "array",
+      items_type: "object",
+      items_fields,
+    });
+    const refusals: [string, unknown][] = [
+      ["a member with no type", entries({ m: {} })],
+      ["a member of an unknown type", entries({ m: { type: "strong" } })],
+      ["a member that is a list", entries({ m: { type: "array" } })],
+      ["a member that is not an object", entries({ m: "string" })],
+      ["no member", entries({})],
+      [
+        "items_fields on a string",
+        { type: "string", items_fields: { m: { type: "string" } } },
+      ],
+      [
+        "a maxLength on a currency",
+        { type: "string", format: "currency", maxLength: 2 },
+      ],
+      [
+        "a maxLength on a currency member",
+        entries({ m: { type: "string", format: "currency", maxLength: 2 } }),
+      ],
+    ];
+    for (const [what, list] of refusals) {
+      const refused = await device.declareTypes([
+        { id: "app.ticket.entry", fields: { list } },
+      ]);
+      expect(
+        refused.ok ? "declared" : refused.refusal.code,
+        `${what} was declared`,
+      ).toBe("invalid");
+      if (!refused.ok) expect(refused.refusal.raw, what).toContain("list");
+    }
+    expect(value(await device.declaredTypes())).toEqual([]);
+    // The witness: the same fields, mended, are declared.
+    value(
+      await device.declareTypes([
+        {
+          id: "app.ticket.entry",
+          fields: {
+            list: entries({
+              m: { type: "string", format: "currency" },
+              n: { type: "integer", minimum: 1 },
+            }),
+            code: { type: "string", format: "currency" },
+          },
+        },
+      ]),
+    );
+    expect(value(await device.declaredTypes())).toHaveLength(1);
+  });
+
   it("refuses a read of the server's catalog with no_server, answering no types from its own", async () => {
     // A run that names a server through the environment would answer the read.
     vi.stubEnv("MARFA_API_URL", "");

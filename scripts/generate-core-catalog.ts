@@ -1,7 +1,8 @@
 /**
  * Write the types a fresh server lists, as the core carries them: the item
  * types and the edge types Marfa ships, in the shape `GET /types` and
- * `GET /edge-types` answer them, the field types a type may declare, the names
+ * `GET /edge-types` answer them, the field types a type may declare, the
+ * kinds a member of a list's entries may take, the names
  * a field cannot take, the names a thumbnail cannot take and the roots a type
  * cannot sit under, so a working copy that has never reached a server holds
  * the catalog it would have read from one that has just started.
@@ -10,6 +11,7 @@ import { writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import {
   ALWAYS_SEARCHED_FIELDS,
+  ENTRY_MEMBER_TYPES,
   FIELD_TYPES,
   RESERVED_ITEM_FIELDS,
   RESERVED_ROOTS,
@@ -40,6 +42,7 @@ writeFileSync(
       types,
       edge_types: edgeTypes,
       field_types: FIELD_TYPES,
+      entry_member_types: ENTRY_MEMBER_TYPES,
       reserved_type_roots: [...RESERVED_ROOTS].sort(),
       reserved_field_names: [...RESERVED_ITEM_FIELDS].sort(),
       searched_field_names: [...ALWAYS_SEARCHED_FIELDS].sort(),

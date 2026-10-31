@@ -52,6 +52,11 @@ beforeAll(async () => {
           weight: { type: "number" },
           url: { type: "url" },
           sites: { type: "array", items_type: "url" },
+          entries: {
+            type: "array",
+            items_type: "object",
+            items_fields: { u: { type: "url" } },
+          },
         },
       })
     ).ok,
@@ -238,6 +243,76 @@ it("matches the server on a range, a currency and the entries of a list", async 
     if (!local.ok) expect(local.refusal.raw).toContain(`${field}:`);
   }
   expect(await device.queue()).toEqual(before);
+  // A JSON text makes `__proto__` an own key, which both paths refuse.
+  const text = '{"contacts":[{"value":"a@example.test","__proto__":{"x":1}}]}';
+  const server = await client.rawRequest("/items", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: `{"type":${JSON.stringify(rulesType)},"properties":${text}}`,
+  });
+  expect(server.status).toBe(400);
+  const local = await device.create({
+    type: rulesType,
+    propertiesText: text,
+  });
+  expect(local.ok).toBe(false);
+  if (!local.ok) expect(local.refusal.raw).toContain("contacts:");
+  expect(await device.queue()).toEqual(before);
+});
+
+it("refuses an update that sets a bad entry on both paths, naming the field, the position and the member", async () => {
+  const contact = { value: "a@example.test" };
+  const made = await client.createItem({
+    type: rulesType,
+    properties: { contacts: [contact] },
+  });
+  expect(made.ok, JSON.stringify(made.error)).toBe(true);
+  if (!made.ok) return;
+  trackItem(ctx, made.data.item.id);
+  expect((await device.catchUp()).ok).toBe(true);
+  const held = await device.get(made.data.item.id);
+  expect(held.ok).toBe(true);
+  if (!held.ok) return;
+  const before = await device.queue();
+  for (const [contacts, named, member] of [
+    [[contact, { label: "x" }], "contacts: Item 1: value:", "contacts.1.value"],
+    [
+      [contact, { ...contact, rank: 6 }],
+      "contacts: Item 1: rank:",
+      "contacts.1.rank",
+    ],
+    [
+      [contact, { ...contact, extra: 1 }],
+      "contacts: Item 1: extra:",
+      "contacts.1.extra",
+    ],
+  ] as const) {
+    const properties = { contacts };
+    const server = await client.updateItem(made.data.item.id, {
+      version: made.data.item.version,
+      properties,
+    });
+    expect(server.status, JSON.stringify(properties)).toBe(400);
+    expect(
+      (
+        server.error?.error.details as
+          { errors?: { field: string }[] } | undefined
+      )?.errors?.map((e) => e.field),
+    ).toContain(member);
+    const local = await device.update(made.data.item.id, {
+      version: held.value.version,
+      properties,
+    });
+    expect(local.ok, JSON.stringify(properties)).toBe(false);
+    if (!local.ok) expect(local.refusal.raw).toContain(named);
+  }
+  expect(await device.queue()).toEqual(before);
+  // The witness: a good entry is queued by the same command.
+  const good = await device.update(made.data.item.id, {
+    version: held.value.version,
+    properties: { contacts: [contact, { ...contact, rank: 5 }] },
+  });
+  expect(good.ok).toBe(true);
 });
 
 /** The digits a float is served as, for each number a write is refused for. */
@@ -607,6 +682,7 @@ it.each([
     for (const properties of [
       { title: "t", url: written },
       { title: "t", sites: [written] },
+      { title: "t", entries: [{ u: written }] },
     ]) {
       const server = await client.createItem({ type: valuesType, properties });
       expect(server.ok, JSON.stringify(server.error)).toBe(true);
@@ -615,8 +691,18 @@ it.each([
       expect(local.ok).toBe(true);
       if (!local.ok) return;
       trackItem(ctx, local.value.item_id!);
-      const field = "url" in properties ? "url" : "sites";
-      const shown = field === "url" ? stored : [stored];
+      const field =
+        "url" in properties
+          ? "url"
+          : "sites" in properties
+            ? "sites"
+            : "entries";
+      const shown =
+        field === "url"
+          ? stored
+          : field === "sites"
+            ? [stored]
+            : [{ u: stored }];
       const before = await device.get(local.value.item_id!);
       expect(before.ok && before.value.properties[field]).toEqual(shown);
       expect(server.ok && server.data.item.properties[field]).toEqual(shown);

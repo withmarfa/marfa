@@ -37,6 +37,7 @@ fn list(key: &str) -> Result<Vec<String>, CoreError> {
             let document: Value = serde_json::from_str(CATALOG).map_err(|e| e.to_string())?;
             [
                 "field_types",
+                "entry_member_types",
                 "reserved_type_roots",
                 "reserved_field_names",
                 "searched_field_names",
@@ -62,6 +63,11 @@ fn list(key: &str) -> Result<Vec<String>, CoreError> {
 /// The field types a type may declare, as the registry takes them.
 pub(crate) fn field_types() -> Result<Vec<String>, CoreError> {
     list("field_types")
+}
+
+/// The kinds a member of a list's entries may take, as the registry takes them.
+pub(crate) fn entry_member_types() -> Result<Vec<String>, CoreError> {
+    list("entry_member_types")
 }
 
 /// The roots the type grammar reserves, which no publisher may take as its own.

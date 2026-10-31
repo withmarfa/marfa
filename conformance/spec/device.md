@@ -4388,7 +4388,7 @@ When a device queues a write that names, in a property, a whole number that a 64
 
 ### `device/url-trimmed`
 
-When a write names a value for a `url` field, or an element of an array of `url`, a device MUST judge the value and queue and show it as `types/url-value`, `types/url-punycode`, `types/url-idna`, `types/url-host-refused` and `types/url-stored` have the server do, except as `device/url-idna-unassigned` states.
+When a write names a value for a `url` field, an element of an array of `url` or a `url` member of an entry of a list, a device MUST judge the value and queue and show it as `types/url-value`, `types/url-punycode`, `types/url-idna`, `types/url-host-refused` and `types/url-stored` have the server do, except as `device/url-idna-unassigned` states.
 
 **Reason:** a value the server takes after trimming must not be refused offline, and the row shown before the answer must be the row stored after it.
 
@@ -4422,9 +4422,9 @@ If a write names, for a `string` field whose `format` is `currency`, a value tha
 
 If a write names, for an `array` field whose `items_fields` names members, an entry with an undeclared member, without a required member, with a member value its definition refuses, with no member, or that is not an object, then a device MUST refuse `validation` the write naming the field, and queue nothing.
 
-**Reason:** the server refuses the entry (`types/array-entries-refused`), and a list a device kept would come back refused.
+**Reason:** the server refuses the entry (`types/array-entries-refused`), and a list a device kept would come back refused. A create and an update are judged alike.
 
-**Tests:** `device/property-validation-live.test.ts › matches the server on a range, a currency and the entries of a list`.
+**Tests:** `device/property-validation-live.test.ts › matches the server on a range, a currency and the entries of a list`, `› refuses an update that sets a bad entry on both paths, naming the field, the position and the member`.
 
 ### `device/unknown-type-write`
 
@@ -4434,11 +4434,11 @@ If a write names a type the copy was never told of, then a device MUST refuse it
 
 ### `device/declaration-refused`
 
-If an app declares a type whose identifier breaks the type grammar or uses a reserved root, that names a type Marfa ships, that has a field with no known type, that names a parent the copy does not know, that declares a status field with an empty `status_values` or with no words anywhere in its chain of declared and shipped types, or that the same declaration names already, then a device MUST refuse the declaration `invalid`.
+If an app declares a type whose identifier breaks the type grammar or uses a reserved root, that names a type Marfa ships, that has a field with no known type, that declares a list of entries (`items_fields`) the server refuses (`types/items-fields-refused`) or a `maxLength` on a `string` field whose `format` is `currency` (`types/field-grammar`), that names a parent the copy does not know, that declares a status field with an empty `status_values` or with no words anywhere in its chain of declared and shipped types, or that the same declaration names already, then a device MUST refuse the declaration `invalid`.
 
-**Reason:** the server refuses such a status field when the type is registered (`types/status-refused`, `types/status-parent-wordless`), and a status field with no words takes no value.
+**Reason:** the server refuses such a status field when the type is registered (`types/status-refused`, `types/status-parent-wordless`), and a status field with no words takes no value. A list whose entry declaration a device took, with a member of no type or of a kind an entry does not have, would fail every later write of that list with a decoding error instead of a refusal.
 
-**Tests:** `device/save-before-sync.test.ts › refuses a declaration that names a type of Marfa's, one it cannot read, a parent it does not know, or one type twice`, `› refuses a declaration whose status field has no words in its chain, naming the field`.
+**Tests:** `device/save-before-sync.test.ts › refuses a declaration that names a type of Marfa's, one it cannot read, a parent it does not know, or one type twice`, `› refuses a declaration whose status field has no words in its chain, naming the field`, `› refuses a declaration of a list of entries or a currency the server refuses, naming the field`.
 
 ### `device/declaration-refused-whole`
 

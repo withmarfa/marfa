@@ -2196,6 +2196,17 @@
   "thumbnail",
   "status"
  ],
+ "entry_member_types": [
+  "string",
+  "email",
+  "url",
+  "enum",
+  "boolean",
+  "integer",
+  "number",
+  "date",
+  "datetime"
+ ],
  "reserved_type_roots": [
   "app",
   "audit",
