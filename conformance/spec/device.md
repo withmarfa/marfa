@@ -1712,7 +1712,7 @@ When a local list or a local search names a filter the server's listing grammar 
 
 **Reason:** a copy that answered one expression otherwise than the server would show one set of rows offline and another online for the same question.
 
-**Tests:** `device/working-copy.test.ts › narrows a local list by a property, a tag and the grammar's logic`, `› narrows a local list by an edge from an item`, `› narrows a local search by the listing grammar and beneath, as a list does`, `device/fidelity.test.ts › answers each filter expression with the ids the server answers`, `device/numeric-filters-live.test.ts › matches numeric equality and range filters between local and server %s`.
+**Tests:** `device/working-copy.test.ts › narrows a local list by a property, a tag and the grammar's logic`, `› narrows a local list by an edge from an item`, `› narrows a local search by the listing grammar and beneath, as a list does`, `device/fidelity.test.ts › answers each filter expression with the ids the server answers`, `device/numeric-filters-live.test.ts › matches numeric equality and range filters between local and server %s`, `device/entry-member-filter-live.test.ts › finds a person by their second email from the copy, as the server does`.
 
 ### `device/filter-case-ascii`
 

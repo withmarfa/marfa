@@ -56,7 +56,7 @@ async function hydrated(label: string): Promise<Harness> {
  * tell a caller something different from what the server tells them.
  */
 const OUTSIDE_THE_GRAMMAR: Array<[string, string]> = [
-  ['properties.meta.author eq "n1"', "a nested property path"],
+  ['properties.meta.author.name eq "n1"', "a property path of three names"],
   ['title eq "n1"', "a field the grammar does not know"],
   ['tags eq "n1"', "an operator tags do not take"],
   ['edge[parent-of] gt "n1"', "an operator edges do not take"],

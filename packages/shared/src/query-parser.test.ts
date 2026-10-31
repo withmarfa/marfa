@@ -336,9 +336,35 @@ describe("parseFilter", () => {
       );
     });
 
-    it("rejects nested property paths", () => {
-      expect(() => parseFilter('properties.author.name eq "test"')).toThrow(
+    it("rejects a property path of three names", () => {
+      expect(() => parseFilter('properties.author.name.given eq "x"')).toThrow(
         "Nested property paths are not supported",
+      );
+    });
+
+    it("parses a member of a list's entries, compared with eq only", () => {
+      expect(
+        parseFilter('properties.emails.value eq "a@example.com"').conditions,
+      ).toEqual([
+        {
+          field: { kind: "entry", path: "emails", member: "value" },
+          op: "eq",
+          value: "a@example.com",
+        },
+      ]);
+      for (const op of ["neq", "contains", "gt"]) {
+        expect(() => parseFilter(`properties.emails.value ${op} "a"`)).toThrow(
+          "not valid for a member of a list's entries",
+        );
+      }
+      expect(() => parseFilter("properties.emails.value exists")).toThrow(
+        "not valid for a member of a list's entries",
+      );
+      expect(() => parseFilter("properties.emails.value eq null")).toThrow(
+        'Compare "properties.emails.value" with a value',
+      );
+      expect(() => parseFilter('properties.emails.9x eq "a"')).toThrow(
+        'Invalid property name "9x"',
       );
     });
 

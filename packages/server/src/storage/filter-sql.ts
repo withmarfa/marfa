@@ -248,6 +248,10 @@ function conditionToSql(
     return propertyFieldSql(table.properties, field.path, op, value);
   }
 
+  if (field.kind === "entry") {
+    return entryMemberSql(table.properties, field.path, field.member, value);
+  }
+
   if (field.kind === "edge") {
     return edgeFieldSql(
       table.id,
@@ -497,6 +501,30 @@ function propertyFieldSql(
         `Unsupported operator "${String(op)}" for property field`,
       );
   }
+}
+
+/**
+ * `properties.<field>.<member> eq <value>`: some entry of the list in
+ * `<field>` is an object whose member equals the value, compared as a
+ * property term compares. A field that is not a list matches no row.
+ * `CASE`, not `AND`, keeps `json_extract` off an entry that is not an
+ * object, which it would refuse as malformed JSON, since SQLite promises no
+ * order of evaluation for `AND`. The device's copy is `filter.rs`.
+ */
+function entryMemberSql(
+  propertiesCol: unknown,
+  path: string,
+  member: string,
+  value: unknown,
+): SQL {
+  const listPath = `$.${path}`;
+  const memberPath = `$.${member}`;
+  const extract = sql`json_extract(entry.value, ${memberPath})`;
+  const compared =
+    typeof value === "number"
+      ? sql`CASE WHEN entry.type <> 'object' THEN NULL WHEN json_type(entry.value, ${memberPath}) IN ('integer', 'real') THEN CAST(${extract} AS REAL) ELSE ${extract} END`
+      : sql`CASE WHEN entry.type = 'object' THEN ${extract} END`;
+  return sql`EXISTS (SELECT 1 FROM json_each(${propertiesCol}, ${listPath}) AS entry WHERE json_type(${propertiesCol}, ${listPath}) = 'array' AND ${compared} = ${value})`;
 }
 
 function tagsFieldSql(idCol: unknown, op: ComparisonOp, value: unknown): SQL {

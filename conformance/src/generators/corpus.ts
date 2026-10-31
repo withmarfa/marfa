@@ -746,27 +746,6 @@ export class Corpus {
     };
   }
 
-  personProperties(): Record<string, unknown> {
-    const names = [
-      "Alice",
-      "Bob",
-      "Charlie",
-      "Diana",
-      "Eve",
-      "Frank",
-      "Grace",
-      "Henry",
-    ];
-    const name = names[Math.floor(this.rand() * names.length)];
-    const surname = this.word().charAt(0).toUpperCase() + this.word().slice(1);
-    return {
-      name: `${name} ${surname}`,
-      given_name: name,
-      family_name: surname,
-      email: `${this.word()}@example.com`,
-    };
-  }
-
   workProperties(index: number, total: number): Record<string, unknown> {
     const marker = this.markerForIndex(index, total);
     const desc = this.paragraph() + (marker ? ` ${marker}` : "");

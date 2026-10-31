@@ -35,6 +35,7 @@ type LogicalOp = "AND" | "OR";
 type FieldRef =
   | { kind: "system"; column: string }
   | { kind: "property"; path: string }
+  | { kind: "entry"; path: string; member: string }
   | { kind: "tags" }
   | { kind: "status_group" }
   | {
@@ -117,6 +118,9 @@ const STATUS_GROUP_ALLOWED_OPS = new Set<ComparisonOp>([
   "exists",
   "not_exists",
 ]);
+
+/** A member of a list's entries is compared for equality only. */
+const ENTRY_ALLOWED_OPS = new Set<ComparisonOp>(["eq"]);
 
 const STATUS_GROUP_SET: ReadonlySet<string> = new Set<string>(STATUS_GROUPS);
 
@@ -353,19 +357,25 @@ function parseFieldRef(token: Token): FieldRef {
         `Missing property name after "properties." at position ${String(token.pos)}`,
       );
     }
-    if (path.includes(".")) {
+    const names = path.split(".");
+    if (names.length > 2) {
       throw new MarfaError(
         ErrorCode.VALIDATION_ERROR,
-        `Nested property paths are not supported. Use "properties.<field>" at position ${String(token.pos)}`,
+        `Nested property paths are not supported. Use "properties.<field>", or "properties.<field>.<member>" for a member of a list's entries, at position ${String(token.pos)}`,
       );
     }
-    if (!PROPERTY_PATH_RE.test(path)) {
-      throw new MarfaError(
-        ErrorCode.VALIDATION_ERROR,
-        `Invalid property name "${path}". Property names must match /^[a-zA-Z_][a-zA-Z0-9_]*$/`,
-      );
+    for (const name of names) {
+      if (!PROPERTY_PATH_RE.test(name)) {
+        throw new MarfaError(
+          ErrorCode.VALIDATION_ERROR,
+          `Invalid property name "${name}". Property names must match /^[a-zA-Z_][a-zA-Z0-9_]*$/`,
+        );
+      }
     }
-    return { kind: "property", path };
+    const [field = "", member] = names;
+    return member === undefined
+      ? { kind: "property", path: field }
+      : { kind: "entry", path: field, member };
   }
 
   if (SYSTEM_FIELDS.has(name)) {
@@ -425,6 +435,11 @@ function refuseNullComparison(
       return new MarfaError(
         ErrorCode.VALIDATION_ERROR,
         `${never} Compare "${field.column}" with a value`,
+      );
+    case "entry":
+      return new MarfaError(
+        ErrorCode.VALIDATION_ERROR,
+        `${never} Compare "properties.${field.path}.${field.member}" with a value`,
       );
     case "tags":
       return new MarfaError(
@@ -512,6 +527,13 @@ export function parseFilter(input: string): FilterExpression {
       throw new MarfaError(
         ErrorCode.VALIDATION_ERROR,
         `Operator "${op}" is not valid for edge references. Use: ${[...EDGE_ALLOWED_OPS].join(", ")}`,
+      );
+    }
+
+    if (field.kind === "entry" && !ENTRY_ALLOWED_OPS.has(op)) {
+      throw new MarfaError(
+        ErrorCode.VALIDATION_ERROR,
+        `Operator "${op}" is not valid for a member of a list's entries. Use: ${[...ENTRY_ALLOWED_OPS].join(", ")}`,
       );
     }
 

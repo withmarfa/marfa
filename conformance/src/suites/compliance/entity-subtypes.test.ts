@@ -58,7 +58,7 @@ describe("entity subtypes", () => {
         name: "Bob Jones",
         given_name: "Bob",
         family_name: "Jones",
-        email: "bob@example.com",
+        emails: [{ value: "bob@example.com", label: "work" }],
         url: "https://bob.example.com",
         description: "A test person with inherited entity fields",
       },

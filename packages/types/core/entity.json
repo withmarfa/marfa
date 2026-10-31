@@ -17,18 +17,68 @@
       "type": "string",
       "description": "What the entity is"
     },
-    "email": {
-      "type": "string",
-      "description": "Contact email",
-      "format": "email"
+    "emails": {
+      "type": "array",
+      "items_type": "object",
+      "description": "Email addresses. The first entry is the main one, and an entry's label is free text, such as work or home.",
+      "items_fields": {
+        "value": {
+          "type": "email",
+          "description": "The email address",
+          "required": true
+        },
+        "label": {
+          "type": "string",
+          "description": "What the entry is for, such as work or home"
+        }
+      }
     },
-    "phone": {
-      "type": "string",
-      "description": "Contact phone (E.164 recommended)"
+    "phones": {
+      "type": "array",
+      "items_type": "object",
+      "description": "Phone numbers. The first entry is the main one, and an entry's label is free text, such as work or home.",
+      "items_fields": {
+        "value": {
+          "type": "string",
+          "description": "The phone number, in E.164 form where known",
+          "required": true
+        },
+        "label": {
+          "type": "string",
+          "description": "What the entry is for, such as work or home"
+        }
+      }
     },
-    "place": {
-      "type": "string",
-      "description": "Location (human-readable address)"
+    "addresses": {
+      "type": "array",
+      "items_type": "object",
+      "description": "Postal addresses. The first entry is the main one, and an entry's label is free text, such as work or home.",
+      "items_fields": {
+        "label": {
+          "type": "string",
+          "description": "What the entry is for, such as work or home"
+        },
+        "street_address": {
+          "type": "string",
+          "description": "Street line"
+        },
+        "locality": {
+          "type": "string",
+          "description": "City or town"
+        },
+        "region": {
+          "type": "string",
+          "description": "State, province, or county"
+        },
+        "postal_code": {
+          "type": "string",
+          "description": "Postcode or ZIP code"
+        },
+        "country": {
+          "type": "string",
+          "description": "Country name or code"
+        }
+      }
     },
     "image_url": {
       "type": "string",
@@ -49,7 +99,9 @@
       "description": "Personal annotations"
     }
   },
-  "required": ["name"],
+  "required": [
+    "name"
+  ],
   "display_hints": {
     "title_field": "name",
     "icon": "lucide:shapes"

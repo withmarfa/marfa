@@ -6464,7 +6464,7 @@ export interface operations {
                 tier?: "library" | "feed" | "all";
                 /** @description Comma-separated tags. Only return items that carry all of them. */
                 tags?: string;
-                /** @description A filter expression. A term naming an edge type, `edge[<type>]` or `backref[<type>]`, needs read on that edge type; `edge[<type>]=<id>` also works as a query parameter. `status_group`, such as `status_group neq "completed"`, matches by status group. */
+                /** @description A filter expression. A term naming an edge type, `edge[<type>]` or `backref[<type>]`, needs read on it; `edge[<type>]=<id>` also works as a query parameter. `status_group` matches by status group; `properties.<field>.<member>`, by a list entry. */
                 filter?: string;
                 /** @description Field to sort by: `created_at`, `updated_at`, `occurred_at` or `properties.<field>`, such as `properties.due_at`. Properties sort by stored value, so an enum property sorts alphabetically, not by meaning. */
                 sort?: string;
@@ -9458,7 +9458,7 @@ export interface operations {
                 tier?: "library" | "feed" | "all";
                 /** @description Comma-separated tags. Only return items that carry all of them. */
                 tags?: string;
-                /** @description A filter expression. A term naming an edge type, `edge[<type>]` or `backref[<type>]`, needs read on that edge type; `edge[<type>]=<id>` also works as a query parameter. `status_group`, such as `status_group neq "completed"`, matches by status group. */
+                /** @description A filter expression. A term naming an edge type, `edge[<type>]` or `backref[<type>]`, needs read on it; `edge[<type>]=<id>` also works as a query parameter. `status_group` matches by status group; `properties.<field>.<member>`, by a list entry. */
                 filter?: string;
                 /** @description Only return items whose own time (`occurred_at`, else `created_at`) is after this time. For the modification time, use `updated_after`. */
                 occurred_after?: string;

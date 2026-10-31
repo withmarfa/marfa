@@ -44,6 +44,8 @@ const TABLE_WRITERS: Record<string, string> = {
   "storage/sqlite/item-store.ts": "the primitives `writeItem` calls",
   "storage/sqlite/metadata-store.ts":
     "moves the modification time beside a tag or extension write, inside that write's transaction",
+  "storage/sqlite/migrations.ts":
+    "the update to schema version 4 moves stored contact fields before the server starts, giving each item its next version, a kept snapshot and an event as a write would",
   "storage/sqlite/oauth-provider-store.ts":
     "stamps a grant record's last use, a bookkeeping field no write door accepts",
 };

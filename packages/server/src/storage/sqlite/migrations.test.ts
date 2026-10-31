@@ -251,7 +251,11 @@ describe("starting on a database at schema version 1", () => {
 
     const copies = backups(path);
     expect(copies).toHaveLength(1);
-    expect(copies[0]).toMatch(/^marfa\.db\.backup-schema-1-to-3-\d{8}T\d{9}Z$/);
+    expect(copies[0]).toMatch(
+      new RegExp(
+        `^marfa\\.db\\.backup-schema-1-to-${String(SCHEMA_VERSION)}-\\d{8}T\\d{9}Z$`,
+      ),
+    );
     expect(await contents(join(path, "..", copies[0] ?? ""))).toEqual(found);
   });
 
@@ -463,10 +467,329 @@ describe("starting on a database at schema version 2", () => {
   });
 });
 
+const WRITTEN_AT = "2026-10-01T00:00:00.000Z";
+
+/**
+ * The types a file at schema version 3 holds, by their parents and their
+ * fields. A type Marfa ships is stored with the fields it inherits as well as
+ * its own; one registered through `POST /types` with its own alone.
+ */
+const ENTITY_FIELDS = {
+  name: { type: "string" },
+  email: { type: "email" },
+  phone: { type: "string" },
+  place: { type: "string" },
+};
+const STORED_TYPES: Record<
+  string,
+  {
+    parent?: string;
+    origin: "platform" | "user";
+    fields: Record<string, unknown>;
+  }
+> = {
+  "core.entity": { origin: "platform", fields: ENTITY_FIELDS },
+  "core.entity.person": {
+    parent: "core.entity",
+    origin: "platform",
+    fields: { ...ENTITY_FIELDS, given_name: { type: "string" } },
+  },
+  "core.entity.place": {
+    parent: "core.entity",
+    origin: "platform",
+    fields: { ...ENTITY_FIELDS, street_address: { type: "string" } },
+  },
+  "core.note": { origin: "platform", fields: { body: { type: "string" } } },
+  "user.contact": {
+    parent: "core.entity",
+    origin: "user",
+    fields: { email: { type: "string" } },
+  },
+  "user.contact.work": {
+    parent: "user.contact",
+    origin: "user",
+    fields: {},
+  },
+  "user.registered": {
+    parent: "core.entity",
+    origin: "user",
+    fields: { email: ENTITY_FIELDS.email },
+  },
+  "user.loop": { parent: "user.loop.back", origin: "user", fields: {} },
+  "user.loop.back": { parent: "user.loop", origin: "user", fields: {} },
+};
+
+/** A file at schema version 3, holding each item as `[type, properties JSON]`. */
+async function versionThree(
+  path: string,
+  items: Record<string, [string, string]>,
+): Promise<void> {
+  const client = createClient({ url: `file:${path}` });
+  await client.executeMultiple(BASELINE_SQL);
+  for (const migration of MIGRATIONS.filter((m) => m.to <= 3))
+    await migration.apply(client);
+  for (const [id, { parent, origin, fields }] of Object.entries(STORED_TYPES)) {
+    const schema = {
+      id,
+      version: 1,
+      ...(parent !== undefined && { parent }),
+      fields,
+    };
+    await client.execute({
+      sql: "INSERT INTO types (id, schema, origin, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+      args: [id, JSON.stringify(schema), origin, WRITTEN_AT, WRITTEN_AT],
+    });
+  }
+  for (const [id, [type, properties]] of Object.entries(items)) {
+    await client.execute({
+      sql:
+        "INSERT INTO items (id, type, state, properties, created_at, updated_at, occurred_at, source, writer_kind, writer_id, writer_name) " +
+        "VALUES (?, ?, ?, jsonb(?), ?, ?, ?, 'fixture', 'key', 'k1', 'A key')",
+      args: [
+        id,
+        type,
+        id === "trashed" ? "trashed" : "active",
+        properties,
+        WRITTEN_AT,
+        WRITTEN_AT,
+        WRITTEN_AT,
+      ],
+    });
+  }
+  await client.execute(
+    "INSERT INTO metadata (item_id, tags, extensions) VALUES ('moved', '[\"kept\"]', '{}')",
+  );
+  await client.execute("PRAGMA user_version = 3");
+  client.close();
+}
+
+const BEFORE_CONTACT_LISTS: Record<string, [string, string]> = {
+  moved: [
+    "core.entity.person",
+    '{"name":"Moved","email":"a@example.com","phone":"+44 20 7946 0000","place":"1 High Street"}',
+  ],
+  empty: [
+    "core.entity",
+    '{"name":"Empty","email":"","phone":" \\t\\n\\u00a0","place":null}',
+  ],
+  odd: [
+    "core.entity",
+    '{"name":"Odd","email":["a@example.com"],"phone":42,"place":{"street":"x"}}',
+  ],
+  invalid: ["core.entity.person", '{"email":"not an email"}'],
+  held: [
+    "core.entity",
+    '{"email":"a@example.com","emails":[{"value":"b@example.com"},{"value":"a@example.com","label":"work"}],' +
+      '"phone":"+1 555 0100","phones":[{"value":"+1 555 0100"}],' +
+      '"place":"1 High Street","addresses":[{"street_address":"1 High Street","locality":"Town"}]}',
+  ],
+  "held-refused": [
+    "core.entity",
+    '{"email":"not an email","emails":[{"value":"not an email","label":"old"}]}',
+  ],
+  beside: [
+    "core.entity",
+    '{"email":"b@example.com","emails":[{"value":"a@example.com"}],"phone":"+1 555 0100","phones":"+1 555 0199"}',
+  ],
+  trashed: ["core.entity.place", '{"name":"Binned","place":"2 Low Road"}'],
+  declares: ["user.contact", '{"email":"c@example.com","phone":"+1 555 0100"}'],
+  inherits: ["user.contact.work", '{"email":"c@example.com"}'],
+  registered: [
+    "user.registered",
+    '{"email":"r@example.com","phone":"+1 555 0102"}',
+  ],
+  loop: ["user.loop", '{"email":"c@example.com"}'],
+  note: ["core.note", '{"body":"x","email":"d@example.com"}'],
+  exact: [
+    "core.entity",
+    '{"email":"e@example.com","count":12345678901234567890,"ratio":1.50}',
+  ],
+  scalar: ["core.entity", '"not an object"'],
+};
+
+/** Each item's properties, version and writer, and every version and event. */
+async function contactState(path: string) {
+  const client = createClient({ url: `file:${path}` });
+  try {
+    const items = await client.execute(
+      "SELECT id, json(properties) AS properties, version, updated_at, writer_kind FROM items",
+    );
+    const versions = await client.execute(
+      "SELECT item_id, version, properties, created_at, writer_kind, writer_id, writer_name FROM versions ORDER BY item_id",
+    );
+    const events = await client.execute(
+      "SELECT event_type, item_id, payload, enable_fanout FROM event_log ORDER BY id",
+    );
+    return {
+      items: Object.fromEntries(
+        items.rows.map((row) => [row.id as string, { ...row }]),
+      ),
+      versions: versions.rows.map((row) => ({ ...row })),
+      events: events.rows.map((row) => ({ ...row })),
+    };
+  } finally {
+    client.close();
+  }
+}
+
+describe("starting on a database at schema version 3", () => {
+  const properties = (
+    state: Awaited<ReturnType<typeof contactState>>,
+    id: string,
+  ) => JSON.parse(state.items[id]?.properties as string) as unknown;
+
+  it("moves an entity's email, phone and place into one-entry lists, and leaves what it cannot move", async () => {
+    const path = scratch();
+    await versionThree(path, BEFORE_CONTACT_LISTS);
+
+    await open(path);
+
+    const state = await contactState(path);
+    expect(properties(state, "moved")).toEqual({
+      name: "Moved",
+      emails: [{ value: "a@example.com" }],
+      phones: [{ value: "+44 20 7946 0000" }],
+      addresses: [{ street_address: "1 High Street" }],
+    });
+    expect(properties(state, "empty")).toEqual({ name: "Empty" });
+    expect(properties(state, "trashed")).toEqual({
+      name: "Binned",
+      addresses: [{ street_address: "2 Low Road" }],
+    });
+    // The type declares `email` itself, and its subtype inherits it; every
+    // other type holds the field as `core.entity` declares it.
+    expect(properties(state, "declares")).toEqual({
+      email: "c@example.com",
+      phones: [{ value: "+1 555 0100" }],
+    });
+    expect(properties(state, "inherits")).toEqual({ email: "c@example.com" });
+    expect(state.items.exact?.properties).toBe(
+      '{"count":12345678901234567890,"ratio":1.50,"emails":[{"value":"e@example.com"}]}',
+    );
+    for (const id of ["odd", "invalid", "beside", "loop", "note", "scalar"]) {
+      expect(state.items[id]?.properties, id).toBe(
+        JSON.stringify(JSON.parse(BEFORE_CONTACT_LISTS[id]![1])),
+      );
+      expect(state.items[id]?.version, id).toBe(1);
+    }
+  });
+
+  it("removes an old field whose value its list already holds, and leaves the list as it was", async () => {
+    const path = scratch();
+    await versionThree(path, BEFORE_CONTACT_LISTS);
+
+    await open(path);
+
+    const state = await contactState(path);
+    expect(properties(state, "held")).toEqual({
+      emails: [
+        { value: "b@example.com" },
+        { value: "a@example.com", label: "work" },
+      ],
+      phones: [{ value: "+1 555 0100" }],
+      addresses: [{ street_address: "1 High Street", locality: "Town" }],
+    });
+    // The list holds the value already, so removing the field loses nothing,
+    // even though the `value` member would refuse it as a new entry.
+    expect(properties(state, "held-refused")).toEqual({
+      emails: [{ value: "not an email", label: "old" }],
+    });
+  });
+
+  it("keeps the value of a field a registered type declares, even word for word as core.entity did", async () => {
+    const path = scratch();
+    await versionThree(path, BEFORE_CONTACT_LISTS);
+
+    await open(path);
+
+    const state = await contactState(path);
+    expect(properties(state, "registered")).toEqual({
+      email: "r@example.com",
+      phones: [{ value: "+1 555 0102" }],
+    });
+  });
+
+  it("gives each changed item its next version, with no writer, the old version in its history and an item.updated event", async () => {
+    const path = scratch();
+    await versionThree(path, BEFORE_CONTACT_LISTS);
+
+    await open(path);
+
+    const state = await contactState(path);
+    const moved = [
+      "declares",
+      "empty",
+      "exact",
+      "held",
+      "held-refused",
+      "moved",
+      "registered",
+      "trashed",
+    ];
+    expect(
+      Object.values(state.items)
+        .filter((item) => item.version === 2)
+        .map((item) => item.id)
+        .sort(),
+    ).toEqual(moved);
+    for (const id of moved) {
+      expect(state.items[id]?.writer_kind, id).toBeNull();
+      expect(state.items[id]?.updated_at, id).not.toBe(WRITTEN_AT);
+    }
+    expect(state.versions.map((version) => version.item_id)).toEqual(moved);
+    expect(state.versions.find((v) => v.item_id === "moved")).toMatchObject({
+      version: 1,
+      properties: JSON.stringify(JSON.parse(BEFORE_CONTACT_LISTS.moved![1])),
+      created_at: state.items.moved?.updated_at,
+      writer_kind: "key",
+      writer_id: "k1",
+      writer_name: "A key",
+    });
+
+    expect(state.events.map((event) => event.item_id).sort()).toEqual(moved);
+    const event = state.events.find((e) => e.item_id === "moved");
+    expect(event).toMatchObject({ event_type: "updated", enable_fanout: 1 });
+    expect(JSON.parse(event?.payload as string)).toMatchObject({
+      event_type: "item.updated",
+      item: {
+        id: "moved",
+        type: "core.entity.person",
+        state: "active",
+        version: 2,
+        updated_at: state.items.moved?.updated_at,
+        properties: properties(state, "moved"),
+      },
+      metadata: { item_id: "moved", tags: ["kept"], extensions: {} },
+    });
+    expect(
+      JSON.parse(
+        state.events.find((e) => e.item_id === "trashed")?.payload as string,
+      ),
+    ).toMatchObject({
+      item: { state: "trashed" },
+      metadata: { item_id: "trashed", tags: [], extensions: {} },
+    });
+  });
+
+  it("changes nothing when it runs again", async () => {
+    const path = scratch();
+    await versionThree(path, BEFORE_CONTACT_LISTS);
+    await open(path);
+    const once = await contents(path);
+
+    const client = createClient({ url: `file:${path}` });
+    await MIGRATIONS.find((m) => m.to === 4)?.apply(client);
+    client.close();
+
+    expect(await contents(path)).toEqual(once);
+  });
+});
+
 describe("starting on a database at this build's schema version", () => {
   it("updates an unstamped one from the last version a build left unstamped", async () => {
-    // Schema version 3 changed rows and not tables, so an unstamped file of
-    // this shape is at version 2: every build since stamps what it writes.
+    // Schema versions 3 and 4 changed rows and not tables, so an unstamped
+    // file of this shape is at version 2: every build since stamps what it
+    // writes.
     expect(Math.max(...UNSTAMPED_VERSIONS)).toBe(2);
     const path = scratch();
     const client = createClient({ url: `file:${path}` });
@@ -491,7 +814,9 @@ describe("starting on a database at this build's schema version", () => {
     expect(await rowsOf(path, tables)).toEqual(before);
     expect(icons.rows).toEqual([]);
     expect(backups(path)).toHaveLength(1);
-    expect(backups(path)[0]).toMatch(/-schema-2-to-3-/);
+    expect(backups(path)[0]).toContain(
+      `-schema-2-to-${String(SCHEMA_VERSION)}-`,
+    );
   });
 });
 
@@ -633,7 +958,7 @@ describe("an update that cannot reach the file or the copy", () => {
     try {
       vi.setSystemTime(new Date("2026-10-27T10:15:00.123Z"));
       writeFileSync(
-        `${path}.backup-schema-1-to-3-20261027T101500123Z`,
+        `${path}.backup-schema-1-to-${String(SCHEMA_VERSION)}-20261027T101500123Z`,
         "in the way",
       );
 

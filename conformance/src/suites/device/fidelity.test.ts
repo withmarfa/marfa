@@ -3064,7 +3064,8 @@ describe("a local read answers the listing grammar as the server does", () => {
     }
 
     for (const filter of [
-      'properties.meta.author eq "x"',
+      'properties.meta.author.name eq "x"',
+      'properties.meta.author neq "x"',
       'title eq "x"',
       "",
       Array.from({ length: 11 }, () => "tags exists").join(" AND "),

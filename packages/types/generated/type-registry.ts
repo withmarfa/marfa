@@ -48,9 +48,9 @@ const coreEntity: TypeSchema = {
     name: { type: "string", description: "Display name", required: true },
     url: { type: "url", description: "Web address" },
     description: { type: "string", description: "What the entity is" },
-    email: { type: "email", description: "Contact email" },
-    phone: { type: "string", description: "Contact phone (E.164 recommended)" },
-    place: { type: "string", description: "Location (human-readable address)" },
+    emails: { type: "array", description: "Email addresses. The first entry is the main one, and an entry's label is free text, such as work or home.", items_type: "object", items_fields: {"value":{"type":"email","description":"The email address","required":true},"label":{"type":"string","description":"What the entry is for, such as work or home"}} },
+    phones: { type: "array", description: "Phone numbers. The first entry is the main one, and an entry's label is free text, such as work or home.", items_type: "object", items_fields: {"value":{"type":"string","description":"The phone number, in E.164 form where known","required":true},"label":{"type":"string","description":"What the entry is for, such as work or home"}} },
+    addresses: { type: "array", description: "Postal addresses. The first entry is the main one, and an entry's label is free text, such as work or home.", items_type: "object", items_fields: {"label":{"type":"string","description":"What the entry is for, such as work or home"},"street_address":{"type":"string","description":"Street line"},"locality":{"type":"string","description":"City or town"},"region":{"type":"string","description":"State, province, or county"},"postal_code":{"type":"string","description":"Postcode or ZIP code"},"country":{"type":"string","description":"Country name or code"}} },
     image_url: { type: "url", description: "Logo or brand image" },
     legal_name: { type: "string", description: "Official registered name" },
     founded: { type: "date", description: "Founding date (ISO 8601)" },
@@ -217,9 +217,9 @@ const coreEntityPerson: TypeSchema = {
     name: { type: "string", description: "Display name", required: true },
     url: { type: "url", description: "Web address" },
     description: { type: "string", description: "What the entity is" },
-    email: { type: "email", description: "Contact email" },
-    phone: { type: "string", description: "Contact phone (E.164 recommended)" },
-    place: { type: "string", description: "Location (human-readable address)" },
+    emails: { type: "array", description: "Email addresses. The first entry is the main one, and an entry's label is free text, such as work or home.", items_type: "object", items_fields: {"value":{"type":"email","description":"The email address","required":true},"label":{"type":"string","description":"What the entry is for, such as work or home"}} },
+    phones: { type: "array", description: "Phone numbers. The first entry is the main one, and an entry's label is free text, such as work or home.", items_type: "object", items_fields: {"value":{"type":"string","description":"The phone number, in E.164 form where known","required":true},"label":{"type":"string","description":"What the entry is for, such as work or home"}} },
+    addresses: { type: "array", description: "Postal addresses. The first entry is the main one, and an entry's label is free text, such as work or home.", items_type: "object", items_fields: {"label":{"type":"string","description":"What the entry is for, such as work or home"},"street_address":{"type":"string","description":"Street line"},"locality":{"type":"string","description":"City or town"},"region":{"type":"string","description":"State, province, or county"},"postal_code":{"type":"string","description":"Postcode or ZIP code"},"country":{"type":"string","description":"Country name or code"}} },
     image_url: { type: "url", description: "Logo or brand image" },
     legal_name: { type: "string", description: "Official registered name" },
     founded: { type: "date", description: "Founding date (ISO 8601)" },
@@ -250,9 +250,9 @@ const coreEntityPlace: TypeSchema = {
     name: { type: "string", description: "Display name", required: true },
     url: { type: "url", description: "Web address" },
     description: { type: "string", description: "What the entity is" },
-    email: { type: "email", description: "Contact email" },
-    phone: { type: "string", description: "Contact phone (E.164 recommended)" },
-    place: { type: "string", description: "Location (human-readable address)" },
+    emails: { type: "array", description: "Email addresses. The first entry is the main one, and an entry's label is free text, such as work or home.", items_type: "object", items_fields: {"value":{"type":"email","description":"The email address","required":true},"label":{"type":"string","description":"What the entry is for, such as work or home"}} },
+    phones: { type: "array", description: "Phone numbers. The first entry is the main one, and an entry's label is free text, such as work or home.", items_type: "object", items_fields: {"value":{"type":"string","description":"The phone number, in E.164 form where known","required":true},"label":{"type":"string","description":"What the entry is for, such as work or home"}} },
+    addresses: { type: "array", description: "Postal addresses. The first entry is the main one, and an entry's label is free text, such as work or home.", items_type: "object", items_fields: {"label":{"type":"string","description":"What the entry is for, such as work or home"},"street_address":{"type":"string","description":"Street line"},"locality":{"type":"string","description":"City or town"},"region":{"type":"string","description":"State, province, or county"},"postal_code":{"type":"string","description":"Postcode or ZIP code"},"country":{"type":"string","description":"Country name or code"}} },
     image_url: { type: "url", description: "Logo or brand image" },
     legal_name: { type: "string", description: "Official registered name" },
     founded: { type: "date", description: "Founding date (ISO 8601)" },
@@ -805,11 +805,45 @@ export const SHIPPED_TYPE_SHAPES = {
       "title_field": "name"
     },
     "fields": {
+      "addresses": {
+        "items_fields": {
+          "country": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "locality": {
+            "type": "string"
+          },
+          "postal_code": {
+            "type": "string"
+          },
+          "region": {
+            "type": "string"
+          },
+          "street_address": {
+            "type": "string"
+          }
+        },
+        "items_type": "object",
+        "type": "array"
+      },
       "description": {
         "type": "string"
       },
-      "email": {
-        "type": "email"
+      "emails": {
+        "items_fields": {
+          "label": {
+            "type": "string"
+          },
+          "value": {
+            "required": true,
+            "type": "email"
+          }
+        },
+        "items_type": "object",
+        "type": "array"
       },
       "founded": {
         "type": "date"
@@ -827,11 +861,18 @@ export const SHIPPED_TYPE_SHAPES = {
       "notes": {
         "type": "string"
       },
-      "phone": {
-        "type": "string"
-      },
-      "place": {
-        "type": "string"
+      "phones": {
+        "items_fields": {
+          "label": {
+            "type": "string"
+          },
+          "value": {
+            "required": true,
+            "type": "string"
+          }
+        },
+        "items_type": "object",
+        "type": "array"
       },
       "url": {
         "type": "url"
@@ -847,6 +888,30 @@ export const SHIPPED_TYPE_SHAPES = {
       "icon": "lucide:user"
     },
     "fields": {
+      "addresses": {
+        "items_fields": {
+          "country": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "locality": {
+            "type": "string"
+          },
+          "postal_code": {
+            "type": "string"
+          },
+          "region": {
+            "type": "string"
+          },
+          "street_address": {
+            "type": "string"
+          }
+        },
+        "items_type": "object",
+        "type": "array"
+      },
       "birthday": {
         "type": "date"
       },
@@ -856,8 +921,18 @@ export const SHIPPED_TYPE_SHAPES = {
       "description": {
         "type": "string"
       },
-      "email": {
-        "type": "email"
+      "emails": {
+        "items_fields": {
+          "label": {
+            "type": "string"
+          },
+          "value": {
+            "required": true,
+            "type": "email"
+          }
+        },
+        "items_type": "object",
+        "type": "array"
       },
       "family_name": {
         "type": "string"
@@ -893,11 +968,18 @@ export const SHIPPED_TYPE_SHAPES = {
       "organization": {
         "type": "string"
       },
-      "phone": {
-        "type": "string"
-      },
-      "place": {
-        "type": "string"
+      "phones": {
+        "items_fields": {
+          "label": {
+            "type": "string"
+          },
+          "value": {
+            "required": true,
+            "type": "string"
+          }
+        },
+        "items_type": "object",
+        "type": "array"
       },
       "prefix": {
         "type": "string"
@@ -923,6 +1005,30 @@ export const SHIPPED_TYPE_SHAPES = {
       "icon": "lucide:map-pin"
     },
     "fields": {
+      "addresses": {
+        "items_fields": {
+          "country": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "locality": {
+            "type": "string"
+          },
+          "postal_code": {
+            "type": "string"
+          },
+          "region": {
+            "type": "string"
+          },
+          "street_address": {
+            "type": "string"
+          }
+        },
+        "items_type": "object",
+        "type": "array"
+      },
       "altitude": {
         "type": "number"
       },
@@ -933,8 +1039,18 @@ export const SHIPPED_TYPE_SHAPES = {
       "description": {
         "type": "string"
       },
-      "email": {
-        "type": "email"
+      "emails": {
+        "items_fields": {
+          "label": {
+            "type": "string"
+          },
+          "value": {
+            "required": true,
+            "type": "email"
+          }
+        },
+        "items_type": "object",
+        "type": "array"
       },
       "founded": {
         "type": "date"
@@ -961,11 +1077,18 @@ export const SHIPPED_TYPE_SHAPES = {
       "notes": {
         "type": "string"
       },
-      "phone": {
-        "type": "string"
-      },
-      "place": {
-        "type": "string"
+      "phones": {
+        "items_fields": {
+          "label": {
+            "type": "string"
+          },
+          "value": {
+            "required": true,
+            "type": "string"
+          }
+        },
+        "items_type": "object",
+        "type": "array"
       },
       "postal_code": {
         "type": "string"
