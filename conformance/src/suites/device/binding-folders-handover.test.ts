@@ -46,6 +46,15 @@ async function watched(label: string): Promise<
   return { ...harness, watch, served };
 }
 
+/**
+ * Moves the engine's clock until `done`, one step for each step of real time.
+ * A command asking for a folder gives up after ten seconds of that clock, and
+ * the watch it asks lets go only when its pass reaches the end of a step,
+ * which takes real time. A step every few milliseconds ran the clock far
+ * ahead of the watch on a busy machine, so the command was refused before the
+ * watch had answered. Never faster than real time, the clock cannot pass the
+ * refusal before the watch could have let go.
+ */
 async function advanceUntil(
   harness: BindingFolderHarness,
   done: () => boolean | Promise<boolean>,
@@ -56,7 +65,7 @@ async function advanceUntil(
       await harness.device.clock.advance(200);
       expect(await done()).toBe(true);
     },
-    { timeout: 10_000, interval: 10 },
+    { timeout: 30_000, interval: 200 },
   );
 }
 

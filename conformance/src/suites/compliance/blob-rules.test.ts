@@ -76,6 +76,18 @@ async function replicateToZero(): Promise<void> {
   throw new Error("blob-replicate never reached remaining: 0");
 }
 
+/**
+ * Runs the orphan sweep once replication has nothing left to place. An upload
+ * wakes replication, which copies a blob under the lock the sweep takes only
+ * when it is free, so a sweep that meets the copy leaves the blob for a later
+ * run by design. A case that counts runs (one reports, the next purges) must
+ * not leave the count to the order the two happen in.
+ */
+async function sweepOrphans<T = unknown>(): Promise<T> {
+  await replicateToZero();
+  return run<T>("blob-orphans");
+}
+
 /** Checks until the predicate holds of the blob's copies, bounded the
  *  same way: one run checks a bounded batch, least recently checked first,
  *  and this blob's copies may not be in it. */
@@ -427,7 +439,7 @@ describe("the rules that keep a blob's bytes", () => {
     expect(item.ok, JSON.stringify(item.error)).toBe(true);
     trackItem(ctx, item.data.item.id);
 
-    await run("blob-orphans");
+    await sweepOrphans();
     const report = await operator.listBlobOrphans();
     expect(report.status).toBe(200);
     await expectMatchesSchema("GET", "/blobs/orphans", 200, report.data);
@@ -453,7 +465,7 @@ describe("the rules that keep a blob's bytes", () => {
     });
     expect(lateItem.ok, JSON.stringify(lateItem.error)).toBe(true);
     trackItem(ctx, lateItem.data.item.id);
-    await run("blob-orphans");
+    await sweepOrphans();
     expect((await operator.downloadBlob(orphan)).status).toBe(404);
     expect((await operator.downloadBlob(kept)).status).toBe(200);
     expect((await operator.downloadBlob(late)).status).toBe(200);
@@ -470,7 +482,7 @@ describe("the rules that keep a blob's bytes", () => {
   it("lifts the report on an upload of the same bytes, so the next run keeps them", async () => {
     const words = "uploaded, reported, uploaded again";
     const hash = await uploadText(words);
-    await run("blob-orphans");
+    await sweepOrphans();
     const reported = (await operator.listBlobOrphans()).data.data.map(
       (row) => row.hash,
     );
@@ -486,7 +498,7 @@ describe("the rules that keep a blob's bytes", () => {
 
     // The run that would have purged the earlier report reports them afresh
     // and keeps them.
-    await run("blob-orphans");
+    await sweepOrphans();
     const kept = await operator.downloadBlob(hash);
     expect(kept.status).toBe(200);
     expect(new TextDecoder().decode(kept.data)).toBe(text(words));
@@ -497,13 +509,13 @@ describe("the rules that keep a blob's bytes", () => {
 
     // Still named by nothing once the grace has passed since that report,
     // they go: the witness that the run above could have purged them.
-    await run("blob-orphans");
+    await sweepOrphans();
     expect((await operator.downloadBlob(hash)).status).toBe(404);
   });
 
   it("lifts the report on a reference added and removed between runs", async () => {
     const hash = await uploadText("named, then unnamed, between runs");
-    await run("blob-orphans");
+    await sweepOrphans();
     expect(
       (await operator.listBlobOrphans()).data.data.map((row) => row.hash),
     ).toContain(hash);
@@ -525,9 +537,9 @@ describe("the rules that keep a blob's bytes", () => {
 
     // Unnamed again, it waits a fresh grace rather than going on the old
     // report.
-    await run("blob-orphans");
+    await sweepOrphans();
     expect((await operator.downloadBlob(hash)).status).toBe(200);
-    await run("blob-orphans");
+    await sweepOrphans();
     expect((await operator.downloadBlob(hash)).status).toBe(404);
   });
 
@@ -557,8 +569,8 @@ describe("the rules that keep a blob's bytes", () => {
     expect(note.ok, JSON.stringify(note.error)).toBe(true);
     trackItem(ctx, note.data.item.id);
 
-    await run("blob-orphans");
-    await run("blob-orphans");
+    await sweepOrphans();
+    await sweepOrphans();
 
     expect((await operator.downloadBlob(unlinked)).status).toBe(404);
     const download = await operator.downloadBlob(linked);
@@ -591,8 +603,8 @@ describe("the rules that keep a blob's bytes", () => {
     });
     expect(edge.ok, JSON.stringify(edge.error)).toBe(true);
 
-    await run("blob-orphans");
-    await run("blob-orphans");
+    await sweepOrphans();
+    await sweepOrphans();
 
     expect((await operator.downloadBlob(unreferenced)).status).toBe(404);
     expect((await operator.downloadBlob(whole)).status).toBe(200);
@@ -617,8 +629,8 @@ describe("the rules that keep a blob's bytes", () => {
     const versions = await client.getVersions(note.data.item.id);
     expect(JSON.stringify(versions.data)).toContain(inHistory);
 
-    await run("blob-orphans");
-    await run("blob-orphans");
+    await sweepOrphans();
+    await sweepOrphans();
 
     // The witness: two runs purge a blob nothing names, so the one kept
     // was kept by its history.
@@ -638,14 +650,14 @@ describe("the rules that keep a blob's bytes", () => {
     // The witness: with no upload in the way, a reported blob is purged by
     // the next run, so the races below have something to lose.
     const idle = await uploadText("reported and left alone");
-    await run("blob-orphans");
-    await run("blob-orphans");
+    await sweepOrphans();
+    await sweepOrphans();
     expect((await operator.downloadBlob(idle)).status).toBe(404);
 
     for (let round = 0; round < 8; round++) {
       const words = `reported, then sent while the run purges, round ${String(round)}`;
       const hash = await uploadText(words);
-      await run("blob-orphans");
+      await sweepOrphans();
 
       // Either order is allowed: the upload lands first and the run keeps
       // the bytes, or the run purges them and the upload stores them again.
@@ -692,17 +704,17 @@ describe("the rules that keep a blob's bytes", () => {
     // The witness: with no restore in the way, the report and the next run
     // purge the bytes, so the races below have something to lose.
     const idle = await archiveThenPurge("restorable and left alone");
-    await run("blob-orphans");
+    await sweepOrphans();
     expect(
       (await operator.listBlobOrphans()).data.data.map((row) => row.hash),
     ).toContain(idle.hash);
-    await run("blob-orphans");
+    await sweepOrphans();
     expect((await operator.downloadBlob(idle.hash)).status).toBe(404);
 
     for (let round = 0; round < 8; round++) {
       const words = `reported, then restored while the run purges, round ${String(round)}`;
       const { hash, archive } = await archiveThenPurge(words);
-      await run("blob-orphans");
+      await sweepOrphans();
       expect(
         (await operator.listBlobOrphans()).data.data.map((row) => row.hash),
       ).toContain(hash);
@@ -752,8 +764,8 @@ describe("the rules that keep a blob's bytes", () => {
     const id = file.data.item.id;
     expect((await client.deleteItem(id)).status).toBe(200);
     expect((await client.purgeItem(id)).status).toBe(200);
-    await run("blob-orphans");
-    await run("blob-orphans");
+    await sweepOrphans();
+    await sweepOrphans();
 
     const gone = await fetch(link.data.url);
     expect(gone.status).toBe(404);
@@ -817,11 +829,11 @@ describe("what the orphan sweep keeps", () => {
       JSON.stringify((await client.getVersions(earlier.id)).data),
     ).toContain(versioned);
 
-    await run("blob-orphans");
+    await sweepOrphans();
     const reported = (await operator.listBlobOrphans()).data.data.map(
       (row) => row.hash,
     );
-    await run("blob-orphans");
+    await sweepOrphans();
 
     // The witness: the blob nothing names is reported and then purged by the
     // same two runs, so they could have taken the others.
@@ -869,8 +881,8 @@ describe("what the orphan sweep keeps", () => {
       dropped.push([name, hash]);
     }
 
-    await run("blob-orphans");
-    await run("blob-orphans");
+    await sweepOrphans();
+    await sweepOrphans();
 
     for (const [name, hash] of kept) {
       expect((await operator.downloadBlob(hash)).status, name).toBe(200);
@@ -979,9 +991,9 @@ describe("how the copies are placed and removed", () => {
 
     const orphan = await uploadText("purged with a row in the copy record");
     expect(await audited("blob.purge", orphan)).toHaveLength(0);
-    await run("blob-orphans");
+    await sweepOrphans();
     expect(await audited("blob.purge", orphan)).toHaveLength(0);
-    await run("blob-orphans");
+    await sweepOrphans();
     expect((await operator.downloadBlob(orphan)).status).toBe(404);
     const purged = await audited("blob.purge", orphan);
     expect(purged).toHaveLength(1);
@@ -999,8 +1011,8 @@ describe("how the copies are placed and removed", () => {
     expect(existsSync(diskPathFor(hash))).toBe(true);
     expect((await fetch(link)).status).toBe(200);
 
-    await run("blob-orphans");
-    await run("blob-orphans");
+    await sweepOrphans();
+    await sweepOrphans();
 
     expect((await operator.downloadBlob(hash)).status).toBe(404);
     expect(existsSync(diskPathFor(hash))).toBe(false);
