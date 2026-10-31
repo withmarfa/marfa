@@ -1297,25 +1297,27 @@ describe("what a pull does with a file whose item stops matching", () => {
     properties: { title: "going", body: "body\n" },
   };
 
-  /** A folder holding one item, and a stream that trashes it and then
-   *  restores it. */
+  /** A folder holding one item, at `version`, and a stream that trashes it
+   *  and then restores it. */
   async function departure(
     label: string,
     files?: Record<string, string>,
+    version = 1,
   ): Promise<FolderHarness> {
+    const held = { ...departed, version };
     return folderHarness(label, {
       files,
-      rows: { "core.note": [{ item: departed }] },
+      rows: { "core.note": [{ item: held }] },
       events: [
         copyReplay("2", [
           copyItemEvent(
             "2",
             "item.deleted",
-            wireItem({ ...departed, state: "trashed" }),
+            wireItem({ ...held, state: "trashed" }),
           ),
         ]),
         copyReplay("3", [
-          copyItemEvent("3", "item.restored", wireItem(departed)),
+          copyItemEvent("3", "item.restored", wireItem(held)),
         ]),
       ],
     });
@@ -1398,11 +1400,16 @@ describe("what a pull does with a file whose item stops matching", () => {
   }
 
   /** A folder added over `departed`'s rendered file, whose first pull
-   *  leaves the file as it is. */
-  async function addedOverItsRender(label: string): Promise<FolderHarness> {
+   *  leaves the file as it is. `behind` versions of the item, in nothing
+   *  the file shows, came after the file was written. */
+  async function addedOverItsRender(
+    label: string,
+    behind = 0,
+  ): Promise<FolderHarness> {
     const rendered = await departedAsRendered(label);
     expect(rendered).toContain(departed.id);
-    const added = await departure(label, { "going.md": rendered });
+    expect(rendered).toContain("marfa_version: 1\n");
+    const added = await departure(label, { "going.md": rendered }, 1 + behind);
     scriptFolderWrites(added);
     const scanned = await added.folder.scan();
     expect(scanned.ok).toBe(true);
@@ -1421,8 +1428,13 @@ describe("what a pull does with a file whose item stops matching", () => {
     return added;
   }
 
-  it("removes the file of an item put in the bin that it found as its item renders, and brings it back on restore", async () => {
-    harness = await addedOverItsRender("folder-found-trashed");
+  /** The file `addedOverItsRender` leaves goes once its item is in the bin,
+   *  and comes back once it is restored. */
+  async function foundGoesAndComesBack(
+    label: string,
+    behind: number,
+  ): Promise<void> {
+    harness = await addedOverItsRender(label, behind);
     const caught = await harness.folder.device().catchUp();
     expect(caught.ok ? caught.value.applied : 0).toBe(1);
     const pulled = await harness.folder.pull();
@@ -1447,6 +1459,14 @@ describe("what a pull does with a file whose item stops matching", () => {
       read(harness, "going.md"),
       "a restored item did not come back as a file",
     ).toContain("body");
+  }
+
+  it("removes the file of an item put in the bin that it found as its item renders, and brings it back on restore", async () => {
+    await foundGoesAndComesBack("folder-found-trashed", 0);
+  });
+
+  it("removes the file of an item put in the bin that it found as its item renders at an older version line, and brings it back on restore", async () => {
+    await foundGoesAndComesBack("folder-found-trashed-behind", 1);
   });
 
   it("trashes the item of a file it found as its item renders once the person deletes it", async () => {
