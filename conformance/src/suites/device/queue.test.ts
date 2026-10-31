@@ -5301,6 +5301,41 @@ describe("an upload is a queued write", () => {
     }
   });
 
+  it("types an added file by the MIME type it is told, whatever its kind, parameter and case", async () => {
+    harness = await hydratedHarness("upload-mime-kinds", { rows: held() });
+    const { device } = harness;
+    for (const [mime, type] of [
+      ["image/png", "core.file.image"],
+      ["IMAGE/WEBP", "core.file.image"],
+      ["audio/mpeg", "core.file.audio"],
+      ["Audio/Ogg", "core.file.audio"],
+      ["video/mp4", "core.file.video"],
+      ["VIDEO/WEBM", "core.file.video"],
+      ["text/html", "core.file.webpage"],
+      ["TEXT/HTML", "core.file.webpage"],
+      ["text/html; charset=utf-8", "core.file.webpage"],
+      ["application/xhtml+xml", "core.file.webpage"],
+      ["Application/XHTML+XML; charset=UTF-8", "core.file.webpage"],
+      ["text/plain", "core.file"],
+      ["text/plain; charset=utf-8", "core.file"],
+      ["application/pdf", "core.file"],
+      ["application/octet-stream", "core.file"],
+    ] as const) {
+      const added = await device.addFile(
+        fileOf("told.bin", `bytes ${mime}\n`),
+        {
+          mimeType: mime,
+        },
+      );
+      expect(added.ok, `${mime}: ${JSON.stringify(added)}`).toBe(true);
+      if (!added.ok) continue;
+      const file = await device.get(added.value[1]?.item_id ?? "");
+      expect(file.ok && file.value.type, `${mime} was typed otherwise`).toBe(
+        type,
+      );
+    }
+  });
+
   it("adds a file as an upload and a file item, linked to nothing", async () => {
     harness = await hydratedHarness("upload-add", { rows: held() });
     const { device, server } = harness;

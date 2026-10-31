@@ -309,6 +309,30 @@ export const SCRIPTED_TYPES: ReadonlyArray<Record<string, unknown>> = [
     fields: FILE_FIELDS,
     mergePolicy: { fields: {}, default: "last_writer_wins" },
   }),
+  wireType("core.file.audio", {
+    parent: "core.file",
+    titleField: "title",
+    fields: {
+      ...FILE_FIELDS,
+      duration: {
+        type: "number",
+        description:
+          "Length in seconds (server enrichment: derived from the file when the client does not supply it)",
+      },
+    },
+    mergePolicy: { fields: {}, default: "last_writer_wins" },
+  }),
+  wireType("core.file.video", {
+    parent: "core.file",
+    titleField: "title",
+    fields: {
+      ...FILE_FIELDS,
+      width: { type: "integer", description: "Width in pixels" },
+      height: { type: "integer", description: "Height in pixels" },
+      duration: { type: "number", description: "Length in seconds" },
+    },
+    mergePolicy: { fields: {}, default: "last_writer_wins" },
+  }),
   wireType("core.file.image", {
     parent: "core.file",
     titleField: "title",

@@ -1,4 +1,5 @@
 import {
+  linkSync,
   chmodSync,
   copyFileSync,
   existsSync,
@@ -938,12 +939,12 @@ describe("folder syncing from login", () => {
     const root = standIn("keyfile-refused");
     const registry = registryOf(root);
     const secret = `device-fixture-secret-${randomUUID()}`;
-    const refused = (path: string, reason: string) => {
-      const ran = autostart(root, "on", {
-        registry,
-        args: ["--key-file", path],
-      });
-      expect(ran.status, ran.stdout).toBe(1);
+    const refuse = (
+      ran: { status: number | null; stdout: string; stderr: string },
+      reason: string,
+      switched: boolean,
+    ) => {
+      expect(ran.status, ran.stdout + ran.stderr).toBe(1);
       expect(ran.stdout).toBe("");
       const envelope = JSON.parse(ran.stderr) as {
         error: { code: string; message: string };
@@ -951,7 +952,32 @@ describe("folder syncing from login", () => {
       expect(envelope.error.code).toBe("invalid");
       expect(envelope.error.message).toContain(reason);
       expect(ran.stderr).not.toContain(secret);
-      expect(existsSync(agentFile(root))).toBe(false);
+      if (switched) expect(existsSync(agentFile(root))).toBe(false);
+    };
+    // Each file is refused by `autostart on` and by `folders watch`.
+    const refused = (path: string, reason: string) => {
+      refuse(
+        autostart(root, "on", { registry, args: ["--key-file", path] }),
+        reason,
+        true,
+      );
+      refuse(
+        spawnSync(
+          requireBinary(),
+          ["--json", "folders", "watch", "--key-file", path, "--for", "1"],
+          {
+            env: {
+              ...process.env,
+              ...keychainEnv(),
+              MARFA_FOLDER_REGISTRY: registry,
+            },
+            encoding: "utf8",
+            timeout: 30_000,
+          },
+        ),
+        reason,
+        false,
+      );
     };
     const open = keyFile(root, "http://127.0.0.1:9", secret, 0o644);
     refused(open, "can be read by others");
@@ -964,6 +990,30 @@ describe("folder syncing from login", () => {
     writeFileSync(bare, "MARFA_API_URL=http://127.0.0.1:9\n");
     chmodSync(bare, 0o600);
     refused(bare, "has no MARFA_API_KEY line");
+    const unnamed = join(root, "keys", "unnamed.env");
+    writeFileSync(unnamed, `MARFA_API_KEY=${secret}\n`);
+    chmodSync(unnamed, 0o600);
+    refused(unnamed, "has no MARFA_API_URL line");
+    const elsewhere = join(root, "keys", "elsewhere.env");
+    writeFileSync(
+      elsewhere,
+      `MARFA_API_URL=not a server address\nMARFA_API_KEY=${secret}\n`,
+    );
+    chmodSync(elsewhere, 0o600);
+    refused(elsewhere, "not a server address");
+    // The witness for the modes: the same file, readable by no one else, is
+    // taken, and each way of being readable by the group or others is not.
+    for (const mode of [0o640, 0o660, 0o604, 0o606, 0o644]) {
+      chmodSync(bare, mode);
+      refused(bare, "can be read by others");
+    }
+    chmodSync(bare, 0o600);
+    refused(join(root, "keys"), "is not a file");
+    const second = join(root, "keys", "second-name.env");
+    linkSync(bare, second);
+    refused(bare, "has more than one name");
+    refused(second, "has more than one name");
+    rmSync(second);
     // A key file inside a listed folder would be sent to the server.
     const folder = join(root, "notes");
     mkdirSync(folder, { recursive: true });
