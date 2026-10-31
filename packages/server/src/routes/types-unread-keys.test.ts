@@ -182,7 +182,7 @@ describe("PUT /types/{id}", () => {
       label: string;
       fields: Record<string, unknown>;
     };
-    expect(type.fields.serves).toEqual({ type: "integer" });
+    expect(type.fields.serves).toEqual({ type: "integer", label: "Serves" });
     expect(type.label).not.toBe("Recipe");
 
     const mended = await send("PUT", `/types/${id}`, {

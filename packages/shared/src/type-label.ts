@@ -26,14 +26,26 @@ export function namedLabel(label: string | undefined): string | undefined {
   return label === undefined || label === "" ? undefined : label;
 }
 
+/** The plural a type is answered with: its own, or where it names none or an
+ *  empty one, the plural of its label. */
+export function pluralOf(schema: {
+  id: string;
+  label?: string;
+  plural?: string;
+}): string {
+  return (
+    namedLabel(schema.plural) ??
+    pluralFromLabel(namedLabel(schema.label) ?? labelFromId(schema.id))
+  );
+}
+
 /** Gives a definition that names no label, or an empty one, the label its
- *  identifier makes, and one that names no plural, or an empty one, the
- *  plural its label makes. Changes the definition it is given and returns
- *  it. */
+ *  identifier makes. Changes the definition it is given and returns it. A
+ *  plural is not filled here: one made from the label is made on each read
+ *  (`pluralOf`), so it follows a later change of label. */
 export function labelledTypeDefinition<
-  T extends { id: string; label?: string; plural?: string },
+  T extends { id: string; label?: string },
 >(schema: T): T {
   schema.label = namedLabel(schema.label) ?? labelFromId(schema.id);
-  schema.plural = namedLabel(schema.plural) ?? pluralFromLabel(schema.label);
   return schema;
 }

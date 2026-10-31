@@ -13,6 +13,7 @@ import {
   MarfaError,
   MAX_RESOLUTION_DEPTH,
   mergeFieldChain,
+  pluralOf,
   withFieldLabels,
 } from "@withmarfa/shared";
 import type {
@@ -196,7 +197,7 @@ export function resolveTypeSchema(
     resolved.compatible_with = self.compatible_with;
   }
   if (self.label !== undefined) resolved.label = self.label;
-  if (self.plural !== undefined) resolved.plural = self.plural;
+  resolved.plural = pluralOf(self);
   if (self.description !== undefined) resolved.description = self.description;
   if (displayHints) resolved.display_hints = displayHints;
   // The type's own and never an ancestor's: a link identifies rows of

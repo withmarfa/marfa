@@ -6,6 +6,7 @@
   "fields": {
     "url": {
       "type": "string",
+      "label": "URL",
       "description": "The saved URL",
       "format": "url"
     },
@@ -23,6 +24,7 @@
     },
     "source_url": {
       "type": "string",
+      "label": "Source URL",
       "description": "Where the content was sourced from",
       "format": "url"
     },
@@ -36,11 +38,13 @@
     },
     "published_at": {
       "type": "string",
+      "label": "Published",
       "description": "When the original content was published",
       "format": "datetime"
     },
     "image_url": {
       "type": "string",
+      "label": "Image URL",
       "description": "Preview image",
       "format": "url"
     },

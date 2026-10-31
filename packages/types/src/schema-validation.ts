@@ -9,11 +9,7 @@
 // `SchemaValidationContext` instead.
 
 import { ICON_SETS, isIconId, lucideIconId } from "./icon-sets.js";
-import {
-  MAX_LABEL_LENGTH,
-  STATUS_GROUPS,
-  TYPE_ROLES,
-} from "./schema-types.js";
+import { MAX_LABEL_LENGTH, STATUS_GROUPS, TYPE_ROLES } from "./schema-types.js";
 import {
   STATUS_WORD_PATTERN,
   isStatusGroup,
@@ -389,14 +385,16 @@ function labelIssue(
   hint: string,
 ): void {
   if (value === undefined) return;
-  if (typeof value !== "string" || [...value].length > MAX_LABEL_LENGTH) {
+  // Code points, as the contract counts them, rather than graphemes.
+  const length = typeof value === "string" ? Array.from(value).length : 0;
+  if (typeof value !== "string" || length > MAX_LABEL_LENGTH) {
     errors.push(
       issue({
         field,
         expected: `a string of at most ${String(MAX_LABEL_LENGTH)} characters, or nothing`,
         actual:
           typeof value === "string"
-            ? `a string of ${String([...value].length)} characters`
+            ? `a string of ${String(length)} characters`
             : describe(value),
         hint,
       }),
@@ -426,7 +424,12 @@ function validateFieldShape(
 
   const declaredFormat = typeof fd.format === "string" ? fd.format : undefined;
 
-  labelIssue(`${path}.label`, fd.label, errors, "A label is the name an app shows for it. Omit it to make one from the name.");
+  labelIssue(
+    `${path}.label`,
+    fd.label,
+    errors,
+    "A label is the name an app shows for it. Omit it to make one from the name.",
+  );
 
   if (typeof fd.type !== "string" || fd.type.length === 0) {
     errors.push(
@@ -1050,8 +1053,18 @@ export function validateTypeSchema(
     );
   }
 
-  labelIssue("label", obj.label, errors, "label is the human-facing name. Omit it to derive one from the id.");
-  labelIssue("plural", obj.plural, errors, "The name for more than one item, such as People. Omit it to make one from the label.");
+  labelIssue(
+    "label",
+    obj.label,
+    errors,
+    "label is the human-facing name. Omit it to derive one from the id.",
+  );
+  labelIssue(
+    "plural",
+    obj.plural,
+    errors,
+    "The name for more than one item, such as People. Omit it to make one from the label.",
+  );
 
   if (obj.description !== undefined && typeof obj.description !== "string") {
     errors.push(

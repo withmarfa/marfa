@@ -429,6 +429,7 @@ describe("type registration and listing", () => {
     for (const format of formats) {
       expect(read.data.fields[`as_${format}`], format).toEqual({
         type: format,
+        label: `As ${format[0]!.toUpperCase()}${format.slice(1)}`,
       });
     }
   });
@@ -442,6 +443,7 @@ describe("type registration and listing", () => {
     expect(registered.status, JSON.stringify(registered.error)).toBe(201);
     expect((await client.getType(id)).data.fields.home).toEqual({
       type: "url",
+      label: "Home",
     });
 
     const refusedId = `user.format-list-thumbnail-${ctx.runId}`;
@@ -484,10 +486,12 @@ describe("type registration and listing", () => {
     expect(read.data.fields.locale).toEqual({
       type: "string",
       format: "bcp47",
+      label: "Locale",
     });
     expect(read.data.fields.country).toEqual({
       type: "string",
       format: "iso3166",
+      label: "Country",
     });
 
     const refusedId = `user.format-kept-refused-${ctx.runId}`;
@@ -533,13 +537,10 @@ describe("type registration and listing", () => {
     } as never);
     expect(registered.status, JSON.stringify(registered.error)).toBe(201);
     const read = await client.getType(id);
-    const fields = read.data.fields as Record<string, Record<string, unknown>>;
+    const fields = read.data.fields;
     expect(fields.phone.type).toBe("string");
     expect(fields.phone.format).toBe("phone");
-    expect(
-      (fields.contacts.items_fields as Record<string, Record<string, unknown>>)
-        .value.format,
-    ).toBe("phone");
+    expect(fields.contacts.items_fields?.value.format).toBe("phone");
 
     // A number in any form a person or a vendor writes is kept as written.
     for (const value of ["+44 20 7946 0958 ext. 12", "1-800-FLOWERS", "x"]) {
@@ -715,7 +716,9 @@ describe("type registration and listing", () => {
       "lable",
       "fields.serves.exclusiveMinimum",
     ]);
-    expect((await client.getType(id)).data.fields).toEqual(fields);
+    expect((await client.getType(id)).data.fields).toEqual({
+      serves: { ...fields.serves, label: "Serves" },
+    });
 
     // The witness: the same replacement without the keys is taken.
     const mended = await client.replaceType(id, {

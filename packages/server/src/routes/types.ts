@@ -19,9 +19,14 @@ import {
   FIELD_FORMATS,
   malformedTypeIdentifier,
   labelledTypeDefinition,
+  pluralOf,
   iconNameIssue,
 } from "@withmarfa/shared";
-import type { SchemaValidationIssue, TypeSchema } from "@withmarfa/shared";
+import type {
+  FieldDefinition,
+  SchemaValidationIssue,
+  TypeSchema,
+} from "@withmarfa/shared";
 import type { Context, Next } from "hono";
 import type { AppEnv } from "../middleware/auth.js";
 import {
@@ -254,7 +259,7 @@ const FieldDefinitionSchema = z
       .enum(FIELD_FORMATS as unknown as [string, ...string[]])
       .optional()
       .describe(
-        "A refinement of a `string` field or an array of strings. `url`, `email`, `datetime`, `date` and `thumbnail` become the `type` or `items_type`. `bcp47`, `iso3166`, `currency` and `phone` stay as `format`; a `currency` is three capital letters, such as `GBP`, and a `phone` is a phone number Marfa does not check.",
+        "Refines a `string` field or an array of strings. `url`, `email`, `datetime`, `date` and `thumbnail` become the `type` or `items_type`. `bcp47`, `iso3166`, `currency` and `phone` stay as `format`; a `currency` is three capital letters, such as `GBP`.",
       ),
     searchable: z
       .boolean()
@@ -698,16 +703,16 @@ function withOwnerIcon<T extends TypeSchema>(
 const DISPLAY_HINT_KEYS = ["title_field", "body_field", "icon"] as const;
 
 /**
- * The hints the type reads as, which is what a caller that reads a type and
- * writes the answer back submits. A parent chain that cannot be walked, the
- * state a replacement exists to correct, leaves nothing to compare with.
+ * The type as it reads, which is what a caller that reads a type and writes
+ * the answer back submits. A parent chain that cannot be walked, the state a
+ * replacement exists to correct, leaves nothing to compare with.
  */
-function readDisplayHints(
+function readTypeSchema(
   id: string,
   owned: ReadonlyMap<string, string>,
-): TypeSchema["display_hints"] {
+): TypeSchema | undefined {
   try {
-    return resolveTypeSchema(id, ownerResolver(owned))?.display_hints;
+    return resolveTypeSchema(id, ownerResolver(owned));
   } catch (err) {
     if (
       err instanceof MarfaError &&
@@ -726,16 +731,73 @@ function readDisplayHints(
  * reads as, is that read-back, so it is dropped and the type goes on
  * following its ancestor. The icon the definition does set is kept when the
  * submitted one is the owner's, so clearing the owner's icon shows the
- * author's again.
+ * author's again. A plural, and a field's or member's label, that the stored
+ * definition does not name and the submission gives as read is dropped the
+ * same way, so it goes on following the label, name or ancestor it came from.
  */
 function withoutReadBack<T extends TypeSchema>(
   schema: T,
   stored: TypeSchema,
   owned: ReadonlyMap<string, string>,
 ): T {
+  const read = readTypeSchema(stored.id, owned);
+  return withoutReadBackHints(
+    read ? withoutReadBackLabels(schema, stored, read) : schema,
+    stored,
+    read,
+    owned,
+  );
+}
+
+function withoutReadBackLabels<T extends TypeSchema>(
+  schema: T,
+  stored: TypeSchema,
+  read: TypeSchema,
+): T {
+  const rest: TypeSchema = { ...schema, fields: { ...schema.fields } };
+  if (stored.plural === undefined && rest.plural === pluralOf(stored)) {
+    delete rest.plural;
+  }
+  for (const [name, field] of Object.entries(rest.fields)) {
+    const own = stored.fields[name];
+    const readField = read.fields[name];
+    if (!readField) continue;
+    const kept: FieldDefinition = { ...field };
+    if (own?.label === undefined && kept.label === readField.label) {
+      delete kept.label;
+    }
+    if (kept.items_fields) {
+      kept.items_fields = Object.fromEntries(
+        Object.entries(kept.items_fields).map(([member, definition]) => {
+          const ownMember = own?.items_fields?.[member];
+          const readMember = readField.items_fields?.[member];
+          if (
+            readMember &&
+            ownMember?.label === undefined &&
+            definition.label === readMember.label
+          ) {
+            const unlabelled = { ...definition };
+            delete unlabelled.label;
+            return [member, unlabelled];
+          }
+          return [member, definition];
+        }),
+      );
+    }
+    rest.fields[name] = kept;
+  }
+  return rest as T;
+}
+
+function withoutReadBackHints<T extends TypeSchema>(
+  schema: T,
+  stored: TypeSchema,
+  readSchema: TypeSchema | undefined,
+  owned: ReadonlyMap<string, string>,
+): T {
   const submitted = schema.display_hints;
   if (submitted === undefined) return schema;
-  const read = readDisplayHints(stored.id, owned);
+  const read = readSchema?.display_hints;
   const ownerIcon = owned.get(stored.id);
   const hints: Record<string, string> = {};
   for (const key of DISPLAY_HINT_KEYS) {
@@ -1032,7 +1094,7 @@ const replaceTypeRoute = createRoute({
   tags: ["Types"],
   summary: "Replace a type",
   description:
-    "Replaces a registered type's whole schema and returns it. A field you leave out is removed, but items keep their values for it. `metadata.types:write` alone can add optional fields and change `label`, `plural`, `description`, `display_hints`, `version`, or a kept field's `description` or `label`.",
+    "Replaces a type's whole schema and returns it. A field left out is removed; items keep their values. `metadata.types:write` alone can add optional fields and change labels, descriptions, `plural`, `display_hints` and `version`.",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({
@@ -1325,6 +1387,7 @@ export function typeRoutes(storage: Storage) {
             const row = rows.get(schema.id);
             return {
               ...schema,
+              plural: pluralOf(schema),
               ...(roles ? { roles } : {}),
               own_roles: [...(schema.roles ?? [])].sort(),
               provenance: {
@@ -1460,6 +1523,7 @@ export function typeRoutes(storage: Storage) {
           assertCompatibleDependents([schema.id]);
           return {
             ...created,
+            plural: pluralOf(created),
             provenance: await storage.types.provenance(created.id),
           };
         },
@@ -1529,6 +1593,7 @@ export function typeRoutes(storage: Storage) {
           assertCompatibleDependents([id]);
           return {
             ...withOwnerIcon(updated, await storage.types.icons()),
+            plural: pluralOf(updated),
             provenance: await storage.types.provenance(id),
           };
         },

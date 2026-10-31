@@ -124,6 +124,7 @@ describe("connector interfaces", () => {
     expect(repeated.type).toEqual(repeated.registered_type);
     expect(repeated.resolved_type.fields.inherited).toEqual({
       type: "string",
+      label: "Inherited",
       required: false,
       searchable: true,
     });
@@ -131,7 +132,10 @@ describe("connector interfaces", () => {
     const wire = (await (
       await call(`/types/${input.id}`, "GET", undefined, readKey)
     ).json()) as { fields: Record<string, unknown> };
-    expect(wire.fields.inherited).toEqual({ type: "string" });
+    expect(wire.fields.inherited).toEqual({
+      type: "string",
+      label: "Inherited",
+    });
 
     expect(repeated.registered_type).not.toHaveProperty("fields.inherited");
     const equivalent = {

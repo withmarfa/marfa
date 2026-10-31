@@ -641,6 +641,9 @@ pub struct TypeField {
     /// The field's own type, such as `string` or `thumbnail`.
     pub field_type: String,
     pub required: bool,
+    /// The name an app shows for the field: the nearest one its type's chain
+    /// names, else one made from its name, such as `Due At` for `due_at`.
+    pub label: String,
     pub description: Option<String>,
     /// The type that declares it: the type itself, or the nearest one it
     /// inherits the field from.
@@ -654,6 +657,9 @@ pub struct TypeField {
 pub struct ItemType {
     pub id: String,
     pub label: Option<String>,
+    /// The name an app shows for more than one item of the type, such as
+    /// `People`: the type's own, else one made from its label.
+    pub plural: String,
     pub description: Option<String>,
     pub parent: Option<String>,
     pub version: i64,
@@ -717,6 +723,7 @@ impl From<marfa_core::TypeField> for TypeField {
             name: field.name,
             field_type: field.r#type,
             required: field.required,
+            label: field.label,
             description: field.description,
             declared_by: field.declared_by,
             definition: match field.definition {
@@ -732,6 +739,7 @@ impl From<marfa_core::ItemType> for ItemType {
         ItemType {
             id: held.id,
             label: held.label,
+            plural: held.plural,
             description: held.description,
             parent: held.parent,
             version: held.version,
@@ -3696,6 +3704,7 @@ mod tests {
                 name: "since".into(),
                 r#type: "string".into(),
                 required: false,
+                label: "Since".into(),
                 description: None,
                 declared_by: "mentor-of".into(),
                 definition: serde_json::json!({ "type": "string" }),

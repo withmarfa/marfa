@@ -79,7 +79,7 @@ describe("a thumbnail field", () => {
     expect(
       stored.data.fields.cover,
       "a thumbnail declared by its format is stored under a second spelling",
-    ).toEqual({ type: "thumbnail" });
+    ).toEqual({ type: "thumbnail", label: "Cover" });
   });
 
   it("refuses a thumbnail named for a field search indexes, and a second thumbnail", async () => {

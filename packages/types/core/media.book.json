@@ -7,10 +7,12 @@
   "fields": {
     "isbn": {
       "type": "string",
+      "label": "ISBN",
       "description": "International Standard Book Number (ISO 2108)"
     },
     "page_count": {
       "type": "integer",
+      "label": "Pages",
       "description": "Number of pages"
     },
     "edition": {

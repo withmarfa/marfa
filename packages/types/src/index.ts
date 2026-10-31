@@ -27,11 +27,7 @@ export {
   statusGroupOf,
 } from "./status.js";
 
-export {
-  labelFromName,
-  pluralFromLabel,
-  withFieldLabels,
-} from "./labels.js";
+export { labelFromName, pluralFromLabel, withFieldLabels } from "./labels.js";
 
 export type { IconSet } from "./icon-sets.js";
 export { ICON_SETS, lucideIconId } from "./icon-sets.js";

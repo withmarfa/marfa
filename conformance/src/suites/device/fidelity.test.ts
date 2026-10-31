@@ -2454,15 +2454,35 @@ describe("the scripted answers match the server's", () => {
       {
         id: base,
         label: "Base of a family",
-        fields: { name: { type: "string", required: true } },
+        plural: "Bases of families",
+        fields: {
+          name: { type: "string", required: true, label: "Full Name" },
+          contacts: {
+            type: "array",
+            items_type: "object",
+            items_fields: {
+              phone_number: { type: "string", label: "Number" },
+              kind: { type: "string" },
+            },
+          },
+        },
         display_hints: { title_field: "name" },
       },
       {
         id: leaf,
         parent: base,
+        label: "Story",
         fields: {
           rating: { type: "number", description: "Out of five" },
           name: { type: "string", required: true },
+          contacts: {
+            type: "array",
+            items_type: "object",
+            items_fields: {
+              phone_number: { type: "string" },
+              kind: { type: "string", label: "Kind of Contact" },
+            },
+          },
         },
       },
     ]) {
@@ -2506,6 +2526,7 @@ describe("the scripted answers match the server's", () => {
     expect(
       {
         label: read.value.label,
+        plural: read.value.plural,
         parent: read.value.parent,
         title_field: read.value.title_field,
         body_field: read.value.body_field,
@@ -2516,6 +2537,7 @@ describe("the scripted answers match the server's", () => {
       "the copy resolved the type's inheritance otherwise than the server's own read of it",
     ).toEqual({
       label: resolved.label ?? null,
+      plural: resolved.plural,
       parent: resolved.parent ?? null,
       title_field: resolved.display_hints?.title_field ?? null,
       body_field: resolved.display_hints?.body_field ?? null,
@@ -2525,9 +2547,27 @@ describe("the scripted answers match the server's", () => {
       read.value.fields.map((field) => [field.name, field.declared_by]),
       "the copy did not say which type declares each field",
     ).toEqual([
+      ["contacts", leaf],
       ["name", leaf],
       ["rating", leaf],
     ]);
+    // The witness: the labels the comparison above holds the copy to are the
+    // ones the chain names and the ones the names make, and the plural is the
+    // leaf's own label's rather than the parent's plural.
+    expect(read.value.plural).toBe("Stories");
+    expect(read.value.fields.map((field) => [field.name, field.label])).toEqual(
+      [
+        ["contacts", "Contacts"],
+        ["name", "Full Name"],
+        ["rating", "Rating"],
+      ],
+    );
+    expect(resolved.fields.contacts).toMatchObject({
+      items_fields: {
+        phone_number: { label: "Number" },
+        kind: { label: "Kind of Contact" },
+      },
+    });
 
     const listed = await client.rawRequest("/edge-types");
     expect(listed.ok, JSON.stringify(listed.error)).toBe(true);

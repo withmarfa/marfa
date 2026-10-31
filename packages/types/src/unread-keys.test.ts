@@ -125,6 +125,7 @@ describe("unreadKeys", () => {
       fields: {
         name: {
           type: "string",
+          label: "Name",
           description: "d",
           required: true,
           searchable: false,
@@ -222,6 +223,7 @@ describe("unreadKeys", () => {
       id: "user.recipe",
       parent: parentSchema.id,
       label: "Recipe",
+      plural: "Recipes",
       description: "A recipe.",
       version: 1,
       fields: { serves: { type: "number" } },
@@ -280,6 +282,7 @@ describe("unreadKeys", () => {
         (key) =>
           ![
             "items_fields",
+            "label",
             "maxItems",
             "maxLength",
             "maximum",

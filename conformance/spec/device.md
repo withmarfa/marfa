@@ -4192,7 +4192,7 @@ A device MUST answer a read of either catalog from its copy alone, with no serve
 
 ### `device/catalog-type-read`
 
-A device MUST answer an item type as `GET /types/{id}` answers it (`types/read`): its label and parent as declared, its fields with those it inherits, each naming the type that declares it and a field declared again nearer the type taking the place of the one above, and each display hint, the icon among them, from the nearest type that sets it (`types/read-display-hint`).
+A device MUST answer an item type as `GET /types/{id}` answers it (`types/read`): its label and parent as declared, its plural (`types/plural`), its fields with those it inherits, each naming the type that declares it, with the label it is shown by (`types/field-label`), and a field declared again nearer the type taking the place of the one above, and each display hint, the icon among them, from the nearest type that sets it (`types/read-display-hint`).
 
 **Tests:** `device/catalog.test.ts › reads a registered type with its label and inherited fields, and an edge type's reverse name, from the copy alone`, `device/fidelity.test.ts › reads a registered type and edge type from a working copy as the server answers them`, `device/folders-frontmatter.test.ts › takes each display hint from the nearest type that sets it, as the server resolves them`.
 

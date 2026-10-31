@@ -212,6 +212,7 @@ function quote(value: string): string {
 
 function fieldLiteral(field: FieldDefinition): string {
   const parts: string[] = [`type: ${quote(field.type)}`];
+  if (field.label) parts.push(`label: ${quote(field.label)}`);
   if (field.description) parts.push(`description: ${quote(field.description)}`);
   if (field.required) parts.push("required: true");
   if (field.enum_values) {
@@ -250,6 +251,7 @@ function emitSchema(schema: TypeSchema, lines: string[]): void {
   lines.push(`  id: ${quote(schema.id)},`);
   if (schema.parent) lines.push(`  parent: ${quote(schema.parent)},`);
   if (schema.label) lines.push(`  label: ${quote(schema.label)},`);
+  if (schema.plural) lines.push(`  plural: ${quote(schema.plural)},`);
   if (schema.description) {
     lines.push(`  description: ${quote(schema.description)},`);
   }
@@ -346,7 +348,7 @@ lines.push("");
 
 /**
  * A shipped definition as literal types: every key sorted by code unit, the
- * prose (`label`, `reverse_label`, `description`) and the id left out. The
+ * prose (`label`, `plural`, `reverse_label`, `description`) and the id left out. The
  * consts above are annotated with the schema interfaces, which widen every value to `string`
  * and every list to `string[]`, so the shapes of fields, enum values,
  * parents, roles, constraints and cardinalities reach a built declaration
@@ -367,7 +369,13 @@ function shapeLiteral(value: unknown): unknown {
 }
 
 /** Keys a definition carries only for a person reading it. */
-const PROSE_KEYS = new Set(["label", "reverse_label", "description", "id"]);
+const PROSE_KEYS = new Set([
+  "label",
+  "plural",
+  "reverse_label",
+  "description",
+  "id",
+]);
 
 /**
  * Keys whose value maps a name the definition chose to what it names. A field

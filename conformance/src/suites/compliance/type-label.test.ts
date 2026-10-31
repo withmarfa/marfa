@@ -131,18 +131,12 @@ describe("type label compliance", () => {
     expect(r.status, JSON.stringify(r.error)).toBe(201);
     trackType(ctx, typeId, client);
 
-    const fields = (await client.getType(typeId)).data.fields as Record<
-      string,
-      Record<string, unknown>
-    >;
+    const fields = (await client.getType(typeId)).data.fields;
     expect(fields.due_at.label).toBe("Due At");
     expect(fields.website.label).toBe("Web Address");
-    const members = fields.contacts.items_fields as Record<
-      string,
-      Record<string, unknown>
-    >;
-    expect(members.phone_number.label).toBe("Phone Number");
-    expect(members.kind.label).toBe("Kind of Contact");
+    const members = fields.contacts.items_fields;
+    expect(members?.phone_number.label).toBe("Phone Number");
+    expect(members?.kind.label).toBe("Kind of Contact");
   });
 
   it("lists only the field labels a type declares", async () => {
@@ -160,7 +154,7 @@ describe("type label compliance", () => {
     const listed = (await client.listTypes()).data.data.find(
       (t) => t.id === typeId,
     );
-    const fields = listed!.fields as Record<string, Record<string, unknown>>;
+    const fields = listed!.fields;
     expect(fields.website.label).toBe("Web Address");
     expect(fields.due_at).not.toHaveProperty("label");
   });
@@ -178,7 +172,10 @@ describe("type label compliance", () => {
       (
         await client.registerType({
           id: parent,
-          fields: { score: { type: "integer", label: "Given" }, entries: field },
+          fields: {
+            score: { type: "integer", label: "Given" },
+            entries: field,
+          },
         } as never)
       ).status,
     ).toBe(201);
@@ -285,12 +282,54 @@ describe("type label compliance", () => {
     expect((await client.getType(child)).data.plural).toBe("Authors");
   });
 
+  it("does not freeze a made plural or field label when a read is written back", async () => {
+    const typeId = `user.label-write-back-${ctx.runId}`;
+    const r = await client.registerType({
+      id: typeId,
+      label: "Story",
+      fields: {
+        due_at: { type: "datetime" },
+        website: { type: "url", label: "Web Address" },
+      },
+    } as never);
+    expect(r.status, JSON.stringify(r.error)).toBe(201);
+    trackType(ctx, typeId, client);
+
+    const read = (await client.getType(typeId)).data;
+    expect(read.plural).toBe("Stories");
+    expect(read.fields.due_at.label).toBe("Due At");
+    const { provenance: _provenance, ...definition } = read as typeof read & {
+      provenance?: unknown;
+    };
+    const replaced = await client.replaceType(typeId, {
+      ...definition,
+      label: "Tale",
+      fields: {
+        ...definition.fields,
+        website: { ...definition.fields.website, label: "Home Page" },
+      },
+    });
+    expect(replaced.status, JSON.stringify(replaced.error)).toBe(200);
+    expect(replaced.data.type.plural).toBe("Tales");
+
+    const after = (await client.getType(typeId)).data;
+    expect(after.plural).toBe("Tales");
+    expect(after.fields.website.label).toBe("Home Page");
+    const listed = (await client.listTypes()).data.data.find(
+      (t) => t.id === typeId,
+    );
+    expect(listed!.fields.due_at).not.toHaveProperty("label");
+    expect(listed!.fields.website.label).toBe("Home Page");
+  });
+
   it.each([
     ["label", (text: unknown) => ({ label: text, fields: {} })],
     ["plural", (text: unknown) => ({ plural: text, fields: {} })],
     [
       "fields.value.label",
-      (text: unknown) => ({ fields: { value: { type: "string", label: text } } }),
+      (text: unknown) => ({
+        fields: { value: { type: "string", label: text } },
+      }),
     ],
     [
       "fields.entries.items_fields.value.label",
@@ -335,16 +374,50 @@ describe("type label compliance", () => {
     expect((await client.getType("core.media.series")).data.plural).toBe(
       "Series",
     );
-    const phones = (person.fields as Record<string, Record<string, unknown>>)
-      .phones;
+    const phones = person.fields.phones;
     expect(phones.label).toBe("Phone Numbers");
-    const bookmark = (await client.getType("core.bookmark")).data
-      .fields as Record<string, Record<string, unknown>>;
-    expect(bookmark.url.label).toBe("URL");
-    const task = (await client.getType("core.task")).data.fields as Record<
-      string,
-      Record<string, unknown>
-    >;
+    for (const [id, plural] of [
+      ["core.media", "Media"],
+      ["core.file.audio", "Audio"],
+    ]) {
+      expect((await client.getType(id)).data.plural, id).toBe(plural);
+    }
+    // The core types `types/shipped` names.
+    const shipped = [
+      "bookmark",
+      "collection",
+      "entity",
+      "entity.person",
+      "entity.place",
+      "event",
+      "file",
+      "file.audio",
+      "file.image",
+      "file.video",
+      "file.webpage",
+      "highlight",
+      "media",
+      "media.album",
+      "media.article",
+      "media.book",
+      "media.episode",
+      "media.film",
+      "media.game",
+      "media.series",
+      "media.song",
+      "message",
+      "note",
+      "task",
+    ].map((name) => `core.${name}`);
+    let urls = 0;
+    for (const id of shipped) {
+      const fields = (await client.getType(id)).data.fields;
+      if (fields.url === undefined) continue;
+      urls += 1;
+      expect(fields.url.label, id).toBe("URL");
+    }
+    expect(urls).toBeGreaterThan(0);
+    const task = (await client.getType("core.task")).data.fields;
     expect(task.due_at.label).toBe("Due");
   });
 });

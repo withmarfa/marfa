@@ -387,6 +387,7 @@ describe("a key whose type map reaches a type evolves it", () => {
     expect((await client.getType(id)).data.fields.rank).toEqual({
       type: "integer",
       description: "Where it sits in the queue.",
+      label: "Rank",
     });
   });
 
@@ -426,11 +427,8 @@ describe("a key whose type map reaches a type evolves it", () => {
     expect(relabelled.status, JSON.stringify(relabelled.error)).toBe(200);
     const read = (await client.getType(id)).data;
     expect(read.plural).toBe("Issue Records");
-    const fields = read.fields as Record<string, Definition>;
-    expect(fields.rank.label).toBe("Queue Position");
-    expect(
-      (fields.links.items_fields as Record<string, Definition>).href.label,
-    ).toBe("Link");
+    expect(read.fields.rank?.label).toBe("Queue Position");
+    expect(read.fields.links?.items_fields?.href?.label).toBe("Link");
   });
 
   it("lists every change that needs schema.write, sorted", async () => {

@@ -12,6 +12,7 @@
     },
     "num_tracks": {
       "type": "integer",
+      "label": "Tracks",
       "description": "Total track count"
     }
   },

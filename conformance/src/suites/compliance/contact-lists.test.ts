@@ -62,7 +62,7 @@ describe("the contact lists of core.entity", () => {
       type: "array",
       items_type: "object",
       items_fields: {
-        value: { type: "string", required: true },
+        value: { type: "string", required: true, format: "phone" },
         label: { type: "string" },
       },
     });

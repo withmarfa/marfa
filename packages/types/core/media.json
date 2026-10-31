@@ -1,6 +1,7 @@
 {
   "id": "core.media",
   "label": "Media",
+  "plural": "Media",
   "description": "Content produced by someone that the user engages with — a film, podcast, book, article, song, show.",
   "version": 0,
   "fields": {
@@ -18,6 +19,7 @@
     },
     "url": {
       "type": "string",
+      "label": "URL",
       "description": "Web address",
       "format": "url"
     },
@@ -31,11 +33,13 @@
     },
     "published_at": {
       "type": "string",
+      "label": "Published",
       "description": "When originally published or released",
       "format": "datetime"
     },
     "image_url": {
       "type": "string",
+      "label": "Image URL",
       "description": "Cover art, poster, or thumbnail",
       "format": "url"
     },

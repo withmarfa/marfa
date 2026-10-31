@@ -778,7 +778,7 @@ export interface paths {
         get: operations["getType"];
         /**
          * Replace a type
-         * @description Replaces a registered type's whole schema and returns it. A field you leave out is removed, but items keep their values for it. `metadata.types:write` alone can add optional fields and change `label`, `description`, `display_hints` or `version`.
+         * @description Replaces a type's whole schema and returns it. A field left out is removed; items keep their values. `metadata.types:write` alone can add optional fields and change labels, descriptions, `plural`, `display_hints` and `version`.
          */
         put: operations["replaceType"];
         post?: never;
@@ -3957,6 +3957,8 @@ export interface components {
              * @enum {string}
              */
             type: "string" | "number" | "integer" | "boolean" | "url" | "email" | "datetime" | "date" | "enum" | "array" | "object" | "thumbnail" | "status";
+            /** @description A name for people to read, up to 100 characters. Leave it out and a type read answers the nearest one a type above names, else one made from the field's name, such as `Due At` for `due_at`. The type list answers only the declared label. */
+            label?: string;
             /** @description What the field holds. */
             description?: string;
             /** @description `true` if an item of the type must have a value for it. */
@@ -3972,10 +3974,10 @@ export interface components {
                 [key: string]: components["schemas"]["EntryMember"];
             };
             /**
-             * @description A refinement of a `string` field or an array of strings. `url`, `email`, `datetime`, `date` and `thumbnail` become the `type` or `items_type`. `bcp47`, `iso3166` and `currency` stay as `format`; a `currency` is three capital letters, such as `GBP`.
+             * @description Refines a `string` field or an array of strings. `url`, `email`, `datetime`, `date` and `thumbnail` become the `type` or `items_type`. `bcp47`, `iso3166`, `currency` and `phone` stay as `format`; a `currency` is three capital letters, such as `GBP`.
              * @enum {string}
              */
-            format?: "url" | "email" | "datetime" | "date" | "thumbnail" | "bcp47" | "iso3166" | "currency";
+            format?: "url" | "email" | "datetime" | "date" | "thumbnail" | "bcp47" | "iso3166" | "currency" | "phone";
             /** @description `false` if full-text search should skip the field. Items still return it. */
             searchable?: boolean;
             /** @description The longest value a `string` or `enum` field allows. */
@@ -4006,6 +4008,8 @@ export interface components {
              * @enum {string}
              */
             type: "string" | "number" | "integer" | "boolean" | "url" | "email" | "datetime" | "date" | "enum" | "array" | "object" | "thumbnail" | "status";
+            /** @description A name for people to read, up to 100 characters. Leave it out and a type read answers the nearest one a type above names, else one made from the member's name, such as `Due At` for `due_at`. The type list answers only the declared label. */
+            label?: string;
             /** @description What the member holds. */
             description?: string;
             /** @description `true` if every entry must have the member. */
@@ -4016,7 +4020,7 @@ export interface components {
              * @description A refinement of a `string` member, as a field's `format`.
              * @enum {string}
              */
-            format?: "url" | "email" | "datetime" | "date" | "thumbnail" | "bcp47" | "iso3166" | "currency";
+            format?: "url" | "email" | "datetime" | "date" | "thumbnail" | "bcp47" | "iso3166" | "currency" | "phone";
             /** @description The longest value a `string` or `enum` member allows. */
             maxLength?: number;
             /** @description The lowest value the member allows, itself included. Only a `number` or `integer` member takes it. */
@@ -4036,6 +4040,8 @@ export interface components {
             id: string;
             /** @description The type's name for people to read. */
             label?: string;
+            /** @description The type's plural name for people to read, such as `People`. Never inherited. */
+            plural?: string;
             /** @description What the type is for. */
             description?: string;
             /** @description The identifier of the type this one inherits from. */
@@ -4143,8 +4149,10 @@ export interface components {
             version?: number;
             /** @description The identifier of the type this one inherits from. To set or change it, you need write on it, unless Marfa ships it. Leave it out for a type with no parent. */
             parent?: string;
-            /** @description A name for people to read. Leave it out and Marfa derives one from the last segment of the identifier. */
+            /** @description A name for people to read, up to 100 characters. Leave it out and Marfa derives one from the last segment of the identifier. */
             label?: string;
+            /** @description The label's plural, up to 100 characters, such as `People`. Leave it out and Marfa adds `s`, `es` or `ies` to the label by the regular English rule. */
+            plural?: string;
             /** @description What the type is for. */
             description?: string;
             /** @description The structural roles the type plays: `container`. An edge type's `role:<name>` constraint matches types by role. */
@@ -4227,8 +4235,10 @@ export interface components {
             version?: number;
             /** @description The identifier of the type this one inherits from. To set or change it, you need write on it, unless Marfa ships it. Leave it out for a type with no parent. */
             parent?: string;
-            /** @description A name for people to read. Leave it out and Marfa derives one from the last segment of the identifier. */
+            /** @description A name for people to read, up to 100 characters. Leave it out and Marfa derives one from the last segment of the identifier. */
             label?: string;
+            /** @description The label's plural, up to 100 characters, such as `People`. Leave it out and Marfa adds `s`, `es` or `ies` to the label by the regular English rule. */
+            plural?: string;
             /** @description What the type is for. */
             description?: string;
             /** @description The structural roles the type plays: `container`. An edge type's `role:<name>` constraint matches types by role. */

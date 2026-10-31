@@ -232,6 +232,9 @@ export interface TypeField {
   name: string;
   type: string;
   required: boolean;
+  /** The name an app shows: the nearest one the chain names, else one made
+   *  from the field's name. */
+  label: string;
   description: string | null;
   /** The type that declares it: the type itself, or the nearest it inherits it from. */
   declared_by: string;
@@ -243,6 +246,8 @@ export interface TypeField {
 export interface ItemType {
   id: string;
   label: string | null;
+  /** The type's own plural, else the one its label makes. */
+  plural: string;
   description: string | null;
   parent: string | null;
   version: number;

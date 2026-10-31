@@ -1068,8 +1068,8 @@ describe("what a restore answers", () => {
     expect((await client.getItem(fresh.id)).status).toBe(404);
     const held_ = await client.getType(ids.type);
     expect(held_.data.fields).toEqual({
-      label: { type: "string" },
-      blob: { type: "string" },
+      label: { type: "string", label: "Label" },
+      blob: { type: "string", label: "Blob" },
     });
   });
 });
