@@ -870,9 +870,14 @@ pub struct CreateArgs {
 pub struct UpdateArgs {
     /// The item id.
     pub id: String,
-    /// The properties to write, as a JSON object. Whole values.
-    #[arg(long, value_name = "JSON", default_value = "{}")]
-    pub properties: String,
+    /// The properties to write, as a JSON object. Whole values. Required
+    /// unless `--clear-property` is given.
+    #[arg(
+        long,
+        value_name = "JSON",
+        required_unless_present = "clear_properties"
+    )]
+    pub properties: Option<String>,
     /// A property to remove from the item, leaving every other as it is.
     /// Repeat it to remove more than one.
     #[arg(long = "clear-property", value_name = "NAME")]
@@ -898,8 +903,8 @@ pub struct UpdateArgs {
     #[arg(long)]
     pub tier: Option<Tier>,
     /// The properties are the item's whole properties: one they leave out is
-    /// cleared rather than kept.
-    #[arg(long)]
+    /// cleared rather than kept. Requires `--properties`.
+    #[arg(long, requires = "properties")]
     pub replace: bool,
     /// The item's own time, RFC 3339.
     #[arg(long, value_name = "TIME", conflicts_with = "clear_occurred_at")]
@@ -1375,7 +1380,12 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
                 }
                 ItemsCommand::Update(args) => {
                     let edit = Edit {
-                        properties: item_properties(&args.properties)?,
+                        properties: args
+                            .properties
+                            .as_deref()
+                            .map(item_properties)
+                            .transpose()?
+                            .unwrap_or_default(),
                         base_version: args.version,
                         source_id: args.source_id,
                         r#type: args.type_,

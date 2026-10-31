@@ -2780,14 +2780,14 @@ marfa device items update [OPTIONS] <ID>
 
 | Option | Description |
 | --- | --- |
-| `--properties <JSON>` | The properties to write, as a JSON object. Whole values. Default: `{}`. |
+| `--properties <JSON>` | The properties to write, as a JSON object. Whole values. Required unless `--clear-property` is given. |
 | `--clear-property <NAME>` | A property to remove from the item, leaving every other as it is. Repeat it to remove more than one. |
 | `--version <VERSION>` | The version the edit was based on. Required: the device refuses an update that names no version, as the server does. |
 | `--source-id <KEY>` | The natural key to move the row to. The server refuses one another item already holds, so a rename does not take a name off a note. |
 | `--as-read` | The version is one read before the version the copy holds now, and the server merges the edit against it rather than taking it as newer than what came in since. |
 | `--type <TYPE>` | The type to move the item to. The server holds its properties to the type it enters. |
 | `--tier <TIER>` | The tier to move the item to. One of `library`, `feed`. |
-| `--replace` | The properties are the item's whole properties: one they leave out is cleared rather than kept. |
+| `--replace` | The properties are the item's whole properties: one they leave out is cleared rather than kept. Requires `--properties`. |
 | `--occurred-at <TIME>` | The item's own time, RFC 3339. |
 | `--clear-occurred-at` | Give the item no time of its own again, so its own time is its creation time. |
 

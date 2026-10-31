@@ -718,6 +718,22 @@ mod tests {
     }
 
     #[test]
+    fn a_device_update_names_what_it_changes() {
+        let parses = |words: &[&str]| {
+            let mut argv = vec!["marfa", "device", "items", "update", "i1", "--version", "3"];
+            argv.extend_from_slice(words);
+            Cli::try_parse_from(argv).is_ok()
+        };
+        assert!(parses(&["--properties", "{}", "--replace"]));
+        assert!(parses(&["--clear-property", "due"]));
+        assert!(parses(&["--properties", r#"{"a":1}"#]));
+        // A replace with no properties would queue an empty item.
+        assert!(!parses(&["--replace"]));
+        assert!(!parses(&["--replace", "--clear-property", "due"]));
+        assert!(!parses(&[]));
+    }
+
+    #[test]
     fn socket_authority_cannot_be_combined_with_network_credentials() {
         for flags in [["--url", "https://example.com"], ["--key", "secret"]] {
             assert!(
