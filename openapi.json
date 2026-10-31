@@ -11204,10 +11204,10 @@
           {
             "schema": {
               "type": "string",
-              "description": "A filter expression. A term naming an edge type, `edge[<type>]` or `backref[<type>]`, needs read on that edge type; `edge[<type>]=<id>` also works as a query parameter. `status_group`, such as `status_group neq \"completed\"`, matches by status group. `properties.<field>.<member> eq <value>` matches a list holding an entry with that member."
+              "description": "A filter expression. A term naming an edge type, `edge[<type>]` or `backref[<type>]`, needs read on it; `edge[<type>]=<id>` also works as a query parameter. `status_group` matches by status group; `properties.<field>.<member>`, by a list entry."
             },
             "required": false,
-            "description": "A filter expression. A term naming an edge type, `edge[<type>]` or `backref[<type>]`, needs read on that edge type; `edge[<type>]=<id>` also works as a query parameter. `status_group`, such as `status_group neq \"completed\"`, matches by status group. `properties.<field>.<member> eq <value>` matches a list holding an entry with that member.",
+            "description": "A filter expression. A term naming an edge type, `edge[<type>]` or `backref[<type>]`, needs read on it; `edge[<type>]=<id>` also works as a query parameter. `status_group` matches by status group; `properties.<field>.<member>`, by a list entry.",
             "name": "filter",
             "in": "query"
           },
@@ -16853,10 +16853,10 @@
           {
             "schema": {
               "type": "string",
-              "description": "A filter expression. A term naming an edge type, `edge[<type>]` or `backref[<type>]`, needs read on that edge type; `edge[<type>]=<id>` also works as a query parameter. `status_group`, such as `status_group neq \"completed\"`, matches by status group. `properties.<field>.<member> eq <value>` matches a list holding an entry with that member."
+              "description": "A filter expression. A term naming an edge type, `edge[<type>]` or `backref[<type>]`, needs read on it; `edge[<type>]=<id>` also works as a query parameter. `status_group` matches by status group; `properties.<field>.<member>`, by a list entry."
             },
             "required": false,
-            "description": "A filter expression. A term naming an edge type, `edge[<type>]` or `backref[<type>]`, needs read on that edge type; `edge[<type>]=<id>` also works as a query parameter. `status_group`, such as `status_group neq \"completed\"`, matches by status group. `properties.<field>.<member> eq <value>` matches a list holding an entry with that member.",
+            "description": "A filter expression. A term naming an edge type, `edge[<type>]` or `backref[<type>]`, needs read on it; `edge[<type>]=<id>` also works as a query parameter. `status_group` matches by status group; `properties.<field>.<member>`, by a list entry.",
             "name": "filter",
             "in": "query"
           },
