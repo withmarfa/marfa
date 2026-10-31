@@ -550,7 +550,7 @@ When a stale `PATCH /items/{id}` under `properties_mode: replace` leaves out a p
 
 When a stale `PATCH /items/{id}` names in `clear_properties` a property that nobody changed since the version it names, the server MUST remove that property.
 
-**Tests:** `correctness/clear-properties.test.ts › clears a property nobody changed since, keeping what others wrote`.
+**Tests:** `correctness/clear-properties.test.ts › clears a property nobody changed since, keeping what others wrote`, `device/clear-properties-live.test.ts › lands a queued clear over another writer's change to a different property`.
 
 ### `versions/merge-clear-unread`
 

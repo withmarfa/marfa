@@ -7423,7 +7423,7 @@ export interface operations {
             };
             /**
              * @description - `missing_required_field`: `version` is missing.
-             *     - `validation_error`: the body is malformed, changes nothing, or names a property in both `properties` and `clear_properties`.
+             *     - `validation_error`: the body is malformed or changes nothing.
              *     - `invalid_id`: the ID or a target isn't valid.
              *     - `invalid_properties`: the properties don't fit the type, or an inline edge lacks a property its type requires.
              *     - `unknown_type`: `type` isn't registered.
