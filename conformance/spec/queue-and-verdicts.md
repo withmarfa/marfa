@@ -2526,7 +2526,7 @@ If an edge write would leave an edge of a type the held catalog marks `acyclic` 
 
 ### `queue-and-verdicts/edge-judged-held`
 
-Where the copy does not hold the edge type, the type of an end, an end, or an edge that a cycle runs through, a device MUST NOT refuse an edge write for what it does not hold, and MUST queue it for the server to judge.
+Where the copy does not hold the edge type, the type of an end, an end, or an edge that a cycle runs through, a device MUST queue an edge write for the server to judge rather than refuse it for what the copy does not hold.
 
 **Reason:** a slice holds part of the server, so the server stays the judge; refusing on a guess would refuse writes the server takes. A write queued this way and refused by the server is kept with its verdict, as any other refused write is.
 
@@ -2540,7 +2540,7 @@ If an item update moves a row to a type that an edge the copy holds at the row w
 
 ### `queue-and-verdicts/edge-check`
 
-When a caller asks whether an edge can be written, a device MUST answer with the refusal an edge create of it would give, or that it finds none, and MUST queue nothing.
+When a caller asks whether an edge can be written, a device MUST answer with the refusal an edge create of it would give, or that it finds none, without queuing anything.
 
 **Reason:** an app can disable a control before the person tries it, and learns of a refusal without a write to undo.
 
