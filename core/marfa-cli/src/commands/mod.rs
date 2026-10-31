@@ -25,6 +25,7 @@ pub mod profile;
 pub mod restore;
 pub mod search;
 pub mod sign_ins;
+pub mod sources;
 pub mod status;
 pub mod types;
 pub mod views;

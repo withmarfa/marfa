@@ -36,7 +36,7 @@ use clap::{ArgMatches, CommandFactory, FromArgMatches, Parser, Subcommand};
 use crate::commands::{
     apps, audit, blobs, config, connectors, docs, edge_types, edges, events, export, extensions,
     housekeeping, items, keys, login, logout, metadata, metrics, operations, overview, owner,
-    profile, restore, search, sign_ins, status, types, views, webhooks, whoami,
+    profile, restore, search, sign_ins, sources, status, types, views, webhooks, whoami,
 };
 use crate::device::DeviceArgs;
 use crate::error::{CliError, DOCS_HINT, Exit, long_help_footer};
@@ -227,6 +227,12 @@ enum Command {
     Keys {
         #[command(subcommand)]
         command: keys::KeysCommand,
+    },
+    /// Sources: the codes items carry to say what wrote them, and the name
+    /// and mark each is shown by.
+    Sources {
+        #[command(subcommand)]
+        command: sources::SourcesCommand,
     },
     /// The instance configuration.
     Config {
@@ -639,6 +645,7 @@ fn run(cli: Cli) -> Result<Exit, CliError> {
             keys::run(keys::KeysCommand::Forget, &Remote::public_at(&url)?, &out)
         }
         Command::Keys { command } => keys::run(command, &remote()?, &out),
+        Command::Sources { command } => sources::run(command, &remote()?, &out),
         Command::Config { command } => config::run(command, &remote()?, &out),
         Command::Export(args) => export::run(args, &remote()?, &out),
         Command::Restore(args) => restore::run(args, &remote()?, &out),
