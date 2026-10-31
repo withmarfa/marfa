@@ -3642,6 +3642,38 @@ mod tests {
         assert!(!blobs.join(hex).exists());
     }
 
+    /// The stamp is seeded where a pull would write it, since no server is
+    /// reachable here; the device suite asserts what writes it.
+    #[test]
+    fn synced_at_crosses_the_swift_boundary_and_survives_a_reopen() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("core.sqlite").display().to_string();
+        let core = Core::open(path.clone(), None, None, None).unwrap();
+        assert_eq!(
+            core.status().unwrap().synced_at,
+            None,
+            "a store that never pulled says it synced"
+        );
+
+        let stamp = "2026-10-31T09:15:02.123Z";
+        rusqlite::Connection::open(&path)
+            .unwrap()
+            .execute(
+                "INSERT OR REPLACE INTO meta VALUES ('synced_at', ?1)",
+                [stamp],
+            )
+            .unwrap();
+        assert_eq!(core.status().unwrap().synced_at.as_deref(), Some(stamp));
+
+        drop(core);
+        let reopened = Core::open(path, None, None, None).unwrap();
+        assert_eq!(
+            reopened.status().unwrap().synced_at.as_deref(),
+            Some(stamp),
+            "the stamp was lost when the store was opened again"
+        );
+    }
+
     #[test]
     fn a_links_parts_and_candidates_cross_the_swift_boundary() {
         // An emoji is two UTF-16 units: positions count what NSString counts.
