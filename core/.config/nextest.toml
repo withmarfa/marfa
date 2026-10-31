@@ -14,3 +14,15 @@ max-threads = 1
 [[profile.default.overrides]]
 filter = 'binary(~live)'
 test-group = 'live-server'
+
+# CI only (`NEXTEST_PROFILE=ci` in the workflow), so nothing retries on a
+# developer's machine. A failing test is run once more; a pass on the retry is
+# a flaky test, which the report names, and a second failure fails the run. The
+# JUnit file is what `scripts/report-flaky.py` reads for the job summary.
+[profile.ci]
+retries = 1
+status-level = "retry"
+final-status-level = "flaky"
+
+[profile.ci.junit]
+path = "junit.xml"

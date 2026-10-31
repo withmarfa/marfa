@@ -2,3 +2,12 @@
 # own workspace; the reason for the number is in `core/.config/nextest.toml`.
 [profile.default]
 slow-timeout = { period = "30s", terminate-after = 4 }
+
+# CI only; the reason is in `core/.config/nextest.toml`.
+[profile.ci]
+retries = 1
+status-level = "retry"
+final-status-level = "flaky"
+
+[profile.ci.junit]
+path = "junit.xml"

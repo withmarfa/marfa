@@ -1,10 +1,15 @@
 import { defineConfig } from "vitest/config";
-import { sharedTestBudget, silenceTelemetry } from "./vitest.shared.js";
+import {
+  ciReporters,
+  sharedTestBudget,
+  silenceTelemetry,
+} from "./vitest.shared.js";
 
 silenceTelemetry();
 
 export default defineConfig({
   test: {
+    reporters: ciReporters(),
     // Per-package projects, matched as a directory glob. A project matched
     // this way inherits nothing from this file, so each package sets its
     // own budget from `vitest.shared.ts`.
