@@ -1144,8 +1144,20 @@ describe("an interrupted hydration", () => {
     expect(resumed.ok, JSON.stringify(resumed)).toBe(true);
     if (!resumed.ok) return;
     expect(resumed.value.resumed).toBe(true);
-    expect([resumed.value.pages, resumed.value.pages_total]).toEqual([1, 3]);
-    expect(listed(server)).toEqual([null, "1", "2", "2"]);
+    // The walk asks for the next page before it writes the one it holds, so
+    // the kill that follows the third request can land before or after the
+    // second page's cursor is saved. Resuming starts from the last one saved:
+    // the second page again, or the third.
+    const asked = listed(server);
+    expect(asked.slice(0, 3)).toEqual([null, "1", "2"]);
+    const savedSecond = asked[3] === "2";
+    expect(asked.slice(3), "resumed from a cursor never saved").toEqual(
+      savedSecond ? ["2"] : ["1", "2"],
+    );
+    expect([resumed.value.pages, resumed.value.pages_total]).toEqual([
+      savedSecond ? 1 : 2,
+      3,
+    ]);
     expect(
       (
         (await device.list()) as { ok: true; value: Array<{ id: string }> }

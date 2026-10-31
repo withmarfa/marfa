@@ -12,6 +12,13 @@ async function crashWitness(partial: boolean) {
   const received: string[] = [];
   const receivedPaths: string[] = [];
   const receiver = createServer((request, response) => {
+    // Another process on a shared machine can probe a local port with a GET;
+    // only a delivery, which is a POST, counts.
+    if (request.method !== "POST") {
+      response.writeHead(404);
+      response.end();
+      return;
+    }
     let body = "";
     request.on("data", (chunk: Buffer) => {
       body += chunk.toString();
