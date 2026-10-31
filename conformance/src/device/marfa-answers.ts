@@ -453,7 +453,7 @@ export interface WireEdgeType {
   cardinality: "one-to-one" | "one-to-many" | "many-to-one" | "many-to-many";
   source_type_constraints: string[];
   target_type_constraints: string[];
-  cascade_on_delete: "cascade" | "orphan" | "block";
+  cascade_on_delete: "cascade" | "orphan" | "block" | "with-hosts";
   property_schema: Record<string, unknown>;
   reverse_name?: string;
   written_at: "source" | "target" | "none";

@@ -42,14 +42,19 @@ async function purgeEach(
   { revokedGrant }: { revokedGrant?: true },
 ): Promise<number> {
   let purged = 0;
+  // Parts an earlier purge took because it left them no host.
+  const purgedAlong = new Set<string>();
   for (const id of ids) {
+    if (purgedAlong.has(id)) continue;
     try {
       const result = await writeItem(
         storage,
         { kind: "platform", by: null },
         { op: "purge", id, ...(revokedGrant && { revokedGrant }) },
       );
-      if (result.outcome === "moved") purged += 1;
+      if (result.outcome !== "moved") continue;
+      purged += 1 + result.parts.length;
+      for (const part of result.parts) purgedAlong.add(part.item.id);
     } catch (err) {
       storage.assertTransactionUsable();
       if (isConnectionLostError(err)) throw err;

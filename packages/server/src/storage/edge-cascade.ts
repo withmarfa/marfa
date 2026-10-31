@@ -1,74 +1,118 @@
 import { ErrorCode, MarfaError, getEdgeTypeSchema } from "@withmarfa/shared";
 import type { Edge } from "@withmarfa/shared";
-import type { EdgeStore } from "./interface.js";
+import type { Storage } from "./interface.js";
+
+/** What trashing a root takes, as `planCascadeDelete` plans it. */
+export interface CascadePlan {
+  /** The root and every row it takes, leaves first. */
+  ordered: string[];
+  /** The rows taken as parts whose hosts are all in the bin or going, and
+   *  not reached by a `cascade` edge: each goes with its hosts. */
+  withHosts: Set<string>;
+}
 
 /**
- * Plans the cascade consequences of deleting a root item. Walks outbound
- * edges from the root and any cascade-reachable descendants; for each edge,
- * consults the edge-type registry's cascade_on_delete:
+ * Plans what trashing a root item takes: one closure over two rules, run
+ * until nothing new joins.
  *
- *   - cascade: recursively add the target item to the cascade set
- *     (e.g. parent-of — deleting the parent cascades to children).
- *   - block: reject the delete; accumulate all blockers for a helpful error.
- *   - orphan: no action here. There is no FK cascade to inherit — `edges`
- *     carries no foreign key to `items` on either endpoint, which the
- *     schema says in as many words — so the edge row is removed by the
- *     caller that removes the item, through `deleteBySource` /
- *     `deleteByTarget`, and announced from there. Believing otherwise is
- *     how a purge came to leave dangling rows before those calls existed.
+ *   - cascade: the target of an outbound `cascade` edge from a row in the
+ *     set (e.g. parent-of: deleting the parent cascades to children).
+ *   - with-hosts: the source of a `with-hosts` edge into a row in the set,
+ *     once every target of its `with-hosts` edges is in the set or already
+ *     in the bin. A part already in the bin is left where it is.
  *
- * Also checks inbound block edges: an edge from anywhere with
- * cascade_on_delete = block pointing AT the item under delete rejects too.
+ * A `block` edge on either side of any row in the set refuses the whole
+ * plan, naming every blocker. `orphan` does nothing here: `edges` carries no
+ * foreign key to `items`, so the caller that removes an item removes its
+ * edges (`deleteBySource` / `deleteByTarget`).
  *
- * Returns the ordered list of item ids to delete — depth-first, leaves
- * before roots — so callers can soft- or hard-delete them in that order.
+ * Every row is judged whatever the caller may read: a caller names in its
+ * answer only what it may read.
  *
  * Run inside the caller's transaction.
  */
 export async function planCascadeDelete(
-  edgeStore: EdgeStore,
+  storage: Pick<Storage, "edges" | "items">,
   rootItemId: string,
-): Promise<string[]> {
-  const visited = new Set<string>();
-  const ordered: string[] = [];
+): Promise<CascadePlan> {
+  const inSet = new Set<string>();
+  const cascadeReached = new Set<string>();
   const blockers = new Map<string, Edge>();
-  const MAX_DEPTH = 10000;
+  /** Each row's children in the plan: its cascade targets and its parts. */
+  const children = new Map<string, string[]>();
+  const candidates = new Map<string, string[]>();
 
-  async function walk(itemId: string, depth: number): Promise<void> {
-    if (depth > MAX_DEPTH) {
-      throw new MarfaError(
-        ErrorCode.EDGE_CONSTRAINT_VIOLATION,
-        `Cascade-delete depth limit (${String(MAX_DEPTH)}) exceeded: a chain of cascading edges is deeper than one delete can follow`,
-        { item_id: itemId },
-      );
-    }
-    if (visited.has(itemId)) return;
-    visited.add(itemId);
-
-    const { outbound, inbound } = await edgeStore.listAllByItem(itemId);
-
-    // A block edge on either side refuses the delete. The walk goes on past
-    // one so that the refusal names every blocker, not only the first.
-    for (const edge of [...outbound, ...inbound]) {
-      const schema = getEdgeTypeSchema(edge.edge_type);
-      if (schema?.cascade_on_delete === "block") {
-        blockers.set(edge.id, edge);
+  const queue = [rootItemId];
+  const drain = async (): Promise<void> => {
+    while (queue.length > 0) {
+      const itemId = queue.shift() as string;
+      if (inSet.has(itemId)) continue;
+      inSet.add(itemId);
+      const { outbound, inbound } = await storage.edges.listAllByItem(itemId);
+      for (const edge of [...outbound, ...inbound]) {
+        if (getEdgeTypeSchema(edge.edge_type)?.cascade_on_delete === "block") {
+          blockers.set(edge.id, edge);
+        }
+      }
+      const mine = children.get(itemId) ?? [];
+      children.set(itemId, mine);
+      for (const edge of outbound) {
+        if (getEdgeTypeSchema(edge.edge_type)?.cascade_on_delete !== "cascade")
+          continue;
+        cascadeReached.add(edge.target_id);
+        mine.push(edge.target_id);
+        queue.push(edge.target_id);
+      }
+      for (const edge of inbound) {
+        if (
+          getEdgeTypeSchema(edge.edge_type)?.cascade_on_delete !== "with-hosts"
+        )
+          continue;
+        const hosts = candidates.get(edge.source_id) ?? [];
+        hosts.push(itemId);
+        candidates.set(edge.source_id, hosts);
       }
     }
+  };
 
-    // Cascade: walk outbound cascade edges → recurse into targets.
-    for (const edge of outbound) {
-      const schema = getEdgeTypeSchema(edge.edge_type);
-      if (schema?.cascade_on_delete === "cascade") {
-        await walk(edge.target_id, depth + 1);
+  await drain();
+  for (;;) {
+    const pending = [...candidates.keys()].filter((id) => !inSet.has(id));
+    if (pending.length === 0) break;
+    const rows = await storage.items.getMany(pending, { includeTrashed: true });
+    const joining: string[] = [];
+    for (const partId of pending) {
+      const part = rows.get(partId);
+      if (!part || part.state === "trashed") {
+        candidates.delete(partId);
+        continue;
       }
+      const hosts = (await storage.edges.listAllByItem(partId)).outbound
+        .filter(
+          (edge) =>
+            getEdgeTypeSchema(edge.edge_type)?.cascade_on_delete ===
+            "with-hosts",
+        )
+        .map((edge) => edge.target_id);
+      const outside = hosts.filter((id) => !inSet.has(id));
+      const held = await storage.items.getMany(outside, {
+        includeTrashed: true,
+      });
+      if (outside.every((id) => held.get(id)?.state === "trashed")) {
+        joining.push(partId);
+      }
+      // A part not joining now may join once more of its hosts are in.
     }
-
-    // Post-order: leaves first.
-    ordered.push(itemId);
+    if (joining.length === 0) break;
+    for (const partId of joining) {
+      for (const host of candidates.get(partId) ?? []) {
+        if (inSet.has(host)) children.get(host)?.push(partId);
+      }
+      candidates.delete(partId);
+      queue.push(partId);
+    }
+    await drain();
   }
-
-  await walk(rootItemId, 0);
 
   if (blockers.size > 0) {
     throw new MarfaError(
@@ -86,5 +130,30 @@ export async function planCascadeDelete(
     );
   }
 
-  return ordered;
+  // Post-order over the plan, iteratively so a deep chain cannot overflow
+  // the stack: leaves first, the root last.
+  const ordered: string[] = [];
+  const placed = new Set<string>();
+  const stack: { id: string; next: number }[] = [{ id: rootItemId, next: 0 }];
+  placed.add(rootItemId);
+  while (stack.length > 0) {
+    const top = stack[stack.length - 1] as { id: string; next: number };
+    const kids = children.get(top.id) ?? [];
+    if (top.next < kids.length) {
+      const kid = kids[top.next] as string;
+      top.next += 1;
+      if (!placed.has(kid) && inSet.has(kid)) {
+        placed.add(kid);
+        stack.push({ id: kid, next: 0 });
+      }
+      continue;
+    }
+    ordered.push(top.id);
+    stack.pop();
+  }
+
+  const withHosts = new Set(
+    [...inSet].filter((id) => id !== rootItemId && !cascadeReached.has(id)),
+  );
+  return { ordered, withHosts };
 }

@@ -58,8 +58,9 @@ export interface RunChunkContext {
   ids: string[];
   /**
    * Rows an earlier row of the same job carried where the job moves them: a
-   * restore out of the bin bringing back what the trash took with it, or a
-   * trash taking what its cascading edges reach. Such a row is in the match
+   * restore out of the bin bringing back what the trash took with it, a
+   * trash taking what its cascading edges reach, or a purge taking the parts
+   * it left with no host. Such a row is in the match
    * set too, and moving it again would refuse a row that is already where
    * the job put it.
    */
@@ -151,13 +152,21 @@ async function runPurgeChunk({
   storage,
   input,
   ids,
+  carried: carriedByJob,
   credential,
 }: RunChunkContext): Promise<ChunkOutcome> {
   const succeeded: string[] = [];
   const errors: BulkActionErrorEntry[] = [];
   const blob_hashes = new Set<string>();
+  // Parts an earlier purge of the job took because it left them no host.
+  const alreadyCarried = carriedByJob ?? new Set<string>();
+  const purgedAlong = new Set<string>();
   await storage.runInTransaction(async () => {
     for (const id of ids) {
+      if (alreadyCarried.has(id) || purgedAlong.has(id)) {
+        succeeded.push(id);
+        continue;
+      }
       try {
         // The single purge's write, judged inside the chunk's transaction
         // and as a savepoint of it: a row restored since the job was queued
@@ -176,6 +185,10 @@ async function runPurgeChunk({
           : writeItem(storage, actor, write, options));
         if (result.outcome !== "moved") continue;
         collectBlobHashes(result.item.properties, blob_hashes);
+        for (const part of result.parts) {
+          purgedAlong.add(part.item.id);
+          collectBlobHashes(part.item.properties, blob_hashes);
+        }
         succeeded.push(id);
       } catch (err) {
         storage.assertTransactionUsable();
@@ -184,7 +197,7 @@ async function runPurgeChunk({
     }
     storage.assertTransactionUsable();
   });
-  return { succeeded, errors, blob_hashes };
+  return { succeeded, errors, blob_hashes, carried: purgedAlong };
 }
 
 async function runUpdateTagsChunk({

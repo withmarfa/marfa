@@ -37,6 +37,7 @@ import {
   validateProperties,
   validateTransition,
   getEdgeTypeSchema,
+  withHostsEdgeTypes,
   softDeleteState,
   parseFilter,
   MarfaError,
@@ -142,6 +143,7 @@ import {
   items,
   metadata,
   trash_cascades,
+  trash_with_hosts,
 } from "./schema.js";
 import type { DrizzleDb } from "./connection.js";
 import {
@@ -2176,6 +2178,7 @@ export class SqliteItemStore implements ItemStore {
     id: string,
     trashedWith?: CascadeRoot,
     writer: VersionWriter | null = null,
+    withHosts = false,
   ): Promise<void> {
     const row = await this.getRaw(id);
     if (!row) {
@@ -2223,6 +2226,9 @@ export class SqliteItemStore implements ItemStore {
           trashed_with_type: trashedWith.type,
         })
         .run();
+      if (withHosts) {
+        await this.db.insert(trash_with_hosts).values({ item_id: id }).run();
+      }
     }
 
     await this.searchStore.remove(id);
@@ -2461,6 +2467,46 @@ export class SqliteItemStore implements ItemStore {
       .delete(cascade_marks)
       .where(eq(cascade_marks.item_id, id))
       .run();
+    await this.db
+      .delete(trash_with_hosts)
+      .where(eq(trash_with_hosts.item_id, id))
+      .run();
+  }
+
+  async partsInBinWithHosts(hosts: readonly string[]): Promise<string[]> {
+    const types = withHostsEdgeTypes();
+    if (hosts.length === 0 || types.length === 0) return [];
+    const found = new Set<string>();
+    for (let offset = 0; offset < hosts.length; offset += 500) {
+      const rows = await this.db
+        .selectDistinct({ id: items.id })
+        .from(edges)
+        .innerJoin(items, eq(items.id, edges.source_id))
+        .innerJoin(trash_with_hosts, eq(trash_with_hosts.item_id, items.id))
+        .where(
+          and(
+            inArray(edges.target_id, hosts.slice(offset, offset + 500)),
+            inArray(edges.edge_type, types),
+            eq(items.state, "trashed"),
+          ),
+        )
+        .all();
+      for (const row of rows) found.add(row.id);
+    }
+    return [...found];
+  }
+
+  async wentWithHosts(ids: readonly string[]): Promise<Set<string>> {
+    const out = new Set<string>();
+    for (let offset = 0; offset < ids.length; offset += 500) {
+      const rows = await this.db
+        .select({ id: trash_with_hosts.item_id })
+        .from(trash_with_hosts)
+        .where(inArray(trash_with_hosts.item_id, ids.slice(offset, offset + 500)))
+        .all();
+      for (const row of rows) out.add(row.id);
+    }
+    return out;
   }
 
   async restoreBeneath(id: string): Promise<Item[]> {
@@ -2478,11 +2524,15 @@ export class SqliteItemStore implements ItemStore {
     // A row a trash above took is brought back only from beneath this one:
     // restoring a child brings back its own children, not its siblings.
     const beneath = own === undefined ? null : await this.beneath(id);
+    // A row that went with its hosts comes back only when one of its
+    // hosts does (`restorePartsOf` in `item-write.ts`).
+    const parts = await this.wentWithHosts(taken.map((row) => row.item_id));
     const restored: Item[] = [];
     for (const { item_id } of taken) {
       if (item_id === id || (beneath !== null && !beneath.has(item_id))) {
         continue;
       }
+      if (parts.has(item_id)) continue;
       const row = await this.getRaw(item_id);
       if (row?.state !== "trashed") {
         // Out of the bin by a door that kept no record of it, which leaves

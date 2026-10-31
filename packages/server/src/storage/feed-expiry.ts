@@ -197,7 +197,7 @@ export class FeedExpirer {
   private async heldBack(id: string): Promise<boolean> {
     let reached: string[];
     try {
-      reached = await planCascadeDelete(this.storage.edges, id);
+      reached = (await planCascadeDelete(this.storage, id)).ordered;
     } catch (err) {
       if (
         err instanceof MarfaError &&

@@ -58,6 +58,8 @@ import { StaleVersionSchema } from "./_item-conflict.js";
 import { exactItemVersion } from "../storage/conflict.js";
 import { mergeUpdateProperties } from "../storage/merge-properties.js";
 import { announcedSource, publishEdge } from "../pubsub.js";
+import { announceSettledParts } from "./_edges-inline.js";
+import { settleLateParts } from "../storage/item-write.js";
 import { requestBlobProof } from "./_blob-reach.js";
 import { pageLimit, pageCursor } from "../page-limits.js";
 
@@ -181,7 +183,11 @@ async function endsAfterMove(
     requireTypeAccess(c, source, "write");
   }
   // Before any check that reads the target, so an unreadable one says no more than a missing one.
-  const target = await storage.items.get(ends.target_id);
+  // A host in the bin takes a part arriving late (`settleLateParts`).
+  const target =
+    schema.cascade_on_delete === "with-hosts"
+      ? await storage.items.getIncludingTrashed(ends.target_id)
+      : await storage.items.get(ends.target_id);
   if (!target || !mayReadEdgeEnd(c)(target.type)) {
     throw edgeTargetNotFound(ends.target_id);
   }
@@ -766,6 +772,13 @@ export function edgeRoutes(storage: Storage) {
           edge: created,
           ...announcedSource(sourceItem),
         });
+        await announceSettledParts(
+          await settleLateParts(
+            storage,
+            { kind: "credential", key: requireAuth(c) },
+            [created],
+          ),
+        );
         return {
           edge: created,
           acknowledged: false,
@@ -878,6 +891,15 @@ export function edgeRoutes(storage: Storage) {
           edge: written.edge,
           ...announcedSource(source),
         });
+        if (ends !== null) {
+          await announceSettledParts(
+            await settleLateParts(
+              storage,
+              { kind: "credential", key: requireAuth(c) },
+              [written.edge],
+            ),
+          );
+        }
         return { ...written, moved: ends !== null };
       },
       (written) =>

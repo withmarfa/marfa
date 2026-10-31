@@ -106,6 +106,19 @@ export const MIGRATIONS: readonly Migration[] = [
           ");",
       ),
   },
+  {
+    // Empty at first: no row went to the bin with its hosts before the
+    // rule existed.
+    to: 7,
+    changes: ["trash_with_hosts"],
+    apply: (db) =>
+      db.executeMultiple(
+        "CREATE TABLE `trash_with_hosts` (\n" +
+          "\t`item_id` text PRIMARY KEY NOT NULL,\n" +
+          "\tFOREIGN KEY (`item_id`) REFERENCES `items`(`id`) ON UPDATE no action ON DELETE cascade\n" +
+          ");",
+      ),
+  },
 ];
 
 /**

@@ -145,6 +145,19 @@ export function unshadowedEdgeTypeRegistrations(
   return [...schemas].filter((schema) => !isCoreEdgeType(schema.id));
 }
 
+/** Whether an edge of this type makes its source a part of its target, the
+ *  part's host: `cascade_on_delete` `with-hosts`. */
+export function isWithHostsEdgeType(edgeTypeId: string): boolean {
+  return getEdgeTypeSchema(edgeTypeId)?.cascade_on_delete === "with-hosts";
+}
+
+/** Every edge type, shipped or registered, whose edges make parts. */
+export function withHostsEdgeTypes(): string[] {
+  return listEdgeTypes()
+    .filter((schema) => schema.cascade_on_delete === "with-hosts")
+    .map((schema) => schema.id);
+}
+
 // ---------------------------------------------------------------------------
 // Constraint resolution (inheritance-aware)
 // ---------------------------------------------------------------------------
