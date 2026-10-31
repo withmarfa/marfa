@@ -2,8 +2,10 @@
 //! judged from the catalog and the rows and edges the copy holds.
 //!
 //! What the copy does not hold it leaves to the server: an edge type or an
-//! item type outside its catalog, an end outside its slice, and a cycle that
-//! closes only through edges it does not hold. Those writes are queued, and
+//! item type outside its catalog, a constraint only the part of a type's
+//! parent chain it cannot read would decide (a parent outside its catalog,
+//! or a chain that loops), an end outside its slice, and a cycle that closes
+//! only through edges it does not hold. Those writes are queued, and
 //! the server's verdict on them stands.
 
 use std::collections::HashMap;
@@ -123,20 +125,20 @@ pub(crate) fn refuse_unwritable_edge(conn: &Connection, edge: &Proposed) -> Resu
     let mut lineages = Lineages::default();
     if let Some(r#type) = &source_type
         && let Some(lineage) = lineages.of(conn, r#type)?
-        && !lineage.admitted_by(&edge_type.source_type_constraints)
+        && lineage.admitted_by(&edge_type.source_type_constraints) == Some(false)
     {
         return Err(refused_end(edge.edge_type, "source", r#type));
     }
     if let Some(r#type) = &target_type
         && let Some(lineage) = lineages.of(conn, r#type)?
-        && !lineage.admitted_by(&edge_type.target_type_constraints)
+        && lineage.admitted_by(&edge_type.target_type_constraints) == Some(false)
     {
         return Err(refused_end(edge.edge_type, "target", r#type));
     }
     if edge_type.flat
         && let Some(r#type) = &source_type
         && let Some(lineage) = lineages.of(conn, r#type)?
-        && lineage.admitted_by(&edge_type.target_type_constraints)
+        && lineage.admitted_by(&edge_type.target_type_constraints) == Some(true)
     {
         return Err(refused_nesting(edge.edge_type));
     }
@@ -207,13 +209,16 @@ pub(crate) fn refuse_retype_breaking_edges(
         let Some(Some(edge_type)) = edge_types.get(&id) else {
             continue;
         };
-        if from && !lineage.admitted_by(&edge_type.source_type_constraints) {
+        if from && lineage.admitted_by(&edge_type.source_type_constraints) == Some(false) {
             return Err(refused_end(&id, "source", next_type));
         }
-        if from && edge_type.flat && lineage.admitted_by(&edge_type.target_type_constraints) {
+        if from
+            && edge_type.flat
+            && lineage.admitted_by(&edge_type.target_type_constraints) == Some(true)
+        {
             return Err(refused_nesting(&id));
         }
-        if to && !lineage.admitted_by(&edge_type.target_type_constraints) {
+        if to && lineage.admitted_by(&edge_type.target_type_constraints) == Some(false) {
             return Err(refused_end(&id, "target", next_type));
         }
     }
@@ -271,48 +276,58 @@ mod tests {
     /// No edge type here is named for what the server does with it, so each
     /// one's rules come from its listing alone.
     fn copy() -> Core {
+        copy_with(Vec::new(), Vec::new())
+    }
+
+    /// The same, with these types and edge types in its catalog too.
+    fn copy_with(more_types: Vec<WireType>, more_edge_types: Vec<Value>) -> Core {
         let many = "many-to-many";
         let core = Core::open_in_memory(None).unwrap();
         {
             let conn = core.conn().unwrap();
+            let mut types = vec![
+                item_type("core.note", None, &[]),
+                item_type("core.task", None, &[]),
+                item_type("core.file", None, &[]),
+                item_type("core.file.image", Some("core.file"), &[]),
+                item_type("core.collection", None, &["container"]),
+                item_type("user.album", Some("core.collection"), &[]),
+            ];
+            types.extend(more_types);
             store::replace_catalog(
                 &conn,
                 &WireCatalog {
-                    types: vec![
-                        item_type("core.note", None, &[]),
-                        item_type("core.task", None, &[]),
-                        item_type("core.file", None, &[]),
-                        item_type("core.file.image", Some("core.file"), &[]),
-                        item_type("core.collection", None, &["container"]),
-                        item_type("user.album", Some("core.collection"), &[]),
-                    ],
-                    edge_types: vec![
-                        edge_type(
-                            "mock.notes",
-                            many,
-                            [&["core.note"], &["core.note"]],
-                            false,
-                            false,
-                        ),
-                        edge_type(
-                            "mock.next-note",
-                            "one-to-one",
-                            [&["core.note"], &["core.note"]],
-                            false,
-                            false,
-                        ),
-                        edge_type("mock.files", many, [&["*"], &["core.file"]], false, false),
-                        edge_type(
-                            "mock.member",
-                            many,
-                            [&["*"], &["role:container"]],
-                            false,
-                            true,
-                        ),
-                        edge_type("mock.tree", many, [&[], &[]], true, false),
-                        edge_type("mock.under", "many-to-one", [&[], &[]], true, false),
-                        edge_type("mock.loose", many, [&[], &[]], false, false),
-                    ],
+                    types,
+                    edge_types: more_edge_types
+                        .into_iter()
+                        .chain([
+                            edge_type(
+                                "mock.notes",
+                                many,
+                                [&["core.note"], &["core.note"]],
+                                false,
+                                false,
+                            ),
+                            edge_type(
+                                "mock.next-note",
+                                "one-to-one",
+                                [&["core.note"], &["core.note"]],
+                                false,
+                                false,
+                            ),
+                            edge_type("mock.files", many, [&["*"], &["core.file"]], false, false),
+                            edge_type(
+                                "mock.member",
+                                many,
+                                [&["*"], &["role:container"]],
+                                false,
+                                true,
+                            ),
+                            edge_type("mock.tree", many, [&[], &[]], true, false),
+                            edge_type("mock.under", "many-to-one", [&[], &[]], true, false),
+                            edge_type("mock.loose", many, [&[], &[]], false, false),
+                        ])
+                        .collect(),
                 },
             )
             .unwrap();
@@ -455,6 +470,71 @@ mod tests {
         );
         // The witness: the same two collections on an edge type that is not flat.
         assert_create_queued(&core, &edge(SERIES, ALBUM, "mock.loose"), "a loose edge");
+    }
+
+    #[test]
+    fn a_parent_chain_the_copy_cannot_read_to_its_top_is_left_to_the_server() {
+        const CLIP: &str = "0190f3a0-0000-7000-8000-000000000011";
+        const LOOPED: &str = "0190f3a0-0000-7000-8000-000000000012";
+        let core = copy_with(
+            vec![
+                item_type("user.clip", Some("user.reel"), &[]),
+                item_type("user.loop-a", Some("user.loop-b"), &[]),
+                item_type("user.loop-b", Some("user.loop-a"), &[]),
+            ],
+            vec![
+                edge_type(
+                    "mock.reels",
+                    "many-to-many",
+                    [&["*"], &["user.reel"]],
+                    false,
+                    false,
+                ),
+                edge_type("mock.any", "many-to-many", [&["*"], &["*"]], false, false),
+            ],
+        );
+        for (id, r#type) in [(CLIP, "user.clip"), (LOOPED, "user.loop-a")] {
+            let row = store::testing::wire_item(
+                id,
+                r#type,
+                "active",
+                "2026-01-01T00:00:00Z",
+                json!({ "title": r#type }),
+            );
+            store::put_server_item(&core.conn().unwrap(), &row, None, &Catalog::empty()).unwrap();
+        }
+        assert_create_queued(
+            &core,
+            &edge(NOTE_A, CLIP, "mock.reels"),
+            "a clip, beneath the reel type the copy does not hold",
+        );
+        assert_create_queued(
+            &core,
+            &edge(NOTE_A, CLIP, "mock.files"),
+            "a clip, which a reel the copy does not hold may make a file",
+        );
+        assert_create_queued(
+            &core,
+            &edge(CLIP, ALBUM, "mock.member"),
+            "a clip joining an album, which a reel may make a container",
+        );
+        assert_create_queued(
+            &core,
+            &edge(NOTE_A, LOOPED, "mock.any"),
+            "an item whose parent chain loops, on an edge type that admits every type",
+        );
+        assert_create_queued(
+            &core,
+            &edge(NOTE_A, LOOPED, "mock.files"),
+            "an item whose parent chain loops, which only the server can judge",
+        );
+        // The witness: a chain read to its top is still judged.
+        assert_create_refused(
+            &core,
+            &edge(NOTE_A, TASK, "mock.files"),
+            "edge_constraint_violation",
+            "a task, which is no file",
+        );
     }
 
     #[test]

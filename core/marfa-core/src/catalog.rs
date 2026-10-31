@@ -742,22 +742,27 @@ fn resolve(
 pub(crate) struct Lineage {
     pub ancestors: Vec<String>,
     pub roles: Vec<String>,
+    /// Whether the walk reached the top of the chain: a parent the copy does
+    /// not hold, or a chain that loops, leaves what is above unknown.
+    pub whole: bool,
 }
 
 impl Lineage {
     /// Whether an edge type's constraint list for one end admits this type,
     /// by the server's rule: an empty list or `*` admits every type, a
     /// `role:<name>` a type that plays it, and a type id that type and every
-    /// type beneath it.
-    pub fn admitted_by(&self, constraints: &[String]) -> bool {
-        constraints.is_empty()
+    /// type beneath it. `None` where only the part of the chain the copy
+    /// could not read would tell.
+    pub fn admitted_by(&self, constraints: &[String]) -> Option<bool> {
+        let admitted = constraints.is_empty()
             || constraints.iter().any(|allowed| {
                 allowed == "*"
                     || match allowed.strip_prefix("role:") {
                         Some(role) => self.roles.iter().any(|held| held == role),
                         None => self.ancestors.iter().any(|held| held == allowed),
                     }
-            })
+            });
+        (admitted || self.whole).then_some(admitted)
     }
 }
 
@@ -773,18 +778,23 @@ pub(crate) fn lineage(conn: &Connection, id: &str) -> Result<Option<Lineage>, Co
     let mut lineage = Lineage {
         ancestors: Vec::new(),
         roles: Vec::new(),
+        whole: true,
     };
     let mut current = Some(id);
     while let Some(at) = current {
-        let Some(row) = held.get(at) else { break };
         if lineage.ancestors.len() >= MAX_PARENT_WALK
             || lineage.ancestors.iter().any(|seen| seen == at)
         {
-            return Err(CoreError::Decoding(format!(
-                "{id}'s parent chain loops or runs past {MAX_PARENT_WALK} types, so its roles cannot be resolved"
-            )));
+            lineage.whole = false;
+            break;
         }
+        // A parent the copy does not hold is still an ancestor a type
+        // constraint can name.
         lineage.ancestors.push(at.to_string());
+        let Some(row) = held.get(at) else {
+            lineage.whole = false;
+            break;
+        };
         for role in texts(row, "roles") {
             if !lineage.roles.contains(&role) {
                 lineage.roles.push(role);
