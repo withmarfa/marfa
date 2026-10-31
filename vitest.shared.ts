@@ -1,3 +1,5 @@
+import { FlakyReporter } from "./vitest.flaky-reporter.js";
+
 /**
  * The test and hook budget every package shares unless it has chosen its own.
  *
@@ -16,6 +18,24 @@ export const sharedTestBudget = {
   testTimeout: 20_000,
   hookTimeout: 20_000,
 } as const;
+
+/**
+ * Retries a failing test once, only where `CI` is set. A pass on the retry is
+ * reported as flaky by `FlakyReporter`, which `ciReporters` adds; nothing
+ * retries on a developer's machine, where a flaky test should be seen. Spread
+ * into the `test` block of each project that retries, since an inline project
+ * inherits nothing from its parent. The performance, hydration and load
+ * projects measure, and do not use it.
+ */
+export const ciRetry = {
+  retry: (process.env.CI ?? "") === "" ? 0 : 1,
+} as const;
+
+/** The reporters for a root config: the default, plus the flaky report on CI. */
+export const ciReporters = (): ("default" | FlakyReporter)[] =>
+  (process.env.CI ?? "") === ""
+    ? ["default"]
+    : ["default", new FlakyReporter()];
 
 /**
  * Takes the telemetry settings out of the environment and turns the OpenTelemetry

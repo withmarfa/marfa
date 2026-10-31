@@ -248,6 +248,10 @@ jobs:
     name: Core checks
     timeout-minutes: 24
     runs-on: macos-26
+    # A failing test is run once more, and one that then passes is named in
+    # the job summary as flaky; see `[profile.ci]` in `core/.config/nextest.toml`.
+    env:
+      NEXTEST_PROFILE: ci
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
@@ -276,6 +280,10 @@ jobs:
           cargo fmt --check
           cargo clippy --locked --all-targets -- -D warnings
           cargo nextest run --locked
+      - name: Report flaky tests
+        if: ${{ !cancelled() }}
+        working-directory: core
+        run: scripts/report-flaky.py target/nextest/ci/junit.xml bindings/swift/target/nextest/ci/junit.xml
       # The script marfa-swift runs at the commit it pins. cargo-swift embeds
       # one UniFFI bindgen and reads the metadata the crate's `uniffi` wrote,
       # so a bump of either alone fails here and not in marfa-swift.
@@ -299,6 +307,10 @@ jobs:
     name: Core checks (Linux)
     timeout-minutes: 17
     runs-on: ubuntu-latest
+    # A failing test is run once more, and one that then passes is named in
+    # the job summary as flaky; see `[profile.ci]` in `core/.config/nextest.toml`.
+    env:
+      NEXTEST_PROFILE: ci
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
@@ -322,6 +334,8 @@ jobs:
           cargo fmt --all --check
           cargo clippy --locked --workspace --all-targets --no-deps -- -D warnings
           cargo nextest run --locked --workspace
+          # The next run writes its report over this one's.
+          scripts/report-flaky.py target/nextest/ci/junit.xml
           # The `marfa` binary turns the core's `telemetry` feature on for the
           # workspace above, so the core alone is checked here with it off, as
           # the Swift and Node builds ship it.
@@ -341,6 +355,10 @@ jobs:
         run: |
           cargo fmt --check
           cargo clippy --locked --all-targets -- -D warnings
+      - name: Report flaky tests
+        if: ${{ !cancelled() }}
+        working-directory: core
+        run: scripts/report-flaky.py target/nextest/ci/junit.xml
 
   # The contract, run against the server in this same checkout.
   #

@@ -1,11 +1,15 @@
 import { defineConfig } from "vitest/config";
 
-import { silenceTelemetry } from "../../vitest.shared.ts";
+import { ciReporters, ciRetry, silenceTelemetry } from "../../vitest.shared.ts";
 
 silenceTelemetry();
 
 export default defineConfig({
   test: {
+    // One retry on CI, reported as flaky; none on a developer's machine.
+    ...ciRetry,
+    reporters: ciReporters(),
+
     // Global setup refuses a stale build and sweeps temporary directories
     // abandoned by earlier runs; see src/test-global-setup.ts.
     globalSetup: ["./src/test-global-setup.ts"],

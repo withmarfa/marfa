@@ -20,6 +20,7 @@ export default [
             // and hook budget. Not under any package's tsconfig, for the same
             // reason the configs importing it are not.
             "vitest.shared.ts",
+            "vitest.flaky-reporter.ts",
             "packages/*/tsup.config.ts",
             "packages/*/vitest.config.ts",
           ],

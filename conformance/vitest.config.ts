@@ -1,6 +1,6 @@
 import "dotenv/config";
 import { defineConfig } from "vitest/config";
-import { silenceTelemetry } from "../vitest.shared.js";
+import { ciReporters, ciRetry, silenceTelemetry } from "../vitest.shared.js";
 import WeightedShards from "./src/utils/shard-sequencer.js";
 
 silenceTelemetry();
@@ -8,6 +8,7 @@ silenceTelemetry();
 export default defineConfig({
   test: {
     fileParallelism: false,
+    reporters: ciReporters(),
     // `--shard` splits a project's files by the time they take, which
     // Vitest's own split by path does not.
     sequence: { sequencer: WeightedShards },
@@ -15,6 +16,7 @@ export default defineConfig({
       {
         test: {
           name: "generators",
+          ...ciRetry,
           // The no-network lane. `*.decision.test.ts` under a suite folder is
           // a pure verdict driven over inputs rather than a run against a
           // target, so it belongs here: a decision the suites gate on should
@@ -35,6 +37,7 @@ export default defineConfig({
       {
         test: {
           name: "correctness",
+          ...ciRetry,
           include: ["src/suites/correctness/**/*.test.ts"],
           // Budgeted for the heavy bodies rather than the typical one: 100+
           // edge hydration and pagination, and archive operations, run slowly
@@ -57,6 +60,7 @@ export default defineConfig({
       {
         test: {
           name: "compliance",
+          ...ciRetry,
           include: ["src/suites/compliance/**/*.test.ts"],
           setupFiles: ["src/utils/fresh-server-teardown.ts"],
           // Matches correctness, for the same reasons: archive, bulk and
@@ -73,6 +77,7 @@ export default defineConfig({
         // rather than a single request.
         test: {
           name: "sync",
+          ...ciRetry,
           include: ["src/suites/sync/**/*.test.ts"],
           // Runs in the no-network lane instead; see the generators project.
           exclude: ["src/suites/sync/**/*.decision.test.ts"],
@@ -86,6 +91,7 @@ export default defineConfig({
         // budget as the network suites.
         test: {
           name: "device",
+          ...ciRetry,
           include: ["src/suites/device/**/*.test.ts"],
           globalSetup: ["src/utils/keychain.ts", "src/utils/registry.ts"],
           // Runs in the no-network lane instead; see the generators project.
@@ -100,6 +106,7 @@ export default defineConfig({
         // plus a round trip, so the budget matches the device project.
         test: {
           name: "cli",
+          ...ciRetry,
           include: ["src/suites/cli/**/*.test.ts"],
           globalSetup: ["src/utils/keychain.ts", "src/utils/registry.ts"],
           testTimeout: 120_000,
@@ -112,6 +119,7 @@ export default defineConfig({
         // installs. Every body boots and stops the entrypoint several times.
         test: {
           name: "backup",
+          ...ciRetry,
           include: ["src/suites/backup/**/*.test.ts"],
           testTimeout: 120_000,
           hookTimeout: 120_000,
