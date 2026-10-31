@@ -2458,7 +2458,7 @@ When the server takes an edit of an item that moves it to another type, a device
 
 **Reason:** a retype changes the reach (`reach/moves-retype`) on the edit alone, and the item may leave or enter what the copy's slice reads, which no answer tells a device; the next hydration holds the item where the server does. An edit that names the type the row already has moves nothing, and a device queues none (`reach/keeps-same-type`).
 
-**Tests:** `device/retype-drain.test.ts › sends the writes queued behind it and expires the copy once, at the end`.
+**Tests:** `device/retype-drain.test.ts › sends the writes queued behind it and expires the copy once, at the end`, `› queues no retype to the type the row already has, so the drain meets no changed reach from it`.
 
 ### `queue-and-verdicts/retype-carries-on`
 
