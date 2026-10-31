@@ -246,9 +246,13 @@ pub(crate) fn declaration(
         None => {
             row.insert("fields".into(), Value::Object(Map::new()));
         }
-        Some(Value::Object(fields)) => {
+        Some(Value::Object(_)) => {
+            // Judged as the registry holds it: a string whose format is a kind
+            // of its own is that kind.
+            let folded = normalized_type(definition)?;
+            let fields = folded["fields"].as_object().into_iter().flatten();
             let kinds = crate::builtin::field_types()?;
-            for (name, definition) in fields {
+            for (name, definition) in fields.clone() {
                 let held =
                     field(name, definition, id).map_err(|error| invalid(error.to_string()))?;
                 if !kinds.contains(&held.r#type) {
@@ -266,8 +270,7 @@ pub(crate) fn declaration(
                 }
             }
             let statuses = fields
-                .values()
-                .filter(|definition| {
+                .filter(|(_, definition)| {
                     definition.get("type").and_then(Value::as_str) == Some("status")
                 })
                 .count();
@@ -446,7 +449,9 @@ pub(crate) fn status_declaration(kind: &str, definition: &Value) -> Option<Strin
 /// What the server refuses in a field's currency bound and list entries
 /// (`types/field-grammar`, `types/items-fields-refused`): a `maxLength` on a
 /// currency, `items_fields` on anything but an array of objects, no member in
-/// it, or a member that is not an object with the kind of a plain value.
+/// it, or a member that is not an object with the kind of a plain value. A
+/// member is held to the checks of a field: a status word list it may not
+/// take, a currency's `maxLength` and `items_fields`.
 fn entries_declaration(kind: &str, definition: &Value) -> Result<Option<String>, CoreError> {
     let currency_length = |definition: &Value| {
         definition.get("format").and_then(Value::as_str) == Some("currency")
@@ -482,11 +487,68 @@ fn entries_declaration(kind: &str, definition: &Value) -> Result<Option<String>,
                 kinds.join(", ")
             )));
         }
-        if currency_length(held) {
-            return Ok(Some(format!("with the member {member} {bound}")));
+        // A member meets the checks a field of its own meets.
+        if let Some(problem) = status_declaration(held_kind, held) {
+            return Ok(Some(format!("with the member {member} {problem}")));
+        }
+        if let Some(problem) = entries_declaration(held_kind, held)? {
+            return Ok(Some(format!("with the member {member} {problem}")));
         }
     }
     Ok(None)
+}
+
+/// A field's definition as the registry holds it (`normalizeFieldDefinition`):
+/// a string whose `format` is a kind of its own is that kind, an array of
+/// strings with such a format is an array of that kind, and each member of a
+/// list's entries is folded the same way. The format is then carried by the
+/// kind alone. Every other format annotates the string and stays.
+fn normalized(definition: &Value) -> Result<Value, CoreError> {
+    let Some(row) = definition.as_object() else {
+        return Ok(definition.clone());
+    };
+    let mut row = row.clone();
+    let kind = row
+        .get("format")
+        .and_then(Value::as_str)
+        .and_then(|format| {
+            crate::builtin::format_field_types()
+                .ok()?
+                .get(format)
+                .cloned()
+        });
+    if let Some(kind) = kind {
+        row.remove("format");
+        let is_list = row.get("type").and_then(Value::as_str) == Some("array");
+        if is_list && row.get("items_type").is_some_and(Value::is_string) {
+            row.insert("items_type".into(), Value::String(kind));
+        } else if !is_list && row.get("type").is_some_and(Value::is_string) {
+            row.insert("type".into(), Value::String(kind));
+        }
+    }
+    if let Some(Value::Object(members)) = row.get("items_fields") {
+        let folded = members
+            .iter()
+            .map(|(name, member)| Ok((name.clone(), normalized(member)?)))
+            .collect::<Result<Map<_, _>, CoreError>>()?;
+        row.insert("items_fields".into(), Value::Object(folded));
+    }
+    Ok(Value::Object(row))
+}
+
+/// A type as the registry holds it: each of its fields folded by [`normalized`].
+/// A type the app declares is folded as it is read into the copy's catalog,
+/// where a server's is already folded.
+pub(crate) fn normalized_type(definition: &Value) -> Result<Value, CoreError> {
+    let mut row = definition.clone();
+    if let Some(Value::Object(fields)) = row.get("fields") {
+        let folded = fields
+            .iter()
+            .map(|(name, held)| Ok((name.clone(), normalized(held)?)))
+            .collect::<Result<Map<_, _>, CoreError>>()?;
+        row["fields"] = Value::Object(folded);
+    }
+    Ok(row)
 }
 
 fn object(id: &str, json: &str) -> Result<Map<String, Value>, CoreError> {

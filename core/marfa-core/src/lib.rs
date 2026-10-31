@@ -5692,6 +5692,131 @@ mod tests {
     }
 
     #[test]
+    fn a_declaration_holds_a_member_of_entries_to_the_checks_it_makes_of_a_field() {
+        let core = Core::open_in_memory(None).unwrap();
+        let declare = |field: serde_json::Value| {
+            core.declare_types(&[serde_json::json!({
+                "id": "app.recipe.member",
+                "fields": { "f": field },
+            })])
+        };
+        let words = serde_json::json!([{ "value": "open", "group": "not_started" }]);
+        // Each is refused on a field of its own, and so on a member.
+        let checks = [
+            (
+                "status_values on a string",
+                serde_json::json!({ "type": "string", "status_values": words }),
+            ),
+            (
+                "items_fields on a string",
+                serde_json::json!({ "type": "string", "items_fields": { "n": { "type": "string" } } }),
+            ),
+            (
+                "items_type status",
+                serde_json::json!({ "type": "string", "items_type": "status" }),
+            ),
+            (
+                "a maxLength on a currency",
+                serde_json::json!({ "type": "string", "format": "currency", "maxLength": 3 }),
+            ),
+        ];
+        for (what, check) in checks {
+            assert!(
+                matches!(declare(check.clone()), Err(CoreError::Invalid(_))),
+                "{what} was declared on a field"
+            );
+            let member = serde_json::json!({
+                "type": "array", "items_type": "object", "items_fields": { "m": check }
+            });
+            assert!(
+                matches!(declare(member), Err(CoreError::Invalid(_))),
+                "{what} was declared on a member"
+            );
+        }
+        // The witness: the mended members are declared.
+        declare(serde_json::json!({
+            "type": "array", "items_type": "object", "items_fields": {
+                "a": { "type": "string" },
+                "b": { "type": "string", "format": "currency" },
+            }
+        }))
+        .unwrap();
+    }
+
+    #[test]
+    fn a_declared_format_that_is_a_kind_is_judged_as_the_server_judges_that_kind() {
+        let core = Core::open_in_memory(None).unwrap();
+        let declare = |fields: serde_json::Value| {
+            core.declare_types(&[serde_json::json!({
+                "id": "app.recipe.format",
+                "fields": fields,
+            })])
+        };
+        let entries = |member: serde_json::Value| serde_json::json!({ "type": "array", "items_type": "object", "items_fields": { "m": member } });
+        // The server turns a string's format into the kind (`normalizeFieldDefinition`),
+        // and an entry does not take a thumbnail.
+        assert!(
+            matches!(
+                declare(serde_json::json!({
+                    "list": entries(serde_json::json!({ "type": "string", "format": "thumbnail" }))
+                })),
+                Err(CoreError::Invalid(_))
+            ),
+            "a member that is a thumbnail by its format was declared"
+        );
+        declare(serde_json::json!({
+            "site": { "type": "string", "format": "url" },
+            "sites": { "type": "array", "items_type": "string", "format": "url" },
+            "list": entries(serde_json::json!({ "type": "string", "format": "url" })),
+            "when": { "type": "string", "format": "date" },
+            "image": { "type": "string", "format": "thumbnail" },
+        }))
+        .unwrap();
+        let create = |properties: serde_json::Value| {
+            core.create_item(&Draft {
+                r#type: "app.recipe.format".into(),
+                properties: properties.as_object().unwrap().clone(),
+                ..Default::default()
+            })
+        };
+        let id = create(serde_json::json!({
+            "site": "  https://example.com/a\t ",
+            "sites": [" https://example.com/b "],
+            "list": [{ "m": "\thttps://example.com/c\n" }],
+        }))
+        .unwrap()
+        .item_id
+        .unwrap();
+        let kept = core.get(&id).unwrap().unwrap().properties;
+        assert_eq!(kept["site"], "https://example.com/a");
+        assert_eq!(kept["sites"], serde_json::json!(["https://example.com/b"]));
+        assert_eq!(
+            kept["list"],
+            serde_json::json!([{ "m": "https://example.com/c" }])
+        );
+        for (named, bad) in [
+            ("site", serde_json::json!({ "site": "not a url" })),
+            ("sites", serde_json::json!({ "sites": ["not a url"] })),
+            (
+                "list",
+                serde_json::json!({ "list": [{ "m": "not a url" }] }),
+            ),
+            ("when", serde_json::json!({ "when": "tomorrow" })),
+            ("image", serde_json::json!({ "image": "not an image" })),
+        ] {
+            let Err(CoreError::Validation { message, .. }) = create(bad) else {
+                panic!("{named}: a value its format refuses was queued");
+            };
+            assert!(message.contains(named), "{message}");
+        }
+        // The witness: the plain kinds judge the same.
+        assert!(
+            create(serde_json::json!({ "site": "https://example.com/" })).is_ok(),
+            "a url was refused"
+        );
+    }
+
+    #[test]
     fn a_declaration_refuses_reserved_type_roots() {
         let core = Core::open_in_memory(None).unwrap();
         let mut taken = Vec::new();

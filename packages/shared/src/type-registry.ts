@@ -17,6 +17,7 @@ import {
   ENTRY_MEMBER_TYPES,
   FIELD_FORMATS,
   FIELD_TYPES,
+  FORMAT_TO_FIELD_TYPE,
   RESERVED_ITEM_FIELDS,
   ROLE_CONSTRAINT_PREFIX,
   SHIPPED_TYPE_SHAPES,
@@ -111,6 +112,7 @@ export {
   ENTRY_MEMBER_TYPES,
   FIELD_TYPES,
   FIELD_FORMATS,
+  FORMAT_TO_FIELD_TYPE,
 };
 
 // The fixed status groups and how a chain joins a status field's words.

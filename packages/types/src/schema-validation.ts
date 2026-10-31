@@ -112,14 +112,15 @@ const FIELD_FORMAT_SET: ReadonlySet<string> = new Set<string>(FIELD_FORMATS);
  * formats absent from this map (`bcp47`, `iso3166`, `currency`) annotate a `string` field
  * and survive normalization as `format`.
  */
-const FORMAT_TO_FIELD_TYPE: Readonly<Partial<Record<FieldFormat, FieldType>>> =
-  {
-    url: "url",
-    email: "email",
-    datetime: "datetime",
-    date: "date",
-    thumbnail: "thumbnail",
-  };
+export const FORMAT_TO_FIELD_TYPE: Readonly<
+  Partial<Record<FieldFormat, FieldType>>
+> = {
+  url: "url",
+  email: "email",
+  datetime: "datetime",
+  date: "date",
+  thumbnail: "thumbnail",
+};
 
 /**
  * The most days `retention_policy.feed_days` may name: the largest window

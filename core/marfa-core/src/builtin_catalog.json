@@ -2207,6 +2207,13 @@
   "date",
   "datetime"
  ],
+ "format_field_types": {
+  "url": "url",
+  "email": "email",
+  "datetime": "datetime",
+  "date": "date",
+  "thumbnail": "thumbnail"
+ },
  "reserved_type_roots": [
   "app",
   "audit",

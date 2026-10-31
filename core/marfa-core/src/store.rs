@@ -3281,9 +3281,13 @@ fn local_catalog(conn: &Connection) -> Result<(Vec<WireType>, Vec<Value>), CoreE
     let shipped = crate::builtin::catalog()?;
     let mut types = shipped.types;
     for (id, json) in declared_type_rows(conn)? {
-        types.push(serde_json::from_str(&json).map_err(|error| {
+        let unreadable = |error: serde_json::Error| {
             CoreError::Store(format!("the declared type {id} cannot be read: {error}"))
-        })?);
+        };
+        // Held as the registry holds it, as a server's catalog already is.
+        let declared =
+            crate::catalog::normalized_type(&serde_json::from_str(&json).map_err(unreadable)?)?;
+        types.push(serde_json::from_value(declared).map_err(unreadable)?);
     }
     Ok((types, shipped.edge_types))
 }

@@ -613,6 +613,74 @@ describe("a url is stored without the whitespace around it at every door", () =>
   });
 });
 
+describe("a string whose format is a kind of its own", () => {
+  const entries = (member: FieldDefinition): FieldDefinition => ({
+    type: "array",
+    items_type: "object",
+    items_fields: { m: member },
+  });
+
+  it("is held as that kind in a field and in a member of a list's entries", async () => {
+    const id = nextId();
+    const registered = await client.registerType({
+      id,
+      fields: {
+        site: { type: "string", format: "url" },
+        sites: { type: "array", items_type: "string", format: "url" },
+        list: entries({ type: "string", format: "url" }),
+      },
+    });
+    expect(registered.status, JSON.stringify(registered.error)).toBe(201);
+    const read = await client.getType(id);
+    expect(read.data.fields?.site).toMatchObject({ type: "url" });
+    expect(read.data.fields?.sites).toMatchObject({ items_type: "url" });
+    expect(read.data.fields?.list?.items_fields?.m).toMatchObject({
+      type: "url",
+    });
+    const created = await client.createItem({
+      type: id,
+      source: ctx.source,
+      properties: {
+        site: "  https://example.test/a\t ",
+        sites: [" https://example.test/b "],
+        list: [{ m: "\thttps://example.test/c\n" }],
+      },
+    });
+    expect(created.status, JSON.stringify(created.error)).toBe(201);
+    trackItem(ctx, created.data.item.id);
+    expect(created.data.item.properties).toMatchObject({
+      site: "https://example.test/a",
+      sites: ["https://example.test/b"],
+      list: [{ m: "https://example.test/c" }],
+    });
+    const refused = await client.createItem({
+      type: id,
+      source: ctx.source,
+      properties: { list: [{ m: "not a url" }] },
+    });
+    expect(refused.status).toBe(400);
+    expect(errorsOf(refused)?.map((e) => e.field)).toContain("list.0.m");
+  });
+
+  it("is refused as a member where the kind is one an entry does not take", async () => {
+    const refused = await client.registerType({
+      id: nextId(),
+      fields: { list: entries({ type: "string", format: "thumbnail" }) },
+    });
+    expect(refused.status).toBe(400);
+    expect(
+      errorsOf(refused)?.map((e) => e.field),
+      JSON.stringify(refused.error),
+    ).toContain("fields.list.items_fields.m.type");
+    // The witness: as a field of its own, the same definition registers.
+    const taken = await client.registerType({
+      id: nextId(),
+      fields: { image: { type: "string", format: "thumbnail" } },
+    });
+    expect(taken.status, JSON.stringify(taken.error)).toBe(201);
+  });
+});
+
 describe("a child and a claim of compatibility", () => {
   it("takes a child that tightens an inherited range, and refuses one that loosens it", async () => {
     const parent = nextId();

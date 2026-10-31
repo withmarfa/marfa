@@ -4434,11 +4434,27 @@ If a write names a type the copy was never told of, then a device MUST refuse it
 
 ### `device/declaration-refused`
 
-If an app declares a type whose identifier breaks the type grammar or uses a reserved root, that names a type Marfa ships, that has a field with no known type, that declares a list of entries (`items_fields`) the server refuses (`types/items-fields-refused`) or a `maxLength` on a `string` field whose `format` is `currency` (`types/field-grammar`), that names a parent the copy does not know, that declares a status field with an empty `status_values` or with no words anywhere in its chain of declared and shipped types, or that the same declaration names already, then a device MUST refuse the declaration `invalid`.
+If an app declares a type whose identifier breaks the type grammar or uses a reserved root, that names a type Marfa ships, that names a parent the copy does not know, that declares more than one status field, that declares a status field with no words anywhere in its chain of declared and shipped types, that has a field `device/declaration-field-refused` names, or that the same declaration names already, then a device MUST refuse the declaration `invalid`.
 
-**Reason:** the server refuses such a status field when the type is registered (`types/status-refused`, `types/status-parent-wordless`), and a status field with no words takes no value. A list whose entry declaration a device took, with a member of no type or of a kind an entry does not have, would fail every later write of that list with a decoding error instead of a refusal.
+**Reason:** the server refuses such a status field when the type is registered (`types/status-refused`, `types/status-parent-wordless`), and a status field with no words takes no value.
 
-**Tests:** `device/save-before-sync.test.ts › refuses a declaration that names a type of Marfa's, one it cannot read, a parent it does not know, or one type twice`, `› refuses a declaration whose status field has no words in its chain, naming the field`, `› refuses a declaration of a list of entries or a currency the server refuses, naming the field`.
+**Tests:** `device/save-before-sync.test.ts › refuses a declaration that names a type of Marfa's, one it cannot read, a parent it does not know, or one type twice`, `› refuses a declaration whose status field has no words in its chain, naming the field`.
+
+### `device/declaration-field-refused`
+
+If an app declares a field, or a member of a list's entries (`items_fields`), that has a `type` other than a field type (for a member, other than `string`, `email`, `url`, `enum`, `boolean`, `integer`, `number`, `date` or `datetime`); that has `items_type` `status`; that has `status_values` where its `type` is not `status`; whose `type` is `status` with `enum_values`, or with `status_values` that is not a non-empty list of words, each exactly a `value` and a `group`, the `value` a lowercase letter then up to 63 lowercase letters, digits and underscores and named once, the `group` one of `not_started`, `in_progress`, `completed` and `canceled`; that is a `string` whose `format` is `currency` with a `maxLength`; or that has `items_fields` where it is not an `array` whose `items_type` is `object`, or that names no member, or a member that is not an object naming its `type`, then a device MUST refuse the declaration `invalid`, naming the field.
+
+**Reason:** the server refuses these when the type is registered (`types/field-grammar`, `types/status-refused`, `types/items-fields-refused`). A list whose entry declaration a device took, with a member of no type or of a kind an entry does not have, would fail every later write of that list with a decoding error instead of a refusal. A device checks only these: it does not check an `enum` without `enum_values`, a `minimum` above its `maximum`, a `format` it does not know or an `array` without `items_type`, in a field or in a member, and the server refuses them when a hydration registers the declaration (`device/hydrate-unregistered-said`).
+
+**Tests:** `device/save-before-sync.test.ts › refuses a declaration of a list of entries or a currency the server refuses, naming the field`, `› holds a member of a list's entries to the checks a declaration makes of a field, naming the field`.
+
+### `device/declared-format-kind`
+
+Where an app declares a `string` field, or a member of a list's entries, whose `format` is `url`, `email`, `datetime`, `date` or `thumbnail`, or an `array` field of `string` elements with such a `format`, a device MUST hold the field as one of that type, as the server does (`types/format-collapses`).
+
+**Reason:** a device that read the declared `type` alone would take a member the server refuses, and keep a `url` untrimmed that the server trims (`types/url-stored`).
+
+**Tests:** `device/save-before-sync.test.ts › judges a declared string by the kind its format names, as the server does, in a field and in a member`, `› refuses a declaration of a list of entries or a currency the server refuses, naming the field`, `compliance/field-rules.test.ts › a string whose format is a kind of its own`.
 
 ### `device/declaration-refused-whole`
 
