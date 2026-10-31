@@ -1604,9 +1604,9 @@ If the server answers a write a drain sends, or the lookup it asks for a create'
 
 ### `queue-and-verdicts/instance-changed-sends-nothing`
 
-When the server answers a write a drain sends, or the lookup it asks for a create's natural key, `409 instance_changed`, a device MUST send no further write in that drain, whether or not the server took a move of an edge's source or a retype earlier in it.
+When the server answers a write a drain sends, or the lookup it asks for a create's natural key, `409 instance_changed`, a device MUST send no further write in that drain, whether or not the server took a move of an edge's source or a change of an item's type earlier in it.
 
-**Reason:** a write behind a move or a retype is sent as it would have been had the copy not expired (`queue-and-verdicts/edge-source-move-carries-on`, `queue-and-verdicts/retype-carries-on`), and this refusal is about the server at the address, not about the write.
+**Reason:** a write behind a move or a change of type is sent as it would have been had the copy not expired (`queue-and-verdicts/edge-source-move-carries-on`), and this refusal is about the server at the address, not about the write.
 
 **Tests:** `device/queue.test.ts › ends the drain copy_expired where another instance refuses a write, sending nothing more and keeping the queue`, `› expires the copy where another instance refuses the lookup a keyed create asks, sending the create nowhere`, `device/edge-move.test.ts › ends at once where another instance refuses a write behind a source move the server took`.
 
@@ -2398,81 +2398,65 @@ When the server refuses a move of an edge, a device MUST hold the edge where the
 
 ### `queue-and-verdicts/edge-source-move-expires`
 
-When the server takes a move of an edge's source, a device MUST expire the copy, whatever rows the copy holds.
+When the server takes a write that changes the reach, a move of an edge's source or a change of an item's type, a device MUST expire the copy, whatever rows the copy holds.
 
-**Reason:** a move of a source changes the reach (`reach/moves-edge-source`) on the move alone, and nothing the server answers tells a device whether the move touched a row its copy holds, so the next hydration holds the edge where the server does.
+**Reason:** each changes the reach (`reach/moves-edge-source`, `reach/moves-retype`) on the write alone, and nothing the server answers tells a device whether the write touched a row its copy holds, so the next hydration holds the row where the server does. An edit that names the type the row already has moves nothing, and a device queues none (`queue-and-verdicts/move-same-not-sent`, `reach/keeps-same-type`).
 
-**Tests:** `device/edge-move-live.test.ts › re-parents a note offline in one write a real server takes, never leaving it without a parent`, `› holds a move onto its own unanswered create, and sends it naming the row the create landed on`, `› re-parents several notes in one drain a real server takes, and one hydration covers them`, `device/edge-move.test.ts › sends every move queued and expires the copy once, at the end`.
+**Tests:** `device/edge-move-live.test.ts › re-parents a note offline in one write a real server takes, never leaving it without a parent`, `› holds a move onto its own unanswered create, and sends it naming the row the create landed on`, `› re-parents several notes in one drain a real server takes, and one hydration covers them`, `device/edge-move.test.ts › sends every move queued and expires the copy once, at the end`, `device/retype-drain.test.ts › sends the writes queued behind it and expires the copy once, at the end`, `device/reach-live.test.ts › sends the writes queued behind a retype in one drain a real server takes, and one hydration covers it`.
 
 ### `queue-and-verdicts/edge-source-move-carries-on`
 
-When a device expires the copy for a move of an edge's source, a device MUST send the writes queued behind the move in the same drain, each judged as it would have been had the copy not expired.
+When a device expires the copy for a move of an edge's source or a change of an item's type, a device MUST send the writes queued behind it in the same drain, each judged as it would have been had the copy not expired.
 
-**Reason:** only the copy is stale; the writes are the person's, and each is judged by the server on the version it names, so stopping at the move would cost a hydration for every move a batch holds.
+**Reason:** only the copy is stale; the writes are the person's, and each is judged by the server on the version it names, so stopping at the write would cost a hydration for every move or retype a batch holds.
 
-**Tests:** `device/edge-move.test.ts › sends every move queued and expires the copy once, at the end`, `› judges each write behind the move as it would have been`, `device/edge-move-live.test.ts › re-parents several notes in one drain a real server takes, and one hydration covers them`.
+**Tests:** `device/edge-move.test.ts › sends every move queued and expires the copy once, at the end`, `› judges each write behind the move as it would have been`, `device/edge-move-live.test.ts › re-parents several notes in one drain a real server takes, and one hydration covers them`, `device/retype-drain.test.ts › sends the writes queued behind it and expires the copy once, at the end`, `device/reach-live.test.ts › sends the writes queued behind a retype in one drain a real server takes, and one hydration covers it`.
 
 ### `queue-and-verdicts/edge-source-move-reads-owed`
 
-While a drain goes on after a move of an edge's source changed the reach, a device MUST leave the read after each answer owed, asking the server for none.
+While a drain goes on after a move of an edge's source or a change of an item's type changed the reach, a device MUST leave the read after each answer owed, asking the server for none.
 
-**Reason:** the server refuses each such read under the reach the move changed, and the hydration that follows reads every row again.
+**Reason:** the server refuses each such read under the reach the write changed, and the hydration that follows reads every row again.
 
-**Tests:** `device/edge-move.test.ts › sends every move queued and expires the copy once, at the end`, `› judges each write behind the move as it would have been`.
+**Tests:** `device/edge-move.test.ts › sends every move queued and expires the copy once, at the end`, `› judges each write behind the move as it would have been`, `device/retype-drain.test.ts › sends the writes queued behind it and expires the copy once, at the end`.
 
 ### `queue-and-verdicts/edge-source-move-one-expiry`
 
-When a drain has sent a move of an edge's source that the server took, and ends with no wait, no unavailable server, no credential stop and no write left undelivered, a device MUST end the drain `copy_expired` once, after the last write it sent.
+When a drain has sent a move of an edge's source or a change of an item's type that the server took, and ends with no wait, no unavailable server, no credential stop and no write left undelivered, a device MUST end the drain `copy_expired` once, after the last write it sent.
 
 **Reason:** one hydration then covers the batch (`device/reach-changed`).
 
-**Tests:** `device/edge-move.test.ts › sends every move queued and expires the copy once, at the end`, `device/edge-move-live.test.ts › re-parents several notes in one drain a real server takes, and one hydration covers them`.
+**Tests:** `device/edge-move.test.ts › sends every move queued and expires the copy once, at the end`, `device/edge-move-live.test.ts › re-parents several notes in one drain a real server takes, and one hydration covers them`, `device/retype-drain.test.ts › sends the writes queued behind it and expires the copy once, at the end`, `device/reach-live.test.ts › sends the writes queued behind a retype in one drain a real server takes, and one hydration covers it`.
 
 ### `queue-and-verdicts/edge-source-move-report-kept`
 
-If a drain that expired the copy for a move of an edge's source ends with a wait, an unavailable server, a credential stop or a write left undelivered, then a device MUST return the drain's report, with the copy expired.
+If a drain that expired the copy for a move of an edge's source or a change of an item's type ends with a wait, an unavailable server, a credential stop or a write left undelivered, then a device MUST return the drain's report, with the copy expired.
 
 **Reason:** the report holds what a caller must act on, the wait among it (`queue-and-verdicts/report-retry-after`), and the next call is refused `copy_expired`.
 
-**Tests:** `device/edge-move.test.ts › returns the report with the wait the server asked for, the copy expired`.
+**Tests:** `device/edge-move.test.ts › returns the report with the wait the server asked for, the copy expired`, `device/retype-drain.test.ts › returns the report with the wait the server asked for after a retype, the copy expired`.
 
 ### `queue-and-verdicts/edge-source-move-error-wins`
 
-If a drain that expired the copy for a move of an edge's source ends in an error of its own, a redirect or a stop among them, then a device MUST end the drain with that error, leaving the copy expired.
+If a drain that expired the copy for a move of an edge's source or a change of an item's type ends in an error of its own, a redirect or a stop among them, then a device MUST end the drain with that error, leaving the copy expired.
 
 **Reason:** a stop ends the call `canceled` (`device/stop-canceled`) whatever else the drain learned; the expiry then shows as the copy's state and as the refusal of the next call.
 
-**Tests:** `device/edge-move.test.ts › ends with the error of its own where a redirect meets the drain after the move`, `› ends canceled where a stop meets the drain after the move, the copy expired`.
+**Tests:** `device/edge-move.test.ts › ends with the error of its own where a redirect meets the drain after the move`, `› ends canceled where a stop meets the drain after the move, the copy expired`, `device/retype-drain.test.ts › ends with the error of its own where a redirect meets the drain after a retype, the copy expired`.
 
 ### `queue-and-verdicts/edge-source-move-refused-keeps-copy`
 
-If the server refuses every move of an edge's source a drain sends, then a device MUST NOT expire the copy on account of those moves.
+If the server refuses every move of an edge's source and every change of an item's type a drain sends, then a device MUST NOT expire the copy on account of those writes.
 
-**Reason:** a refused move changes nothing on the server, so its reach stands (`reach/moves-edge-source`). A change made by another client is met by the rule that ends the drain (`queue-and-verdicts/reach-change-ends-drain`).
+**Reason:** a refused write changes nothing on the server, so its reach stands (`reach/moves-edge-source`, `reach/moves-retype`). A change made by another client is met by the rule that ends the drain (`queue-and-verdicts/reach-change-ends-drain`).
 
-**Tests:** `device/edge-move.test.ts › leaves the copy current where the server refuses every move`.
-
-### `queue-and-verdicts/retype-expires`
-
-When the server takes an edit of an item that moves it to another type, a device MUST expire the copy, whatever rows the copy holds.
-
-**Reason:** a retype changes the reach (`reach/moves-retype`) on the edit alone, and the item may leave or enter what the copy's slice reads, which no answer tells a device; the next hydration holds the item where the server does. An edit that names the type the row already has moves nothing, and a device queues none (`reach/keeps-same-type`).
-
-**Tests:** `device/retype-drain.test.ts › sends the writes queued behind it and expires the copy once, at the end`, `› queues no retype to the type the row already has, so the drain meets no changed reach from it`.
-
-### `queue-and-verdicts/retype-carries-on`
-
-When a device expires the copy for a retype, a device MUST send the writes queued behind the retype in the same drain, and end the drain `copy_expired` once, after the last write it sent, leaving the read after each answer owed as it does after a move of an edge's source (`queue-and-verdicts/edge-source-move-reads-owed`).
-
-**Reason:** only the copy is stale; the writes are the person's, and stopping at the retype would cost a hydration for every retype a batch holds.
-
-**Tests:** `device/retype-drain.test.ts › sends the writes queued behind it and expires the copy once, at the end`.
+**Tests:** `device/edge-move.test.ts › leaves the copy current where the server refuses every move`, `device/retype-drain.test.ts › leaves the copy current where the server refuses every retype`.
 
 ### `queue-and-verdicts/reach-change-ends-drain`
 
-If a drain meets a changed reach anywhere but in the read after the answer it has just had to a move of an edge's source or to a retype, then a device MUST end the drain `copy_expired` at once, sending no further write.
+If a drain meets a changed reach anywhere but in the read after the answer it has just had to a move of an edge's source or to a change of an item's type, then a device MUST end the drain `copy_expired` at once, sending no further write.
 
-**Reason:** only a move of a source or a retype answered in the drain at hand is known to have changed the reach (`reach/moves-edge-source`, `reach/moves-retype`); a change from any other cause, or met by a read an earlier drain left owed, is news the drain had no part in, and the caller learns of it before more is sent.
+**Reason:** only a move of a source or a change of type answered in the drain at hand is known to have changed the reach (`reach/moves-edge-source`, `reach/moves-retype`); a change from any other cause, or met by a read an earlier drain left owed, is news the drain had no part in, and the caller learns of it before more is sent.
 
 **Tests:** `device/edge-move.test.ts › ends at once where the read of a write that moves no source meets a changed reach`, `› ends at once where a read owed from an earlier drain meets a changed reach`, `› expires the copy where another client changed the reach during a drain whose moves were all refused`, `device/retype-drain.test.ts › ends at once where the read of an edit that retypes nothing meets a changed reach`.
 

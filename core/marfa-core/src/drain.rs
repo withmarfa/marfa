@@ -3206,8 +3206,7 @@ fn changes_reach(row: &QueuedWrite) -> bool {
 /// changed reach and `reach_write` says the write was a move of an edge's
 /// source or a retype, the pass notes it and goes on, and every read after it is left
 /// unmade, since the server would refuse each the same way
-/// (`queue-and-verdicts/edge-source-move-carries-on`,
-/// `queue-and-verdicts/retype-carries-on`); any other change ends
+/// (`queue-and-verdicts/edge-source-move-carries-on`); any other change ends
 /// the pass here, with the copy expired.
 fn read_owed(
     core: &Core,
