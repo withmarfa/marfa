@@ -2007,7 +2007,13 @@ impl Folder {
                 );
             }
         }
-        let recorded = self.hold_ends(&wanted)?;
+        let recorded = self.hold_ends(&wanted, |_, error| {
+            if matches!(error, CoreError::NoServer) || error.is_environmental() {
+                Ok(())
+            } else {
+                Err(error)
+            }
+        })?;
         let conn = self.core.conn()?;
         for (id, made) in recorded {
             if !wanted.contains(&id) {
@@ -2020,7 +2026,14 @@ impl Folder {
     /// Holds the attachments of `members` as `hold_edge_ends` would, for a
     /// scan that runs before any pull has: one that has none of them would
     /// send a file the directory has where a pull writes one as a new item.
-    pub(super) fn hold_attachments(&self, members: &HashSet<String>) -> Result<()> {
+    /// Answers each the server could not be asked for or refused to show for
+    /// a reason other than that it is gone or hidden, with why. A refusal of
+    /// the credential ends the scan, as it ends a pull's fetch of bytes: the
+    /// pin that met it has ended the copy already.
+    pub(super) fn hold_attachments(
+        &self,
+        members: &HashSet<String>,
+    ) -> Result<HashMap<String, String>> {
         let wanted: std::collections::BTreeSet<String> = self
             .core
             .edges_of_type(ATTACHMENT_EDGE)?
@@ -2028,15 +2041,27 @@ impl Folder {
             .filter(|edge| members.contains(&edge.target_id))
             .map(|edge| edge.source_id)
             .collect();
-        self.hold_ends(&wanted)?;
-        Ok(())
+        let mut unread = HashMap::new();
+        self.hold_ends(&wanted, |id, error| match error {
+            CoreError::CopyExpired { .. }
+            | CoreError::Unauthorized { .. }
+            | CoreError::RenewalFailed(_)
+            | CoreError::Redirected { .. } => Err(error),
+            error => {
+                unread.insert(id.to_string(), error.to_string());
+                Ok(())
+            }
+        })?;
+        Ok(unread)
     }
 
-    /// Pins each of `wanted` the record does not hold yet and records it.
-    /// Answers the record as it stood before.
+    /// Pins each of `wanted` the record does not hold yet and records it,
+    /// passing `unread` each pin that failed for a reason other than that the
+    /// item is gone or hidden. Answers the record as it stood before.
     fn hold_ends(
         &self,
         wanted: &std::collections::BTreeSet<String>,
+        mut unread: impl FnMut(&str, CoreError) -> Result<()>,
     ) -> Result<HashMap<String, bool>> {
         let recorded: HashMap<String, bool> =
             state::edge_ends(&*self.core.conn()?)?.into_iter().collect();
@@ -2063,13 +2088,11 @@ impl Folder {
                 // asks again.
                 match self.core.pin(id) {
                     Ok(_) => true,
-                    Err(
-                        CoreError::NoServer
-                        | CoreError::NotFound { .. }
-                        | CoreError::Forbidden { .. },
-                    ) => continue,
-                    Err(error) if error.is_environmental() => continue,
-                    Err(error) => return Err(error),
+                    Err(CoreError::NotFound { .. } | CoreError::Forbidden { .. }) => continue,
+                    Err(error) => {
+                        unread(id, error)?;
+                        continue;
+                    }
                 }
             };
             state::hold_edge_end(&*self.core.conn()?, id, made)?;

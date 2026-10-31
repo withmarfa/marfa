@@ -2054,8 +2054,11 @@ describe("embedded files", () => {
     harness: FolderHarness;
     door: EdgeDoor;
     placements: Record<string, string>;
+    /** The answer a read of each row by id is given in place of the door's. */
+    unread: Map<string, Answer>;
   }> {
     const door = new EdgeDoor();
+    const unread = new Map<string, Answer>();
     const rows: Record<string, Array<{ item: WireItemOptions }>> = {};
     for (const item of items) {
       const asked = (item.type ?? "core.note").split(".").slice(0, 2).join(".");
@@ -2100,6 +2103,8 @@ describe("embedded files", () => {
       // A read by id that asks for its edges is answered with them, as the
       // server's is: the read that holds an attachment outside the query.
       reading: (answer, request) => {
+        const standIn = unread.get(request.pathname.split("/").at(-1) ?? "");
+        if (standIn !== undefined) return standIn;
         const include = request.query.get("include")?.split(",") ?? [];
         if (answer.kind !== "json" || !include.includes("edges")) return answer;
         const body = answer.body as { item?: Record<string, unknown> };
@@ -2120,7 +2125,7 @@ describe("embedded files", () => {
         `the fixture could not hydrate: ${JSON.stringify(hydrated)}`,
       );
     }
-    return { harness: made, door, placements };
+    return { harness: made, door, placements, unread };
   }
 
   it("sends an embedded file with its file", async () => {
@@ -3613,6 +3618,70 @@ describe("embedded files", () => {
           (request) => request.method === "DELETE",
         ),
       ).toEqual([]);
+    });
+    it("holds a file a note embeds while the item attached there cannot be read, sends the rest, and takes it back once it can", async () => {
+      const made = await placedEmbeds(
+        "folder-embed-added-again-unread",
+        [
+          {
+            id: host,
+            properties: { title: "Host", body: "![](photo.png)\n" },
+          },
+          fileRow(photo, "photo.png", png(5)),
+        ],
+        [attached(edgeId(17), photo, host)],
+        { [host]: "Host.md", [photo]: "photo.png" },
+        ["core.note"],
+      );
+      harness = made.harness;
+      acceptUploads(harness.server);
+      scriptBlob(harness.server, png(5));
+      await pulledAndRemoved(harness);
+      // The server cannot be reached for the image while the folder is added
+      // again beside a new note.
+      made.unread.set(photo, {
+        kind: "json",
+        status: 503,
+        body: { error: { code: "unavailable", message: "scripted" } },
+      });
+      writeFileSync(join(harness.dir, "New.md"), "A new note.\n");
+
+      const added = await harness.folder.add(harness.settings.id);
+      expect(added.ok, JSON.stringify(added)).toBe(true);
+      const held = await harness.folder.push();
+      expect(held.ok, JSON.stringify(held)).toBe(true);
+      if (!held.ok) return;
+      expect(
+        held.value.scan.flagged.map((file) => [file.path, file.flag]),
+      ).toEqual([["photo.png", "waiting"]]);
+      expect(held.value.scan.flagged[0]?.reason).toContain(
+        "cannot be read yet",
+      );
+      // The witness that the push sent what it could: the new note.
+      expect(
+        sentCreates(harness).map(
+          (create) => (create.properties as { title?: string }).title,
+        ),
+        "a file a note embeds was sent as a new item while its item could not be read",
+      ).toEqual(["New"]);
+
+      made.unread.delete(photo);
+      const pushed = await harness.folder.push();
+      expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+      expect(pushed.ok && pushed.value.scan.flagged).toEqual([]);
+      expect(
+        sentCreates(harness).map(
+          (create) => (create.properties as { title?: string }).title,
+        ),
+      ).toEqual(["New"]);
+      const bound = await boundIds(harness);
+      expect(bound["photo.png"]).toBe(photo);
+      expect(
+        readdirSync(harness.dir)
+          .filter((name) => !name.startsWith("."))
+          .sort(),
+        "the pull wrote an embedded file again beside the one that held it",
+      ).toEqual(["Host.md", "New.md", "photo.png"]);
     });
   });
 

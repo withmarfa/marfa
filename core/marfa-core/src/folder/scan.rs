@@ -105,6 +105,30 @@ fn bound_by_path(snapshot: &[state::Bound]) -> HashMap<&str, &state::Bound> {
         .collect()
 }
 
+/// Each path a claimed file embeds, folded, with the items the files that
+/// embed it are.
+fn embedded_by(
+    files: &[Scanned],
+    claims: &[Option<Claim>],
+    shown: &HashMap<String, Vec<(String, embeds::Target)>>,
+) -> HashMap<String, HashSet<String>> {
+    let mut by_path: HashMap<String, HashSet<String>> = HashMap::new();
+    for (host, claim) in files.iter().zip(claims) {
+        let (Some(found), Some(claim)) = (shown.get(&host.key), claim) else {
+            continue;
+        };
+        for (_, target) in found {
+            if let embeds::Target::At(at) = target {
+                by_path
+                    .entry(crate::names::folded(at))
+                    .or_default()
+                    .insert(claim.item_id.clone());
+            }
+        }
+    }
+    by_path
+}
+
 pub(super) enum Missing {
     Moved,
     /// Still bound and journaled, until the folder it went to binds it.
@@ -1544,6 +1568,8 @@ impl Folder {
         let mut placed: Option<HashMap<String, Vec<crate::model::Edge>>> = None;
         // Each path a Markdown file here embeds, with the items those files are.
         let mut embedders: Option<HashMap<String, HashSet<String>>> = None;
+        // Each attachment the scan could not read, with why.
+        let mut unread: HashMap<String, String> = HashMap::new();
         for (at, file) in files.iter().enumerate() {
             if file.deferred
                 || claims[at].is_some()
@@ -1557,38 +1583,24 @@ impl Folder {
                 None => {
                     // Before a folder's first pull, its copy holds no
                     // attachment outside the query, nor where it is placed.
-                    self.hold_attachments(
+                    unread = self.hold_attachments(
                         members.get_or_init(|| self.members(settings).unwrap_or_default()),
                     )?;
                     placed.insert(self.placed_here()?)
                 }
             };
-            let Some(candidates) = placed.get(&crate::names::folded(&file.key)) else {
-                continue;
-            };
+            let candidates = placed
+                .get(&crate::names::folded(&file.key))
+                .map(Vec::as_slice)
+                .unwrap_or_default();
             for edge in candidates {
                 if by_item.contains_key(edge.source_id.as_str()) || taken.contains(&edge.source_id)
                 {
                     continue;
                 }
                 if !self.holds(&edge.source_id, settings, &members) {
-                    let embedders = embedders.get_or_insert_with(|| {
-                        let mut by_path: HashMap<String, HashSet<String>> = HashMap::new();
-                        for (host, claim) in files.iter().zip(&claims) {
-                            let (Some(found), Some(claim)) = (shown.get(&host.key), claim) else {
-                                continue;
-                            };
-                            for (_, target) in found {
-                                if let embeds::Target::At(at) = target {
-                                    by_path
-                                        .entry(crate::names::folded(at))
-                                        .or_default()
-                                        .insert(claim.item_id.clone());
-                                }
-                            }
-                        }
-                        by_path
-                    });
+                    let embedders =
+                        embedders.get_or_insert_with(|| embedded_by(files, &claims, shown));
                     let Some(hosts) = embedders.get(&crate::names::folded(&file.key)) else {
                         continue;
                     };
@@ -1634,6 +1646,35 @@ impl Folder {
                     }),
                 });
                 break;
+            }
+            // Neither new nor that item until it can be read, since a pull
+            // writes that item's file over the new one's.
+            if claims[at].is_none() && !unread.is_empty() {
+                let embedders = embedders.get_or_insert_with(|| embedded_by(files, &claims, shown));
+                for host in embedders
+                    .get(&crate::names::folded(&file.key))
+                    .into_iter()
+                    .flatten()
+                {
+                    if !self.holds(host, settings, &members) {
+                        continue;
+                    }
+                    let edges = self.core.edges_to(host)?;
+                    let Some(error) = edges
+                        .iter()
+                        .filter(|edge| edge.edge_type == embeds::ATTACHMENT_EDGE)
+                        .find_map(|edge| unread.get(&edge.source_id))
+                    else {
+                        continue;
+                    };
+                    waiting.insert(
+                        at,
+                        format!(
+                            "a document here embeds it and has an attached file that cannot be read yet ({error}), which may be this file's item; it is taken at the next push"
+                        ),
+                    );
+                    break;
+                }
             }
         }
         // A file that carries no id, moved here from another folder on this

@@ -6195,4 +6195,140 @@ mod tests {
         // The new note, and the image as a new item.
         assert_eq!(created(&folder), 2);
     }
+
+    /// `added_again_over_embeds` for one embedded and attached image whose
+    /// item the copy does not hold, beside a new note, scanned against a
+    /// server that answers the image's read with `answer`, or against none
+    /// that answers at all.
+    fn scanned_over_an_unread_attachment(
+        n: usize,
+        answer: Option<crate::scripted::Answer>,
+    ) -> (
+        Result<ScanReport>,
+        Folder,
+        ScannedDir,
+        Option<crate::scripted::Scripted>,
+    ) {
+        let photo = b"\x89PNG\r\n\x1a\nphoto".as_slice();
+        let id = "01a00000-0000-7000-8000-0000000026e1";
+        let (dir, folder) = added_again_over_embeds(
+            n,
+            &[(id, "Pictures/photo.png", photo, Some(photo))],
+            true,
+            true,
+        );
+        {
+            let conn = folder.core.conn().unwrap();
+            crate::store::evict_item(&conn, id, &[ATTACHMENT_EDGE.to_string()]).unwrap();
+            crate::store::meta_set(&conn, crate::store::META_EVENT_CURSOR, "10").unwrap();
+            crate::store::meta_set(&conn, crate::reach::FENCE, crate::scripted::FENCE).unwrap();
+            crate::store::meta_set(
+                &conn,
+                crate::store::META_INSTANCE_ID,
+                crate::scripted::INSTANCE,
+            )
+            .unwrap();
+            crate::store::meta_set(&conn, crate::store::META_SLICE_TYPES, "[\"core.note\"]")
+                .unwrap();
+            crate::store::meta_set(&conn, crate::store::META_SLICE_TIER, "library").unwrap();
+        }
+        let attachments = folder.core.edges_of_type(ATTACHMENT_EDGE).unwrap();
+        assert_eq!(attachments.len(), 1);
+        assert!(folder.core.get(id).unwrap().is_none());
+        drop(folder);
+        std::fs::write(dir.path().join("New.md"), "A new note.\n").unwrap();
+        let server = answer.map(|answer| {
+            let server = crate::scripted::Scripted::start();
+            server.on(
+                &format!("/items/{id}"),
+                vec![crate::scripted::certified(answer)],
+            );
+            // The bin, which a read that finds nothing asks next.
+            server.on(
+                "/items",
+                vec![crate::scripted::certified(crate::scripted::json(
+                    200,
+                    r#"{"data":[],"next_cursor":null}"#,
+                ))],
+            );
+            server
+        });
+        // Offline: a port nothing listens on.
+        let url = server.as_ref().map_or_else(
+            || {
+                let closed = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+                format!("http://127.0.0.1:{}", closed.local_addr().unwrap().port())
+            },
+            crate::scripted::Scripted::url,
+        );
+        let folder = Folder::open(
+            dir.path(),
+            Some(crate::Server {
+                url,
+                key: "fixture".into(),
+            }),
+        )
+        .unwrap();
+        let scanned = folder.scan();
+        if let Some(server) = &server {
+            assert!(!server.seen(&format!("/items/{id}")).is_empty());
+        }
+        (scanned, folder, dir, server)
+    }
+
+    #[test]
+    fn a_scan_holds_a_file_an_unreadable_attachment_may_be_and_sends_the_rest() {
+        use crate::scripted::refusal;
+
+        // The witness: an image the server says is gone is not the file's
+        // item, so the file is sent as new beside the new note.
+        let (scanned, folder, _dir, _server) =
+            scanned_over_an_unread_attachment(6, Some(refusal(404, "item_not_found")));
+        let report = scanned.unwrap();
+        assert_eq!(created(&folder), 2, "{report:?}");
+        assert!(report.flagged.is_empty(), "{report:?}");
+
+        let mut failed = Vec::new();
+        for (case, answer) in [
+            ("409", Some(refusal(409, "conflict"))),
+            ("400", Some(refusal(400, "invalid_request"))),
+            ("offline", None),
+        ] {
+            let (scanned, folder, _dir, _server) = scanned_over_an_unread_attachment(7, answer);
+            let report = match scanned {
+                Ok(report) => report,
+                Err(error) => {
+                    failed.push(format!("{case}: the scan failed: {error}"));
+                    continue;
+                }
+            };
+            let held: Vec<_> = report
+                .flagged
+                .iter()
+                .map(|flagged| (flagged.path.as_str(), flagged.flag))
+                .collect();
+            // The new note alone is sent.
+            if created(&folder) != 1
+                || bound_item(&folder, "New.md").is_none()
+                || bound_item(&folder, "Pictures/photo.png").is_some()
+                || held != [("Pictures/photo.png", "waiting")]
+                || !report.flagged[0].reason.contains("cannot be read yet")
+            {
+                failed.push(format!("{case}: {} created, {report:?}", created(&folder)));
+            }
+        }
+        assert!(failed.is_empty(), "{failed:#?}");
+
+        // A refused credential is no one file's: the scan ends, as a pull's
+        // fetch of bytes does, with the copy the refusal ended.
+        let (scanned, _folder, _dir, _server) =
+            scanned_over_an_unread_attachment(8, Some(refusal(401, "unauthorized")));
+        assert!(
+            matches!(
+                &scanned,
+                Err(CoreError::CopyExpired { reason }) if reason == "credential_ended"
+            ),
+            "{scanned:?}"
+        );
+    }
 }
