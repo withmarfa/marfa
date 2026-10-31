@@ -9,8 +9,9 @@ import {
 
 /**
  * A definition as the shapes carry it: prose and the id left out of each
- * definition, and every name under `fields` and `property_schema` kept, since
- * a field may be called `description` or `label`.
+ * definition, and every name under `fields`, `property_schema` and
+ * `items_fields` kept, since a field or a member may be called `description`
+ * or `label`.
  */
 function withoutProse(value: unknown, named = false): unknown {
   if (Array.isArray(value)) return value.map((v) => withoutProse(v));
@@ -24,7 +25,10 @@ function withoutProse(value: unknown, named = false): unknown {
       )
       .map(([key, v]) => [
         key,
-        withoutProse(v, !named && ["fields", "property_schema"].includes(key)),
+        withoutProse(
+          v,
+          !named && ["fields", "property_schema", "items_fields"].includes(key),
+        ),
       ]),
   );
 }
