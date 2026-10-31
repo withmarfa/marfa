@@ -1296,6 +1296,60 @@ The server MUST ship `core.entity` requiring `name`, with `core.entity.person` a
 
 **Tests:** `compliance/entity-subtypes.test.ts › creates a generic entity with required name field`, `› rejects entity without required name with invalid_properties naming it`, `› creates a person entity with person-specific fields`, `› creates a place entity with place-specific fields`, `› person inherits all entity fields`, `› requires an entity's name on a person and a place too`.
 
+### `types/entity-contact-lists`
+
+The server MUST ship `core.entity` with `emails`, `phones` and `addresses` as `array` fields of `object` entries and with no `email`, `phone` or `place` field, where an `emails` entry requires an `email` member `value` and takes a `string` member `label`, a `phones` entry requires a `string` member `value` and takes a `string` member `label`, and an `addresses` entry takes `label`, `street_address`, `locality`, `region`, `postal_code` and `country`, each a `string`.
+
+**Reason:** a person or an organization has more than one email address, phone number and postal address, and a `label` says which is which in the writer's own words, such as work or home. A write that names `email`, `phone` or `place` is kept as any undeclared property is (`types/strict-mode-off`).
+
+**Tests:** `compliance/contact-lists.test.ts › declares emails, phones and addresses as lists of entries, and no email, phone or place`, `› takes a person with two emails, two phones and an address`, `› refuses %s, naming the entry and the member`, `› keeps an email the type no longer declares as an undeclared property`.
+
+### `types/entity-main-entry`
+
+When an item of `core.entity` or a type under it is written with entries in `emails`, `phones` or `addresses`, the server MUST answer the entries in the order they were written.
+
+**Reason:** the first entry is the main one, as each field's description says, so an app shows it where only one value fits.
+
+**Tests:** `compliance/contact-lists.test.ts › takes a person with two emails, two phones and an address`.
+
+### `types/entity-contact-upgrade`
+
+When the server updates a database under `instance/upgrade-in-place` from a schema version before 4, the server MUST replace each `email`, `phone` and `place` that an item of `core.entity` or a type under it holds as a non-empty string with a one-entry list in `emails`, `phones` or `addresses`, holding the string as `value`, `value` or `street_address`, unless the type or an ancestor below `core.entity` declares the old or the new field itself.
+
+**Reason:** the update keeps what an owner wrote under the fields the type no longer declares, in the shape it declares now. An item in the bin is updated too, so it comes back in that shape. A value the update cannot move stays where it was (`types/entity-contact-upgrade-kept`).
+
+**Tests:** `compliance/contact-lists-upgrade.test.ts › moves a stored email, phone and place into one-entry lists`.
+
+### `types/entity-contact-upgrade-empty`
+
+When the server updates a database under `types/entity-contact-upgrade` and an item holds `email`, `phone` or `place` as an empty string, a string of only spaces, or `null`, the server MUST remove the field and add no entry for it.
+
+**Tests:** `compliance/contact-lists-upgrade.test.ts › removes an empty email and keeps a value it cannot move under its own field`.
+
+### `types/entity-contact-upgrade-kept`
+
+When the server updates a database under `types/entity-contact-upgrade` and an item holds `email`, `phone` or `place` as a value other than a string, as an `email` the `value` member refuses, or beside the field it would move into, the server MUST keep the value under its own field and leave the other field as it was.
+
+**Reason:** the update never drops what it cannot move. The value stays where an owner or an agent can read it and move it by hand.
+
+**Tests:** `compliance/contact-lists-upgrade.test.ts › removes an empty email and keeps a value it cannot move under its own field`.
+
+### `types/entity-contact-upgrade-version`
+
+When the server changes an item under `types/entity-contact-upgrade` or `types/entity-contact-upgrade-empty`, the server MUST give it the next version, keep the version it held in its history, and record no writer for the new version.
+
+**Reason:** a device that edits the item at its old version then meets an ordinary stale write, which the server merges against the version in the history (`versions/merge-stale`), rather than one with no ancestor (`versions/ancestor-none`).
+
+**Tests:** `compliance/contact-lists-upgrade.test.ts › gives a moved item its next version, with the old one in its history and an item.updated event`.
+
+### `types/entity-contact-upgrade-event`
+
+When the server changes an item under `types/entity-contact-upgrade` or `types/entity-contact-upgrade-empty`, the server MUST append an `item.updated` event carrying the changed item to the event stream.
+
+**Reason:** devices and connectors catch up from the event stream, so without the event their copies would keep the old fields.
+
+**Tests:** `compliance/contact-lists-upgrade.test.ts › gives a moved item its next version, with the old one in its history and an item.updated event`.
+
 ### `types/connection`
 
 The server MUST ship `system.connection` with `kind` taking `app` alone, a description that names no connector, and none of `attached_device`, `feed_activity`, `last_error_at`, `last_sync_at`, `mapping_reapply_until`, `next_run_at`, `runtime_status`, `triggers`, `connector_id`, `credential_id`, `configuration`, `direction` and `mapping`, in its fields, its description or a row it serves.

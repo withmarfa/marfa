@@ -150,7 +150,7 @@ export function createPerson(
       name: "Alice Smith",
       given_name: "Alice",
       family_name: "Smith",
-      email: "alice@example.com",
+      emails: [{ value: "alice@example.com" }],
       organization: "Acme Corp",
     },
     ...overrides,
@@ -164,7 +164,8 @@ export function createPlace(
     type: "core.entity.place",
     properties: {
       name: "The Ivy",
-      place: "1-5 West Street, London WC2H 9NQ",
+      street_address: "1-5 West Street",
+      postal_code: "WC2H 9NQ",
       latitude: 51.5114,
       longitude: -0.1272,
       country: "GB",
