@@ -471,7 +471,8 @@ const WRITTEN_AT = "2026-10-01T00:00:00.000Z";
 
 /**
  * The types a file at schema version 3 holds, by their parents and their
- * fields, inherited ones included, as a stored schema holds them.
+ * fields. A type Marfa ships is stored with the fields it inherits as well as
+ * its own; one registered through `POST /types` with its own alone.
  */
 const ENTITY_FIELDS = {
   name: { type: "string" },
@@ -481,28 +482,41 @@ const ENTITY_FIELDS = {
 };
 const STORED_TYPES: Record<
   string,
-  { parent?: string; fields: Record<string, unknown> }
+  {
+    parent?: string;
+    origin: "platform" | "user";
+    fields: Record<string, unknown>;
+  }
 > = {
-  "core.entity": { fields: ENTITY_FIELDS },
+  "core.entity": { origin: "platform", fields: ENTITY_FIELDS },
   "core.entity.person": {
     parent: "core.entity",
+    origin: "platform",
     fields: { ...ENTITY_FIELDS, given_name: { type: "string" } },
   },
   "core.entity.place": {
     parent: "core.entity",
+    origin: "platform",
     fields: { ...ENTITY_FIELDS, street_address: { type: "string" } },
   },
-  "core.note": { fields: { body: { type: "string" } } },
+  "core.note": { origin: "platform", fields: { body: { type: "string" } } },
   "user.contact": {
     parent: "core.entity",
-    fields: { ...ENTITY_FIELDS, email: { type: "string" } },
+    origin: "user",
+    fields: { email: { type: "string" } },
   },
   "user.contact.work": {
     parent: "user.contact",
-    fields: { ...ENTITY_FIELDS, email: { type: "string" } },
+    origin: "user",
+    fields: {},
   },
-  "user.loop": { parent: "user.loop.back", fields: ENTITY_FIELDS },
-  "user.loop.back": { parent: "user.loop", fields: ENTITY_FIELDS },
+  "user.registered": {
+    parent: "core.entity",
+    origin: "user",
+    fields: { email: ENTITY_FIELDS.email },
+  },
+  "user.loop": { parent: "user.loop.back", origin: "user", fields: {} },
+  "user.loop.back": { parent: "user.loop", origin: "user", fields: {} },
 };
 
 /** A file at schema version 3, holding each item as `[type, properties JSON]`. */
@@ -514,7 +528,9 @@ async function versionThree(
   await client.executeMultiple(BASELINE_SQL);
   for (const migration of MIGRATIONS.filter((m) => m.to <= 3))
     await migration.apply(client);
-  for (const [id, { parent, fields }] of Object.entries(STORED_TYPES)) {
+  for (const [id, { parent, origin, fields }] of Object.entries(
+    STORED_TYPES,
+  )) {
     const schema = {
       id,
       version: 1,
@@ -522,8 +538,8 @@ async function versionThree(
       fields,
     };
     await client.execute({
-      sql: "INSERT INTO types (id, schema, origin, created_at, updated_at) VALUES (?, ?, 'platform', ?, ?)",
-      args: [id, JSON.stringify(schema), WRITTEN_AT, WRITTEN_AT],
+      sql: "INSERT INTO types (id, schema, origin, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+      args: [id, JSON.stringify(schema), origin, WRITTEN_AT, WRITTEN_AT],
     });
   }
   for (const [id, [type, properties]] of Object.entries(items)) {
@@ -556,7 +572,7 @@ const BEFORE_CONTACT_LISTS: Record<string, [string, string]> = {
   ],
   empty: [
     "core.entity",
-    '{"name":"Empty","email":"","phone":"   ","place":null}',
+    '{"name":"Empty","email":"","phone":" \\t\\n\\u00a0","place":null}',
   ],
   odd: [
     "core.entity",
@@ -565,7 +581,13 @@ const BEFORE_CONTACT_LISTS: Record<string, [string, string]> = {
   invalid: ["core.entity.person", '{"email":"not an email"}'],
   held: [
     "core.entity",
-    '{"email":"a@example.com","emails":[{"value":"a@example.com"}]}',
+    '{"email":"a@example.com","emails":[{"value":"b@example.com"},{"value":"a@example.com","label":"work"}],' +
+      '"phone":"+1 555 0100","phones":[{"value":"+1 555 0100"}],' +
+      '"place":"1 High Street","addresses":[{"street_address":"1 High Street","locality":"Town"}]}',
+  ],
+  "held-refused": [
+    "core.entity",
+    '{"email":"not an email","emails":[{"value":"not an email","label":"old"}]}',
   ],
   beside: [
     "core.entity",
@@ -574,6 +596,10 @@ const BEFORE_CONTACT_LISTS: Record<string, [string, string]> = {
   trashed: ["core.entity.place", '{"name":"Binned","place":"2 Low Road"}'],
   declares: ["user.contact", '{"email":"c@example.com","phone":"+1 555 0100"}'],
   inherits: ["user.contact.work", '{"email":"c@example.com"}'],
+  registered: [
+    "user.registered",
+    '{"email":"r@example.com","phone":"+1 555 0102"}',
+  ],
   loop: ["user.loop", '{"email":"c@example.com"}'],
   note: ["core.note", '{"body":"x","email":"d@example.com"}'],
   exact: [
@@ -628,9 +654,6 @@ describe("starting on a database at schema version 3", () => {
       addresses: [{ street_address: "1 High Street" }],
     });
     expect(properties(state, "empty")).toEqual({ name: "Empty" });
-    expect(properties(state, "held")).toEqual({
-      emails: [{ value: "a@example.com" }],
-    });
     expect(properties(state, "trashed")).toEqual({
       name: "Binned",
       addresses: [{ street_address: "2 Low Road" }],
@@ -653,14 +676,58 @@ describe("starting on a database at schema version 3", () => {
     }
   });
 
-  it("gives each moved item its next version, with no writer, the old version in its history and an item.updated event", async () => {
+  it("removes an old field whose value its list already holds, and leaves the list as it was", async () => {
     const path = scratch();
     await versionThree(path, BEFORE_CONTACT_LISTS);
 
     await open(path);
 
     const state = await contactState(path);
-    const moved = ["declares", "empty", "exact", "held", "moved", "trashed"];
+    expect(properties(state, "held")).toEqual({
+      emails: [
+        { value: "b@example.com" },
+        { value: "a@example.com", label: "work" },
+      ],
+      phones: [{ value: "+1 555 0100" }],
+      addresses: [{ street_address: "1 High Street", locality: "Town" }],
+    });
+    // The list holds the value already, so removing the field loses nothing,
+    // even though the `value` member would refuse it as a new entry.
+    expect(properties(state, "held-refused")).toEqual({
+      emails: [{ value: "not an email", label: "old" }],
+    });
+  });
+
+  it("keeps the value of a field a registered type declares, even word for word as core.entity did", async () => {
+    const path = scratch();
+    await versionThree(path, BEFORE_CONTACT_LISTS);
+
+    await open(path);
+
+    const state = await contactState(path);
+    expect(properties(state, "registered")).toEqual({
+      email: "r@example.com",
+      phones: [{ value: "+1 555 0102" }],
+    });
+  });
+
+  it("gives each changed item its next version, with no writer, the old version in its history and an item.updated event", async () => {
+    const path = scratch();
+    await versionThree(path, BEFORE_CONTACT_LISTS);
+
+    await open(path);
+
+    const state = await contactState(path);
+    const moved = [
+      "declares",
+      "empty",
+      "exact",
+      "held",
+      "held-refused",
+      "moved",
+      "registered",
+      "trashed",
+    ];
     expect(
       Object.values(state.items)
         .filter((item) => item.version === 2)

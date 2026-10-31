@@ -164,10 +164,10 @@ const ITEM_COLUMNS =
 /**
  * Moves the `email`, `phone` and `place` an item of `core.entity`, or of a
  * type under it, holds into `emails`, `phones` and `addresses`, as one entry
- * each, in the bin too. A string of only spaces, an empty one or null is
- * removed. A value the list cannot take, or one beside a list that does not
- * already hold it, stays under its own field, and so does every value of a
- * pair a type below `core.entity` declares itself.
+ * each, in the bin too. A string of only white space, an empty one or null
+ * is removed, and so is a string its list already holds. Any other value the
+ * list cannot take, or one beside a list, stays under its own field, and so
+ * does every value of a pair a type below `core.entity` declares itself.
  *
  * Each changed item gets its next version, as a write would give it: the
  * version it leaves is kept in its history, it has no writer, since no one
@@ -176,13 +176,14 @@ const ITEM_COLUMNS =
  * other value is parsed and written back.
  */
 async function contactListsOnEntities(db: Writer): Promise<void> {
-  // A stored schema holds the fields its type inherits as well as its own.
+  // A type Marfa ships is stored with the fields it inherits as well as its
+  // own; one registered through `POST /types` with its own alone.
   const declared = new Map<
     string,
-    { parent?: string; fields: Map<string, unknown> }
+    { parent?: string; shipped: boolean; fields: Map<string, unknown> }
   >();
   const defined = await db.execute(
-    "SELECT id, schema FROM types WHERE json_valid(schema)",
+    "SELECT id, schema, origin FROM types WHERE json_valid(schema)",
   );
   for (const row of defined.rows) {
     const schema = JSON.parse(row.schema as string) as {
@@ -191,6 +192,7 @@ async function contactListsOnEntities(db: Writer): Promise<void> {
     };
     declared.set(row.id as string, {
       ...(typeof schema.parent === "string" && { parent: schema.parent }),
+      shipped: row.origin === "platform",
       fields: new Map(
         schema.fields !== null && typeof schema.fields === "object"
           ? Object.entries(schema.fields)
@@ -213,6 +215,7 @@ async function contactListsOnEntities(db: Writer): Promise<void> {
   const declaresItself = (type: string, field: string): boolean => {
     const own = declared.get(type);
     if (own?.fields.has(field) !== true) return false;
+    if (!own.shipped) return true;
     const parent =
       own.parent === undefined ? undefined : declared.get(own.parent);
     return (
@@ -256,12 +259,9 @@ async function contactListsOnEntities(db: Writer): Promise<void> {
         removed.push(old);
         continue;
       }
-      if (typeof value !== "string" || !accepts(value)) continue;
+      if (typeof value !== "string") continue;
       const present = properties[list];
-      if (present === undefined) {
-        removed.push(old);
-        lists.push([list, [{ [member]: value }]]);
-      } else if (
+      if (
         Array.isArray(present) &&
         present.some(
           (entry: unknown) =>
@@ -271,6 +271,9 @@ async function contactListsOnEntities(db: Writer): Promise<void> {
         )
       ) {
         removed.push(old);
+      } else if (present === undefined && accepts(value)) {
+        removed.push(old);
+        lists.push([list, [{ [member]: value }]]);
       }
     }
     if (removed.length === 0) continue;
