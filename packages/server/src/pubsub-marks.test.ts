@@ -56,4 +56,23 @@ describe("frameFor", () => {
     expect(frame.item).toMatchObject({ trashed_by_cascade: true });
     expect(frame.item).not.toHaveProperty("trashed_with");
   });
+
+  it("gives an item frame logged before items carried trashed_at a null one, and leaves the rest", () => {
+    const earlier = { event_type: "item.updated", item: item("01HOLD") };
+    expect(earlier.item).not.toHaveProperty("trashed_at");
+    expect(frameFor(earlier, () => true).item).toHaveProperty(
+      "trashed_at",
+      null,
+    );
+    const later = {
+      event_type: "item.deleted",
+      item: { ...item("01HNEW"), trashed_at: "2026-01-02T03:04:05.000Z" },
+    };
+    expect(frameFor(later, () => true).item).toHaveProperty(
+      "trashed_at",
+      "2026-01-02T03:04:05.000Z",
+    );
+    const edgeFrame = { event_type: "edge.created", edge: { id: "e" } };
+    expect(frameFor(edgeFrame, () => true)).toEqual(edgeFrame);
+  });
 });

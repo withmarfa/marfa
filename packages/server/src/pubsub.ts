@@ -169,7 +169,13 @@ export function frameFor(
   delete frame.source_item_source;
   const readable = (type: unknown): boolean =>
     typeof type === "string" && mayRead(type);
-  const item: unknown = frame.item;
+  let item: unknown = frame.item;
+  // A frame records the item as it was, and one logged before items carried
+  // `trashed_at` recorded no time it went to the bin.
+  if (typeof item === "object" && item !== null && !("trashed_at" in item)) {
+    item = { ...item, trashed_at: null };
+    frame.item = item;
+  }
   if (typeof item === "object" && item !== null && "trashed_with" in item) {
     const { trashed_with: named, ...rest } = item as Record<string, unknown>;
     frame.item =
