@@ -173,6 +173,10 @@ pub struct Item {
     /// where the writer set none.
     pub capture_latitude: Option<f64>,
     pub capture_longitude: Option<f64>,
+    /// When the item went to the bin, or a `system.*` item was revoked; absent
+    /// outside that state, and for a row an archive restored to the bin
+    /// without the time.
+    pub trashed_at: Option<String>,
     pub tags: Vec<String>,
 }
 
@@ -194,8 +198,23 @@ impl Item {
             updated_at: item.updated_at,
             capture_latitude: item.capture_latitude,
             capture_longitude: item.capture_longitude,
+            trashed_at: item.trashed_at,
             tags,
         })
+    }
+
+    /// Moves the item to `state`, made at `at`, as the server records it: a
+    /// move into the bin takes `at` as `trashed_at`, a move out of it clears
+    /// it, and a row already in the bin keeps the time it holds.
+    pub(crate) fn move_to(&mut self, state: ItemState, at: &str) {
+        if state == ItemState::Trashed {
+            if self.state != ItemState::Trashed {
+                self.trashed_at = Some(at.to_string());
+            }
+        } else if self.state == ItemState::Trashed {
+            self.trashed_at = None;
+        }
+        self.state = state;
     }
 
     pub(crate) fn as_wire(&self) -> WireItem {
@@ -214,6 +233,7 @@ impl Item {
             properties: self.properties.clone(),
             capture_latitude: self.capture_latitude,
             capture_longitude: self.capture_longitude,
+            trashed_at: self.trashed_at.clone(),
             edges: None,
         }
     }
@@ -332,6 +352,10 @@ pub enum SortField {
     /// The name after `properties.`, one or more of `a` to `z`, `0` to `9`
     /// and `_`.
     Property(String),
+    /// When each row went to the bin, or its `updated_at` where it holds no
+    /// such time: the order of a list of the bin alone that names no field
+    /// (`device/bin-local-order`). No caller names it, as no server takes it.
+    TrashedAt,
 }
 
 impl fmt::Display for SortField {
@@ -341,6 +365,7 @@ impl fmt::Display for SortField {
             SortField::UpdatedAt => f.write_str("updated_at"),
             SortField::OccurredAt => f.write_str("occurred_at"),
             SortField::Property(name) => write!(f, "properties.{name}"),
+            SortField::TrashedAt => f.write_str("trashed_at"),
         }
     }
 }
@@ -436,27 +461,44 @@ impl Sort {
         direction: SortDirection::Ascending,
     };
 
+    /// The order of a list of the bin alone that names no field.
+    pub(crate) const BINNED: Sort = Sort {
+        field: SortField::TrashedAt,
+        direction: SortDirection::Descending,
+    };
+
     /// A list's order from the halves a caller named, as the server reads
-    /// `sort` and `direction`: a half left out is the resumed order's beside
-    /// `updated_after` (`resumed`), so only a half naming another is refused,
-    /// and otherwise the default's. Nothing named is `None`, the list's own.
+    /// `sort` and `direction`: a half left out is the half of the order
+    /// `filters` take when they name none, so only a half naming another is
+    /// refused beside `updated_after`. Nothing named is `None`, the list's own.
     pub fn named(
         field: Option<SortField>,
         direction: Option<SortDirection>,
-        resumed: bool,
+        filters: &ListFilters,
     ) -> Option<Sort> {
         if field.is_none() && direction.is_none() {
             return None;
         }
-        let fallback = if resumed {
-            Sort::RESUMED
-        } else {
-            Sort::default()
-        };
+        let fallback = Sort::unnamed(filters);
         Some(Sort {
             field: field.unwrap_or(fallback.field),
             direction: direction.unwrap_or(fallback.direction),
         })
+    }
+
+    /// The order a list answers in when it names none: by `updated_at`,
+    /// ascending, beside `updated_after`; when each row went to the bin,
+    /// newest first, for the bin alone; and otherwise the default.
+    pub(crate) fn unnamed(filters: &ListFilters) -> Sort {
+        if filters.updated_after.is_some() {
+            Sort::RESUMED
+        } else if !filters.all_states
+            && filters.states.as_deref() == Some(&[ItemState::Trashed][..])
+        {
+            Sort::BINNED
+        } else {
+            Sort::default()
+        }
     }
 }
 
@@ -885,6 +927,7 @@ impl Draft {
             properties: self.properties.clone(),
             capture_latitude: self.capture_latitude,
             capture_longitude: self.capture_longitude,
+            trashed_at: (self.state == Some(ItemState::Trashed)).then(crate::store::now_iso),
             edges: None,
         }
     }
@@ -1488,10 +1531,8 @@ impl QueuedWrite {
     }
 }
 
-/// A page of the server's bin, read online and never held in the copy. Each
-/// row's `updated_at` stands for when it went to the bin: the server answers
-/// no time of its own for that, and a write to the row in the bin moves it
-/// too.
+/// A page of the server's bin, newest binned first, read online and never
+/// held in the copy.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct BinPage {
     pub items: Vec<(Item, Shown)>,

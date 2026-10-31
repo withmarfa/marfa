@@ -94,6 +94,10 @@ pub struct Item {
     pub capture_latitude: Option<f64>,
     #[uniffi(default = None)]
     pub capture_longitude: Option<f64>,
+    /// When the item went to the bin; none outside it, and for a row an
+    /// archive restored to the bin without the time.
+    #[uniffi(default = None)]
+    pub trashed_at: Option<String>,
     /// The text under the property the type's display hints name as its
     /// title, or `title` where they name none; none where that holds no
     /// string.
@@ -1696,6 +1700,7 @@ fn item(item: marfa_core::Item, shown: marfa_core::Shown) -> Item {
         tags: item.tags,
         capture_latitude: item.capture_latitude,
         capture_longitude: item.capture_longitude,
+        trashed_at: item.trashed_at,
         title: shown.title,
         body: shown.body,
         unreadable_properties: shown.unreadable_properties,
@@ -1742,7 +1747,7 @@ impl From<ListFilters> for marfa_core::ListFilters {
 }
 
 impl Sort {
-    fn named(self, resumed: bool) -> Option<marfa_core::Sort> {
+    fn named(self, filters: &marfa_core::ListFilters) -> Option<marfa_core::Sort> {
         marfa_core::Sort::named(
             self.field.map(|field| match field {
                 SortField::CreatedAt => marfa_core::SortField::CreatedAt,
@@ -1754,7 +1759,7 @@ impl Sort {
                 SortDirection::Ascending => marfa_core::SortDirection::Ascending,
                 SortDirection::Descending => marfa_core::SortDirection::Descending,
             }),
-            resumed,
+            filters,
         )
     }
 }
@@ -2361,14 +2366,13 @@ impl Core {
         })
     }
 
-    /// Without a `sort` the list is newest created first, or oldest changed
-    /// first where `updated_after` is set.
+    /// Without a `sort` the list is newest created first, oldest changed
+    /// first where `updated_after` is set, or newest binned first for the bin
+    /// alone.
     pub fn list(&self, filters: ListFilters, sort: Option<Sort>) -> Result<Listing, MarfaError> {
-        let resumed = filters.updated_after.is_some();
-        Ok(listing(self.inner.list_kept(
-            &filters.into(),
-            sort.and_then(|sort| sort.named(resumed)),
-        )?))
+        let filters = filters.into();
+        let sort = sort.and_then(|sort| sort.named(&filters));
+        Ok(listing(self.inner.list_kept(&filters, sort)?))
     }
 
     pub fn get(&self, id: String) -> Result<Option<Item>, MarfaError> {
@@ -2591,9 +2595,8 @@ impl Core {
         Ok(self.inner.purge_item(&id, version)?)
     }
 
-    /// A page of the server's bin, newest change first, read online and held
-    /// nowhere in the copy. Each item's `updated_at` stands for when it went
-    /// to the bin. Offline it throws `Network`, and `NoServer` for a copy with
+    /// A page of the server's bin, newest binned first, read online and held
+    /// nowhere in the copy. Offline it throws `Network`, and `NoServer` for a copy with
     /// none.
     pub fn bin(
         &self,

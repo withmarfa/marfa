@@ -12,7 +12,7 @@ import {
 import { requireBinary } from "./harness.js";
 
 /**
- * The bin through a working copy (`device/bin-read`, `device/bin-unheld`, `device/bin-offline`, `device/pin-trashed`,
+ * The bin through a working copy (`device/bin-read`, `device/bin-read-order`, `device/bin-unheld`, `device/bin-offline`, `device/pin-trashed`,
  * `device/read-back-trashed-held`, `device/read-back-trashed-pin`, `queue-and-verdicts/refused-row-absent` and
  * `queue-and-verdicts/restore-by-id`), against a real server and the real binary.
  * Each device command is a process of its own, so every step here is also a
@@ -119,6 +119,36 @@ it("reads the server's bin a page at a time, holding nothing", async () => {
   );
   const held = value(await copy.list({ state: "trashed", tier: "library" }));
   expect(held.map((row) => row.id)).not.toContain(rows[0]!.id);
+});
+
+it("reads the server's bin newest binned first, with when each row went there", async () => {
+  // Created a, b, c and binned b, c, a, so newest binned first is a, c, b
+  // where creation order is c, b, a.
+  const made: string[] = [];
+  for (const title of ["order a", "order b", "order c"]) {
+    const created = await client.createItem({
+      type: "core.note",
+      source: ctx.source,
+      tier: "library",
+      properties: { title, body: title },
+    });
+    expect(created.ok, JSON.stringify(created.error)).toBe(true);
+    trackItem(ctx, created.data.item.id);
+    made.push(created.data.item.id);
+  }
+  const [a, b, c] = made as [string, string, string];
+  for (const id of [b, c, a]) {
+    expect((await client.deleteItem(id)).ok).toBe(true);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  const copy = await device("order", "feed");
+  const page = value(await copy.bin({ type: "core.note", limit: 100 }));
+  const mine = page.data.filter((row) => made.includes(row.id));
+  expect(
+    mine.map((row) => row.id),
+    "the bin was not read newest binned first",
+  ).toEqual([a, c, b]);
+  for (const row of mine) expect(row.trashed_at).not.toBeNull();
 });
 
 it("refuses to pin a row in the bin, saying so", async () => {

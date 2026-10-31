@@ -72,7 +72,7 @@ pub const SCHEMA_VERSION: &str = "0";
 const META_TABLE: &str =
     "CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);";
 
-const ITEM_COLUMNS: &str = "id, type, state, tier, version, schema_version, source, source_id, occurred_at, created_at, updated_at, properties, capture_latitude, capture_longitude";
+const ITEM_COLUMNS: &str = "id, type, state, tier, version, schema_version, source, source_id, occurred_at, created_at, updated_at, properties, capture_latitude, capture_longitude, trashed_at";
 const EDGE_COLUMNS: &str =
     "id, source_id, target_id, edge_type, properties, version, created_at, updated_at";
 
@@ -3723,8 +3723,8 @@ pub fn upsert_item(
     crate::body::rule::item_changing(conn, &item.id, Some(item))?;
     let before = attachments_before(conn, &[&item.id])?;
     conn.prepare_cached(
-        "INSERT INTO items (id, type, state, tier, version, schema_version, source, source_id, occurred_at, created_at, updated_at, properties, capture_latitude, capture_longitude)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
+        "INSERT INTO items (id, type, state, tier, version, schema_version, source, source_id, occurred_at, created_at, updated_at, properties, capture_latitude, capture_longitude, trashed_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
          ON CONFLICT (id) DO UPDATE SET
            type = excluded.type, state = excluded.state, tier = excluded.tier,
            version = excluded.version, schema_version = excluded.schema_version,
@@ -3732,7 +3732,8 @@ pub fn upsert_item(
            occurred_at = excluded.occurred_at, created_at = excluded.created_at,
            updated_at = excluded.updated_at, properties = excluded.properties,
            capture_latitude = excluded.capture_latitude,
-           capture_longitude = excluded.capture_longitude",
+           capture_longitude = excluded.capture_longitude,
+           trashed_at = excluded.trashed_at",
     )?
     .execute(params![
             item.id,
@@ -3749,6 +3750,7 @@ pub fn upsert_item(
             js::json(&Value::Object(js::object_order(&item.properties))),
             item.capture_latitude,
             item.capture_longitude,
+            item.trashed_at,
     ])?;
     if let Some(tags) = tags {
         conn.prepare_cached("DELETE FROM tags WHERE item_id = ?1")?
@@ -4529,6 +4531,7 @@ fn read_item(row: &rusqlite::Row<'_>) -> rusqlite::Result<(Item, Option<String>)
         properties,
         capture_latitude: row.get(12)?,
         capture_longitude: row.get(13)?,
+        trashed_at: row.get(14)?,
         tags: Vec::new(),
     };
     Ok((item, why))
@@ -5522,7 +5525,7 @@ fn lay_write(
                 item.occurred_at = crate::time::projected(&occurred_at);
             }
             if let Some(state) = draft.state {
-                item.state = state;
+                item.move_to(state, &row.queued_at);
             }
             if draft.capture_latitude.is_some() {
                 item.capture_latitude = draft.capture_latitude;
@@ -5581,11 +5584,11 @@ fn lay_write(
         }
         WriteKind::TransitionItem => {
             if let Some(state) = payload.get("state").and_then(Value::as_str) {
-                item.state = state.parse()?;
+                item.move_to(state.parse()?, &row.queued_at);
             }
         }
-        WriteKind::DeleteItem => item.state = ItemState::Trashed,
-        WriteKind::RestoreItem => item.state = ItemState::Active,
+        WriteKind::DeleteItem => item.move_to(ItemState::Trashed, &row.queued_at),
+        WriteKind::RestoreItem => item.move_to(ItemState::Active, &row.queued_at),
         WriteKind::AddTag => {
             for tag in named_tags() {
                 if !tags.contains(&tag) {
@@ -5942,13 +5945,26 @@ pub fn replace_tags(conn: &Connection, item_id: &str, tags: &[String]) -> Result
 
 /// The version and the time are the server's, untouched: a row the server
 /// writes after this is ordered against them (`Stamp`).
-pub fn set_item_state(conn: &Connection, id: &str, state: ItemState) -> Result<bool, CoreError> {
+/// `at` is when the move was made, recorded as `Item::move_to` records it,
+/// which leaves `updated_at` as the server last sent it.
+pub fn set_item_state(
+    conn: &Connection,
+    id: &str,
+    state: ItemState,
+    at: &str,
+) -> Result<bool, CoreError> {
     crate::body::rule::rows_changed(conn)?;
     crate::body::rule::item_changing(conn, id, None)?;
     let before = attachments_before(conn, &[id])?;
     let changed = conn.execute(
-        "UPDATE items SET state = ?2 WHERE id = ?1",
-        params![id, state.as_str()],
+        "UPDATE items SET state = ?2,
+           trashed_at = CASE
+             WHEN ?2 = 'trashed' THEN CASE WHEN state = 'trashed' THEN trashed_at ELSE ?3 END
+             WHEN state = 'trashed' THEN NULL
+             ELSE trashed_at
+           END
+         WHERE id = ?1",
+        params![id, state.as_str(), at],
     )?;
     attachments_changed(conn, &[id], before)?;
     if changed > 0 {
@@ -6078,6 +6094,7 @@ pub(crate) mod testing {
             updated_at: occurred_at.into(),
             capture_latitude: None,
             capture_longitude: None,
+            trashed_at: (state == "trashed").then(|| occurred_at.into()),
             edges: None,
         }
     }
@@ -6763,6 +6780,7 @@ mod tests {
             updated_at: "2031-03-03T03:03:03Z".into(),
             capture_latitude: Some(51.5),
             capture_longitude: Some(-0.25),
+            trashed_at: Some("2032-04-04T04:04:04Z".into()),
             edges: None,
         };
         upsert_item(&conn, &row, None, &Indexing::default()).unwrap();
@@ -6781,6 +6799,7 @@ mod tests {
         assert_eq!(item.updated_at, "2031-03-03T03:03:03Z");
         assert_eq!(item.capture_latitude, Some(51.5));
         assert_eq!(item.capture_longitude, Some(-0.25));
+        assert_eq!(item.trashed_at.as_deref(), Some("2032-04-04T04:04:04Z"));
         assert_eq!(
             item.properties.get("title").and_then(Value::as_str),
             Some("T")

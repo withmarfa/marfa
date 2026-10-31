@@ -129,12 +129,15 @@ impl Core {
         limit: Option<u32>,
         offset: Option<u32>,
     ) -> Result<Listing, MarfaError> {
-        Ok(crate::listing(self.inner.list_in_folder_kept(
-            &id,
-            sort.named(false).unwrap_or_default(),
-            limit,
-            offset,
-        )?))
+        Ok(crate::listing(
+            self.inner.list_in_folder_kept(
+                &id,
+                sort.named(&marfa_core::ListFilters::default())
+                    .unwrap_or_default(),
+                limit,
+                offset,
+            )?,
+        ))
     }
 
     /// Refused as `list_in_folder` refuses.

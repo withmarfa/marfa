@@ -465,9 +465,8 @@ pub enum ItemsCommand {
         #[arg(long)]
         version: Option<i64>,
     },
-    /// Read a page of the server's bin, newest change first. Online only,
-    /// and held nowhere in the copy; each item's `updated_at` stands for
-    /// when it went to the bin.
+    /// Read a page of the server's bin, newest binned first. Online only,
+    /// and held nowhere in the copy.
     Bin {
         /// A type identifier; its subtypes are included.
         #[arg(long = "type")]
@@ -1244,11 +1243,6 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
             let core = store.open(None)?;
             match command {
                 ItemsCommand::List(args) => {
-                    let sort = Sort::named(
-                        args.sort,
-                        args.direction.map(Into::into),
-                        args.updated_after.is_some(),
-                    );
                     if let Some(view) = &args.view {
                         return output::listing(
                             core.list_in_view(view, args.limit, args.offset)?,
@@ -1272,6 +1266,7 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
                         limit: args.limit,
                         offset: args.offset,
                     };
+                    let sort = Sort::named(args.sort, args.direction.map(Into::into), &filters);
                     output::listing(core.list_shown(&filters, sort)?, json)
                 }
                 ItemsCommand::Get { id } => match core.get_shown(&id)? {

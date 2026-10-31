@@ -1646,6 +1646,7 @@ mod tests {
             updated_at: String::new(),
             capture_latitude: None,
             capture_longitude: None,
+            trashed_at: None,
             tags: Vec::new(),
         };
         let shown = |r#type: &str, properties: serde_json::Value| {

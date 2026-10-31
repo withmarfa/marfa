@@ -41,6 +41,8 @@ pub struct WireItem {
     #[serde(default)]
     pub capture_longitude: Option<f64>,
     #[serde(default)]
+    pub trashed_at: Option<String>,
+    #[serde(default)]
     pub edges: Option<HashMap<String, WireEdgeBlock>>,
 }
 

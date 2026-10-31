@@ -762,7 +762,7 @@ impl Http {
         self.get_json(&["items", "stats"], &params)
     }
 
-    /// A page of the bin: `GET /items?state=trashed`, newest change first,
+    /// A page of the bin: `GET /items?state=trashed`, newest binned first,
     /// with each row's tags. `filter` is the listing grammar's.
     pub fn bin_page(
         &self,
@@ -775,8 +775,6 @@ impl Http {
         let mut params: Vec<(&str, &str)> = vec![
             ("state", "trashed"),
             ("include", "metadata"),
-            ("sort", "updated_at"),
-            ("direction", "desc"),
             ("limit", &limit),
         ];
         if let Some(declared) = r#type {

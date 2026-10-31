@@ -16,7 +16,8 @@
 //!   `schema_version` as `i64`; `source`; `source_id` as an optional text;
 //!   `occurred_at`, `created_at` and `updated_at`; `tags` as a `u32` count and
 //!   that many texts; `capture_latitude` and `capture_longitude` as optional
-//!   `f64`; `title`, `body` and `unreadable_properties` as optional texts.
+//!   `f64`; `trashed_at` as an optional text; `title`, `body` and
+//!   `unreadable_properties` as optional texts.
 //! - A text: a `u32` length in bytes, then its UTF-8.
 //! - An optional: one byte, 0 for none or 1 followed by the value.
 //! - An `f64`: its IEEE 754 bits as a `u64`.
@@ -31,7 +32,7 @@ use serde_json::{Map, Value};
 
 /// The layout's version. A change to the layout, or to `Item` or `JsonValue`,
 /// changes it, and the Swift package refuses a buffer of another version.
-pub(crate) const FORMAT: u32 = 1;
+pub(crate) const FORMAT: u32 = 2;
 
 pub(crate) fn pack(rows: &[(Item, Shown)]) -> Vec<u8> {
     let mut packer = Packer(Vec::with_capacity(8 + rows.len() * 256));
@@ -118,6 +119,7 @@ impl Packer {
         }
         self.optional_f64(item.capture_latitude);
         self.optional_f64(item.capture_longitude);
+        self.optional_text(item.trashed_at.as_deref());
         self.optional_text(shown.title.as_deref());
         self.optional_text(shown.body.as_deref());
         self.optional_text(shown.unreadable_properties.as_deref());
@@ -250,6 +252,7 @@ impl Reader<'_> {
             tags: (0..self.count()).map(|_| self.text()).collect(),
             capture_latitude: self.optional(Self::f64),
             capture_longitude: self.optional(Self::f64),
+            trashed_at: self.optional(Self::text),
             title: self.optional(Self::text),
             body: self.optional(Self::text),
             unreadable_properties: self.optional(Self::text),
@@ -332,6 +335,7 @@ mod tests {
             tags: vec!["x".into(), "".into()],
             capture_latitude: Some(51.5),
             capture_longitude: Some(-0.12),
+            trashed_at: Some("2026-01-04T00:00:00Z".into()),
         };
         let shown = Shown {
             title: Some("Title".into()),
@@ -353,6 +357,7 @@ mod tests {
             tags: vec![],
             capture_latitude: None,
             capture_longitude: None,
+            trashed_at: None,
             ..item
         };
         let shown = Shown {
@@ -415,7 +420,7 @@ mod tests {
     /// The bytes the Swift package's `PackedListing.agreed` holds.
     #[test]
     fn the_layout_of_a_plain_item_is_the_one_the_swift_package_reads() {
-        let mut expected = vec![1, 0, 0, 0, 1, 0, 0, 0];
+        let mut expected = vec![2, 0, 0, 0, 1, 0, 0, 0];
         text(&mut expected, "id");
         text(&mut expected, "core.note");
         expected.extend([1, 0, 0, 0, 1, 0, 0, 0, b'k', 3, 1, 0, 0, 0, 0, 0, 0, 0]);
@@ -426,7 +431,7 @@ mod tests {
         expected.push(0);
         times(&mut expected);
         expected.extend([0, 0, 0, 0]);
-        expected.extend([0, 0, 0, 0, 0]);
+        expected.extend([0, 0, 0, 0, 0, 0]);
         assert_eq!(pack(&[plain()]), expected);
     }
 
@@ -435,7 +440,7 @@ mod tests {
     /// tier codes the plain item leaves out.
     #[test]
     fn the_layout_of_a_full_item_is_the_one_the_swift_package_reads() {
-        let mut expected = vec![1, 0, 0, 0, 1, 0, 0, 0];
+        let mut expected = vec![2, 0, 0, 0, 1, 0, 0, 0];
         text(&mut expected, "a");
         text(&mut expected, "core.note");
         expected.extend([8, 0, 0, 0]);
@@ -472,6 +477,8 @@ mod tests {
         expected.extend(51.5f64.to_bits().to_le_bytes());
         expected.push(1);
         expected.extend((-0.12f64).to_bits().to_le_bytes());
+        expected.push(1);
+        text(&mut expected, "2026-01-04T00:00:00Z");
         expected.push(1);
         text(&mut expected, "Title");
         expected.push(1);
