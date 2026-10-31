@@ -7,9 +7,9 @@
  *
  * Each number is the mean of one file's time over three green runs on `main`,
  * read off the per-file lines of the shard logs and rounded to 5 seconds.
- * The `Check the shard weights` step of `ci.yml` compares them with every
- * shard's own times and writes the table to the job summary, so a number that
- * has drifted shows there.
+ * The `Compare each file's time with its weight` step of `ci.yml` compares
+ * them with every shard's own times and writes the table to the job summary,
+ * so a number that has drifted shows there.
  */
 export const SHARD_SECONDS: Readonly<Record<string, number>> = {
   "src/suites/compliance/approval-screens.test.ts": 145,

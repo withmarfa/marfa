@@ -184,7 +184,9 @@ const RUST_LINUX: readonly Job[] = [
  * The jobs that run on macOS for a pull request: the core's checks and its
  * live checks. Linux builds, lints and tests the same Rust, so a pull request
  * runs these only for a path that has a macOS-only part (`RULES` names them);
- * a push to `main`, the nightly and a dispatch run them whatever changed.
+ * a push to `main`, the nightly and a dispatch run `core-checks` whatever
+ * changed, and `core.yml`, not this workflow, runs the live checks for a push
+ * to `main` and every night.
  */
 const MACOS: readonly Job[] = ["core-checks", "core"];
 
