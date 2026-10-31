@@ -2636,7 +2636,14 @@ mod tests {
     /// already has, whose copy holds the folder item `id` with `settings`.
     fn folder_with(id: &str, settings: Value, types: Option<Value>) -> (tempfile::TempDir, Folder) {
         let dir = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
-        let state = dir.path().join(STATE_DIR);
+        let folder = folder_over(dir.path(), id, settings, types);
+        (dir, folder)
+    }
+
+    /// A folder over `dir`, whatever files it already holds, with a fresh
+    /// copy that holds the folder item `id` with `settings`.
+    fn folder_over(dir: &Path, id: &str, settings: Value, types: Option<Value>) -> Folder {
+        let state = dir.join(STATE_DIR);
         std::fs::create_dir_all(&state).unwrap();
         let core = Core::open(state.join("core.sqlite"), None).unwrap();
         if let Some(types) = types {
@@ -2661,8 +2668,7 @@ mod tests {
         .unwrap();
         settings_file::bind(&core, id).unwrap();
         drop(core);
-        let folder = Folder::open(dir.path(), None).unwrap();
-        (dir, folder)
+        Folder::open(dir, None).unwrap()
     }
 
     #[test]
@@ -4625,6 +4631,134 @@ mod tests {
             .filter(|write| write.kind == crate::model::WriteKind::DeleteItem)
             .map(|write| write.base_version)
             .collect()
+    }
+
+    /// A note's file as a pull wrote it, then the folder taken off this
+    /// machine and added again over the same directory, as `folders remove`
+    /// and `folders add` leave it: the file is byte for byte its item's
+    /// render, and the new copy never wrote it.
+    fn added_over_its_render() -> (ScannedDir, Folder, String) {
+        const FOLDER: &str = "01a00000-0000-7000-8000-000000000001";
+        let (dir, folder) = answered_notes(&["a.md"]);
+        let id = id_at(&folder, "a.md");
+        folder.pull().unwrap();
+        let rendered = std::fs::read(dir.path().join("a.md")).unwrap();
+        assert!(
+            String::from_utf8_lossy(&rendered).contains(&id),
+            "the pull wrote no id line"
+        );
+        // The row as the new copy's hydration brings it back.
+        let (columns, row) = {
+            let conn = folder.core.conn().unwrap();
+            let mut read = conn.prepare("SELECT * FROM items WHERE id = ?1").unwrap();
+            let columns: Vec<String> = read.column_names().iter().map(|c| c.to_string()).collect();
+            let row = read
+                .query_row([&id], |row| {
+                    (0..columns.len())
+                        .map(|at| row.get::<_, rusqlite::types::Value>(at))
+                        .collect::<rusqlite::Result<Vec<_>>>()
+                })
+                .unwrap();
+            (columns, row)
+        };
+        drop(folder);
+        std::fs::remove_dir_all(dir.path().join(STATE_DIR)).unwrap();
+
+        let folder = folder_over(dir.path(), FOLDER, serde_json::json!({ "query": {} }), None);
+        folder
+            .core
+            .conn()
+            .unwrap()
+            .execute(
+                &format!(
+                    "INSERT INTO items ({}) VALUES ({})",
+                    columns.join(", "),
+                    vec!["?"; columns.len()].join(", ")
+                ),
+                rusqlite::params_from_iter(row),
+            )
+            .unwrap();
+        let scanned = folder.scan().unwrap();
+        assert_eq!((scanned.created, scanned.unchanged), (0, 1), "{scanned:?}");
+        landed(&folder, "a.md");
+        let pulled = folder.pull().unwrap();
+        // The witness that the file is the render: the pull leaves it as it is.
+        assert_eq!(pulled.written + pulled.rewritten, 0, "{pulled:?}");
+        assert_eq!(std::fs::read(dir.path().join("a.md")).unwrap(), rendered);
+        (dir, folder, id)
+    }
+
+    #[test]
+    fn a_sweep_trashes_the_item_of_a_file_it_found_as_its_render() {
+        let (dir, folder, id) = added_over_its_render();
+        std::fs::remove_file(dir.path().join("a.md")).unwrap();
+        assert_eq!(folder.scan().unwrap().missing, 1);
+        past_the_grace(&folder, "a.md");
+        let swept = folder.scan().unwrap();
+        assert_eq!(
+            swept.trashed,
+            ["a.md"],
+            "the person's delete was held as a change made elsewhere: {swept:?}"
+        );
+        assert_eq!(deletes_queued(&folder).len(), 1);
+        let conn = folder.core.conn().unwrap();
+        assert!(state::bound_at(&conn, "a.md").unwrap().is_none());
+        assert!(state::journaled(&conn).unwrap().is_empty());
+        drop(conn);
+        assert_eq!(folder.pull().unwrap().written, 0);
+        assert!(!dir.path().join("a.md").exists(), "{id} was written back");
+    }
+
+    #[test]
+    fn a_sweep_trashes_the_item_of_a_file_found_as_its_render_with_no_line_of_its_own() {
+        let (dir, folder, _) = added_over_its_render();
+        // As a build that recorded neither the bytes nor the own-field lines
+        // of such a file left its binding.
+        folder
+            .core
+            .conn()
+            .unwrap()
+            .execute(
+                "UPDATE folder_files SET own = NULL, written_hash = NULL WHERE path = 'a.md'",
+                [],
+            )
+            .unwrap();
+        std::fs::remove_file(dir.path().join("a.md")).unwrap();
+        assert_eq!(folder.scan().unwrap().missing, 1);
+        let pulled = folder.pull().unwrap();
+        assert_eq!(
+            (pulled.revived, pulled.written + pulled.rewritten),
+            (0, 0),
+            "the person's delete was written back as a change made elsewhere: {pulled:?}"
+        );
+        assert!(!dir.path().join("a.md").exists());
+        past_the_grace(&folder, "a.md");
+        let swept = folder.scan().unwrap();
+        assert_eq!(swept.trashed, ["a.md"], "{swept:?}");
+        assert_eq!(deletes_queued(&folder).len(), 1);
+    }
+
+    #[test]
+    fn a_pull_removes_a_file_it_found_as_its_render_once_the_item_is_binned() {
+        let (dir, folder, id) = added_over_its_render();
+        folder
+            .core
+            .conn()
+            .unwrap()
+            .execute(
+                "UPDATE items SET state = 'trashed', version = version + 1 WHERE id = ?1",
+                [&id],
+            )
+            .unwrap();
+        let pulled = folder.pull().unwrap();
+        assert_eq!(
+            (pulled.removed, pulled.kept),
+            (1, 0),
+            "the file of an item in the bin stayed: {pulled:?}"
+        );
+        assert!(!dir.path().join("a.md").exists());
+        let scanned = folder.scan().unwrap();
+        assert_eq!((scanned.lost, scanned.missing), (0, 0), "{scanned:?}");
     }
 
     #[cfg(debug_assertions)]

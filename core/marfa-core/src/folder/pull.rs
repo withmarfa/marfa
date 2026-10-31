@@ -1038,6 +1038,25 @@ impl Folder {
             return Ok(PlacementWrite::Done);
         }
         if in_place && let Some(bound) = bound {
+            // Bytes the pull would write are the folder's own, however they
+            // came: a folder added over files an earlier copy wrote never
+            // wrote them itself, and its person's delete of one, or another
+            // device's bin, would otherwise never let the file go.
+            if bound.path == want
+                && bound.content_hash == hash
+                && bound.held.is_none()
+                && bound.writes.queued.is_empty()
+                && self.exists(&path)
+                && bound.written_hash.as_deref() != Some(hash.as_str())
+            {
+                let recorded = state::Bound {
+                    written_hash: Some(hash.clone()),
+                    own: own.clone().or_else(|| bound.own.clone()),
+                    ..bound.clone()
+                };
+                state::bind(&*self.core.conn()?, &recorded)?;
+                return self.stay(item, &recorded, &want, rendering, withheld, report);
+            }
             return self.stay(item, bound, &want, rendering, withheld, report);
         }
 
@@ -1823,8 +1842,17 @@ impl Folder {
         {
             return Ok(false);
         }
+        // A file found as its item rendered, by a copy that never wrote it,
+        // showed the line its bytes carry.
         let line = carries_frontmatter(Path::new(&bound.path))
-            .then(|| bound.own.as_ref().map(|own| own.line))
+            .then(|| {
+                bound.own.as_ref().map(|own| own.line).or_else(|| {
+                    bound
+                        .presentation
+                        .as_ref()
+                        .and_then(|agreed| line_of(agreed.front()))
+                })
+            })
             .flatten();
         let previous = bound
             .presentation
