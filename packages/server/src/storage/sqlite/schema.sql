@@ -627,6 +627,7 @@ CREATE INDEX IF NOT EXISTS `idx_items_occurred_at_id` ON `items` (`occurred_at`,
 CREATE INDEX IF NOT EXISTS `idx_items_type_created_at` ON `items` (`type`,`created_at`,`id`);
 CREATE INDEX IF NOT EXISTS `idx_items_type_updated_at` ON `items` (`type`,`updated_at`,`id`);
 CREATE INDEX IF NOT EXISTS `idx_items_type_occurred_at` ON `items` (`type`,`occurred_at`,`id`);
+CREATE INDEX IF NOT EXISTS `idx_items_state_binned_at` ON `items` (`state`,CASE WHEN "trashed_at" IS NULL THEN "updated_at" ELSE "trashed_at" END,`id`);
 CREATE UNIQUE INDEX IF NOT EXISTS `idx_items_source_dedup` ON `items` (`source`,`source_id`) WHERE source IS NOT NULL;
 CREATE INDEX IF NOT EXISTS `idx_items_source_id_prefix` ON `items` ("source_id" COLLATE NOCASE) WHERE source_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS `idx_items_starts_at` ON `items` (`starts_at`) WHERE starts_at IS NOT NULL;

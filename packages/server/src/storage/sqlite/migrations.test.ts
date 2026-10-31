@@ -785,16 +785,17 @@ describe("starting on a database at schema version 3", () => {
   });
 });
 
-describe("starting on a database at this build's schema version", () => {
+describe("starting on an unstamped database", () => {
   it("updates an unstamped one from the last version a build left unstamped", async () => {
-    // Schema versions 3 and 4 changed rows and not tables, so an unstamped
-    // file of this shape is at version 2: every build since stamps what it
-    // writes.
+    // Schema versions 3 and 4 changed rows and not tables, and version 5
+    // adds one index, so an unstamped file of this shape without that index
+    // is at version 2: every build since stamps what it writes.
     expect(Math.max(...UNSTAMPED_VERSIONS)).toBe(2);
     const path = scratch();
     const client = createClient({ url: `file:${path}` });
     await client.executeMultiple(SCHEMA_SQL);
     await client.executeMultiple(CREATE_FTS);
+    await client.execute("DROP INDEX idx_items_state_binned_at");
     await fill(client);
     client.close();
     // The fixture's icons are bare names no icon set has, which the update

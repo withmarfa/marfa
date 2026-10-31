@@ -182,7 +182,9 @@ import * as clock from "../../clock.js";
  * no earlier than the move.
  */
 const BINNED_ORDER = { kind: "binned" } as const;
-const binnedAt = sql<string>`COALESCE(${items.trashed_at}, ${items.updated_at})`;
+// Written as `idx_items_state_binned_at` writes it, which SQLite reads in
+// order only for the same expression.
+const binnedAt = sql<string>`CASE WHEN ${items.trashed_at} IS NULL THEN ${items.updated_at} ELSE ${items.trashed_at} END`;
 
 function isBinListing(filters: ItemFilters): boolean {
   return (

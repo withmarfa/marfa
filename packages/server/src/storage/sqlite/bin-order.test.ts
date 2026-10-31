@@ -6,7 +6,14 @@
  * on the time, so a listing still ordered by creation or by the column alone
  * answers a different sequence.
  */
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import {
+  createClient,
+  type Client,
+  type InArgs,
+  type InStatement,
+  type ResultSet,
+} from "@libsql/client";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -81,10 +88,12 @@ const ROWS: Row[] = [
 
 let directory: string;
 let storage: Storage;
+let path: string;
 
 beforeAll(async () => {
   directory = await mkdtemp(join(tmpdir(), "marfa-bin-order-"));
-  storage = await createSqliteStorage(join(directory, "test.db"));
+  path = join(directory, "test.db");
+  storage = await createSqliteStorage(path);
   for (const row of ROWS) {
     await storage.__sqliteRun(
       `INSERT INTO items (id, type, state, tier, properties, created_at, updated_at, occurred_at, trashed_at, version)
@@ -193,4 +202,78 @@ describe("the order of the bin", () => {
       }),
     ).rejects.toThrow();
   });
+});
+
+describe("the plan of a page of the bin", () => {
+  let reader: Client;
+  let sent: { sql: string; args: InArgs }[] | null = null;
+
+  beforeAll(() => {
+    reader = createClient({ url: `file:${path}` });
+    const driver = Object.getPrototypeOf(createClient({ url: ":memory:" })) as {
+      execute: (
+        this: Client,
+        statement: InStatement | string,
+        args?: InArgs,
+      ) => Promise<ResultSet>;
+    };
+    const execute = driver.execute;
+    vi.spyOn(driver, "execute").mockImplementation(function (
+      this: Client,
+      statement,
+      args,
+    ) {
+      sent?.push(
+        typeof statement === "string"
+          ? { sql: statement, args: args ?? [] }
+          : { sql: statement.sql, args: statement.args ?? [] },
+      );
+      return execute.call(this, statement, args);
+    });
+  });
+
+  afterAll(() => {
+    vi.restoreAllMocks();
+    reader.close();
+  });
+
+  /** The plan of the one statement a listing sends that reads `items`. */
+  async function planOf(filters: ItemFilters): Promise<string[]> {
+    sent = [];
+    await storage.items.list(filters);
+    const statements = sent.filter(({ sql }) =>
+      /from\s+["`]?items["`]?[\s,]/i.test(sql),
+    );
+    sent = null;
+    expect(statements).toHaveLength(1);
+    const { sql, args } = statements[0]!;
+    const rows = await reader.execute({
+      sql: `EXPLAIN QUERY PLAN ${sql}`,
+      args,
+    });
+    return rows.rows.map((row) => row.detail as string);
+  }
+
+  for (const direction of ["desc", "asc"] as const) {
+    it(`reads the bin in index order, ${direction}, a page and a page after it`, async () => {
+      const first = await storage.items.list({
+        states: ["trashed"],
+        direction,
+        limit: 1,
+      });
+      for (const cursor of [undefined, first.next_cursor ?? undefined]) {
+        const plan = await planOf({
+          states: ["trashed"],
+          direction,
+          limit: 1,
+          cursor,
+        });
+        expect(plan.join(" | ")).toContain("idx_items_state_binned_at");
+        expect(
+          plan.filter((detail) => detail.includes("TEMP B-TREE")),
+          plan.join(" | "),
+        ).toEqual([]);
+      }
+    });
+  }
 });

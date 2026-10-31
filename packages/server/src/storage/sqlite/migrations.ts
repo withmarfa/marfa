@@ -85,6 +85,14 @@ export const MIGRATIONS: readonly Migration[] = [
     changes: ["items", "versions", "event_log"],
     apply: contactListsOnEntities,
   },
+  {
+    to: 5,
+    changes: [],
+    apply: (db) =>
+      db.executeMultiple(
+        'CREATE INDEX `idx_items_state_binned_at` ON `items` (`state`,CASE WHEN "trashed_at" IS NULL THEN "updated_at" ELSE "trashed_at" END,`id`);',
+      ),
+  },
 ];
 
 /**

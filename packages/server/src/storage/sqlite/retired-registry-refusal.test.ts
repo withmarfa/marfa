@@ -20,6 +20,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { createConnection } from "./connection.js";
+import { SCHEMA_VERSION } from "./migrations.js";
 import { SCHEMA_SQL } from "./schema-shape.js";
 
 const dirs: string[] = [];
@@ -301,6 +302,7 @@ describe("a retired registry table is refused on open", () => {
     const path = scratch();
     const seed = createClient({ url: `file:${path}` });
     await seed.executeMultiple(SCHEMA_SQL);
+    await seed.execute(`PRAGMA user_version = ${String(SCHEMA_VERSION)}`);
     await seed.execute(
       "INSERT INTO settings (key, value) VALUES ('space_config', '{\"trash_retention_days\":90}')",
     );
@@ -347,6 +349,7 @@ describe("a retired registry table is refused on open", () => {
     const path = scratch();
     const seed = createClient({ url: `file:${path}` });
     await seed.executeMultiple(SCHEMA_SQL);
+    await seed.execute(`PRAGMA user_version = ${String(SCHEMA_VERSION)}`);
     await seed.execute(
       "INSERT INTO settings (key, value) VALUES ('bootstrap_done', 'true')",
     );
