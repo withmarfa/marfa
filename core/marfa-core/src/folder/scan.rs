@@ -7,8 +7,8 @@ use super::{
     EdgeTypes, EdgeWork, Flagged, Folder, HashMap, HashSet, ID_FIELD, Item, ItemState,
     LOCAL_ADMISSION_REFUSAL, Lists, Look, Names, OnceCell, Path, PathBuf, Peers, RENAME_GRACE,
     Resolver, Result, ScanReport, Scanned, Settings, Unsure, Value, Waiting, Walked, beside,
-    bytes_of, captured_identities, carries_frontmatter, changed_within, document, embeds,
-    executable, fields, id_named, identity, is_document, landing, line_of, lines,
+    bytes_of, captured_identities, carries_frontmatter, changed_within, copy_refused, document,
+    embeds, executable, fields, id_named, identity, is_document, landing, line_of, lines,
     local_properties_refusal, name_of, named_by_its_file, near_limit, one_per_name, placement,
     stat_metadata, state, suited, swap_root, text_of, typed_title,
 };
@@ -871,10 +871,16 @@ impl Folder {
                         }
                         // Lines only the server can resolve are asked again
                         // at each scan that can ask it.
+                        // So are lines the copy refused, since what refused
+                        // them can change without the file.
                         if bound
                             .held
                             .as_deref()
                             .is_some_and(|held| held.starts_with(state::EDGES_WAITING))
+                            || bound.writes.refused.iter().any(|refused| {
+                                matches!(refused.change, state::Change::Edge { .. })
+                                    && copy_refused(refused)
+                            })
                         {
                             work.push(self.edge_work(file, &item_id, Some(&bound)));
                         }
@@ -1013,15 +1019,22 @@ impl Folder {
             // A failure is this file's alone: it waits, and the scan goes on,
             // and what was queued before it stays the file's.
             let mut queued = Vec::new();
-            let outcome = self
-                .queue_edges(&pending, edge_types, catalog, &mut resolver, &mut queued)
-                .unwrap_or_else(|error| lines::Outcome {
-                    links: pending.had_links.clone(),
-                    lines: pending.had_lines.clone(),
-                    held: Some(format!("{}{error}", state::EDGES_WAITING)),
-                    refused: Vec::new(),
-                    embeds: Vec::new(),
-                });
+            let judged = self.queue_edges(
+                &pending,
+                edge_types,
+                catalog,
+                &mut resolver,
+                &mut queued,
+                None,
+            );
+            let rejudged = judged.is_ok();
+            let outcome = judged.unwrap_or_else(|error| lines::Outcome {
+                links: pending.had_links.clone(),
+                lines: pending.had_lines.clone(),
+                held: Some(format!("{}{error}", state::EDGES_WAITING)),
+                refused: Vec::new(),
+                embeds: Vec::new(),
+            });
             report.embeds.extend(
                 outcome
                     .embeds
@@ -1043,8 +1056,10 @@ impl Folder {
                         save,
                         line: None,
                     }));
-                // A refused edge the file no longer asks for holds it no longer.
+                // A refused edge the file no longer asks for holds it no longer,
+                // and one the copy refused was judged again in this pass.
                 writes.refused.retain(|refused| match &refused.change {
+                    state::Change::Edge { .. } if rejudged && copy_refused(refused) => false,
                     state::Change::Edge { line, shown } => outcome.lines.contains(line) == *shown,
                     _ => true,
                 });

@@ -336,6 +336,11 @@ impl Folder {
     /// to `queued` as it is made, so a failure later keeps the earlier ones
     /// tied to the file; a line read no way it was written changes nothing of
     /// its type.
+    ///
+    /// With `removals`, only the edges the file's lines no longer name are
+    /// removed, each line added to it, and the outcome is not the file's: a
+    /// retype is queued after them, as the server holds it to every edge
+    /// still standing.
     pub(super) fn queue_edges(
         &self,
         work: &EdgeWork,
@@ -343,6 +348,7 @@ impl Folder {
         catalog: &Catalog,
         resolver: &mut Resolver<'_>,
         queued: &mut Vec<String>,
+        mut removals: Option<&mut Vec<Line>>,
     ) -> Result<Outcome> {
         let item_id = work.item_id.as_str();
         let mut reasons: Vec<String> = Vec::new();
@@ -361,7 +367,12 @@ impl Folder {
             .collect();
         let mut named: Vec<String> = Vec::new();
         let mut links_resolved = true;
-        for raw in &work.links {
+        let links = if removals.is_some() {
+            &[][..]
+        } else {
+            &work.links[..]
+        };
+        for raw in links {
             let typed = Typed::new(raw);
             let resolved = resolve_reference(&typed, |text| {
                 self.resolve_typed(
@@ -492,6 +503,9 @@ impl Folder {
             )?;
             let links_group = edge_type == LINK_EDGE && end == End::Source;
             let embeds_group = edge_type == ATTACHMENT_EDGE && end == End::Target;
+            if removals.is_some() && (links_group || embeds_group) {
+                continue;
+            }
             let Some(desired) = desired else {
                 lines.extend(recorded.into_iter().map(|other| Line {
                     edge_type: edge_type.to_string(),
@@ -562,7 +576,18 @@ impl Folder {
                     ..Default::default()
                 },
             };
-            if group.edge_type.one_at(end) && adds.len() == 1 && !current.is_empty() {
+            let moves = group.edge_type.one_at(end) && adds.len() == 1 && !current.is_empty();
+            if let Some(removed) = removals.as_deref_mut() {
+                // A move keeps its edge, and is the whole pass's to make.
+                if !moves {
+                    for edge in removes {
+                        queued.push(self.core.delete_edge(&edge.id)?.id);
+                        removed.push(line_of(edge_type, end, &other_of(edge)));
+                    }
+                }
+                continue;
+            }
+            if moves && adds.len() == 1 && !current.is_empty() {
                 // Only an edge this file showed is its to replace; one it never
                 // showed would be dropped unseen.
                 let Some(old) = current

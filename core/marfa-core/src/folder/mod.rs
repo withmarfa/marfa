@@ -1607,12 +1607,21 @@ impl Folder {
 
 const LOCAL_ADMISSION_REFUSAL: &str = "refused: local item validation: ";
 
+fn local_refusal_prefix() -> &'static str {
+    LOCAL_ADMISSION_REFUSAL
+        .strip_prefix(state::REFUSED)
+        .unwrap_or(LOCAL_ADMISSION_REFUSAL)
+}
+
 /// A local refusal as a refused write records it, as the server's reads.
 fn local_refusal_reason(error: &CoreError) -> String {
-    let prefix = LOCAL_ADMISSION_REFUSAL
-        .strip_prefix(state::REFUSED)
-        .unwrap_or(LOCAL_ADMISSION_REFUSAL);
-    format!("{prefix}{error}")
+    format!("{}{error}", local_refusal_prefix())
+}
+
+/// Whether the copy refused the write, a judgement it can make again; the
+/// server's refusal stands until the file changes.
+fn copy_refused(refused: &state::Refused) -> bool {
+    refused.reason.starts_with(local_refusal_prefix())
 }
 
 /// What the copy refuses a write for before queueing it: a field the type
@@ -5592,10 +5601,16 @@ mod tests {
             "{bound:?}"
         );
 
-        // Unchanged, the file queues nothing again.
+        // Unchanged, the file's line is judged again, refused again, and
+        // queues nothing.
         let edges = queued_kinds(&folder, WriteKind::CreateEdge);
-        folder.scan().unwrap();
+        let again = folder.scan().unwrap();
+        assert_eq!(refused_at(&again, "a.md").len(), 1, "{again:?}");
         assert_eq!(queued_kinds(&folder, WriteKind::CreateEdge), edges);
+        let bound = state::bound_at(&folder.core.conn().unwrap(), "a.md")
+            .unwrap()
+            .unwrap();
+        assert_eq!(bound.writes.refused.len(), 1, "{bound:?}");
 
         // The line taken out, the file is held by it no longer.
         std::fs::write(
@@ -5609,6 +5624,248 @@ mod tests {
             .unwrap()
             .unwrap();
         assert!(bound.writes.refused.is_empty(), "{bound:?}");
+    }
+
+    #[test]
+    fn a_line_the_copy_refused_is_queued_once_its_target_takes_it() {
+        const OTHER: &str = "01a00000-0000-7000-8000-0000000000d2";
+        let (dir, folder) = folder_beside_shelves(serde_json::json!({ "query": {} }));
+        let held_as = |r#type: &str, version: i64| {
+            let mut item = crate::store::testing::wire_item(
+                OTHER,
+                r#type,
+                "active",
+                "2026-01-01T00:00:00Z",
+                serde_json::json!({ "title": "other" }),
+            );
+            item.version = version;
+            crate::store::upsert_item(
+                &folder.core.conn().unwrap(),
+                &item,
+                None,
+                &Default::default(),
+            )
+            .unwrap();
+        };
+        held_as("core.note", 1);
+        std::fs::write(
+            dir.path().join("a.md"),
+            format!("---\nin-collection: \"[[{OTHER}]]\"\n---\nbody\n"),
+        )
+        .unwrap();
+        let report = folder.scan().unwrap();
+        assert_eq!(refused_at(&report, "a.md").len(), 1, "{report:?}");
+        let edges = queued_kinds(&folder, WriteKind::CreateEdge);
+
+        // Another machine makes the other item a collection; the file is
+        // left as it was.
+        held_as("core.collection", 2);
+        let again = folder.scan().unwrap();
+        assert!(refused_at(&again, "a.md").is_empty(), "{again:?}");
+        assert_eq!(queued_kinds(&folder, WriteKind::CreateEdge), edges + 1);
+        let bound = state::bound_at(&folder.core.conn().unwrap(), "a.md")
+            .unwrap()
+            .unwrap();
+        assert!(bound.writes.refused.is_empty(), "{bound:?}");
+        assert!(bound.held.is_none(), "{bound:?}");
+        let shelved = folder
+            .core
+            .edges_from(&bound.item_id)
+            .unwrap()
+            .into_iter()
+            .find(|edge| edge.edge_type == "in-collection")
+            .expect("the line's edge is queued");
+        assert_eq!(shelved.target_id, OTHER);
+        assert!(
+            bound.writes.queued.iter().any(|queued| folder
+                .core
+                .queue()
+                .unwrap()
+                .iter()
+                .any(|row| row.id == queued.id && row.edge_id.as_deref() == Some(&shelved.id))),
+            "{bound:?}"
+        );
+    }
+
+    #[test]
+    fn a_retype_that_takes_out_the_line_refusing_it_is_queued_in_one_save() {
+        const NOTE: &str = "01a00000-0000-7000-8000-0000000000c2";
+        let (dir, folder) = folder_beside_shelves(serde_json::json!({ "query": {} }));
+        {
+            let conn = folder.core.conn().unwrap();
+            crate::store::put_server_item(
+                &conn,
+                &crate::store::testing::note(NOTE, "n", "", "2026-01-01T00:00:00Z"),
+                None,
+                &crate::catalog::Catalog::empty(),
+            )
+            .unwrap();
+            crate::store::put_server_edge(
+                &conn,
+                &crate::store::testing::wire_edge("shelved", NOTE, SHELF, "in-collection"),
+            )
+            .unwrap();
+        }
+        let file = |r#type: &str, shelved: bool| {
+            let line = if shelved {
+                format!("in-collection: \"[[{SHELF}]]\"\n")
+            } else {
+                String::new()
+            };
+            format!("---\nmarfa_id: {NOTE}\nmarfa_version: 1\ntype: {type}\ntitle: n\n{line}---\n")
+        };
+        std::fs::write(dir.path().join("n.md"), file("core.note", true)).unwrap();
+        let first = folder.scan().unwrap();
+        assert!(refused_at(&first, "n.md").is_empty(), "{first:?}");
+        let updates = queued_kinds(&folder, WriteKind::UpdateItem);
+        let deletes = queued_kinds(&folder, WriteKind::DeleteEdge);
+
+        // The type changed and the line kept, the retype is refused.
+        std::fs::write(dir.path().join("n.md"), file("core.collection", true)).unwrap();
+        let kept = folder.scan().unwrap();
+        let refused = refused_at(&kept, "n.md");
+        assert_eq!(refused.len(), 1, "{kept:?}");
+        assert!(
+            refused[0].contains("edge_constraint_violation"),
+            "{refused:?}"
+        );
+        assert_eq!(queued_kinds(&folder, WriteKind::UpdateItem), updates);
+        assert_eq!(queued_kinds(&folder, WriteKind::DeleteEdge), deletes);
+        assert_eq!(folder.core.get(NOTE).unwrap().unwrap().r#type, "core.note");
+
+        // The line taken out in the same save, one scan queues its removal
+        // and then the retype.
+        std::fs::write(dir.path().join("n.md"), file("core.collection", false)).unwrap();
+        let taken = folder.scan().unwrap();
+        assert!(refused_at(&taken, "n.md").is_empty(), "{taken:?}");
+        assert!(taken.flagged.iter().all(|f| f.path != "n.md"), "{taken:?}");
+        assert_eq!(
+            folder.core.get(NOTE).unwrap().unwrap().r#type,
+            "core.collection"
+        );
+        let queue = folder.core.queue().unwrap();
+        let at = |kind: WriteKind| {
+            queue
+                .iter()
+                .rposition(|row| row.kind == kind)
+                .unwrap_or_else(|| panic!("no {kind:?} queued"))
+        };
+        assert_eq!(queued_kinds(&folder, WriteKind::DeleteEdge), deletes + 1);
+        assert_eq!(queued_kinds(&folder, WriteKind::UpdateItem), updates + 1);
+        assert!(
+            at(WriteKind::DeleteEdge) < at(WriteKind::UpdateItem),
+            "{queue:?}"
+        );
+        let bound = state::bound_at(&folder.core.conn().unwrap(), "n.md")
+            .unwrap()
+            .unwrap();
+        assert!(bound.held.is_none(), "{bound:?}");
+        assert!(bound.lines.is_empty(), "{bound:?}");
+        for row in [
+            &queue[at(WriteKind::DeleteEdge)],
+            &queue[at(WriteKind::UpdateItem)],
+        ] {
+            assert!(
+                bound.writes.queued.iter().any(|queued| queued.id == row.id),
+                "{row:?} is not the file's: {bound:?}"
+            );
+        }
+        // Nothing is left to send at the next scan.
+        let settled = folder.scan().unwrap();
+        assert!(
+            settled.flagged.iter().all(|f| f.path != "n.md"),
+            "{settled:?}"
+        );
+        assert_eq!(queued_kinds(&folder, WriteKind::DeleteEdge), deletes + 1);
+    }
+
+    #[test]
+    fn a_line_taken_out_with_a_retype_another_edge_refuses_stays_taken_out() {
+        const NOTE: &str = "01a00000-0000-7000-8000-0000000000c3";
+        const ELSEWHERE: &str = "01a00000-0000-7000-8000-0000000000b3";
+        let (dir, folder) = folder_beside_shelves(serde_json::json!({ "query": {} }));
+        {
+            let conn = folder.core.conn().unwrap();
+            crate::store::upsert_item(
+                &conn,
+                &crate::store::testing::wire_item(
+                    ELSEWHERE,
+                    "core.collection",
+                    "active",
+                    "2026-01-01T00:00:00Z",
+                    serde_json::json!({ "title": ELSEWHERE }),
+                ),
+                None,
+                &Default::default(),
+            )
+            .unwrap();
+            crate::store::put_server_item(
+                &conn,
+                &crate::store::testing::note(NOTE, "n", "", "2026-01-01T00:00:00Z"),
+                None,
+                &crate::catalog::Catalog::empty(),
+            )
+            .unwrap();
+            for (id, shelf) in [("shelved", SHELF), ("elsewhere", ELSEWHERE)] {
+                crate::store::put_server_edge(
+                    &conn,
+                    &crate::store::testing::wire_edge(id, NOTE, shelf, "in-collection"),
+                )
+                .unwrap();
+            }
+        }
+        let file = |r#type: &str, line: &str| {
+            format!("---\nmarfa_id: {NOTE}\nmarfa_version: 1\ntype: {type}\ntitle: n\n{line}---\n")
+        };
+        std::fs::write(
+            dir.path().join("n.md"),
+            file("core.note", &format!("in-collection: \"[[{SHELF}]]\"\n")),
+        )
+        .unwrap();
+        let first = folder.scan().unwrap();
+        assert!(refused_at(&first, "n.md").is_empty(), "{first:?}");
+        let updates = queued_kinds(&folder, WriteKind::UpdateItem);
+
+        // The edge the file never showed still refuses the retype; the line
+        // taken out is removed all the same, and the file's.
+        std::fs::write(dir.path().join("n.md"), file("core.collection", "")).unwrap();
+        let report = folder.scan().unwrap();
+        assert_eq!(refused_at(&report, "n.md").len(), 1, "{report:?}");
+        assert_eq!(queued_kinds(&folder, WriteKind::UpdateItem), updates);
+        assert_eq!(queued_kinds(&folder, WriteKind::DeleteEdge), 1);
+        let targets: Vec<String> = folder
+            .core
+            .edges_from(NOTE)
+            .unwrap()
+            .into_iter()
+            .filter(|edge| edge.edge_type == "in-collection")
+            .map(|edge| edge.target_id)
+            .collect();
+        assert_eq!(targets, [ELSEWHERE.to_string()]);
+        let bound = state::bound_at(&folder.core.conn().unwrap(), "n.md")
+            .unwrap()
+            .unwrap();
+        assert!(bound.lines.is_empty(), "{bound:?}");
+        let delete = folder
+            .core
+            .queue()
+            .unwrap()
+            .into_iter()
+            .find(|row| row.kind == WriteKind::DeleteEdge)
+            .unwrap();
+        assert!(
+            bound
+                .writes
+                .queued
+                .iter()
+                .any(|queued| queued.id == delete.id),
+            "{bound:?}"
+        );
+
+        // Held, it is asked again, refused again, and removes nothing twice.
+        let again = folder.scan().unwrap();
+        assert_eq!(refused_at(&again, "n.md").len(), 1, "{again:?}");
+        assert_eq!(queued_kinds(&folder, WriteKind::DeleteEdge), 1);
     }
 
     #[test]

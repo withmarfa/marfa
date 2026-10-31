@@ -1,7 +1,7 @@
 use super::{
     BoundFiles, Catalog, CoreError, Draft, EdgeTypes, EdgeWork, Edit, FILE_TYPE, Flagged, Folder,
-    HashSet, Item, ItemState, Kept, LOCAL_ADMISSION_REFUSAL, Map, Names, Path, Result, Retitle,
-    Scanned, Settings, Value, blank, bytes_of, bytes_type, carries_frontmatter, document,
+    HashSet, Item, ItemState, Kept, LOCAL_ADMISSION_REFUSAL, Map, Names, Path, Resolver, Result,
+    Retitle, Scanned, Settings, Value, blank, bytes_of, bytes_type, carries_frontmatter, document,
     executable, fields, identity, local_admission_refusal, local_properties_refusal, name_of,
     names, placement, state, title_of,
 };
@@ -698,6 +698,25 @@ impl Folder {
                     replace_properties: whole,
                     ..Edit::default()
                 };
+                // The edges the file's lines no longer name go before a
+                // retype, which the server holds to every edge still standing,
+                // so taking out the line that blocks it works in one save.
+                let mut removed: Vec<state::Line> = Vec::new();
+                if changes.r#type.is_some() && bound.is_some() {
+                    let mut ids = Vec::new();
+                    let mut resolver = Resolver::new(&self.core, catalog, &BoundFiles);
+                    // A line that cannot be read yet removes nothing, and the
+                    // retype is judged with its edge standing.
+                    let _ = self.queue_edges(
+                        &self.edge_work(file, item_id, bound),
+                        edge_types,
+                        catalog,
+                        &mut resolver,
+                        &mut ids,
+                        Some(&mut removed),
+                    );
+                    queued.extend(ids.into_iter().map(|id| (id, None)));
+                }
                 let updated = if read_at.is_some() {
                     self.core.write_update(
                         item_id,
@@ -717,8 +736,26 @@ impl Folder {
                     Err(error) if local_admission_refusal(&error) => {
                         let held_for = format!("{LOCAL_ADMISSION_REFUSAL}{error}");
                         flagged.push(Flagged::of(&file.key, &held_for));
+                        // The removals stand: the file no longer names them.
+                        let removing = bound.filter(|_| !queued.is_empty()).map(|bound| {
+                            let mut kept = bound.clone();
+                            kept.lines.retain(|line| !removed.contains(line));
+                            kept.writes.save = save;
+                            kept.writes.queued.extend(
+                                queued
+                                    .drain(..)
+                                    .map(|(id, line)| state::Queued { id, save, line }),
+                            );
+                            kept
+                        });
                         return self
-                            .bind_held(file, item_id, bound, held_for, named.as_ref())
+                            .bind_held(
+                                file,
+                                item_id,
+                                removing.as_ref().or(bound),
+                                held_for,
+                                named.as_ref(),
+                            )
                             .map(|()| false);
                     }
                     other => other?.id,
