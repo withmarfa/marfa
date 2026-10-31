@@ -6916,7 +6916,7 @@ Where `--json` is given, the CLI MUST print a storage warning on standard error 
 
 When the owner or a private local command asks for `GET /folders`, the server MUST return a page of active `system.folder` summaries, newest first, as `data` and `next_cursor`.
 
-**Tests:** `compliance/folder-status.test.ts › lists active folder summaries for the owner and local command with bounded pages`.
+**Tests:** `compliance/folder-status.test.ts › lists active folder summaries for the owner and local command with bounded pages`, `› lists folders newest first under a trimmed, collapsed or placeholder title, and refuses an app's token`.
 
 ### `folders/inventory-summary`
 
@@ -6924,7 +6924,7 @@ When `GET /folders` returns a folder summary, the server MUST include only `id`,
 
 **Reason:** the console lists folders without exposing folder settings or the content of items they hold. The title uses the stored title with whitespace trimmed and collapsed, or "Untitled folder" when blank. Reported copies are read through `GET /folders/{id}/status`.
 
-**Tests:** `compliance/folder-status.test.ts › lists active folder summaries for the owner and local command with bounded pages`.
+**Tests:** `compliance/folder-status.test.ts › lists active folder summaries for the owner and local command with bounded pages`, `› lists folders newest first under a trimmed, collapsed or placeholder title, and refuses an app's token`.
 
 ### `folders/inventory-paging`
 
@@ -6936,7 +6936,7 @@ When `GET /folders` receives `limit` or `cursor`, the server MUST apply the shar
 
 When an API key or delegated token asks for `GET /folders`, the server MUST answer `403 forbidden`.
 
-**Tests:** `compliance/folder-status.test.ts › lists active folder summaries for the owner and local command with bounded pages`.
+**Tests:** `compliance/folder-status.test.ts › lists active folder summaries for the owner and local command with bounded pages`, `› lists folders newest first under a trimmed, collapsed or placeholder title, and refuses an app's token`.
 
 ### `folders/inventory-authentication`
 

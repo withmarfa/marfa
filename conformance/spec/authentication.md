@@ -72,13 +72,13 @@ When a registration names a credential ID already registered on the instance, th
 
 When a caller without an owner browser session or private local authority asks to manage passkeys, the server MUST refuse the request with `401` if unauthenticated or `403` if using an app token or API key.
 
-**Tests:** `compliance/passkeys.test.ts › requires owner authority and the instance origin for passkey management`.
+**Tests:** `compliance/passkeys.test.ts › requires owner authority and the instance origin for passkey management`, `compliance/owner-sign-ins.test.ts › refuses a key and an app's token 403 on every passkey door, and no credential 401`.
 
 ### `authentication/passkey-origin`
 
 When a foreign origin asks to remove an owner passkey, the server MUST refuse it with `403`.
 
-**Tests:** `compliance/passkeys.test.ts › requires owner authority and the instance origin for passkey management`.
+**Tests:** `compliance/passkeys.test.ts › requires owner authority and the instance origin for passkey management`, `compliance/owner-sign-ins.test.ts › refuses a key and an app's token 403 on every passkey door, and no credential 401`.
 
 ### `authentication/passkey-recent-management`
 

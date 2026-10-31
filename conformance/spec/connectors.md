@@ -1336,7 +1336,7 @@ If `PUT /connectors/{id}/state` is refused, then the server MUST preserve the so
 
 When a process writes state, problems or agreements, the server MUST check the registration's owning key is still unrevoked and unexpired in the transaction that commits the write.
 
-**Tests:** `compliance/connector-interfaces.test.ts › publishes source problems while keeping state private and preserves them across restart and key handover`.
+**Tests:** `compliance/connector-interfaces.test.ts › publishes source problems while keeping state private and preserves them across restart and key handover`, `› refuses a write whose key is revoked or expires while the write waits for the database`.
 
 ### `connectors/problems-private-state`
 

@@ -476,6 +476,53 @@ describe("the owner's sign-ins", () => {
     expect(await session(browser)).not.toBeNull();
   });
 
+  it("refuses a key and an app's token 403 on every passkey door, and no credential 401", async () => {
+    const browser = await signIn();
+    const app = await registerApp(server, "core.note:read");
+    const appToken = (
+      await connect(server, origin, browser.cookie, app, "core.note:read")
+    ).access_token!;
+    expect(await itemsStatus(server, appToken)).toBe(200);
+
+    const doors = [
+      ["GET", "/owner/passkeys"],
+      ["PATCH", "/owner/passkeys/absent"],
+      ["DELETE", "/owner/passkeys/absent"],
+    ] as const;
+    const call = (
+      method: string,
+      path: string,
+      headers: Record<string, string>,
+    ) =>
+      fetch(`${server.apiUrl}${path}`, {
+        method,
+        headers: { origin, "content-type": "application/json", ...headers },
+        ...(method === "PATCH" ? { body: JSON.stringify({ name: "x" }) } : {}),
+      });
+
+    // The witness: the owner's own session reaches each door, which answers
+    // the absent passkey 404 and the list 200, so the refusals below are the
+    // credential's and not the path's.
+    for (const [method, path] of doors) {
+      const owner = await call(method, path, { cookie: browser.cookie });
+      expect(owner.status, `owner ${method} ${path}`).toBe(
+        method === "GET" ? 200 : 404,
+      );
+    }
+    for (const bearer of [server.managementKey, server.workingKey, appToken]) {
+      for (const [method, path] of doors) {
+        const response = await call(method, path, {
+          authorization: `Bearer ${bearer}`,
+        });
+        expect(response.status, `${method} ${path}`).toBe(403);
+      }
+    }
+    for (const [method, path] of doors) {
+      const none = await call(method, path, {});
+      expect(none.status, `no credential ${method} ${path}`).toBe(401);
+    }
+  });
+
   it("answers the private local command every browser session, marking none current, and ends one for it", async () => {
     const browser = await signIn();
     const id = await idOf(browser);

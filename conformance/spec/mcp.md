@@ -70,13 +70,13 @@ When a credential calls `/mcp/schema`, the server MUST list to it the tools `/mc
 
 **Reason:** a tool the credential can never use costs the agent's context and invites calls that fail.
 
-**Tests:** `compliance/mcp.test.ts › lists the six tools and every schema tool at /mcp/schema to a credential that may use each`, `› lists only the read tools and marfa_search_docs at /mcp/schema to a credential that only reads`.
+**Tests:** `compliance/mcp.test.ts › lists the six tools and every schema tool at /mcp/schema to a credential that may use each`, `› lists only the read tools and marfa_search_docs at /mcp/schema to a credential that only reads`, `› lists each schema tool at /mcp/schema to a credential that holds only the one thing it needs`.
 
 ### `mcp/tools-for-admin`
 
 When a credential calls `/mcp/admin`, the server MUST list to it the tools `/mcp` lists it, with `marfa_health` while it holds `instance.read` or `connectors.manage`, `marfa_audit` while it holds `audit.read`, `marfa_keys`, `marfa_manage_key` and `marfa_revoke_key` while it holds `keys.mint` or `keys.manage`, and `marfa_webhooks` and `marfa_manage_webhook` while it holds `webhooks.manage`.
 
-**Tests:** `compliance/mcp.test.ts › lists each admin tool at /mcp/admin only to a credential that holds its permission`, `› lists every admin tool at /mcp/admin to a credential that holds every permission and reaches no type`.
+**Tests:** `compliance/mcp.test.ts › lists each admin tool at /mcp/admin only to a credential that holds its permission`, `› lists every admin tool at /mcp/admin to a credential that holds every permission and reaches no type`, `› lists each admin tool at /mcp/admin to a credential that holds only one of the permissions that opens it`.
 
 ### `mcp/tools-withheld`
 

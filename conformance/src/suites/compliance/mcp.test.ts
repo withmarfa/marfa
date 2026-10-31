@@ -676,6 +676,121 @@ describe("the schema and admin endpoints", () => {
     }
   });
 
+  it("lists each schema tool at /mcp/schema to a credential that holds only the one thing it needs", async () => {
+    const reads = { "core.note": "read" } as const;
+    const cases: {
+      name: string;
+      type_map: Record<string, "read" | "write">;
+      reach: Parameters<typeof keyWith>[2];
+      tools: string[];
+    }[] = [
+      {
+        name: "read only",
+        type_map: reads,
+        reach: {},
+        tools: [...READ_TOOLS, "marfa_search_docs"],
+      },
+      {
+        name: "schema.write alone",
+        type_map: reads,
+        reach: { permissions: ["schema.write"] },
+        tools: [...READ_TOOLS, "marfa_search_docs", "marfa_save_type"],
+      },
+      {
+        name: "metadata.types alone",
+        type_map: reads,
+        reach: { metadata_permissions: { types: "write" } },
+        tools: [...READ_TOOLS, "marfa_search_docs", "marfa_save_type"],
+      },
+      {
+        name: "write on system.view alone",
+        type_map: { "system.view": "write" },
+        reach: {},
+        tools: [
+          "marfa_search_docs",
+          "marfa_save_view",
+          "marfa_move_items",
+          "marfa_bulk_save",
+          "marfa_create",
+          "marfa_delete",
+          "marfa_find",
+          "marfa_get",
+          "marfa_overview",
+          "marfa_update",
+        ],
+      },
+      {
+        name: "write on one other type alone",
+        type_map: { "core.note": "write" },
+        reach: {},
+        tools: [
+          ...ALL_TOOLS,
+          "marfa_search_docs",
+          "marfa_move_items",
+          "marfa_bulk_save",
+        ],
+      },
+    ];
+    for (const { name, type_map, reach, tools } of cases) {
+      const connection = await connectMcp(
+        apiUrl,
+        await keyWith(
+          `schema-one-${name.replace(/\W+/g, "-")}`,
+          type_map,
+          reach,
+        ),
+        "2026-07-28",
+        "/mcp/schema",
+      );
+      try {
+        expect(await toolNames(connection), name).toEqual([...tools].sort());
+      } finally {
+        await connection.close();
+      }
+    }
+  });
+
+  it("lists each admin tool at /mcp/admin to a credential that holds only one of the permissions that opens it", async () => {
+    const management = process.env.MARFA_MANAGEMENT_KEY;
+    if (!management) throw new Error("MARFA_MANAGEMENT_KEY is required");
+    const manager = new MarfaClient({ baseUrl: apiUrl, apiKey: management });
+    const keys = ["marfa_keys", "marfa_manage_key", "marfa_revoke_key"];
+    const cases: [string, string[]][] = [
+      ["instance.read", ["marfa_health"]],
+      ["connectors.manage", ["marfa_health"]],
+      ["audit.read", ["marfa_audit"]],
+      ["keys.mint", keys],
+      ["keys.manage", keys],
+      ["webhooks.manage", ["marfa_webhooks", "marfa_manage_webhook"]],
+    ];
+    for (const [permission, tools] of cases) {
+      const label = `${ctx.source}-admin-${permission}`;
+      const minted = await manager.createKey({
+        label,
+        source: label,
+        permissions: [permission],
+        type_permissions: {},
+      });
+      expect(minted.ok, `${permission}: ${JSON.stringify(minted.error)}`).toBe(
+        true,
+      );
+      const connection = await connectMcp(
+        apiUrl,
+        minted.data.key,
+        "2026-07-28",
+        "/mcp/admin",
+      );
+      try {
+        expect(await toolNames(connection), permission).toEqual(
+          [...tools].sort(),
+        );
+      } finally {
+        await connection.close();
+        await manager.revokeKey(minted.data.id);
+      }
+    }
+  });
+
   it("marks marfa_create and marfa_manage_webhook as reaching outside the instance and no other tool", async () => {
     const admin = await connectMcp(
       apiUrl,
