@@ -226,6 +226,10 @@ export interface Status {
   /** Moves each time a refresh changes the catalog the copy holds, and is
    *  null where the copy has never held one. */
   catalog_version: number | null;
+  /** When the copy last finished a pull from the server without error, as
+   *  an RFC 3339 UTC timestamp, and null where it has not since the store
+   *  was made or last cleared. */
+  synced_at: string | null;
   file_cache: FileCache;
 }
 
