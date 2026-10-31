@@ -1108,15 +1108,15 @@ describe("a restore of a registration carrying a key the schema does not define"
       `restoreunread.${ctx.runId}`,
     ];
     for (const [what, path] of [
-      ["type", "fields.serves.minimum"],
-      ["edge type", "property_schema.rank.minimum"],
+      ["type", "fields.serves.exclusiveMinimum"],
+      ["edge type", "property_schema.rank.exclusiveMinimum"],
     ] as const) {
       const refused = await owner.restoreArchive(
         withEntry(
           itemsArchive([]),
           "types.ndjson",
           `${JSON.stringify(
-            lines({ minimum: 1 }, refusedIds)[what === "type" ? 0 : 1],
+            lines({ exclusiveMinimum: 1 }, refusedIds)[what === "type" ? 0 : 1],
           )}\n`,
         ),
       );
