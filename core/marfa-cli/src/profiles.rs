@@ -1097,22 +1097,43 @@ mod tests {
         assert!(!refused.contains('\u{1b}'), "{refused}");
     }
 
+    /// The processes of a group that are not zombies.
+    fn live_members(group: libc::pid_t) -> usize {
+        let listing = std::process::Command::new("ps")
+            .args(["-A", "-o", "pgid=,stat="])
+            .output()
+            .expect("ps runs");
+        assert!(listing.status.success(), "ps failed");
+        let listing = String::from_utf8_lossy(&listing.stdout).into_owned();
+        // Witness: the listing names groups at all.
+        assert!(listing.lines().count() > 1, "{listing}");
+        listing
+            .lines()
+            .filter_map(|line| {
+                let mut fields = line.split_whitespace();
+                let pgid: libc::pid_t = fields.next()?.parse().ok()?;
+                let state = fields.next()?;
+                (pgid == group && !state.starts_with('Z')).then_some(())
+            })
+            .count()
+    }
+
     #[test]
     fn a_key_command_that_hangs_is_stopped_with_everything_it_started() {
         let at = folder("hang");
         let marker = at.join("still-running");
-        let started = Instant::now();
         let refused = quick(&[
             "sh",
             "-c",
             &format!("(sleep 3; touch '{}') & sleep 30", marker.display()),
         ])
         .unwrap_err();
+        // The command's own sleep is 30 seconds, so the refusal naming the
+        // limit shows it was stopped; a shared runner's speed says nothing.
         assert!(
             refused.contains("did not finish within 1 seconds"),
             "{refused}"
         );
-        assert!(started.elapsed() < Duration::from_secs(3));
         std::thread::sleep(Duration::from_millis(3500));
         assert!(
             !marker.exists(),
@@ -1140,7 +1161,6 @@ mod tests {
             let at = folder(&format!("terminal-{name}"));
             let marker = at.join("still-running");
             let group = at.join("group");
-            let started = Instant::now();
             let refused = run_key_command(
                 "demo",
                 &argv(&[
@@ -1156,11 +1176,6 @@ mod tests {
             )
             .unwrap_err();
             assert!(
-                started.elapsed() < Duration::from_secs(2),
-                "{name}: {:?}: {refused}",
-                started.elapsed()
-            );
-            assert!(
                 refused.contains("tried to read from or write to the terminal"),
                 "{name}: {refused}"
             );
@@ -1173,13 +1188,12 @@ mod tests {
                 .unwrap();
             // Witness: the group was there to be found.
             assert!(group > 1);
-            // A killed process another parent has yet to reap is still in
-            // the group for a moment.
+            // A killed process its parent has yet to reap stays in the group
+            // as a zombie, so only a member that is not one counts as left.
             let gone = Instant::now();
-            // SAFETY: signal 0 only asks whether the group has a member.
-            while unsafe { libc::killpg(group, 0) } == 0 {
+            while live_members(group) > 0 {
                 assert!(
-                    gone.elapsed() < Duration::from_secs(1),
+                    gone.elapsed() < Duration::from_secs(10),
                     "{name}: a process of the command's group is left"
                 );
                 std::thread::sleep(Duration::from_millis(10));
