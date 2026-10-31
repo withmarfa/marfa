@@ -109,7 +109,11 @@ import {
   readsSomeType,
   mayReadRow,
 } from "../middleware/auth.js";
-import type { ItemFilters, Storage } from "../storage/interface.js";
+import {
+  normalizeTimeBound,
+  type ItemFilters,
+  type Storage,
+} from "../storage/interface.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import { ItemSchema, NextCursorSchema } from "./_schemas.js";
 import { MAX_PAGE_LIMIT } from "../page-limits.js";
@@ -903,12 +907,12 @@ const occurrencesRoute = createRoute({
       from: z
         .string()
         .describe(
-          "Window start, ISO 8601. An event overlaps the window if it starts before `to` and ends after this time. Its end is `ends_at`, else its start plus `duration`. A whole-day event fills whole days in its `timezone`, or in UTC if it has none.",
+          "Window start, ISO 8601. No zone means UTC; a date is its UTC midnight. An event overlaps if it starts before `to` and ends after this. Its end is `ends_at`, else start plus `duration`. A whole-day event fills whole days in its `timezone`, else UTC.",
         ),
       to: z
         .string()
         .describe(
-          "Window end, ISO 8601. The window can span at most 400 days. An event with no length is in the window if it starts at or after `from` and before this time.",
+          "Window end, ISO 8601, read as `from` is. The window can span at most 400 days. An event with no length is in the window if it starts at or after `from` and before this time.",
         ),
       type: z
         .string()
@@ -960,15 +964,7 @@ const occurrencesRoute = createRoute({
 });
 
 function readInstant(raw: string, field: string): Date {
-  const at = new Date(raw);
-  if (Number.isNaN(at.getTime())) {
-    throw new MarfaError(
-      ErrorCode.VALIDATION_ERROR,
-      `${field} is not a readable ISO 8601 timestamp`,
-      { [field]: raw },
-    );
-  }
-  return at;
+  return new Date(normalizeTimeBound(raw, field));
 }
 
 function stringProp(item: Item, key: string): string | undefined {

@@ -9730,9 +9730,9 @@ export interface operations {
     listOccurrences: {
         parameters: {
             query: {
-                /** @description Window start, ISO 8601. An event overlaps the window if it starts before `to` and ends after this time. Its end is `ends_at`, else its start plus `duration`. A whole-day event fills whole days in its `timezone`, or in UTC if it has none. */
+                /** @description Window start, ISO 8601. No zone means UTC; a date is its UTC midnight. An event overlaps if it starts before `to` and ends after this. Its end is `ends_at`, else start plus `duration`. A whole-day event fills whole days in its `timezone`, else UTC. */
                 from: string;
-                /** @description Window end, ISO 8601. The window can span at most 400 days. An event with no length is in the window if it starts at or after `from` and before this time. */
+                /** @description Window end, ISO 8601, read as `from` is. The window can span at most 400 days. An event with no length is in the window if it starts at or after `from` and before this time. */
                 to: string;
                 /** @description Only return events of this type, or of the event types a wildcard matches. */
                 type?: string;
