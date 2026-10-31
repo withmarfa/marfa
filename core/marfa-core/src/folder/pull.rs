@@ -2007,9 +2007,62 @@ impl Folder {
                 );
             }
         }
+        let recorded = self.hold_ends(&wanted, |_, error| {
+            if matches!(error, CoreError::NoServer) || error.is_environmental() {
+                Ok(())
+            } else {
+                Err(error)
+            }
+        })?;
+        let conn = self.core.conn()?;
+        for (id, made) in recorded {
+            if !wanted.contains(&id) {
+                state::release_edge_end(&conn, &id, made)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Holds the attachments of `members` as `hold_edge_ends` would, for a
+    /// scan that runs before any pull has: one that has none of them would
+    /// send a file the directory has where a pull writes one as a new item.
+    /// Answers each the server could not be asked for or refused to show for
+    /// a reason other than that it is gone or hidden, with why. What ends a
+    /// drain, a changed copy among it, ends the scan instead, since it is no
+    /// one file's: the push after the scan would meet it too.
+    pub(super) fn hold_attachments(
+        &self,
+        members: &HashSet<String>,
+    ) -> Result<HashMap<String, String>> {
+        let wanted: std::collections::BTreeSet<String> = self
+            .core
+            .edges_of_type(ATTACHMENT_EDGE)?
+            .into_iter()
+            .filter(|edge| members.contains(&edge.target_id))
+            .map(|edge| edge.source_id)
+            .collect();
+        let mut unread = HashMap::new();
+        self.hold_ends(&wanted, |id, error| {
+            if crate::drain::ends_the_drain(&error) || error == CoreError::Canceled {
+                return Err(error);
+            }
+            unread.insert(id.to_string(), error.to_string());
+            Ok(())
+        })?;
+        Ok(unread)
+    }
+
+    /// Pins each of `wanted` the record does not hold yet and records it,
+    /// passing `unread` each pin that failed for a reason other than that the
+    /// item is gone or hidden. Answers the record as it stood before.
+    fn hold_ends(
+        &self,
+        wanted: &std::collections::BTreeSet<String>,
+        mut unread: impl FnMut(&str, CoreError) -> Result<()>,
+    ) -> Result<HashMap<String, bool>> {
         let recorded: HashMap<String, bool> =
             state::edge_ends(&*self.core.conn()?)?.into_iter().collect();
-        for id in &wanted {
+        for id in wanted {
             if recorded.contains_key(id) {
                 continue;
             }
@@ -2032,24 +2085,16 @@ impl Folder {
                 // asks again.
                 match self.core.pin(id) {
                     Ok(_) => true,
-                    Err(
-                        CoreError::NoServer
-                        | CoreError::NotFound { .. }
-                        | CoreError::Forbidden { .. },
-                    ) => continue,
-                    Err(error) if error.is_environmental() => continue,
-                    Err(error) => return Err(error),
+                    Err(CoreError::NotFound { .. } | CoreError::Forbidden { .. }) => continue,
+                    Err(error) => {
+                        unread(id, error)?;
+                        continue;
+                    }
                 }
             };
             state::hold_edge_end(&*self.core.conn()?, id, made)?;
         }
-        let conn = self.core.conn()?;
-        for (id, made) in recorded {
-            if !wanted.contains(&id) {
-                state::release_edge_end(&conn, &id, made)?;
-            }
-        }
-        Ok(())
+        Ok(recorded)
     }
 }
 

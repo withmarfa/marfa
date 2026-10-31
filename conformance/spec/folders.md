@@ -2668,13 +2668,23 @@ When an unreadable renamed file leaves a replacement at its previous path, a dev
 
 ### `folders/identity-placement-bytes`
 
-When an unbound raw-text or file-item file matches the path and rendered bytes of an otherwise unbound item held by the query, a device MUST bind it to that item.
+When an unbound raw-text or file-item file matches the path and rendered bytes of an otherwise unbound item held by the query, or of an otherwise unbound file item attached to a document the query holds whose file in the directory embeds that path, a device MUST bind it to that item.
 
-**Tests:** `device/folders-placement.test.ts › takes back the files it holds by placement and bytes when it is added again over them`, `device/folders-placement.test.ts › takes back an empty text file rendered from a missing body`.
+**Reason:** A pull writes the attachments of the documents a folder holds even when its query holds no file type, so a folder added again over such a file holds it as the item it was, not as a new item beside a second copy. Before a folder's first pull, its copy holds no such attachment, so the device reads it from the server before it binds the file, whether or not the first sync was planned before it was confirmed.
+
+**Tests:** `device/folders-placement.test.ts › takes back the files it holds by placement and bytes when it is added again over them`, `device/folders-placement.test.ts › takes back an empty text file rendered from a missing body`, `device/folders-frontmatter.test.ts › takes each back as its own item by placement and bytes, and plans and sends nothing`, `device/folders-frontmatter.test.ts › takes back the file a note embeds when the add confirms its first sync at once`, `device/folders-frontmatter.test.ts › sends as new a file whose bytes changed while it was away, or that holds the bytes of a file placed elsewhere, and loses neither item's bytes`.
+
+### `folders/identity-placement-unread-attachment`
+
+If a device's read of an item attached to a document the query holds fails for a reason other than that the server does not hold the item, will not show it or ends the drain, and that document's file in the directory embeds the path of an unbound file, then a device MUST hold that file, flagged `waiting`, without making an item of it.
+
+**Reason:** The item may be the file's own, and a pull writes it beside a new item as a second copy. Each scan that meets the file reads the item again, so the file is bound to it once the read succeeds, and the scan goes on with every other file meanwhile. A failure that ends the drain ends the scan instead, since it is no one file's and the push after the scan would meet it too: a refused credential, which ends the copy, a renewal of the credential that fails other than by an environmental failure, no sign-in or no keychain, a redirect, an answer naming another contract, a full store, an expired copy, a working copy that changed during the scan, a stream cut short, or a stopped run. An environmental failure, such as no network or a renewal that cannot reach its keychain, holds the file.
+
+**Tests:** `device/folders-frontmatter.test.ts › holds a file a note embeds while the item attached there cannot be read, sends the rest, and takes it back once it can`.
 
 ### `folders/identity-takeback-search`
 
-When a file matches the old placement and bytes of an item the query no longer holds, a device MUST create a new item for that file.
+When a file matches the old placement and bytes of an item the query no longer holds, and no document the query holds whose file in the directory embeds that path has that item attached, a device MUST create a new item for that file.
 
 **Tests:** `device/folders-placement.test.ts › takes back by placement and bytes only an item its query holds`.
 

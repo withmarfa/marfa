@@ -5952,4 +5952,424 @@ mod tests {
             .unwrap_or_else(|| panic!("{bound:?}"));
         assert!(refused.reason.contains("item_not_found"), "{refused:?}");
     }
+
+    /// An image's id, where it is placed, the bytes its item holds and the
+    /// bytes at that path on the disk, if any.
+    type Image<'a> = (&'a str, &'a str, &'a [u8], Option<&'a [u8]>);
+
+    /// A folder whose query holds notes alone, added again over its own files
+    /// with nothing of its own state left: the copy holds what the server
+    /// does, a note placed at `Note.md` that embeds every image where
+    /// `embedded`, and each image placed at its path and, where `attached`,
+    /// attached to the note.
+    fn added_again_over_embeds(
+        n: usize,
+        images: &[Image<'_>],
+        attached: bool,
+        embedded: bool,
+    ) -> (ScannedDir, Folder) {
+        let folder_id = format!("01a00000-0000-7000-8000-0000000024{n:02}");
+        let (_, registry) = registry::tests::own_registry();
+        let (dir, folder) = folder_with(
+            &folder_id,
+            serde_json::json!({ "query": { "types": ["core.note"] } }),
+            Some(serde_json::json!([])),
+        );
+        let dir = ScannedDir {
+            dir,
+            _registry: registry,
+        };
+        let note = format!("01a00000-0000-7000-8000-0000000025{n:02}");
+        let embeds: String = images
+            .iter()
+            .filter(|_| embedded)
+            .map(|(_, path, _, _)| format!("![image]({path})\n"))
+            .collect();
+        let body = format!("The images.\n\n{embeds}");
+        let at = "2026-01-01T00:00:00Z";
+        let conn = folder.core.conn().unwrap();
+        let catalog = Catalog::load(&conn).unwrap();
+        let placed = |id: &str, source: &str, path: &str| {
+            let mut edge =
+                crate::store::testing::wire_edge(id, source, &folder_id, placement::PLACEMENT_EDGE);
+            edge.properties.insert("path".into(), path.into());
+            crate::store::put_server_edge(&conn, &edge).unwrap();
+        };
+        crate::store::put_server_item(
+            &conn,
+            &crate::store::testing::note(&note, "Note", &body, at),
+            None,
+            &catalog,
+        )
+        .unwrap();
+        placed(&format!("placed-{note}"), &note, "Note.md");
+        for (id, path, held, _) in images {
+            let item = crate::store::testing::wire_item(
+                id,
+                "core.file.image",
+                "active",
+                at,
+                serde_json::json!({
+                    "title": path.rsplit('/').next().unwrap(),
+                    "blob_ref": crate::blob::name_of(held),
+                    "mime_type": "image/png",
+                }),
+            );
+            crate::store::put_server_item(&conn, &item, None, &catalog).unwrap();
+            placed(&format!("placed-{id}"), id, path);
+            if attached {
+                let edge = crate::store::testing::wire_edge(
+                    &format!("attached-{id}"),
+                    id,
+                    &note,
+                    ATTACHMENT_EDGE,
+                );
+                crate::store::put_server_edge(&conn, &edge).unwrap();
+            }
+        }
+        drop(conn);
+        std::fs::write(
+            dir.path().join("Note.md"),
+            format!("---\ntitle: Note\nmarfa_id: {note}\nmarfa_version: 1\n---\n{body}"),
+        )
+        .unwrap();
+        for (_, path, _, on_disk) in images {
+            if let Some(bytes) = on_disk {
+                let file = dir.path().join(path);
+                std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+                std::fs::write(file, bytes).unwrap();
+            }
+        }
+        (dir, folder)
+    }
+
+    fn created(folder: &Folder) -> usize {
+        folder
+            .core
+            .queue()
+            .unwrap()
+            .iter()
+            .filter(|write| write.kind == crate::model::WriteKind::CreateItem)
+            .count()
+    }
+
+    fn bound_item(folder: &Folder, path: &str) -> Option<String> {
+        state::bound_at(&folder.core.conn().unwrap(), path)
+            .unwrap()
+            .map(|bound| bound.item_id)
+    }
+
+    #[test]
+    fn a_folder_added_again_takes_back_the_images_its_notes_embed() {
+        let photo = b"\x89PNG\r\n\x1a\nphoto".as_slice();
+        let [one, two] = [
+            "01a00000-0000-7000-8000-0000000026a1",
+            "01a00000-0000-7000-8000-0000000026a2",
+        ];
+        // The witness: an image attached to no note the folder holds is not
+        // the folder's, so its file is sent as new.
+        let (_dir, folder) = added_again_over_embeds(
+            0,
+            &[(one, "Pictures/photo.png", photo, Some(photo))],
+            false,
+            true,
+        );
+        folder.scan().unwrap();
+        assert_eq!(created(&folder), 1);
+        assert_ne!(
+            bound_item(&folder, "Pictures/photo.png").as_deref(),
+            Some(one)
+        );
+
+        // The same bytes at two paths: each file is the item placed at its own.
+        let (_dir, folder) = added_again_over_embeds(
+            1,
+            &[
+                (one, "Pictures/photo.png", photo, Some(photo)),
+                (two, "Copies/photo.png", photo, Some(photo)),
+            ],
+            true,
+            true,
+        );
+        let report = folder.scan().unwrap();
+        assert_eq!(created(&folder), 0, "{report:?}");
+        assert_eq!(
+            bound_item(&folder, "Pictures/photo.png").as_deref(),
+            Some(one)
+        );
+        assert_eq!(
+            bound_item(&folder, "Copies/photo.png").as_deref(),
+            Some(two)
+        );
+    }
+
+    #[test]
+    fn a_folder_added_again_takes_back_a_large_embedded_image() {
+        let large: Vec<u8> = (0..8 << 20).map(|at| (at % 251) as u8).collect();
+        let id = "01a00000-0000-7000-8000-0000000026b1";
+        let (_dir, folder) = added_again_over_embeds(
+            2,
+            &[(id, "Pictures/large.png", &large, Some(&large))],
+            true,
+            true,
+        );
+        folder.scan().unwrap();
+        assert_eq!(created(&folder), 0);
+        assert_eq!(
+            bound_item(&folder, "Pictures/large.png").as_deref(),
+            Some(id)
+        );
+    }
+
+    #[test]
+    fn a_folder_added_again_takes_back_no_embedded_image_whose_bytes_or_path_differ() {
+        let (held, changed) = (
+            b"\x89PNG\r\n\x1a\nheld".as_slice(),
+            b"\x89PNG\r\n\x1a\nnew".as_slice(),
+        );
+        let [kept, elsewhere] = [
+            "01a00000-0000-7000-8000-0000000026c1",
+            "01a00000-0000-7000-8000-0000000026c2",
+        ];
+        // Bytes changed while the folder was off this machine: a new item,
+        // and the item's own bytes are written beside it, so nothing is lost.
+        let (_dir, folder) = added_again_over_embeds(
+            3,
+            &[(kept, "Pictures/photo.png", held, Some(changed))],
+            true,
+            true,
+        );
+        folder.scan().unwrap();
+        assert_eq!(created(&folder), 1);
+        assert_ne!(
+            bound_item(&folder, "Pictures/photo.png").as_deref(),
+            Some(kept)
+        );
+
+        // The bytes of an item placed elsewhere, whose own file is not here.
+        let (dir, folder) = added_again_over_embeds(
+            4,
+            &[(elsewhere, "Elsewhere/photo.png", held, None)],
+            true,
+            true,
+        );
+        std::fs::create_dir_all(dir.path().join("Pictures")).unwrap();
+        std::fs::write(dir.path().join("Pictures/photo.png"), held).unwrap();
+        std::fs::write(
+            dir.path().join("Note.md"),
+            std::fs::read_to_string(dir.path().join("Note.md"))
+                .unwrap()
+                .replace("Elsewhere/photo.png", "Pictures/photo.png"),
+        )
+        .unwrap();
+        folder.scan().unwrap();
+        assert_eq!(created(&folder), 1);
+        assert_ne!(
+            bound_item(&folder, "Pictures/photo.png").as_deref(),
+            Some(elsewhere)
+        );
+    }
+
+    #[test]
+    fn a_folder_added_again_takes_back_no_image_only_another_file_embeds() {
+        let photo = b"\x89PNG\r\n\x1a\nphoto".as_slice();
+        let id = "01a00000-0000-7000-8000-0000000026d1";
+        // Attached to the note, which embeds it nowhere; another Markdown
+        // file embeds it, and the image is not attached to that one.
+        let (dir, folder) = added_again_over_embeds(
+            5,
+            &[(id, "Pictures/photo.png", photo, Some(photo))],
+            true,
+            false,
+        );
+        std::fs::write(
+            dir.path().join("Other.md"),
+            "---\ntitle: Other\n---\n![image](Pictures/photo.png)\n",
+        )
+        .unwrap();
+        folder.scan().unwrap();
+        assert_ne!(
+            bound_item(&folder, "Pictures/photo.png").as_deref(),
+            Some(id)
+        );
+        // The new note, and the image as a new item.
+        assert_eq!(created(&folder), 2);
+    }
+
+    /// `added_again_over_embeds` for one embedded and attached image whose
+    /// item the copy does not hold, beside a new note, scanned against a
+    /// server that answers the image's reads with `answers`, or against none
+    /// that answers at all, renewing a refused credential with what `renew`
+    /// makes of the folder's directory.
+    fn scanned_over_an_unread_attachment(
+        n: usize,
+        answers: Option<Vec<crate::scripted::Answer>>,
+        renew: Option<fn(&std::path::Path) -> crate::http::Renew>,
+    ) -> (
+        Result<ScanReport>,
+        Folder,
+        ScannedDir,
+        Option<crate::scripted::Scripted>,
+    ) {
+        let photo = b"\x89PNG\r\n\x1a\nphoto".as_slice();
+        let id = "01a00000-0000-7000-8000-0000000026e1";
+        let (dir, folder) = added_again_over_embeds(
+            n,
+            &[(id, "Pictures/photo.png", photo, Some(photo))],
+            true,
+            true,
+        );
+        {
+            let conn = folder.core.conn().unwrap();
+            crate::store::evict_item(&conn, id, &[ATTACHMENT_EDGE.to_string()]).unwrap();
+            crate::store::meta_set(&conn, crate::store::META_EVENT_CURSOR, "10").unwrap();
+            crate::store::meta_set(&conn, crate::reach::FENCE, crate::scripted::FENCE).unwrap();
+            crate::store::meta_set(
+                &conn,
+                crate::store::META_INSTANCE_ID,
+                crate::scripted::INSTANCE,
+            )
+            .unwrap();
+            crate::store::meta_set(&conn, crate::store::META_SLICE_TYPES, "[\"core.note\"]")
+                .unwrap();
+            crate::store::meta_set(&conn, crate::store::META_SLICE_TIER, "library").unwrap();
+        }
+        let attachments = folder.core.edges_of_type(ATTACHMENT_EDGE).unwrap();
+        assert_eq!(attachments.len(), 1);
+        assert!(folder.core.get(id).unwrap().is_none());
+        drop(folder);
+        std::fs::write(dir.path().join("New.md"), "A new note.\n").unwrap();
+        let server = answers.map(|answers| {
+            let server = crate::scripted::Scripted::start();
+            server.on(
+                &format!("/items/{id}"),
+                answers
+                    .into_iter()
+                    .map(crate::scripted::certified)
+                    .collect(),
+            );
+            // The bin, which a read that finds nothing asks next.
+            server.on(
+                "/items",
+                vec![crate::scripted::certified(crate::scripted::json(
+                    200,
+                    r#"{"data":[],"next_cursor":null}"#,
+                ))],
+            );
+            server
+        });
+        // Offline: a port nothing listens on.
+        let url = server.as_ref().map_or_else(
+            || {
+                let closed = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+                format!("http://127.0.0.1:{}", closed.local_addr().unwrap().port())
+            },
+            crate::scripted::Scripted::url,
+        );
+        let folder = Folder::open(
+            dir.path(),
+            Some(crate::Server {
+                url,
+                key: "fixture".into(),
+            }),
+        )
+        .unwrap();
+        if let Some(renew) = renew {
+            folder.core.renew_credential_with(renew(dir.path()));
+        }
+        let scanned = folder.scan();
+        if let Some(server) = &server {
+            assert!(!server.seen(&format!("/items/{id}")).is_empty());
+        }
+        (scanned, folder, dir, server)
+    }
+
+    #[test]
+    fn a_scan_holds_a_file_an_unreadable_attachment_may_be_and_sends_the_rest() {
+        use crate::scripted::refusal;
+
+        // The witness: an image the server says is gone is not the file's
+        // item, so the file is sent as new beside the new note.
+        let (scanned, folder, _dir, _server) =
+            scanned_over_an_unread_attachment(6, Some(vec![refusal(404, "item_not_found")]), None);
+        let report = scanned.unwrap();
+        assert_eq!(created(&folder), 2, "{report:?}");
+        assert!(report.flagged.is_empty(), "{report:?}");
+
+        // A renewal that cannot reach its keychain, as on a locked device.
+        let locked: fn(&std::path::Path) -> crate::http::Renew =
+            |_| Box::new(|_| Err(CoreError::Network("the keychain is locked".into())));
+        let mut failed = Vec::new();
+        for (case, answers, renew) in [
+            ("409", Some(vec![refusal(409, "conflict")]), None),
+            ("400", Some(vec![refusal(400, "invalid_request")]), None),
+            ("offline", None, None),
+            (
+                "renewal unreachable",
+                Some(vec![refusal(401, "unauthorized")]),
+                Some(locked),
+            ),
+        ] {
+            let (scanned, folder, _dir, _server) =
+                scanned_over_an_unread_attachment(7, answers, renew);
+            let report = match scanned {
+                Ok(report) => report,
+                Err(error) => {
+                    failed.push(format!("{case}: the scan failed: {error}"));
+                    continue;
+                }
+            };
+            let held: Vec<_> = report
+                .flagged
+                .iter()
+                .map(|flagged| (flagged.path.as_str(), flagged.flag))
+                .collect();
+            // The new note alone is sent.
+            if created(&folder) != 1
+                || bound_item(&folder, "New.md").is_none()
+                || bound_item(&folder, "Pictures/photo.png").is_some()
+                || held != [("Pictures/photo.png", "waiting")]
+                || !report.flagged[0].reason.contains("cannot be read yet")
+            {
+                failed.push(format!("{case}: {} created, {report:?}", created(&folder)));
+            }
+        }
+        assert!(failed.is_empty(), "{failed:#?}");
+
+        // A refused credential is no one file's: the scan ends, as a pull's
+        // fetch of bytes does, with the copy the refusal ended.
+        let (scanned, _folder, _dir, _server) =
+            scanned_over_an_unread_attachment(8, Some(vec![refusal(401, "unauthorized")]), None);
+        assert!(
+            matches!(
+                &scanned,
+                Err(CoreError::CopyExpired { reason }) if reason == "credential_ended"
+            ),
+            "{scanned:?}"
+        );
+
+        // A copy that changed while the image was read ends the scan with
+        // the error a watch runs the pass again on: here the pins move while
+        // the credential is renewed.
+        let moved: fn(&std::path::Path) -> crate::http::Renew = |dir| {
+            let store = dir.join(STATE_DIR).join("core.sqlite");
+            Box::new(move |_| {
+                let conn = rusqlite::Connection::open(&store).unwrap();
+                crate::reach::pins_changed(&conn).unwrap();
+                Ok("renewed".into())
+            })
+        };
+        let (scanned, _folder, _dir, _server) = scanned_over_an_unread_attachment(
+            9,
+            Some(vec![
+                refusal(401, "unauthorized"),
+                refusal(404, "item_not_found"),
+            ]),
+            Some(moved),
+        );
+        assert!(
+            scanned.as_ref().is_err_and(super::copy_changed),
+            "{scanned:?}"
+        );
+    }
 }
