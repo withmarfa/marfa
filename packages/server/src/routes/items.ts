@@ -595,7 +595,7 @@ const listItemsRoute = createRoute({
         )
         .optional()
         .describe(
-          "Field to sort by: `created_at`, `updated_at`, `occurred_at` or `properties.<field>`. Properties sort by stored value, so an enum sorts alphabetically. Defaults to `created_at`, or, when `state` is `trashed` alone, to when each item went to the trash (`trashed_at`, else `updated_at`), which you can't name here.",
+          "Field to sort by: `created_at`, `updated_at`, `occurred_at` or `properties.<field>`. Properties sort by stored value: an enum sorts alphabetically. Defaults to `created_at`, or for `state=trashed` alone the trash time, which you can't name here.",
         ),
       direction: z
         .enum(["asc", "desc"])
