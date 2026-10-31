@@ -1330,12 +1330,14 @@ describe("the watch run by a service manager", () => {
   // default.
   //
   // A process starts in its parent's class, and a hosted runner starts its
-  // jobs at utility or lower, which leaves nothing at 31 to tell the watch
-  // from. A sibling started the way the harness starts the watch shows what
-  // this machine can tell apart.
+  // jobs at a task clamp of utility, which pins every thread's priority at 20
+  // and leaves nothing at 31 to tell the watch from. A sibling started the way
+  // the harness starts the watch shows which case this machine is in. Under a
+  // clamp `ps` cannot tell the classes apart, but the class a thread
+  // requested survives the clamp, and only root can read it.
   it.runIf(process.platform === "darwin")(
     "runs the threads of a folder watch, and the threads they start, at utility quality of service",
-    async (context) => {
+    async () => {
       const sibling = spawn("sleep", ["30"], { stdio: "ignore" });
       let siblingFound: string[];
       try {
@@ -1349,9 +1351,10 @@ describe("the watch run by a service manager", () => {
       } finally {
         sibling.kill("SIGTERM");
       }
-      if (siblingFound.some((priority) => priority !== "31")) {
-        context.skip(
-          "this machine starts processes at utility or lower, so no thread can be shown lowered",
+      const clamped = siblingFound.some((priority) => priority !== "31");
+      if (clamped && !canReadRequestedClasses()) {
+        throw new Error(
+          "this machine starts processes at utility or lower and gives no root to read the classes threads request, so nothing can show the watch's threads lowered",
         );
       }
       const harness = await folderHarness("autostart-utility");
@@ -1363,6 +1366,28 @@ describe("the watch run by a service manager", () => {
         WAIT,
       );
       await vi.waitFor(() => {
+        if (clamped) {
+          const requested = requestedClasses(watch.pid());
+          const own = requested.filter(
+            (name) => name === "UNSPECIFIED" || name === "DEFAULT",
+          );
+          // The witness: the threads the process starts for itself request no
+          // class, so a lowered thread is told from one that only reads 20.
+          // The main thread starts in its parent's class, utility, and counts
+          // with the lowered ones.
+          expect(own.length).toBeGreaterThanOrEqual(1);
+          expect(own.length).toBeLessThanOrEqual(3);
+          expect(
+            requested.filter((name) => name === "UTILITY").length,
+          ).toBeGreaterThanOrEqual(8);
+          expect(
+            requested.filter(
+              (name) =>
+                name === "USER_INTERACTIVE" || name === "USER_INITIATED",
+            ),
+          ).toEqual([]);
+          return;
+        }
         const found = threadPriorities(watch.pid());
         // The witness: ps tells the default class from the utility one, and
         // the threads the process starts for itself stay at the default.
@@ -1590,6 +1615,25 @@ function threadPriorities(pid: number): string[] {
   })
     .split("\n")
     .flatMap((line) => line.match(/(\d+)T\s*$/)?.[1] ?? []);
+}
+
+/** Whether root is available without a password, which `sudo -n` never asks for. */
+function canReadRequestedClasses(): boolean {
+  return spawnSync("sudo", ["-n", "true"], { stdio: "ignore" }).status === 0;
+}
+
+/**
+ * The quality of service class each thread of a process requested, such as
+ * `UTILITY` or `UNSPECIFIED`, which a task clamp leaves unchanged. Needs root.
+ */
+function requestedClasses(pid: number): string[] {
+  return execFileSync("sudo", ["-n", "taskinfo", "--threads", String(pid)], {
+    encoding: "utf8",
+  })
+    .split("\n")
+    .flatMap(
+      (line) => line.match(/req thread qos:\s*THREAD_QOS_(\w+)/)?.[1] ?? [],
+    );
 }
 
 /** A log path in a directory of the test's own. */
