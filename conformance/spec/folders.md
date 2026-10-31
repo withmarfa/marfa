@@ -3844,11 +3844,11 @@ When an item starts matching a folder’s query through a tag, property, state, 
 
 ### `folders/departed-file-removed`
 
-When an item is trashed or leaves the states held by a folder's query, its file is not held by a document that embeds it or that it is attached to (`folders/embed-held`), its path remains admitted, its bytes remain those the device wrote or found as its item's rendered bytes, and no large-removal pause applies (`folders/pull-removal-paused`), a device MUST remove that file at the next pull where the filesystem permits removal.
+When an item is trashed or leaves the states held by a folder's query, its file is not held by a document that embeds it or that it is attached to (`folders/embed-held`), its path remains admitted, its bytes remain those the device wrote, or those it found before it first wrote the file that are exactly what it would write for the item at the version line the file shows, and no large-removal pause applies (`folders/pull-removal-paused`), a device MUST remove that file at the next pull where the filesystem permits removal.
 
-**Reason:** A folder added over files an earlier copy wrote binds them without writing them. Bytes that are exactly the item's render carry nothing the person changed, so they are the device's own however they came.
+**Reason:** A folder added over files an earlier copy wrote binds them without writing them, at the version line they were written at, which is older than the item's once the item changes in something no file shows. Bytes that are exactly what the device would write carry nothing the person changed. A change to a file the device wrote is the person's, even a reformatting that a render would keep.
 
-**Tests:** `device/folders-identity.test.ts › removes a trashed item's file and brings it back on restore`, `device/folders-identity.test.ts › removes the file of an item that leaves by state`, `device/folders-identity.test.ts › removes the file of an item put in the bin that it found as its item renders, and brings it back on restore`.
+**Tests:** `device/folders-identity.test.ts › removes a trashed item's file and brings it back on restore`, `device/folders-identity.test.ts › removes the file of an item that leaves by state`, `device/folders-identity.test.ts › removes the file of an item put in the bin that it found as its item renders, and brings it back on restore`, `device/folders-identity.test.ts › removes the file of an item put in the bin that it found as its item renders at an older version line, and brings it back on restore`.
 
 ### `folders/departed-binding-released`
 
@@ -3866,7 +3866,7 @@ When a folder pull removes a departed item’s file, a device MUST NOT queue del
 
 When a trashed item is restored into a folder’s query, a device MUST write its file at the next pull.
 
-**Tests:** `device/folders-identity.test.ts › removes a trashed item's file and brings it back on restore`, `device/folders-identity.test.ts › removes the file of an item put in the bin that it found as its item renders, and brings it back on restore`.
+**Tests:** `device/folders-identity.test.ts › removes a trashed item's file and brings it back on restore`, `device/folders-identity.test.ts › removes the file of an item put in the bin that it found as its item renders, and brings it back on restore`, `device/folders-identity.test.ts › removes the file of an item put in the bin that it found as its item renders at an older version line, and brings it back on restore`.
 
 ### `folders/missing-departure-not-pulled`
 
