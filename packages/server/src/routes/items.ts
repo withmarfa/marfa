@@ -1638,10 +1638,8 @@ export function itemRoutes(storage: Storage) {
           { empty_parameters: [key] },
         );
       }
-      // The filter grammar reads `\"` as a quote and takes every other
-      // backslash literally, so a backslash cannot be quoted: one before the
-      // closing quote would swallow it, and the value would run on into the
-      // next clause. An item id never carries one.
+      // An item id never carries a backslash, so one is refused rather than
+      // escaped.
       if (val.includes("\\")) {
         throw new MarfaError(
           ErrorCode.VALIDATION_ERROR,

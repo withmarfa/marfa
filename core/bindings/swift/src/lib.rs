@@ -8,6 +8,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 uniffi::setup_scaffolding!();
 
+mod filters;
 mod folder_settings;
 mod folders;
 mod instance;

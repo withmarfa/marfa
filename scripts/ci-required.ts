@@ -240,6 +240,13 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
       "conformance-device",
     ],
   ],
+  // The filter expressions both implementations are held to: the core's
+  // unit tests, the Node binding's tests and the server's workspace test
+  // read it.
+  [
+    /^conformance\/fixtures\/filter-expressions\.json$/,
+    ["workspace", "core-checks", "core-checks-linux", "core"],
+  ],
   // The binary's command reference is generated from its command tree, and
   // a unit test in `marfa-cli` holds the committed file to it. Only the core
   // checks run the Rust tests.

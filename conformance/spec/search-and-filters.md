@@ -480,7 +480,7 @@ If `GET /items` carries an `edge[<edge type>]` or `backref[<edge type>]` key and
 
 If the value of an `edge[<edge type>]` or `backref[<edge type>]` key carries a backslash, then the server MUST answer `400 validation_error`.
 
-**Reason:** the filter grammar reads `\"` as a quote and every other backslash literally, so a backslash cannot be quoted. One before the closing quote would run the value on into the next clause, where it would be read as filter syntax. An item id never carries one.
+**Reason:** an item id never carries a backslash, so a value holding one names no item and is a mistake in the request.
 
 **Tests:** `compliance/validation.test.ts › refuses an edge shorthand value carrying a backslash, and still takes a quote`.
 
@@ -543,6 +543,22 @@ When a `filter` applies `not_exists` to a property, the server MUST select the r
 When a `filter` compares a field with `"null"` inside double quotes, the server MUST compare it as text.
 
 **Tests:** `compliance/null-filter.test.ts › is refused on a system field, an edge and tags, and still read as text when quoted`.
+
+### `search-and-filters/filter-string-escapes`
+
+When a double-quoted value in a `filter` holds `\"` or `\\`, the server MUST read it as one `"` or one `\` that is part of the value.
+
+**Reason:** with both escaped, any text can be written as a value, one that ends in a backslash included.
+
+**Tests:** `compliance/filter-escapes.test.ts › reads an escaped quote and an escaped backslash as one character of the value`.
+
+### `search-and-filters/filter-string-backslash`
+
+When a double-quoted value in a `filter` holds a backslash that is not followed by `"` or `\`, the server MUST read the backslash as itself.
+
+**Reason:** a value such as a Windows path is written as it reads.
+
+**Tests:** `compliance/filter-escapes.test.ts › reads any other backslash as itself`.
 
 ### `search-and-filters/filter-time-instant`
 

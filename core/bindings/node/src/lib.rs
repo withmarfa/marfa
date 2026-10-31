@@ -1,5 +1,6 @@
 //! The Node-facing shape of `marfa_core`.
 
+pub mod filters;
 mod folders;
 mod views;
 

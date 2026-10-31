@@ -977,10 +977,17 @@ impl Http {
         text: &str,
         pages: usize,
     ) -> Result<(Vec<WireItemWithMetadata>, bool), CoreError> {
-        // The grammar escapes only a quote, so a closing backslash cannot be
-        // written; the caller matches the whole name after.
-        let searched = text.trim_end_matches('\\').replace('"', "\\\"");
-        let filter = format!("properties.{field} contains \"{searched}\"");
+        let filter = crate::FilterExpression {
+            join: crate::FilterJoin::All,
+            conditions: vec![crate::FilterCondition {
+                field: crate::FilterField::Property {
+                    name: field.to_string(),
+                },
+                operator: crate::FilterOperator::Contains,
+                value: Some(crate::FilterValue::Text(text.to_string())),
+            }],
+        }
+        .encode()?;
         let limit = ITEM_PAGE_LIMIT.to_string();
         let mut found = Vec::new();
         let mut cursor: Option<String> = None;

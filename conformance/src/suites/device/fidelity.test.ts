@@ -1999,7 +1999,12 @@ describe("the scripted answers match the server's", () => {
       },
     );
 
-    // The grammar escapes only a quote, so a closing backslash never closes.
+    // A closing backslash is written `\\`; a lone one escapes the quote
+    // after it, so the string never closes.
+    const closed = await client.rawRequest(
+      `/items?filter=${encodeURIComponent('properties.title contains "Back\\\\"')}&state=any`,
+    );
+    expect(closed.status, JSON.stringify(closed.error)).toBe(200);
     const unclosed = await client.rawRequest(
       `/items?filter=${encodeURIComponent('properties.title contains "Back\\"')}&state=any`,
     );

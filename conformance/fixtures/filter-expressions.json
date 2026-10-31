@@ -1,0 +1,881 @@
+{
+  "canonical": [
+    {
+      "description": "a system field compared with text",
+      "text": "state eq \"active\"",
+      "expression": {
+        "join": "all",
+        "conditions": [
+          {
+            "field": {
+              "kind": "system",
+              "name": "state"
+            },
+            "operator": "eq",
+            "value": "active"
+          }
+        ]
+      }
+    },
+    {
+      "description": "a property compared with text",
+      "text": "properties.author eq \"Orwell\"",
+      "expression": {
+        "join": "all",
+        "conditions": [
+          {
+            "field": {
+              "kind": "property",
+              "name": "author"
+            },
+            "operator": "eq",
+            "value": "Orwell"
+          }
+        ]
+      }
+    },
+    {
+      "description": "a value holding quotes",
+      "text": "properties.title eq \"say \\\"hi\\\"\"",
+      "expression": {
+        "join": "all",
+        "conditions": [
+          {
+            "field": {
+              "kind": "property",
+              "name": "title"
+            },
+            "operator": "eq",
+            "value": "say \"hi\""
+          }
+        ]
+      }
+    },
+    {
+      "description": "a value holding backslashes, each escaped",
+      "text": "properties.path eq \"C:\\\\dir\\\\file\"",
+      "expression": {
+        "join": "all",
+        "conditions": [
+          {
+            "field": {
+              "kind": "property",
+              "name": "path"
+            },
+            "operator": "eq",
+            "value": "C:\\dir\\file"
+          }
+        ]
+      }
+    },
+    {
+      "description": "a value holding a backslash before a quote",
+      "text": "properties.path eq \"a\\\\\\\"b\"",
+      "expression": {
+        "join": "all",
+        "conditions": [
+          {
+            "field": {
+              "kind": "property",
+              "name": "path"
+            },
+            "operator": "eq",
+            "value": "a\\\"b"
+          }
+        ]
+      }
+    },
+    {
+      "description": "a value ending in a backslash",
+      "text": "properties.path eq \"C:\\\\\"",
+      "expression": {
+        "join": "all",
+        "conditions": [
+          {
+            "field": {
+              "kind": "property",
+              "name": "path"
+            },
+            "operator": "eq",
+            "value": "C:\\"
+          }
+        ]
+      }
+    },
+    {
+      "description": "a value holding commas, accents and an emoji",
+      "text": "properties.note contains \"one, two, café 🎉\"",
+      "expression": {
+        "join": "all",
+        "conditions": [
+          {
+            "field": {
+              "kind": "property",
+              "name": "note"
+            },
+            "operator": "contains",
+            "value": "one, two, café 🎉"
+          }
+        ]
+      }
+    },
+    {
+      "description": "a value holding a line break and a tab",
+      "text": "properties.note eq \"line\nnext\tend\"",
+      "expression": {
+        "join": "all",
+        "conditions": [
+          {
+            "field": {
+              "kind": "property",
+              "name": "note"
+            },
+            "operator": "eq",
+            "value": "line\nnext\tend"
+          }
+        ]
+      }
+    },
+    {
+      "description": "an empty value",
+      "text": "properties.note eq \"\"",
+      "expression": {
+        "join": "all",
+        "conditions": [
+          {
+            "field": {
+              "kind": "property",
+              "name": "note"
+            },
+            "operator": "eq",
+            "value": ""
+          }
+        ]
+      }
+    },
+    {
+      "description": "null in quotes, which is text",
+      "text": "properties.note eq \"null\"",
+      "expression": {
+        "join": "all",
+        "conditions": [
+          {
+            "field": {
+              "kind": "property",
+              "name": "note"
+            },
+            "operator": "eq",
+            "value": "null"
+          }
+        ]
+      }
+    },
+    {
+      "description": "a value spelled like the grammar",
+      "text": "properties.note eq \"a AND b OR c eq \\\"d\\\"\"",
+      "expression": {
+        "join": "all",
+        "conditions": [
+          {
+            "field": {
+              "kind": "property",
+              "name": "note"
+            },
+            "operator": "eq",
+            "value": "a AND b OR c eq \"d\""
+          }
+        ]
+      }
+    },
+    {
+      "description": "a decimal number",
+      "text": "properties.rank gte 1.5",
+      "expression": {
+        "join": "all",
+        "conditions": [
+          {
+            "field": {
+              "kind": "property",
+              "name": "rank"
+            },
+            "operator": "gte",
+            "value": 1.5
+          }
+        ]
+      }
+    },
+    {
+      "description": "a negative number",
+      "text": "properties.rank lt -3",
+      "expression": {
+        "join": "all",
+        "conditions": [
+          {
+            "field": {
+              "kind": "property",
+              "name": "rank"
+            },
+            "operator": "lt",
+            "value": -3
+          }
+        ]
+      }
+    },
+    {
+      "description": "a large integer as its shortest double",
+      "text": "properties.rank eq 12345678901234567000",
+      "expression": {
+        "join": "all",
+        "conditions": [
+          {
+            "field": {
+              "kind": "property",
+              "name": "rank"
+            },
+            "operator": "eq",
+            "value": 12345678901234567000
+          }
+        ]
+      }
+    },
+    {
+      "description": "a small decimal in fixed notation",
+      "text": "properties.rank eq 0.0000001",
+      "expression": {
+        "join": "all",
+        "conditions": [
+          {
+            "field": {
+              "kind": "property",
+              "name": "rank"
+            },
+            "operator": "eq",
+            "value": 1e-7
+          }
+        ]
+      }
+    },
+    {
+      "description": "a boolean",
+      "text": "properties.done eq true",
+      "expression": {
+        "join": "all",
+        "conditions": [
+          {
+            "field": {
+              "kind": "property",
+              "name": "done"
+            },
+            "operator": "eq",
+            "value": true
+          }
+        ]
+      }
+    },
+    {
+      "description": "a property that is absent or null",
+      "text": "properties.due not_exists",
+      "expression": {
+        "join": "all",
+        "conditions": [
+          {
+            "field": {
+              "kind": "property",
+              "name": "due"
+            },
+            "operator": "not_exists"
+          }
+        ]
+      }
+    },
+    {
+      "description": "a property that holds a value",
+      "text": "properties.due exists",
+      "expression": {
+        "join": "all",
+        "conditions": [
+          {
+            "field": {
+              "kind": "property",
+              "name": "due"
+            },
+            "operator": "exists"
+          }
+        ]
+      }
+    },
+    {
+      "description": "a property no type declares, which the grammar takes",
+      "text": "properties.anything_at_all neq \"x\"",
+      "expression": {
+        "join": "all",
+        "conditions": [
+          {
+            "field": {
+              "kind": "property",
+              "name": "anything_at_all"
+            },
+            "operator": "neq",
+            "value": "x"
+          }
+        ]
+      }
+    },
+    {
+      "description": "a member of a list's entries",
+      "text": "properties.emails.address eq \"someone@example.com\"",
+      "expression": {
+        "join": "all",
+        "conditions": [
+          {
+            "field": {
+              "kind": "member",
+              "field": "emails",
+              "member": "address"
+            },
+            "operator": "eq",
+            "value": "someone@example.com"
+          }
+        ]
+      }
+    },
+    {
+      "description": "a tag held",
+      "text": "tags contains \"reading\"",
+      "expression": {
+        "join": "all",
+        "conditions": [
+          {
+            "field": {
+              "kind": "tags"
+            },
+            "operator": "contains",
+            "value": "reading"
+          }
+        ]
+      }
+    },
+    {
+      "description": "items with no tag",
+      "text": "tags not_exists",
+      "expression": {
+        "join": "all",
+        "conditions": [
+          {
+            "field": {
+              "kind": "tags"
+            },
+            "operator": "not_exists"
+          }
+        ]
+      }
+    },
+    {
+      "description": "open items by status group",
+      "text": "status_group neq \"completed\" AND status_group neq \"canceled\"",
+      "expression": {
+        "join": "all",
+        "conditions": [
+          {
+            "field": {
+              "kind": "status_group"
+            },
+            "operator": "neq",
+            "value": "completed"
+          },
+          {
+            "field": {
+              "kind": "status_group"
+            },
+            "operator": "neq",
+            "value": "canceled"
+          }
+        ]
+      }
+    },
+    {
+      "description": "items with no status group",
+      "text": "status_group not_exists",
+      "expression": {
+        "join": "all",
+        "conditions": [
+          {
+            "field": {
+              "kind": "status_group"
+            },
+            "operator": "not_exists"
+          }
+        ]
+      }
+    },
+    {
+      "description": "an outbound edge to an item",
+      "text": "edge[in-folder] eq \"itm_folder\"",
+      "expression": {
+        "join": "all",
+        "conditions": [
+          {
+            "field": {
+              "kind": "edge",
+              "edge_type": "in-folder",
+              "direction": "outbound"
+            },
+            "operator": "eq",
+            "value": "itm_folder"
+          }
+        ]
+      }
+    },
+    {
+      "description": "an inbound edge of a namespaced type",
+      "text": "backref[example.list-member] exists",
+      "expression": {
+        "join": "all",
+        "conditions": [
+          {
+            "field": {
+              "kind": "edge",
+              "edge_type": "example.list-member",
+              "direction": "backref"
+            },
+            "operator": "exists"
+          }
+        ]
+      }
+    },
+    {
+      "description": "an edge of a type a key may not read, which is still grammar",
+      "text": "edge[private.hidden] neq \"itm_x\"",
+      "expression": {
+        "join": "all",
+        "conditions": [
+          {
+            "field": {
+              "kind": "edge",
+              "edge_type": "private.hidden",
+              "direction": "outbound"
+            },
+            "operator": "neq",
+            "value": "itm_x"
+          }
+        ]
+      }
+    },
+    {
+      "description": "an edge compared with a number",
+      "text": "edge[about] eq 5",
+      "expression": {
+        "join": "all",
+        "conditions": [
+          {
+            "field": {
+              "kind": "edge",
+              "edge_type": "about",
+              "direction": "outbound"
+            },
+            "operator": "eq",
+            "value": 5
+          }
+        ]
+      }
+    },
+    {
+      "description": "a time compared as an instant, kept as written",
+      "text": "created_at gte \"2026-01-01T01:00:00+01:00\"",
+      "expression": {
+        "join": "all",
+        "conditions": [
+          {
+            "field": {
+              "kind": "system",
+              "name": "created_at"
+            },
+            "operator": "gte",
+            "value": "2026-01-01T01:00:00+01:00"
+          }
+        ]
+      }
+    },
+    {
+      "description": "a time matched as text",
+      "text": "updated_at contains \"2026-01\"",
+      "expression": {
+        "join": "all",
+        "conditions": [
+          {
+            "field": {
+              "kind": "system",
+              "name": "updated_at"
+            },
+            "operator": "contains",
+            "value": "2026-01"
+          }
+        ]
+      }
+    },
+    {
+      "description": "a path prefix",
+      "text": "source_id starts_with \"notes/\"",
+      "expression": {
+        "join": "all",
+        "conditions": [
+          {
+            "field": {
+              "kind": "system",
+              "name": "source_id"
+            },
+            "operator": "starts_with",
+            "value": "notes/"
+          }
+        ]
+      }
+    },
+    {
+      "description": "conditions joined by OR",
+      "text": "type eq \"core.note\" OR type eq \"core.task\" OR tier eq \"feed\"",
+      "expression": {
+        "join": "any",
+        "conditions": [
+          {
+            "field": {
+              "kind": "system",
+              "name": "type"
+            },
+            "operator": "eq",
+            "value": "core.note"
+          },
+          {
+            "field": {
+              "kind": "system",
+              "name": "type"
+            },
+            "operator": "eq",
+            "value": "core.task"
+          },
+          {
+            "field": {
+              "kind": "system",
+              "name": "tier"
+            },
+            "operator": "eq",
+            "value": "feed"
+          }
+        ]
+      }
+    },
+    {
+      "description": "ten conditions, the most the grammar takes",
+      "text": "properties.p0 eq 0 AND properties.p1 eq 1 AND properties.p2 eq 2 AND properties.p3 eq 3 AND properties.p4 eq 4 AND properties.p5 eq 5 AND properties.p6 eq 6 AND properties.p7 eq 7 AND properties.p8 eq 8 AND properties.p9 eq 9",
+      "expression": {
+        "join": "all",
+        "conditions": [
+          {
+            "field": {
+              "kind": "property",
+              "name": "p0"
+            },
+            "operator": "eq",
+            "value": 0
+          },
+          {
+            "field": {
+              "kind": "property",
+              "name": "p1"
+            },
+            "operator": "eq",
+            "value": 1
+          },
+          {
+            "field": {
+              "kind": "property",
+              "name": "p2"
+            },
+            "operator": "eq",
+            "value": 2
+          },
+          {
+            "field": {
+              "kind": "property",
+              "name": "p3"
+            },
+            "operator": "eq",
+            "value": 3
+          },
+          {
+            "field": {
+              "kind": "property",
+              "name": "p4"
+            },
+            "operator": "eq",
+            "value": 4
+          },
+          {
+            "field": {
+              "kind": "property",
+              "name": "p5"
+            },
+            "operator": "eq",
+            "value": 5
+          },
+          {
+            "field": {
+              "kind": "property",
+              "name": "p6"
+            },
+            "operator": "eq",
+            "value": 6
+          },
+          {
+            "field": {
+              "kind": "property",
+              "name": "p7"
+            },
+            "operator": "eq",
+            "value": 7
+          },
+          {
+            "field": {
+              "kind": "property",
+              "name": "p8"
+            },
+            "operator": "eq",
+            "value": 8
+          },
+          {
+            "field": {
+              "kind": "property",
+              "name": "p9"
+            },
+            "operator": "eq",
+            "value": 9
+          }
+        ]
+      }
+    }
+  ],
+  "variants": [
+    {
+      "description": "a backslash before neither a quote nor a backslash, which is itself",
+      "text": "properties.path eq \"C:\\dir\\file\"",
+      "canonical": "properties.path eq \"C:\\\\dir\\\\file\""
+    },
+    {
+      "description": "spaces and tabs around tokens",
+      "text": "  state   eq\t\"active\"  ",
+      "canonical": "state eq \"active\""
+    },
+    {
+      "description": "spaces around the joiner",
+      "text": "state eq \"a\"    OR\ttype eq \"b\"",
+      "canonical": "state eq \"a\" OR type eq \"b\""
+    },
+    {
+      "description": "no space after a quoted value",
+      "text": "state eq \"a\"AND type eq \"b\"",
+      "canonical": "state eq \"a\" AND type eq \"b\""
+    },
+    {
+      "description": "trailing zeros",
+      "text": "properties.rank eq 1.50",
+      "canonical": "properties.rank eq 1.5"
+    },
+    {
+      "description": "leading zeros",
+      "text": "properties.rank eq 007",
+      "canonical": "properties.rank eq 7"
+    },
+    {
+      "description": "a bare decimal point",
+      "text": "properties.rank eq 2.",
+      "canonical": "properties.rank eq 2"
+    },
+    {
+      "description": "a whole number with a decimal part",
+      "text": "version gt 10.000",
+      "canonical": "version gt 10"
+    },
+    {
+      "description": "digits past a double's precision",
+      "text": "properties.rank eq 0.30000000000000004441",
+      "canonical": "properties.rank eq 0.30000000000000004"
+    }
+  ],
+  "refused": [
+    {
+      "description": "nothing",
+      "text": "",
+      "message": "Filter expression cannot be empty",
+      "code": "validation_error"
+    },
+    {
+      "description": "only blanks",
+      "text": " \t ",
+      "message": "Filter expression cannot be empty",
+      "code": "validation_error"
+    },
+    {
+      "description": "a byte order mark, which JavaScript trims",
+      "text": "﻿",
+      "message": "Filter expression cannot be empty",
+      "code": "validation_error"
+    },
+    {
+      "description": "a next-line character, which JavaScript does not trim",
+      "text": "",
+      "message": "Unexpected character '' at position 0",
+      "code": "validation_error"
+    },
+    {
+      "description": "a field that is neither a system field nor a property",
+      "text": "author eq \"Orwell\"",
+      "message": "Unknown field \"author\" at position 0. Valid system fields: state, type, source, occurred_at, created_at, updated_at, tier, version, id, source_id. Use \"properties.<field>\" for custom fields, \"tags\" for tag filtering, or \"status_group\" for a status group.",
+      "code": "validation_error"
+    },
+    {
+      "description": "a property path of three names",
+      "text": "properties.a.b.c eq 1",
+      "message": "Nested property paths are not supported. Use \"properties.<field>\", or \"properties.<field>.<member>\" for a member of a list's entries, at position 0",
+      "code": "validation_error"
+    },
+    {
+      "description": "a property name that starts with a digit",
+      "text": "properties.1a eq 1",
+      "message": "Invalid property name \"1a\". Property names must match /^[a-zA-Z_][a-zA-Z0-9_]*$/",
+      "code": "validation_error"
+    },
+    {
+      "description": "a member compared with an operator other than eq",
+      "text": "properties.emails.address contains \"x\"",
+      "message": "Operator \"contains\" is not valid for a member of a list's entries. Use: eq",
+      "code": "validation_error"
+    },
+    {
+      "description": "a member tested for presence",
+      "text": "properties.emails.address exists",
+      "message": "Operator \"exists\" is not valid for a member of a list's entries. Use: eq",
+      "code": "validation_error"
+    },
+    {
+      "description": "tags compared with eq",
+      "text": "tags eq \"x\"",
+      "message": "Operator \"eq\" is not valid for \"tags\". Use: contains, exists, not_exists",
+      "code": "validation_error"
+    },
+    {
+      "description": "an edge compared with gt",
+      "text": "edge[about] gt \"x\"",
+      "message": "Operator \"gt\" is not valid for edge references. Use: eq, neq, exists, not_exists",
+      "code": "validation_error"
+    },
+    {
+      "description": "an edge with no type",
+      "text": "edge[] exists",
+      "message": "Unexpected character '[' at position 4",
+      "code": "validation_error"
+    },
+    {
+      "description": "a system field tested for presence",
+      "text": "id exists",
+      "message": "Operator \"exists\" is not valid for system field \"id\". System fields always exist.",
+      "code": "validation_error"
+    },
+    {
+      "description": "a null literal",
+      "text": "properties.x eq null",
+      "message": "Null is not a value to compare with, so \"eq null\" never matches at position 16. Use \"not_exists\" to ask for a property that is absent or null, and \"exists\" for one that has a value",
+      "code": "validation_error"
+    },
+    {
+      "description": "AND and OR in one expression",
+      "text": "state eq \"a\" AND type eq \"b\" OR id eq \"c\"",
+      "message": "Cannot mix AND and OR in a single filter expression. Found \"OR\" at position 29 after \"AND\" used earlier. Use only AND or only OR.",
+      "code": "validation_error"
+    },
+    {
+      "description": "a lowercase joiner",
+      "text": "state eq \"a\" and type eq \"b\"",
+      "message": "Expected AND or OR at position 13, got \"and\"",
+      "code": "validation_error"
+    },
+    {
+      "description": "a status group no type has",
+      "text": "status_group eq \"done\"",
+      "message": "Unknown status group \"done\" at position 16. Status groups: not_started, in_progress, completed, canceled",
+      "code": "validation_error"
+    },
+    {
+      "description": "a status group compared with contains",
+      "text": "status_group contains \"completed\"",
+      "message": "Operator \"contains\" is not valid for \"status_group\". Use: eq, neq, exists, not_exists",
+      "code": "validation_error"
+    },
+    {
+      "description": "an unquoted word as a value",
+      "text": "state eq active",
+      "message": "Expected value at position 9, got \"active\"",
+      "code": "validation_error"
+    },
+    {
+      "description": "an unterminated value",
+      "text": "properties.x eq \"open",
+      "message": "Unterminated string starting at position 16",
+      "code": "validation_error"
+    },
+    {
+      "description": "a backslash before the closing quote",
+      "text": "properties.x eq \"a\\\"",
+      "message": "Unterminated string starting at position 16",
+      "code": "validation_error"
+    },
+    {
+      "description": "a line break between tokens",
+      "text": "state eq \"a\"\n",
+      "message": "Unexpected character '\n' at position 12",
+      "code": "validation_error"
+    },
+    {
+      "description": "an exponent",
+      "text": "properties.x eq 1e5",
+      "message": "Expected AND or OR at position 17, got \"e5\"",
+      "code": "validation_error"
+    },
+    {
+      "description": "a character outside the grammar after an emoji, at its UTF-16 position",
+      "text": "properties.x eq \"🎉\" @",
+      "message": "Unexpected character '@' at position 21",
+      "code": "validation_error"
+    },
+    {
+      "description": "a joiner with nothing after it",
+      "text": "state eq \"a\" AND",
+      "message": "Unexpected end of expression after \"AND\": expected another condition",
+      "code": "validation_error"
+    },
+    {
+      "description": "eleven conditions",
+      "text": "properties.p0 eq 0 AND properties.p1 eq 1 AND properties.p2 eq 2 AND properties.p3 eq 3 AND properties.p4 eq 4 AND properties.p5 eq 5 AND properties.p6 eq 6 AND properties.p7 eq 7 AND properties.p8 eq 8 AND properties.p9 eq 9 AND properties.p10 eq 10",
+      "message": "Too many conditions (11). Maximum is 10",
+      "code": "validation_error"
+    },
+    {
+      "description": "a number no double holds",
+      "text": "properties.x eq 10000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "message": "Number out of range \"10000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000\" at position 16",
+      "code": "validation_error"
+    },
+    {
+      "description": "a time compared with a number",
+      "text": "created_at eq 5",
+      "at": "listing",
+      "message": "Invalid created_at: expected a timestamp",
+      "code": "validation_error"
+    },
+    {
+      "description": "a time compared with a word that is not a timestamp",
+      "text": "occurred_at lt \"yesterday\"",
+      "at": "listing",
+      "message": "Invalid occurred_at: expected an RFC 3339 timestamp",
+      "code": "validation_error"
+    }
+  ]
+}
