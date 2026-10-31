@@ -659,6 +659,31 @@ function withoutKeys(
 }
 
 /**
+ * The properties a write stores: each value as validation answers it (a `url`
+ * trimmed, `types/url-stored`), in the order the write found them
+ * (`items/property-order-merge`). Validation answers the type's fields first,
+ * so its order is not the row's. A property validation does not answer, which
+ * is one named `__proto__`, stays as it was.
+ */
+function storedAsValidated(
+  result: Record<string, unknown>,
+  validated: Record<string, unknown>,
+): Record<string, unknown> {
+  const stored: Record<string, unknown> = {};
+  for (const key of Object.keys(result)) {
+    const value = Object.hasOwn(validated, key) ? validated[key] : result[key];
+    if (value !== undefined)
+      Object.defineProperty(stored, key, {
+        value,
+        enumerable: true,
+        writable: true,
+        configurable: true,
+      });
+  }
+  return stored;
+}
+
+/**
  * What a write leaves the row holding, judged against the type the row ends
  * up as, at the current version and a stale one alike. Judged only where the
  * write carries properties or a move: a type may gain a required field while
@@ -698,7 +723,7 @@ function judgeResult(
         )
       : result;
   const validation = validateProperties(resultingType, result, { written });
-  if (validation.success) return result;
+  if (validation.success) return storedAsValidated(result, validation.data);
   const detail = validation.errors
     .map((e) => `${e.field}: ${e.message}`)
     .join("; ");

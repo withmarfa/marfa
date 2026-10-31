@@ -480,6 +480,139 @@ describe("a value in a field with a range, a currency or entries", () => {
   });
 });
 
+describe("a url is stored without the whitespace around it at every door", () => {
+  const PADDED = "  https://example.test/a\t ";
+  const KEPT = "https://example.test/a";
+  let typeId: string;
+
+  beforeAll(async () => {
+    typeId = nextId();
+    const registered = await client.registerType({
+      id: typeId,
+      fields: {
+        link: { type: "url" },
+        sites: { type: "array", items_type: "url" },
+        entries: {
+          type: "array",
+          items_type: "object",
+          items_fields: { u: { type: "url" }, v: { type: "string" } },
+        },
+        note: { type: "string" },
+      },
+    });
+    expect(registered.status, JSON.stringify(registered.error)).toBe(201);
+  });
+
+  const made = async (
+    properties: Record<string, unknown>,
+    sourceId?: string,
+  ) => {
+    const created = await client.createItem({
+      type: typeId,
+      source: ctx.source,
+      ...(sourceId !== undefined && { source_id: sourceId }),
+      properties,
+    });
+    expect(created.status, JSON.stringify(created.error)).toBe(201);
+    trackItem(ctx, created.data.item.id);
+    return created.data.item;
+  };
+
+  const kept = async (id: string) =>
+    (await client.getItem(id)).data.item.properties;
+
+  it("stores a top-level url, a url in a list and a url member trimmed on a create", async () => {
+    const item = await made({
+      link: PADDED,
+      sites: [PADDED],
+      entries: [{ u: PADDED, v: PADDED }],
+    });
+    for (const properties of [item.properties, await kept(item.id)]) {
+      expect(properties.link).toBe(KEPT);
+      expect(properties.sites).toEqual([KEPT]);
+      expect(properties.entries).toEqual([{ u: KEPT, v: PADDED }]);
+    }
+  });
+
+  it("stores them trimmed on an update", async () => {
+    const item = await made({ note: "n" });
+    const updated = await client.updateItem(item.id, {
+      version: item.version,
+      properties: {
+        link: PADDED,
+        sites: [PADDED],
+        entries: [{ u: PADDED, v: PADDED }],
+      },
+    });
+    expect(updated.status, JSON.stringify(updated.error)).toBe(200);
+    for (const properties of [
+      updated.data.item.properties,
+      await kept(item.id),
+    ]) {
+      expect(properties.link).toBe(KEPT);
+      expect(properties.sites).toEqual([KEPT]);
+      expect(properties.entries).toEqual([{ u: KEPT, v: PADDED }]);
+    }
+  });
+
+  it("stores them trimmed on an update that names a version since passed", async () => {
+    const item = await made({ note: "n" });
+    const moved = await client.updateItem(item.id, {
+      version: item.version,
+      properties: { note: "m" },
+    });
+    expect(moved.status, JSON.stringify(moved.error)).toBe(200);
+    const stale = await client.updateItem(item.id, {
+      version: item.version,
+      properties: { link: PADDED, entries: [{ u: PADDED }] },
+    });
+    expect(stale.status, JSON.stringify(stale.error)).toBe(200);
+    const properties = await kept(item.id);
+    expect(properties.link).toBe(KEPT);
+    expect(properties.entries).toEqual([{ u: KEPT }]);
+    expect(properties.note).toBe("m");
+  });
+
+  it("stores them trimmed on an upsert onto an existing item and on a bulk update", async () => {
+    const key = `url-${ctx.runId}`;
+    const item = await made({ note: "n" }, `${key}-a`);
+    const upserted = await client.createItem({
+      type: typeId,
+      source: ctx.source,
+      source_id: `${key}-a`,
+      properties: { link: PADDED, entries: [{ u: PADDED }] },
+    });
+    expect(upserted.status, JSON.stringify(upserted.error)).toBe(200);
+    expect(upserted.data.item.id).toBe(item.id);
+    let properties = await kept(item.id);
+    expect(properties.link).toBe(KEPT);
+    expect(properties.entries).toEqual([{ u: KEPT }]);
+
+    const other = await made({ note: "n" }, `${key}-b`);
+    const bulk = await client.bulkItems({
+      mode: "upsert",
+      atomic: false,
+      items: [
+        {
+          type: typeId,
+          source_id: `${key}-b`,
+          properties: {
+            link: PADDED,
+            sites: [PADDED],
+            entries: [{ u: PADDED }],
+          },
+        },
+      ],
+    });
+    expect(bulk.status, JSON.stringify(bulk.error)).toBe(200);
+    expect(bulk.data.results[0]?.outcome).toBe("updated");
+    properties = await kept(other.id);
+    expect(properties.link).toBe(KEPT);
+    expect(properties.sites).toEqual([KEPT]);
+    expect(properties.entries).toEqual([{ u: KEPT }]);
+  });
+});
+
 describe("a child and a claim of compatibility", () => {
   it("takes a child that tightens an inherited range, and refuses one that loosens it", async () => {
     const parent = nextId();

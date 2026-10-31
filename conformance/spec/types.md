@@ -491,7 +491,9 @@ If a `url` value of a special scheme has a host that holds a forbidden domain co
 
 When the server takes a `url` value, an element of an array of `url` or a `url` member of an entry of a list, the server MUST store the value without the whitespace trimmed from its ends and without tab, line feed and carriage return characters anywhere in it.
 
-**Tests:** `device/property-validation-live.test.ts › treats %s in a url the same on both paths and stores the same value`.
+**Reason:** this holds at every door that writes properties: a create, an update (at the current version and a passed one), an upsert onto an existing item and a bulk entry.
+
+**Tests:** `device/property-validation-live.test.ts › treats %s in a url the same on both paths and stores the same value`, `compliance/field-rules.test.ts › a url is stored without the whitespace around it at every door`.
 
 ### `types/array-items`
 
