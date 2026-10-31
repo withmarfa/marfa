@@ -13,6 +13,7 @@ import {
   MarfaError,
   MAX_RESOLUTION_DEPTH,
   mergeFieldChain,
+  namedLabel,
   pluralOf,
   withFieldLabels,
 } from "@withmarfa/shared";
@@ -139,11 +140,16 @@ function buildChain(typeId: string, resolve: TypeResolver): TypeSchema[] {
  *   kept as-is on the leaf (these identify the leaf type and its own claims,
  *   not the inherited schema).
  *
+ * - With `declaredOnly`, no label or plural is made: a field or member keeps
+ *   only a label some type in the chain names, and the plural only where the
+ *   type names one, as a definition is stored.
+ *
  * Returns `undefined` for unknown type ids.
  */
 export function resolveTypeSchema(
   typeId: string,
   resolve: TypeResolver,
+  options: { readonly declaredOnly?: boolean } = {},
 ): TypeSchema | undefined {
   const self = resolve(typeId);
   if (!self) return undefined;
@@ -153,9 +159,8 @@ export function resolveTypeSchema(
   // fields: root→leaf, per-key merge, a status field joining its words and a
   // redeclaration keeping a label above it; then each field and member that
   // no type in the chain names takes the label its name makes.
-  const fields = withFieldLabels(
-    mergeFieldChain(chain.map((ancestor) => ancestor.fields)),
-  );
+  const merged = mergeFieldChain(chain.map((ancestor) => ancestor.fields));
+  const fields = options.declaredOnly ? merged : withFieldLabels(merged);
 
   // display_hints: each hint comes from the nearest type that sets that hint,
   // so a child can set an icon and keep its parent's title. Walk root→leaf and
@@ -197,7 +202,11 @@ export function resolveTypeSchema(
     resolved.compatible_with = self.compatible_with;
   }
   if (self.label !== undefined) resolved.label = self.label;
-  resolved.plural = pluralOf(self);
+  if (options.declaredOnly) {
+    if (namedLabel(self.plural) !== undefined) resolved.plural = self.plural;
+  } else {
+    resolved.plural = pluralOf(self);
+  }
   if (self.description !== undefined) resolved.description = self.description;
   if (displayHints) resolved.display_hints = displayHints;
   // The type's own and never an ancestor's: a link identifies rows of

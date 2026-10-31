@@ -124,10 +124,10 @@ describe("connector interfaces", () => {
     expect(repeated.type).toEqual(repeated.registered_type);
     expect(repeated.resolved_type.fields.inherited).toEqual({
       type: "string",
-      label: "Inherited",
       required: false,
       searchable: true,
     });
+    expect(repeated.resolved_type).not.toHaveProperty("plural");
     expect(repeated.resolved_type.roles).toContain("container");
     const wire = (await (
       await call(`/types/${input.id}`, "GET", undefined, readKey)

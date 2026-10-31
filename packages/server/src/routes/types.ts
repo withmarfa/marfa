@@ -1456,7 +1456,9 @@ export function typeRoutes(storage: Storage) {
           const registered_type = stored
             ? canonicalTypeDefinition(stored)
             : null;
-          const resolved = resolveTypeSchema(type.id, getTypeSchema);
+          const resolved = resolveTypeSchema(type.id, getTypeSchema, {
+            declaredOnly: true,
+          });
           const resolved_type = resolved
             ? canonicalTypeDefinition(resolved)
             : null;
