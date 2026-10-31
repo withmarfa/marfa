@@ -2369,6 +2369,7 @@ describe("the scripted answers match the server's", () => {
             ...wireType("core.entity.person", {
               parent: "core.entity",
               icon: "lucide:user",
+              plural: "People",
             }),
             // The list answers each type's hints as declared, so a child
             // that sets only an icon carries no title field of its own.
@@ -2380,6 +2381,7 @@ describe("the scripted answers match the server's", () => {
         same: [
           "row.id",
           "row.parent",
+          "row.plural",
           "row.display_hints.title_field",
           "row.display_hints.icon",
           "row.provenance.origin",

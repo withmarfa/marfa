@@ -128,13 +128,6 @@ export function edgesPage(
   };
 }
 
-/** The plural a type that names none is listed with (`types/plural`). */
-function pluralOf(label: string): string {
-  if (/[b-df-hj-np-tv-z]y$/.test(label)) return `${label.slice(0, -1)}ies`;
-  if (/(s|x|z|ch|sh)$/.test(label)) return `${label}es`;
-  return `${label}s`;
-}
-
 export function wireType(
   id: string,
   options: {
@@ -143,6 +136,9 @@ export function wireType(
     bodyField?: string;
     /** The icon ID the type declares; absent where it declares none. */
     icon?: string;
+    /** The plural the type declares; absent where it declares none, as the
+     *  list answers it (`types/list-declared-plural`). */
+    plural?: string;
     fields?: Record<string, unknown>;
     /** Which fields collide how. What decides whether a resolution names a
      *  sibling (`queue-and-verdicts/success-conflicted`), so a scripted type without one
@@ -157,7 +153,7 @@ export function wireType(
     id,
     ...(options.parent === undefined ? {} : { parent: options.parent }),
     label,
-    plural: pluralOf(label),
+    ...(options.plural === undefined ? {} : { plural: options.plural }),
     description: `the ${id} type`,
     version: 1,
     fields: options.fields ?? {
