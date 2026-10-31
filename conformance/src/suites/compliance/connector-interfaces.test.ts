@@ -5,6 +5,8 @@ import {
   FRESH_SERVER_TIMEOUT_MS,
   type FreshServer,
 } from "../../utils/fresh-server.js";
+import { withInstanceDatabase } from "../../utils/instance-database.js";
+import { HeldLock } from "../../utils/held-lock.js";
 
 let server: FreshServer;
 let key: string;
@@ -386,5 +388,150 @@ describe("connector interfaces", () => {
         })
       ).status,
     ).toBe(200);
+    // The witness is the read above that held the problems the map named; the
+    // same read after the clear holds none.
+    const cleared = await call(`/connectors/${id}/state`);
+    expect(cleared.status).toBe(200);
+    expect(((await cleared.json()) as { problems: unknown }).problems).toEqual(
+      {},
+    );
+  });
+  it("refuses a write whose key is revoked or expires while the write waits for the database", async () => {
+    let number = 0;
+    for (const ending of ["revoked", "expired"] as const) {
+      for (const door of ["state", "agreements"] as const) {
+        number++;
+        const label = `${ending} ${door}`;
+        const mint = async (suffix: string) => {
+          const minted = await call(
+            "/keys",
+            "POST",
+            { label, source: `fence-${String(number)}${suffix}` },
+            server.workingKey,
+          );
+          expect(minted.status, label).toBe(201);
+          return (await minted.json()) as { key: string; id: string };
+        };
+        const owner = await mint("");
+        const registered = await call(
+          "/connectors",
+          "POST",
+          { name: label },
+          owner.key,
+        );
+        expect(registered.status, label).toBe(201);
+        const connector = ((await registered.json()) as { id: string }).id;
+        expect(
+          (
+            await call(
+              `/connectors/${connector}/hold`,
+              "POST",
+              { process: "p" },
+              owner.key,
+            )
+          ).status,
+          label,
+        ).toBe(200);
+        const item = await call(
+          "/items",
+          "POST",
+          {
+            type: "core.note",
+            properties: { body: label },
+          },
+          server.workingKey,
+        );
+        expect(item.status, label).toBe(201);
+        const itemId = ((await item.json()) as { item: { id: string } }).item
+          .id;
+        const write = (marker: string) =>
+          door === "state"
+            ? call(
+                `/connectors/${connector}/state`,
+                "PUT",
+                {
+                  process: "p",
+                  state: { marker },
+                  problems: { fence: marker },
+                },
+                owner.key,
+              )
+            : call(
+                `/connectors/${connector}/agreements`,
+                "POST",
+                {
+                  process: "p",
+                  set: [
+                    { item_id: itemId, waiting: false, record: { marker } },
+                  ],
+                },
+                owner.key,
+              );
+
+        // The witness: the key's own write is taken while it stands.
+        expect((await write("before")).status, label).toBe(200);
+
+        const lock = await HeldLock.take(server.sqlitePath);
+        try {
+          const pending = write("in flight");
+          await new Promise((resolve) => setTimeout(resolve, 150));
+          await lock.commit([
+            ending === "revoked"
+              ? `UPDATE api_keys SET revoked_at='2026-01-01T00:00:00.000Z' WHERE id='${owner.id}'`
+              : `UPDATE api_keys SET expires_at='2026-01-01T00:00:00.000Z' WHERE id='${owner.id}'`,
+          ]);
+          expect((await pending).status, label).toBe(401);
+        } finally {
+          await lock.release();
+        }
+
+        // What the source holds is what the key wrote before it ended. A
+        // successor under the source reads it through its own registration.
+        if (ending === "expired") {
+          // An expired key still holds its source until it is revoked.
+          withInstanceDatabase(server.sqlitePath, (db) => {
+            db.prepare("UPDATE api_keys SET revoked_at = ? WHERE id = ?").run(
+              "2026-01-02T00:00:00.000Z",
+              owner.id,
+            );
+          });
+        }
+        const successor = await mint("");
+        const successorRegistration = await call(
+          "/connectors",
+          "POST",
+          { name: `${label} successor` },
+          successor.key,
+        );
+        expect(successorRegistration.status, label).toBe(201);
+        const next = ((await successorRegistration.json()) as { id: string })
+          .id;
+        if (door === "state") {
+          const held = await call(
+            `/connectors/${next}/state`,
+            "GET",
+            undefined,
+            successor.key,
+          );
+          expect(await held.json(), label).toMatchObject({
+            state: { marker: "before" },
+            problems: { fence: "before" },
+          });
+        } else {
+          const held = await call(
+            `/connectors/${next}/agreements/lookup`,
+            "POST",
+            { item_ids: [itemId] },
+            successor.key,
+          );
+          expect(
+            ((await held.json()) as { data: { record: unknown }[] }).data.map(
+              (row) => row.record,
+            ),
+            label,
+          ).toEqual([{ marker: "before" }]);
+        }
+      }
+    }
   });
 });

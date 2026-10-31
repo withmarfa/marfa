@@ -502,6 +502,7 @@ describe("the record of folder watches", () => {
   it("says once that another process has held the record's lock for long", async () => {
     const { a } = await twoFolders("record-locked-long");
     const holder = await lockHeld(a);
+    const again: ChildProcess[] = [];
     try {
       const watch = hold(a.folder.watchEvery());
       const said = (): unknown[] =>
@@ -519,8 +520,24 @@ describe("the record of folder watches", () => {
       await new Promise((resolve) => setTimeout(resolve, 7_000));
       expect(said(), "said again unchanged").toHaveLength(1);
       expect(watch.running(), watch.stderr).toBe(true);
+
+      // A write of the record succeeds once the lock is let go, and a later
+      // hold of the lock for long is said again.
+      holder.kill("SIGKILL");
+      await vi.waitFor(
+        () => expect(processOf(a, watch.pid()), watch.stdout).toBeDefined(),
+        WAIT,
+      );
+      expect(said(), "said while the lock was free").toHaveLength(1);
+      again.push(await lockHeld(a));
+      await vi.waitFor(() => expect(said(), watch.stderr).toHaveLength(2), {
+        timeout: 30_000,
+        interval: 200,
+      });
+      expect(JSON.stringify(said()[1])).toContain("lock");
     } finally {
       holder.kill("SIGKILL");
+      for (const next of again) next.kill("SIGKILL");
     }
   });
 

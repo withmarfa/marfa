@@ -329,6 +329,26 @@ describe("a starting definition for a type", () => {
         1,
       ),
     ).toContain("different format");
+    expect(
+      await refused(
+        [
+          "user.recipe",
+          "--parent",
+          "core.task",
+          "--field",
+          "priority:enum:low,high",
+        ],
+        "invalid",
+        1,
+      ),
+    ).toContain("different enum_values");
+    expect(
+      await refused(
+        ["user.recipe", "--parent", "core.message", "--field", "to:array:url"],
+        "invalid",
+        1,
+      ),
+    ).toContain("different items_type");
     // Witness: restated as the parent has it, or left out, it is taken; and a
     // parent that is not shipped is not judged.
     for (const args of [
@@ -343,6 +363,13 @@ describe("a starting definition for a type", () => {
         "from",
       ],
       ["--parent", "core.note", "--field", "title:string"],
+      [
+        "--parent",
+        "core.task",
+        "--field",
+        "priority:enum:low,medium,high,urgent",
+      ],
+      ["--parent", "core.message", "--field", "to:array:string"],
       ["--parent", "user.base", "--field", "body:integer"],
     ]) {
       const ran = await scaffold(["user.recipe", ...args]);

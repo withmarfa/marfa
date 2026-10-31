@@ -378,6 +378,60 @@ describe("item versioning", () => {
     expect(read.data.item.tier).toBe("feed");
   });
 
+  it("moves the version on an update of occurred_at, source_id or a type", async () => {
+    const cases: Array<{
+      name: string;
+      body: Record<string, unknown>;
+      expected: (item: MarfaItem) => unknown;
+      read: (item: MarfaItem) => unknown;
+    }> = [
+      {
+        name: "occurred_at",
+        body: { occurred_at: "2026-02-03T04:05:06.000Z" },
+        expected: () => "2026-02-03T04:05:06.000Z",
+        read: (item) => item.occurred_at,
+      },
+      {
+        name: "source_id",
+        body: { source_id: `${ctx.source}-moved` },
+        expected: () => `${ctx.source}-moved`,
+        read: (item) => item.source_id,
+      },
+      {
+        name: "type",
+        body: { type: "core.task", retype: true },
+        expected: () => "core.task",
+        read: (item) => item.type,
+      },
+    ];
+
+    for (const { name, body, expected, read } of cases) {
+      const r = await client.createItem({
+        type: "core.bookmark",
+        source: ctx.source,
+        properties: { url: `https://example.com/${name}`, title: name },
+      });
+      expect(r.ok, name).toBe(true);
+      trackItem(ctx, r.data.item.id);
+      expect(read(r.data.item), name).not.toEqual(expected(r.data.item));
+
+      const updated = await client.updateItem(r.data.item.id, {
+        ...body,
+        version: r.data.item.version,
+      });
+      expect(updated.status, `${name}: ${JSON.stringify(updated.error)}`).toBe(
+        200,
+      );
+      await expectMatchesSchema("PATCH", "/items/{id}", 200, updated.data);
+      expect(updated.data.item.version, name).toBe(r.data.item.version + 1);
+      expect(read(updated.data.item), name).toEqual(expected(r.data.item));
+
+      const read2 = await client.getItem(r.data.item.id);
+      expect(read2.data.item.version, name).toBe(r.data.item.version + 1);
+      expect(read(read2.data.item), name).toEqual(expected(r.data.item));
+    }
+  });
+
   it("merges a stale write on an item field nobody else changed", async () => {
     // The witness for the case above, and the rule it must not break:
     // `versions/merge-stale` merges a stale write whose changed fields did not

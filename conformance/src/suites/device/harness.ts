@@ -584,12 +584,17 @@ export async function hydratedHarness(
     head?: string;
     rows?: Record<string, Array<{ item: WireItemOptions; tags?: string[] }>>;
     types?: string[];
+    /** Types the catalog lists beside the scripted ones. */
+    registered?: ReadonlyArray<Record<string, unknown>>;
   } = {},
 ): Promise<Harness> {
   const harness = await startHarness(label);
   scriptHydration(harness.server, {
     head: options.head ?? "1",
     rows: options.rows,
+    ...(options.registered === undefined
+      ? {}
+      : { catalog: () => typeCatalog(options.registered) }),
   });
   const hydrated = await harness.device.hydrate(
     options.types ?? ["core.note"],

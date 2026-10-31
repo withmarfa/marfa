@@ -141,6 +141,18 @@ describe("a restore of rows whose type no longer shapes them", () => {
     // Reads, listing and search serve the orphan as they serve it on the
     // instance that deleted its type (`types/orphan-read`).
     for (const client of [source, reader]) {
+      const read = await client.getItem(id);
+      expect(read.status, "item").toBe(200);
+      expect(read.data.item.type, "item").toBe(type);
+      const versions = await client.getVersions(id);
+      expect(versions.status, "versions").toBe(200);
+      expect(versions.data.data.length, "versions").toBe(1);
+      const edges = await client.listItemEdges(id);
+      expect(edges.status, "edges").toBe(200);
+      expect(
+        edges.data.data.map((edge) => edge.target_id),
+        "edges",
+      ).toEqual([note.data.item.id]);
       expect(
         (await client.search("edited")).data.data.map((r) => r.item.id),
         "search",

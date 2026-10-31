@@ -8,7 +8,7 @@ An item carries a `version` that starts at 1 and moves with each write to its fi
 
 When `PATCH /items/{id}` names the version the item holds and carries `properties`, `tier`, `occurred_at`, `source_id` or a move to another type, the server MUST answer `200` with the item at the next version.
 
-**Tests:** `correctness/item-versioning.test.ts › version increments on update`, `› moves a row's tier on an update`.
+**Tests:** `correctness/item-versioning.test.ts › version increments on update`, `› moves a row's tier on an update`, `› moves the version on an update of occurred_at, source_id or a type`.
 
 ### `versions/metadata-keeps-version`
 

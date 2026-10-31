@@ -6143,6 +6143,20 @@ describe("a folder's first sync", () => {
     }
     expect(watching.exitCode()).not.toBe(0);
     expect(watching.stderr).toContain("first sync waits for confirmation");
+    // The program-readable run names the code, not only the sentence.
+    const coded = harness.folder.watch();
+    try {
+      await vi.waitFor(() => expect(coded.running()).toBe(false), {
+        timeout: 20_000,
+        interval: 100,
+      });
+    } finally {
+      await coded.stop();
+    }
+    expect(coded.exitCode()).toBe(1);
+    expect(
+      (JSON.parse(coded.stderr) as { error: { code: string } }).error.code,
+    ).toBe("first_sync_waiting");
     expect(writesSent(harness)).toEqual([]);
     expect(existsSync(join(harness.dir, "Remote A.md"))).toBe(false);
 

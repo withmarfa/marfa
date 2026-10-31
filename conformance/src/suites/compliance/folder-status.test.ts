@@ -212,6 +212,97 @@ describe("folder sync reports", () => {
     expect(active).toContain(firstId);
     expect(active).not.toContain(secondId);
   });
+  it("lists folders newest first under a trimmed, collapsed or placeholder title, and refuses an app's token", async () => {
+    const wait = () => new Promise((resolve) => setTimeout(resolve, 15));
+    const made: { id: string; title: string }[] = [];
+    for (const [sent, shown] of [
+      ["  padded \t  and   spaced  ", "padded and spaced"],
+      [" \n\t ", "Untitled folder"],
+      ["plain", "plain"],
+    ] as const) {
+      const r = await call("POST", "/folders", { title: sent });
+      expect(r.status, JSON.stringify(sent)).toBe(201);
+      made.push({
+        id: ((await r.json()) as { item: { id: string } }).item.id,
+        title: shown,
+      });
+      await wait();
+    }
+    const newestFirst = [...made].reverse();
+    const cookie = await signIn(server, origin);
+
+    const owner = await call(
+      "GET",
+      "/folders?limit=200",
+      undefined,
+      "",
+      cookie,
+    );
+    expect(owner.status).toBe(200);
+    const rows = (
+      (await owner.json()) as {
+        data: { id: string; title: string; created_at: string }[];
+      }
+    ).data;
+    expect(
+      rows.filter((row) => made.some((m) => m.id === row.id)),
+      "owner",
+    ).toMatchObject(newestFirst);
+    const created = rows.map((row) => row.created_at);
+    expect(created, "newest first").toEqual([...created].sort().reverse());
+
+    // The same order by single-row pages, which a Set would not show.
+    const paged: string[] = [];
+    let cursor: string | null = null;
+    do {
+      const response = await call(
+        "GET",
+        `/folders?limit=1${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`,
+        undefined,
+        "",
+        cookie,
+      );
+      const page = (await response.json()) as {
+        data: { id: string }[];
+        next_cursor: string | null;
+      };
+      paged.push(...page.data.map((row) => row.id));
+      cursor = page.next_cursor;
+    } while (cursor);
+    expect(paged.filter((id) => made.some((m) => m.id === id))).toEqual(
+      newestFirst.map((m) => m.id),
+    );
+
+    const local = await controlRequest(
+      server.controlSocket,
+      "/folders?limit=200",
+    );
+    expect(local.status).toBe(200);
+    expect(
+      (local.body.data as { id: string; title: string }[]).filter((row) =>
+        made.some((m) => m.id === row.id),
+      ),
+    ).toMatchObject(newestFirst);
+
+    // The witness: the app holds the permission the folder's own reads need,
+    // and the token works there, so the refusal is the inventory's.
+    const app = await registerApp(server, "system.folder:read");
+    const delegated = (
+      await connect(server, origin, cookie, app, "system.folder:read")
+    ).access_token!;
+    const witness = await call(
+      "GET",
+      `/folders/${made[0]!.id}/status`,
+      undefined,
+      delegated,
+    );
+    expect(witness.status).toBe(200);
+    const refused = await call("GET", "/folders", undefined, delegated);
+    expect(refused.status).toBe(403);
+    expect(
+      ((await refused.json()) as { error: { code: string } }).error.code,
+    ).toBe("forbidden");
+  });
   it("allows a local command to read but refuses a report without a sign-in", async () => {
     const id = await folder();
     await put(id);
@@ -357,6 +448,14 @@ describe("folder sync reports", () => {
       { pending_uploads: -1 },
       { pending_downloads: 0.5 },
       { last_success_at: "2026-02-30T09:30:00.000Z" },
+      { last_success_at: "2026-10-03T09:30:00Z" },
+      { last_success_at: "2026-10-03T09:30:00.00Z" },
+      { last_success_at: "2026-10-03T09:30:00.000+00:00" },
+      { last_success_at: "2026-10-03T10:30:00.000+01:00" },
+      { last_success_at: "2026-10-03T09:30:00.000" },
+      { last_success_at: "2026-10-03" },
+      { last_success_at: "2026-10-03T09:30:00.000z" },
+      { last_success_at: "" },
       { folder_store_id: "/private/path" },
     ]) {
       const r = await call("PUT", `/folders/${id}/status`, {

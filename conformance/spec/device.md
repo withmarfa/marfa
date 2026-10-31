@@ -4118,7 +4118,7 @@ Where a file is attached or added with no type, a device MUST give the file item
 
 **Reason:** a page is an HTML file whatever the top-level part of its MIME type, which names only text; a parameter such as a charset, and the case of the type, do not change what it is.
 
-**Tests:** `device/queue.test.ts › types an added file by its extension, whatever its case, where it is told nothing`, `› adds a file as an upload and a file item, linked to nothing`.
+**Tests:** `device/queue.test.ts › types an added file by its extension, whatever its case, where it is told nothing`, `› types an added file by the MIME type it is told, whatever its kind, parameter and case`, `› adds a file as an upload and a file item, linked to nothing`.
 
 ### `device/file-title-default`
 
@@ -4920,7 +4920,7 @@ If hydration is incomplete, or its copy is stale, then a device MUST refuse to e
 
 **Reason:** partial or out-of-date rows or totals would misrepresent the saved view.
 
-**Tests:** `device/views.test.ts › refuses a partially hydrated view instead of reporting partial totals`.
+**Tests:** `device/views.test.ts › refuses a partially hydrated view's %s with hydration_incomplete instead of reporting partial totals`, `› refuses a stale copy's view %s with hydration_incomplete while the copy itself still answers`.
 
 ### `device/view-cli-selection`
 

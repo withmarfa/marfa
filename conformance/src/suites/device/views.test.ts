@@ -1,10 +1,15 @@
 import { spawnSync } from "node:child_process";
 import { afterEach, expect, it } from "vitest";
 import {
+  catchupTooOld,
+  connected,
+  copyReplay,
+  copyStreamCursor,
   typeCatalog,
   type WireItemOptions,
 } from "../../device/marfa-answers.js";
 import type { Item, Outcome } from "../../device/protocol.js";
+import type { Answer } from "../../device/scripted-server.js";
 import {
   requireBinary,
   scriptHydration,
@@ -39,6 +44,7 @@ async function copy(
     slice?: string[];
     tier?: "library" | "all";
     partial?: boolean;
+    replay?: (cursor: string) => Answer;
   } = {},
 ) {
   await harness?.stop();
@@ -75,6 +81,7 @@ async function copy(
         { id: id(103), source_id: id(2), target_id: id(3) },
       ],
     },
+    ...(options.replay ? { replay: options.replay } : {}),
     ...(options.partial
       ? { pageSize: 1, drop: (offset: number) => offset > 0 }
       : {}),
@@ -412,18 +419,65 @@ it.each(unanswerableCases)(
   },
 );
 
-it("refuses a partially hydrated view instead of reporting partial totals", async () => {
+/** A whole copy whose cursor then ages out, so it answers but is stale. */
+async function agedOut() {
+  let aged = false;
   const device = await copy(
     [1, 2].map((n) => ({ item: { id: id(n) } })),
     {},
-    { partial: true },
+    {
+      replay: (cursor) =>
+        aged
+          ? {
+              kind: "sse",
+              frames: [
+                connected,
+                copyStreamCursor("900"),
+                catchupTooOld("500", cursor),
+              ],
+            }
+          : copyReplay(cursor, []),
+    },
   );
-  const partial = value(await device.listAnswer());
-  expect(partial.completeness).toBe("partial");
-  const answer = await device.attempt(["items", "list", "--view", VIEW]);
-  expect(answer.ok).toBe(false);
-  if (!answer.ok) expect(answer.refusal.raw).toMatch(/hydrat|incomplete/);
-});
+  // The witness: it answers whole before the cursor ages out.
+  expect((await listed()).sort()).toEqual([id(1), id(2)]);
+  aged = true;
+  expect((await device.catchUp()).ok).toBe(false);
+  return device;
+}
+
+const READS: Array<[string, string[]]> = [
+  ["items", ["items", "list", "--view", VIEW]],
+  ["groups", ["views", "groups", VIEW]],
+];
+
+it.each(READS)(
+  "refuses a partially hydrated view's %s with hydration_incomplete instead of reporting partial totals",
+  async (_name, command) => {
+    const device = await copy(
+      [1, 2].map((n) => ({ item: { id: id(n) } })),
+      {},
+      { partial: true },
+    );
+    const partial = value(await device.listAnswer());
+    expect(partial.completeness).toBe("partial");
+    const answer = await device.attempt(command);
+    expect(answer.ok).toBe(false);
+    if (!answer.ok) expect(answer.refusal.code).toBe("hydration_incomplete");
+  },
+);
+
+it.each(READS)(
+  "refuses a stale copy's view %s with hydration_incomplete while the copy itself still answers",
+  async (_name, command) => {
+    const device = await agedOut();
+    const answer = await device.listAnswer();
+    expect(answer.ok && answer.value.completeness).toBe("stale");
+    const refused = await device.attempt(command);
+    expect(refused.ok, JSON.stringify(refused)).toBe(false);
+    if (!refused.ok) expect(refused.refusal.code).toBe("hydration_incomplete");
+  },
+);
 
 it("accepts --view and refuses the removed --folder option", async () => {
   await copy([{ item: { id: id(1) } }], {});
