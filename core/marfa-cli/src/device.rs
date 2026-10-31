@@ -871,8 +871,12 @@ pub struct UpdateArgs {
     /// The item id.
     pub id: String,
     /// The properties to write, as a JSON object. Whole values.
-    #[arg(long, value_name = "JSON")]
+    #[arg(long, value_name = "JSON", default_value = "{}")]
     pub properties: String,
+    /// A property to remove from the item, leaving every other as it is.
+    /// Repeat it to remove more than one.
+    #[arg(long = "clear-property", value_name = "NAME")]
+    pub clear_properties: Vec<String>,
     /// The version the edit was based on. Required: the device refuses an
     /// update that names no version, as the server does.
     #[arg(long)]
@@ -1379,6 +1383,7 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
                         occurred_at: args.occurred_at,
                         clear_occurred_at: args.clear_occurred_at,
                         replace_properties: args.replace,
+                        clear_properties: args.clear_properties,
                     };
                     let queued = if args.as_read {
                         core.update_item_as_read(&args.id, &edit)?

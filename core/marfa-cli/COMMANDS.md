@@ -618,6 +618,7 @@ marfa items update [OPTIONS] --version <VERSION> <ID>
 | `--properties <JSON>` | The properties, as a JSON object. |
 | `--prop <KEY=VALUE>` | One property as key=value, repeatable. The value is a string. |
 | `--replace` | Replace the properties whole instead of merging the ones given. |
+| `--clear-property <NAME>` | A property to remove from the item, leaving every other as it is. Repeat it to remove more than one. |
 | `--type <TYPE>` | Move the item to this type. |
 | `--retype` | Let the type change even where the target type is enforced. |
 | `--tier <TIER>` | The tier to move the item to. One of `library`, `feed`. |
@@ -2770,7 +2771,7 @@ Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 Change an item in the local copy and queue the change.
 
 ```text
-marfa device items update [OPTIONS] --properties <JSON> <ID>
+marfa device items update [OPTIONS] <ID>
 ```
 
 | Argument | Description |
@@ -2779,7 +2780,8 @@ marfa device items update [OPTIONS] --properties <JSON> <ID>
 
 | Option | Description |
 | --- | --- |
-| `--properties <JSON>` | The properties to write, as a JSON object. Whole values. |
+| `--properties <JSON>` | The properties to write, as a JSON object. Whole values. Default: `{}`. |
+| `--clear-property <NAME>` | A property to remove from the item, leaving every other as it is. Repeat it to remove more than one. |
 | `--version <VERSION>` | The version the edit was based on. Required: the device refuses an update that names no version, as the server does. |
 | `--source-id <KEY>` | The natural key to move the row to. The server refuses one another item already holds, so a rename does not take a name off a note. |
 | `--as-read` | The version is one read before the version the copy holds now, and the server merges the edit against it rather than taking it as newer than what came in since. |

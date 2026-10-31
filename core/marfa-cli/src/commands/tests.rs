@@ -167,6 +167,20 @@ fn an_update_carries_the_version_and_asks_for_resolution_only_when_told() {
     assert_eq!(body(&resolved)["source_id"], "notes/new.md");
     // An empty object would clear everything under `--replace`.
     assert!(body(&resolved).get("properties").is_none());
+
+    let cleared = items::update_request(&items::UpdateArgs {
+        id: "i1".into(),
+        version: 7,
+        clear_properties: vec!["notes".into(), "due".into()],
+        ..Default::default()
+    })
+    .unwrap();
+    assert_eq!(
+        body(&cleared),
+        &json!({ "version": 7, "clear_properties": ["notes", "due"] })
+    );
+    // The witness: no flag sends no list.
+    assert!(body(&plain).get("clear_properties").is_none());
 }
 
 #[test]
