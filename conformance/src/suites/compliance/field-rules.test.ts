@@ -613,6 +613,141 @@ describe("a url is stored without the whitespace around it at every door", () =>
   });
 });
 
+describe("a conflicted copy is judged as a create of its type", () => {
+  let typeId: string;
+
+  beforeAll(async () => {
+    typeId = nextId();
+    const registered = await client.registerType({
+      id: typeId,
+      fields: {
+        title: { type: "string" },
+        link: { type: "url" },
+        n: { type: "integer" },
+      },
+      merge_policy: {
+        default: "last_writer_wins",
+        fields: { link: "keep_both_copies", n: "keep_both_copies" },
+      },
+    });
+    expect(registered.status, JSON.stringify(registered.error)).toBe(201);
+  });
+
+  const listed = async () => {
+    const items = await client.listItems({ type: typeId, limit: 100 });
+    expect(items.status).toBe(200);
+    return items.data.data.map((item) => item.id).sort();
+  };
+
+  /** An item whose `field` a first writer has moved on, then a second
+   *  writer's stale body for it. */
+  const collide = async (field: string, first: unknown, late: unknown) => {
+    const created = await client.createItem({
+      type: typeId,
+      source: ctx.source,
+      properties: { title: "Shared" },
+    });
+    expect(created.status, JSON.stringify(created.error)).toBe(201);
+    trackItem(ctx, created.data.item.id);
+    const { id, version } = created.data.item;
+    const moved = await client.updateItem(id, {
+      properties: { [field]: first },
+      version,
+    });
+    expect(moved.status, JSON.stringify(moved.error)).toBe(200);
+    const before = await listed();
+    const stale = await client.rawRequest<{
+      conflict_resolution?: { conflicted_copy_id?: string };
+    }>(`/items/${id}?conflict=auto`, {
+      method: "PATCH",
+      body: { properties: { [field]: late }, version },
+    });
+    return { id, before, moved: moved.data.item, stale };
+  };
+
+  it("stores a url in the copy without the whitespace around it", async () => {
+    const { stale } = await collide(
+      "link",
+      "https://a.test/",
+      "  https://c.test/ \t",
+    );
+    expect(stale.status, JSON.stringify(stale.data)).toBe(200);
+    const copyId = stale.data.conflict_resolution?.conflicted_copy_id;
+    expect(copyId, "no copy was written").toBeTruthy();
+    trackItem(ctx, String(copyId));
+    const copy = await client.getItem(String(copyId));
+    expect(copy.data.item.properties.link).toBe("https://c.test/");
+  });
+
+  it("refuses a copy holding a value of the wrong kind, writing neither the copy nor the change", async () => {
+    const refused = await collide("n", 7, "not a number");
+    expect(refused.stale.status, JSON.stringify(refused.stale.data)).toBe(400);
+    expect(refused.stale.error?.error.code).toBe("invalid_properties");
+    expect(errorsOf(refused.stale)?.map((e) => e.field)).toContain("n");
+    expect(await listed(), "a copy was written").toEqual(refused.before);
+    const kept = await client.getItem(refused.id);
+    expect(kept.data.item.version).toBe(refused.moved.version);
+    expect(kept.data.item.properties.n).toBe(7);
+
+    // The witness: a number in the same collision makes the copy.
+    const taken = await collide("n", 7, 9);
+    expect(taken.stale.status, JSON.stringify(taken.stale.data)).toBe(200);
+    const copyId = taken.stale.data.conflict_resolution?.conflicted_copy_id;
+    expect(copyId, "no copy was written").toBeTruthy();
+    trackItem(ctx, String(copyId));
+    const copy = await client.getItem(String(copyId));
+    expect(copy.data.item.properties.n).toBe(9);
+  });
+});
+
+describe("an object is stored key for key as given", () => {
+  it("keeps a __proto__ key of an object and of a list's objects through a create and an update", async () => {
+    const typeId = nextId();
+    const registered = await client.registerType({
+      id: typeId,
+      fields: {
+        title: { type: "string" },
+        meta: { type: "object" },
+        rows: { type: "array", items_type: "object" },
+      },
+    });
+    expect(registered.status, JSON.stringify(registered.error)).toBe(201);
+
+    // JSON.parse makes `__proto__` an own key, which an object literal does not.
+    const meta = JSON.parse('{"__proto__": {"x": 1}, "k": 1}') as Record<
+      string,
+      unknown
+    >;
+    const rows = JSON.parse('[{"__proto__": {"y": 2}, "k": 2}]') as unknown[];
+    const created = await client.createItem({
+      type: typeId,
+      source: ctx.source,
+      properties: { title: "t", meta, rows },
+    });
+    expect(created.status, JSON.stringify(created.error)).toBe(201);
+    const { id, version } = created.data.item;
+    trackItem(ctx, id);
+
+    const updated = await client.updateItem(id, {
+      properties: { title: "t2" },
+      version,
+    });
+    expect(updated.status, JSON.stringify(updated.error)).toBe(200);
+
+    for (const properties of [
+      created.data.item.properties,
+      (await client.getItem(id)).data.item.properties,
+    ]) {
+      expect(Object.hasOwn(properties.meta as object, "__proto__")).toBe(true);
+      expect(properties.meta).toEqual(meta);
+      expect(
+        Object.hasOwn((properties.rows as object[])[0] as object, "__proto__"),
+      ).toBe(true);
+      expect(properties.rows).toEqual(rows);
+    }
+  });
+});
+
 describe("a string whose format is a kind of its own", () => {
   const entries = (member: FieldDefinition): FieldDefinition => ({
     type: "array",

@@ -890,6 +890,25 @@ const bounded = (
   return out;
 };
 
+const plainRecord = z.record(z.string(), z.unknown());
+
+/**
+ * An object value of no declared members, checked and answered as given. A
+ * record's output drops a key named `__proto__` that JSON.parse made an own
+ * key, so the value is stored from the raw input.
+ */
+const objectValue = z.unknown().transform((raw, ctx) => {
+  const typed = plainRecord.safeParse(raw);
+  if (!typed.success) {
+    ctx.addIssue({
+      code: "custom",
+      message: typed.error.issues[0]?.message ?? "Must be an object",
+    });
+    return z.NEVER;
+  }
+  return raw as Record<string, unknown>;
+});
+
 /**
  * The schema of one entry of a list whose `items_fields` names its members: a
  * non-empty object holding only those members, each required one and each
@@ -908,9 +927,8 @@ function entryToZod(members: Readonly<Record<string, EntryMember>>): z.ZodType {
       valueToZod(member.type, member) ?? z.unknown(),
     ]),
   );
-  const plain = z.record(z.string(), z.unknown());
   return z.unknown().transform((raw, ctx) => {
-    const typed = plain.safeParse(raw);
+    const typed = plainRecord.safeParse(raw);
     if (!typed.success) {
       ctx.addIssue({
         code: "custom",
@@ -1024,7 +1042,7 @@ function valueToZod(
         .array(z.unknown())
         .max(field.maxItems ?? DEFAULT_MAX_ARRAY_ITEMS);
     case "object":
-      return z.record(z.string(), z.unknown());
+      return objectValue;
     case "thumbnail":
       return thumbnail;
     default:

@@ -34,7 +34,6 @@ import {
   ALL_TYPE_IDS,
   isValidTypeIdentifier,
   scheduleIssues,
-  statusIssues,
   validateProperties,
   validateTransition,
   getEdgeTypeSchema,
@@ -662,8 +661,9 @@ function withoutKeys(
  * The properties a write stores: each value as validation answers it (a `url`
  * trimmed, `types/url-stored`), in the order the write found them
  * (`items/property-order-merge`). Validation answers the type's fields first,
- * so its order is not the row's. A property validation does not answer, which
- * is one named `__proto__`, stays as it was.
+ * so its order is not the row's. A property validation does not answer stays
+ * as it was, and so does one it answers with nothing, which is a stored
+ * `null` on an optional field: an update that does not touch it keeps it.
  */
 function storedAsValidated(
   result: Record<string, unknown>,
@@ -671,7 +671,8 @@ function storedAsValidated(
 ): Record<string, unknown> {
   const stored: Record<string, unknown> = {};
   for (const key of Object.keys(result)) {
-    const value = Object.hasOwn(validated, key) ? validated[key] : result[key];
+    const answered = Object.hasOwn(validated, key) ? validated[key] : undefined;
+    const value = answered === undefined ? result[key] : answered;
     if (value !== undefined)
       Object.defineProperty(stored, key, {
         value,
@@ -1920,36 +1921,32 @@ export class SqliteItemStore implements ItemStore {
               ancestorFields,
             );
           }
-          // The copy is a new item, so a status word it holds that the write
-          // changed is judged as a create's would be, and refusing it refuses
-          // the whole write. A stored word the write leaves alone is kept.
-          // Its schedule is judged whole, as a create's is, so that a rule
-          // the losing writer set cannot be stored here when every other
-          // door refuses it.
+          // The copy is a new item, so it is judged as a create of its type
+          // would be and stored as that judgment answers it, and refusing it
+          // refuses the whole write. A status word the write leaves alone is
+          // kept, as in an update. Its schedule is judged whole, as a create's
+          // is, so that a rule the losing writer set cannot be stored here
+          // when every other door refuses it.
           const siblingProperties = conflictedSiblingProperties({
             clientProperties: clientProps,
             currentProperties: currentProps,
             keepBothFields: plan.keepBothFields,
             clearedProperties,
           });
-          const errors = [
-            ...statusIssues(
-              row.type,
-              Object.fromEntries(
-                Object.entries(siblingProperties).filter(
-                  ([name, value]) => !Object.is(value, currentProps[name]),
-                ),
+          const validation = validateProperties(row.type, siblingProperties, {
+            written: Object.fromEntries(
+              Object.entries(siblingProperties).filter(
+                ([name, value]) => !Object.is(value, currentProps[name]),
               ),
             ),
-            ...scheduleIssues(row.type, siblingProperties),
-          ];
-          if (errors.length > 0) {
+          });
+          if (!validation.success) {
             throw new MarfaError(
               ErrorCode.INVALID_PROPERTIES,
-              `Invalid properties: ${errors
+              `Invalid properties: ${validation.errors
                 .map((e) => `${e.field}: ${e.message}`)
                 .join("; ")}`,
-              { errors },
+              { errors: validation.errors },
             );
           }
           siblingId = conflictedSiblingIdFor(id, input.version, input);
@@ -1962,7 +1959,7 @@ export class SqliteItemStore implements ItemStore {
             refuseUnprovenFile: input.refuse_unproven_file === true,
             carried: staleCarried,
             writer: input.writer ?? null,
-            properties: siblingProperties,
+            properties: storedAsValidated(siblingProperties, validation.data),
           });
         }
 

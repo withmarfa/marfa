@@ -557,6 +557,14 @@ If a write of an item's properties, by a create, an update, an upsert or an entr
 
 **Tests:** `compliance/field-rules.test.ts › refuses %s, naming the field, the position and the member`, `› checks the entries on an update and a bulk entry, naming the member, and on entries stored before the field declared its members`.
 
+### `types/object-stored`
+
+When the server takes an `object` field, or an element of an `array` field of `object` with no `items_fields`, the server MUST store each key of the object as given, a key named `__proto__` among them.
+
+**Reason:** a JSON text makes `__proto__` an ordinary key, and an update that names another property must keep what the item holds.
+
+**Tests:** `compliance/field-rules.test.ts › an object is stored key for key as given`.
+
 ### `types/searchable-false`
 
 When a field declares `searchable: false`, the server MUST leave its value out of full-text matches and answer it on the item.
