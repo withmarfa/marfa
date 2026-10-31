@@ -2007,9 +2007,42 @@ impl Folder {
                 );
             }
         }
+        let recorded = self.hold_ends(&wanted)?;
+        let conn = self.core.conn()?;
+        for (id, made) in recorded {
+            if !wanted.contains(&id) {
+                state::release_edge_end(&conn, &id, made)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Before the scan of a first sync, holds the attachments of the
+    /// documents the query holds as `hold_edge_ends` would, so a file the
+    /// directory already has where a pull would write one is found as that
+    /// item, not sent again as a new one.
+    pub(super) fn hold_attachments(&self) -> Result<()> {
+        let members = self.members(&self.settings()?)?;
+        let wanted: std::collections::BTreeSet<String> = self
+            .core
+            .edges_of_type(ATTACHMENT_EDGE)?
+            .into_iter()
+            .filter(|edge| members.contains(&edge.target_id))
+            .map(|edge| edge.source_id)
+            .collect();
+        self.hold_ends(&wanted)?;
+        Ok(())
+    }
+
+    /// Pins each of `wanted` the record does not hold yet and records it.
+    /// Answers the record as it stood before.
+    fn hold_ends(
+        &self,
+        wanted: &std::collections::BTreeSet<String>,
+    ) -> Result<HashMap<String, bool>> {
         let recorded: HashMap<String, bool> =
             state::edge_ends(&*self.core.conn()?)?.into_iter().collect();
-        for id in &wanted {
+        for id in wanted {
             if recorded.contains_key(id) {
                 continue;
             }
@@ -2043,13 +2076,7 @@ impl Folder {
             };
             state::hold_edge_end(&*self.core.conn()?, id, made)?;
         }
-        let conn = self.core.conn()?;
-        for (id, made) in recorded {
-            if !wanted.contains(&id) {
-                state::release_edge_end(&conn, &id, made)?;
-            }
-        }
-        Ok(())
+        Ok(recorded)
     }
 }
 

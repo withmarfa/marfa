@@ -659,7 +659,8 @@ impl Folder {
     ) -> Result<(Vec<Option<Claim>>, Waiting)> {
         let (files, snapshot, stale) = (&scan.files, &scan.snapshot, &scan.stale);
         let (settings, catalog) = (&scan.settings, &scan.catalog);
-        let (mut claims, mut waiting) = self.claim(files, snapshot, settings, catalog, peers)?;
+        let (mut claims, mut waiting) =
+            self.claim(files, snapshot, settings, catalog, peers, &scan.embedded)?;
         for (at, file) in files.iter().enumerate() {
             if let Some(reason) = stale.get(&file.key) {
                 claims[at] = None;
@@ -1412,6 +1413,7 @@ impl Folder {
         settings: &Settings,
         catalog: &Catalog,
         peers: &Peers<'_>,
+        embedded: &HashSet<String>,
     ) -> Result<(Vec<Option<Claim>>, Waiting)> {
         let by_mark: HashMap<&str, &state::Bound> = snapshot
             .iter()
@@ -1534,8 +1536,10 @@ impl Folder {
         }
         // A file that carries no id and that no record here names, the
         // folder added again over its own files say, is the item this folder
-        // holds that is placed where it sits and whose bytes it holds. An item
-        // the query no longer holds, one another folder took in or one that
+        // carries that is placed where it sits and whose bytes it holds: one
+        // its query holds, or, where a document here embeds the file, one
+        // attached to an item its query holds, as a pull writes it. An item
+        // the folder no longer carries, one another folder took in or one that
         // left by state, has a file elsewhere or none, and a copy of it is new.
         let mut placed: Option<HashMap<String, Vec<crate::model::Edge>>> = None;
         for (at, file) in files.iter().enumerate() {
@@ -1556,7 +1560,9 @@ impl Folder {
             for edge in candidates {
                 if by_item.contains_key(edge.source_id.as_str())
                     || taken.contains(&edge.source_id)
-                    || !self.holds(&edge.source_id, settings, &members)
+                    || !(self.holds(&edge.source_id, settings, &members)
+                        || (embedded.contains(&file.key)
+                            && self.attached_to_held(&edge.source_id, settings, &members)?))
                 {
                     continue;
                 }
@@ -1753,6 +1759,18 @@ impl Folder {
             });
         }
         Ok(Arrival::Here)
+    }
+
+    fn attached_to_held(
+        &self,
+        id: &str,
+        settings: &Settings,
+        members: &OnceCell<HashSet<String>>,
+    ) -> Result<bool> {
+        Ok(self.core.edges_from(id)?.iter().any(|edge| {
+            edge.edge_type == embeds::ATTACHMENT_EDGE
+                && self.holds(&edge.target_id, settings, members)
+        }))
     }
 
     fn holds(&self, id: &str, settings: &Settings, members: &OnceCell<HashSet<String>>) -> bool {

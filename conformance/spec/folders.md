@@ -2668,9 +2668,11 @@ When an unreadable renamed file leaves a replacement at its previous path, a dev
 
 ### `folders/identity-placement-bytes`
 
-When an unbound raw-text or file-item file matches the path and rendered bytes of an otherwise unbound item held by the query, a device MUST bind it to that item.
+When an unbound raw-text or file-item file matches the path and rendered bytes of an otherwise unbound item held by the query, or of an otherwise unbound file item attached to a document the query holds whose file embeds it, a device MUST bind it to that item.
 
-**Tests:** `device/folders-placement.test.ts › takes back the files it holds by placement and bytes when it is added again over them`, `device/folders-placement.test.ts › takes back an empty text file rendered from a missing body`.
+**Reason:** A pull writes the attachments of the documents a folder holds even when its query holds no file type, so a folder added again over such a file holds it as the item it was, not as a new item beside a second copy. The first sync's plan reads the attachment from the server before it reads the directory, as the pull would.
+
+**Tests:** `device/folders-placement.test.ts › takes back the files it holds by placement and bytes when it is added again over them`, `device/folders-placement.test.ts › takes back an empty text file rendered from a missing body`, `device/folders-frontmatter.test.ts › takes each back as its own item by placement and bytes, and plans and sends nothing`, `device/folders-frontmatter.test.ts › sends as new a file whose bytes changed while it was away, or that holds the bytes of a file placed elsewhere, and loses neither item's bytes`.
 
 ### `folders/identity-takeback-search`
 

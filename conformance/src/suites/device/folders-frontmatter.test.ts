@@ -2081,18 +2081,38 @@ describe("embedded files", () => {
       door.hold(edge);
       placements[id] = edge.id;
     }
-    for (const item of items) {
+    const drawnFrom = (
+      id: unknown,
+    ): Record<string, { data: unknown[]; next_cursor: null }> => {
       const drawn: Record<string, { data: unknown[]; next_cursor: null }> = {};
       for (const edge of door.edges.values()) {
-        if (edge.source_id !== item.id) continue;
+        if (edge.source_id !== id) continue;
         (drawn[edge.edge_type ?? "references"] ??= {
           data: [],
           next_cursor: null,
         }).data.push(wireEdge(edge));
       }
-      item.edges = drawn;
-    }
-    scriptFolderWrites(made, { edges: door });
+      return drawn;
+    };
+    for (const item of items) item.edges = drawnFrom(item.id);
+    scriptFolderWrites(made, {
+      edges: door,
+      // A read by id that asks for its edges is answered with them, as the
+      // server's is: the read that holds an attachment outside the query.
+      reading: (answer, request) => {
+        const include = request.query.get("include")?.split(",") ?? [];
+        if (answer.kind !== "json" || !include.includes("edges")) return answer;
+        const body = answer.body as { item?: Record<string, unknown> };
+        if (body.item === undefined) return answer;
+        return {
+          ...answer,
+          body: {
+            ...body,
+            item: { ...body.item, edges: drawnFrom(body.item.id) },
+          },
+        };
+      },
+    });
     const hydrated = await made.folder.hydrate();
     if (!hydrated.ok) {
       await made.stop();
@@ -3347,6 +3367,212 @@ describe("embedded files", () => {
       existsSync(join(harness.dir, "art", "x.png")),
       "a .txt file's text was read as embedding a file",
     ).toBe(false);
+  });
+
+  describe("a folder of notes added again over the files its notes embed", () => {
+    const [photo, copy, large, logo] = [
+      "01a00000-0000-7000-8000-00000000e401",
+      "01a00000-0000-7000-8000-00000000e402",
+      "01a00000-0000-7000-8000-00000000e403",
+      "01a00000-0000-7000-8000-00000000e404",
+    ];
+    const edgeId = (n: number): string =>
+      `01a00000-0000-7000-8000-00000000e4${String(n).padStart(2, "0")}`;
+
+    /** The item the folder holds each file as, by path. */
+    async function boundIds(
+      made: FolderHarness,
+    ): Promise<Record<string, string | undefined>> {
+      const status = await made.folder.status();
+      if (!status.ok) throw new Error(JSON.stringify(status));
+      return Object.fromEntries(
+        status.value.files.map((file) => [file.path, file.item_id]),
+      );
+    }
+
+    /** The id of the one item created under `title`. */
+    function idByTitle(
+      created: Array<Record<string, unknown>>,
+      title: string,
+    ): unknown {
+      const named = created.filter(
+        (create) => (create.properties as { title?: string }).title === title,
+      );
+      expect(named).toHaveLength(1);
+      return named[0]!.id;
+    }
+
+    /** Writes the folder's files and sends what that leaves to send, then
+     *  takes the folder off the machine. */
+    async function pulledAndRemoved(made: FolderHarness): Promise<void> {
+      for (const pass of ["first", "second"]) {
+        const pushed = await made.folder.push();
+        expect(pushed.ok, `${pass} push: ${JSON.stringify(pushed)}`).toBe(true);
+      }
+      const removed = await made.folder.remove();
+      expect(removed.ok, JSON.stringify(removed)).toBe(true);
+    }
+
+    it("takes each back as its own item by placement and bytes, and plans and sends nothing", async () => {
+      // Several MB, so the bytes are compared from a file this size too.
+      const big = Buffer.concat([png(7), Buffer.alloc(4 * 1024 * 1024, 0x2a)]);
+      const made = await placedEmbeds(
+        "folder-embed-added-again",
+        [
+          {
+            id: host,
+            properties: {
+              title: "Host",
+              body: "![](photo.png)\n![](copy.png)\n![](big.png)\n",
+            },
+          },
+          fileRow(photo, "photo.png", png(5)),
+          // The same bytes at another path, as another item.
+          fileRow(copy, "copy.png", png(5)),
+          fileRow(large, "big.png", big),
+        ],
+        [
+          attached(edgeId(11), photo, host),
+          attached(edgeId(12), copy, host),
+          attached(edgeId(13), large, host),
+        ],
+        {
+          [host]: "Host.md",
+          [photo]: "photo.png",
+          [copy]: "copy.png",
+          [large]: "big.png",
+        },
+        ["core.note"],
+      );
+      harness = made.harness;
+      acceptUploads(harness.server);
+      scriptBlob(harness.server, png(5));
+      scriptBlob(harness.server, big);
+      await pulledAndRemoved(harness);
+      expect(readFileSync(join(harness.dir, "copy.png"))).toEqual(png(5));
+      expect(readFileSync(join(harness.dir, "big.png"))).toEqual(big);
+
+      const added = await harness.folder.add(harness.settings.id, {
+        confirm: false,
+      });
+      expect(added.ok, JSON.stringify(added)).toBe(true);
+      if (!added.ok) return;
+      expect(
+        added.value.first_sync,
+        "a folder of notes added again over the files its notes embed planned to send them as new items",
+      ).toEqual({
+        waiting: false,
+        write: null,
+        send: null,
+        beside: null,
+        left: null,
+        unread: null,
+      });
+      const pushed = await harness.folder.push();
+      expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+      expect(
+        sentCreates(harness),
+        "a file a note embeds was sent again as a new item",
+      ).toEqual([]);
+      expect(sentUpdates(harness)).toEqual([]);
+      expect(await boundIds(harness)).toEqual({
+        "Host.md": host,
+        "photo.png": photo,
+        "copy.png": copy,
+        "big.png": large,
+      });
+      expect(
+        readdirSync(harness.dir)
+          .filter((name) => !name.startsWith("."))
+          .sort(),
+        "the pull wrote an embedded file again beside the one that held it",
+      ).toEqual(["Host.md", "big.png", "copy.png", "photo.png"]);
+    });
+
+    it("sends as new a file whose bytes changed while it was away, or that holds the bytes of a file placed elsewhere, and loses neither item's bytes", async () => {
+      const made = await placedEmbeds(
+        "folder-embed-added-again-not",
+        [
+          {
+            id: host,
+            properties: {
+              title: "Host",
+              body: "![](chart.png)\n![](logo.png)\n",
+            },
+          },
+          fileRow(chart, "chart.png", png(6)),
+          fileRow(logo, "logo.png", png(8)),
+        ],
+        [attached(edgeId(14), chart, host), attached(edgeId(15), logo, host)],
+        {
+          [host]: "Host.md",
+          [chart]: "chart.png",
+          [logo]: "logo.png",
+        },
+        ["core.note"],
+      );
+      harness = made.harness;
+      acceptUploads(harness.server);
+      scriptBlob(harness.server, png(6));
+      scriptBlob(harness.server, png(8));
+      await pulledAndRemoved(harness);
+      // While the folder was off the machine: the chart was edited, and the
+      // logo copied to another place the note embeds it from.
+      writeFileSync(join(harness.dir, "chart.png"), png(9));
+      mkdirSync(join(harness.dir, "Other"));
+      writeFileSync(join(harness.dir, "Other", "logo.png"), png(8));
+      edit(
+        harness,
+        "Host.md",
+        "![](logo.png)\n",
+        "![](logo.png)\n![](Other/logo.png)\n",
+      );
+
+      const added = await harness.folder.add(harness.settings.id, {
+        confirm: false,
+      });
+      expect(added.ok, JSON.stringify(added)).toBe(true);
+      if (!added.ok) return;
+      expect(added.value.first_sync).toEqual({
+        waiting: true,
+        write: 1,
+        send: 3,
+        beside: 1,
+        left: 0,
+        unread: null,
+      });
+      expect((await harness.folder.confirm()).ok).toBe(true);
+      const pushed = await harness.folder.push();
+      expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+      const created = sentCreates(harness);
+      expect(
+        created
+          .map((create) => create.id)
+          .filter((id) => id === chart || id === logo),
+        "a file whose bytes are not its placed item's was taken as that item",
+      ).toEqual([]);
+      expect(
+        created
+          .map((create) => (create.properties as { title?: string }).title)
+          .sort(),
+      ).toEqual(["chart.png", "logo.png"]);
+      expect(sentUpdates(harness).map((update) => update.id)).toEqual([host]);
+      const bound = await boundIds(harness);
+      expect(bound["logo.png"]).toBe(logo);
+      expect(bound["Other/logo.png"]).toBe(idByTitle(created, "logo.png"));
+      // Nothing lost: the item placed at the path keeps it and its own bytes
+      // are written there, and the edited file is sent as a new item and
+      // takes a number in its name (`folders/placement-collision-order`).
+      expect(bound["chart.png"]).toBe(chart);
+      expect(readFileSync(join(harness.dir, "chart.png"))).toEqual(png(6));
+      expect(bound["chart (2).png"]).toBe(idByTitle(created, "chart.png"));
+      expect(readFileSync(join(harness.dir, "chart (2).png"))).toEqual(png(9));
+      expect(
+        harness.server.requests.filter(
+          (request) => request.method === "DELETE",
+        ),
+      ).toEqual([]);
+    });
   });
 
   it("removes the edge of an embed taken out between two scans before a push", async () => {
