@@ -14,8 +14,10 @@ import {
   ALL_TYPE_IDS,
   EDGE_PROPERTY_KEYS,
   EDGE_TYPE_SCHEMA_KEYS,
+  ENTRY_MEMBER_TYPES,
   FIELD_FORMATS,
   FIELD_TYPES,
+  FORMAT_TO_FIELD_TYPE,
   RESERVED_ITEM_FIELDS,
   ROLE_CONSTRAINT_PREFIX,
   SHIPPED_TYPE_SHAPES,
@@ -37,6 +39,7 @@ import {
 } from "@withmarfa/types";
 import type {
   DisplayHints,
+  EntryMember,
   FieldDefinition,
   FieldFormat,
   FieldType,
@@ -104,7 +107,13 @@ export {
 // The field vocabularies the validator enforces, re-exported for the same
 // reason: the door that declares what a field definition looks like reads
 // the validator's own lists rather than restating them.
-export { ALWAYS_SEARCHED_FIELDS, FIELD_TYPES, FIELD_FORMATS };
+export {
+  ALWAYS_SEARCHED_FIELDS,
+  ENTRY_MEMBER_TYPES,
+  FIELD_TYPES,
+  FIELD_FORMATS,
+  FORMAT_TO_FIELD_TYPE,
+};
 
 // The fixed status groups and how a chain joins a status field's words.
 export {
@@ -866,6 +875,113 @@ const thumbnail = z.string().superRefine((value, ctx) => {
   }
 });
 
+/** Whether ISO 4217 assigns the code is left alone: that list changes. */
+const CURRENCY_CODE = z
+  .string()
+  .regex(/^[A-Z]{3}$/, "Must be a currency code of three capital letters");
+
+const bounded = (
+  schema: z.ZodNumber,
+  { minimum, maximum }: Pick<FieldDefinition, "minimum" | "maximum">,
+): z.ZodType => {
+  let out = schema;
+  if (minimum !== undefined) out = out.gte(minimum);
+  if (maximum !== undefined) out = out.lte(maximum);
+  return out;
+};
+
+const plainRecord = z.record(z.string(), z.unknown());
+
+/**
+ * An object value of no declared members, checked and answered as given. A
+ * record's output drops a key named `__proto__` that JSON.parse made an own
+ * key, so the value is stored from the raw input.
+ */
+const objectValue = z.unknown().transform((raw, ctx) => {
+  const typed = plainRecord.safeParse(raw);
+  if (!typed.success) {
+    ctx.addIssue({
+      code: "custom",
+      message: typed.error.issues[0]?.message ?? "Must be an object",
+    });
+    return z.NEVER;
+  }
+  return raw as Record<string, unknown>;
+});
+
+/**
+ * The schema of one entry of a list whose `items_fields` names its members: a
+ * non-empty object holding only those members, each required one and each
+ * value a field of the member's definition takes. A member with no value is
+ * left out; a `null` is no value. The entry is stored from what each member's
+ * schema answers, so a `url` member is held trimmed (`types/url-stored`).
+ *
+ * The members are read from the raw input and not from a record's output,
+ * which drops a key named `__proto__` that JSON.parse made an own key, so an
+ * entry carrying one would be taken and stored without it.
+ */
+function entryToZod(members: Readonly<Record<string, EntryMember>>): z.ZodType {
+  const checks = new Map(
+    Object.entries(members).map(([name, member]) => [
+      name,
+      valueToZod(member.type, member) ?? z.unknown(),
+    ]),
+  );
+  return z.unknown().transform((raw, ctx) => {
+    const typed = plainRecord.safeParse(raw);
+    if (!typed.success) {
+      ctx.addIssue({
+        code: "custom",
+        message: typed.error.issues[0]?.message ?? "Must be an object",
+      });
+      return z.NEVER;
+    }
+    const entry = raw as Record<string, unknown>;
+    const given = Object.keys(entry);
+    if (given.length === 0) {
+      ctx.addIssue({
+        code: "custom",
+        message: "Must have at least one member",
+      });
+      return z.NEVER;
+    }
+    const stored: [string, unknown][] = [];
+    let refused = false;
+    for (const name of given) {
+      const check = checks.get(name);
+      if (!check) {
+        refused = true;
+        ctx.addIssue({
+          code: "custom",
+          path: [name],
+          message: "Is not a member of the entry",
+        });
+        continue;
+      }
+      const verdict = check.safeParse(entry[name]);
+      if (verdict.success) {
+        stored.push([name, verdict.data]);
+        continue;
+      }
+      refused = true;
+      for (const found of verdict.error.issues) {
+        ctx.addIssue({ ...found, path: [name, ...found.path] });
+      }
+    }
+    for (const [name, member] of Object.entries(members)) {
+      if (member.required && !Object.hasOwn(entry, name)) {
+        refused = true;
+        ctx.addIssue({
+          code: "custom",
+          path: [name],
+          message: "Required",
+        });
+      }
+    }
+    return refused ? z.NEVER : Object.fromEntries(stored);
+  });
+}
+
 /**
  * The schema a value of `type` must satisfy, with no `required` or `null`
  * handling: a field's own value and each element of an array share it, so an
@@ -873,15 +989,20 @@ const thumbnail = z.string().superRefine((value, ctx) => {
  */
 function valueToZod(
   type: string,
-  field: Pick<FieldDefinition, "enum_values" | "maxLength" | "maxItems">,
+  field: Pick<
+    FieldDefinition,
+    "enum_values" | "maxLength" | "maxItems" | "format" | "minimum" | "maximum"
+  >,
 ): z.ZodType | undefined {
   switch (type) {
     case "string":
-      return boundedString(field);
+      // `currency` is the one format whose value is judged: a code is three
+      // capital letters, and a device applies the same test.
+      return field.format === "currency" ? CURRENCY_CODE : boundedString(field);
     case "number":
-      return z.number();
+      return bounded(z.number(), field);
     case "integer":
-      return z.number().int();
+      return bounded(z.number().int(), field);
     case "boolean":
       return z.boolean();
     case "url":
@@ -921,7 +1042,7 @@ function valueToZod(
         .array(z.unknown())
         .max(field.maxItems ?? DEFAULT_MAX_ARRAY_ITEMS);
     case "object":
-      return z.record(z.string(), z.unknown());
+      return objectValue;
     case "thumbnail":
       return thumbnail;
     default:
@@ -937,9 +1058,12 @@ function fieldToZod(field: FieldDefinition): z.ZodType {
   // registered schema may name none; those elements are not checked, since
   // refusing the name would stop a stored type loading.
   if (field.type === "array") {
-    const element = field.items_type
-      ? valueToZod(field.items_type, { enum_values: field.enum_values })
-      : undefined;
+    const element =
+      field.items_type === "object" && field.items_fields
+        ? entryToZod(field.items_fields)
+        : field.items_type
+          ? valueToZod(field.items_type, { enum_values: field.enum_values })
+          : undefined;
     const bound = field.maxItems ?? DEFAULT_MAX_ARRAY_ITEMS;
     schema = (element ? z.array(element) : z.array(z.unknown())).max(bound);
   }

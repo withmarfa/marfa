@@ -846,6 +846,22 @@ When the server answers `200` to a stale `PATCH /items/{id}?conflict=auto` that 
 
 **Tests:** `sync/conflict.test.ts › keeps both copies in one write where the type says to`.
 
+### `versions/copy-judged`
+
+When the server writes a conflicted copy, the server MUST judge the copy's properties as a create of the item's type, and store each value as that judgment answers it.
+
+**Reason:** the copy is a new item, so a `url` is stored without the whitespace around it (`types/url-stored`) as it is on any create. A status word the stale write leaves alone is kept in the copy (`types/status-write-refused`), as an update keeps it.
+
+**Tests:** `compliance/field-rules.test.ts › stores a url in the copy without the whitespace around it`.
+
+### `versions/copy-refused`
+
+If a stale `PATCH /items/{id}?conflict=auto` would write a conflicted copy holding a value its type's field refuses, then the server MUST answer `400 invalid_properties` and write neither the copy nor the change.
+
+**Reason:** a value the type refuses on a create is refused in the copy as much, and the stale write's other changes do not land without the value the person meant to keep.
+
+**Tests:** `compliance/field-rules.test.ts › refuses a copy holding a value of the wrong kind, writing neither the copy nor the change`.
+
 ### `versions/copy-version`
 
 When the server writes a conflicted copy, the server MUST write it at version 1, with no history.

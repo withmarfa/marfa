@@ -2,7 +2,7 @@
  * What the type and edge type doors answer a definition carrying a key the
  * schema does not define.
  *
- * A misspelled rule, or an `integer` bounded by a `minimum` nothing enforces,
+ * A misspelled rule, or an `integer` bounded by an `exclusiveMinimum` nothing enforces,
  * must not come back as a success. The cases pair every refusal with the same
  * body, mended, that registers, so a refusal cannot be the door refusing
  * everything.
@@ -94,15 +94,15 @@ describe("POST /types", () => {
       id,
       fields: {
         title: { type: "string", max_length: 10 },
-        serves: { type: "integer", minimum: 1, maximum: 12 },
+        serves: { type: "integer", exclusiveMinimum: 1, exclusiveMaximum: 12 },
         kind: { type: "enum", enum_values: ["a"], values: ["b"] },
       },
     });
     expect(bad).toMatchObject({ status: 400, code: "invalid_schema" });
     expect(bad.paths).toEqual([
       "fields.title.max_length",
-      "fields.serves.minimum",
-      "fields.serves.maximum",
+      "fields.serves.exclusiveMinimum",
+      "fields.serves.exclusiveMaximum",
       "fields.kind.values",
     ]);
 
@@ -169,11 +169,11 @@ describe("PUT /types/{id}", () => {
     expect((await send("POST", "/types", { id, fields })).status).toBe(201);
 
     const bad = await send("PUT", `/types/${id}`, {
-      fields: { ...fields, serves: { type: "integer", minimum: 1 } },
+      fields: { ...fields, serves: { type: "integer", exclusiveMinimum: 1 } },
       lable: "Recipe",
     });
     expect(bad).toMatchObject({ status: 400, code: "invalid_schema" });
-    expect(bad.paths).toEqual(["lable", "fields.serves.minimum"]);
+    expect(bad.paths).toEqual(["lable", "fields.serves.exclusiveMinimum"]);
 
     const stored = await request(ctx.app, "GET", `/types/${id}`, {
       key: ctx.workingKey,

@@ -166,7 +166,12 @@ fn field(kind: &str, definition: &Value, value: &Value) -> Result<Option<String>
         }
     };
     Ok(match kind {
-        "string" => match value.as_str() { Some(text) => bounded(text), None => expected("string") },
+        "string" => match value.as_str() {
+            None => expected("string"),
+            // `currency` is the one format whose value is judged.
+            Some(text) if definition.get("format").and_then(Value::as_str) == Some("currency") => currency(text),
+            Some(text) => bounded(text),
+        },
         // Whether the word is one the type declares is judged apart, only
         // where a write changes it (`Catalog::validate_merged`).
         "status" => field("string", &Value::Null, value)?,
@@ -178,8 +183,8 @@ fn field(kind: &str, definition: &Value, value: &Value) -> Result<Option<String>
                 None => bounded(text),
             }
         },
-        "number" => if value.as_f64().is_some_and(f64::is_finite) { None } else { expected("number") },
-        "integer" => if value.as_f64().is_some_and(|number| number.is_finite() && number.fract() == 0.0 && number.abs() <= 9_007_199_254_740_991.0) { None } else { expected("safe integer") },
+        "number" => match value.as_f64().filter(|number| number.is_finite()) { Some(number) => in_range(definition, number), None => expected("number") },
+        "integer" => match value.as_f64().filter(|number| number.is_finite() && number.fract() == 0.0 && number.abs() <= 9_007_199_254_740_991.0) { Some(number) => in_range(definition, number), None => expected("safe integer") },
         "boolean" => if value.is_boolean() { None } else { expected("boolean") },
         "array" => match value.as_array() {
             None => expected("array"),
@@ -200,6 +205,27 @@ fn field(kind: &str, definition: &Value, value: &Value) -> Result<Option<String>
     })
 }
 
+/// A currency code as the server takes one: three capital letters from A to
+/// Z. Whether ISO 4217 assigns the code is left alone, as that list changes.
+fn currency(text: &str) -> Option<String> {
+    let taken = text.len() == 3 && text.bytes().all(|byte| byte.is_ascii_uppercase());
+    (!taken).then(|| "Must be a currency code of three capital letters".into())
+}
+
+/// Where `number` falls outside the `minimum` and `maximum` the field names,
+/// both inclusive.
+fn in_range(definition: &Value, number: f64) -> Option<String> {
+    let bound = |key| definition.get(key).filter(|bound| bound.is_number());
+    if let Some(minimum) =
+        bound("minimum").filter(|minimum| minimum.as_f64().is_some_and(|minimum| number < minimum))
+    {
+        return Some(format!("Must be at least {minimum}"));
+    }
+    bound("maximum")
+        .filter(|maximum| maximum.as_f64().is_some_and(|maximum| number > maximum))
+        .map(|maximum| format!("Must be at most {maximum}"))
+}
+
 /// The first element of an array that is not a value of the field's
 /// `items_type`, judged as a field of that type judges a value. An
 /// `items_type` that names no field type leaves the elements unchecked, as the
@@ -208,6 +234,12 @@ fn elements(definition: &Value, values: &[Value]) -> Result<Option<String>, Core
     let Some(items) = definition.get("items_type").and_then(Value::as_str) else {
         return Ok(None);
     };
+    if let (true, Some(members)) = (
+        items == "object",
+        definition.get("items_fields").and_then(Value::as_object),
+    ) {
+        return entries(members, values);
+    }
     let element = serde_json::json!({ "enum_values": definition.get("enum_values") });
     for (index, value) in values.iter().enumerate() {
         match field(items, &element, value) {
@@ -217,6 +249,40 @@ fn elements(definition: &Value, values: &[Value]) -> Result<Option<String>, Core
                 if let Some(message) = checked? {
                     return Ok(Some(format!("Item {index}: {message}")));
                 }
+            }
+        }
+    }
+    Ok(None)
+}
+
+/// The first entry of a list that is not an object with at least one member,
+/// only members the field declares, every member it requires and a value for
+/// each that a field of the member's definition takes. A member with no value
+/// is left out, and a `null` is no value.
+fn entries(members: &Map<String, Value>, values: &[Value]) -> Result<Option<String>, CoreError> {
+    for (index, value) in values.iter().enumerate() {
+        let refused = |message: String| Ok(Some(format!("Item {index}: {message}")));
+        let Some(entry) = value.as_object() else {
+            return refused("Expected object".into());
+        };
+        if entry.is_empty() {
+            return refused("Must have at least one member".into());
+        }
+        if let Some(name) = entry.keys().find(|name| !members.contains_key(*name)) {
+            return refused(format!("{name}: Is not a member of the entry"));
+        }
+        for (name, member) in members {
+            let Some(held) = entry.get(name) else {
+                if member.get("required").and_then(Value::as_bool) == Some(true) {
+                    return refused(format!("{name}: Required"));
+                }
+                continue;
+            };
+            let kind = member.get("type").and_then(Value::as_str).ok_or_else(|| {
+                CoreError::Decoding(format!("the held member {name} declares no type"))
+            })?;
+            if let Some(message) = field(kind, member, held)? {
+                return refused(format!("{name}: {message}"));
             }
         }
     }
@@ -685,6 +751,64 @@ mod tests {
         assert_eq!(
             field("enum", &closed, &serde_json::json!("\u{0000}")).unwrap(),
             None
+        );
+    }
+    #[test]
+    fn a_range_a_currency_and_the_entries_of_a_list_are_judged_as_the_server_judges_them() {
+        use serde_json::json;
+        let judged =
+            |kind: &str, definition: Value, value: Value| field(kind, &definition, &value).unwrap();
+        let score = json!({"minimum": 1, "maximum": 5});
+        for good in [json!(1), json!(5), json!(3)] {
+            assert_eq!(judged("integer", score.clone(), good), None);
+        }
+        for bad in [json!(0), json!(6), json!(5.5)] {
+            assert!(judged("integer", score.clone(), bad).is_some());
+        }
+        let price = json!({"minimum": -0.5});
+        assert_eq!(judged("number", price.clone(), json!(-0.5)), None);
+        assert!(judged("number", price, json!(-0.51)).is_some());
+        assert_eq!(judged("number", json!({}), json!(-1e300)), None);
+
+        let code = json!({"format": "currency"});
+        for good in ["GBP", "ZZZ"] {
+            assert_eq!(judged("string", code.clone(), json!(good)), None, "{good}");
+        }
+        for bad in ["gbp", "GB", "GBPX", "", "GB1", "GBP\n", "\u{c9}UR"] {
+            assert!(
+                judged("string", code.clone(), json!(bad)).is_some(),
+                "{bad:?}"
+            );
+        }
+        assert!(judged("string", code, json!(826)).is_some());
+
+        let contacts = json!({"items_type": "object", "items_fields": {
+            "value": {"type": "email", "required": true},
+            "rank": {"type": "integer", "minimum": 1, "maximum": 5},
+        }});
+        let entries = |value: Value| judged("array", contacts.clone(), value);
+        assert_eq!(
+            entries(json!([{"value": "a@example.test", "rank": 5}, {"value": "b@example.test"}])),
+            None
+        );
+        assert_eq!(entries(json!([])), None);
+        for bad in [
+            json!([{"value": "a@example.test", "extra": 1}]),
+            json!([{"rank": 1}]),
+            json!([{"value": "no"}]),
+            json!([{"value": "a@example.test", "rank": 6}]),
+            json!([{"value": "a@example.test", "rank": null}]),
+            json!([{}]),
+            json!(["text"]),
+        ] {
+            assert!(
+                entries(bad.clone()).is_some_and(|message| message.starts_with("Item 0:")),
+                "{bad}"
+            );
+        }
+        assert_eq!(
+            entries(json!([{"value": "a@example.test"}, {"value": "a@example.test", "rank": 9}])),
+            Some("Item 1: rank: Must be at most 5".into())
         );
     }
 }

@@ -423,6 +423,7 @@ const coreMediaArticle: TypeSchema = {
     progress: { type: "status", description: "Where the owner is with the work: want to read, watch, listen to or play it, started, finished, or gave up", status_values: [{ value: "planned", group: "not_started" }, { value: "started", group: "in_progress" }, { value: "finished", group: "completed" }, { value: "abandoned", group: "canceled" }] },
     notes: { type: "string", description: "Personal annotations" },
     thumbnail: { type: "thumbnail", description: "A small preview of the work, supplied by the writer" },
+    doi: { type: "string", description: "Digital Object Identifier (ISO 26324)" },
     section: { type: "string", description: "Section of the publication" },
     word_count: { type: "integer", description: "Word count" },
   },
@@ -1540,6 +1541,9 @@ export const SHIPPED_TYPE_SHAPES = {
         "type": "string"
       },
       "description": {
+        "type": "string"
+      },
+      "doi": {
         "type": "string"
       },
       "image_url": {

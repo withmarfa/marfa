@@ -81,6 +81,30 @@ const CLASSES: { name: string; input: unknown; atField: string }[] = [
     atField: "fields.count.maxLength",
   },
   {
+    name: "maxLength on a currency field",
+    input: {
+      id: "acme.f2",
+      fields: { code: { type: "string", format: "currency", maxLength: 2 } },
+    },
+    atField: "fields.code.maxLength",
+  },
+  {
+    name: "maxLength on a currency member of a list entry",
+    input: {
+      id: "acme.f3",
+      fields: {
+        prices: {
+          type: "array",
+          items_type: "object",
+          items_fields: {
+            code: { type: "string", format: "currency", maxLength: 2 },
+          },
+        },
+      },
+    },
+    atField: "fields.prices.items_fields.code.maxLength",
+  },
+  {
     name: "maxItems on a non-array field",
     input: { id: "acme.g", fields: { title: { type: "string", maxItems: 3 } } },
     atField: "fields.title.maxItems",

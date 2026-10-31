@@ -4478,6 +4478,69 @@ mod tests {
     }
 
     #[test]
+    fn an_update_that_sets_a_bad_entry_is_refused_naming_the_field_the_position_and_the_member() {
+        let core = Core::open_in_memory(None).unwrap();
+        core.declare_types(&[serde_json::json!({
+            "id": "app.recipe.entry",
+            "fields": { "list": { "type": "array", "items_type": "object", "items_fields": {
+                "value": { "type": "email", "required": true },
+                "rank": { "type": "integer", "minimum": 1, "maximum": 5 },
+            } } },
+        })])
+        .unwrap();
+        let created = core
+            .create_item(&Draft {
+                r#type: "app.recipe.entry".into(),
+                properties: properties(
+                    serde_json::json!({ "list": [{ "value": "a@example.test" }] }),
+                ),
+                ..Default::default()
+            })
+            .unwrap()
+            .item_id
+            .unwrap();
+        let queued = core.queue().unwrap().len();
+        let edit = |list: Value| Edit {
+            base_version: Some(0),
+            properties: properties(serde_json::json!({ "list": list })),
+            ..Default::default()
+        };
+        for (bad, named) in [
+            (
+                serde_json::json!([{ "value": "a@example.test" }, { "rank": 1 }]),
+                "list: Item 1: value: Required",
+            ),
+            (
+                serde_json::json!([{ "value": "a@example.test", "rank": 6 }]),
+                "list: Item 0: rank: Must be at most 5",
+            ),
+            (
+                serde_json::json!([{ "value": "a@example.test", "x": 1 }]),
+                "list: Item 0: x: Is not a member of the entry",
+            ),
+        ] {
+            let Err(CoreError::Validation { message, .. }) = core.update_item(&created, &edit(bad))
+            else {
+                panic!("an update setting a bad entry was queued");
+            };
+            assert!(message.contains(named), "{message}");
+        }
+        assert_eq!(
+            core.queue().unwrap().len(),
+            queued,
+            "a refused update was queued"
+        );
+        // The witness: a good entry is queued.
+        assert!(
+            core.update_item(
+                &created,
+                &edit(serde_json::json!([{ "value": "b@example.test", "rank": 5 }]))
+            )
+            .is_ok()
+        );
+    }
+
+    #[test]
     fn local_fields_judge_current_whole_edits_but_only_stale_supplied_values() {
         let core = validation_copy();
         let mut row = store::testing::note("typed", "valid", "body", "2026-01-01T00:00:00Z");
@@ -5586,6 +5649,203 @@ mod tests {
         assert!(core.declared_types().unwrap().is_empty());
         core.declare_types(&[serde_json::json!({ "id": "app.recipe.entry", "fields": {} })])
             .unwrap();
+    }
+
+    #[test]
+    fn a_declaration_refuses_a_list_of_entries_and_a_currency_the_server_refuses() {
+        let core = Core::open_in_memory(None).unwrap();
+        let entries = |members: serde_json::Value| serde_json::json!({ "type": "array", "items_type": "object", "items_fields": members });
+        let declare = |field: serde_json::Value| {
+            core.declare_types(&[serde_json::json!({
+                "id": "app.recipe.entry",
+                "fields": { "list": field },
+            })])
+        };
+        let refused: Vec<(&str, serde_json::Value)> = vec![
+            (
+                "a member with no type",
+                entries(serde_json::json!({ "m": {} })),
+            ),
+            (
+                "a member of an unknown type",
+                entries(serde_json::json!({ "m": { "type": "strong" } })),
+            ),
+            (
+                "a member that is not an object",
+                entries(serde_json::json!({ "m": "string" })),
+            ),
+            ("no member", entries(serde_json::json!({}))),
+            (
+                "members that are not an object",
+                entries(serde_json::json!(["m"])),
+            ),
+            (
+                "items_fields on a string",
+                serde_json::json!({ "type": "string", "items_fields": { "m": { "type": "string" } } }),
+            ),
+            (
+                "items_fields on a list of strings",
+                serde_json::json!({ "type": "array", "items_type": "string", "items_fields": { "m": { "type": "string" } } }),
+            ),
+            (
+                "a maxLength on a currency field",
+                serde_json::json!({ "type": "string", "format": "currency", "maxLength": 2 }),
+            ),
+            (
+                "a maxLength on a currency member",
+                entries(
+                    serde_json::json!({ "m": { "type": "string", "format": "currency", "maxLength": 2 } }),
+                ),
+            ),
+        ];
+        for kind in ["array", "object", "status", "thumbnail"] {
+            let member = entries(serde_json::json!({ "m": { "type": kind } }));
+            assert!(
+                matches!(declare(member), Err(CoreError::Invalid(_))),
+                "a member of kind {kind} was declared"
+            );
+        }
+        for (what, field) in refused {
+            assert!(
+                matches!(declare(field), Err(CoreError::Invalid(_))),
+                "{what} was declared"
+            );
+        }
+        // The witness: the same fields, mended, are declared and judge a write.
+        declare(entries(serde_json::json!({
+            "a": { "type": "string", "required": true },
+            "b": { "type": "integer", "minimum": 1 },
+            "c": { "type": "string", "format": "currency" },
+        })))
+        .unwrap();
+        declare(serde_json::json!({ "type": "string", "format": "currency" })).unwrap();
+        // Nothing of a refused declaration was kept.
+        assert_eq!(core.declared_types().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn a_declaration_holds_a_member_of_entries_to_the_checks_it_makes_of_a_field() {
+        let core = Core::open_in_memory(None).unwrap();
+        let declare = |field: serde_json::Value| {
+            core.declare_types(&[serde_json::json!({
+                "id": "app.recipe.member",
+                "fields": { "f": field },
+            })])
+        };
+        let words = serde_json::json!([{ "value": "open", "group": "not_started" }]);
+        // Each is refused on a field of its own, and so on a member.
+        let checks = [
+            (
+                "status_values on a string",
+                serde_json::json!({ "type": "string", "status_values": words }),
+            ),
+            (
+                "items_fields on a string",
+                serde_json::json!({ "type": "string", "items_fields": { "n": { "type": "string" } } }),
+            ),
+            (
+                "items_type status",
+                serde_json::json!({ "type": "string", "items_type": "status" }),
+            ),
+            (
+                "a maxLength on a currency",
+                serde_json::json!({ "type": "string", "format": "currency", "maxLength": 3 }),
+            ),
+        ];
+        for (what, check) in checks {
+            assert!(
+                matches!(declare(check.clone()), Err(CoreError::Invalid(_))),
+                "{what} was declared on a field"
+            );
+            let member = serde_json::json!({
+                "type": "array", "items_type": "object", "items_fields": { "m": check }
+            });
+            assert!(
+                matches!(declare(member), Err(CoreError::Invalid(_))),
+                "{what} was declared on a member"
+            );
+        }
+        // The witness: the mended members are declared.
+        declare(serde_json::json!({
+            "type": "array", "items_type": "object", "items_fields": {
+                "a": { "type": "string" },
+                "b": { "type": "string", "format": "currency" },
+            }
+        }))
+        .unwrap();
+    }
+
+    #[test]
+    fn a_declared_format_that_is_a_kind_is_judged_as_the_server_judges_that_kind() {
+        let core = Core::open_in_memory(None).unwrap();
+        let declare = |fields: serde_json::Value| {
+            core.declare_types(&[serde_json::json!({
+                "id": "app.recipe.format",
+                "fields": fields,
+            })])
+        };
+        let entries = |member: serde_json::Value| serde_json::json!({ "type": "array", "items_type": "object", "items_fields": { "m": member } });
+        // The server turns a string's format into the kind (`normalizeFieldDefinition`),
+        // and an entry does not take a thumbnail.
+        assert!(
+            matches!(
+                declare(serde_json::json!({
+                    "list": entries(serde_json::json!({ "type": "string", "format": "thumbnail" }))
+                })),
+                Err(CoreError::Invalid(_))
+            ),
+            "a member that is a thumbnail by its format was declared"
+        );
+        declare(serde_json::json!({
+            "site": { "type": "string", "format": "url" },
+            "sites": { "type": "array", "items_type": "string", "format": "url" },
+            "list": entries(serde_json::json!({ "type": "string", "format": "url" })),
+            "when": { "type": "string", "format": "date" },
+            "image": { "type": "string", "format": "thumbnail" },
+        }))
+        .unwrap();
+        let create = |properties: serde_json::Value| {
+            core.create_item(&Draft {
+                r#type: "app.recipe.format".into(),
+                properties: properties.as_object().unwrap().clone(),
+                ..Default::default()
+            })
+        };
+        let id = create(serde_json::json!({
+            "site": "  https://example.com/a\t ",
+            "sites": [" https://example.com/b "],
+            "list": [{ "m": "\thttps://example.com/c\n" }],
+        }))
+        .unwrap()
+        .item_id
+        .unwrap();
+        let kept = core.get(&id).unwrap().unwrap().properties;
+        assert_eq!(kept["site"], "https://example.com/a");
+        assert_eq!(kept["sites"], serde_json::json!(["https://example.com/b"]));
+        assert_eq!(
+            kept["list"],
+            serde_json::json!([{ "m": "https://example.com/c" }])
+        );
+        for (named, bad) in [
+            ("site", serde_json::json!({ "site": "not a url" })),
+            ("sites", serde_json::json!({ "sites": ["not a url"] })),
+            (
+                "list",
+                serde_json::json!({ "list": [{ "m": "not a url" }] }),
+            ),
+            ("when", serde_json::json!({ "when": "tomorrow" })),
+            ("image", serde_json::json!({ "image": "not an image" })),
+        ] {
+            let Err(CoreError::Validation { message, .. }) = create(bad) else {
+                panic!("{named}: a value its format refuses was queued");
+            };
+            assert!(message.contains(named), "{message}");
+        }
+        // The witness: the plain kinds judge the same.
+        assert!(
+            create(serde_json::json!({ "site": "https://example.com/" })).is_ok(),
+            "a url was refused"
+        );
     }
 
     #[test]

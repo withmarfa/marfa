@@ -21,6 +21,7 @@ import type {
   EdgeCascade,
   EdgeTypeSchema,
   EdgeWrittenAt,
+  EntryMember,
   FieldDefinition,
   FieldFormat,
   FieldType,
@@ -77,7 +78,28 @@ export const FIELD_FORMATS: readonly FieldFormat[] = [
   "thumbnail",
   "bcp47",
   "iso3166",
+  "currency",
 ];
+
+/**
+ * The kinds a member of a list entry may take: plain values, so an entry
+ * stays one flat object.
+ */
+export const ENTRY_MEMBER_TYPES: readonly FieldType[] = [
+  "string",
+  "email",
+  "url",
+  "enum",
+  "boolean",
+  "integer",
+  "number",
+  "date",
+  "datetime",
+];
+
+const ENTRY_MEMBER_TYPE_SET: ReadonlySet<string> = new Set<string>(
+  ENTRY_MEMBER_TYPES,
+);
 
 const FIELD_TYPE_SET: ReadonlySet<string> = new Set<string>(FIELD_TYPES);
 const FIELD_FORMAT_SET: ReadonlySet<string> = new Set<string>(FIELD_FORMATS);
@@ -87,17 +109,18 @@ const FIELD_FORMAT_SET: ReadonlySet<string> = new Set<string>(FIELD_FORMATS);
  * field declaring one is normalized to the equivalent `type`, and an array of
  * strings to the equivalent `items_type`, so there is exactly one
  * representation of a URL field in the registry, however it was authored. The
- * formats absent from this map (`bcp47`, `iso3166`) annotate a `string` field
+ * formats absent from this map (`bcp47`, `iso3166`, `currency`) annotate a `string` field
  * and survive normalization as `format`.
  */
-const FORMAT_TO_FIELD_TYPE: Readonly<Partial<Record<FieldFormat, FieldType>>> =
-  {
-    url: "url",
-    email: "email",
-    datetime: "datetime",
-    date: "date",
-    thumbnail: "thumbnail",
-  };
+export const FORMAT_TO_FIELD_TYPE: Readonly<
+  Partial<Record<FieldFormat, FieldType>>
+> = {
+  url: "url",
+  email: "email",
+  datetime: "datetime",
+  date: "date",
+  thumbnail: "thumbnail",
+};
 
 /**
  * The most days `retention_policy.feed_days` may name: the largest window
@@ -305,6 +328,17 @@ export function normalizeFieldDefinition(
   if (raw.searchable === false) out.searchable = false;
   if (typeof raw.maxLength === "number") out.maxLength = raw.maxLength;
   if (typeof raw.maxItems === "number") out.maxItems = raw.maxItems;
+  if (typeof raw.minimum === "number") out.minimum = raw.minimum;
+  if (typeof raw.maximum === "number") out.maximum = raw.maximum;
+  const members = asRecord(raw.items_fields);
+  if (members && isList && raw.items_type === "object") {
+    out.items_fields = Object.fromEntries(
+      Object.entries(members).map(([member, def]) => [
+        member,
+        normalizeFieldDefinition(asRecord(def) ?? { type: "string" }),
+      ]),
+    );
+  }
   return out;
 }
 
@@ -339,16 +373,17 @@ function validateFieldShape(
   name: string,
   def: unknown,
   errors: SchemaValidationIssue[],
-  options?: { inheritsStatus?: boolean },
+  options?: { inheritsStatus?: boolean; path?: string },
 ): void {
+  const path = options?.path ?? `fields.${name}`;
   const fd = asRecord(def);
   if (!fd) {
     errors.push(
       issue({
-        field: `fields.${name}`,
+        field: path,
         expected: "an object describing the field",
         actual: describe(def),
-        hint: `Write fields.${name} as { "type": "string", "description": "..." }.`,
+        hint: `Write ${path} as { "type": "string", "description": "..." }.`,
       }),
     );
     return;
@@ -359,7 +394,7 @@ function validateFieldShape(
   if (typeof fd.type !== "string" || fd.type.length === 0) {
     errors.push(
       issue({
-        field: `fields.${name}.type`,
+        field: `${path}.type`,
         expected: `one of: ${FIELD_TYPES.join(", ")}`,
         actual: describe(fd.type),
         hint: "Every field declares a type. Use `string` when in doubt.",
@@ -368,7 +403,7 @@ function validateFieldShape(
   } else if (!FIELD_TYPE_SET.has(fd.type)) {
     errors.push(
       issue({
-        field: `fields.${name}.type`,
+        field: `${path}.type`,
         expected: `one of: ${FIELD_TYPES.join(", ")}`,
         actual: describe(fd.type),
         hint: `"${fd.type}" is not a field type. For a semantic refinement of a string, use "format" instead.`,
@@ -380,7 +415,7 @@ function validateFieldShape(
     if (!FIELD_FORMAT_SET.has(declaredFormat)) {
       errors.push(
         issue({
-          field: `fields.${name}.format`,
+          field: `${path}.format`,
           expected: `one of: ${FIELD_FORMATS.join(", ")}`,
           actual: describe(fd.format),
           hint: "Drop the format, or pick one of the supported values.",
@@ -396,7 +431,7 @@ function validateFieldShape(
         if (fd.type !== "string" && fd.type !== collapsed && !fitsList) {
           errors.push(
             issue({
-              field: `fields.${name}.format`,
+              field: `${path}.format`,
               expected:
                 collapsed === "thumbnail"
                   ? `format "thumbnail" on a string field`
@@ -409,7 +444,7 @@ function validateFieldShape(
       } else if (fd.type !== "string") {
         errors.push(
           issue({
-            field: `fields.${name}.format`,
+            field: `${path}.format`,
             expected: `format "${declaredFormat}" on a string field`,
             actual: `format "${declaredFormat}" on a ${describe(fd.type)} field`,
             hint: `The ${declaredFormat} format annotates string contents. Set the field type to "string".`,
@@ -423,7 +458,7 @@ function validateFieldShape(
     if (!Array.isArray(fd.enum_values)) {
       errors.push(
         issue({
-          field: `fields.${name}.enum_values`,
+          field: `${path}.enum_values`,
           expected: "a non-empty array of allowed string values",
           actual: describe(fd.enum_values),
           hint: `Add enum_values, e.g. ["open", "closed"], or change the type to "string".`,
@@ -432,7 +467,7 @@ function validateFieldShape(
     } else if (fd.enum_values.length === 0) {
       errors.push(
         issue({
-          field: `fields.${name}.enum_values`,
+          field: `${path}.enum_values`,
           expected: "a non-empty array of allowed string values",
           actual: "an empty array",
           hint: "An enum with no values can never validate. List the allowed values.",
@@ -441,7 +476,7 @@ function validateFieldShape(
     } else if (!fd.enum_values.every((v: unknown) => typeof v === "string")) {
       errors.push(
         issue({
-          field: `fields.${name}.enum_values`,
+          field: `${path}.enum_values`,
           expected: "every entry to be a string",
           actual: describe(fd.enum_values),
           hint: "Enum values cross the wire as JSON strings. Quote the non-string entries.",
@@ -455,7 +490,7 @@ function validateFieldShape(
   } else if (fd.status_values !== undefined) {
     errors.push(
       issue({
-        field: `fields.${name}.status_values`,
+        field: `${path}.status_values`,
         expected: "status_values on a status field",
         actual: `status_values on a ${describe(fd.type)} field`,
         hint: 'Set the type to "status", or drop status_values.',
@@ -465,7 +500,7 @@ function validateFieldShape(
   if (fd.type === "status" && fd.enum_values !== undefined) {
     errors.push(
       issue({
-        field: `fields.${name}.enum_values`,
+        field: `${path}.enum_values`,
         expected: "no enum_values on a status field",
         actual: describe(fd.enum_values),
         hint: "A status field lists its words in status_values, each with its group.",
@@ -475,7 +510,7 @@ function validateFieldShape(
   if (fd.items_type === "status") {
     errors.push(
       issue({
-        field: `fields.${name}.items_type`,
+        field: `${path}.items_type`,
         expected: "an element type other than status",
         actual: '"status"',
         hint: "An item has one status. Declare it as its own field of type status.",
@@ -486,7 +521,7 @@ function validateFieldShape(
   if (fd.type === "array" && typeof fd.items_type !== "string") {
     errors.push(
       issue({
-        field: `fields.${name}.items_type`,
+        field: `${path}.items_type`,
         expected: "a string naming the element type",
         actual: describe(fd.items_type),
         hint: `Add items_type, e.g. "string" or "object".`,
@@ -499,7 +534,7 @@ function validateFieldShape(
   if (fd.items_type === "thumbnail") {
     errors.push(
       issue({
-        field: `fields.${name}.items_type`,
+        field: `${path}.items_type`,
         expected: "an element type other than thumbnail",
         actual: '"thumbnail"',
         hint: "A thumbnail is one image a type carries. Declare it as its own field of type thumbnail.",
@@ -510,7 +545,7 @@ function validateFieldShape(
   if (fd.searchable !== undefined && typeof fd.searchable !== "boolean") {
     errors.push(
       issue({
-        field: `fields.${name}.searchable`,
+        field: `${path}.searchable`,
         expected: "a boolean",
         actual: describe(fd.searchable),
         hint: "Set searchable: false to keep the field out of full-text search; omit it to index the field.",
@@ -524,7 +559,7 @@ function validateFieldShape(
     if (typeof value !== "number" || !Number.isInteger(value) || value < 1) {
       errors.push(
         issue({
-          field: `fields.${name}.${cap}`,
+          field: `${path}.${cap}`,
           expected: "a positive integer",
           actual: describe(value),
           hint: `${cap} bounds a single field's size; a value below 1 would reject every write.`,
@@ -540,10 +575,19 @@ function validateFieldShape(
   ) {
     errors.push(
       issue({
-        field: `fields.${name}.maxLength`,
+        field: `${path}.maxLength`,
         expected: "maxLength on a string or enum field",
         actual: `maxLength on a ${describe(fd.type)} field`,
         hint: "maxLength bounds string length. Use maxItems for arrays; drop it elsewhere.",
+      }),
+    );
+  } else if (fd.maxLength !== undefined && fd.format === "currency") {
+    errors.push(
+      issue({
+        field: `${path}.maxLength`,
+        expected: "no maxLength on a currency field",
+        actual: describe(fd.maxLength),
+        hint: "A currency code is always three capital letters, so a length bound would be ignored. Drop maxLength.",
       }),
     );
   }
@@ -551,12 +595,127 @@ function validateFieldShape(
   if (fd.maxItems !== undefined && fd.type !== "array") {
     errors.push(
       issue({
-        field: `fields.${name}.maxItems`,
+        field: `${path}.maxItems`,
         expected: "maxItems on an array field",
         actual: `maxItems on a ${describe(fd.type)} field`,
         hint: "maxItems bounds element count. Use maxLength for strings; drop it elsewhere.",
       }),
     );
+  }
+
+  validateRange(path, fd, errors);
+  validateItemsFields(path, fd, errors);
+}
+
+function validateRange(
+  path: string,
+  fd: Record<string, unknown>,
+  errors: SchemaValidationIssue[],
+): void {
+  const bounds: number[] = [];
+  for (const bound of ["minimum", "maximum"] as const) {
+    const value = fd[bound];
+    if (value === undefined) continue;
+    if (fd.type !== "number" && fd.type !== "integer") {
+      errors.push(
+        issue({
+          field: `${path}.${bound}`,
+          expected: `${bound} on a number or integer field`,
+          actual: `${bound} on a ${describe(fd.type)} field`,
+          hint: `${bound} bounds a number. Use maxLength for the length of a string and maxItems for the count of a list; drop it elsewhere.`,
+        }),
+      );
+    } else if (typeof value !== "number" || !Number.isFinite(value)) {
+      errors.push(
+        issue({
+          field: `${path}.${bound}`,
+          expected: "a finite number",
+          actual: describe(value),
+          hint: `Write ${bound} as a number such as 0 or 2.5.`,
+        }),
+      );
+    } else if (fd.type === "integer" && !Number.isInteger(value)) {
+      errors.push(
+        issue({
+          field: `${path}.${bound}`,
+          expected: "a whole number on an integer field",
+          actual: describe(value),
+          hint: `An integer field takes only whole numbers, so a ${bound} between two of them is ambiguous. Use a whole number, or make the field a number.`,
+        }),
+      );
+    } else {
+      bounds.push(value);
+    }
+  }
+  const [low, high] = [fd.minimum, fd.maximum];
+  if (
+    bounds.length === 2 &&
+    typeof low === "number" &&
+    typeof high === "number" &&
+    low > high
+  ) {
+    errors.push(
+      issue({
+        field: `${path}.minimum`,
+        expected: "a minimum no higher than the maximum",
+        actual: `minimum ${String(low)} above maximum ${String(high)}`,
+        hint: "No value fits between them. Swap the bounds, or drop one.",
+      }),
+    );
+  }
+}
+
+function validateItemsFields(
+  path: string,
+  fd: Record<string, unknown>,
+  errors: SchemaValidationIssue[],
+): void {
+  if (fd.items_fields === undefined) return;
+  if (fd.type !== "array" || fd.items_type !== "object") {
+    errors.push(
+      issue({
+        field: `${path}.items_fields`,
+        expected: "items_fields on an array field whose items_type is object",
+        actual: `items_fields on ${
+          fd.type === "array"
+            ? `an array of ${describe(fd.items_type)}`
+            : `a ${describe(fd.type)} field`
+        }`,
+        hint: 'Set the field to { "type": "array", "items_type": "object" }, or drop items_fields.',
+      }),
+    );
+    return;
+  }
+  const members = asRecord(fd.items_fields);
+  if (!members || Object.keys(members).length === 0) {
+    errors.push(
+      issue({
+        field: `${path}.items_fields`,
+        expected: "an object naming at least one member",
+        actual: describe(fd.items_fields),
+        hint: 'Name each member of an entry, e.g. { "value": { "type": "string" } }, or drop items_fields.',
+      }),
+    );
+    return;
+  }
+  for (const [member, def] of Object.entries(members)) {
+    const memberPath = `${path}.items_fields.${member}`;
+    const record = asRecord(def);
+    if (record && typeof record.type === "string") {
+      const kind = normalizeFieldDefinition(record).type;
+      if (FIELD_TYPE_SET.has(record.type) && !ENTRY_MEMBER_TYPE_SET.has(kind)) {
+        errors.push(
+          issue({
+            field: `${memberPath}.type`,
+            expected: `one of: ${ENTRY_MEMBER_TYPES.join(", ")}`,
+            actual: describe(kind),
+            hint: "A member of an entry is a plain value. A list, an object, a status or a thumbnail would need nesting an entry does not have.",
+          }),
+        );
+        continue;
+      }
+    }
+    validateFieldShape(member, def, errors, { path: memberPath });
   }
 }
 
@@ -713,6 +872,26 @@ const SHAPE_ATTRIBUTES = [
   "maxItems",
 ] as const;
 
+/**
+ * The members of an entry as one comparable string, in a fixed order and
+ * without their prose, so two lists of entries are the same exactly when they
+ * accept the same entries.
+ */
+function entryMembersKey(
+  members: Readonly<Record<string, EntryMember>> | undefined,
+): string {
+  if (members === undefined) return "";
+  return JSON.stringify(
+    Object.entries(members)
+      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+      .map(([name, member]) => {
+        const rest = { ...member };
+        delete rest.description;
+        return [name, rest];
+      }),
+  );
+}
+
 function describeShapeConflict(
   child: FieldDefinition,
   ancestor: FieldDefinition,
@@ -733,6 +912,31 @@ function describeShapeConflict(
       attribute: "enum_values",
       expected: `enum_values ${describe(ancestor.enum_values)}`,
       actual: `enum_values ${describe(child.enum_values)}`,
+    };
+  }
+  for (const bound of ["minimum", "maximum"] as const) {
+    const inherited = ancestor[bound];
+    const own = child[bound];
+    if (
+      inherited !== undefined &&
+      (own === undefined ||
+        (bound === "minimum" ? own < inherited : own > inherited))
+    ) {
+      return {
+        attribute: bound,
+        expected: `${bound} ${bound === "minimum" ? "no lower" : "no higher"} than ${String(inherited)}`,
+        actual: `${bound} ${describe(own)}`,
+      };
+    }
+  }
+  if (
+    entryMembersKey(child.items_fields) !==
+    entryMembersKey(ancestor.items_fields)
+  ) {
+    return {
+      attribute: "items_fields",
+      expected: `items_fields ${describe(ancestor.items_fields)}`,
+      actual: `items_fields ${describe(child.items_fields)}`,
     };
   }
   if (ancestor.required === true && child.required !== true) {
@@ -2079,10 +2283,10 @@ function fieldTypeIsReadableAs(
 /**
  * The first way `candidate` would surprise a reader of `target`, or null.
  *
- * Reaches field declarations only. Two `object` fields — or two arrays of
- * them — pass whatever they contain, because a `FieldDefinition` has no
- * vocabulary for nested shape and inventing one here would be guesswork. The
- * limit is documented alongside the authoring rule rather than papered over.
+ * Reaches field declarations only. Two `object` fields, or two arrays of
+ * them that name no `items_fields`, pass whatever they contain, because the
+ * declaration says nothing of their shape. Two arrays of entries compare by
+ * their `items_fields`.
  */
 function describeCompatibilityConflict(
   candidate: FieldDefinition,
@@ -2114,12 +2318,50 @@ function describeCompatibilityConflict(
     };
   }
 
+  // `currency` is the one format whose value is checked, so a string that
+  // is not known to be a currency cannot stand where one is read. The other
+  // way round holds: a currency is a string.
+  if (target.format === "currency" && candidate.format !== "currency") {
+    return {
+      attribute: "format",
+      expected: "format currency",
+      actual: `format ${describe(candidate.format)}`,
+    };
+  }
+
   if (target.type === "array" && candidate.items_type !== target.items_type) {
     return {
       attribute: "items_type",
       expected: `items_type ${describe(target.items_type)}`,
       actual: `items_type ${describe(candidate.items_type)}`,
     };
+  }
+
+  if (
+    target.type === "array" &&
+    entryMembersKey(candidate.items_fields) !==
+      entryMembersKey(target.items_fields)
+  ) {
+    return {
+      attribute: "items_fields",
+      expected: `items_fields ${describe(target.items_fields)}`,
+      actual: `items_fields ${describe(candidate.items_fields)}`,
+    };
+  }
+
+  for (const bound of ["minimum", "maximum"] as const) {
+    const wanted = target[bound];
+    const own = candidate[bound];
+    if (
+      wanted !== undefined &&
+      (own === undefined || (bound === "minimum" ? own < wanted : own > wanted))
+    ) {
+      return {
+        attribute: bound,
+        expected: `${bound} ${bound === "minimum" ? "no lower" : "no higher"} than ${String(wanted)}`,
+        actual: `${bound} ${describe(own)}`,
+      };
+    }
   }
 
   if (target.type === "status") {
@@ -2501,11 +2743,28 @@ export const FIELD_DEFINITION_KEYS: ReadonlySet<string> = new Set(
     enum_values: true,
     status_values: true,
     items_type: true,
+    items_fields: true,
     format: true,
     searchable: true,
     maxLength: true,
     maxItems: true,
+    minimum: true,
+    maximum: true,
   } satisfies Record<keyof FieldDefinition, true>),
+);
+
+/** Every key of a member of `items_fields`, held the same way. */
+export const ENTRY_MEMBER_KEYS: ReadonlySet<string> = new Set(
+  Object.keys({
+    type: true,
+    description: true,
+    required: true,
+    enum_values: true,
+    format: true,
+    maxLength: true,
+    minimum: true,
+    maximum: true,
+  } satisfies Record<keyof EntryMember, true>),
 );
 
 /** Every key of a type's `display_hints`, held the same way. */
@@ -2597,7 +2856,8 @@ export const EDGE_TYPE_SCHEMA_KEYS: ReadonlySet<string> = new Set(
 /**
  * Every key of a property an edge type declares. A field's definition less
  * the keys that only mean something to the items a type validates:
- * `searchable`, `maxLength`, `maxItems` and `status_values`. `POST /edge-types` does not
+ * `searchable`, `maxLength`, `maxItems`, `status_values`, `minimum`, `maximum` and
+ * `items_fields`. `POST /edge-types` does not
  * declare them, and an edge write does not apply them.
  */
 export const EDGE_PROPERTY_KEYS: ReadonlySet<string> = new Set(
@@ -2611,7 +2871,13 @@ export const EDGE_PROPERTY_KEYS: ReadonlySet<string> = new Set(
   } satisfies Record<
     Exclude<
       keyof FieldDefinition,
-      "searchable" | "maxLength" | "maxItems" | "status_values"
+      | "searchable"
+      | "maxLength"
+      | "maxItems"
+      | "status_values"
+      | "minimum"
+      | "maximum"
+      | "items_fields"
     >,
     true
   >),
@@ -2700,6 +2966,21 @@ export function unreadKeys(
           "a field definition",
         ),
       );
+      for (const [member, memberDef] of Object.entries(
+        asRecord(record.items_fields) ?? {},
+      )) {
+        const memberRecord = asRecord(memberDef);
+        if (memberRecord) {
+          issues.push(
+            ...unreadKeysOf(
+              memberRecord,
+              `fields.${name}.items_fields.${member}`,
+              ENTRY_MEMBER_KEYS,
+              "a member of a list entry",
+            ),
+          );
+        }
+      }
     }
   }
   for (const [key, read] of [

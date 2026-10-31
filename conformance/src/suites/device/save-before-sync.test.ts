@@ -316,6 +316,186 @@ describe("a copy no server has been named for", () => {
     expect(value(await device.declaredTypes())).toHaveLength(1);
   });
 
+  it("refuses a declaration of a list of entries or a currency the server refuses, naming the field", async () => {
+    const device = await offline("save-declare-entries");
+    const entries = (items_fields: unknown) => ({
+      type: "array",
+      items_type: "object",
+      items_fields,
+    });
+    const refusals: [string, unknown][] = [
+      ["a member with no type", entries({ m: {} })],
+      ["a member of an unknown type", entries({ m: { type: "strong" } })],
+      ["a member that is a list", entries({ m: { type: "array" } })],
+      ["a member that is not an object", entries({ m: "string" })],
+      ["no member", entries({})],
+      [
+        "items_fields on a string",
+        { type: "string", items_fields: { m: { type: "string" } } },
+      ],
+      [
+        "a maxLength on a currency",
+        { type: "string", format: "currency", maxLength: 2 },
+      ],
+      [
+        "a maxLength on a currency member",
+        entries({ m: { type: "string", format: "currency", maxLength: 2 } }),
+      ],
+      [
+        "a member that is a thumbnail by its format",
+        entries({ m: { type: "string", format: "thumbnail" } }),
+      ],
+    ];
+    for (const [what, list] of refusals) {
+      const refused = await device.declareTypes([
+        { id: "app.ticket.entry", fields: { list } },
+      ]);
+      expect(
+        refused.ok ? "declared" : refused.refusal.code,
+        `${what} was declared`,
+      ).toBe("invalid");
+      if (!refused.ok) expect(refused.refusal.raw, what).toContain("list");
+    }
+    expect(value(await device.declaredTypes())).toEqual([]);
+    // The witness: the same fields, mended, are declared.
+    value(
+      await device.declareTypes([
+        {
+          id: "app.ticket.entry",
+          fields: {
+            list: entries({
+              m: { type: "string", format: "currency" },
+              n: { type: "integer", minimum: 1 },
+            }),
+            code: { type: "string", format: "currency" },
+          },
+        },
+      ]),
+    );
+    expect(value(await device.declaredTypes())).toHaveLength(1);
+  });
+
+  it("holds a member of a list's entries to the checks a declaration makes of a field, naming the field", async () => {
+    const device = await offline("save-declare-member-checks");
+    const word = { value: "open", group: "not_started" };
+    // Each is refused on a field of its own and on a member of a list.
+    const checks: [string, Record<string, unknown>][] = [
+      ["a type that is not a field type", { type: "nonsense" }],
+      ["items_type status", { type: "array", items_type: "status" }],
+      ["status_values on a string", { type: "string", status_values: [word] }],
+      [
+        "enum_values on a status",
+        { type: "status", enum_values: ["a"], status_values: [word] },
+      ],
+      ["status_values that are empty", { type: "status", status_values: [] }],
+      [
+        "a status word with a key beyond value and group",
+        { type: "status", status_values: [{ ...word, label: "Open" }] },
+      ],
+      [
+        "a status word named twice",
+        { type: "status", status_values: [word, word] },
+      ],
+      [
+        "a status word in an unknown group",
+        { type: "status", status_values: [{ ...word, group: "later" }] },
+      ],
+      [
+        "a maxLength on a currency",
+        { type: "string", format: "currency", maxLength: 3 },
+      ],
+      [
+        "items_fields on a string",
+        { type: "string", items_fields: { n: { type: "string" } } },
+      ],
+    ];
+    const entries = (member: unknown) => ({
+      type: "array",
+      items_type: "object",
+      items_fields: { m: member },
+    });
+    for (const [what, definition] of checks) {
+      for (const [where, list] of [
+        ["a field", { shelf: definition }],
+        ["a member", { shelf: entries(definition) }],
+      ] as const) {
+        // A member is a plain value, so a status is refused there by its kind.
+        const refused = await device.declareTypes([
+          { id: "app.ticket.entry", fields: list },
+        ]);
+        expect(
+          refused.ok ? "declared" : refused.refusal.code,
+          `${what} was declared on ${where}`,
+        ).toBe("invalid");
+        if (!refused.ok) expect(refused.refusal.raw, what).toContain("shelf");
+      }
+    }
+    expect(value(await device.declaredTypes())).toEqual([]);
+    // The witness: the same checks, mended, declare.
+    value(
+      await device.declareTypes([
+        {
+          id: "app.ticket.entry",
+          fields: {
+            stage: { type: "status", status_values: [word] },
+            list: entries({ type: "string", format: "currency" }),
+          },
+        },
+      ]),
+    );
+  });
+
+  it("judges a declared string by the kind its format names, as the server does, in a field and in a member", async () => {
+    const device = await offline("save-declare-format");
+    value(
+      await device.declareTypes([
+        {
+          id: "app.link.entry",
+          fields: {
+            site: { type: "string", format: "url" },
+            sites: { type: "array", items_type: "string", format: "url" },
+            list: {
+              type: "array",
+              items_type: "object",
+              items_fields: { u: { type: "string", format: "url" } },
+            },
+          },
+        },
+      ]),
+    );
+    const made = value(
+      await device.create({
+        type: "app.link.entry",
+        properties: {
+          site: "  https://example.com/a\t ",
+          sites: [" https://example.com/b "],
+          list: [{ u: "\thttps://example.com/c\n" }],
+        },
+      }),
+    );
+    const shown = value(await device.get(made.item_id!));
+    expect(shown.properties).toMatchObject({
+      site: "https://example.com/a",
+      sites: ["https://example.com/b"],
+      list: [{ u: "https://example.com/c" }],
+    });
+    const queued = await device.queue();
+    for (const [field, properties] of [
+      ["site", { site: "not a url" }],
+      ["sites", { sites: ["not a url"] }],
+      ["list", { list: [{ u: "not a url" }] }],
+    ] as const) {
+      const refused = await device.create({
+        type: "app.link.entry",
+        properties,
+      });
+      expect(refused.ok, field).toBe(false);
+      if (!refused.ok)
+        expect(refused.refusal.raw, field).toContain(`${field}:`);
+    }
+    expect(await device.queue()).toEqual(queued);
+  });
+
   it("refuses a read of the server's catalog with no_server, answering no types from its own", async () => {
     // A run that names a server through the environment would answer the read.
     vi.stubEnv("MARFA_API_URL", "");

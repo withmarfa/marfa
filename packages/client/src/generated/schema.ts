@@ -2251,7 +2251,7 @@ export interface components {
             enum_values?: string[];
             /** @description The type of each element of an `array` property. A write is refused if an element is not a value of that type. It can't be `thumbnail`. */
             items_type?: string;
-            /** @description A refinement of a `string` property. `url`, `email`, `date` and `datetime` store it as that type. `bcp47` and `iso3166` only label it. It can't be `thumbnail`. */
+            /** @description A refinement of a `string` property. `url`, `email`, `date` and `datetime` store it as that type. `bcp47` and `iso3166` only label it, and `currency` limits it to three capital letters. It can't be `thumbnail`. */
             format?: string;
         };
         /** @description A lever that applies to the types it names. */
@@ -3967,17 +3967,25 @@ export interface components {
             status_values?: components["schemas"]["StatusValue"][];
             /** @description The type of each element of an `array` field. A write is refused if an element is not a value of that type. */
             items_type?: string;
+            /** @description The members of each entry of an `array` field whose `items_type` is `object`, by name. A write is refused if an entry has another member, lacks a required one, holds a value a member does not take, or has none. */
+            items_fields?: {
+                [key: string]: components["schemas"]["EntryMember"];
+            };
             /**
-             * @description A refinement of a `string` field, or of an array of strings. `url`, `email`, `datetime`, `date` and `thumbnail` become the field's `type`, and all but `thumbnail` an array's `items_type`. `bcp47` and `iso3166` stay as `format`.
+             * @description A refinement of a `string` field or an array of strings. `url`, `email`, `datetime`, `date` and `thumbnail` become the `type` or `items_type`. `bcp47`, `iso3166` and `currency` stay as `format`; a `currency` is three capital letters, such as `GBP`.
              * @enum {string}
              */
-            format?: "url" | "email" | "datetime" | "date" | "thumbnail" | "bcp47" | "iso3166";
+            format?: "url" | "email" | "datetime" | "date" | "thumbnail" | "bcp47" | "iso3166" | "currency";
             /** @description `false` if full-text search should skip the field. Items still return it. */
             searchable?: boolean;
             /** @description The longest value a `string` or `enum` field allows. */
             maxLength?: number;
             /** @description The most elements an `array` field allows. */
             maxItems?: number;
+            /** @description The lowest value the field allows, itself included. Only a `number` or `integer` field takes it. A subtype may raise it, never lower or drop it. */
+            minimum?: number;
+            /** @description The highest value the field allows, itself included. Only a `number` or `integer` field takes it. A subtype may lower it, never raise or drop it. */
+            maximum?: number;
         } & {
             [key: string]: unknown;
         };
@@ -3990,6 +3998,33 @@ export interface components {
              * @enum {string}
              */
             group: "not_started" | "in_progress" | "completed" | "canceled";
+        };
+        /** @description One member of the entries of an `array` field. */
+        EntryMember: {
+            /**
+             * @description The member's type: `string`, `email`, `url`, `enum`, `boolean`, `integer`, `number`, `date` or `datetime`.
+             * @enum {string}
+             */
+            type: "string" | "number" | "integer" | "boolean" | "url" | "email" | "datetime" | "date" | "enum" | "array" | "object" | "thumbnail" | "status";
+            /** @description What the member holds. */
+            description?: string;
+            /** @description `true` if every entry must have the member. */
+            required?: boolean;
+            /** @description The values an `enum` member allows. */
+            enum_values?: string[];
+            /**
+             * @description A refinement of a `string` member, as a field's `format`.
+             * @enum {string}
+             */
+            format?: "url" | "email" | "datetime" | "date" | "thumbnail" | "bcp47" | "iso3166" | "currency";
+            /** @description The longest value a `string` or `enum` member allows. */
+            maxLength?: number;
+            /** @description The lowest value the member allows, itself included. Only a `number` or `integer` member takes it. */
+            minimum?: number;
+            /** @description The highest value the member allows, itself included. Only a `number` or `integer` member takes it. */
+            maximum?: number;
+        } & {
+            [key: string]: unknown;
         };
         /** @description A type says which fields the items of that type hold, and what else Marfa does for them. */
         RegisteredType: components["schemas"]["TypeDefinition"] & {

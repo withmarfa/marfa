@@ -47,7 +47,10 @@ interface FieldDefinition {
   enum_values?: string[];
   status_values?: { value: string; group: string }[];
   items_type?: string;
+  items_fields?: Record<string, unknown>;
   format?: string;
+  minimum?: number;
+  maximum?: number;
 }
 
 /** A type's definition with only what an agent writing an item needs. */
@@ -68,7 +71,12 @@ export function compactType(type: Record<string, unknown>) {
         status_values: field.status_values,
       }),
       ...(field.items_type !== undefined && { items_type: field.items_type }),
+      ...(field.items_fields !== undefined && {
+        items_fields: field.items_fields,
+      }),
       ...(field.format !== undefined && { format: field.format }),
+      ...(field.minimum !== undefined && { minimum: field.minimum }),
+      ...(field.maximum !== undefined && { maximum: field.maximum }),
     };
   }
   const hints = type.display_hints as

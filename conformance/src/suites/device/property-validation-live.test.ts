@@ -17,6 +17,7 @@ let ctx: TestContext;
 let device: CliDevice;
 let type: string;
 let valuesType: string;
+let rulesType: string;
 let store: string;
 let apiUrl: string;
 let apiKey: string;
@@ -51,11 +52,39 @@ beforeAll(async () => {
           weight: { type: "number" },
           url: { type: "url" },
           sites: { type: "array", items_type: "url" },
+          entries: {
+            type: "array",
+            items_type: "object",
+            items_fields: { u: { type: "url" } },
+          },
         },
       })
     ).ok,
   ).toBe(true);
   trackType(ctx, valuesType);
+  rulesType = `fixture.${ctx.runId}.rules`;
+  expect(
+    (
+      await client.registerType({
+        id: rulesType,
+        fields: {
+          score: { type: "integer", minimum: 1, maximum: 5 },
+          price: { type: "number", minimum: -0.5, maximum: 10 },
+          code: { type: "string", format: "currency" },
+          contacts: {
+            type: "array",
+            items_type: "object",
+            items_fields: {
+              value: { type: "email", required: true },
+              label: { type: "string", maxLength: 10 },
+              rank: { type: "integer", minimum: 1, maximum: 5 },
+            },
+          },
+        },
+      })
+    ).ok,
+  ).toBe(true);
+  trackType(ctx, rulesType);
   store = newStore("property-validation-live");
   device = new CliDevice({
     binary: requireBinary(),
@@ -63,7 +92,9 @@ beforeAll(async () => {
     url: context.apiUrl,
     key: context.apiKey,
   });
-  expect((await device.hydrate([type, valuesType], "library")).ok).toBe(true);
+  expect(
+    (await device.hydrate([type, valuesType, rulesType], "library")).ok,
+  ).toBe(true);
 });
 afterAll(async () => {
   if (ctx) await cleanup(ctx);
@@ -159,6 +190,129 @@ it("matches a real server's field decisions and keeps queued writes across a cat
   expect(kept.ok && kept.value.at(-1)?.body).toMatchObject({
     properties: { title: "valid" },
   });
+});
+
+it("matches the server on a range, a currency and the entries of a list", async () => {
+  const contact = { value: "a@example.test" };
+  const good: Record<string, unknown>[] = [
+    { score: 1, price: -0.5 },
+    { score: 5, price: 10 },
+    { code: "GBP" },
+    { code: "ZZZ" },
+    { contacts: [contact, { ...contact, label: "work", rank: 5 }] },
+    { contacts: [] },
+  ];
+  const bad: [string, Record<string, unknown>][] = [
+    ["score", { score: 0 }],
+    ["score", { score: 6 }],
+    ["price", { price: -0.51 }],
+    ["price", { price: 10.01 }],
+    ["code", { code: "gbp" }],
+    ["code", { code: "GB" }],
+    ["code", { code: "GBPX" }],
+    ["code", { code: "" }],
+    ["code", { code: 826 }],
+    ["contacts", { contacts: [contact, { ...contact, extra: 1 }] }],
+    ["contacts", { contacts: [contact, { label: "x" }] }],
+    ["contacts", { contacts: [contact, { value: 5 }] }],
+    ["contacts", { contacts: [contact, { value: "no" }] }],
+    ["contacts", { contacts: [contact, { ...contact, rank: 6 }] }],
+    ["contacts", { contacts: [contact, { ...contact, label: null }] }],
+    ["contacts", { contacts: [contact, {}] }],
+    ["contacts", { contacts: [contact, "text"] }],
+  ];
+  for (const properties of good) {
+    const server = await client.createItem({ type: rulesType, properties });
+    expect(server.ok, JSON.stringify([properties, server.error])).toBe(true);
+    if (server.ok) trackItem(ctx, server.data.item.id);
+    const local = await device.create({ type: rulesType, properties });
+    expect(local.ok, JSON.stringify(properties)).toBe(true);
+    if (local.ok) trackItem(ctx, local.value.item_id!);
+  }
+  const drained = await device.drain();
+  expect(drained.ok && drained.value.verdicts.map((v) => v.verdict)).toEqual(
+    good.map(() => "accepted"),
+  );
+  const before = await device.queue();
+  for (const [field, properties] of bad) {
+    const server = await client.createItem({ type: rulesType, properties });
+    expect(server.ok, JSON.stringify(properties)).toBe(false);
+    expect(server.error?.error.code).toBe("invalid_properties");
+    const local = await device.create({ type: rulesType, properties });
+    expect(local.ok, JSON.stringify(properties)).toBe(false);
+    if (!local.ok) expect(local.refusal.raw).toContain(`${field}:`);
+  }
+  expect(await device.queue()).toEqual(before);
+  // A JSON text makes `__proto__` an own key, which both paths refuse.
+  const text = '{"contacts":[{"value":"a@example.test","__proto__":{"x":1}}]}';
+  const server = await client.rawRequest("/items", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: `{"type":${JSON.stringify(rulesType)},"properties":${text}}`,
+  });
+  expect(server.status).toBe(400);
+  const local = await device.create({
+    type: rulesType,
+    propertiesText: text,
+  });
+  expect(local.ok).toBe(false);
+  if (!local.ok) expect(local.refusal.raw).toContain("contacts:");
+  expect(await device.queue()).toEqual(before);
+});
+
+it("refuses an update that sets a bad entry on both paths, naming the field, the position and the member", async () => {
+  const contact = { value: "a@example.test" };
+  const made = await client.createItem({
+    type: rulesType,
+    properties: { contacts: [contact] },
+  });
+  expect(made.ok, JSON.stringify(made.error)).toBe(true);
+  if (!made.ok) return;
+  trackItem(ctx, made.data.item.id);
+  expect((await device.catchUp()).ok).toBe(true);
+  const held = await device.get(made.data.item.id);
+  expect(held.ok).toBe(true);
+  if (!held.ok) return;
+  const before = await device.queue();
+  for (const [contacts, named, member] of [
+    [[contact, { label: "x" }], "contacts: Item 1: value:", "contacts.1.value"],
+    [
+      [contact, { ...contact, rank: 6 }],
+      "contacts: Item 1: rank:",
+      "contacts.1.rank",
+    ],
+    [
+      [contact, { ...contact, extra: 1 }],
+      "contacts: Item 1: extra:",
+      "contacts.1.extra",
+    ],
+  ] as const) {
+    const properties = { contacts };
+    const server = await client.updateItem(made.data.item.id, {
+      version: made.data.item.version,
+      properties,
+    });
+    expect(server.status, JSON.stringify(properties)).toBe(400);
+    expect(
+      (
+        server.error?.error.details as
+          { errors?: { field: string }[] } | undefined
+      )?.errors?.map((e) => e.field),
+    ).toContain(member);
+    const local = await device.update(made.data.item.id, {
+      version: held.value.version,
+      properties,
+    });
+    expect(local.ok, JSON.stringify(properties)).toBe(false);
+    if (!local.ok) expect(local.refusal.raw).toContain(named);
+  }
+  expect(await device.queue()).toEqual(before);
+  // The witness: a good entry is queued by the same command.
+  const good = await device.update(made.data.item.id, {
+    version: held.value.version,
+    properties: { contacts: [contact, { ...contact, rank: 5 }] },
+  });
+  expect(good.ok).toBe(true);
 });
 
 /** The digits a float is served as, for each number a write is refused for. */
@@ -528,6 +682,7 @@ it.each([
     for (const properties of [
       { title: "t", url: written },
       { title: "t", sites: [written] },
+      { title: "t", entries: [{ u: written }] },
     ]) {
       const server = await client.createItem({ type: valuesType, properties });
       expect(server.ok, JSON.stringify(server.error)).toBe(true);
@@ -536,8 +691,18 @@ it.each([
       expect(local.ok).toBe(true);
       if (!local.ok) return;
       trackItem(ctx, local.value.item_id!);
-      const field = "url" in properties ? "url" : "sites";
-      const shown = field === "url" ? stored : [stored];
+      const field =
+        "url" in properties
+          ? "url"
+          : "sites" in properties
+            ? "sites"
+            : "entries";
+      const shown =
+        field === "url"
+          ? stored
+          : field === "sites"
+            ? [stored]
+            : [{ u: stored }];
       const before = await device.get(local.value.item_id!);
       expect(before.ok && before.value.properties[field]).toEqual(shown);
       expect(server.ok && server.data.item.properties[field]).toEqual(shown);

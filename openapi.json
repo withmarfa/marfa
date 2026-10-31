@@ -140,7 +140,7 @@
           },
           "format": {
             "type": "string",
-            "description": "A refinement of a `string` property. `url`, `email`, `date` and `datetime` store it as that type. `bcp47` and `iso3166` only label it. It can't be `thumbnail`."
+            "description": "A refinement of a `string` property. `url`, `email`, `date` and `datetime` store it as that type. `bcp47` and `iso3166` only label it, and `currency` limits it to three capital letters. It can't be `thumbnail`."
           }
         },
         "required": [
@@ -4298,6 +4298,13 @@
             "type": "string",
             "description": "The type of each element of an `array` field. A write is refused if an element is not a value of that type."
           },
+          "items_fields": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/EntryMember"
+            },
+            "description": "The members of each entry of an `array` field whose `items_type` is `object`, by name. A write is refused if an entry has another member, lacks a required one, holds a value a member does not take, or has none."
+          },
           "format": {
             "type": "string",
             "enum": [
@@ -4307,9 +4314,10 @@
               "date",
               "thumbnail",
               "bcp47",
-              "iso3166"
+              "iso3166",
+              "currency"
             ],
-            "description": "A refinement of a `string` field, or of an array of strings. `url`, `email`, `datetime`, `date` and `thumbnail` become the field's `type`, and all but `thumbnail` an array's `items_type`. `bcp47` and `iso3166` stay as `format`."
+            "description": "A refinement of a `string` field or an array of strings. `url`, `email`, `datetime`, `date` and `thumbnail` become the `type` or `items_type`. `bcp47`, `iso3166` and `currency` stay as `format`; a `currency` is three capital letters, such as `GBP`."
           },
           "searchable": {
             "type": "boolean",
@@ -4322,6 +4330,14 @@
           "maxItems": {
             "type": "integer",
             "description": "The most elements an `array` field allows."
+          },
+          "minimum": {
+            "type": "number",
+            "description": "The lowest value the field allows, itself included. Only a `number` or `integer` field takes it. A subtype may raise it, never lower or drop it."
+          },
+          "maximum": {
+            "type": "number",
+            "description": "The highest value the field allows, itself included. Only a `number` or `integer` field takes it. A subtype may lower it, never raise or drop it."
           }
         },
         "required": [
@@ -4353,6 +4369,76 @@
           "group"
         ],
         "description": "One word a `status` field takes, with its group."
+      },
+      "EntryMember": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "string",
+              "number",
+              "integer",
+              "boolean",
+              "url",
+              "email",
+              "datetime",
+              "date",
+              "enum",
+              "array",
+              "object",
+              "thumbnail",
+              "status"
+            ],
+            "description": "The member's type: `string`, `email`, `url`, `enum`, `boolean`, `integer`, `number`, `date` or `datetime`."
+          },
+          "description": {
+            "type": "string",
+            "description": "What the member holds."
+          },
+          "required": {
+            "type": "boolean",
+            "description": "`true` if every entry must have the member."
+          },
+          "enum_values": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The values an `enum` member allows."
+          },
+          "format": {
+            "type": "string",
+            "enum": [
+              "url",
+              "email",
+              "datetime",
+              "date",
+              "thumbnail",
+              "bcp47",
+              "iso3166",
+              "currency"
+            ],
+            "description": "A refinement of a `string` member, as a field's `format`."
+          },
+          "maxLength": {
+            "type": "integer",
+            "description": "The longest value a `string` or `enum` member allows."
+          },
+          "minimum": {
+            "type": "number",
+            "description": "The lowest value the member allows, itself included. Only a `number` or `integer` member takes it."
+          },
+          "maximum": {
+            "type": "number",
+            "description": "The highest value the member allows, itself included. Only a `number` or `integer` member takes it."
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "additionalProperties": {},
+        "description": "One member of the entries of an `array` field."
       },
       "RegisteredType": {
         "allOf": [

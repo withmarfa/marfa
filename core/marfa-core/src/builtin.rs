@@ -37,6 +37,7 @@ fn list(key: &str) -> Result<Vec<String>, CoreError> {
             let document: Value = serde_json::from_str(CATALOG).map_err(|e| e.to_string())?;
             [
                 "field_types",
+                "entry_member_types",
                 "reserved_type_roots",
                 "reserved_field_names",
                 "searched_field_names",
@@ -62,6 +63,26 @@ fn list(key: &str) -> Result<Vec<String>, CoreError> {
 /// The field types a type may declare, as the registry takes them.
 pub(crate) fn field_types() -> Result<Vec<String>, CoreError> {
     list("field_types")
+}
+
+/// The kinds a member of a list's entries may take, as the registry takes them.
+pub(crate) fn entry_member_types() -> Result<Vec<String>, CoreError> {
+    list("entry_member_types")
+}
+
+/// The kind each format of a string turns into, as the registry folds a
+/// definition (`normalizeFieldDefinition`). A format absent from it annotates
+/// the string and leaves it one.
+pub(crate) fn format_field_types() -> Result<&'static HashMap<String, String>, CoreError> {
+    static PARSED: OnceLock<Result<HashMap<String, String>, String>> = OnceLock::new();
+    PARSED
+        .get_or_init(|| {
+            let document: Value = serde_json::from_str(CATALOG).map_err(|e| e.to_string())?;
+            serde_json::from_value(document["format_field_types"].clone())
+                .map_err(|e| e.to_string())
+        })
+        .as_ref()
+        .map_err(|error| CoreError::Decoding(format!("the shipped catalog's formats: {error}")))
 }
 
 /// The roots the type grammar reserves, which no publisher may take as its own.

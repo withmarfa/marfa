@@ -123,8 +123,8 @@ describe("compatible_with", () => {
   });
 
   it("compares object fields as opaque, whatever they contain", () => {
-    // A field declaration has no vocabulary for nested shape, so two object
-    // fields compare compatible regardless of contents. The docs state this
+    // An `object` field declares nothing of its shape, so two object fields
+    // compare compatible regardless of contents. The docs state this
     // as the mechanism's honest limit; pinning it makes a future deep
     // comparison a deliberate widening rather than silent drift.
     const target = validateTypeSchema(
