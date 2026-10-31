@@ -953,6 +953,40 @@ describe("marfa_update", () => {
     expect(((await edges.json()) as { data: unknown[] }).data).toEqual([]);
   });
 
+  it("removes the fields clear_properties names and keeps every other", async () => {
+    const note = await saveNote({ title: "Plan", body: "one", notes: "gone" });
+    const cleared = payloadOf(
+      await callTool(client, "marfa_update", {
+        id: note.id,
+        version: note.version,
+        clear_properties: ["notes"],
+      }),
+    );
+    expect(cleared).toMatchObject({ applied: ["properties"] });
+    expect((await readItem(note.id)).properties).toEqual({
+      title: "Plan",
+      body: "one",
+    });
+
+    // A stale clear names the field another writer changed since.
+    const moved = await request(ctx.app, "PATCH", `/items/${note.id}`, {
+      key: ctx.workingKey,
+      body: { version: cleared.version, properties: { body: "two" } },
+    });
+    expect(moved.status).toBe(200);
+    const stale = errorOf(
+      await callTool(client, "marfa_update", {
+        id: note.id,
+        version: cleared.version,
+        clear_properties: ["body", "title"],
+      }),
+    );
+    expect(stale).toMatchObject({
+      code: "version_conflict",
+      conflicting_fields: ["body"],
+    });
+  });
+
   it("restores an item from the trash", async () => {
     const note = await saveNote({ body: "oops" });
     await request(ctx.app, "DELETE", `/items/${note.id}`, {
