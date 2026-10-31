@@ -116,3 +116,25 @@ it("names every case the core is held to as the core does, and Untitled where th
     );
   }
 });
+
+it("reads a 100,000-character hostile line in linear time", () => {
+  const n = 100_000;
+  const hostile = [
+    " ".repeat(n) + "x",
+    "x" + " ".repeat(n) + "x",
+    "# a " + "#".repeat(n) + "x",
+    "# " + "#".repeat(n) + " " + " ".repeat(n) + "x",
+    ">".repeat(n) + "x",
+    "- ".repeat(n / 2) + "x",
+    "> ".repeat(n / 2) + "x",
+    "a".repeat(n),
+  ];
+  const hints = { title_field: "title", body_field: "body" };
+  const start = performance.now();
+  for (const line of hostile) {
+    itemName({ title: line }, hints);
+    itemPreview({ body: line }, hints);
+    itemPreview({ body: `${line}\n${line}` }, hints);
+  }
+  expect(performance.now() - start).toBeLessThan(1500);
+});

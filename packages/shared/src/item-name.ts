@@ -176,8 +176,23 @@ class Plain {
   }
 }
 
-const trimStart = (text: string) => text.replace(/^\s+/u, "");
-const trimEnd = (text: string) => text.replace(/\s+$/u, "");
+function trimStart(text: string): string {
+  let start = 0;
+  while (start < text.length && isSpace(text[start])) start++;
+  return text.slice(start);
+}
+
+function trimEnd(text: string): string {
+  let end = text.length;
+  while (end > 0 && isSpace(text[end - 1])) end--;
+  return text.slice(0, end);
+}
+
+function dropTrailing(text: string, mark: string): string {
+  let end = text.length;
+  while (end > 0 && text[end - 1] === mark) end--;
+  return text.slice(0, end);
+}
 
 function runOf(text: string, mark: string): number {
   let length = 0;
@@ -270,7 +285,7 @@ function stripBlocks(text: string): string {
         : undefined;
     if (heading !== undefined) {
       const rest = trimEnd(heading);
-      const kept = rest.replace(/#+$/u, "");
+      const kept = dropTrailing(rest, "#");
       return kept === "" || isSpace(kept.at(-1)) ? kept : rest;
     }
     const item = listMarker(line);
