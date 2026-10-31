@@ -1421,7 +1421,7 @@ describe("what a pull does with a file whose item stops matching", () => {
     return added;
   }
 
-  it("removes the file of an item put in the bin that it found as its item renders", async () => {
+  it("removes the file of an item put in the bin that it found as its item renders, and brings it back on restore", async () => {
     harness = await addedOverItsRender("folder-found-trashed");
     const caught = await harness.folder.device().catchUp();
     expect(caught.ok ? caught.value.applied : 0).toBe(1);
@@ -1433,6 +1433,20 @@ describe("what a pull does with a file whose item stops matching", () => {
       "the file of an item in the bin stayed, because this copy never wrote the bytes it found",
     ).toEqual([1, 0]);
     expect(existsSync(join(harness.dir, "going.md"))).toBe(false);
+    const scanned = await harness.folder.scan();
+    expect(
+      scanned.ok && [scanned.value.missing, scanned.value.lost],
+      "the removed file was journaled, or held as bound to an item that is gone",
+    ).toEqual([0, 0]);
+
+    const restored = await harness.folder.device().catchUp();
+    expect(restored.ok ? restored.value.applied : 0).toBe(1);
+    const back = await harness.folder.pull();
+    expect(back.ok && back.value.written).toBe(1);
+    expect(
+      read(harness, "going.md"),
+      "a restored item did not come back as a file",
+    ).toContain("body");
   });
 
   it("trashes the item of a file it found as its item renders once the person deletes it", async () => {

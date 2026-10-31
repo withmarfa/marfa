@@ -3848,7 +3848,7 @@ When an item is trashed or leaves the states held by a folder's query, its file 
 
 **Reason:** A folder added over files an earlier copy wrote binds them without writing them. Bytes that are exactly the item's render carry nothing the person changed, so they are the device's own however they came.
 
-**Tests:** `device/folders-identity.test.ts › removes a trashed item's file and brings it back on restore`, `device/folders-identity.test.ts › removes the file of an item that leaves by state`, `device/folders-identity.test.ts › removes the file of an item put in the bin that it found as its item renders`.
+**Tests:** `device/folders-identity.test.ts › removes a trashed item's file and brings it back on restore`, `device/folders-identity.test.ts › removes the file of an item that leaves by state`, `device/folders-identity.test.ts › removes the file of an item put in the bin that it found as its item renders, and brings it back on restore`.
 
 ### `folders/departed-binding-released`
 
@@ -3866,7 +3866,7 @@ When a folder pull removes a departed item’s file, a device MUST NOT queue del
 
 When a trashed item is restored into a folder’s query, a device MUST write its file at the next pull.
 
-**Tests:** `device/folders-identity.test.ts › removes a trashed item's file and brings it back on restore`.
+**Tests:** `device/folders-identity.test.ts › removes a trashed item's file and brings it back on restore`, `device/folders-identity.test.ts › removes the file of an item put in the bin that it found as its item renders, and brings it back on restore`.
 
 ### `folders/missing-departure-not-pulled`
 
