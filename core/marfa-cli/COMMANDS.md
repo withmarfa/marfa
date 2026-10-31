@@ -2825,7 +2825,7 @@ Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 
 ### marfa device items bin
 
-Read a page of the server's bin, newest change first. Online only, and held nowhere in the copy; each item's `updated_at` stands for when it went to the bin.
+Read a page of the server's bin, newest binned first. Online only, and held nowhere in the copy.
 
 ```text
 marfa device items bin [OPTIONS]

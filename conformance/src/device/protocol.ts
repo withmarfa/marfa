@@ -47,6 +47,8 @@ export interface Item {
   /** Where the item was captured; null where its writer set none. */
   capture_latitude?: number | null;
   capture_longitude?: number | null;
+  /** When the item went to the bin; null outside it or where none was kept. */
+  trashed_at: string | null;
   tags: string[];
 }
 

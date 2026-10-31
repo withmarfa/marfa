@@ -175,6 +175,26 @@ import {
 import type { WriterColumns } from "./helpers.js";
 import * as clock from "../../clock.js";
 
+/**
+ * The order of a listing of the bin alone that names no `sort`: when each
+ * row went there, newest first unless `direction=asc`. A row an archive
+ * restored to the bin without that time stands at its last write, which is
+ * no earlier than the move.
+ */
+const BINNED_ORDER = { kind: "binned" } as const;
+// Written as `idx_items_state_binned_at` writes it, which SQLite reads in
+// order only for the same expression.
+const binnedAt = sql<string>`CASE WHEN ${items.trashed_at} IS NULL THEN ${items.updated_at} ELSE ${items.trashed_at} END`;
+
+function isBinListing(filters: ItemFilters): boolean {
+  return (
+    filters.sort === undefined &&
+    filters.all_states !== true &&
+    filters.states?.length === 1 &&
+    filters.states[0] === "trashed"
+  );
+}
+
 // The stored properties column is SQLite's binary JSONB encoding. Every read
 // projects it back to JSON text via json() so rowToItem can parse it; every
 // write converts through jsonb(). In-place updates elsewhere must use
@@ -465,6 +485,7 @@ async function insertConflictedSibling(
       version: 1,
       schema_version: schemaVersion,
       source: row.source ?? MISSING_SOURCE,
+      trashed_at: null,
     } satisfies Item,
     edges: copied,
   };
@@ -1054,6 +1075,7 @@ export class SqliteItemStore implements ItemStore {
         ...(input.capture_longitude != null && {
           capture_longitude: input.capture_longitude,
         }),
+        trashed_at: state === softDeleteState(input.type) ? now : null,
       } satisfies Item;
     });
   }
@@ -1400,7 +1422,9 @@ export class SqliteItemStore implements ItemStore {
     const catchUp = updatedAfter !== undefined;
     const sort = catchUp
       ? ({ kind: "system", column: "updated_at" } as const)
-      : parseSortField(filters.sort);
+      : isBinListing(filters)
+        ? BINNED_ORDER
+        : parseSortField(filters.sort);
     const dir: SortDirection = catchUp ? "asc" : (filters.direction ?? "desc");
     // The cursor records the ordering that issued it — column and
     // direction, taken from the resolved values above rather than from
@@ -1439,7 +1463,9 @@ export class SqliteItemStore implements ItemStore {
           : sort.column === "occurred_at"
             ? items.occurred_at
             : items.created_at
-        : null;
+        : sort.kind === "binned"
+          ? binnedAt
+          : null;
 
     if (filters.cursor) {
       const { v, id } = decodeKeyedCursorNullable(filters.cursor, cursorKey);
@@ -1462,7 +1488,8 @@ export class SqliteItemStore implements ItemStore {
           if (clause) cursorConditions.push(clause);
         }
       } else if (systemSortCol && v !== null) {
-        // System columns are NOT NULL, so the cursor value is always present.
+        // System columns are NOT NULL, and so is `binnedAt`, so the cursor
+        // value is always present.
         // One row-value comparison rather than its expansion into `OR`: an
         // index on the column and `id` answers it as a single range, where
         // the expansion is a range on the column and a test of every row in it.
@@ -1530,11 +1557,13 @@ export class SqliteItemStore implements ItemStore {
       const sortValue =
         sort.kind === "property"
           ? propertySortValue(last.properties, sort)
-          : sort.column === "updated_at"
-            ? last.updated_at
-            : sort.column === "occurred_at"
-              ? last.occurred_at
-              : last.created_at;
+          : sort.kind === "binned"
+            ? (last.trashed_at ?? last.updated_at)
+            : sort.column === "updated_at"
+              ? last.updated_at
+              : sort.column === "occurred_at"
+                ? last.occurred_at
+                : last.created_at;
       cursor = encodeKeyedCursor(sortValue, last.id, cursorKey);
     }
 
@@ -2412,7 +2441,12 @@ export class SqliteItemStore implements ItemStore {
 
     await this.searchStore.index(id, row.properties, row.type);
 
-    return { ...row, state: "active" as ItemState, updated_at: now };
+    return {
+      ...row,
+      state: "active" as ItemState,
+      updated_at: now,
+      trashed_at: null,
+    };
   }
 
   /** What a row leaving the bin leaves behind of the trash that took it. */
@@ -2545,12 +2579,13 @@ export class SqliteItemStore implements ItemStore {
     }
 
     const now = clock.now().toISOString();
+    const stamp = softDeleteClock(row.type, row.state, state, now);
     await this.db
       .update(items)
       .set({
         state,
         updated_at: now,
-        ...softDeleteClock(row.type, row.state, state, now),
+        ...stamp,
         ...(row.state === softDeleteState(row.type) ||
         state === softDeleteState(row.type)
           ? { trashed_by: null }
@@ -2566,7 +2601,12 @@ export class SqliteItemStore implements ItemStore {
       await this.searchStore.index(id, row.properties, row.type);
     }
 
-    return { ...row, state, updated_at: now };
+    return {
+      ...row,
+      state,
+      updated_at: now,
+      ...("trashed_at" in stamp && { trashed_at: stamp.trashed_at }),
+    };
   }
 
   async countByType(type: string): Promise<number> {

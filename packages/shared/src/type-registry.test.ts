@@ -862,6 +862,7 @@ describe("RESERVED_ITEM_FIELDS — freshness against Item interface", () => {
       schema_version: 1,
       capture_latitude: 0,
       capture_longitude: 0,
+      trashed_at: null,
       trashed_by_cascade: true,
       trashed_with: "",
     };

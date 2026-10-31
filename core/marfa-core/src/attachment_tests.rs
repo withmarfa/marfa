@@ -111,12 +111,24 @@ fn the_bytes_attachments_keep_follow_each_change_and_only_grow_while_the_copy_is
     assert_eq!(kept(&core), HashSet::from([hex(&photo), hex(&scan)]));
     store::delete_edge(&core.conn().unwrap(), "e2").unwrap();
     assert_eq!(kept(&core), HashSet::from([hex(&photo)]));
-    store::set_item_state(&core.conn().unwrap(), "note", crate::ItemState::Trashed).unwrap();
+    store::set_item_state(
+        &core.conn().unwrap(),
+        "note",
+        crate::ItemState::Trashed,
+        "2026-01-01T00:00:00.000Z",
+    )
+    .unwrap();
     assert!(
         kept(&core).is_empty(),
         "the bytes of a file attached to a binned item were kept"
     );
-    store::set_item_state(&core.conn().unwrap(), "note", crate::ItemState::Active).unwrap();
+    store::set_item_state(
+        &core.conn().unwrap(),
+        "note",
+        crate::ItemState::Active,
+        "2026-01-01T00:00:00.000Z",
+    )
+    .unwrap();
     assert_eq!(kept(&core), HashSet::from([hex(&photo)]));
 
     // From the start of a hydration the rows go, and the bytes stay kept

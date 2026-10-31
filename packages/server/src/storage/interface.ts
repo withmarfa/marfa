@@ -431,11 +431,16 @@ export function cursorSortKey(
   listing: CursorListing,
   sort:
     | { kind: "system"; column: SystemSortField }
-    | { kind: "property"; field: string },
+    | { kind: "property"; field: string }
+    | { kind: "binned" },
   direction: SortDirection,
 ): CursorSortKey {
   const column =
-    sort.kind === "system" ? sort.column : `properties.${sort.field}`;
+    sort.kind === "system"
+      ? sort.column
+      : sort.kind === "binned"
+        ? "trashed_at"
+        : `properties.${sort.field}`;
   return `${listing}:${column}:${direction}`;
 }
 

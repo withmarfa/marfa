@@ -809,7 +809,7 @@ fn record_cells(record: &Value) -> Vec<String> {
             delivery_answer(record),
         ];
     }
-    if record.get("trashed_at").is_some() {
+    if record.get("eligible_for_deletion_at").is_some() {
         return vec![
             owned("id"),
             owned("type"),
@@ -1092,6 +1092,14 @@ pub(crate) mod tests {
         assert!(text.contains("1 items deleted"));
         assert!(text.contains("deletion could not be confirmed"));
         assert!(!text.contains("--cursor"));
+    }
+
+    #[test]
+    fn an_item_in_the_bin_is_drawn_as_an_item_not_a_trash_summary() {
+        let text = describe(&json!({"data":[{"id":"item-one", "type":"core.note", "version":3, "state":"trashed", "properties":{"title":"Shopping list"}, "created_at":"2026-01-01T00:00:00Z", "updated_at":"2026-01-02T00:00:00Z", "trashed_at":"2026-01-02T00:00:00Z", "tags":[]}], "next_cursor":null})).unwrap();
+        assert!(text.contains("Shopping list"), "{text}");
+        assert!(!text.contains("Not recorded"), "{text}");
+        assert!(!text.contains("automatic deletion"), "{text}");
     }
 
     #[test]

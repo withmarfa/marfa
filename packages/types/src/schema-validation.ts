@@ -172,6 +172,7 @@ export const RESERVED_ITEM_FIELDS: ReadonlySet<string> = new Set([
   "schema_version",
   "capture_latitude",
   "capture_longitude",
+  "trashed_at",
   "trashed_by_cascade",
   "trashed_with",
 ]);

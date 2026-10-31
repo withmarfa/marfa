@@ -214,6 +214,7 @@ function item(id: string, type = "core.note"): Item {
     properties: { title: id },
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
+    trashed_at: null,
   };
 }
 
@@ -313,6 +314,52 @@ describe("the body a delivery sends", () => {
       "delivered_at",
     ]);
     expect(sentBodies(http)[0]).toMatchObject({ event_type: "item.created" });
+  });
+  it("sends trashed_at as null for an item frame stored before items carried it, and keeps a stored time", async () => {
+    const { id } = await owner();
+    const webhook = await subscription(id, ["item.updated"]);
+    const binned = "2026-01-02T03:04:05.000Z";
+    for (const [itemId, trashedAt] of [
+      ["01HOLDFRAMEOLDFRAMEOLDFR00", undefined],
+      ["01HNEWFRAMENEWFRAMENEWFR00", binned],
+    ] as const) {
+      const earlier: Partial<Item> = item(itemId);
+      delete earlier.trashed_at;
+      await ctx.storage.outboundWebhookDeliveries.schedule({
+        eventId: 1n,
+        webhookId: webhook.id,
+        eventType: "item.updated",
+        payload: JSON.stringify({
+          event_type: "item.updated",
+          item:
+            trashedAt === undefined
+              ? earlier
+              : { ...earlier, trashed_at: trashedAt },
+        }),
+        webhookUrl: webhook.url,
+        nextAttemptAt: new Date(Date.now() - 1_000).toISOString(),
+      });
+    }
+    const http = recorder(() => ({
+      kind: "answered",
+      status: 204,
+      retryAfter: null,
+    }));
+    await new WebhookPoller({ storage: ctx.storage, http }).runOnce();
+    const sent = new Map(
+      sentBodies(http).map((body) => {
+        const sentItem = body.item as Record<string, unknown>;
+        return [sentItem.id, sentItem];
+      }),
+    );
+    expect(sent.get("01HOLDFRAMEOLDFRAMEOLDFR00")).toHaveProperty(
+      "trashed_at",
+      null,
+    );
+    expect(sent.get("01HNEWFRAMENEWFRAMENEWFR00")).toHaveProperty(
+      "trashed_at",
+      binned,
+    );
   });
 });
 

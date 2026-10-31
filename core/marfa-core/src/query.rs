@@ -90,8 +90,7 @@ pub(crate) fn list_with(
 /// from, so a list naming another is refused, as the server refuses it.
 fn ordered(filters: &ListFilters, sort: Option<Sort>) -> Result<Sort> {
     match (sort, filters.updated_after.is_some()) {
-        (None, true) => Ok(Sort::RESUMED),
-        (None, false) => Ok(Sort::default()),
+        (None, _) => Ok(Sort::unnamed(filters)),
         (Some(sort), true) if sort != Sort::RESUMED => Err(CoreError::Validation {
             code: "validation_error".into(),
             message: "updated_after orders by updated_at, ascending; leave out sort and direction"
@@ -174,6 +173,12 @@ pub(crate) fn list_where_with(
             "ORDER BY {expression} IS NULL, {expression} {}, id ASC",
             sort.direction.as_sql(),
             expression = property_sort_expression(name),
+        ),
+        // As on the server (`search-and-filters/bin-order`).
+        SortField::TrashedAt => format!(
+            "ORDER BY COALESCE(trashed_at, updated_at) {}, id {}",
+            sort.direction.as_sql(),
+            sort.direction.as_sql()
         ),
         field => format!(
             "ORDER BY {field} {}, id {}",
@@ -806,16 +811,16 @@ mod tests {
             (Some(SortField::CreatedAt), None, false),
             (None, Some(SortDirection::Descending), false),
         ] {
-            let sort = Sort::named(field.clone(), direction, true);
+            let sort = Sort::named(field.clone(), direction, &filters());
             assert_eq!(
                 listed(&conn, filters(), sort).is_ok(),
                 taken,
                 "{field:?} {direction:?}"
             );
         }
-        assert_eq!(Sort::named(None, None, true), None);
+        assert_eq!(Sort::named(None, None, &filters()), None);
         assert_eq!(
-            Sort::named(Some(SortField::UpdatedAt), None, false),
+            Sort::named(Some(SortField::UpdatedAt), None, &ListFilters::default()),
             Some(Sort {
                 field: SortField::UpdatedAt,
                 direction: SortDirection::Descending,

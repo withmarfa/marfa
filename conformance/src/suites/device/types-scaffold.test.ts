@@ -182,6 +182,7 @@ describe("a starting definition for a type", () => {
       "schema_version",
       "capture_latitude",
       "capture_longitude",
+      "trashed_at",
       "trashed_by_cascade",
       "trashed_with",
     ]) {

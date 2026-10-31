@@ -468,6 +468,7 @@ describe("starting on a database at schema version 2", () => {
 });
 
 const WRITTEN_AT = "2026-10-01T00:00:00.000Z";
+const TRASHED_AT = "2026-10-02T00:00:00.000Z";
 
 /**
  * The types a file at schema version 3 holds, by their parents and their
@@ -543,8 +544,8 @@ async function versionThree(
   for (const [id, [type, properties]] of Object.entries(items)) {
     await client.execute({
       sql:
-        "INSERT INTO items (id, type, state, properties, created_at, updated_at, occurred_at, source, writer_kind, writer_id, writer_name) " +
-        "VALUES (?, ?, ?, jsonb(?), ?, ?, ?, 'fixture', 'key', 'k1', 'A key')",
+        "INSERT INTO items (id, type, state, properties, created_at, updated_at, occurred_at, source, writer_kind, writer_id, writer_name, trashed_at) " +
+        "VALUES (?, ?, ?, jsonb(?), ?, ?, ?, 'fixture', 'key', 'k1', 'A key', ?)",
       args: [
         id,
         type,
@@ -553,6 +554,7 @@ async function versionThree(
         WRITTEN_AT,
         WRITTEN_AT,
         WRITTEN_AT,
+        id === "trashed" ? TRASHED_AT : null,
       ],
     });
   }
@@ -766,7 +768,7 @@ describe("starting on a database at schema version 3", () => {
         state.events.find((e) => e.item_id === "trashed")?.payload as string,
       ),
     ).toMatchObject({
-      item: { state: "trashed" },
+      item: { state: "trashed", trashed_at: TRASHED_AT },
       metadata: { item_id: "trashed", tags: [], extensions: {} },
     });
   });
@@ -785,16 +787,17 @@ describe("starting on a database at schema version 3", () => {
   });
 });
 
-describe("starting on a database at this build's schema version", () => {
+describe("starting on an unstamped database", () => {
   it("updates an unstamped one from the last version a build left unstamped", async () => {
-    // Schema versions 3 and 4 changed rows and not tables, so an unstamped
-    // file of this shape is at version 2: every build since stamps what it
-    // writes.
+    // Schema versions 3 and 4 changed rows and not tables, and version 5
+    // adds one index, so an unstamped file of this shape without that index
+    // is at version 2: every build since stamps what it writes.
     expect(Math.max(...UNSTAMPED_VERSIONS)).toBe(2);
     const path = scratch();
     const client = createClient({ url: `file:${path}` });
     await client.executeMultiple(SCHEMA_SQL);
     await client.executeMultiple(CREATE_FTS);
+    await client.execute("DROP INDEX idx_items_state_binned_at");
     await fill(client);
     client.close();
     // The fixture's icons are bare names no icon set has, which the update

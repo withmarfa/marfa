@@ -53,6 +53,7 @@ export function rowToItem(row: ItemRow): Item {
     ...(row.capture_longitude != null && {
       capture_longitude: row.capture_longitude,
     }),
+    trashed_at: row.trashed_at ?? null,
   };
 }
 

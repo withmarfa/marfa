@@ -561,6 +561,7 @@ mod tests {
             updated_at: created_at.into(),
             capture_latitude: None,
             capture_longitude: None,
+            trashed_at: None,
             tags: Vec::new(),
         }
     }

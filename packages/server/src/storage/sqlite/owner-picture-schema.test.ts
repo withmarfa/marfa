@@ -10,6 +10,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { createConnection } from "./connection.js";
+import { SCHEMA_VERSION } from "./migrations.js";
 import { SCHEMA_SQL } from "./schema-shape.js";
 import { RefusedDatabaseError } from "./refused-database.js";
 
@@ -41,6 +42,9 @@ async function seed(path: string, ddl: string, after = ""): Promise<void> {
   const client = createClient({ url: `file:${path}` });
   try {
     await client.executeMultiple(ddl);
+    // A file holding rows and no version is taken to be an unstamped
+    // build's, so one with this build's tables carries this build's version.
+    await client.execute(`PRAGMA user_version = ${String(SCHEMA_VERSION)}`);
     if (after !== "") await client.executeMultiple(after);
   } finally {
     client.close();

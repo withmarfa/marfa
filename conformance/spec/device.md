@@ -3884,11 +3884,25 @@ When a device opens to write a store made before a table this build adds, a devi
 
 **Tests:** `device/working-copy.test.ts › opens a store made before a table this build adds, and adds it`, `device/folders-watch-every.test.ts › watches every folder whose store lacks a table this build makes, adding the table`.
 
+### `device/reader-missing-column`
+
+If a device opens to read a store made before a column this build adds to a table, then a device MUST refuse it `invalid`, saying to open it once with this build's writer.
+
+**Tests:** `device/working-copy.test.ts › opens a store made before a column this build adds, adds it, and sends the write it holds`.
+
+### `device/added-column`
+
+When a device opens to write a store made before a column this build adds to a table, a device MUST add the column and open the store.
+
+**Reason:** a column added to the end of a table leaves every other column as it was, so the store's writes the server has not taken can still be sent, and refusing the store would strand them after an update of the app.
+
+**Tests:** `device/working-copy.test.ts › opens a store made before a column this build adds, adds it, and sends the write it holds`, `device/folders-watch-every.test.ts › watches every folder whose store lacks a column this build makes, adding the column`.
+
 ### `device/wrong-schema`
 
 If a store was made by another build of the core, at another schema version or with tables of another shape than this build makes, then a device MUST refuse every open of it, as a writer or to read, `wrong_schema` before it reads anything, naming the store's path, unless the open replaces a folder's store (`folders/refused-store-replaced`).
 
-**Reason:** the schema version does not move before the first public release, so a table's shape is what tells one build's store from another's.
+**Reason:** the schema version does not move before the first public release, so a table's shape is what tells one build's store from another's. A table that lacks only a column this build adds at its end is not of another shape (`device/added-column`), and neither is a missing table (`device/added-table`).
 
 **Tests:** `device/working-copy.test.ts › refuses to read a store a writer of another schema version made`, `› refuses a store another build shaped, by name, with the writes it holds unsent`.
 
@@ -5452,9 +5466,17 @@ If a purge is sent and no answer comes, then a device MUST keep the row and refu
 
 When a caller reads the bin, a device MUST answer the server's bin, a page at a time.
 
-**Reason:** a copy holds a row in the bin only while its slice or a pin takes it, so the whole bin is the server's `GET /items?state=trashed`. The rows of it the copy holds answer a local list naming the bin (`device/bin-local`). The server answers no time a row went to the bin, so a row's `updated_at` stands for it.
+**Reason:** a copy holds a row in the bin only while its slice or a pin takes it, so the whole bin is the server's `GET /items?state=trashed`. The rows of it the copy holds answer a local list naming the bin (`device/bin-local`).
 
 **Tests:** `device/bin-live.test.ts › reads the server's bin a page at a time, holding nothing`.
+
+### `device/bin-read-order`
+
+When a caller reads the bin, a device MUST answer it in the server's order for the bin, newest binned first.
+
+**Reason:** a person looks in the bin for what they binned most recently, and the server already orders the bin that way when a listing names no sort (`search-and-filters/bin-order`). A device that named its own order would answer a different sequence from every other client.
+
+**Tests:** `device/bin-live.test.ts › reads the server's bin newest binned first, with when each row went there`.
 
 ### `device/bin-unheld`
 
@@ -5492,9 +5514,41 @@ When an event says a row the copy holds went to the bin, a device MUST keep the 
 
 When a local list names the bin's state, a device MUST answer the rows the copy holds in the bin from the copy alone, whether or not the server can be reached.
 
-**Reason:** a person reads and restores what they binned while offline. Marfa answers no time a row went to the bin on the row itself, so `updated_at` stands for it: a move to the bin sets it, and so does any later write to the row in the bin, such as a tag. A list sorted by `updated_at`, newest first, answers the most recently binned or changed first. A row this device binned keeps the `updated_at` it had until the server's answer or event brings the server's.
+**Reason:** a person reads and restores what they binned while offline.
 
-**Tests:** `device/bin-held.test.ts › holds a row the device puts in the bin, and lists it there with the server away`, `› holds a row an event puts in the bin, and lists it there with the server away`, `› orders the bin newest first by the time each row last changed`.
+**Tests:** `device/bin-held.test.ts › holds a row the device puts in the bin, and lists it there with the server away`, `› holds a row an event puts in the bin, and lists it there with the server away`.
+
+### `device/bin-local-order`
+
+When a local list names the bin's state alone and no sort field, a device MUST order it by each row's `trashed_at`, newest first unless the list names a direction, a row with no `trashed_at` at its `updated_at`, and the id breaking ties.
+
+**Reason:** a local list of the bin answers in the order the server's listing of the bin does (`search-and-filters/bin-order`), so a person sees the same bin offline as online. A row an archive restored to the bin without the time it went there has no `trashed_at`, and its `updated_at` is the nearest time the copy holds.
+
+**Tests:** `device/bin-held.test.ts › orders the bin newest binned first, a row with no time at its updated_at`.
+
+### `device/bin-local-stamp`
+
+When a device puts a row it holds in the bin, a device MUST set the row's `trashed_at` to the time it queued the delete, leaving its `updated_at` as it was.
+
+**Reason:** a row binned offline takes its place in the bin's order at once, and is not answered as changed by the server before the server has heard. A second trip to the bin after a restore takes a new time, as on the server (`items/trashed-at-fresh`).
+
+**Tests:** `device/bin-held.test.ts › records when the device put it there, leaving updated_at, clears it on restore, and takes a new time on a second delete`.
+
+### `device/bin-local-restore`
+
+When a device takes a row it holds out of the bin, a device MUST clear the row's `trashed_at`.
+
+**Reason:** a row outside the bin answers `trashed_at` as null, as the server answers it (`items/trashed-at-null`).
+
+**Tests:** `device/bin-held.test.ts › records when the device put it there, leaving updated_at, clears it on restore, and takes a new time on a second delete`.
+
+### `device/bin-local-server-time`
+
+When the server's row arrives in the bin, a device MUST hold the server's `trashed_at` in place of a time it stamped itself.
+
+**Reason:** the server's time is the one every other client reads, so a copy that kept its own would order its bin otherwise than theirs once the server had answered.
+
+**Tests:** `device/bin-held.test.ts › holds the server's time in place of its own once the server's row arrives`.
 
 ### `device/bin-restored-one-row`
 

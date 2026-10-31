@@ -377,7 +377,7 @@ describe("the replay's shape guard", () => {
     );
     const payload = {
       event_type: "item.updated",
-      item: { id: "shape-no-metadata", type: "core.note" },
+      item: { id: "shape-no-metadata", type: "core.note", trashed_at: null },
     };
     await appendRow("updated", "shape-no-metadata", JSON.stringify(payload));
 
@@ -399,7 +399,7 @@ describe("the replay's shape guard", () => {
     );
     const payload = {
       event_type: "metadata.changed",
-      item: { id: "shape-no-extensions", type: "core.note" },
+      item: { id: "shape-no-extensions", type: "core.note", trashed_at: null },
       metadata: { tags: ["kept"] },
     };
     await appendRow(

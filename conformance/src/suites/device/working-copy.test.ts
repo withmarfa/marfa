@@ -2010,6 +2010,76 @@ describe("the working copy belongs to one server", () => {
     }
   });
 
+  it("opens a store made before a column this build adds, adds it, and sends the write it holds", async () => {
+    harness = await hydratedHarness("store-older-column", {
+      rows: { "core.note": [{ item: { id: "n1" } }] },
+    });
+    const edit = await harness.device.update("n1", {
+      properties: { title: "unsent", body: "unsent" },
+      version: 1,
+    });
+    expect(edit.ok, JSON.stringify(edit)).toBe(true);
+    // What a build from before the columns left: the item table without the
+    // columns added at its end since.
+    const store = new DatabaseSync(harness.device.store);
+    try {
+      store.exec(
+        "ALTER TABLE items DROP COLUMN trashed_at; ALTER TABLE items DROP COLUMN capture_longitude; ALTER TABLE items DROP COLUMN capture_latitude;",
+      );
+    } finally {
+      store.close();
+    }
+    // A reader cannot add a column, and says the store wants this build's
+    // writer once rather than that another build made it.
+    const reader = harness.device.reopen({ reader: true });
+    const early = await reader.get("n1");
+    expect(early.ok, "a reader read a store that lacks a column it reads").toBe(
+      false,
+    );
+    if (!early.ok) {
+      expect(early.refusal.code).toBe("invalid");
+      expect(early.refusal.raw).toContain("writer");
+    }
+    const answered = wireItem({
+      id: "n1",
+      type: "core.note",
+      version: 2,
+      properties: { title: "unsent", body: "unsent" },
+    });
+    scriptWrites(harness.server, {
+      update: [answers.updated(answered)],
+      read: [answers.updated(answered)],
+    });
+    const drained = await harness.device.drain();
+    expect(drained.ok, JSON.stringify(drained)).toBe(true);
+    expect(drained.ok && drained.value.verdicts.map((v) => v.verdict)).toEqual([
+      "accepted",
+    ]);
+    expect(
+      harness.server.requests.some(
+        (request) =>
+          request.method === "PATCH" && request.pathname.includes("n1"),
+      ),
+      "the write the store held never reached the server",
+    ).toBe(true);
+    expect((await reader.get("n1")).ok).toBe(true);
+    const reopened = new DatabaseSync(harness.device.store);
+    try {
+      const columns = reopened
+        .prepare(
+          "SELECT name FROM pragma_table_info('items') WHERE name IN ('capture_latitude', 'capture_longitude', 'trashed_at') ORDER BY cid",
+        )
+        .all() as Array<{ name: string }>;
+      expect(columns.map((row) => row.name)).toEqual([
+        "capture_latitude",
+        "capture_longitude",
+        "trashed_at",
+      ]);
+    } finally {
+      reopened.close();
+    }
+  });
+
   it("gives a second opener a reading handle that refuses writes", async () => {
     harness = await hydratedHarness("one-writer", {
       rows: { "core.note": [{ item: { id: "n1" } }] },

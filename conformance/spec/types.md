@@ -136,7 +136,7 @@ If `POST /types` names `fields` and no `id`, then the server MUST answer `400 in
 
 ### `types/field-shadows-item`
 
-If a type declares a field named `id`, `type`, `state`, `tier`, `properties`, `created_at`, `updated_at`, `occurred_at`, `source`, `source_id`, `version`, `schema_version`, `capture_latitude`, `capture_longitude`, `trashed_by_cascade` or `trashed_with`, then the server MUST answer `400 property_shadows_field` naming each such field.
+If a type declares a field named `id`, `type`, `state`, `tier`, `properties`, `created_at`, `updated_at`, `occurred_at`, `source`, `source_id`, `version`, `schema_version`, `capture_latitude`, `capture_longitude`, `trashed_at`, `trashed_by_cascade` or `trashed_with`, then the server MUST answer `400 property_shadows_field` naming each such field.
 
 **Reason:** a row would carry two values under one key, with nothing to say which is authoritative.
 

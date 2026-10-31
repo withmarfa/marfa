@@ -68,6 +68,8 @@ mod telemetry_tests;
 mod tier_tests;
 mod time;
 #[cfg(test)]
+mod trashed_at_tests;
+#[cfg(test)]
 mod upload_credential_tests;
 mod url_host;
 mod validation;
@@ -1154,8 +1156,9 @@ impl Core {
     /// Answered part way through a hydration from the rows that have arrived,
     /// marked `Partial`.
     ///
-    /// Left unnamed, the order is newest created first, or oldest changed
-    /// first where `updated_after` is named, as the server's.
+    /// Left unnamed, the order is the server's: newest created first, oldest
+    /// changed first where `updated_after` is named, or newest binned first
+    /// for the bin alone.
     pub fn list(&self, filters: &ListFilters, sort: impl Into<Option<Sort>>) -> Result<Rows<Item>> {
         let sort = sort.into();
         store::read_marked(&mut *self.conn()?, |conn, completeness| {
@@ -1938,7 +1941,7 @@ impl Core {
         Ok(queued)
     }
 
-    /// A page of the server's bin, newest change first, read online and held
+    /// A page of the server's bin, newest binned first, read online and held
     /// nowhere in the copy (`device/bin-read`, `device/bin-unheld` and `device/bin-offline`). Refused with what was met
     /// where the server cannot be read, and `NoServer` for a copy with none.
     pub fn bin(&self, r#type: Option<&str>, cursor: Option<&str>, limit: u32) -> Result<BinPage> {
@@ -2012,7 +2015,6 @@ impl Core {
         let depends_on = store::untaken_creates_for_item(&conn, id)?;
         let tx = conn.transaction()?;
         store::hold_beneath_item(&tx, id)?;
-        store::set_item_state(&tx, id, state)?;
         let queued = store::enqueue(
             &tx,
             &store::NewWrite {
@@ -2028,6 +2030,9 @@ impl Core {
                 depends_on: &depends_on,
             },
         )?;
+        // Stamped with the write's own time, which a re-lay over a row the
+        // server sends while it waits takes again.
+        store::set_item_state(&tx, id, state, &queued.queued_at)?;
         if deleting {
             store::record_read(&tx, &queued.id, &serde_json::to_value(&held)?)?;
         }

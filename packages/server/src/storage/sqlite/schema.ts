@@ -166,6 +166,15 @@ export const items = sqliteTable(
       table.occurred_at,
       table.id,
     ),
+    // Serves the bin's default order, read in index order to the page rather
+    // than sorting the whole bin. SQLite uses it only for the expression the
+    // listing writes, `binnedAt` in `item-store.ts`; a `CASE` rather than
+    // `COALESCE`, since drizzle-kit splits an index expression at its commas.
+    index("idx_items_state_binned_at").on(
+      table.state,
+      sql`CASE WHEN ${table.trashed_at} IS NULL THEN ${table.updated_at} ELSE ${table.trashed_at} END`,
+      table.id,
+    ),
     // Provenance identity: one row per upstream record.
     uniqueIndex("idx_items_source_dedup")
       .on(table.source, table.source_id)

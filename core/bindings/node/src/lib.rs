@@ -80,6 +80,8 @@ pub struct Item {
     /// Where it was captured, in degrees, as sent.
     pub capture_latitude: Option<f64>,
     pub capture_longitude: Option<f64>,
+    /// When it went to the bin; absent outside it.
+    pub trashed_at: Option<String>,
 }
 
 #[napi(object)]
@@ -1311,6 +1313,7 @@ fn item(item: marfa_core::Item) -> Item {
         tags: item.tags,
         capture_latitude: item.capture_latitude,
         capture_longitude: item.capture_longitude,
+        trashed_at: item.trashed_at,
     }
 }
 
@@ -1360,8 +1363,12 @@ fn filters(filters: Option<ListFilters>) -> marfa_core::ListFilters {
     }
 }
 
-/// Unset, the core's own order, which `updatedAfter` (`resumed`) changes.
-fn sort(env: Env, sort: Option<Sort>, resumed: bool) -> Result<Option<marfa_core::Sort>> {
+/// Unset, the core's own order for `filters`.
+fn sort(
+    env: Env,
+    sort: Option<Sort>,
+    filters: &marfa_core::ListFilters,
+) -> Result<Option<marfa_core::Sort>> {
     let Some(sort) = sort else {
         return Ok(None);
     };
@@ -1373,7 +1380,7 @@ fn sort(env: Env, sort: Option<Sort>, resumed: bool) -> Result<Option<marfa_core
         SortDirection::Asc => marfa_core::SortDirection::Ascending,
         SortDirection::Desc => marfa_core::SortDirection::Descending,
     });
-    Ok(marfa_core::Sort::named(field, direction, resumed))
+    Ok(marfa_core::Sort::named(field, direction, filters))
 }
 
 fn server_of(url: Option<String>, key: Option<String>) -> Result<Option<marfa_core::Server>> {
@@ -2433,7 +2440,7 @@ impl MarfaCore {
         sort: Option<Sort>,
     ) -> Result<Listing> {
         let filters = self::filters(filters);
-        let sort = self::sort(env, sort, filters.updated_after.is_some())?;
+        let sort = self::sort(env, sort, &filters)?;
         let listed = self
             .inner
             .list(&filters, sort)
@@ -2457,7 +2464,7 @@ impl MarfaCore {
             .inner
             .list_in_folder(
                 &id,
-                self::sort(env, sort, false)?.unwrap_or_default(),
+                self::sort(env, sort, &marfa_core::ListFilters::default())?.unwrap_or_default(),
                 limit,
                 offset,
             )

@@ -261,8 +261,8 @@ fn recorded(dir: &Path) -> crate::Result<Recorded> {
                 folder: Some(crate::FolderStore::Replaceable),
                 ..
             }) => super::refused::recorded(&state_dir)?,
-            // The open adds the table (`device/added-table`).
-            Err(CoreError::Invalid(_)) if super::refused::lacks_table(&state_dir) => {
+            // The open adds the table or column (`device/added-table`, `device/added-column`).
+            Err(CoreError::Invalid(_)) if super::refused::behind(&state_dir) => {
                 super::refused::recorded(&state_dir)?
             }
             Err(error) => return Err(error),

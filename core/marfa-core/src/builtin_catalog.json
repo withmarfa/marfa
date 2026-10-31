@@ -2597,6 +2597,7 @@
   "source_id",
   "state",
   "tier",
+  "trashed_at",
   "trashed_by_cascade",
   "trashed_with",
   "type",

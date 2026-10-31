@@ -362,7 +362,7 @@ export class SqliteSearchStore implements SearchStore {
         i.created_at, i.updated_at,
         i.occurred_at, i.source, i.source_id, i.version,
         i.schema_version, i.tier,
-        i.capture_latitude, i.capture_longitude,
+        i.capture_latitude, i.capture_longitude, i.trashed_at,
         m.item_id AS meta_item_id, m.tags, m.extensions
       FROM items_fts fts
       JOIN item_search_keys k ON k.seq = fts.rowid

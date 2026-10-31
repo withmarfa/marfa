@@ -85,6 +85,14 @@ export const MIGRATIONS: readonly Migration[] = [
     changes: ["items", "versions", "event_log"],
     apply: contactListsOnEntities,
   },
+  {
+    to: 5,
+    changes: [],
+    apply: (db) =>
+      db.executeMultiple(
+        'CREATE INDEX `idx_items_state_binned_at` ON `items` (`state`,CASE WHEN "trashed_at" IS NULL THEN "updated_at" ELSE "trashed_at" END,`id`);',
+      ),
+  },
 ];
 
 /**
@@ -159,7 +167,7 @@ const CONTACT_LISTS = [
 
 const ITEM_COLUMNS =
   "id, type, state, tier, json(properties) AS properties, created_at, updated_at, occurred_at, " +
-  "version, source, source_id, schema_version, capture_latitude, capture_longitude";
+  "version, source, source_id, schema_version, capture_latitude, capture_longitude, trashed_at";
 
 /**
  * Moves the `email`, `phone` and `place` an item of `core.entity`, or of a
