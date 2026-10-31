@@ -78,7 +78,10 @@ async function doors(): Promise<Door[]> {
 async function get(door: Door, query: string): Promise<Response> {
   const required = REQUIRED[door.path];
   const joined = [required, query].filter(Boolean).join("&");
-  if (["listItemSummaries", "listTrash"].includes(door.operationId))
+  // The working key cannot see the test's source; the owner sees every one.
+  if (
+    ["getSource", "listItemSummaries", "listTrash"].includes(door.operationId)
+  )
     return ctx.ownerRequest(`${door.path}?${joined}`);
   return request(ctx.app, "GET", `${door.path}?${joined}`, {
     key: ctx.workingKey,
@@ -86,12 +89,13 @@ async function get(door: Door, query: string): Promise<Response> {
 }
 
 describe("an empty type, source, tags or filter", () => {
-  it("is found on the doors that list items, search, count, export and stream", async () => {
+  it("is found on the doors that list items, search, count, export, stream and read a source", async () => {
     const found = (await doors()).map((d) => d.operationId).sort();
     expect(found).toEqual(
       [
         "exportArchive",
         "getItemStats",
+        "getSource",
         "listItems",
         "listItemSummaries",
         "listTrash",
