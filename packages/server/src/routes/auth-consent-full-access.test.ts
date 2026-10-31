@@ -91,8 +91,8 @@ async function decide(
 
 const grantedFor = async (c: TestContext, clientId: string) => {
   const grants = await c.storage.items.list({
-    type: "system.connection",
-    state: "active",
+    types: ["system.connection"],
+    states: ["active"],
   });
   const grant = grants.data.find((g) => g.properties.client_id === clientId);
   return new Set(
@@ -248,8 +248,8 @@ describe("full access and the recent sign-in rule", () => {
     expect(
       (
         await ctx.storage.items.list({
-          type: "system.connection",
-          state: "active",
+          types: ["system.connection"],
+          states: ["active"],
         })
       ).data,
     ).toEqual([]);

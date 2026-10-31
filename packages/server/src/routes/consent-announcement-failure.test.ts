@@ -95,7 +95,10 @@ describe("a consent whose event cannot be written", () => {
       };
       const records = async (clientId: string): Promise<unknown[]> =>
         (
-          await c.storage.items.list({ type: "system.connection", limit: 100 })
+          await c.storage.items.list({
+            types: ["system.connection"],
+            limit: 100,
+          })
         ).data.filter(
           (row) =>
             (row.properties as { client_id?: string }).client_id === clientId,

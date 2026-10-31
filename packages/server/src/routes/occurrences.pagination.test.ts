@@ -359,7 +359,7 @@ function syntheticCalendar(
     items: {
       list: (filters: ItemFilters) => {
         // Only the event type holds rows here.
-        if (filters.type !== "core.event") {
+        if (!filters.types?.includes("core.event")) {
           return Promise.resolve({ data: [], next_cursor: null });
         }
         const eligible = items.filter((item) => matches(item, filters));

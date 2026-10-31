@@ -95,8 +95,8 @@ async function liveRows(storage: Storage, type: string): Promise<Item[]> {
   let cursor: string | undefined;
   do {
     const page = await storage.items.list({
-      type,
-      state: "active",
+      types: [type],
+      states: ["active"],
       limit: PAGE,
       cursor,
     });

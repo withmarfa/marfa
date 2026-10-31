@@ -260,7 +260,7 @@ export function typeMoveRoutes(storage: Storage) {
     let cursor: string | undefined;
     do {
       const page = await storage.items.list({
-        type: from,
+        types: [from],
         all_states: true,
         limit: PAGE,
         cursor,

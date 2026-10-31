@@ -1070,8 +1070,8 @@ export function bulkRoutes(storage: Storage) {
     let cursor: string | undefined;
     do {
       const page = await storage.items.list({
-        type: filter.type,
-        state: filter.state,
+        types: filter.type === undefined ? undefined : [filter.type],
+        states: filter.state === undefined ? undefined : [filter.state],
         source: filter.source,
         tier: filter.tier,
         tags: filter.tags,

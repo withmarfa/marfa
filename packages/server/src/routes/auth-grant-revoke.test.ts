@@ -278,7 +278,7 @@ function approveDeviceFlow(
  *  moves `state`, and this helper has to see a row either one produced. */
 async function onlyGrant(c: TestContext) {
   const items = await c.storage.items.list({
-    type: "system.connection",
+    types: ["system.connection"],
     all_states: true,
   });
   expect(items.data.length).toBe(1);

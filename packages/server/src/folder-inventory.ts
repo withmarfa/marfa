@@ -30,8 +30,8 @@ export async function listFolders(
   cursor?: string,
 ) {
   const page = await storage.items.list({
-    type: "system.folder",
-    state: "active",
+    types: ["system.folder"],
+    states: ["active"],
     limit,
     cursor,
   });

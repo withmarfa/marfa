@@ -242,8 +242,8 @@ class VerifyingTransform extends Transform {
 /** The export's filter, resolved once by the route handler. */
 export type ExportFilter = Pick<
   ItemFilters,
-  | "type"
-  | "state"
+  | "types"
+  | "states"
   | "all_states"
   | "exclude_states"
   | "source"

@@ -153,7 +153,7 @@ describe("the bulk-action door and the read doors agree about system rows", () =
     // bare `state` to something other than the column would empty the match
     // set and satisfy the assertion for the wrong reason.
     const reached = await ctx.storage.items.list({
-      state: "revoked",
+      states: ["revoked"],
       tags: [tag],
       filter: 'state eq "revoked"',
     });

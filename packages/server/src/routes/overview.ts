@@ -376,7 +376,7 @@ export function overviewRoutes(storage: Storage, build: DeployedBuild) {
           key,
         );
         const readable: ItemFilters = {
-          state: "active",
+          states: ["active"],
           source_filter,
           allowed_types: allowed,
           excluded_types: excluded,
@@ -393,7 +393,7 @@ export function overviewRoutes(storage: Storage, build: DeployedBuild) {
             : storage.items
                 .list({
                   ...readable,
-                  type,
+                  types: [type],
                   sort: "properties.title",
                   direction: "asc",
                   limit: cap,

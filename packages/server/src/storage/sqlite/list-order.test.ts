@@ -148,10 +148,14 @@ function expected(filters: ItemFilters): Row[] {
         : "created_at";
   const direction = catchUp ? "asc" : (filters.direction ?? "desc");
   const kept = ALL.filter((row) => {
-    if (filters.state ? row.state !== filters.state : row.state !== "active")
+    if (!(filters.states ?? ["active"]).some((s) => s === row.state))
       return false;
-    // An empty `type` is no filter, as the count reads it.
-    if (filters.type && !typeAnswersSubtreeFilter(row.type, filters.type))
+    // An empty `types` is no filter, as the count reads it.
+    if (
+      filters.types !== undefined &&
+      filters.types.length > 0 &&
+      !filters.types.some((type) => typeAnswersSubtreeFilter(row.type, type))
+    )
       return false;
     if (
       filters.allowed_types !== undefined &&
@@ -211,28 +215,28 @@ const LATER = instant(9);
 
 const CASES: Record<string, ItemFilters> = {
   "no filter": {},
-  "an empty type, which is no filter": { type: "" },
-  "a type with subtypes": { type: "user.docs" },
-  "a subtree wildcard": { type: "user.docs.*" },
-  "a leaf type": { type: "user.docs.b.deep" },
-  "a type with nothing stored": { type: "user.nothing" },
-  "a type and a state": { type: "user.docs", state: "archived" },
-  "a type and a tier": { type: "user.docs", tier: "feed" },
-  "a type and a source": { type: "user.docs", source: "one" },
+  "an empty type, which is no filter": { types: [] },
+  "a type with subtypes": { types: ["user.docs"] },
+  "a subtree wildcard": { types: ["user.docs.*"] },
+  "a leaf type": { types: ["user.docs.b.deep"] },
+  "a type with nothing stored": { types: ["user.nothing"] },
+  "a type and a state": { types: ["user.docs"], states: ["archived"] },
+  "a type and a tier": { types: ["user.docs"], tier: "feed" },
+  "a type and a source": { types: ["user.docs"], source: "one" },
   "a type and a source filter": {
-    type: "user.docs",
+    types: ["user.docs"],
     source_filter: { types: ["user.docs.b"], sources: ["one"] },
   },
   "a source filter on everything": {
     source_filter: { types: ["*"], sources: ["two"] },
   },
   "a type and occurred bounds": {
-    type: "user.docs",
+    types: ["user.docs"],
     occurred_after: BASE,
     occurred_before: LATER,
   },
   "a type and an updated bound": {
-    type: "user.docs",
+    types: ["user.docs"],
     updated_before: LATER,
   },
   "grants of a subtree and a name": {
@@ -250,17 +254,17 @@ const CASES: Record<string, ItemFilters> = {
     excluded_types: ["user.docs.*"],
   },
   "grants and a type": {
-    type: "user.docs",
+    types: ["user.docs"],
     allowed_types: ["user.docs.b.*", "user.decl"],
   },
   "grants and a type with an exclusion": {
-    type: "user.docs",
+    types: ["user.docs"],
     allowed_types: ["user.docs.*", "user.decl"],
     excluded_types: ["user.docs.a"],
   },
   "system types excluded": { exclude_system_types: true },
-  "everything under the namespace root": { type: "user.*" },
-  "the global wildcard": { type: "*" },
+  "everything under the namespace root": { types: ["user.*"] },
+  "the global wildcard": { types: ["*"] },
 };
 
 const SORTS = ["created_at", "updated_at", "occurred_at"] as const;
@@ -270,15 +274,19 @@ describe("a listing in a system order", () => {
   it("has rows of every kind the cases below depend on", () => {
     expect(new Set(ALL.map((row) => row.created_at)).size).toBeLessThan(15);
     expect(
-      expected({ type: "user.docs" }).some((row) => row.type === "user.decl"),
+      expected({ types: ["user.docs"] }).some(
+        (row) => row.type === "user.decl",
+      ),
     ).toBe(true);
     expect(
-      expected({ type: "user.docs" }).some(
+      expected({ types: ["user.docs"] }).some(
         (row) => row.type === "user.docs.zz.deep",
       ),
     ).toBe(true);
     expect(
-      expected({ type: "user.docs" }).some((row) => row.type === "user.docsx"),
+      expected({ types: ["user.docs"] }).some(
+        (row) => row.type === "user.docsx",
+      ),
     ).toBe(false);
   });
 
@@ -297,7 +305,7 @@ describe("a listing in a system order", () => {
 
   it("continues from a cursor taken at any row, ties included", async () => {
     const filters: ItemFilters = {
-      type: "user.docs",
+      types: ["user.docs"],
       excluded_types: ["user.docs.a"],
       allowed_types: ["user.docs.*", "user.decl"],
     };
@@ -336,9 +344,13 @@ describe("a listing in a system order", () => {
   it("walks a catch-up from a point in time in updated order, ties included", async () => {
     for (const filters of [
       { updated_after: BASE },
-      { updated_after: BASE, type: "user.docs" },
+      { updated_after: BASE, types: ["user.docs"] },
       { updated_after: BASE, allowed_types: ["user.docs.*", "user.decl"] },
-      { updated_after: BASE, state: "archived" as const, type: "user.docs" },
+      {
+        updated_after: BASE,
+        states: ["archived" as const],
+        types: ["user.docs"],
+      },
     ] satisfies ItemFilters[]) {
       const ids = await walk(filters);
       expect(ids).toEqual(expected(filters).map((row) => row.id));
@@ -347,7 +359,7 @@ describe("a listing in a system order", () => {
   });
 
   it("answers a page the same whatever its page size", async () => {
-    const query: ItemFilters = { type: "user.docs", direction: "asc" };
+    const query: ItemFilters = { types: ["user.docs"], direction: "asc" };
     const whole = expected(query).map((row) => row.id);
     for (const limit of [1, 2, 5, 50, 1000]) {
       const ids: string[] = [];
@@ -362,12 +374,12 @@ describe("a listing in a system order", () => {
   });
 
   it("reads a type nothing registered covers, between registered ones", async () => {
-    const ids = await walk({ type: "user.docs.b" });
+    const ids = await walk({ types: ["user.docs.b"] });
     expect(ids.some((id) => id.startsWith("user.docs.b.deep#"))).toBe(true);
     expect(ids.some((id) => id.startsWith("user.docs.ghost#"))).toBe(false);
-    const ghost = await walk({ type: "user.docs.ghost" });
+    const ghost = await walk({ types: ["user.docs.ghost"] });
     expect(ghost).toEqual(
-      expected({ type: "user.docs.ghost" }).map((row) => row.id),
+      expected({ types: ["user.docs.ghost"] }).map((row) => row.id),
     );
     expect(ghost.length).toBeGreaterThan(0);
   });

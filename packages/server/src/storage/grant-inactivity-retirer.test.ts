@@ -106,14 +106,14 @@ async function deviceGrant(
 }
 
 async function onlyGrant(c: TestContext) {
-  const items = await c.storage.items.list({ type: "system.connection" });
+  const items = await c.storage.items.list({ types: ["system.connection"] });
   expect(items.data.length).toBe(1);
   return items.data[0]!;
 }
 
 /** The app grant projected for one client, when others are stored beside it. */
 async function grantOf(c: TestContext, clientId: string) {
-  const items = await c.storage.items.list({ type: "system.connection" });
+  const items = await c.storage.items.list({ types: ["system.connection"] });
   const own = items.data.filter(
     (i) => i.properties.kind === "app" && i.properties.client_id === clientId,
   );

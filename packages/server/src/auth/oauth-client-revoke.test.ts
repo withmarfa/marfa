@@ -343,7 +343,7 @@ async function grantRows(
 }
 
 async function onlyGrant(c: TestContext) {
-  const items = await c.storage.items.list({ type: "system.connection" });
+  const items = await c.storage.items.list({ types: ["system.connection"] });
   expect(items.data.length).toBe(1);
   return items.data[0]!;
 }
@@ -1061,7 +1061,7 @@ it("rolls provider consent and code back together with a refused browser grant a
   expect(refused.headers.get("location")).toBeNull();
   expect((await grantRows(ctx, clientId, userId)).consents).toBe(0);
   expect(
-    (await ctx.storage.items.list({ type: "system.connection" })).data,
+    (await ctx.storage.items.list({ types: ["system.connection"] })).data,
   ).toHaveLength(0);
   expect(
     await db.__sqliteAll(

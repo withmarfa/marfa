@@ -75,6 +75,51 @@ export function assertTypeFilter(
 }
 
 /**
+ * Most types one `?type=` may name.
+ *
+ * Ten, the same as the edge-type filter on `GET /edges`: a client filtering a
+ * stream and a client filtering a listing are the same client, and a limit it
+ * has to look up twice is one it will get wrong once.
+ */
+export const MAX_TYPE_FILTER_ENTRIES = 10;
+
+/**
+ * Read `?type=` as one type or several, on every door that takes the list:
+ * `GET /items`, `GET /items/stats`, `GET /search`, `GET /export` and
+ * `GET /events`. An item matches the list when it matches any entry.
+ *
+ * Blank entries are dropped, and a value with no entry left is no filter;
+ * the doors that declare `type` refuse that value before it gets here
+ * (`refuseEmptyNarrowingValuesOf`). Each entry is held to
+ * {@link assertTypeFilter} and refused on its terms, so one bad entry is
+ * the refusal it would be on its own rather than a narrower answer.
+ */
+export function parseTypeFilter(
+  c: Context<AppEnv>,
+  raw: string | undefined,
+  reads?: (type: string) => boolean,
+): string[] | undefined {
+  if (raw === undefined) return undefined;
+  const parts = [
+    ...new Set(
+      raw
+        .split(",")
+        .map((p) => p.trim())
+        .filter((p) => p.length > 0),
+    ),
+  ];
+  if (parts.length === 0) return undefined;
+  if (parts.length > MAX_TYPE_FILTER_ENTRIES) {
+    throw new MarfaError(
+      ErrorCode.VALIDATION_ERROR,
+      `Too many types in filter (max ${String(MAX_TYPE_FILTER_ENTRIES)})`,
+    );
+  }
+  for (const part of parts) assertTypeFilter(c, part, reads);
+  return parts;
+}
+
+/**
  * A concrete `type` filter selects the type and everything under it, so it is
  * refused only when nothing it selects is readable. A credential that reads a
  * descendant and not the named type gets the descendants, narrowed by the same

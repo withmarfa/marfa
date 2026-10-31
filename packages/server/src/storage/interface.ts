@@ -143,8 +143,8 @@ export interface ViewListing {
 }
 
 export interface ItemFilters {
-  type?: string;
-  state?: ItemState;
+  types?: readonly string[];
+  states?: readonly ItemState[];
   source?: string;
   /** The instance's `source_filter` enforcement lever, applied per row: a row
    *  whose type the lever lists must carry an approved source, every other
@@ -268,8 +268,8 @@ export interface ItemFilters {
 export type ItemStatsAxis = "state" | "type";
 
 export interface SearchFilters {
-  type?: string;
-  state?: ItemState;
+  types?: readonly string[];
+  states?: readonly ItemState[];
   /** Mirrors `ItemFilters.all_states`. The search door advertises the
    *  listing's filters, so a widening the listing offers and this door does
    *  not is a row reachable by one read and by no other. */

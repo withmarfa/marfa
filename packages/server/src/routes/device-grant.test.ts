@@ -219,7 +219,7 @@ async function holdOfflineAccess(
 }
 
 async function grants(c: TestContext) {
-  const items = await c.storage.items.list({ type: "system.connection" });
+  const items = await c.storage.items.list({ types: ["system.connection"] });
   return items.data.filter((i) => i.properties.kind === "app");
 }
 

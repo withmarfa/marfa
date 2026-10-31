@@ -58,6 +58,7 @@ import {
   sourceFilterToSql,
   typeFilterSql,
   typeSubtreeSql,
+  typesSql,
 } from "../filter-sql.js";
 import type { SourceFilterSettings } from "../filter-sql.js";
 import type { Edge } from "@withmarfa/shared";
@@ -510,9 +511,7 @@ function itemFilterConditions(
   // `core.entity` and `core.entity.*` mean the same thing: the type and
   // everything under it. A bare identifier has always included its
   // subtypes here, so the explicit wildcard must too.
-  const typeClause = filters.type
-    ? typeSubtreeSql(items.type, filters.type)
-    : undefined;
+  const typeClause = typesSql(items.type, filters.types);
 
   // Without statistics, SQLite can choose the state index even when most
   // rows are active. Steer typed active reads to the type index, but leave
@@ -530,8 +529,17 @@ function itemFilterConditions(
       ? sql`+${items.state} = ${value}`
       : eq(items.state, value);
 
-  if (filters.state) {
-    conditions.push(stateIs(filters.state));
+  const states = filters.states;
+  if (states !== undefined) {
+    // An empty list names no state, so it matches no row; the doors refuse
+    // one before it gets here.
+    conditions.push(
+      states.length === 1
+        ? stateIs(states[0] as string)
+        : states.length === 0
+          ? sql`0`
+          : inArray(items.state, [...states]),
+    );
   } else if (!filters.all_states) {
     // The default is the active state. A listing answers what the reader
     // is working with, and archived, trashed and revoked are all rows
@@ -1407,7 +1415,7 @@ export class SqliteItemStore implements ItemStore {
     const slices =
       sort.kind === "system"
         ? typeSlices({
-            type: filters.type,
+            types: filters.types,
             allowed_types: filters.allowed_types,
           })
         : undefined;

@@ -165,7 +165,7 @@ export function itemPageRoutes(storage: Storage) {
         : undefined;
     const trashed = schema
       ? await storage.items.stats(
-          { ...filters, state: "trashed", exclude_system_types: true },
+          { ...filters, states: ["trashed"], exclude_system_types: true },
           "type",
         )
       : {};

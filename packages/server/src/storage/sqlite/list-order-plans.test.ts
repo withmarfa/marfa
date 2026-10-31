@@ -170,13 +170,13 @@ function wholeSorts(plan: PlanRow[]): string[] {
 const text = (plan: PlanRow[]) => plan.map((row) => row.detail).join(" | ");
 
 const LISTINGS: Record<string, ItemFilters> = {
-  "a type with subtypes": { type: "user.docs" },
-  "a subtree wildcard": { type: "user.docs.*" },
-  "a leaf type": { type: "user.docs.a" },
-  "a type and a tier": { type: "user.docs", tier: "feed" },
-  "a type and a source": { type: "user.docs", source: "one" },
+  "a type with subtypes": { types: ["user.docs"] },
+  "a subtree wildcard": { types: ["user.docs.*"] },
+  "a leaf type": { types: ["user.docs.a"] },
+  "a type and a tier": { types: ["user.docs"], tier: "feed" },
+  "a type and a source": { types: ["user.docs"], source: "one" },
   "a type and time bounds": {
-    type: "user.docs",
+    types: ["user.docs"],
     occurred_after: "2026-01-01T00:00:10.000Z",
     occurred_before: "2026-01-01T00:00:50.000Z",
   },
@@ -186,11 +186,11 @@ const LISTINGS: Record<string, ItemFilters> = {
   },
   "grants of names": { allowed_types: ["user.docs.a", "user.other"] },
   "a type under grants": {
-    type: "user.docs",
+    types: ["user.docs"],
     allowed_types: ["user.docs.*", "user.decl"],
   },
   "a type and a source filter": {
-    type: "user.docs",
+    types: ["user.docs"],
     source_filter: { types: ["user.docs.b"], sources: ["one"] },
   },
 };
@@ -210,7 +210,7 @@ describe("a typed listing in a system order", () => {
 
   it("sorts no whole match for a catch-up", async () => {
     for (const filters of [
-      { updated_after: "2026-01-01T00:00:10.000Z", type: "user.docs" },
+      { updated_after: "2026-01-01T00:00:10.000Z", types: ["user.docs"] },
       {
         updated_after: "2026-01-01T00:00:10.000Z",
         allowed_types: ["user.docs.*", "user.other"],
@@ -223,9 +223,9 @@ describe("a typed listing in a system order", () => {
   });
 
   it("continues from a cursor without a sort of the whole match", async () => {
-    const first = await storage.items.list({ type: "user.docs", limit: 20 });
+    const first = await storage.items.list({ types: ["user.docs"], limit: 20 });
     const plan = await planOf({
-      type: "user.docs",
+      types: ["user.docs"],
       limit: 20,
       cursor: first.next_cursor!,
     });
@@ -236,21 +236,21 @@ describe("a typed listing in a system order", () => {
   });
 
   it("reads a type that nothing registers from a range of its own", async () => {
-    const plan = await planOf({ type: "user.docs" });
+    const plan = await planOf({ types: ["user.docs"] });
     expect(plan.some((row) => /SEARCH items .*\(type>/.test(row.detail))).toBe(
       true,
     );
   });
 
   it("reads one slice per registered type and per gap, and not the others", async () => {
-    const plan = await planOf({ type: "user.docs" });
+    const plan = await planOf({ types: ["user.docs"] });
     const searches = plan.filter((row) =>
       row.detail.startsWith("SEARCH items"),
     );
     // user.docs, a, b, decl, and the gaps before a, between a and b, and
     // between b and the end of the namespace.
     expect(searches).toHaveLength(7);
-    const other = await planOf({ type: "user.other" });
+    const other = await planOf({ types: ["user.other"] });
     expect(other.filter((row) => row.detail.startsWith("SEARCH"))).toHaveLength(
       2,
     );
@@ -270,7 +270,7 @@ describe("a typed listing in a system order", () => {
       } as unknown as TypeSchema);
     }
     try {
-      const plan = await planOf({ type: "user.wide" });
+      const plan = await planOf({ types: ["user.wide"] });
       expect(text(plan)).not.toContain("MERGE");
       expect(text(plan)).toContain("USE TEMP B-TREE FOR ORDER BY");
     } finally {
@@ -285,7 +285,7 @@ describe("a typed listing in a system order", () => {
     reader.close();
     reader = createClient({ url: `file:${path}` });
     try {
-      const plan = await planOf({ type: "user.docs" });
+      const plan = await planOf({ types: ["user.docs"] });
       expect(wholeSorts(plan).length).toBeGreaterThan(0);
       expect(text(plan)).not.toContain("idx_items_type_created_at");
     } finally {

@@ -35,8 +35,8 @@ CONSOLE_PAGES.register("folders", {
   hasItems: true,
   value: async ({ storage }) => {
     const counts = await storage.items.stats({
-      type: "system.folder",
-      state: "active",
+      types: ["system.folder"],
+      states: ["active"],
     });
     const count = counts.active ?? 0;
     return {

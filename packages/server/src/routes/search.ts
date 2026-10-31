@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { createRoute, z } from "@hono/zod-openapi";
 import { ErrorCode, MarfaError, resolveEnforcement } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
-import { assertTypeFilter } from "./_type-filter.js";
+import { parseTypeFilter } from "./_type-filter.js";
 import { assertFilterEdgeTermsReadable } from "./_edge-visibility.js";
 import {
   requireAuth,
@@ -133,7 +133,7 @@ const searchRoute = createRoute({
       state: z
         .string()
         .describe(
-          `Only return items in this lifecycle state. Without it, you get \`active\` items. \`${ALL_STATES}\` searches every state, but trashed items are never searchable.`,
+          `Only return items in these lifecycle states: one state or a comma-separated list, such as \`active,archived\`. Without it, you get \`active\` items. \`${ALL_STATES}\` on its own searches every state. Trashed items are never searchable.`,
         )
         .optional(),
       source: listingNarrowingKeys.source,
@@ -257,7 +257,7 @@ export function searchRoutes(storage: Storage) {
 
     // Grammar, the global wildcard and an unknown concrete type, decided once
     // for every list surface; the reasoning is at `assertTypeFilter`.
-    assertTypeFilter(c, type);
+    const types = parseTypeFilter(c, type);
 
     // This door takes the same grammar `GET /items` takes, and it
     // compiles an edge term rather than ignoring one, so it asks the same
@@ -286,13 +286,12 @@ export function searchRoutes(storage: Storage) {
     );
     // Through the shared rule rather than restated: this door and the item
     // list both wrote it out, and the bulk-action door wrote nothing.
-    const excludeSystemTypes = excludesSystemTypes(includeSet, type);
+    const excludeSystemTypes = excludesSystemTypes(includeSet, types);
 
     // The same resolution the listing and the export doors use, so `any`
     // means the same thing on all three. `any` is a widening rather than a
     // state, so it never reaches the column comparison.
-    const { state: resolvedState, all_states: allStates } =
-      resolveStateFilter(state);
+    const { states, all_states: allStates } = resolveStateFilter(state);
 
     const callerKeyForSearch = c.get("apiKey");
     const instanceConfigForSearch = await readInstanceConfig(storage.settings);
@@ -303,8 +302,8 @@ export function searchRoutes(storage: Storage) {
     const fingerprint = searchFingerprint(c.req.valid("query"));
     const offset = searchOffset(cursor, fingerprint);
     const results = await storage.search.search(q.trim(), {
-      type,
-      state: resolvedState,
+      types,
+      states,
       all_states: allStates,
       source,
       tier: tierFilter,

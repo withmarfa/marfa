@@ -861,7 +861,7 @@ const doors: Door[] = [
       h.items.filter((e) => e.item.properties.title === s.tag),
     landed: async (s) =>
       (
-        await ctx.storage.items.list({ type: "system.folder", limit: 500 })
+        await ctx.storage.items.list({ types: ["system.folder"], limit: 500 })
       ).data.some((row) => row.properties.title === s.tag),
     survivesBreakage: false,
   },

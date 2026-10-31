@@ -43,15 +43,17 @@ export const SYSTEM_INCLUDE_TOKEN = "system";
 /**
  * True when the query must exclude `system.*`.
  *
- * `typeFilter` is the request's own `type` parameter, whatever the door
- * calls it.
+ * `typeFilter` is the entries of the request's own `type` parameter,
+ * whatever the door calls it. One entry in the namespace opts in: the list
+ * still narrows to its own entries, so the opt-in reaches no reserved type
+ * the list does not name.
  */
 export function excludesSystemTypes(
   includeTokens: ReadonlySet<string>,
-  typeFilter: string | undefined,
+  typeFilter: readonly string[] | undefined,
 ): boolean {
   if (includeTokens.has(SYSTEM_INCLUDE_TOKEN)) return false;
-  return !namesSystemNamespace(typeFilter);
+  return !(typeFilter ?? []).some((type) => namesSystemNamespace(type));
 }
 
 /**

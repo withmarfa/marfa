@@ -35,8 +35,8 @@ export async function listActiveAppGrants(storage: Storage): Promise<Item[]> {
   let cursor: string | undefined;
   do {
     const page = await storage.items.list({
-      type: "system.connection",
-      state: "active",
+      types: ["system.connection"],
+      states: ["active"],
       limit: MAX_PAGE_LIMIT,
       cursor,
     });

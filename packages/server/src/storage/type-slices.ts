@@ -50,8 +50,8 @@ export const MAX_STATEMENT_PARAMETERS = 32_766;
 
 /** What a listing's type predicates restrict. */
 export interface TypeScope {
-  /** The `?type=` read filter. An empty one restricts nothing. */
-  type?: string | undefined;
+  /** The `?type=` read filter, its entries. An empty one restricts nothing. */
+  types?: readonly string[] | undefined;
   /** The credential's grants. */
   allowed_types?: readonly string[] | undefined;
 }
@@ -117,12 +117,15 @@ function coverOf(
 ): { points: Set<string>; roots: Set<string> } | undefined {
   const points = new Set<string>();
   const roots = new Set<string>();
-  if (scope.type && scope.type !== GLOBAL_TYPE_WILDCARD) {
-    const root = subtreeWildcardRoot(scope.type) ?? scope.type;
-    points.add(root);
-    roots.add(root);
-    for (const type of declaredDescendantsOutsideNamespace(root))
-      points.add(type);
+  const named = (scope.types ?? []).filter((type) => type !== "");
+  if (named.length > 0 && !named.includes(GLOBAL_TYPE_WILDCARD)) {
+    for (const filter of named) {
+      const root = subtreeWildcardRoot(filter) ?? filter;
+      points.add(root);
+      roots.add(root);
+      for (const type of declaredDescendantsOutsideNamespace(root))
+        points.add(type);
+    }
     return { points, roots };
   }
   const grants = scope.allowed_types;

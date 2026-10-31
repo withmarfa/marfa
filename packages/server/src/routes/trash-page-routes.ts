@@ -23,7 +23,7 @@ CONSOLE_PAGES.register("trash", {
   value: async ({ storage }) => {
     const stats = await storage.items.stats({
       ...(await summaryFilters(storage)),
-      state: "trashed",
+      states: ["trashed"],
       exclude_system_types: true,
     });
     const n = stats.trashed ?? 0;
@@ -43,7 +43,7 @@ export function trashPageRoutes(storage: Storage, config: AppConfig) {
       async () => {
         const filters = await summaryFilters(storage);
         const counts = await storage.items.stats(
-          { ...filters, state: "trashed", exclude_system_types: true },
+          { ...filters, states: ["trashed"], exclude_system_types: true },
           "type",
         );
         const schemas = await storage.types.list();
