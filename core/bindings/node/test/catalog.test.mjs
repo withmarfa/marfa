@@ -136,7 +136,11 @@ test("holds the types Marfa ships before a server's catalog is read, then reads 
     ],
   );
   assert.equal(recipe.titleField, "title");
-  assert.deepEqual(recipe.fields[0]?.definition, RECIPE.fields.servings);
+  // The definition is the field as `GET /types/{id}` answers it, which carries
+  // the label the field is shown by (`device/catalog-type-read`), here made
+  // from its name, since the type declares none.
+  assert.equal(recipe.fields[0]?.label, "Servings");
+  assert.deepEqual(recipe.fields[0]?.definition, { ...RECIPE.fields.servings, label: "Servings" });
   const mentor = core.edgeType("mentor-of");
   assert.equal(mentor.reverseName, "mentored-by");
   assert.equal(mentor.label, "Mentees");
