@@ -656,7 +656,7 @@ If `PATCH /items/{id}` under `properties_mode: replace` leaves out a property th
 
 When a merge names a null for a property the item's type declares optional, or does not declare, the server MUST leave that property as it stands.
 
-**Reason:** a null under a merge means unset, and `properties_mode: replace` is how a property is cleared.
+**Reason:** a null under a merge means unset. `clear_properties` (`items/update-clear`) is how a property is removed, and `properties_mode: replace` clears each property it leaves out.
 
 **Tests:** `compliance/validation.test.ts › clears nothing with a null under a merge, declared or not`, `correctness/item-versioning.test.ts › reads a null on a move by the type entered`.
 
@@ -671,6 +671,34 @@ If a merge names a null for a property the item's type requires, then the server
 When `PATCH /items/{id}` under `properties_mode: replace` names a null for a property, the server MUST treat that property as left out.
 
 **Tests:** `correctness/item-versioning.test.ts › reads a null on a move by the type entered`.
+
+### `items/update-clear`
+
+When `PATCH /items/{id}` names `clear_properties`, the server MUST remove each property it names from the item and leave every property it does not name as it stands.
+
+**Reason:** a writer removes only what it names, so a property it could not read, or one added since it read the item, is never lost to a write that sends the whole set back.
+
+**Tests:** `correctness/clear-properties.test.ts › removes each property it names and keeps every other`, `› clears beside the properties it sets, and takes a name the item lacks as done`.
+
+### `items/update-clear-absent`
+
+When `PATCH /items/{id}` names in `clear_properties` a property the item does not hold, the server MUST apply the rest of the write and answer `200`.
+
+**Reason:** a removal that has already happened is done, so a retry or a second device asking for it is not refused.
+
+**Tests:** `correctness/clear-properties.test.ts › clears beside the properties it sets, and takes a name the item lacks as done`.
+
+### `items/update-clear-set`
+
+If `PATCH /items/{id}` names a property in both `properties` and `clear_properties`, then the server MUST answer `400 validation_error` naming each such property in `details.clear_properties`, and write nothing.
+
+**Tests:** `correctness/clear-properties.test.ts › refuses a property both set and cleared, and writes nothing`.
+
+### `items/update-clear-required`
+
+If `PATCH /items/{id}` names in `clear_properties` a property the item's type, or the type the write moves it to, requires, then the server MUST answer `400 invalid_properties`.
+
+**Tests:** `correctness/clear-properties.test.ts › refuses clearing a field the type requires, and clears an optional one`.
 
 ### `items/update-tier`
 

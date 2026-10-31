@@ -7366,6 +7366,8 @@ export interface operations {
                     properties?: {
                         [key: string]: unknown;
                     };
+                    /** @description Properties to remove from the item. Every other property stays as it is. Naming one the item doesn't have isn't an error. A name can't also be in `properties`. */
+                    clear_properties?: string[];
                     /** @description The item's type. It must match the item's current type unless `retype` is `true`. */
                     type?: string;
                     /**
@@ -7421,7 +7423,7 @@ export interface operations {
             };
             /**
              * @description - `missing_required_field`: `version` is missing.
-             *     - `validation_error`: the body is malformed or changes nothing.
+             *     - `validation_error`: the body is malformed, changes nothing, or names a property in both `properties` and `clear_properties`.
              *     - `invalid_id`: the ID or a target isn't valid.
              *     - `invalid_properties`: the properties don't fit the type, or an inline edge lacks a property its type requires.
              *     - `unknown_type`: `type` isn't registered.

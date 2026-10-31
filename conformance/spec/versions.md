@@ -70,11 +70,11 @@ If `PATCH /items/{id}` names a `version` that is not a whole number of at least 
 
 ### `versions/update-nothing`
 
-If `PATCH /items/{id}` names none of `properties`, a non-empty `edges`, `tier`, `occurred_at`, `source_id` or `retype: true`, then the server MUST answer `400 validation_error`.
+If `PATCH /items/{id}` names none of `properties`, a non-empty `clear_properties`, a non-empty `edges`, `tier`, `occurred_at`, `source_id` or `retype: true`, then the server MUST answer `400 validation_error`.
 
-**Reason:** an empty `properties` is a write and an empty `edges` is not, so a body that names only a version and an empty `edges` asks for nothing.
+**Reason:** an empty `properties` is a write and an empty `edges` or `clear_properties` is not, so a body that names only a version and an empty list asks for nothing.
 
-**Tests:** `correctness/item-versioning.test.ts › refuses an update that names nothing to change, and one naming a version that is not a whole number of at least 0`.
+**Tests:** `correctness/item-versioning.test.ts › refuses an update that names nothing to change, and one naming a version that is not a whole number of at least 0`, `correctness/clear-properties.test.ts › refuses an empty clear_properties alone as a write of nothing`.
 
 ### `versions/update-race`
 
@@ -408,6 +408,14 @@ If `PATCH /items/{id}` names a version the item no longer holds, whose snapshot 
 
 **Tests:** `correctness/item-versioning.test.ts › a stale write answers version_conflict with a three-way envelope`, `compliance/error-codes.test.ts › rejects a stale write whose base version is retained`, `correctness/merge-policy.test.ts › keep-both and LWW arrive in one 409, and the resolution reads back`, `sync/conflict.test.ts › keeps both copies in one write where the type says to`.
 
+### `versions/stale-collision-clear`
+
+If a stale `PATCH /items/{id}` that names no `conflict=auto` names in `clear_properties` a property another writer changed since the version it names, then the server MUST answer `409 version_conflict` naming that property in `conflicting_fields`.
+
+**Reason:** a removal is a change to the property as much as a new value is, so it collides with a change made since rather than removing a value the writer never saw.
+
+**Tests:** `correctness/clear-properties.test.ts › refuses clearing a property another writer changed since, and clears nothing`.
+
 ### `versions/stale-envelope`
 
 When `PATCH /items/{id}` answers `409 version_conflict` for a collision, the server MUST carry `current` and `ancestor`, each the item as it stood, with its `id`, `version`, `properties`, `type`, `tier`, `occurred_at` and `source_id`.
@@ -538,6 +546,20 @@ When a stale `PATCH /items/{id}` under `properties_mode: replace` leaves out a p
 
 **Tests:** `correctness/item-versioning.test.ts › judges a stale write by its merged result, not by the body laid over the current row`.
 
+### `versions/merge-clear`
+
+When a stale `PATCH /items/{id}` names in `clear_properties` a property that nobody changed since the version it names, the server MUST remove that property.
+
+**Tests:** `correctness/clear-properties.test.ts › clears a property nobody changed since, keeping what others wrote`.
+
+### `versions/merge-clear-unread`
+
+When a stale `PATCH /items/{id}` names in `clear_properties` a property the item did not hold at the version it names, the server MUST keep that property on the item as it stands.
+
+**Reason:** the writer never read the property, so it cannot have meant to remove a value another writer added since.
+
+**Tests:** `correctness/clear-properties.test.ts › leaves a property the version it names never held`.
+
 ### `versions/merge-retype`
 
 When a stale `PATCH /items/{id}` names `retype: true` and another type and collides on nothing, the server MUST move the item to that type, with or without `properties`, where the result meets that type and takes no link another item holds.
@@ -564,9 +586,9 @@ When a stale `PATCH /items/{id}` carries only `tier`, `occurred_at` or `source_i
 
 ### `versions/ancestor-none`
 
-If `PATCH /items/{id}` carries `properties`, `tier`, `occurred_at`, `source_id` or a move to another type and names a version other than the one the item holds, which no snapshot covers, 0 and a version never issued included, then the server MUST answer `409 ancestor_unavailable`.
+If `PATCH /items/{id}` carries `properties`, `clear_properties`, `tier`, `occurred_at`, `source_id` or a move to another type and names a version other than the one the item holds, which no snapshot covers, 0 and a version never issued included, then the server MUST answer `409 ancestor_unavailable`.
 
-**Tests:** `correctness/item-versioning.test.ts › a version no client ever read answers ancestor_unavailable`, `compliance/error-codes.test.ts › rejects an update naming a version that never existed`.
+**Tests:** `correctness/item-versioning.test.ts › a version no client ever read answers ancestor_unavailable`, `compliance/error-codes.test.ts › rejects an update naming a version that never existed`, `correctness/clear-properties.test.ts › answers a clear naming a version no snapshot covers ancestor_unavailable, and clears nothing`.
 
 ### `versions/ancestor-thinned`
 

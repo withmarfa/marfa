@@ -1865,7 +1865,9 @@ export class SqliteItemStore implements ItemStore {
                 !(sized && key === "size_bytes"),
             )
           : []),
-        ...(input.clear_properties ?? []),
+        ...(input.clear_properties ?? []).filter(
+          (key) => !(sized && key === "size_bytes"),
+        ),
       ];
 
       const result = detectConflict({
