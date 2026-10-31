@@ -64,18 +64,18 @@ pub(super) fn opened(
     Ok((core, Some(reason)))
 }
 
-/// Whether the folder's store lacks a table this build makes, which the
-/// folder's writer adds on open.
-pub(super) fn lacks_table(state: &Directory) -> bool {
+/// Whether the folder's store lacks a table or a column this build makes,
+/// which the folder's writer adds on open.
+pub(super) fn behind(state: &Directory) -> bool {
     crate::directory_vfs::DirectoryVfs::new(state.file())
-        .and_then(|vfs| store::folder_store_lacks_table(&vfs))
+        .and_then(|vfs| store::folder_store_behind(&vfs))
         .unwrap_or(false)
 }
 
 /// The origin the folder's store was hydrated from and whether its first
 /// sync waits, read from a store this build refuses `wrong_schema` while it
 /// holds nothing unsent, which the folder's writer replaces on open, or from
-/// one that lacks a table the writer adds.
+/// one that lacks a table or a column the writer adds.
 pub(super) fn recorded(state: &Directory) -> Result<(Option<String>, bool)> {
     let vfs = crate::directory_vfs::DirectoryVfs::new(state.file())?;
     let mut held =

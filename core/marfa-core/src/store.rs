@@ -196,7 +196,7 @@ pub fn open_to_read(path: &Path) -> Result<Connection, CoreError> {
 pub(crate) fn refusal(path: &Path) -> Result<Option<CoreError>, CoreError> {
     let conn = open_refused(path)?;
     match refuse_misshapen(&conn, &held_shape(&conn)?, false) {
-        Ok(()) => Ok(None),
+        Ok(_) => Ok(None),
         Err(error @ CoreError::WrongSchema { .. }) => Ok(Some(at_path(error, path))),
         Err(other) => Err(other),
     }
@@ -438,10 +438,11 @@ pub(crate) fn refused_folder_meta(
     meta_of(&conn, keys)
 }
 
-/// Whether the folder store holds this build's `meta` but lacks a table this
-/// build makes, which its writer adds on open (`device/added-table`).
+/// Whether the folder store holds this build's `meta` but lacks a table or a
+/// column this build makes, which its writer adds on open
+/// (`device/added-table`, `device/added-column`).
 #[cfg(unix)]
-pub(crate) fn folder_store_lacks_table(
+pub(crate) fn folder_store_behind(
     vfs: &crate::directory_vfs::DirectoryVfs,
 ) -> Result<bool, CoreError> {
     let conn = vfs.open(
@@ -450,7 +451,10 @@ pub(crate) fn folder_store_lacks_table(
     )?;
     conn.busy_timeout(std::time::Duration::from_secs(5))?;
     let held = held_shape(&conn)?;
-    Ok(held.contains_key("meta") && built_shape()?.keys().any(|name| !held.contains_key(name)))
+    let built = built_shape()?;
+    Ok(held.contains_key("meta")
+        && (built.keys().any(|name| !held.contains_key(name))
+            || !columns_behind(&held, built).is_empty()))
 }
 
 #[cfg(unix)]
@@ -732,7 +736,8 @@ fn prepare(conn: &Connection) -> Result<(), CoreError> {
     // about a table that exists with other columns. A store of another shape
     // is refused, never discarded, because it may hold writes the server has
     // never seen.
-    refuse_misshapen(conn, &held_shape(conn)?, false)?;
+    let behind = refuse_misshapen(conn, &held_shape(conn)?, false)?;
+    add_columns(conn, &behind)?;
     conn.execute_batch(SCHEMA)?;
     // Only when absent: writing it on every open would make a reading command
     // take a write lock.
@@ -794,15 +799,92 @@ fn built_shape() -> Result<&'static Shape, CoreError> {
     Ok(BUILT.get_or_init(|| built))
 }
 
+/// Each column added to the end of a table since a table last changed in a
+/// way no column added to its end can follow (`blob`, in the middle of
+/// `folder_files`), in the order added, as `schema.sql` defines it. A writer
+/// adds those a store lacks (`device/added-column`); a column added to a
+/// table's end goes here, or every store made before it is refused.
+const ADDED_COLUMNS: &[(&str, &str)] = &[
+    ("items", "capture_latitude REAL"),
+    ("items", "capture_longitude REAL"),
+    ("items", "trashed_at TEXT"),
+];
+
+/// The columns, from `ADDED_COLUMNS`, that the store's `table` lacks, where
+/// its statement `held` is this build's `built` less some of those at its
+/// end. `None` for any other statement.
+fn columns_to_add(table: &str, held: &str, built: &str) -> Option<Vec<&'static str>> {
+    let added: Vec<&'static str> = ADDED_COLUMNS
+        .iter()
+        .filter(|(name, _)| *name == table)
+        .map(|(_, column)| *column)
+        .collect();
+    let mut shorter = built.to_string();
+    for at in (0..added.len()).rev() {
+        let end = format!(",{})", statement(added[at]));
+        shorter = format!("{})", shorter.strip_suffix(&end)?);
+        if shorter == held {
+            return Some(added[at..].to_vec());
+        }
+    }
+    None
+}
+
+/// Each table of `held` that lacks columns a writer adds, with those columns.
+fn columns_behind(held: &Shape, built: &Shape) -> Vec<(String, Vec<&'static str>)> {
+    let mut behind: Vec<_> = held
+        .iter()
+        .filter_map(|(name, statement)| {
+            let made = built.get(name).filter(|made| *made != statement)?;
+            Some((name.clone(), columns_to_add(name, statement, made)?))
+        })
+        .collect();
+    behind.sort();
+    behind
+}
+
+/// Adds the columns `behind` names, in one transaction, and holds each table
+/// it changes to the statement this build makes it with.
+fn add_columns(conn: &Connection, behind: &[(String, Vec<&'static str>)]) -> Result<(), CoreError> {
+    if behind.is_empty() {
+        return Ok(());
+    }
+    let built = built_shape()?;
+    let tx = rusqlite::Transaction::new_unchecked(conn, rusqlite::TransactionBehavior::Immediate)?;
+    for (table, columns) in behind {
+        for column in columns {
+            tx.execute_batch(&format!("ALTER TABLE \"{table}\" ADD COLUMN {column}"))?;
+        }
+    }
+    let held = held_shape(&tx)?;
+    if let Some((table, _)) = behind
+        .iter()
+        .find(|(table, _)| held.get(table) != built.get(table))
+    {
+        return Err(CoreError::Store(format!(
+            "adding this build's columns to its table {table} did not give the shape this build reads"
+        )));
+    }
+    tx.commit()?;
+    Ok(())
+}
+
 /// The version stays put until the first public release, so it alone cannot
 /// tell two builds' stores apart: every table the store holds is held to the
-/// statement this build makes it with. A table it lacks is one a writer
-/// creates on open, which a reader cannot.
-fn refuse_misshapen(conn: &Connection, held: &Shape, reading: bool) -> Result<(), CoreError> {
+/// statement this build makes it with. A table it lacks, or a column of
+/// `ADDED_COLUMNS` at a table's end, is one a writer adds on open, which a
+/// reader cannot; the columns a writer adds are returned.
+fn refuse_misshapen(
+    conn: &Connection,
+    held: &Shape,
+    reading: bool,
+) -> Result<Vec<(String, Vec<&'static str>)>, CoreError> {
     let built = built_shape()?;
+    let behind = columns_behind(held, built);
     let differs = |name: &str| {
         held.get(name)
             .is_some_and(|statement| built.get(name) != Some(statement))
+            && !behind.iter().any(|(table, _)| table == name)
     };
     let refuse = |reason: String| {
         Err(CoreError::WrongSchema {
@@ -839,7 +921,13 @@ fn refuse_misshapen(conn: &Connection, held: &Shape, reading: bool) -> Result<()
             "this store has no table {name} yet, which this build's writer adds when it opens the store: open it once with this build's writer, then read it"
         )));
     }
-    Ok(())
+    if reading && let Some((table, columns)) = behind.first() {
+        return Err(CoreError::Invalid(format!(
+            "this store's table {table} has no column {} yet, which this build's writer adds when it opens the store: open it once with this build's writer, then read it",
+            columns.join(", ")
+        )));
+    }
+    Ok(behind)
 }
 
 /// The writes the server has not taken whose kind this build does not send,
@@ -8954,8 +9042,135 @@ mod tests {
         assert!(open_to_read(&path).is_ok());
     }
 
-    /// A change to a table's shape refuses every store made before it, so
-    /// it is made on purpose: write the new hash here when it is.
+    fn items_shape(conn: &Connection) -> String {
+        held_shape(conn).unwrap()["items"].clone()
+    }
+
+    #[test]
+    fn a_store_made_before_a_column_this_build_adds_opens_and_gains_it() {
+        for dropped in [
+            "trashed_at",
+            "trashed_at, capture_longitude",
+            "trashed_at, capture_longitude, capture_latitude",
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("core.sqlite");
+            {
+                let conn = open(&path).unwrap();
+                queue_one(&conn);
+                upsert_item(
+                    &conn,
+                    &note("n1", "a", "b", "2026-01-01T00:00:00Z"),
+                    None,
+                    &Indexing::default(),
+                )
+                .unwrap();
+                for column in dropped.split(", ") {
+                    conn.execute_batch(&format!("ALTER TABLE items DROP COLUMN {column}"))
+                        .unwrap();
+                }
+                assert_ne!(items_shape(&conn), built_shape().unwrap()["items"]);
+            }
+            assert!(
+                matches!(
+                    open_to_read(&path),
+                    Err(CoreError::Invalid(said)) if said.contains("this build's writer") && said.contains("trashed_at")
+                ),
+                "a reader of a store without {dropped} did not send it to this build's writer"
+            );
+            let conn = open(&path).unwrap();
+            assert_eq!(items_shape(&conn), built_shape().unwrap()["items"]);
+            assert_eq!(
+                conn.query_row("SELECT COUNT(*) FROM queue", [], |row| row.get::<_, i64>(0))
+                    .unwrap(),
+                1
+            );
+            assert!(item_held(&conn, "n1").unwrap());
+            let trashed: Option<String> = conn
+                .query_row("SELECT trashed_at FROM items WHERE id = 'n1'", [], |row| {
+                    row.get(0)
+                })
+                .unwrap();
+            assert_eq!(trashed, None);
+            drop(conn);
+            assert!(open_to_read(&path).is_ok());
+        }
+    }
+
+    #[test]
+    fn a_store_made_with_the_columns_written_otherwise_gains_them() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("core.sqlite");
+        {
+            let conn = open(&path).unwrap();
+            let made: String = conn
+                .query_row(
+                    "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'items'",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            let earlier = made
+                .replace(
+                    ",\n  capture_latitude REAL,\n  capture_longitude REAL,\n  trashed_at TEXT\n",
+                    "\n  -- as an earlier build wrote it\n",
+                )
+                .replace("(\n", "(");
+            assert!(!earlier.contains("capture_latitude"), "{earlier}");
+            conn.execute_batch(&format!("DROP TABLE items; {earlier};"))
+                .unwrap();
+        }
+        let conn = open(&path).unwrap();
+        assert_eq!(items_shape(&conn), built_shape().unwrap()["items"]);
+    }
+
+    #[test]
+    fn a_store_missing_a_column_short_of_the_end_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("core.sqlite");
+        {
+            let conn = open(&path).unwrap();
+            queue_one(&conn);
+            conn.execute_batch("ALTER TABLE items DROP COLUMN capture_latitude")
+                .unwrap();
+        }
+        let (reason, unsent, _) = refusal_of(&path);
+        assert!(reason.contains("items"), "{reason}");
+        assert_eq!(unsent, Some(1));
+        let conn = Connection::open(&path).unwrap();
+        assert!(!items_shape(&conn).contains("capture_latitude"));
+    }
+
+    /// Each column `ADDED_COLUMNS` lists is at its table's end, in order, so
+    /// a store made before all of them gains them.
+    #[test]
+    fn the_columns_a_writer_adds_end_their_tables() {
+        let built = built_shape().unwrap();
+        let mut tables: Vec<&str> = ADDED_COLUMNS.iter().map(|(table, _)| *table).collect();
+        tables.dedup();
+        for table in tables {
+            let added: Vec<&str> = ADDED_COLUMNS
+                .iter()
+                .filter(|(name, _)| *name == table)
+                .map(|(_, column)| *column)
+                .collect();
+            let made = &built[table];
+            let mut earliest = made.clone();
+            for column in added.iter().rev() {
+                earliest = format!(
+                    "{})",
+                    earliest
+                        .strip_suffix(&format!(",{})", statement(column)))
+                        .unwrap_or_else(|| panic!("{column} does not end {table}"))
+                );
+            }
+            assert_eq!(columns_to_add(table, &earliest, made), Some(added));
+        }
+    }
+
+    /// A change to a table's shape refuses every store made before it, but
+    /// for a column added to a table's end that `ADDED_COLUMNS` lists, so it
+    /// is made on purpose: write the new hash here when it is.
     #[test]
     fn the_shape_this_build_makes_is_the_one_meant() {
         let built = built_shape().unwrap();

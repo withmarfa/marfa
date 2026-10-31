@@ -176,6 +176,30 @@ function holdsCopyChanges(store: string): boolean {
   }
 }
 
+function holdsTrashedAt(store: string): boolean {
+  const db = new DatabaseSync(store, { readOnly: true });
+  try {
+    return (
+      db
+        .prepare(
+          "SELECT 1 FROM pragma_table_info('items') WHERE name = 'trashed_at'",
+        )
+        .get() !== undefined
+    );
+  } finally {
+    db.close();
+  }
+}
+
+function dropTrashedAt(store: string): void {
+  const db = new DatabaseSync(store);
+  try {
+    db.exec("ALTER TABLE items DROP COLUMN trashed_at");
+  } finally {
+    db.close();
+  }
+}
+
 function dropCopyChanges(store: string): void {
   const db = new DatabaseSync(store);
   try {
@@ -259,6 +283,27 @@ describe("a watch of every folder", () => {
       expect(sentTitles(a).sort()).toEqual(["Disk A", "Disk B"]);
     }, WAIT);
     expect(stores.map(holdsCopyChanges)).toEqual([true, true]);
+  });
+
+  it("watches every folder whose store lacks a column this build makes, adding the column", async () => {
+    const { a, b } = await twoFolders("every-lacking-column");
+    const stores = [a, b].map(storeOf);
+    for (const store of stores) dropTrashedAt(store);
+    expect(stores.map(holdsTrashedAt)).toEqual([false, false]);
+
+    put(a, "Disk A.md", "---\ntitle: Disk A\n---\nwritten in a\n");
+    put(b, "Disk B.md", "---\ntitle: Disk B\n---\nwritten in b\n");
+    const watch = hold(a.folder.watchEvery());
+    await vi.waitFor(() => {
+      for (const harness of [a, b]) {
+        expect(
+          watching(watch, harness.dir),
+          `${watch.stdout}${watch.stderr}`,
+        ).toBe(true);
+      }
+      expect(sentTitles(a).sort()).toEqual(["Disk A", "Disk B"]);
+    }, WAIT);
+    expect(stores.map(holdsTrashedAt)).toEqual([true, true]);
   });
 
   it("leaves a store that lacks a table untouched while another process holds its folder, and adds the table once it is let go", async () => {

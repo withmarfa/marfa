@@ -3884,11 +3884,25 @@ When a device opens to write a store made before a table this build adds, a devi
 
 **Tests:** `device/working-copy.test.ts › opens a store made before a table this build adds, and adds it`, `device/folders-watch-every.test.ts › watches every folder whose store lacks a table this build makes, adding the table`.
 
+### `device/reader-missing-column`
+
+If a device opens to read a store made before a column this build adds to a table, then a device MUST refuse it `invalid`, saying to open it once with this build's writer.
+
+**Tests:** `device/working-copy.test.ts › opens a store made before a column this build adds, adds it, and sends the write it holds`.
+
+### `device/added-column`
+
+When a device opens to write a store made before a column this build adds to a table, a device MUST add the column and open the store.
+
+**Reason:** a column added to the end of a table leaves every other column as it was, so the store's writes the server has not taken can still be sent, and refusing the store would strand them after an update of the app.
+
+**Tests:** `device/working-copy.test.ts › opens a store made before a column this build adds, adds it, and sends the write it holds`, `device/folders-watch-every.test.ts › watches every folder whose store lacks a column this build makes, adding the column`.
+
 ### `device/wrong-schema`
 
 If a store was made by another build of the core, at another schema version or with tables of another shape than this build makes, then a device MUST refuse every open of it, as a writer or to read, `wrong_schema` before it reads anything, naming the store's path, unless the open replaces a folder's store (`folders/refused-store-replaced`).
 
-**Reason:** the schema version does not move before the first public release, so a table's shape is what tells one build's store from another's.
+**Reason:** the schema version does not move before the first public release, so a table's shape is what tells one build's store from another's. A table that lacks only a column this build adds at its end is not of another shape (`device/added-column`), and neither is a missing table (`device/added-table`).
 
 **Tests:** `device/working-copy.test.ts › refuses to read a store a writer of another schema version made`, `› refuses a store another build shaped, by name, with the writes it holds unsent`.
 
