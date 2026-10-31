@@ -3489,6 +3489,47 @@ describe("embedded files", () => {
       ).toEqual(["Host.md", "big.png", "copy.png", "photo.png"]);
     });
 
+    it("takes back the file a note embeds when the add confirms its first sync at once", async () => {
+      const made = await placedEmbeds(
+        "folder-embed-added-again-yes",
+        [
+          {
+            id: host,
+            properties: { title: "Host", body: "![](photo.png)\n" },
+          },
+          fileRow(photo, "photo.png", png(5)),
+        ],
+        [attached(edgeId(16), photo, host)],
+        { [host]: "Host.md", [photo]: "photo.png" },
+        ["core.note"],
+      );
+      harness = made.harness;
+      acceptUploads(harness.server);
+      scriptBlob(harness.server, png(5));
+      await pulledAndRemoved(harness);
+      expect(readFileSync(join(harness.dir, "photo.png"))).toEqual(png(5));
+
+      // `--yes`, so no plan reads the folder before its first sync.
+      const added = await harness.folder.add(harness.settings.id);
+      expect(added.ok, JSON.stringify(added)).toBe(true);
+      const pushed = await harness.folder.push();
+      expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+      expect(
+        sentCreates(harness),
+        "a file a note embeds was sent again as a new item",
+      ).toEqual([]);
+      expect(await boundIds(harness)).toEqual({
+        "Host.md": host,
+        "photo.png": photo,
+      });
+      expect(
+        readdirSync(harness.dir)
+          .filter((name) => !name.startsWith("."))
+          .sort(),
+        "the pull wrote an embedded file again beside the one that held it",
+      ).toEqual(["Host.md", "photo.png"]);
+    });
+
     it("sends as new a file whose bytes changed while it was away, or that holds the bytes of a file placed elsewhere, and loses neither item's bytes", async () => {
       const made = await placedEmbeds(
         "folder-embed-added-again-not",

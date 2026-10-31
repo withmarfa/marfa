@@ -96,9 +96,6 @@ impl Folder {
             Err(error) if error.is_environmental() => {}
             Err(error) => return Err(error),
         }
-        // The pull holds these only after the scan, which would otherwise
-        // send a file a document here embeds as a new item.
-        self.hold_attachments()?;
         self.scan()?;
         // From the queue, not the scan's counts, which a second look at the
         // same files would find nothing new in.

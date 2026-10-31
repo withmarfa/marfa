@@ -2017,12 +2017,10 @@ impl Folder {
         Ok(())
     }
 
-    /// Before the scan of a first sync, holds the attachments of the
-    /// documents the query holds as `hold_edge_ends` would, so a file the
-    /// directory already has where a pull would write one is found as that
-    /// item, not sent again as a new one.
-    pub(super) fn hold_attachments(&self) -> Result<()> {
-        let members = self.members(&self.settings()?)?;
+    /// Holds the attachments of `members` as `hold_edge_ends` would, for a
+    /// scan that runs before any pull has: one that has none of them would
+    /// send a file the directory has where a pull writes one as a new item.
+    pub(super) fn hold_attachments(&self, members: &HashSet<String>) -> Result<()> {
         let wanted: std::collections::BTreeSet<String> = self
             .core
             .edges_of_type(ATTACHMENT_EDGE)?

@@ -5959,12 +5959,14 @@ mod tests {
 
     /// A folder whose query holds notes alone, added again over its own files
     /// with nothing of its own state left: the copy holds what the server
-    /// does, a note placed at `Note.md` that embeds every image, and each
-    /// image attached to the note and placed at its path.
+    /// does, a note placed at `Note.md` that embeds every image where
+    /// `embedded`, and each image placed at its path and, where `attached`,
+    /// attached to the note.
     fn added_again_over_embeds(
         n: usize,
         images: &[Image<'_>],
         attached: bool,
+        embedded: bool,
     ) -> (ScannedDir, Folder) {
         let folder_id = format!("01a00000-0000-7000-8000-0000000024{n:02}");
         let (_, registry) = registry::tests::own_registry();
@@ -5980,6 +5982,7 @@ mod tests {
         let note = format!("01a00000-0000-7000-8000-0000000025{n:02}");
         let embeds: String = images
             .iter()
+            .filter(|_| embedded)
             .map(|(_, path, _, _)| format!("![image]({path})\n"))
             .collect();
         let body = format!("The images.\n\n{embeds}");
@@ -6065,8 +6068,12 @@ mod tests {
         ];
         // The witness: an image attached to no note the folder holds is not
         // the folder's, so its file is sent as new.
-        let (_dir, folder) =
-            added_again_over_embeds(0, &[(one, "Pictures/photo.png", photo, Some(photo))], false);
+        let (_dir, folder) = added_again_over_embeds(
+            0,
+            &[(one, "Pictures/photo.png", photo, Some(photo))],
+            false,
+            true,
+        );
         folder.scan().unwrap();
         assert_eq!(created(&folder), 1);
         assert_ne!(
@@ -6081,6 +6088,7 @@ mod tests {
                 (one, "Pictures/photo.png", photo, Some(photo)),
                 (two, "Copies/photo.png", photo, Some(photo)),
             ],
+            true,
             true,
         );
         let report = folder.scan().unwrap();
@@ -6099,8 +6107,12 @@ mod tests {
     fn a_folder_added_again_takes_back_a_large_embedded_image() {
         let large: Vec<u8> = (0..8 << 20).map(|at| (at % 251) as u8).collect();
         let id = "01a00000-0000-7000-8000-0000000026b1";
-        let (_dir, folder) =
-            added_again_over_embeds(2, &[(id, "Pictures/large.png", &large, Some(&large))], true);
+        let (_dir, folder) = added_again_over_embeds(
+            2,
+            &[(id, "Pictures/large.png", &large, Some(&large))],
+            true,
+            true,
+        );
         folder.scan().unwrap();
         assert_eq!(created(&folder), 0);
         assert_eq!(
@@ -6125,6 +6137,7 @@ mod tests {
             3,
             &[(kept, "Pictures/photo.png", held, Some(changed))],
             true,
+            true,
         );
         folder.scan().unwrap();
         assert_eq!(created(&folder), 1);
@@ -6134,8 +6147,12 @@ mod tests {
         );
 
         // The bytes of an item placed elsewhere, whose own file is not here.
-        let (dir, folder) =
-            added_again_over_embeds(4, &[(elsewhere, "Elsewhere/photo.png", held, None)], true);
+        let (dir, folder) = added_again_over_embeds(
+            4,
+            &[(elsewhere, "Elsewhere/photo.png", held, None)],
+            true,
+            true,
+        );
         std::fs::create_dir_all(dir.path().join("Pictures")).unwrap();
         std::fs::write(dir.path().join("Pictures/photo.png"), held).unwrap();
         std::fs::write(
@@ -6151,5 +6168,31 @@ mod tests {
             bound_item(&folder, "Pictures/photo.png").as_deref(),
             Some(elsewhere)
         );
+    }
+
+    #[test]
+    fn a_folder_added_again_takes_back_no_image_only_another_file_embeds() {
+        let photo = b"\x89PNG\r\n\x1a\nphoto".as_slice();
+        let id = "01a00000-0000-7000-8000-0000000026d1";
+        // Attached to the note, which embeds it nowhere; another Markdown
+        // file embeds it, and the image is not attached to that one.
+        let (dir, folder) = added_again_over_embeds(
+            5,
+            &[(id, "Pictures/photo.png", photo, Some(photo))],
+            true,
+            false,
+        );
+        std::fs::write(
+            dir.path().join("Other.md"),
+            "---\ntitle: Other\n---\n![image](Pictures/photo.png)\n",
+        )
+        .unwrap();
+        folder.scan().unwrap();
+        assert_ne!(
+            bound_item(&folder, "Pictures/photo.png").as_deref(),
+            Some(id)
+        );
+        // The new note, and the image as a new item.
+        assert_eq!(created(&folder), 2);
     }
 }
