@@ -4454,7 +4454,7 @@ Where an app declares a `string` field, or a member of a list's entries, whose `
 
 **Reason:** a device that read the declared `type` alone would take a member the server refuses, and keep a `url` untrimmed that the server trims (`types/url-stored`).
 
-**Tests:** `device/save-before-sync.test.ts › judges a declared string by the kind its format names, as the server does, in a field and in a member`, `› refuses a declaration of a list of entries or a currency the server refuses, naming the field`, `compliance/field-rules.test.ts › a string whose format is a kind of its own`.
+**Tests:** `device/save-before-sync.test.ts › judges a declared string by the kind its format names, as the server does, in a field and in a member`, `› refuses a declaration of a list of entries or a currency the server refuses, naming the field`, `compliance/field-rules.test.ts › is held as that kind in a field and in a member of a list's entries`, `› is refused as a member where the kind is one an entry does not take`.
 
 ### `device/declaration-refused-whole`
 

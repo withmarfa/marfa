@@ -852,7 +852,7 @@ When the server writes a conflicted copy, the server MUST judge the copy's prope
 
 **Reason:** the copy is a new item, so a `url` is stored without the whitespace around it (`types/url-stored`) as it is on any create. A status word the stale write leaves alone is kept in the copy (`types/status-write-refused`), as an update keeps it.
 
-**Tests:** `compliance/field-rules.test.ts › a conflicted copy is judged as a create of its type › stores a url in the copy without the whitespace around it`.
+**Tests:** `compliance/field-rules.test.ts › stores a url in the copy without the whitespace around it`.
 
 ### `versions/copy-refused`
 
@@ -860,7 +860,7 @@ If a stale `PATCH /items/{id}?conflict=auto` would write a conflicted copy holdi
 
 **Reason:** a value the type refuses on a create is refused in the copy as much, and the stale write's other changes do not land without the value the person meant to keep.
 
-**Tests:** `compliance/field-rules.test.ts › a conflicted copy is judged as a create of its type › refuses a copy holding a value of the wrong kind, writing neither the copy nor the change`.
+**Tests:** `compliance/field-rules.test.ts › refuses a copy holding a value of the wrong kind, writing neither the copy nor the change`.
 
 ### `versions/copy-version`
 
