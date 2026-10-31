@@ -108,6 +108,7 @@ export enum ErrorCode {
   OAUTH_GRANT_NOT_FOUND = "oauth_grant_not_found",
   PASSKEY_NOT_FOUND = "passkey_not_found",
   SIGN_IN_NOT_FOUND = "sign_in_not_found",
+  SOURCE_NOT_FOUND = "source_not_found",
   /**
    * The instance already has an owner, so `POST /owner` has nothing to
    * create. `GET /owner` says who.
@@ -561,6 +562,10 @@ export const ERROR_CODES: Record<AnsweredCode, ErrorCodeInfo> = {
     status: 404,
     summary:
       "No live sign-in of the owner has this id: it never existed, has ended or has expired.",
+  },
+  [ErrorCode.SOURCE_NOT_FOUND]: {
+    status: 404,
+    summary: "The caller can't see a source with this code.",
   },
   [ErrorCode.OWNER_EXISTS]: {
     status: 409,

@@ -191,6 +191,11 @@ const OWNER_OR_MANAGER =
   "the row's own key, or the route's management permission";
 const PRIVATE_READ = "the row's own key or a manager, hidden from others";
 
+/** The answer a door hidden from others gives a credential it hides from. */
+const HIDDEN: Record<string, string> = {
+  "GET /source": "404 source_not_found",
+};
+
 const OPEN_BY_ROW: Record<string, string> = {
   "GET /connectors": EVERYONE,
   "GET /connectors/:id": PRIVATE_READ,
@@ -200,6 +205,9 @@ const OPEN_BY_ROW: Record<string, string> = {
   "GET /types/:id": EVERYONE,
   "GET /edge-types": EVERYONE,
   "GET /overview": EVERYONE,
+  "GET /sources": EVERYONE,
+  "GET /source": PRIVATE_READ,
+  "PATCH /source": OWNER_OR_MANAGER,
   "GET /connectors/:id/agreements": OWNER,
   "POST /connectors/:id/agreements": OWNER,
   "POST /connectors/:id/agreements/lookup": OWNER,
@@ -332,6 +340,11 @@ const PERMISSION_CALLS: Record<
   "routes/connectors.ts": {
     asks: { "connectors.manage": 1 },
     because: "manager admission alongside row ownership",
+  },
+  "routes/sources.ts": {
+    asks: { "keys.manage": 1 },
+    because:
+      "a credential names its own source and those it claims without a permission, and any other source with keys.manage",
   },
   "routes/audit.ts": {
     asks: { "audit.read": 1 },
@@ -546,6 +559,11 @@ async function seedRows(doc: Schema): Promise<void> {
   ).json()) as { id: string };
   ROWS.job = job.id;
   ROWS.type = "core.note";
+  ROWS.source = (
+    (await (await asOwner("GET", "/keys/current")).json()) as {
+      source: string;
+    }
+  ).source;
 }
 
 /** Deletes last, and the connector's own delete after its parts'. */
@@ -596,7 +614,9 @@ function wellFormed(door: string, doc: Schema, bearer: string) {
     if (parameter.in === "query" && parameter.required === true) {
       query.set(
         parameter.name as string,
-        String(sample(parameter.schema as Schema, doc)),
+        path === "/source" && parameter.name === "source"
+          ? ROWS.source!
+          : String(sample(parameter.schema as Schema, doc)),
       );
     }
   }
@@ -706,7 +726,7 @@ describe("every door asks what it asks of every caller before anything else", ()
         const got = await answer(await wellFormed(door, doc, bearer));
         const refused =
           OPEN_BY_ROW[door] === PRIVATE_READ
-            ? got === "404 connector_not_found"
+            ? got === (HIDDEN[door] ?? "404 connector_not_found")
             : got.startsWith("403");
         if (
           got.startsWith("404") &&

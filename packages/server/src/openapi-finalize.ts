@@ -305,6 +305,12 @@ export const PUBLIC_TAGS: readonly PublicTag[] = [
     ],
   },
   {
+    name: "Sources",
+    description:
+      "The codes items carry to say what wrote them, and the name and mark each is shown by.",
+    operations: ["listSources", "getSource", "updateSource"],
+  },
+  {
     name: "API keys",
     description:
       "The keys that authenticate requests to this instance, and the permissions each holds.",

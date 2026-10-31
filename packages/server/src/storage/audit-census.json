@@ -404,6 +404,13 @@
       "finalizeArchiveItem": 1
     }
   },
+  "routes/sources.ts": {
+    "boundary": "Audited set and clear of a source's name and mark, read and written in one transaction; the row goes when both are cleared.",
+    "calls": {
+      "SourceStore.set": 1,
+      "runAuditedTransaction": 1
+    }
+  },
   "routes/types.ts": {
     "boundary": "Audited type create/update/delete, the owner's icon set and clear, and registry settlement; audit-atomicity.test.ts.",
     "calls": {

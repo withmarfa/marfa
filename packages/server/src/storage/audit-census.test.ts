@@ -20,7 +20,8 @@ const READS: Record<string, string> = {
     "list get provenance listRegistered listRegisteredWithProvenance loadAll countRegistered propertyNamesHeld icons",
   EdgeTypeStore: "list get",
   SearchStore: "search",
-  KeyStore: "list get validate count",
+  KeyStore: "list get validate count ownSourceLabels",
+  SourceStore: "list get",
   BlobRegistry:
     "get listAll readableThrough lendingHashesOf lendingHashesOfEdges lendingHashesOfExtensions uploadedBy count listStores copiesClaimedAt listCopies storeIdsOf listPendingCopyDeletions listMissingFrom countMissingFrom listToVerify listOrphans listOrphansToPurge listPendingPurges purgePending",
   WebhookStore: "checkpoint listAfter list get count",
@@ -54,6 +55,7 @@ const WRITES: Record<string, string> = {
   TypeStore:
     "create update delete seedPlatformTypes deleteRetiredPlatformType setIcon clearIcon",
   EdgeTypeStore: "create replace delete",
+  SourceStore: "set",
   SearchStore: "index setTags remove",
   KeyStore:
     "create update revoke revokeLapsedHolders updateLastUsed deleteDeadKeysOlderThan",

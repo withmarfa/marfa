@@ -2625,18 +2625,21 @@ export class SqliteItemStore implements ItemStore {
     by: ItemStatsAxis = "state",
   ): Promise<Record<string, number>> {
     const conditions = itemFilterConditions(filters);
+    // The grouped column is chosen here rather than by near-identical query
+    // builders, so a filter added to one axis cannot be missed on another,
+    // which is what would break the totals agreeing.
+    const column =
+      by === "type"
+        ? items.type
+        : by === "source"
+          ? sourceColumnSql(items.source)
+          : items.state;
 
     const rows = await this.db
-      .select({
-        // The grouped column is chosen here rather than by two near-identical
-        // query builders, so a filter added to one axis cannot be missed on
-        // the other — which is what would break the totals agreeing.
-        bucket: by === "type" ? items.type : items.state,
-        count: sql<number>`count(*)`,
-      })
+      .select({ bucket: sql<string>`${column}`, count: sql<number>`count(*)` })
       .from(items)
       .where(conditions.length > 0 ? and(...conditions) : undefined)
-      .groupBy(by === "type" ? items.type : items.state)
+      .groupBy(column)
       .all();
 
     const result: Record<string, number> = {};

@@ -50,6 +50,8 @@ const NOT_ROW_ACCESS: Record<string, string> = {
   revokeLapsedHolders:
     "a mint revoking the keys past their expiry that hold its source, which no credential reaches by id",
   count: "a number, which names no key",
+  ownSourceLabels:
+    "the label a live key holds beside its own source, answered as that source's name only to a caller that may see the source",
   deleteDeadKeysOlderThan: "retention removing rows no credential holds",
 };
 

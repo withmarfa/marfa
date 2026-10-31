@@ -382,8 +382,15 @@ export function oauthPrincipal(oauthToken: OauthAccessTokenRow): ApiKey | null {
 export function oauthGrantOf(
   key: ApiKey,
 ): { clientId: string; authUserId: string } | null {
-  if (!key.source.startsWith(OAUTH_SOURCE_PREFIX)) return null;
-  const handle = key.source.slice(OAUTH_SOURCE_PREFIX.length);
+  return oauthGrantOfSource(key.source);
+}
+
+/** The app and person an `oauth:` source code stands for, or null. */
+export function oauthGrantOfSource(
+  source: string,
+): { clientId: string; authUserId: string } | null {
+  if (!source.startsWith(OAUTH_SOURCE_PREFIX)) return null;
+  const handle = source.slice(OAUTH_SOURCE_PREFIX.length);
   const at = handle.lastIndexOf(":");
   if (at <= 0 || at === handle.length - 1) return null;
   return { clientId: handle.slice(0, at), authUserId: handle.slice(at + 1) };

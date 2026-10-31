@@ -203,6 +203,16 @@ export class SqliteKeyStore implements KeyStore {
     });
   }
 
+  async ownSourceLabels(): Promise<ReadonlyMap<string, string>> {
+    const rows = await this.db
+      .select({ source: apiKeys.source, label: apiKeys.label })
+      .from(apiKeys)
+      .where(notRevokedOrExpired(clock.now().toISOString()))
+      .orderBy(apiKeys.created_at)
+      .all();
+    return new Map(rows.map((row) => [row.source, row.label]));
+  }
+
   async list(): Promise<StoredApiKey[]> {
     const rows = await this.db
       .select()
