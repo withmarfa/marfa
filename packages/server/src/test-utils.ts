@@ -839,7 +839,8 @@ export async function readSse(
   let text = "";
   let closed = false;
   let satisfied = false;
-  const deadline = clock.monotonicMs() + timeoutMs;
+  const started = clock.monotonicMs();
+  const deadline = started + timeoutMs;
 
   // One read outstanding at a time, and the same promise is awaited again
   // rather than replaced. A second `read()` issued while the first is still
@@ -897,7 +898,9 @@ export async function readSse(
   }
   if (!untilClosed && until !== undefined && !satisfied) {
     throw new Error(
-      `SSE read did not reach its condition within ${String(timeoutMs)}ms; read so far: ${JSON.stringify(text)}`,
+      closed
+        ? `SSE read did not reach its condition: the stream closed after ${String(Math.round(clock.monotonicMs() - started))}ms; read so far: ${JSON.stringify(text)}`
+        : `SSE read did not reach its condition within ${String(timeoutMs)}ms; read so far: ${JSON.stringify(text)}`,
     );
   }
   if (requireSeen !== undefined && !requireSeen(text)) {

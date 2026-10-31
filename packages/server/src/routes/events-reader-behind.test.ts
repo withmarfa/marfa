@@ -46,6 +46,9 @@ afterAll(async () => {
 });
 
 const BOUND = 16 * 1024;
+/** Below the server package's 60s test limit, so a read that never reaches
+ *  its frame fails with what it read instead of a bare timeout. */
+const READ_BUDGET_MS = 15_000;
 /** Bodies large enough that a handful of frames pass the bound. */
 const BODY = "x".repeat(2_000);
 
@@ -180,7 +183,7 @@ describe("a replay to a slow reader", () => {
     }
     const res = await appWith({
       maxUnsentBytes: BOUND,
-      readerStallMs: 300,
+      readerStallMs: 2 * READ_BUDGET_MS,
     }).request("/events", {
       headers: { "Last-Event-ID": String(from) },
     });
@@ -202,7 +205,7 @@ describe("a replay to a slow reader", () => {
     await backlog("steady");
     const res = await appWith({
       maxUnsentBytes: BOUND,
-      readerStallMs: 300,
+      readerStallMs: 2 * READ_BUDGET_MS,
     }).request("/events", {
       headers: { "Last-Event-ID": String(from) },
     });
@@ -255,7 +258,10 @@ describe("a replay to a slow reader", () => {
       "/events",
       eventRoutes(ctx.storage, {
         maxUnsentBytes: BOUND,
-        readerStallMs: 5_000,
+        // Past the read's own budget, so a loaded machine that starts the
+        // read late fails on that budget, naming what it read, rather than
+        // on a stream the stall ended as `reader_behind`.
+        readerStallMs: 2 * READ_BUDGET_MS,
         keepAliveMs: 100,
       }),
     );
@@ -271,6 +277,7 @@ describe("a replay to a slow reader", () => {
     await settle(400);
     const { text } = await readSse(stream, {
       until: (seen) => seen.includes("event: stream_live"),
+      timeoutMs: READ_BUDGET_MS,
     });
     // Everything at or past the bound was queued after the reader began
     // reading, so after the key changed. The witness: tasks were sent
