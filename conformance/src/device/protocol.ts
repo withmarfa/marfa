@@ -470,6 +470,34 @@ export interface BodyLinks {
   embeds: BodyName[];
 }
 
+/** One part of a link, trimmed, placed in UTF-16 code units. */
+export interface LinkPart {
+  text: string;
+  start: number;
+  end: number;
+}
+
+/** A link in a text, as `device/link-parts` reads it. */
+export interface LinkParts {
+  /** As it appears, brackets included. */
+  text: string;
+  start: number;
+  end: number;
+  /** The text between the brackets, trimmed. */
+  target: string;
+  name: LinkPart;
+  heading: LinkPart | null;
+  alias: LinkPart | null;
+}
+
+/** What a link could name, from the copy alone (`device/link-candidates`). */
+export interface LinkCandidates {
+  target: string;
+  state: "bound" | "ambiguous" | "unresolved";
+  item: string | null;
+  candidates: string[];
+}
+
 /** A create, before it is queued. */
 export interface Draft {
   type: string;

@@ -520,6 +520,36 @@ pub enum ItemsCommand {
         #[arg(required = true)]
         ids: Vec<String>,
     },
+    /// The `[[links]]` in a text, in order and repeats included, each with
+    /// its name, heading and alias and where each sits in the text, counted
+    /// in UTF-16 code units. A link in code or a comment, an embed and a
+    /// `[[` that a line break or another `[[` comes before its `]]` are not
+    /// links. Reads no copy.
+    #[command(name = "link-parts")]
+    LinkParts {
+        /// The text.
+        #[arg(conflicts_with = "file", required_unless_present = "file")]
+        text: Option<String>,
+        /// Read the text from a file, or `-` for stdin.
+        #[arg(long, value_name = "PATH")]
+        file: Option<PathBuf>,
+    },
+    /// What each link could name, read from the local copy: every item
+    /// outside the bin whose id, title or file path its name answers to,
+    /// without regard to case or Unicode form, and whether it is `bound`,
+    /// `ambiguous` or `unresolved`. An item the copy does not hold is not
+    /// listed.
+    #[command(name = "link-candidates")]
+    LinkCandidates {
+        /// The text between each link's brackets, such as `Plan#Goals|the
+        /// plan`.
+        #[arg(required = true)]
+        targets: Vec<String>,
+        /// Answer each as a link in this item's body would bind, by the
+        /// edges the item already has.
+        #[arg(long, value_name = "ID")]
+        item: Option<String>,
+    },
     /// The text that embeds a file item in an item's body, which reads back
     /// as the file's `attached-to` edge to the item.
     Embed {
@@ -1227,6 +1257,22 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
             }
         }
         DeviceCommand::Items {
+            command: ItemsCommand::LinkParts { text, file },
+        } => {
+            let text = match (text, file) {
+                (Some(text), _) => text,
+                (None, Some(file)) => crate::commands::read_text(&file)?,
+                // clap refuses this; reached only if the argument rules drift.
+                (None, None) => {
+                    return Err(CliError::Invalid(
+                        "a text is needed: TEXT, or --file PATH".into(),
+                    ));
+                }
+            };
+            let parts = marfa_core::link_parts(&text);
+            output::report(&parts, json, || output::link_parts(&parts))
+        }
+        DeviceCommand::Items {
             command: ItemsCommand::Purge { id, version },
         } => {
             store.open_with_server(named)?.purge_item(&id, version)?;
@@ -1324,6 +1370,7 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
                 ItemsCommand::Purge { .. } | ItemsCommand::Bin { .. } => {
                     unreachable!("answered above, with the server")
                 }
+                ItemsCommand::LinkParts { .. } => unreachable!("answered above, with no copy"),
                 ItemsCommand::Restore { id } => output::queued_one(&core.restore_item(&id)?, json),
                 ItemsCommand::Transition { id, state } => {
                     output::queued_one(&core.transition_item(&id, state.into())?, json)
@@ -1381,6 +1428,10 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
                             .collect::<Vec<_>>()
                             .join("\n\n")
                     })
+                }
+                ItemsCommand::LinkCandidates { targets, item } => {
+                    let answers = core.link_candidates(item.as_deref(), &targets)?;
+                    output::report(&answers, json, || output::link_candidates(&answers))
                 }
                 ItemsCommand::Embed { id, file } => {
                     let text = core.embed_text(&id, &file)?;

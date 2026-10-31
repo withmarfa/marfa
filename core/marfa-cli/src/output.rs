@@ -960,6 +960,49 @@ pub fn body_links(links: &marfa_core::BodyLinks) -> String {
     }
 }
 
+pub fn link_parts(parts: &[marfa_core::LinkParts]) -> String {
+    if parts.is_empty() {
+        return "the text carries no link".into();
+    }
+    parts
+        .iter()
+        .map(|link| {
+            let mut line = format!(
+                "{}-{}\t{}\tname: {}",
+                link.start, link.end, link.text, link.name.text
+            );
+            if let Some(heading) = &link.heading {
+                line.push_str(&format!("\theading: {}", heading.text));
+            }
+            if let Some(alias) = &link.alias {
+                line.push_str(&format!("\talias: {}", alias.text));
+            }
+            line
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+pub fn link_candidates(answers: &[marfa_core::LinkCandidates]) -> String {
+    answers
+        .iter()
+        .map(|answer| {
+            let state = match answer.state {
+                marfa_core::LinkState::Bound => "bound",
+                marfa_core::LinkState::Ambiguous => "ambiguous",
+                marfa_core::LinkState::Unresolved => "unresolved",
+            };
+            let listed = if answer.candidates.is_empty() {
+                "no item the copy holds".to_string()
+            } else {
+                answer.candidates.join(", ")
+            };
+            format!("[[{}]]\t{state}\t{listed}", answer.target)
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
     use std::collections::HashMap;

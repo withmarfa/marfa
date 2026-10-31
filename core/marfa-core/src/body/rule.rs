@@ -12,7 +12,7 @@ use serde::Serialize;
 use serde_json::Value;
 
 use super::embed::{FILE_TYPE, blob_ref_of, bytes_of, file_like, is_note, joined, read_as};
-use super::resolve::{Others, Paths, Resolved, Resolver, is_id, resolve_reference};
+use super::resolve::{Names, Others, Paths, Resolved, Resolver, is_id, resolve_reference};
 use super::text::{self, Embed, Typed};
 use crate::catalog::Catalog;
 use crate::error::CoreError;
@@ -27,7 +27,8 @@ pub(crate) const ATTACHMENT_EDGE: &str = "attached-to";
 const PLACEMENT_EDGE: &str = "in-folder";
 
 /// The paths a working copy knows items' files by: their placements in
-/// folders, which every machine reads alike. A placement whose stored
+/// folders, which every machine reads alike. An item in the bin answers to
+/// no path, as it answers to no title. A placement whose stored
 /// properties are not JSON names no path: SQLite raises on such text, so each
 /// JSON function is behind `json_valid` in a `CASE`, which SQLite evaluates in
 /// order where it promises no order for `AND`.
@@ -36,9 +37,10 @@ pub(crate) struct Placements;
 impl Paths for Placements {
     fn every(&self, conn: &Connection) -> Result<Vec<(String, String)>> {
         let mut statement = conn.prepare(
-            "SELECT json_extract(properties, '$.path'), source_id FROM edges
-              WHERE edge_type = ?1
-                AND CASE WHEN json_valid(properties) THEN json_type(properties, '$.path') END = 'text'",
+            "SELECT json_extract(edges.properties, '$.path'), edges.source_id FROM edges
+               JOIN items ON items.id = edges.source_id
+              WHERE edges.edge_type = ?1 AND items.state IN ('active', 'archived')
+                AND CASE WHEN json_valid(edges.properties) THEN json_type(edges.properties, '$.path') END = 'text'",
         )?;
         let rows = statement.query_map([PLACEMENT_EDGE], |row| Ok((row.get(0)?, row.get(1)?)))?;
         Ok(rows.collect::<rusqlite::Result<_>>()?)
@@ -46,9 +48,11 @@ impl Paths for Placements {
 
     fn of(&self, conn: &Connection, id: &str) -> Result<Vec<String>> {
         let mut statement = conn.prepare_cached(
-            "SELECT json_extract(properties, '$.path') FROM edges
-              WHERE edge_type = ?1 AND source_id = ?2
-                AND CASE WHEN json_valid(properties) THEN json_type(properties, '$.path') END = 'text'
+            "SELECT json_extract(edges.properties, '$.path') FROM edges
+               JOIN items ON items.id = edges.source_id
+              WHERE edges.edge_type = ?1 AND edges.source_id = ?2
+                AND items.state IN ('active', 'archived')
+                AND CASE WHEN json_valid(edges.properties) THEN json_type(edges.properties, '$.path') END = 'text'
               ORDER BY 1",
         )?;
         let rows = statement.query_map(params![PLACEMENT_EDGE, id], |row| row.get(0))?;
@@ -90,6 +94,33 @@ pub struct BodyLinks {
     pub links: Vec<BodyName>,
     /// Embeds of files; an embed of a note is text.
     pub embeds: Vec<BodyName>,
+}
+
+/// Whether a link names one item.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LinkState {
+    /// Saving the link in the item's body would make its edge to `item`.
+    Bound,
+    /// More than one item the copy holds answers to it.
+    Ambiguous,
+    /// No item, or one the copy cannot tell is the only one, since it holds a
+    /// slice: the server's lookup decides.
+    Unresolved,
+}
+
+/// The items a link could name, from the copy alone.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct LinkCandidates {
+    /// The link's text between its brackets, as asked.
+    pub target: String,
+    pub state: LinkState,
+    /// The item it names, where `state` is `bound`.
+    pub item: Option<String>,
+    /// Every item outside the bin the copy holds that answers to the link's
+    /// name, by id, title or file path, without regard to case or Unicode
+    /// form; and the bound item.
+    pub candidates: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1563,6 +1594,91 @@ fn refuse_names_of(
     Ok(())
 }
 
+/// What each of `targets` names from the copy alone: in the body of `host`
+/// where one is given, by the rules that body's edges are read by, so a link
+/// answers as saving it there would bind it.
+pub(crate) fn candidates(
+    conn: &Connection,
+    host: Option<&str>,
+    targets: &[String],
+) -> Result<Vec<LinkCandidates>> {
+    let catalog = Catalog::load(conn)?;
+    let host = match host {
+        Some(id) => Some(
+            store::item_by_id(conn, id)?.ok_or_else(|| CoreError::NotFound {
+                code: "item_not_found".into(),
+                message: format!("{id} is not a row this copy holds"),
+            })?,
+        ),
+        None => None,
+    };
+    let held = match &host {
+        Some(item) => Some((
+            recorded(conn, &item.id)?,
+            Others::load(conn, &catalog, &Placements, &references_of(conn, &item.id)?)?,
+            text::links(body_of(&catalog, item)),
+        )),
+        None => None,
+    };
+    let names = Names::load(conn, &catalog, &Placements)?;
+    let mut answers = Vec::with_capacity(targets.len());
+    for target in targets {
+        let typed = Typed::new(target);
+        let mut candidates: Vec<String> = Vec::new();
+        let mut add = |ids: &mut dyn Iterator<Item = String>| {
+            for id in ids {
+                if !candidates.contains(&id) {
+                    candidates.push(id);
+                }
+            }
+        };
+        let by_id = is_id(&typed.name);
+        if by_id {
+            add(&mut store::item_by_id(conn, &typed.name)?
+                .map(|item| item.id)
+                .into_iter());
+        } else if !typed.name.is_empty() {
+            add(&mut names.of(&typed.name).into_iter().flatten().cloned());
+            if typed.raw != typed.name {
+                add(&mut names.of(&typed.raw).into_iter().flatten().cloned());
+            }
+        }
+        let resolved = match (&host, &held) {
+            (Some(item), Some((recorded, references, kept))) => link_offline(
+                conn,
+                &item.id,
+                &typed,
+                references,
+                recorded,
+                Reading::Written(Some(kept)),
+            )?,
+            _ if by_id && !candidates.is_empty() => Resolved::Found {
+                id: candidates[0].clone(),
+                r#type: None,
+            },
+            _ => Resolved::Waiting,
+        };
+        let (state, item) = match resolved {
+            Resolved::Found { id, .. } => {
+                if !candidates.contains(&id) {
+                    candidates.insert(0, id.clone());
+                }
+                (LinkState::Bound, Some(id))
+            }
+            Resolved::Ambiguous => (LinkState::Ambiguous, None),
+            _ if candidates.len() > 1 => (LinkState::Ambiguous, None),
+            _ => (LinkState::Unresolved, None),
+        };
+        answers.push(LinkCandidates {
+            target: typed.raw,
+            state,
+            item,
+            candidates,
+        });
+    }
+    Ok(answers)
+}
+
 /// Each link and embed of a file in an item's body, with the item it names
 /// or why it names none, from the copy alone.
 pub(crate) fn read(conn: &Connection, id: &str) -> Result<BodyLinks> {
@@ -1781,6 +1897,8 @@ mod tests {
         let core = copy(&dir);
         let conn = core.conn().unwrap();
         for (id, source, path) in [("sound", "a", Some("x.md")), ("torn", "b", Some("y.md"))] {
+            let item = crate::store::testing::note(source, source, "", "2026-01-01T00:00:00Z");
+            store::put_server_item(&conn, &item, Some(&[]), &Catalog::empty()).unwrap();
             let mut edge = crate::store::testing::wire_edge(id, source, "folder", PLACEMENT_EDGE);
             edge.properties = props(serde_json::json!({ "path": path }));
             crate::store::put_server_edge(&conn, &edge).unwrap();
@@ -3206,5 +3324,166 @@ mod tests {
         for title in ["", "a|b.png", "a#b.png", "a[1].png", "notes.md", "plan.txt"] {
             assert!(!embeddable(title), "{title}");
         }
+    }
+
+    fn candidates_of(core: &Core, host: Option<&str>, target: &str) -> LinkCandidates {
+        core.link_candidates(host, &[target.to_string()])
+            .unwrap()
+            .pop()
+            .unwrap()
+    }
+
+    fn listed(answer: &LinkCandidates) -> Vec<String> {
+        let mut ids = answer.candidates.clone();
+        ids.sort();
+        ids
+    }
+
+    #[test]
+    fn link_candidates_fold_case_and_unicode_form_and_nothing_else() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = copy(&dir);
+        let cafe = note(&core, "Caf\u{e9}", "");
+        for target in ["CAFE\u{301}", "  caf\u{e9}  ", "Caf\u{e9}#Menu|lunch"] {
+            let answer = candidates_of(&core, None, target);
+            assert_eq!(answer.candidates, std::slice::from_ref(&cafe), "{target:?}");
+            assert_eq!(
+                answer.state,
+                LinkState::Unresolved,
+                "a name one held item answers to was bound, though the copy holds a slice"
+            );
+        }
+        for target in ["Cafe", "Ca f\u{e9}", "Caf\u{e9}s"] {
+            assert!(
+                candidates_of(&core, None, target).candidates.is_empty(),
+                "{target:?} answered to Caf\u{e9}, but names fold only case and Unicode form"
+            );
+        }
+    }
+
+    #[test]
+    fn link_candidates_list_every_item_a_name_answers_to() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = copy(&dir);
+        let one = note(&core, "Plan", "");
+        let two = note(&core, "PLAN", "");
+        let answer = candidates_of(&core, None, "plan");
+        assert_eq!(answer.state, LinkState::Ambiguous);
+        let mut both = vec![one.clone(), two.clone()];
+        both.sort();
+        assert_eq!(listed(&answer), both);
+        assert_eq!(answer.item, None);
+
+        let c = note(&core, "C", "");
+        let sharp = note(&core, "C#", "");
+        let answer = candidates_of(&core, None, "C#");
+        assert_eq!(
+            answer.state,
+            LinkState::Ambiguous,
+            "a heading reading chose an item where the whole text names another"
+        );
+        let mut both = vec![c, sharp];
+        both.sort();
+        assert_eq!(listed(&answer), both);
+    }
+
+    #[test]
+    fn link_candidates_leave_out_an_item_in_the_bin_by_title_or_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = copy(&dir);
+        let gone = note(&core, "Gone", "");
+        let filed = note(&core, "Something else", "");
+        let conn = core.conn().unwrap();
+        let mut placement =
+            crate::store::testing::wire_edge("placed", &filed, "folder", PLACEMENT_EDGE);
+        placement.properties = props(serde_json::json!({ "path": "notes/Filed.md" }));
+        crate::store::put_server_edge(&conn, &placement).unwrap();
+        drop(conn);
+        // The witness: both answer while they are out of the bin.
+        assert_eq!(
+            candidates_of(&core, None, "Gone").candidates,
+            std::slice::from_ref(&gone)
+        );
+        assert_eq!(
+            candidates_of(&core, None, "notes/filed").candidates,
+            std::slice::from_ref(&filed)
+        );
+        core.delete_item(&gone).unwrap();
+        core.delete_item(&filed).unwrap();
+        for target in ["Gone", "notes/filed", "Filed.md"] {
+            let answer = candidates_of(&core, None, target);
+            assert!(
+                answer.candidates.is_empty(),
+                "{target:?} answered to an item in the bin"
+            );
+            assert_eq!(answer.state, LinkState::Unresolved);
+        }
+    }
+
+    #[test]
+    fn link_candidates_bind_an_id_the_copy_holds_and_nothing_it_does_not() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = copy(&dir);
+        let target = note(&core, "Target", "");
+        let titled = note(&core, &target, "");
+        let answer = candidates_of(&core, None, &format!("{target}|Shown"));
+        assert_eq!(answer.state, LinkState::Bound);
+        assert_eq!(answer.item.as_deref(), Some(target.as_str()));
+        assert_eq!(
+            answer.candidates,
+            std::slice::from_ref(&target),
+            "an item titled with an id answered to it"
+        );
+        assert!(!answer.candidates.contains(&titled));
+
+        let elsewhere = "01a10ed5-92a0-73e0-96d2-32cc12d86082";
+        let answer = candidates_of(&core, None, elsewhere);
+        assert_eq!(
+            (answer.state, answer.candidates.len()),
+            (LinkState::Unresolved, 0),
+            "an item outside the copy's slice was answered offline"
+        );
+    }
+
+    #[test]
+    fn link_candidates_in_a_body_answer_as_saving_the_link_would_bind_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = copy(&dir);
+        let kept = note(&core, "Plan", "");
+        let other = note(&core, "plan", "");
+        let host = note(&core, "Host", "see [[Plan]]");
+        // Without the host's edge the name answers to two items.
+        assert_eq!(
+            candidates_of(&core, Some(&host), "Plan").state,
+            LinkState::Ambiguous
+        );
+        let conn = core.conn().unwrap();
+        crate::store::put_server_edge(
+            &conn,
+            &crate::store::testing::wire_edge("linked", &host, &kept, LINK_EDGE),
+        )
+        .unwrap();
+        drop(conn);
+        let answer = candidates_of(&core, Some(&host), "Plan");
+        assert_eq!(
+            (answer.state, answer.item.as_deref()),
+            (LinkState::Bound, Some(kept.as_str())),
+            "a link the body's edge already names was not answered with that item"
+        );
+        let mut both = vec![kept.clone(), other.clone()];
+        both.sort();
+        assert_eq!(listed(&answer), both);
+        let read = core.body_links(&host).unwrap();
+        assert_eq!(read.links[0].target, BodyTarget::Item { id: kept.clone() });
+
+        // Without a host the same name is ambiguous.
+        assert_eq!(
+            candidates_of(&core, None, "Plan").state,
+            LinkState::Ambiguous
+        );
+        assert!(matches!(
+            core.link_candidates(Some("not-held"), &["Plan".into()]),
+            Err(CoreError::NotFound { .. })
+        ));
     }
 }

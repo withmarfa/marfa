@@ -1213,6 +1213,83 @@ fn object(value: Option<serde_json::Value>) -> Result<serde_json::Map<String, se
     }
 }
 
+/// A link in a text, as `linkParts` reads it. Every position is a range of
+/// UTF-16 code units in the text, as a JavaScript string counts them.
+#[napi(object)]
+pub struct LinkParts {
+    /// As it appears in the text, brackets included.
+    pub text: String,
+    pub start: i64,
+    pub end: i64,
+    /// The text between the brackets, trimmed: what the link is bound by and
+    /// what `linkCandidates` takes.
+    pub target: String,
+    /// What the link names. Empty for a link to a heading of the same text.
+    pub name: LinkPart,
+    pub heading: Option<LinkPart>,
+    pub alias: Option<LinkPart>,
+}
+
+/// One part of a link, trimmed, and where it sits in the text.
+#[napi(object)]
+pub struct LinkPart {
+    pub text: String,
+    pub start: i64,
+    pub end: i64,
+}
+
+/// Whether a link names one item.
+#[napi(string_enum = "snake_case")]
+pub enum LinkState {
+    /// Saving the link in the item's body would make its edge to `item`.
+    Bound,
+    /// More than one item the copy holds answers to it.
+    Ambiguous,
+    /// No item, or one the copy cannot tell is the only one, since it holds a
+    /// slice: the server's lookup decides.
+    Unresolved,
+}
+
+/// The items a link could name, from the copy alone.
+#[napi(object)]
+pub struct LinkCandidates {
+    /// The link's text between its brackets, as asked.
+    pub target: String,
+    pub state: LinkState,
+    /// The item it names, where `state` is `bound`.
+    pub item: Option<String>,
+    /// Every item outside the bin the copy holds that answers to the link's
+    /// name, by id, title or file path, without regard to case or Unicode
+    /// form; and the bound item.
+    pub candidates: Vec<String>,
+}
+
+fn link_part(part: marfa_core::LinkPart) -> LinkPart {
+    LinkPart {
+        text: part.text,
+        start: count(part.start),
+        end: count(part.end),
+    }
+}
+
+/// Every link in `text` in order, repeats included, split as Marfa reads it,
+/// with each part's place in the text. Needs no store.
+#[napi]
+pub fn link_parts(text: String) -> Vec<LinkParts> {
+    marfa_core::link_parts(&text)
+        .into_iter()
+        .map(|link| LinkParts {
+            text: link.text,
+            start: count(link.start),
+            end: count(link.end),
+            target: link.target,
+            name: link_part(link.name),
+            heading: link.heading.map(link_part),
+            alias: link.alias.map(link_part),
+        })
+        .collect()
+}
+
 fn count(value: u64) -> i64 {
     i64::try_from(value).unwrap_or(i64::MAX)
 }
@@ -2428,6 +2505,36 @@ impl MarfaCore {
             .get(&id)
             .map_err(|error| failure(env, error))?
             .map(item))
+    }
+
+    /// What each of `targets`, the text between a link's brackets as
+    /// `linkParts` gives it, could name from the copy alone, in order. With
+    /// `item`, each is read as a link in that item's body: `bound` where
+    /// saving it there would make its edge. Refuses `item_not_found` for an
+    /// item the copy does not hold.
+    #[napi]
+    pub fn link_candidates(
+        &self,
+        env: Env,
+        item: Option<String>,
+        targets: Vec<String>,
+    ) -> Result<Vec<LinkCandidates>> {
+        Ok(self
+            .inner
+            .link_candidates(item.as_deref(), &targets)
+            .map_err(|error| failure(env, error))?
+            .into_iter()
+            .map(|link| LinkCandidates {
+                target: link.target,
+                state: match link.state {
+                    marfa_core::LinkState::Bound => LinkState::Bound,
+                    marfa_core::LinkState::Ambiguous => LinkState::Ambiguous,
+                    marfa_core::LinkState::Unresolved => LinkState::Unresolved,
+                },
+                item: link.item,
+                candidates: link.candidates,
+            })
+            .collect())
     }
 
     #[napi]
