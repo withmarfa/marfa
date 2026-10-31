@@ -553,7 +553,7 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
   [/^vitest\.config\.ts$/, ["workspace", "version-fields", "control-socket"]],
   // The conformance config and its server script import it too.
   [
-    /^vitest\.shared\.ts$/,
+    /^vitest\.(shared|flaky-reporter)\.ts$/,
     [
       "workspace",
       "version-fields",
