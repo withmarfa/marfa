@@ -5046,8 +5046,6 @@ If a folder is revoked, then a device MUST refuse a list or a search in it `inva
 
 **Tests:** `device/folder-settings-live.test.ts › creates, changes and revokes at once, holding the answer and queueing nothing`.
 
-## A file's size
-
 ### `device/folder-list-not-folder`
 
 If the row a list in a folder names is not a `system.folder`, then a device MUST refuse the list `invalid`, naming `system.folder`.
@@ -5123,6 +5121,8 @@ When a folder operation accepts a write and the copy's slice or a pin takes the 
 **Reason:** an app that made a folder shows it at once.
 
 **Tests:** `device/folder-settings-live.test.ts › creates, changes and revokes at once, holding the answer and queueing nothing`.
+
+## A file's size
 
 ### `device/file-size`
 
