@@ -1648,7 +1648,7 @@ impl Folder {
                 break;
             }
             // Neither new nor that item until it can be read, since a pull
-            // writes that item's file over the new one's.
+            // writes that item's file beside the new one's as a second copy.
             if claims[at].is_none() && !unread.is_empty() {
                 let embedders = embedders.get_or_insert_with(|| embedded_by(files, &claims, shown));
                 for host in embedders
