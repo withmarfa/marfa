@@ -12,6 +12,7 @@ import {
   MarfaError,
   getEdgeTypeSchema,
   isValidId,
+  parseFilter,
 } from "@withmarfa/shared";
 import type { Item, Metadata } from "@withmarfa/shared";
 import type { Context } from "hono";
@@ -191,9 +192,30 @@ const IdParam = z.object({
 // Validation the schemas cannot express
 // ---------------------------------------------------------------------------
 
+/**
+ * A folder's pass on disk cannot follow a `backref` condition, so no device
+ * could follow a folder that held one.
+ */
+function assertNoBackref(filter: string | undefined): void {
+  if (filter === undefined) return;
+  const backref = parseFilter(filter).conditions.some(
+    ({ field }) => field.kind === "edge" && field.direction === "backref",
+  );
+  if (backref) {
+    throw settingRefusal(
+      ErrorCode.VALIDATION_ERROR,
+      "query.filter",
+      "A folder's query cannot hold a backref condition: a folder on disk cannot follow one",
+    );
+  }
+}
+
 function assertSettings(settings: Settings): void {
   const { query, defaults, first_placement: placement } = settings;
-  if (query !== undefined) assertItemQuery("query", query);
+  if (query !== undefined) {
+    assertItemQuery("query", query);
+    assertNoBackref(query.filter);
+  }
   if (defaults?.type !== undefined) {
     assertKnownType("defaults.type", defaults.type);
   }
@@ -238,7 +260,7 @@ function assertSettings(settings: Settings): void {
       throw settingRefusal(
         ErrorCode.VALIDATION_ERROR,
         path,
-        `"${dir}" is not a directory inside the folder: write a path relative to its root, with "/" between names, that does not climb out of it`,
+        `"${dir}" is not a directory inside the folder: write a path relative to its root, with "/" between names and no ".." name`,
       );
     }
   }
@@ -320,7 +342,7 @@ const notFound = {
 };
 
 const SETTING_MALFORMED =
-  "a setting is malformed or undeclared, such as a `system.*` type or a `first_placement` outside the folder. `details.errors[0].path` or `details.unknown_body_fields` names it.";
+  "a setting is malformed or undeclared, such as a `system.*` type, a `..` placement or a `backref` filter. `details.errors[0].path` or `details.unknown_body_fields` names it.";
 
 const SETTING_TYPE_UNKNOWN = "- `unknown_type`: a setting's type is unknown.";
 

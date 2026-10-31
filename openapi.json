@@ -38183,7 +38183,7 @@
             }
           },
           "400": {
-            "description": "- `validation_error`: a setting is malformed or undeclared, such as a `system.*` type or a `first_placement` outside the folder. `details.errors[0].path` or `details.unknown_body_fields` names it.\n- `missing_required_field`: `title` is missing.\n- `unknown_type`: a setting's type is unknown.\n- `invalid_properties`: `defaults.properties` has a whole number a 64-bit float can't keep.",
+            "description": "- `validation_error`: a setting is malformed or undeclared, such as a `system.*` type, a `..` placement or a `backref` filter. `details.errors[0].path` or `details.unknown_body_fields` names it.\n- `missing_required_field`: `title` is missing.\n- `unknown_type`: a setting's type is unknown.\n- `invalid_properties`: `defaults.properties` has a whole number a 64-bit float can't keep.",
             "content": {
               "application/json": {
                 "schema": {

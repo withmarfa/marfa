@@ -321,18 +321,19 @@ describe("a copy writes a folder's settings through the folder door", () => {
     });
     expect(listed.ok, JSON.stringify(listed.error)).toBe(true);
     expect(listed.data.data).toEqual([]);
-    // The witness: the server takes the same settings from its own door,
-    // and the copy reads, and revokes, a folder it could not have made.
-    const served = await serverFolder({
+    // The witness: the server refuses the same settings at its own door, so
+    // no copy is handed a folder it cannot follow, and takes a query whose
+    // edge condition is not a `backref`.
+    const served = await client.createFolder({
       title,
       query: { filter: "backref[parent-of] exists" },
     });
-    value(await device.catchUp());
-    expect(value(await device.folder(served)).settings.title).toBe(title);
-    const unanswered = refused(await listInFolder(device, served));
-    expect(unanswered.code, unanswered.raw).toBe("invalid");
-    expect(unanswered.raw).toContain("backref");
-    expect(value(await device.revokeFolder(served)).state).toBe("revoked");
+    expect(served.status, JSON.stringify(served.error)).toBe(400);
+    expect(served.error?.error.code).toBe("validation_error");
+    await serverFolder({
+      title,
+      query: { types: [typeId], filter: "edge[parent-of] exists" },
+    });
 
     const offline = copy("offline", "http://127.0.0.1:9");
     value(await offline.status());
@@ -349,6 +350,14 @@ describe("a copy writes a folder's settings through the folder door", () => {
       [{ title, query: { types: [typeId], filter: "title eq" } }, "validation"],
       [
         { title, query: { types: [typeId] }, defaults: { tags: [""] } },
+        "validation",
+      ],
+      [
+        {
+          title,
+          query: { types: [typeId] },
+          first_placement: { [typeId]: "Shelf/../Other" },
+        },
         "validation",
       ],
       [

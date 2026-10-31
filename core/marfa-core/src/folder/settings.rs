@@ -197,6 +197,7 @@ impl Settings {
             crate::validation::property_names(&self.defaults.properties)
                 .and_then(|()| crate::integers::refuse_in_value(&self.defaults.properties)),
         )?;
+        named("first_placement", self.placements())?;
         self.lists()?;
         if let Some(fraction) = self.removal_threshold.fraction
             && !(0.0..=1.0).contains(&fraction)
@@ -213,6 +214,30 @@ impl Settings {
                 tier.as_str(),
                 self.tier().as_str()
             )));
+        }
+        Ok(())
+    }
+
+    /// The server refuses a placement directory a device cannot write to: an
+    /// absolute or drive-absolute one, one with a backslash or NUL, and one
+    /// with a `..` name, which a device counts `outside` wherever it climbs
+    /// back (`items/folder-setting-followable`).
+    fn placements(&self) -> Result<()> {
+        for (r#type, dir) in &self.first_placement {
+            let outside = dir.starts_with('/')
+                || dir.contains(['\\', '\0'])
+                || dir.split('/').any(|name| name == "..")
+                || dir.split_once(':').is_some_and(|(drive, _)| {
+                    drive.len() == 1 && drive.chars().all(|c| c.is_ascii_alphabetic())
+                });
+            if outside {
+                return Err(CoreError::Validation {
+                    code: "validation_error".into(),
+                    message: format!(
+                        "{type}: {dir:?} is not a directory inside the folder: write a path relative to its root, with \"/\" between names and no \"..\" name"
+                    ),
+                });
+            }
         }
         Ok(())
     }
@@ -554,6 +579,37 @@ mod tests {
             }))
             .is_ok()
         );
+    }
+
+    #[test]
+    fn a_placement_the_server_refuses_is_refused_here() {
+        for dir in [
+            "Notes/../Tickets",
+            "../out",
+            "Notes/./../Tickets/./Open",
+            "Notes/..",
+            "/Notes",
+            "C:/Notes",
+            "Notes\\Open",
+            "Notes\0",
+        ] {
+            let message = match read(json!({ "first_placement": { "core.note": dir } })) {
+                Err(CoreError::Validation { code, message }) => {
+                    assert_eq!(code, "validation_error", "{dir:?}");
+                    message
+                }
+                other => panic!("{dir:?}: {other:?}"),
+            };
+            assert!(message.contains("first_placement"), "{message}");
+            assert!(message.contains("core.note"), "{message}");
+        }
+        // The witness: the same directories without the refused part are taken.
+        for dir in ["Notes/Tickets", "Notes/./Tickets/Open", "Notes", "ab:c/d"] {
+            assert!(
+                read(json!({ "first_placement": { "core.note": dir } })).is_ok(),
+                "{dir:?}"
+            );
+        }
     }
 
     #[test]

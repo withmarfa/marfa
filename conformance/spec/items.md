@@ -2080,7 +2080,7 @@ If `query.types`, `defaults.type` or a `first_placement` key names a well-formed
 
 ### `items/folder-setting-invalid`
 
-If a folder setting names a malformed or `system.*` type identifier, a `filter` the listing grammar refuses, a `beneath` or edge target that is not an item id, an edge type in `defaults.edges` nothing registered or `in-folder`, more than 100 edge types or 100 targets for one, an empty or non-string `include` or `ignore` pattern, a `first_placement` directory that is absolute or drive-absolute, carries a backslash or NUL or climbs out of the folder, a `removal_threshold` with negative `files` or a `fraction` outside 0 to 1, a `query.state` other than `active` or `archived`, or a `query.tier` other than `library`, `feed` or `all`, then the server MUST answer `400 validation_error`.
+If a folder setting names a malformed or `system.*` type identifier, a `filter` the listing grammar refuses, a `beneath` or edge target that is not an item id, an edge type in `defaults.edges` nothing registered or `in-folder`, more than 100 edge types or 100 targets for one, an empty or non-string `include` or `ignore` pattern, a `first_placement` directory that is absolute or drive-absolute or carries a backslash or NUL, a `removal_threshold` with negative `files` or a `fraction` outside 0 to 1, a `query.state` other than `active` or `archived`, or a `query.tier` other than `library`, `feed` or `all`, then the server MUST answer `400 validation_error`.
 
 **Tests:** `compliance/folders.test.ts › refuses a malformed setting %j with %s naming %s, on a create and on a change`, `› caps defaults.edges at 100 edge types and 100 targets for each`.
 
@@ -2092,11 +2092,13 @@ If a request to `POST /folders` or `PATCH /folders/{id}` carries a key that its 
 
 **Tests:** `compliance/folders.test.ts › refuses a key a folder setting does not declare, naming its path from the body, on a create and on a change`, `› refuses search as an unknown folder setting`.
 
-### `items/folder-placement-inside`
+### `items/folder-setting-followable`
 
-When a `first_placement` directory climbs and comes back inside the folder, the server MUST take it.
+If a `first_placement` directory holds a `..` name, wherever it climbs back, or a folder's `query.filter` holds a `backref` condition, then the server MUST answer `400 validation_error`, naming the setting in `details.errors[0].path`, before it writes anything.
 
-**Tests:** `compliance/folders.test.ts › takes a placement that climbs and comes back inside the folder, on a create and on a change`.
+**Reason:** a device treats a placement with a `..` name as outside the folder and writes no file there (`folders/placement-outside`), and a folder on disk cannot follow a `backref` condition (`folders/search-refuse-unsupported`), so a folder made with either would be stuck on every device.
+
+**Tests:** `compliance/folders.test.ts › refuses a malformed setting %j with %s naming %s, on a create and on a change`, `› takes the settings a device can follow, on a create and on a change`.
 
 ## Links and tombstones
 

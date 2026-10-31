@@ -169,6 +169,30 @@ describe("POST /folders", () => {
       "first_placement.core.note",
     ],
     [
+      { first_placement: { "core.note": "Notes/../Tickets" } },
+      "validation_error",
+      "first_placement.core.note",
+    ],
+    [
+      { first_placement: { "core.note": "Notes/./../Tickets/./Open" } },
+      "validation_error",
+      "first_placement.core.note",
+    ],
+    [
+      { query: { filter: "backref[parent-of] exists" } },
+      "validation_error",
+      "query.filter",
+    ],
+    [
+      {
+        query: {
+          filter: 'tags contains "a" AND backref[references] eq "x"',
+        },
+      },
+      "validation_error",
+      "query.filter",
+    ],
+    [
       { first_placement: { "core.note": "/abs" } },
       "validation_error",
       "first_placement.core.note",
@@ -311,12 +335,12 @@ describe("POST /folders", () => {
     }
   });
 
-  it("takes a placement that climbs and comes back inside, on a create and on a change", async () => {
+  it("takes the settings a device can follow, with the placement written without `..` and an edge condition that is not a backref", async () => {
     const settings = {
-      first_placement: { "core.note": "Notes/../Tickets/./Open" },
+      first_placement: { "core.note": "Notes/./Tickets/Open" },
       query: {
         types: ["core.note"],
-        filter: 'tags contains "project"',
+        filter: 'tags contains "project" AND edge[parent-of] exists',
         beneath: "01920000-0000-7000-8000-000000000000",
       },
       defaults: {

@@ -1024,19 +1024,13 @@ If `POST /edges` names an `in-folder` edge to an item that is not a `system.fold
 
 ### `edges/folder-path`
 
-If `POST /edges` names an `in-folder` edge with no `path`, or a `path` that is empty, over 1024 UTF-16 code units, absolute, drive-absolute, holds a backslash or a NUL, climbs out of the folder or names its root, then the server MUST answer `400 validation_error` with `details.errors[0].path` `properties.path`.
+If `POST /edges` names an `in-folder` edge with no `path`, or a `path` that is empty, over 1024 UTF-16 code units, absolute, drive-absolute, holds a backslash or a NUL, holds a `..` name or names its root, then the server MUST answer `400 validation_error` with `details.errors[0].path` `properties.path`.
 
 **Tests:** `compliance/edge-types.test.ts › refuses an in-folder path that is missing or leaves the folder, and any other property, on every door that writes one`.
 
 ### `edges/folder-other-property`
 
 If `POST /edges` names an `in-folder` edge with a property other than `path`, then the server MUST answer `400 validation_error` with `details.errors[0].path` naming `properties.` and that property.
-
-**Tests:** `compliance/edge-types.test.ts › refuses an in-folder path that is missing or leaves the folder, and any other property, on every door that writes one`.
-
-### `edges/folder-path-climb-back`
-
-When `POST /edges` names an `in-folder` edge whose `path` climbs out of a name and comes back inside the folder, the server MUST create the edge.
 
 **Tests:** `compliance/edge-types.test.ts › refuses an in-folder path that is missing or leaves the folder, and any other property, on every door that writes one`.
 

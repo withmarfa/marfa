@@ -178,6 +178,8 @@ describe("in-folder", () => {
     [{ path: "../a.md" }, "properties.path"],
     [{ path: "Notes/../../a.md" }, "properties.path"],
     [{ path: "Notes/.." }, "properties.path"],
+    [{ path: "Notes/../Tickets/a.md" }, "properties.path"],
+    [{ path: "Notes/./../Tickets/a.md" }, "properties.path"],
     [{ path: "a.md", weight: 1 }, "properties.weight"],
   ])(
     "refuses a placement with properties %j, naming %s",
@@ -191,10 +193,10 @@ describe("in-folder", () => {
     },
   );
 
-  it("takes a path that climbs and comes back inside", async () => {
+  it("takes the path a climbing one names once it is written without the `..`", async () => {
     const source = await note(ctx.workingKey);
     await created<EdgeResponse>(
-      await place(source, await folder(), { path: "Notes/../Tickets/./a.md" }),
+      await place(source, await folder(), { path: "Notes/./Tickets/a.md" }),
     );
   });
 
