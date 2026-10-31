@@ -1091,6 +1091,21 @@ describe("embeds", () => {
     await drained(device);
     expect(await attachedTo(host.id)).toEqual([...files].sort());
     expect(await referencesFrom(host.id)).toEqual([...files].sort());
+
+    // Taking an embed out takes its reference, and the file stays attached.
+    await setBody(device, host.id, texts[1]!);
+    expect(
+      (await unsent(device))
+        .filter((write) => write.kind === "delete_edge")
+        .map((write) => [write.item_id, write.target_id]),
+      "taking the embed out deleted more than its reference",
+    ).toEqual([[host.id, files[0]!]]);
+    await drained(device);
+    expect(await referencesFrom(host.id)).toEqual([files[1]!]);
+    expect(
+      await attachedTo(host.id),
+      "taking the embed out took the file's attachment",
+    ).toEqual([...files].sort());
     const refused = await device.embedText(host.id, host.id);
     expect(refused.ok, "a note was given embed text").toBe(false);
     if (!refused.ok) expect(refused.refusal.code).toBe("invalid");

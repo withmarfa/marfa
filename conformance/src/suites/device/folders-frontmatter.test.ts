@@ -9,6 +9,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { randomUUID } from "node:crypto";
+import { DatabaseSync } from "node:sqlite";
 import { join } from "node:path";
 import { describe, it, expect, afterEach } from "vitest";
 import { parse as parseYaml } from "yaml";
@@ -2323,6 +2324,81 @@ describe("embedded files", () => {
     expect(heldEdges(edges)).toEqual(
       [`${note} references ${pic}`, `${pic} attached-to ${note}`].sort(),
     );
+  });
+
+  it("reads its embeds again once, and keeps only an outside file's attachment the earlier rule made", async () => {
+    const earlier = "01a00000-0000-7000-8000-00000000e2d9";
+    for (const [label, types, inside] of [
+      ["folder-embed-reread-outside", ["core.note"], false],
+      ["folder-embed-reread-inside", ["core.note", "core.file"], true],
+    ] as const) {
+      const made = await folderHarness(label, {
+        settings: { query: { types: [...types] } },
+      });
+      if (inside) second = made;
+      else harness = made;
+      scriptFolderWrites(made, { edges: new EdgeDoor() });
+      acceptUploads(made.server);
+      writeFileSync(join(made.dir, "pic.png"), png(1));
+      put(made, "Note.md", "---\ntitle: Note\n---\nshown ![](pic.png)\n");
+      expect((await made.folder.push()).ok).toBe(true);
+      const note = createdFor(made, "Note");
+      const pic = createdFor(made, "pic.png");
+      // As the earlier rule left the copy: the embed made the file's
+      // attached-to edge alone, the record names it as a line, and the
+      // folder has not read its files since.
+      const db = new DatabaseSync(made.folder.store);
+      try {
+        const now = new Date().toISOString();
+        db.prepare(
+          "DELETE FROM edges WHERE edge_type IN ('references', 'attached-to') AND (source_id = ? OR target_id = ?)",
+        ).run(note, note);
+        db.prepare(
+          "INSERT INTO edges (id, source_id, target_id, edge_type, properties, version, created_at, updated_at) VALUES (?, ?, ?, 'attached-to', '{}', 1, ?, ?)",
+        ).run(earlier, pic, note, now, now);
+        db.prepare(
+          "UPDATE folder_files SET links = '[]', edge_lines = ? WHERE path = 'Note.md'",
+        ).run(
+          JSON.stringify([{ edge_type: "attached-to", end: "target", other: pic }]),
+        );
+        db.prepare("DELETE FROM meta WHERE key = 'folder_embeds_references'").run();
+      } finally {
+        db.close();
+      }
+      const edgeWrites = async (): Promise<string[]> => {
+        const queued = await made.folder.device().queue();
+        if (!queued.ok) throw new Error(JSON.stringify(queued));
+        return withoutPlacements(made, queued.value)
+          .filter((row) => row.verdict === null)
+          .flatMap((row) =>
+            row.kind === "create_edge"
+              ? [
+                  `create ${String(row.item_id)} ${String((row.body as { edge_type?: unknown }).edge_type)} ${String(row.target_id)}`,
+                ]
+              : row.kind === "delete_edge"
+                ? [`delete ${String(row.edge_id)}`]
+                : [],
+          )
+          .sort();
+      };
+
+      expect((await made.folder.scan()).ok).toBe(true);
+      expect(
+        await edgeWrites(),
+        inside
+          ? "the file the query holds kept the attachment its embed alone made, or gained no reference"
+          : "the file outside the query lost its attachment, or gained no reference",
+      ).toEqual(
+        [
+          `create ${note} references ${pic}`,
+          ...(inside ? [`delete ${earlier}`] : []),
+        ].sort(),
+      );
+      // Once: the next scan reads no unchanged file again.
+      const before = (await edgeWrites()).length;
+      expect((await made.folder.scan()).ok).toBe(true);
+      expect(await edgeWrites()).toHaveLength(before);
+    }
   });
 
   it("writes an embedded file where its link says", async () => {
