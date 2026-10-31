@@ -649,7 +649,7 @@ impl Folder {
             }
         }
         context.same_copy(&*self.core.conn()?)?;
-        self.remove_departed(&members, &settings, &lists, &refused, report)?;
+        self.remove_departed(&members, &settings, &lists, &refused, &rendering, report)?;
         if crate::fault::named("copy-changes-after-pull-effects").is_some() {
             static CALLS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
             if CALLS.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
@@ -1038,26 +1038,15 @@ impl Folder {
             return Ok(PlacementWrite::Done);
         }
         if in_place && let Some(bound) = bound {
-            // Bytes the pull would write are the folder's own, however they
-            // came. A folder added over files an earlier copy wrote never
-            // wrote them, and without this a delete of one, or another
-            // device's bin, would never let the file go.
-            if bound.written_hash.as_deref() != Some(hash.as_str())
-                && bound.path == want
-                && bound.content_hash == hash
-                && bound.held.is_none()
-                && bound.writes.queued.is_empty()
-                && self.exists(&path)
-            {
-                let recorded = state::Bound {
-                    written_hash: Some(hash.clone()),
-                    own: own.clone().or_else(|| bound.own.clone()),
-                    ..bound.clone()
-                };
-                state::bind(&*self.core.conn()?, &recorded)?;
-                return self.stay(item, &recorded, &want, rendering, withheld, report);
-            }
-            return self.stay(item, bound, &want, rendering, withheld, report);
+            let found = self.found_as_written(item, bound, Some(&hash), rendering)?;
+            return self.stay(
+                item,
+                found.as_ref().unwrap_or(bound),
+                &want,
+                rendering,
+                withheld,
+                report,
+            );
         }
 
         // Written over an edit still waiting, the line it writes is spent
@@ -1659,6 +1648,7 @@ impl Folder {
         settings: &Settings,
         lists: &Lists,
         refused: &HashSet<String>,
+        rendering: &Rendering<'_>,
         report: &mut PullReport,
     ) -> Result<()> {
         let mut context = crate::reach::Context::capture(&*self.core.conn()?)?;
@@ -1673,7 +1663,10 @@ impl Folder {
             }
             match self.departing(&row, members, settings, lists)? {
                 Departing::No => {}
-                Departing::Kept => report.kept += 1,
+                Departing::Kept => match self.found_departed(&row, rendering)? {
+                    Some(found) => going.push(found),
+                    None => report.kept += 1,
+                },
                 Departing::Unread(reason) => report.not_written(
                     NotWritten::Unwritten,
                     &row.item_id,
@@ -1890,6 +1883,88 @@ impl Folder {
             });
             agreed.agrees(&presented, edge_types)
         }))
+    }
+
+    /// The binding of a departing file this folder never wrote but found as
+    /// its item renders, with those bytes recorded as its own, so the file
+    /// leaves with its item: an item put in the bin before a pull recorded
+    /// them, or before the folder recorded found bytes at all.
+    fn found_departed(
+        &self,
+        row: &state::Bound,
+        rendering: &Rendering<'_>,
+    ) -> Result<Option<state::Bound>> {
+        let held = {
+            let conn = self.core.conn()?;
+            crate::store::items_by_ids(&conn, std::slice::from_ref(&row.item_id))?.pop()
+        };
+        match held {
+            Some(item) => self.found_as_written(&item, row, None, rendering),
+            None => Ok(None),
+        }
+    }
+
+    /// The binding of a file left in place that this folder never wrote but
+    /// found holding byte for byte what it would write there at the version
+    /// line the file shows, or at the item's own version where `rendered`
+    /// is the hash of what it would write now, as a folder added over files
+    /// an earlier copy wrote finds them, with those bytes recorded as its
+    /// own. `None` where the file is not such a file.
+    ///
+    /// A document this folder wrote has its own-field lines on record, and a
+    /// later change to it is the person's, even one a render would keep: a
+    /// render keeps the formatting of the file it renders over.
+    fn found_as_written(
+        &self,
+        item: &Item,
+        bound: &state::Bound,
+        rendered: Option<&str>,
+        rendering: &Rendering<'_>,
+    ) -> Result<Option<state::Bound>> {
+        let document = carries_frontmatter(Path::new(&bound.path));
+        if bound.written_hash.as_deref() == Some(bound.content_hash.as_str())
+            || bound.held.is_some()
+            || !bound.writes.queued.is_empty()
+            || document && bound.own.is_some()
+        {
+            return Ok(None);
+        }
+        let Ok(found) = self.read(self.root.join(&bound.path)) else {
+            return Ok(None);
+        };
+        if state::hash(&found) != bound.content_hash {
+            return Ok(None);
+        }
+        let line = if rendered == Some(bound.content_hash.as_str()) {
+            item.version
+        } else if document
+            && let Ok(text) = std::str::from_utf8(&found)
+            && let typed = document::read(text)
+            && let Some(line) = line_of(&typed.front).filter(|line| *line < item.version)
+            && self
+                .render(
+                    item,
+                    &bound.path,
+                    Some(line),
+                    rendering.catalog,
+                    rendering.edge_types,
+                    (rendering.names, Some(&typed), &bound.lines),
+                )?
+                .text
+                .is_ok_and(|text| state::hash(text.as_bytes()) == bound.content_hash)
+        {
+            line
+        } else {
+            return Ok(None);
+        };
+        rendering.context.borrow().check(&*self.core.conn()?)?;
+        let recorded = state::Bound {
+            written_hash: Some(bound.content_hash.clone()),
+            own: document.then(|| fields::OwnBase::written(None, line, fields::Own::of(item))),
+            ..bound.clone()
+        };
+        state::bind(&*self.core.conn()?, &recorded)?;
+        Ok(Some(recorded))
     }
 
     /// Whether a file differs from its item's render in its version line

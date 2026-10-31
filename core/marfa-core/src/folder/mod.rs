@@ -4638,6 +4638,13 @@ mod tests {
     /// and `folders add` leave it: the file is byte for byte its item's
     /// render, and the new copy never wrote it.
     fn added_over_its_render() -> (ScannedDir, Folder, String) {
+        added_over_its_render_behind(0)
+    }
+
+    /// As `added_over_its_render`, with the item `behind` versions past the
+    /// file's line when the new copy first holds it, through changes in
+    /// nothing the file shows.
+    fn added_over_its_render_behind(behind: i64) -> (ScannedDir, Folder, String) {
         const FOLDER: &str = "01a00000-0000-7000-8000-000000000001";
         let (dir, folder) = answered_notes(&["a.md"]);
         let id = id_at(&folder, "a.md");
@@ -4678,9 +4685,22 @@ mod tests {
                 rusqlite::params_from_iter(row),
             )
             .unwrap();
+        let ahead = |folder: &Folder| {
+            folder
+                .core
+                .conn()
+                .unwrap()
+                .execute(
+                    "UPDATE items SET version = 1 + ?1 WHERE id = ?2",
+                    rusqlite::params![behind, id],
+                )
+                .unwrap();
+        };
+        ahead(&folder);
         let scanned = folder.scan().unwrap();
         assert_eq!((scanned.created, scanned.unchanged), (0, 1), "{scanned:?}");
         landed(&folder, "a.md");
+        ahead(&folder);
         let pulled = folder.pull().unwrap();
         // The witness that the file is the render: the pull leaves it as it is.
         assert_eq!(pulled.written + pulled.rewritten, 0, "{pulled:?}");
@@ -4736,6 +4756,178 @@ mod tests {
         let swept = folder.scan().unwrap();
         assert_eq!(swept.trashed, ["a.md"], "{swept:?}");
         assert_eq!(deletes_queued(&folder).len(), 1);
+    }
+
+    fn binned_elsewhere(folder: &Folder, id: &str) {
+        folder
+            .core
+            .conn()
+            .unwrap()
+            .execute(
+                "UPDATE items SET state = 'trashed', version = version + 1 WHERE id = ?1",
+                [id],
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn a_pull_removes_a_file_it_found_as_its_render_at_an_older_line_once_the_item_is_binned() {
+        let (dir, folder, id) = added_over_its_render_behind(1);
+        let file = std::fs::read_to_string(dir.path().join("a.md")).unwrap();
+        assert!(
+            file.contains("marfa_version: 1\n"),
+            "the file does not show an older line, so nothing below is about one: {file}"
+        );
+        binned_elsewhere(&folder, &id);
+        let pulled = folder.pull().unwrap();
+        assert_eq!(
+            (pulled.removed, pulled.kept),
+            (1, 0),
+            "the file of an item in the bin stayed: {pulled:?}"
+        );
+        assert!(!dir.path().join("a.md").exists());
+        let scanned = folder.scan().unwrap();
+        assert_eq!((scanned.lost, scanned.missing), (0, 0), "{scanned:?}");
+    }
+
+    #[test]
+    fn a_pull_removes_a_file_found_as_its_render_before_its_item_moved_on_once_the_item_is_binned()
+    {
+        let (dir, folder, id) = added_over_its_render();
+        // As a build that recorded neither the bytes nor the own-field lines
+        // of such a file left its binding.
+        folder
+            .core
+            .conn()
+            .unwrap()
+            .execute(
+                "UPDATE folder_files SET own = NULL, written_hash = NULL WHERE path = 'a.md'",
+                [],
+            )
+            .unwrap();
+        let before = std::fs::read(dir.path().join("a.md")).unwrap();
+        // Another device changes the item in nothing the file shows.
+        folder
+            .core
+            .conn()
+            .unwrap()
+            .execute(
+                "UPDATE items SET version = version + 1 WHERE id = ?1",
+                [&id],
+            )
+            .unwrap();
+        let pulled = folder.pull().unwrap();
+        assert_eq!(pulled.written + pulled.rewritten, 0, "{pulled:?}");
+        assert_eq!(std::fs::read(dir.path().join("a.md")).unwrap(), before);
+        binned_elsewhere(&folder, &id);
+        let pulled = folder.pull().unwrap();
+        assert_eq!(
+            (pulled.removed, pulled.kept),
+            (1, 0),
+            "the file of an item in the bin stayed: {pulled:?}"
+        );
+        assert!(!dir.path().join("a.md").exists());
+        let scanned = folder.scan().unwrap();
+        assert_eq!((scanned.lost, scanned.missing), (0, 0), "{scanned:?}");
+    }
+
+    #[test]
+    fn a_pull_removes_a_file_found_as_its_render_whose_item_was_binned_before_it_recorded_it() {
+        for behind in [0, 1] {
+            let (dir, folder, id) = added_over_its_render_behind(behind);
+            // As a build that recorded neither the bytes nor the own-field
+            // lines of such a file left its binding, or as a pass whose scan
+            // took the file in before the bin reached the copy.
+            folder
+                .core
+                .conn()
+                .unwrap()
+                .execute(
+                    "UPDATE folder_files SET own = NULL, written_hash = NULL WHERE path = 'a.md'",
+                    [],
+                )
+                .unwrap();
+            binned_elsewhere(&folder, &id);
+            let pulled = folder.pull().unwrap();
+            assert_eq!(
+                (pulled.removed, pulled.kept),
+                (1, 0),
+                "the file of an item in the bin stayed {behind} behind: {pulled:?}"
+            );
+            assert!(!dir.path().join("a.md").exists());
+            let scanned = folder.scan().unwrap();
+            assert_eq!((scanned.lost, scanned.missing), (0, 0), "{scanned:?}");
+        }
+    }
+
+    #[test]
+    fn a_pull_keeps_a_file_found_as_its_render_and_then_changed_once_the_item_is_binned() {
+        let (dir, folder, id) = added_over_its_render();
+        folder
+            .core
+            .conn()
+            .unwrap()
+            .execute(
+                "UPDATE folder_files SET own = NULL, written_hash = NULL WHERE path = 'a.md'",
+                [],
+            )
+            .unwrap();
+        binned_elsewhere(&folder, &id);
+        // The person's edit, saved after the scan read the file.
+        let path = dir.path().join("a.md");
+        let edited = format!("{}\nMore.\n", std::fs::read_to_string(&path).unwrap());
+        std::fs::write(&path, &edited).unwrap();
+        let pulled = folder.pull().unwrap();
+        assert_eq!(
+            (pulled.removed, pulled.kept),
+            (0, 1),
+            "the person's edit was taken away: {pulled:?}"
+        );
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), edited);
+    }
+
+    #[test]
+    fn a_pull_keeps_a_file_the_person_reformatted_once_the_item_is_binned() {
+        for behind in [0, 1] {
+            let (dir, folder) = answered_notes(&["a.md"]);
+            let id = id_at(&folder, "a.md");
+            assert_eq!(folder.pull().unwrap().rewritten, 1);
+            // A change in what the item holds would be the person's edit:
+            // this one changes only how the file says it.
+            let path = dir.path().join("a.md");
+            let reformatted = std::fs::read_to_string(&path)
+                .unwrap()
+                .replace("title: a.md\n", "title: \"a.md\"\n");
+            assert!(reformatted.contains("\"a.md\""), "{reformatted}");
+            std::fs::write(&path, &reformatted).unwrap();
+            let scanned = folder.scan().unwrap();
+            assert_eq!((scanned.updated, scanned.unchanged), (0, 1), "{scanned:?}");
+            landed(&folder, "a.md");
+            folder
+                .core
+                .conn()
+                .unwrap()
+                .execute(
+                    "UPDATE items SET version = 1 + ?1 WHERE id = ?2",
+                    rusqlite::params![behind, id],
+                )
+                .unwrap();
+            let pulled = folder.pull().unwrap();
+            assert_eq!(
+                pulled.written + pulled.rewritten,
+                0,
+                "the pull wrote over the reformatting, so nothing below is about it: {pulled:?}"
+            );
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), reformatted);
+            binned_elsewhere(&folder, &id);
+            let pulled = folder.pull().unwrap();
+            assert_eq!(
+                (pulled.removed, pulled.kept),
+                (0, 1),
+                "a file the person changed was taken away {behind} behind: {pulled:?}"
+            );
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), reformatted);
+        }
     }
 
     #[test]
