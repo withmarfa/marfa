@@ -346,7 +346,7 @@ When `PATCH /items/{id}` names `version_match: exact` and a `version` other than
 
 **Reason:** an app can base a write on fields it inspected without writing those fields itself, such as an ownership marker. Merging disjoint changes would invalidate that decision.
 
-**Tests:** `compliance/version-exact.test.ts › refuses stale exact writes without changing the row or history`.
+**Tests:** `compliance/version-exact.test.ts › refuses stale exact writes without changing the row or history`, `correctness/clear-properties.test.ts › refuses a stale clear under version_match exact`.
 
 ### `versions/exact-envelope`
 

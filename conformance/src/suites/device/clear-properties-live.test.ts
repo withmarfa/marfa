@@ -19,24 +19,36 @@ import { requireBinary } from "./harness.js";
 let client: MarfaClient;
 let ctx: TestContext;
 let device: CliDevice;
+let apiUrl: string;
+let deviceKey: string;
 beforeAll(async () => {
-  let apiUrl: string;
   ({ client, ctx, apiUrl } = await createTestContext("device", "clears"));
   const minted = await client.createKey({
     label: `${ctx.source}-clears`,
     source: `${ctx.source}-clears`,
     default_tier: "library",
-    type_permissions: { "core.note": "write", "core.message": "write" },
+    type_permissions: {
+      "core.note": "write",
+      "core.message": "write",
+      "core.bookmark": "write",
+      "core.task": "write",
+    },
   });
   expect(minted.ok, JSON.stringify(minted.error)).toBe(true);
   trackKey(ctx, minted.data.id);
+  deviceKey = minted.data.key;
   device = new CliDevice({
     binary: requireBinary(),
     store: newStore("clears"),
     url: apiUrl,
-    key: minted.data.key,
+    key: deviceKey,
   });
-  value(await device.hydrate(["core.note", "core.message"], "library"));
+  value(
+    await device.hydrate(
+      ["core.note", "core.message", "core.bookmark", "core.task"],
+      "library",
+    ),
+  );
 });
 afterAll(async () => {
   if (ctx) await cleanup(ctx);
@@ -114,11 +126,85 @@ it("refuses a property both set and cleared, and a required field, queuing nothi
   });
   expect(!required.ok && required.refusal.code).toBe("validation");
   expect(!required.ok && required.refusal.raw).toContain("invalid_properties");
-  expect(value(await device.queue()).length).toBe(before);
-  expect(await shown(id)).toEqual({ from: "Sender", to: ["Recipient"] });
+  // On a version read earlier, the field is still required.
+  value(await device.update(id, { properties: { to: ["Second"] }, version }));
+  value(await device.drain());
+  const current = value(await device.get(id)).version;
+  expect(current).toBe(version + 1);
+  const beforeEarlier = value(await device.queue()).length;
+  const earlier = await device.update(id, {
+    properties: {},
+    version,
+    asRead: true,
+    clear: ["from"],
+  });
+  expect(!earlier.ok && earlier.refusal.code).toBe("validation");
+  expect(!earlier.ok && earlier.refusal.raw).toContain("invalid_properties");
+  expect(value(await device.queue()).length).toBe(beforeEarlier);
+  expect(await shown(id)).toEqual({ from: "Sender", to: ["Second"] });
+
+  // On a move, the type entered decides: a task requires a title. A move
+  // changes the reach once it lands, so it runs on a copy of its own.
+  const mover = new CliDevice({
+    binary: requireBinary(),
+    store: newStore("clears-move"),
+    url: apiUrl,
+    key: deviceKey,
+  });
+  value(await mover.hydrate(["core.bookmark", "core.task"], "library"));
+  const made = value(
+    await mover.create({
+      type: "core.bookmark",
+      properties: {
+        url: "https://example.com/device-clear-move",
+        title: "Kept",
+      },
+    }),
+  );
+  const bookmark = { id: made.item_id ?? "", version: 1 };
+  trackItem(ctx, bookmark.id);
+  value(await mover.drain());
+  const queuedBefore = value(await mover.queue()).length;
+  const moveRequired = await mover.update(bookmark.id, {
+    properties: {},
+    version: bookmark.version,
+    type: "core.task",
+    clear: ["title"],
+  });
+  expect(!moveRequired.ok && moveRequired.refusal.code).toBe("validation");
+  expect(!moveRequired.ok && moveRequired.refusal.raw).toContain(
+    "invalid_properties",
+  );
+  expect(value(await mover.queue()).length).toBe(queuedBefore);
+  const unmoved = value(await mover.get(bookmark.id));
+  expect(unmoved.type).toBe("core.bookmark");
+  expect(unmoved.properties).toEqual({
+    url: "https://example.com/device-clear-move",
+    title: "Kept",
+  });
+  // The witness: the same move clearing a field the task does not require
+  // is queued.
+  const move = value(
+    await mover.update(bookmark.id, {
+      properties: {},
+      version: bookmark.version,
+      type: "core.task",
+      clear: ["url"],
+    }),
+  );
+  expect(move.body).toMatchObject({
+    type: "core.task",
+    clear_properties: ["url"],
+  });
 
   // The witness: an optional field clears.
-  value(await device.update(id, { properties: {}, version, clear: ["to"] }));
+  value(
+    await device.update(id, {
+      properties: {},
+      version: current,
+      clear: ["to"],
+    }),
+  );
   value(await device.drain());
   expect((await answered(id)).properties).toEqual({ from: "Sender" });
 });

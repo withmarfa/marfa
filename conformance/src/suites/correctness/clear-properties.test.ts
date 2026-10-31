@@ -158,6 +158,38 @@ describe("clearing named properties", () => {
       from: "Sender",
       body: "Body",
     });
+
+    // On a move, the type entered decides: a task requires a title.
+    const bookmark = await client.createItem({
+      type: "core.bookmark",
+      source: ctx.source,
+      properties: { url: "https://example.com/clear-move", title: "Kept" },
+    });
+    expect(bookmark.ok, JSON.stringify(bookmark.error)).toBe(true);
+    trackItem(ctx, bookmark.data.item.id);
+    const moveRequired = await client.updateItem(bookmark.data.item.id, {
+      type: "core.task",
+      retype: true,
+      clear_properties: ["title"],
+      version: bookmark.data.item.version,
+    });
+    expect(moveRequired.status).toBe(400);
+    expect(moveRequired.error?.error.code).toBe("invalid_properties");
+    const unmoved = await client.getItem(bookmark.data.item.id);
+    expect(unmoved.data.item.type).toBe("core.bookmark");
+    expect(unmoved.data.item.version).toBe(bookmark.data.item.version);
+
+    // The witness: the same move clearing a field the task does not require
+    // lands.
+    const moved = await client.updateItem(bookmark.data.item.id, {
+      type: "core.task",
+      retype: true,
+      clear_properties: ["url"],
+      version: bookmark.data.item.version,
+    });
+    expect(moved.status, JSON.stringify(moved.error)).toBe(200);
+    expect(moved.data.item.type).toBe("core.task");
+    expect(moved.data.item.properties).toEqual({ title: "Kept" });
   });
 
   it("refuses a stale clear under version_match exact", async () => {

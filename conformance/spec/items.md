@@ -426,7 +426,7 @@ When a write names a property whose value is a whole number written with the sho
 
 If a write names a property with no characters, other than an archive restore, then the server MUST answer `400 validation_error`.
 
-**Tests:** `compliance/odd-input.test.ts › refuses a property named with no characters`, `› refuses a tag or property name the item doors refuse`, `› accepts valid tags and property names and refuses invalid ones on each write`.
+**Tests:** `compliance/odd-input.test.ts › refuses a property named with no characters`, `› refuses a tag or property name the item doors refuse`, `› accepts valid tags and property names and refuses invalid ones on each write`, `correctness/clear-properties.test.ts › refuses an empty name, as it refuses an empty property name`.
 
 ### `items/create-null-optional`
 
