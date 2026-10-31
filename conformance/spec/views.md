@@ -158,7 +158,7 @@ When a key sends `DELETE /views/{id}` for an active or revoked view, the server 
 
 When a key deletes a view, the server MUST announce `item.purged` for it, and neither `item.deleted` nor `item.state_changed`.
 
-**Reason:** `item.deleted` means a move to the trash, which a working copy keeps; `item.purged` tells every working copy to drop the view.
+**Reason:** `item.deleted` announces a row that stays, in the bin or, for a `system.*` row a cascade revokes, with `state` `revoked`, and a working copy keeps it; `item.purged` tells every working copy to drop the view.
 
 **Tests:** `compliance/views.test.ts › publishes a view's create and change as item events, and its delete as item.purged`.
 

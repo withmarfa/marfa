@@ -116,7 +116,9 @@ When a push or pull reports a refused settings edit, the CLI MUST say that the e
 
 ### `folders/settings-refusal-no-repeat`
 
-When the folder operation refuses a settings edit with `400`, `403`, `404`, `409`, or `422`, a device MUST NOT resend the same text.
+When the folder operation refuses a settings edit with `400`, `403`, `404`, `422`, or a `409` other than `instance_changed`, a device MUST NOT resend the same text.
+
+**Reason:** `409 instance_changed` ends the call and expires the copy instead (`device/instance-changed-one-write`).
 
 **Tests:** `device/folders-contract-a.test.ts › holds a settings edit refused with status %s without resending its text`.
 
@@ -3918,7 +3920,7 @@ When an embedded or attached file item becomes archived outside the folder’s q
 
 ### `folders/binary-created`
 
-When a nonempty non-document file is admitted by a folder’s query or an embed, a device MUST create a file item typed from its MIME type whose create waits for the bytes’ upload.
+When a nonempty non-document file is admitted by a folder’s query or an embed, a device MUST create a file item typed from its MIME type, or `core.file` where the held catalog holds no type for it, whose create waits for the bytes’ upload.
 
 **Tests:** `device/folders-placement.test.ts › pushes a file that is not a document as a file item, its bytes uploaded first`, `device/folders-frontmatter.test.ts › sends an embedded file with its file`.
 

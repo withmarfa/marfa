@@ -640,9 +640,9 @@ If the bytes available on the database's volume and on the disk store's volume c
 
 ### `instance/health-disk-degraded`
 
-If the bytes available on the database's volume and on the disk store's volume can both be read, and the lesser of the two is below 64 MiB and at least 1 MiB, then the server MUST answer the `disk` component of `GET /health` as `degraded`.
+If the bytes available on the database's volume and on the disk store's volume can both be read, and the lesser of the two is at least 1 MiB and below the greater of 64 MiB and the instance's disk reserve (`MARFA_DISK_RESERVE_BYTES`, 128 MiB unless set), then the server MUST answer the `disk` component of `GET /health` as `degraded`.
 
-**Tests:** `compliance/disk-space-faults.test.ts › answers the disk component degraded, and the status 200, when the lesser of the two volumes has 1 MiB or more and under 64 MiB`.
+**Tests:** `compliance/disk-space-faults.test.ts › answers the disk component degraded, and the status 200, when the lesser of the two volumes has 1 MiB or more and under 64 MiB`, `compliance/disk-reserve-health.test.ts › answers the disk component degraded below a reserve above 64 MiB, and ok at it`.
 
 ### `instance/health-disk-unknown`
 
@@ -1290,7 +1290,7 @@ If a key holding `config.manage` sends `PATCH /config` with a key the server doe
 
 ### `instance/config-audit`
 
-When the server accepts `PUT /config`, the server MUST record an audit entry with the `action` `config.update`, the `resource_type` `config` and the `key_id` of the key that wrote.
+When the server accepts `PUT /config`, the server MUST record an audit entry with the `action` `config.update`, the `resource_type` `config` and as `key_id` the credential that wrote: the key's id, `owner:<session ID>` for an owner browser session or `local:process` for the private local process.
 
 **Tests:** `compliance/instance-config.test.ts › records a config.update audit entry for the key that wrote, and none for a refused write`.
 

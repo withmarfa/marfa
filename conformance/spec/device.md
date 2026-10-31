@@ -172,9 +172,11 @@ When a device takes the pin off a row its slice does not take and no write of it
 
 ### `device/unpin-edges`
 
-When a device lets an unpinned row go, a device MUST let go the edges the row draws, but those of a type its slice holds whole.
+When a device lets an unpinned row go, a device MUST let go the edges the row draws, but those of a type its slice holds whole and one a queued write names.
 
-**Tests:** `device/catch-up.test.ts › keeps the edges of a type held whole when it unpins a row`.
+**Reason:** an unpin lets a row go as a row leaves the copy does (`device/catch-up-leaving-edges`).
+
+**Tests:** `device/catch-up.test.ts › keeps the edges of a type held whole when it unpins a row`, `› keeps an edge a queued write names when it unpins the row the edge leaves from`.
 
 ### `device/unpin-waiting`
 
@@ -812,7 +814,7 @@ If the server's item type or edge type catalog differs from the one an interrupt
 
 If the server's item type and edge type catalog differs from the one an interrupted hydration held only in the `display_hints.icon` of item types, then a device MUST adopt the new catalog and resume the hydration where it stopped, reporting it `resumed` and with no `restarted`.
 
-**Reason:** an icon is read by no index, naming or body rule, so the rows taken stand as they were indexed; restarting, or indexing every held row again, would cost a whole fill for a change of picture (`device/hydrate-restart-catalog` still holds for any other difference). The core's `store::tests::an_icon_only_catalog_change_reindexes_no_row` holds the no-reindex half.
+**Reason:** an icon is read by no index, naming or body rule, so the rows taken stand as they were indexed; restarting, or indexing every held row again, would cost a whole fill for a change of picture (`device/hydrate-restart-catalog` still holds for any other difference).
 
 **Tests:** `device/hydration.test.ts › resumes under a catalog that differs only in a type's icon, and holds the new icon`.
 
@@ -1312,13 +1314,13 @@ When the server answers a write, a device MUST hold the row at the version the s
 
 ### `device/conflict-blocked`
 
-If the server refuses a write `409 version_conflict`, then a device MUST report the write `blocked` with the reason `conflict_unresolved`, keeping the server's envelope.
+If the server refuses a write `409 version_conflict`, then a device MUST report the write `blocked` with the reason `conflict_unresolved`, keeping the server's envelope, unless the write is a create carrying a natural key whose answer names another row (`queue-and-verdicts/landed-refused`).
 
-**Tests:** `device/verdicts.test.ts › reports a conflict rather than resolving it`, `device/local-refusals.test.ts › refuses to resolve a conflict it was refused`.
+**Tests:** `device/verdicts.test.ts › reports a conflict rather than resolving it`, `device/local-refusals.test.ts › refuses to resolve a conflict it was refused`, `device/queue.test.ts › refuses a create whose natural key names a row, and moves the copy onto that row`.
 
 ### `device/conflict-unresolved`
 
-If the server refuses a write `409 version_conflict`, then a device MUST send nothing more for the write on a later drain until it is released.
+If the server refuses a write `409 version_conflict`, then a device MUST send nothing more for the write on a later drain until it is released, unless the write is a create carrying a natural key whose answer names another row (`queue-and-verdicts/landed-refused`).
 
 **Reason:** a conflict is the server's to resolve; a device that resolved it would have to be believed by every other device.
 
@@ -1326,9 +1328,9 @@ If the server refuses a write `409 version_conflict`, then a device MUST send no
 
 ### `device/conflict-version-kept`
 
-If the server refuses a write `409 version_conflict`, then a device MUST keep the row at the version it held.
+If the server refuses a write `409 version_conflict`, then a device MUST keep the row at the version it held, unless the write is a create carrying a natural key whose answer names another row (`queue-and-verdicts/landed-refused`).
 
-**Tests:** `device/local-refusals.test.ts › refuses to resolve a conflict it was refused`, `device/verdicts.test.ts › reports a conflict rather than resolving it`.
+**Tests:** `device/local-refusals.test.ts › refuses to resolve a conflict it was refused`, `device/verdicts.test.ts › reports a conflict rather than resolving it`, `device/queue.test.ts › refuses a create whose natural key names a row, and moves the copy onto that row`.
 
 ### `device/create-tags-queued`
 
@@ -2604,17 +2606,17 @@ The CLI is built for one contract version, the version of the document it was ge
 
 ### `device/command-contract-mismatch`
 
-If an answer names a contract other than the one the CLI was built for, then the CLI MUST refuse it `contract_mismatch` with exit 1.
+If an answer to a command other than `status` and `whoami` names a contract other than the one the CLI was built for, then the CLI MUST refuse it `contract_mismatch` with exit 1.
 
-**Reason:** a body shaped for another contract may be shaped and sized in ways the CLI cannot read.
+**Reason:** a body shaped for another contract may be shaped and sized in ways the CLI cannot read. `status` and `whoami` exist to say which contract a server speaks, so they report it and exit 0 (`device/status-other-contract`, `device/whoami-other-contract`).
 
-**Tests:** `device/contract.test.ts › refuses an answer on another contract rather than reading it`, `› refuses contract_mismatch from every command but status`, `› refuses an event stream on another contract, and reads one on its own`, `› reads every door on its own contract, so the refusal above is the contract's`, `› names an invocation for every command in the table, and nothing else`, `› drives every command the binary has, or says why not`, `device/contract.test.ts › refuses a content response on another contract from a bound folder push`, `› holds item summaries to the contract through its private socket`, `› holds both app narrowing responses to the contract through its private socket`, `› holds every owner passkey command to the contract through its private socket`, `› holds owner update to the contract through its private socket`, `› holds profile update to the contract through its ordinary credential`, `› holds the profile picture upload to the contract through its ordinary credential`, `› holds the owner picture upload to the contract through its private socket`, `› holds every trash command to the contract through its private socket`, `› holds folder inventory to the contract through its private socket`, `› holds attention to the contract through its private socket`.
+**Tests:** `device/contract.test.ts › refuses an answer on another contract rather than reading it`, `› refuses contract_mismatch from every command but status and whoami`, `› refuses an event stream on another contract, and reads one on its own`, `› reads every door on its own contract, so the refusal above is the contract's`, `› names an invocation for every command in the table, and nothing else`, `› drives every command the binary has, or says why not`, `device/contract.test.ts › refuses a content response on another contract from a bound folder push`, `› holds item summaries to the contract through its private socket`, `› holds both app narrowing responses to the contract through its private socket`, `› holds every owner passkey command to the contract through its private socket`, `› holds owner update to the contract through its private socket`, `› holds profile update to the contract through its ordinary credential`, `› holds the profile picture upload to the contract through its ordinary credential`, `› holds the owner picture upload to the contract through its private socket`, `› holds every trash command to the contract through its private socket`, `› holds folder inventory to the contract through its private socket`, `› holds attention to the contract through its private socket`.
 
 ### `device/command-mismatch-prints-nothing`
 
 When the CLI refuses an answer for its contract, the CLI MUST print nothing of the answer.
 
-**Tests:** `device/contract.test.ts › refuses an answer on another contract rather than reading it`, `› refuses contract_mismatch from every command but status`, `› holds item summaries to the contract through its private socket`, `› holds every owner passkey command to the contract through its private socket`, `› holds owner update to the contract through its private socket`, `› holds profile update to the contract through its ordinary credential`, `› holds the profile picture upload to the contract through its ordinary credential`, `› holds the owner picture upload to the contract through its private socket`, `› holds every trash command to the contract through its private socket`, `› holds folder inventory to the contract through its private socket`, `› holds attention to the contract through its private socket`.
+**Tests:** `device/contract.test.ts › refuses an answer on another contract rather than reading it`, `› refuses contract_mismatch from every command but status and whoami`, `› holds item summaries to the contract through its private socket`, `› holds every owner passkey command to the contract through its private socket`, `› holds owner update to the contract through its private socket`, `› holds profile update to the contract through its ordinary credential`, `› holds the profile picture upload to the contract through its ordinary credential`, `› holds the owner picture upload to the contract through its private socket`, `› holds every trash command to the contract through its private socket`, `› holds folder inventory to the contract through its private socket`, `› holds attention to the contract through its private socket`.
 
 ### `device/command-unnamed-success`
 
@@ -5434,7 +5436,7 @@ If a body's link names no item by an id the copy holds and no item the item alre
 
 ### `device/body-link-forms`
 
-When a body carries `[[name|shown]]` or `[[name#part]]`, a device MUST read the link as naming `name`.
+When a body carries `[[name|shown]]` or `[[name#part]]`, a device MUST read the link as naming `name`, unless the whole text between the brackets names another item or is itself unsettled, which makes the link ambiguous (`folders/body-link-ambiguity`).
 
 **Tests:** `device/body-edges-live.test.ts › reads an alias and a heading as the name before them, and a link in code as text`.
 
@@ -6312,7 +6314,6 @@ The device fixtures drive a scripted server where the precondition cannot be arr
 - **A `429`.** Rate limiting is off on the run's server, because a run's own key minting would spend the key operations' allowance (`README.md`). The real server does answer one, and `keys-and-oauth/keys-rate-cap` asserts it against a server booted with the limiter on.
 - **A read answered before an event the copy has since taken.** A follow and a drain on one core race, and an event applied between a read's request and its write leaves the read older than the row the copy holds (`device/server-row-order`). The run's server answers a read with the row as it stands when it is asked, so the scripted server answers with the older row, standing for the read that lost the race.
 - **A placement path with a leading separator.** The edge operation refuses one (`edges/folder-path`), so only a path written past it carries one; the fixture serves one to hold the folder to reading it from its root (`folders/placement-root-relative`).
-- **A `404 item_not_found` naming the bin, and a `403` naming the grant a key lacks.** The server does not yet say either in `details`; the device reads both where they come (`queue-and-verdicts/refusal-in-bin` and `queue-and-verdicts/refusal-parts`), and the fixtures script the shapes the server will answer.
 - **An aged-out cursor.** A cursor is too old only when the event after it has been retired (`events/catchup-too-old`), and an event is retired only once it is older than the retention, an hour at the shortest: a request can run the sweep but cannot age an event, so the terminal `catchup_too_old` frame cannot be provoked against the run's server. The frame's shape is held by the server's own test, which retires a row directly.
 - **Another instance at the copy's origin.** The run has one server, and a device cannot be put in front of a second at its address while it runs. A server restored behind the copy is reachable: the `cursor_ahead` frame a cursor past the head gets is held against the real server's (`device/fidelity.test.ts`).
 - **A create queued under an id the server cannot hold.** A device refuses such an id before it queues it (`device/id-format`), so only a store an earlier build made carries one. `device/verdicts.test.ts` scripts the refusal and the read-back that follow it (`device/read-back-invalid-id`).

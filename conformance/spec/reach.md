@@ -44,7 +44,7 @@ If a copy-stream request names an `X-Marfa-Reach` that is empty, repeated, or no
 
 ### `reach/copy-reach-ordinary`
 
-If `GET /events` names `X-Marfa-Reach` and no `copy`, then the server MUST answer `400 validation_error`.
+If a credential that reads some type sends `GET /events` naming `X-Marfa-Reach` and no `copy`, then the server MUST answer `400 validation_error`.
 
 **Tests:** `compliance/reach.test.ts › rejects every alternate copy grammar before starting a stream`.
 
@@ -88,7 +88,7 @@ The server MUST send `stream_cursor` and `stream_live` without an SSE `id`.
 
 ### `reach/marker-body`
 
-The server MUST send the body of `stream_cursor` and of `stream_live` as an object of exactly the string members `event_type`, `cursor`, `instance_id` and `reach`.
+The server MUST send the body of `stream_cursor` and of `stream_live` on a copy stream as an object of exactly the string members `event_type`, `cursor`, `instance_id` and `reach`.
 
 **Tests:** `compliance/reach.test.ts › bootstraps and resumes with one instance, cursor and opaque reach`.
 

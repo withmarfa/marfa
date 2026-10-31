@@ -167,7 +167,9 @@ export interface RetentionPolicy {
 /**
  * Declarative hints for generic renderers that consume items of this type
  * without type-specific code. Readers consult these first, then fall back in
- * a fixed order: title → name → first non-empty string field → type id.
+ * the order `types/item-name-fields` fixes: `title_field`, `title`, `name`,
+ * `body_field`, `body`, `text`, `filename`, `url`, `address`. A row none of
+ * them names is `Untitled` (`types/item-name-empty`), never its type id.
  */
 export interface DisplayHints {
   /** Field that carries this type's canonical display title. */

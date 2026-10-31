@@ -39,7 +39,7 @@ pub const POWERS: [(&str, &str); 12] = [
     ),
     (
         "instance.maintain",
-        "Run housekeeping, reset platform types and cancel bulk jobs",
+        "Run housekeeping, remove retired platform types and cancel bulk jobs",
     ),
     ("schema.write", "Replace or remove type definitions"),
     (

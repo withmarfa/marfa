@@ -1301,7 +1301,7 @@ async function driven(): Promise<{ command: string }[]> {
   ];
 }
 
-/** The one command that reads a server on another contract: saying so is its job. */
+/** The driven command that reads a server on another contract, as `whoami` does (not driven, `NOT_DRIVEN`): saying so is their job. */
 const DESCRIBES = "status";
 
 /**
@@ -2496,7 +2496,7 @@ describe("every command holds the server to the contract", () => {
     expect(unaccounted).toEqual([]);
   });
 
-  it("refuses contract_mismatch from every command but status", async () => {
+  it("refuses contract_mismatch from every command but status and whoami", async () => {
     const served = String(builtFor + 1);
     const rows = [
       ...(await driven()),

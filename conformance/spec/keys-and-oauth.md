@@ -13,7 +13,7 @@ A credential holds any of these permissions, each a row of the table below, whic
 | `config.manage`     | Reading and replacing the instance configuration at `/config`: the enforcement levers and the cleanup-job retention overrides.                          |
 | `connectors.manage` | Reading and administering connector registrations, their runs and their endpoints, deleting registrations and clearing a registration's retained state. |
 | `grants.manage`     | Listing and revoking other apps' access.                                                                                                                |
-| `instance.maintain` | Running housekeeping, resetting platform type definitions and cancelling bulk jobs.                                                                     |
+| `instance.maintain` | Running housekeeping, removing retired platform types and cancelling bulk jobs.                                                                         |
 | `instance.read`     | Reading detailed health, metrics, housekeeping status, retired platform types, blob storage diagnostics and bulk job status.                            |
 | `items.purge`       | Destroying a trashed row irrecoverably, through the single-row operation and the bulk one alike.                                                        |
 | `keys.manage`       | Listing and revoking keys across the instance, and changing their metadata or narrowing access.                                                         |
@@ -377,7 +377,7 @@ When `PATCH /keys/{id}` names `narrow_only: true` and would give the key nothing
 
 If `PATCH /keys/{id}` names `narrow_only: true` and an `enforcement_override` other than the key's own, including `null` for a key that has one, then the server MUST answer `403 forbidden` and leave the key as it was, whoever the caller is.
 
-**Reason:** Whether levers are looser than the key's own depends on the instance's levers, which a lever left out or `null` falls back to and which can change, so the server refuses any change to them rather than judging its direction. Levers equal to the key's own change nothing and are accepted.
+**Reason:** Whether levers are looser than the key's own depends on the instance's levers, which a lever left out or `null` falls back to and which can change, so the server refuses any change to them rather than judging its direction. A caller without `config.manage` is refused for naming `enforcement_override` at all, whatever its value; one that holds it is refused only a value other than the key's own.
 
 **Tests:** `compliance/keys-update.test.ts › refuses a change to a key's write rules when it names narrow_only`.
 
@@ -643,9 +643,9 @@ If a key that has an `expires_at` sends `POST /keys` naming an `expires_at` late
 
 ### `keys-and-oauth/expiry-update-ceiling`
 
-If a key that has an `expires_at` sends `PATCH /keys/{id}` naming an `expires_at` later than its own, or `null`, then the server MUST answer `403 forbidden` and leave the key as it was.
+If a key that has an `expires_at` and does not hold `keys.manage` sends `PATCH /keys/{id}` naming an `expires_at` later than its own, or `null`, then the server MUST answer `403 forbidden` and leave the key as it was.
 
-**Reason:** A key that could move its own expiry, or the expiry of a key it made, would hold the bound only until it chose not to.
+**Reason:** A key that could move its own expiry, or the expiry of a key it made, would hold the bound only until it chose not to. A caller holding `keys.manage` is held to the expiry of the key it changes instead (`keys-and-oauth/expiry-manage-narrows`).
 
 **Tests:** `compliance/key-expiry.test.ts › neither lengthens nor clears the expiry of a key, its own included, and leaves the key as it was`.
 
@@ -2683,7 +2683,7 @@ When `GET /owner/sign-ins` answers, the server MUST give each sign-in its `id`, 
 
 ### `keys-and-oauth/sign-ins-app-expiry`
 
-When `GET /owner/sign-ins` lists an app, the server MUST give `expires_at` as its `last_used_at`, or `granted_at` if never used, plus `MARFA_GRANT_INACTIVITY_DAYS` days, or `null` when that setting is zero.
+When `GET /owner/sign-ins` lists an app, the server MUST give `expires_at` as its `last_used_at`, or `granted_at` if never used, plus the instance's grant inactivity days (`grant_inactivity_days` in `PUT /config` where set, else `MARFA_GRANT_INACTIVITY_DAYS`), or `null` when that is zero.
 
 **Reason:** This is the inactivity boundary; the retirement sweep ends the grant after the boundary is passed.
 
