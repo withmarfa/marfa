@@ -126,6 +126,7 @@ it("refuses a property both set and cleared, and a required field, queuing nothi
   });
   expect(!required.ok && required.refusal.code).toBe("validation");
   expect(!required.ok && required.refusal.raw).toContain("invalid_properties");
+  expect(value(await device.queue()).length).toBe(before);
   // On a version read earlier, the field is still required.
   value(await device.update(id, { properties: { to: ["Second"] }, version }));
   value(await device.drain());
