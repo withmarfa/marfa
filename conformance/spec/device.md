@@ -5836,6 +5836,14 @@ If a local list or search names a `type` outside the server's type grammar (`typ
 
 **Tests:** `device/local-refusals.test.ts › refuses a list or a search naming a type outside the server's grammar`.
 
+### `device/type-unknown`
+
+If a local list or search names a `type` that is a well-formed concrete type identifier (`device/type-grammar`) and the working copy's catalog does not hold it, then a device MUST refuse it with the code `unknown_type`.
+
+**Reason:** an empty page is the one answer a caller cannot tell from a type that holds nothing, so a mistyped name, a type registered under another handle and a type deleted since the copy last read the catalog would read as nothing here offline and fail only online, where the server refuses them (`search-and-filters/type-unknown`). The copy holds the server's whole registry whatever its key reads, so a registered type the key may not read is not refused here, and a wildcard is not refused, because what it names may be nothing (`search-and-filters/type-wildcard-none`). A copy answers by the catalog it last read: a type registered since is refused until the copy reads the catalog again.
+
+**Tests:** `device/local-refusals.test.ts › refuses a list or a search naming a type its catalog does not hold, as the server does`.
+
 ## The docs site
 
 `marfa docs` reads the public docs site, `https://docs.marfa.so` unless `MARFA_DOCS_URL` names another. The docs site is not a Marfa instance: the command needs no server, working copy or key to read it.

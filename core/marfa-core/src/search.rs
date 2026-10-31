@@ -29,6 +29,7 @@ pub(crate) fn search(
         None if !filters.all_states => clauses.push("items.state = 'active'".into()),
         None => {}
     }
+    query::refuse_unknown_type(catalog, filters.r#type.as_deref())?;
     query::narrow_by_type(
         catalog,
         filters.r#type.as_deref(),

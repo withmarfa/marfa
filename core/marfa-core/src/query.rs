@@ -28,6 +28,7 @@ pub(crate) fn list_with(
     let mut values: Vec<Value> = Vec::new();
     let sort = ordered(filters, sort)?;
 
+    refuse_unknown_type(catalog, filters.r#type.as_deref())?;
     narrow_by_type(
         catalog,
         filters.r#type.as_deref(),
@@ -207,6 +208,28 @@ fn property_sort_expression(name: &str) -> String {
     )
 }
 
+/// A concrete type the copy's catalog does not hold is refused `unknown_type`,
+/// as the server refuses one nothing registers (`device/type-unknown`). A
+/// wildcard is never refused: what it names may be nothing. A name outside the
+/// grammar is left to `narrow_by_type`, which refuses it first on the server's
+/// code. The server answers `type_not_permitted` for a registered type its key
+/// may not read, so only a type the catalog lacks is refused here: the catalog
+/// is the server's whole registry, whatever the key reads.
+pub(crate) fn refuse_unknown_type(catalog: &Catalog, declared: Option<&str>) -> Result<()> {
+    let Some(declared) = declared else {
+        return Ok(());
+    };
+    if declared == "*" || declared.ends_with(".*") || !crate::hydrate::type_pattern(declared)? {
+        return Ok(());
+    }
+    if catalog.known(declared) {
+        return Ok(());
+    }
+    Err(CoreError::UnknownType {
+        message: format!("Unknown type: {declared}"),
+    })
+}
+
 /// A declared type and its subtree, by name and by declared parent, the
 /// question `?type=` answers on the server. Shared by the list and the
 /// search, so the two cannot answer it differently. A name outside the
@@ -383,7 +406,7 @@ mod tests {
             vec!["f", "e", "c", "b", "a"]
         );
         let filters = ListFilters {
-            r#type: Some("core.fil".into()),
+            r#type: Some("core.fil.*".into()),
             ..Default::default()
         };
         assert!(ids(&conn, filters, Sort::default()).is_empty());
@@ -392,6 +415,35 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(ids(&conn, filters, Sort::default()).len(), 4);
+    }
+
+    #[test]
+    fn a_concrete_type_the_catalog_does_not_hold_is_refused_and_a_wildcard_is_not() {
+        let conn = seeded();
+        let catalog = Catalog::load(&conn).unwrap();
+        let named = |name: &str| ListFilters {
+            r#type: Some(name.into()),
+            ..Default::default()
+        };
+        // The witnesses: a held type answers, and a wildcard that names
+        // nothing answers an empty page.
+        assert!(list(&conn, &catalog, &named("core.note"), None).is_ok());
+        assert!(
+            list(&conn, &catalog, &named("core.taks.*"), None)
+                .unwrap()
+                .is_empty()
+        );
+        assert!(list(&conn, &catalog, &named("core.taks"), None).is_err());
+        assert_eq!(
+            list(&conn, &catalog, &named("core.taks"), None).unwrap_err(),
+            crate::error::CoreError::UnknownType {
+                message: "Unknown type: core.taks".into()
+            }
+        );
+        assert!(matches!(
+            list(&conn, &catalog, &named("core.Taks"), None).unwrap_err(),
+            crate::error::CoreError::Validation { .. }
+        ));
     }
 
     #[test]
