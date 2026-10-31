@@ -851,7 +851,12 @@ fn add_columns(conn: &Connection, behind: &[(String, Vec<&'static str>)]) -> Res
     }
     let built = built_shape()?;
     let tx = rusqlite::Transaction::new_unchecked(conn, rusqlite::TransactionBehavior::Immediate)?;
-    for (table, columns) in behind {
+    // Another program may have added them between the read and the lock.
+    let behind = columns_behind(&held_shape(&tx)?, built);
+    if behind.is_empty() {
+        return Ok(());
+    }
+    for (table, columns) in &behind {
         for column in columns {
             tx.execute_batch(&format!("ALTER TABLE \"{table}\" ADD COLUMN {column}"))?;
         }
@@ -9095,6 +9100,26 @@ mod tests {
             drop(conn);
             assert!(open_to_read(&path).is_ok());
         }
+    }
+
+    #[test]
+    fn two_programs_opening_one_old_store_at_once_both_succeed() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("core.sqlite");
+        {
+            let conn = open(&path).unwrap();
+            conn.execute_batch("ALTER TABLE items DROP COLUMN trashed_at")
+                .unwrap();
+        }
+        let first = Connection::open(&path).unwrap();
+        let second = Connection::open(&path).unwrap();
+        let seen_first = refuse_misshapen(&first, &held_shape(&first).unwrap(), false).unwrap();
+        let seen_second = refuse_misshapen(&second, &held_shape(&second).unwrap(), false).unwrap();
+        assert!(!seen_first.is_empty() && !seen_second.is_empty());
+        add_columns(&first, &seen_first).unwrap();
+        // It read the old shape before the first added the column.
+        add_columns(&second, &seen_second).unwrap();
+        assert_eq!(items_shape(&second), built_shape().unwrap()["items"]);
     }
 
     #[test]

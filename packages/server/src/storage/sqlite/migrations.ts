@@ -167,7 +167,7 @@ const CONTACT_LISTS = [
 
 const ITEM_COLUMNS =
   "id, type, state, tier, json(properties) AS properties, created_at, updated_at, occurred_at, " +
-  "version, source, source_id, schema_version, capture_latitude, capture_longitude";
+  "version, source, source_id, schema_version, capture_latitude, capture_longitude, trashed_at";
 
 /**
  * Moves the `email`, `phone` and `place` an item of `core.entity`, or of a
