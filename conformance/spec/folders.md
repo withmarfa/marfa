@@ -3536,6 +3536,14 @@ When a person deletes a bound file before a device first writes its `marfa_id` l
 
 **Tests:** `device/folders-pass-writeback.test.ts › does not write back a file deleted after the scan, and journals the delete`, `device/binding-folders-clock.test.ts › writes back no file deleted between a watch pass's scan and its pull, and sends its delete after the grace`.
 
+### `folders/delete-of-found-render`
+
+When a person deletes a bound file that a device found holding exactly its item's rendered bytes, a device MUST retain the journaled deletion while the item has not changed in content the file showed.
+
+**Reason:** A folder added over files an earlier copy wrote binds them without writing them, so it holds no version line of its own for them. The file showed the version line its bytes carry, and its absence from what the device would write now is no change made elsewhere.
+
+**Tests:** `device/folders-identity.test.ts › trashes the item of a file it found as its item renders once the person deletes it`.
+
 ### `folders/pull-missing-file-not-written`
 
 If a folder pull reaches an item whose bound file is missing from a path the folder's lists take outside any nested folder, neither journaled as deleted nor put back by a restore of a paused removal, then a device MUST NOT write the item's file.
@@ -3836,9 +3844,11 @@ When an item starts matching a folder’s query through a tag, property, state, 
 
 ### `folders/departed-file-removed`
 
-When an item is trashed or leaves the states held by a folder's query, its file is not held by a document that embeds it or that it is attached to (`folders/embed-held`), its path remains admitted, its bytes remain those the device wrote, and no large-removal pause applies (`folders/pull-removal-paused`), a device MUST remove that file at the next pull where the filesystem permits removal.
+When an item is trashed or leaves the states held by a folder's query, its file is not held by a document that embeds it or that it is attached to (`folders/embed-held`), its path remains admitted, its bytes remain those the device wrote or found as its item's rendered bytes, and no large-removal pause applies (`folders/pull-removal-paused`), a device MUST remove that file at the next pull where the filesystem permits removal.
 
-**Tests:** `device/folders-identity.test.ts › removes a trashed item's file and brings it back on restore`, `device/folders-identity.test.ts › removes the file of an item that leaves by state`.
+**Reason:** A folder added over files an earlier copy wrote binds them without writing them. Bytes that are exactly the item's render carry nothing the person changed, so they are the device's own however they came.
+
+**Tests:** `device/folders-identity.test.ts › removes a trashed item's file and brings it back on restore`, `device/folders-identity.test.ts › removes the file of an item that leaves by state`, `device/folders-identity.test.ts › removes the file of an item put in the bin that it found as its item renders`.
 
 ### `folders/departed-binding-released`
 
