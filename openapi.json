@@ -11223,10 +11223,10 @@
             "schema": {
               "type": "string",
               "pattern": "^(created_at|updated_at|occurred_at|properties\\.[a-z0-9_]+)$",
-              "description": "Field to sort by: `created_at`, `updated_at`, `occurred_at` or `properties.<field>`. Properties sort by stored value, so an enum sorts alphabetically. Defaults to `created_at`, or to `trashed_at` when `state` is `trashed` alone."
+              "description": "Field to sort by: `created_at`, `updated_at`, `occurred_at` or `properties.<field>`. Properties sort by stored value, so an enum sorts alphabetically. Defaults to `created_at`, or, when `state` is `trashed` alone, to when each item went to the trash (`trashed_at`, else `updated_at`), which you can't name here."
             },
             "required": false,
-            "description": "Field to sort by: `created_at`, `updated_at`, `occurred_at` or `properties.<field>`. Properties sort by stored value, so an enum sorts alphabetically. Defaults to `created_at`, or to `trashed_at` when `state` is `trashed` alone.",
+            "description": "Field to sort by: `created_at`, `updated_at`, `occurred_at` or `properties.<field>`. Properties sort by stored value, so an enum sorts alphabetically. Defaults to `created_at`, or, when `state` is `trashed` alone, to when each item went to the trash (`trashed_at`, else `updated_at`), which you can't name here.",
             "name": "sort",
             "in": "query"
           },

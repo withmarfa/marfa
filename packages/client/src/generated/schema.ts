@@ -6468,7 +6468,7 @@ export interface operations {
                 tags?: string;
                 /** @description A filter expression. A term naming an edge type, `edge[<type>]` or `backref[<type>]`, needs read on it; `edge[<type>]=<id>` also works as a query parameter. `status_group` matches by status group; `properties.<field>.<member>`, by a list entry. */
                 filter?: string;
-                /** @description Field to sort by: `created_at`, `updated_at`, `occurred_at` or `properties.<field>`. Properties sort by stored value, so an enum sorts alphabetically. Defaults to `created_at`, or to `trashed_at` when `state` is `trashed` alone. */
+                /** @description Field to sort by: `created_at`, `updated_at`, `occurred_at` or `properties.<field>`. Properties sort by stored value, so an enum sorts alphabetically. Defaults to `created_at`, or, when `state` is `trashed` alone, to when each item went to the trash (`trashed_at`, else `updated_at`), which you can't name here. */
                 sort?: string;
                 /** @description Sort direction. Defaults to `desc`. */
                 direction?: "asc" | "desc";
