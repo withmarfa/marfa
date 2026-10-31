@@ -6198,11 +6198,13 @@ mod tests {
 
     /// `added_again_over_embeds` for one embedded and attached image whose
     /// item the copy does not hold, beside a new note, scanned against a
-    /// server that answers the image's read with `answer`, or against none
-    /// that answers at all.
+    /// server that answers the image's reads with `answers`, or against none
+    /// that answers at all, renewing a refused credential with what `renew`
+    /// makes of the folder's directory.
     fn scanned_over_an_unread_attachment(
         n: usize,
-        answer: Option<crate::scripted::Answer>,
+        answers: Option<Vec<crate::scripted::Answer>>,
+        renew: Option<fn(&std::path::Path) -> crate::http::Renew>,
     ) -> (
         Result<ScanReport>,
         Folder,
@@ -6237,11 +6239,14 @@ mod tests {
         assert!(folder.core.get(id).unwrap().is_none());
         drop(folder);
         std::fs::write(dir.path().join("New.md"), "A new note.\n").unwrap();
-        let server = answer.map(|answer| {
+        let server = answers.map(|answers| {
             let server = crate::scripted::Scripted::start();
             server.on(
                 &format!("/items/{id}"),
-                vec![crate::scripted::certified(answer)],
+                answers
+                    .into_iter()
+                    .map(crate::scripted::certified)
+                    .collect(),
             );
             // The bin, which a read that finds nothing asks next.
             server.on(
@@ -6269,6 +6274,9 @@ mod tests {
             }),
         )
         .unwrap();
+        if let Some(renew) = renew {
+            folder.core.renew_credential_with(renew(dir.path()));
+        }
         let scanned = folder.scan();
         if let Some(server) = &server {
             assert!(!server.seen(&format!("/items/{id}")).is_empty());
@@ -6283,18 +6291,27 @@ mod tests {
         // The witness: an image the server says is gone is not the file's
         // item, so the file is sent as new beside the new note.
         let (scanned, folder, _dir, _server) =
-            scanned_over_an_unread_attachment(6, Some(refusal(404, "item_not_found")));
+            scanned_over_an_unread_attachment(6, Some(vec![refusal(404, "item_not_found")]), None);
         let report = scanned.unwrap();
         assert_eq!(created(&folder), 2, "{report:?}");
         assert!(report.flagged.is_empty(), "{report:?}");
 
+        // A renewal that cannot reach its keychain, as on a locked device.
+        let locked: fn(&std::path::Path) -> crate::http::Renew =
+            |_| Box::new(|_| Err(CoreError::Network("the keychain is locked".into())));
         let mut failed = Vec::new();
-        for (case, answer) in [
-            ("409", Some(refusal(409, "conflict"))),
-            ("400", Some(refusal(400, "invalid_request"))),
-            ("offline", None),
+        for (case, answers, renew) in [
+            ("409", Some(vec![refusal(409, "conflict")]), None),
+            ("400", Some(vec![refusal(400, "invalid_request")]), None),
+            ("offline", None, None),
+            (
+                "renewal unreachable",
+                Some(vec![refusal(401, "unauthorized")]),
+                Some(locked),
+            ),
         ] {
-            let (scanned, folder, _dir, _server) = scanned_over_an_unread_attachment(7, answer);
+            let (scanned, folder, _dir, _server) =
+                scanned_over_an_unread_attachment(7, answers, renew);
             let report = match scanned {
                 Ok(report) => report,
                 Err(error) => {
@@ -6322,12 +6339,36 @@ mod tests {
         // A refused credential is no one file's: the scan ends, as a pull's
         // fetch of bytes does, with the copy the refusal ended.
         let (scanned, _folder, _dir, _server) =
-            scanned_over_an_unread_attachment(8, Some(refusal(401, "unauthorized")));
+            scanned_over_an_unread_attachment(8, Some(vec![refusal(401, "unauthorized")]), None);
         assert!(
             matches!(
                 &scanned,
                 Err(CoreError::CopyExpired { reason }) if reason == "credential_ended"
             ),
+            "{scanned:?}"
+        );
+
+        // A copy that changed while the image was read ends the scan with
+        // the error a watch runs the pass again on: here the pins move while
+        // the credential is renewed.
+        let moved: fn(&std::path::Path) -> crate::http::Renew = |dir| {
+            let store = dir.join(STATE_DIR).join("core.sqlite");
+            Box::new(move |_| {
+                let conn = rusqlite::Connection::open(&store).unwrap();
+                crate::reach::pins_changed(&conn).unwrap();
+                Ok("renewed".into())
+            })
+        };
+        let (scanned, _folder, _dir, _server) = scanned_over_an_unread_attachment(
+            9,
+            Some(vec![
+                refusal(401, "unauthorized"),
+                refusal(404, "item_not_found"),
+            ]),
+            Some(moved),
+        );
+        assert!(
+            scanned.as_ref().is_err_and(super::copy_changed),
             "{scanned:?}"
         );
     }

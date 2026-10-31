@@ -2676,9 +2676,9 @@ When an unbound raw-text or file-item file matches the path and rendered bytes o
 
 ### `folders/identity-placement-unread-attachment`
 
-If a device's read of an item attached to a document the query holds fails for a reason other than that the server does not hold the item, will not show it or refuses the credential, and that document's file in the directory embeds the path of an unbound file, then a device MUST hold that file, flagged `waiting`, without making an item of it.
+If a device's read of an item attached to a document the query holds fails for a reason other than that the server does not hold the item, will not show it or ends the drain, and that document's file in the directory embeds the path of an unbound file, then a device MUST hold that file, flagged `waiting`, without making an item of it.
 
-**Reason:** The item may be the file's own, and a pull writes it beside a new item as a second copy. Each scan that meets the file reads the item again, so the file is bound to it once the read succeeds, and the scan goes on with every other file meanwhile. A refused credential is excluded because it ends the copy, which no other file's scan can go on without.
+**Reason:** The item may be the file's own, and a pull writes it beside a new item as a second copy. Each scan that meets the file reads the item again, so the file is bound to it once the read succeeds, and the scan goes on with every other file meanwhile. A failure that ends the drain ends the scan instead, since it is no one file's and the push after the scan would meet it too: a refused credential, which ends the copy, a renewal of the credential that fails other than by an environmental failure, no sign-in or no keychain, a redirect, an answer naming another contract, a full store, an expired copy, a working copy that changed during the scan, a stream cut short, or a stopped run. An environmental failure, such as no network or a renewal that cannot reach its keychain, holds the file.
 
 **Tests:** `device/folders-frontmatter.test.ts › holds a file a note embeds while the item attached there cannot be read, sends the rest, and takes it back once it can`.
 

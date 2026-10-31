@@ -2027,9 +2027,9 @@ impl Folder {
     /// scan that runs before any pull has: one that has none of them would
     /// send a file the directory has where a pull writes one as a new item.
     /// Answers each the server could not be asked for or refused to show for
-    /// a reason other than that it is gone or hidden, with why. A refusal of
-    /// the credential ends the scan, as it ends a pull's fetch of bytes: the
-    /// pin that met it has ended the copy already.
+    /// a reason other than that it is gone or hidden, with why. What ends a
+    /// drain, a changed copy among it, ends the scan instead, since it is no
+    /// one file's: the push after the scan would meet it too.
     pub(super) fn hold_attachments(
         &self,
         members: &HashSet<String>,
@@ -2042,15 +2042,12 @@ impl Folder {
             .map(|edge| edge.source_id)
             .collect();
         let mut unread = HashMap::new();
-        self.hold_ends(&wanted, |id, error| match error {
-            CoreError::CopyExpired { .. }
-            | CoreError::Unauthorized { .. }
-            | CoreError::RenewalFailed(_)
-            | CoreError::Redirected { .. } => Err(error),
-            error => {
-                unread.insert(id.to_string(), error.to_string());
-                Ok(())
+        self.hold_ends(&wanted, |id, error| {
+            if crate::drain::ends_the_drain(&error) || error == CoreError::Canceled {
+                return Err(error);
             }
+            unread.insert(id.to_string(), error.to_string());
+            Ok(())
         })?;
         Ok(unread)
     }

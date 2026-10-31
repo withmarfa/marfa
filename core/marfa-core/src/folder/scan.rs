@@ -1670,7 +1670,7 @@ impl Folder {
                     waiting.insert(
                         at,
                         format!(
-                            "a document here embeds it and has an attached file that cannot be read yet ({error}), which may be this file's item; it is taken at the next push"
+                            "a document here embeds it and has an attached file that cannot be read yet ({error}), which may be this file's item; it is taken once that file can be read"
                         ),
                     );
                     break;
