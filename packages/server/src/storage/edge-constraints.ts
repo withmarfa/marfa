@@ -113,7 +113,7 @@ function assertFolderEdgeProperties(
   if ((depthInsideFolder(path) ?? 0) < 1) {
     throw propertyRefusal(
       "path",
-      `"${path}" is not a file inside the folder: write a path relative to its root, with "/" between names, that does not climb out of it`,
+      `"${path}" is not a file inside the folder: write a path relative to its root, with "/" between names and no ".." name`,
     );
   }
 }

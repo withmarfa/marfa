@@ -598,7 +598,7 @@ When a folder query names no states, a device MUST include active and archived i
 
 ### `folders/search-refuse-unsupported`
 
-If folder settings name an unknown setting, query member, defaults member, or removal-threshold member, a `backref` condition, an empty state list, a state other than active or archived, or a query tier other than `library`, `feed` or `all`, then a device MUST refuse to follow them.
+If folder settings name an unknown setting, query member, defaults member, or removal-threshold member, a `backref` condition, an empty state list, a state other than active or archived, a query tier other than `library`, `feed` or `all`, or a `first_placement` directory the server refuses (`items/folder-setting-followable`), then a device MUST refuse to follow them.
 
 **Tests:** `device/folders.test.ts › refuses a query condition it does not implement`.
 

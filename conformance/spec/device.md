@@ -5008,14 +5008,6 @@ When a caller reads a folder the copy holds, a device MUST answer its state and 
 
 **Tests:** `device/folder-settings-live.test.ts › holds the folders a slice names, at either tier`, `› creates, changes and revokes at once, holding the answer and queueing nothing`.
 
-### `device/folder-read-backref`
-
-When a caller reads a folder the copy holds whose query carries a `backref` condition, a device MUST answer its settings.
-
-**Reason:** the server takes such a folder (`items/folder-create`), and an app shows it by its title though no copy answers its query, whatever edge types the copy holds whole, since a folder on disk cannot follow a `backref` condition.
-
-**Tests:** `device/folder-settings-live.test.ts › refuses settings no folder follows before anything is sent, and fails offline with nothing kept`.
-
 ### `device/folder-list`
 
 When a caller lists or searches in a folder, a device MUST answer the items of the query's types and their subtypes, in the tiers the query holds, in the states it names or `active` and `archived` where it names none, that its `filter` matches, and no `system.*` row.
@@ -5046,14 +5038,6 @@ If a device refuses a list in a folder because its slice cannot answer the folde
 
 **Tests:** `device/folder-settings-live.test.ts › refuses a folder query its slice cannot answer whole, and a folder it does not hold`.
 
-### `device/folder-list-backref`
-
-If a folder's query carries a `backref` condition, then a device MUST refuse a list in that folder `invalid`, naming the condition, whatever edge types the copy holds whole.
-
-**Reason:** a folder's pass on disk cannot follow a `backref` condition, and a device checks a folder's settings before it reads the copy, so a copy that holds the edge type whole is refused as one that does not. A list that answered it would show a set the folder on disk does not hold.
-
-**Tests:** `device/folder-settings-live.test.ts › refuses settings no folder follows before anything is sent, and fails offline with nothing kept`.
-
 ### `device/folder-list-revoked`
 
 If a folder is revoked, then a device MUST refuse a list or a search in it `invalid`, naming it revoked.
@@ -5061,6 +5045,8 @@ If a folder is revoked, then a device MUST refuse a list or a search in it `inva
 **Reason:** a revoked folder has no settings to follow.
 
 **Tests:** `device/folder-settings-live.test.ts › creates, changes and revokes at once, holding the answer and queueing nothing`.
+
+## A file's size
 
 ### `device/folder-list-not-folder`
 
@@ -5102,15 +5088,15 @@ If a folder write through a working copy cannot reach the server, then a device 
 
 If folder settings sent through a working copy carry a `backref` condition, then a device MUST refuse them `invalid` before anything is sent.
 
-**Reason:** the server takes a `backref` condition, which a folder on disk cannot follow, so a folder made with one could be followed by no folder on disk.
+**Reason:** the server refuses a `backref` condition in a folder's query (`items/folder-setting-followable`), and a device says so before sending, with no server to reach.
 
 **Tests:** `device/folder-settings-live.test.ts › refuses settings no folder follows before anything is sent, and fails offline with nothing kept`.
 
 ### `device/folder-write-grammar`
 
-If folder settings sent through a working copy carry a `filter` the listing grammar refuses or a default tag the server refuses, then a device MUST refuse them `validation` before anything is sent.
+If folder settings sent through a working copy carry a `filter` the listing grammar refuses, a default tag the server refuses or a `first_placement` directory the server refuses, then a device MUST refuse them `validation` before anything is sent.
 
-**Reason:** the server refuses such a filter (`items/folder-setting-invalid`), and a default tag the server refuses on an item would be refused on every new file the folder makes.
+**Reason:** the server refuses such a filter (`items/folder-setting-invalid`) and such a directory (`items/folder-setting-followable`), and a default tag the server refuses on an item would be refused on every new file the folder makes.
 
 **Tests:** `device/folder-settings-live.test.ts › refuses settings the server would refuse, or defaults its query would not hold, before anything is sent`.
 
@@ -5137,16 +5123,6 @@ When a folder operation accepts a write and the copy's slice or a pin takes the 
 **Reason:** an app that made a folder shows it at once.
 
 **Tests:** `device/folder-settings-live.test.ts › creates, changes and revokes at once, holding the answer and queueing nothing`.
-
-### `device/folder-write-accepted`
-
-When a folder operation accepts a write to a folder whose query carries a `backref` condition, a device MUST answer the write as accepted.
-
-**Reason:** the write has taken effect, and a caller told it failed would send it again.
-
-**Tests:** `device/folder-settings-live.test.ts › refuses settings no folder follows before anything is sent, and fails offline with nothing kept`.
-
-## A file's size
 
 ### `device/file-size`
 

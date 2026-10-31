@@ -354,6 +354,16 @@ describe("the folder door", () => {
       "first_placement.core.note",
     ],
     [
+      { first_placement: { "core.note": "Notes/../Tickets" } },
+      "validation_error",
+      "first_placement.core.note",
+    ],
+    [
+      { query: { filter: "backref[parent-of] exists" } },
+      "validation_error",
+      "query.filter",
+    ],
+    [
       { first_placement: { "core.note": "/Notes" } },
       "validation_error",
       "first_placement.core.note",
@@ -475,13 +485,14 @@ describe("the folder door", () => {
     await folder({ defaults: { edges: full } });
   });
 
-  it("takes a placement that climbs and comes back inside the folder, on a create and on a change", async () => {
-    // The witness for the refusals above: `..` alone is not what refuses, and
-    // a registered type outside `system.*` is taken.
+  it("takes the settings a device can follow, on a create and on a change", async () => {
+    // The witness for the refusals above: a registered type outside
+    // `system.*`, the placement written without `..` and an edge condition
+    // that is not a `backref` are taken.
     const settings = {
-      query: { types: ["core.note"] },
+      query: { types: ["core.note"], filter: "edge[parent-of] exists" },
       defaults: { type: "core.note" },
-      first_placement: { "core.note": "Notes/../Tickets" },
+      first_placement: { "core.note": "Notes/Tickets" },
     };
     const { id } = await folder(settings);
     const changed = await client.updateFolder(id, { version: 1, ...settings });

@@ -1548,6 +1548,11 @@ describe("what a folder's query holds", () => {
         named: "backref",
       },
       {
+        condition: "a placement directory that climbs and comes back",
+        settings: { first_placement: { "core.note": "Notes/../Tickets" } },
+        named: "first_placement",
+      },
+      {
         condition: "a query member it does not know",
         settings: { query: { near: "01a00000-0000-7000-8000-0000000002f9" } },
         named: "near",

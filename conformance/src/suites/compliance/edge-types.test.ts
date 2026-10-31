@@ -639,6 +639,7 @@ describe("custom edge-type registration", () => {
       [{ path: "Notes\\a.md" }, "properties.path"],
       [{ path: "Notes/../../a.md" }, "properties.path"],
       [{ path: "Notes/.." }, "properties.path"],
+      [{ path: "Notes/../Tickets/a.md" }, "properties.path"],
       [{ path: "a.md", weight: 1 }, "properties.weight"],
     ] as const) {
       const r = await client.createEdge({
@@ -655,12 +656,12 @@ describe("custom edge-type registration", () => {
       expect(details?.errors?.[0]?.path, label).toBe(path);
     }
 
-    // The witness: a path that climbs and comes back inside is taken.
+    // The witness: the same path without the `..` is taken.
     const placed = await client.createEdge({
       source_id: source,
       target_id: folderId,
       edge_type: "in-folder",
-      properties: { path: "Notes/../Tickets/a.md" },
+      properties: { path: "Notes/Tickets/a.md" },
     });
     expect(placed.status).toBe(201);
     trackEdge(ctx, placed.data.edge.id);
