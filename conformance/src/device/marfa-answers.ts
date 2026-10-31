@@ -505,6 +505,18 @@ export const SCRIPTED_EDGE_TYPES: ReadonlyArray<WireEdgeType> = [
   shipped("about", "About", "Subject of"),
   shipped("attached-to", "Attached to", "Attachments", {
     reverse_name: "has-attachment",
+    cascade_on_delete: "with-hosts",
+    property_schema: {
+      position: {
+        type: "number",
+        description:
+          "Ordering among the host's attachments, such as the page of a scan (1-based).",
+      },
+    },
+  }),
+  shipped("comments-on", "Comment on", "Comments", {
+    cardinality: "many-to-one",
+    cascade_on_delete: "with-hosts",
   }),
   shipped("derived-from", "Derived from", "Basis for"),
   shipped("excerpt-of", "Excerpt of", "Excerpts", {

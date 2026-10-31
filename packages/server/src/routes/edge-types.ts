@@ -131,7 +131,7 @@ const SOURCE_CONSTRAINTS =
 const TARGET_CONSTRAINTS =
   "The types an edge's target item can have, in the same form as `source_type_constraints`.";
 const CASCADE =
-  "What happens when an item an edge joins is deleted. `cascade`: deleting the source trashes the target. `orphan`: the other item stays. `block`: the delete fails while the edge exists.";
+  "What happens when an item an edge joins is deleted. `cascade`: deleting the source trashes the target. `orphan`: the other item stays. `block`: the delete fails while the edge exists. `with-hosts`: the source is a part of the target, its host; the part goes to the trash when all its hosts are in the trash, and comes back when any of them is restored.";
 const PROPERTY_SCHEMA =
   "The properties an edge of the type can carry, by name. Marfa checks an edge's properties against it each time the edge is written, and accepts a property it doesn't list.";
 const REVERSE_NAME =
@@ -161,7 +161,7 @@ export const EdgeTypeRequestSchema = z
       .optional()
       .describe(`${TARGET_CONSTRAINTS} Leave it out to allow any type.`),
     cascade_on_delete: z
-      .enum(["cascade", "orphan", "block"])
+      .enum(EDGE_CASCADES)
       .optional()
       .describe(`${CASCADE} Leave it out for \`orphan\`.`),
     property_schema: z
@@ -193,7 +193,7 @@ const EdgeTypeResponseSchema = z
     cardinality: CardinalitySchema,
     source_type_constraints: z.array(z.string()).describe(SOURCE_CONSTRAINTS),
     target_type_constraints: z.array(z.string()).describe(TARGET_CONSTRAINTS),
-    cascade_on_delete: z.enum(["cascade", "orphan", "block"]).describe(CASCADE),
+    cascade_on_delete: z.enum(EDGE_CASCADES).describe(CASCADE),
     property_schema: z
       .record(z.string(), EdgePropertyDefinitionSchema)
       .describe(PROPERTY_SCHEMA),

@@ -49,7 +49,7 @@ describe("the catalogues in the contract", () => {
     for (const { id } of [...ALL_TYPES, ...ALL_SYSTEM_TYPES]) {
       expect(rows("types"), id).toContain(`| \`${id}\` `);
     }
-    expect(ALL_EDGE_TYPES.length).toBe(10);
+    expect(ALL_EDGE_TYPES.length).toBe(11);
     for (const { id } of ALL_EDGE_TYPES) {
       expect(rows("edge-types"), id).toContain(`| \`${id}\` `);
     }

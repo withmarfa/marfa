@@ -102,6 +102,7 @@ describe("shipped type identifiers", () => {
 const CORE_EDGE_TYPE_IDENTIFIERS = [
   "about",
   "attached-to",
+  "comments-on",
   "derived-from",
   "excerpt-of",
   "in-collection",

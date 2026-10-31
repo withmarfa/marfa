@@ -58,10 +58,10 @@ async function makeFolder(): Promise<string> {
 /**
  * Every shipped edge type, with what each one's target has to be.
  *
- * Ten, and the list is written out rather than read off the registry
- * because nothing under `src/suites/` may import a workspace package. So it
- * is a copy, and `compliance/edge-types.test.ts` is what refuses to let it
- * fall behind: it holds the served set against the same ten.
+ * The list is written out rather than read off the registry because nothing
+ * under `src/suites/` may import a workspace package. So it is a copy, and
+ * `compliance/edge-types.test.ts` is what refuses to let it fall behind: it
+ * holds the served set against the same list.
  *
  * A target per entry, because two constrain theirs: `in-collection` needs
  * one declaring the `container` role and `in-folder` a `system.folder`.
@@ -75,6 +75,7 @@ const CORE_EDGE_TYPES: readonly {
   { id: "parent-of", target: makeItem },
   { id: "in-thread", target: makeItem },
   { id: "attached-to", target: makeItem },
+  { id: "comments-on", target: makeItem },
   { id: "derived-from", target: makeItem },
   { id: "excerpt-of", target: makeItem },
   { id: "supersedes", target: makeItem },

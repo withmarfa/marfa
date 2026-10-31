@@ -175,6 +175,7 @@ describe("The type catalog a working copy holds", () => {
       [
         "about",
         "attached-to",
+        "comments-on",
         "derived-from",
         "excerpt-of",
         "in-collection",

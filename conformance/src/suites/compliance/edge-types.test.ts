@@ -70,6 +70,7 @@ describe("custom edge-type registration", () => {
       "attached-to",
       "derived-from",
       "excerpt-of",
+      "comments-on",
       "supersedes",
       "references",
       "in-collection",
@@ -78,7 +79,7 @@ describe("custom edge-type registration", () => {
     for (const shipped of SHIPPED) {
       expect(ids).toContain(shipped);
     }
-    // And no eleventh. `toContain` per name cannot see a shipped type nobody
+    // And no other. `toContain` per name cannot see a shipped type nobody
     // listed here, so the list could fall behind the registry with nothing
     // red — and a type absent from this list is a type absent from every
     // fixture that reads it.
@@ -971,6 +972,7 @@ describe("custom edge-type registration", () => {
     expect(names).toEqual({
       about: ["About", "Subject of"],
       "attached-to": ["Attached to", "Attachments"],
+      "comments-on": ["Comment on", "Comments"],
       "derived-from": ["Derived from", "Basis for"],
       "excerpt-of": ["Excerpt of", "Excerpts"],
       "in-collection": ["In collection", "Contents"],
@@ -1073,6 +1075,7 @@ describe("custom edge-type registration", () => {
     // an attachment included, which names what it was made for.
     expect(writtenAt["parent-of"]).toBe("target");
     expect(writtenAt["attached-to"]).toBe("source");
+    expect(writtenAt["comments-on"]).toBe("source");
     expect(writtenAt["references"]).toBe("source");
     // No file writes the placement of a file, so the edge names no end.
     expect(writtenAt["in-folder"]).toBe("none");
