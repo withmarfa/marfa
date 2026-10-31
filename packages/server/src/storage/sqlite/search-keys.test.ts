@@ -239,4 +239,22 @@ describe("stable search keys", () => {
     expect(await key()).toEqual(original);
     expect(await hits("removalfailure")).toEqual([itemId]);
   });
+
+  it("carries the time a hit went to the bin", async () => {
+    await itemWrites(storage).create({
+      writer: null,
+      id: itemId,
+      type: "core.note",
+      properties: { body: "binnedhit" },
+    });
+    await storage.__sqliteRun(
+      "UPDATE items SET state = 'trashed', trashed_at = ? WHERE id = ?",
+      ["2026-01-02T03:04:05.000Z", itemId],
+    );
+    const [hit] = await storage.search.search("binnedhit", {
+      states: ["trashed"],
+    });
+    expect(hit?.item.id).toBe(itemId);
+    expect(hit?.item.trashed_at).toBe("2026-01-02T03:04:05.000Z");
+  });
 });
