@@ -979,6 +979,15 @@ fn unsendable(conn: &Connection) -> String {
     )
 }
 
+/// The id of every write the queue holds.
+pub fn queued_ids(conn: &Connection) -> Result<HashSet<String>, CoreError> {
+    let mut statement = conn.prepare("SELECT id FROM queue")?;
+    let ids = statement
+        .query_map([], |row| row.get(0))?
+        .collect::<rusqlite::Result<_>>()?;
+    Ok(ids)
+}
+
 /// Every write the server has not taken that clearing answered writes would
 /// keep: waiting, blocked, refused or dead. Read by clearing a copy of the
 /// queue in the connection's own temporary space, so the count is what

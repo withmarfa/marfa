@@ -2928,6 +2928,27 @@ impl Core {
         store::forget_answered_ids(&conn, ids)
     }
 
+    /// Clears what `forget_answered` clears and returns each write it took,
+    /// as `queue` read it, in one transaction under the connection's lock:
+    /// two callers taking at once never both get one write, and none leaves
+    /// the queue unreturned.
+    pub fn take_answered(&self) -> Result<Vec<QueuedWrite>> {
+        self.lock.refuse_unless_writer()?;
+        let mut conn = self.conn()?;
+        let tx = conn.transaction()?;
+        let before = store::queued_writes(&tx)?;
+        #[cfg(debug_assertions)]
+        fault::hold(|| "answered-taking");
+        body::rule::after_answers_in(&tx, None)?;
+        store::forget_answered(&tx)?;
+        let left = store::queued_ids(&tx)?;
+        tx.commit()?;
+        Ok(before
+            .into_iter()
+            .filter(|write| !left.contains(&write.id))
+            .collect())
+    }
+
     /// Asks again about the names bodies written here carry and no edge says
     /// yet. Best effort: a failure leaves them for the next pass, but for a
     /// store that can no longer be written.
@@ -6671,6 +6692,126 @@ mod tests {
         assert_eq!(ids(&core), vec![unanswered.id.clone()]);
     }
 
+    /// A held copy whose queue holds a refused edit with content, a refused
+    /// tag, an accepted tag and a tag still waiting, with their ids in that
+    /// order.
+    fn answered_queue() -> (Core, [String; 4]) {
+        let core = held_copy();
+        let edited = core
+            .update_item(
+                "row",
+                &Edit {
+                    properties: serde_json::json!({ "title": "the words" })
+                        .as_object()
+                        .unwrap()
+                        .clone(),
+                    base_version: Some(3),
+                    ..Edit::default()
+                },
+            )
+            .unwrap();
+        let refused = core.add_tag("row", "b").unwrap();
+        let accepted = core.add_tag("row", "c").unwrap();
+        let waiting = core.add_tag("row", "d").unwrap();
+        refuse(&core, &edited);
+        refuse(&core, &refused);
+        {
+            let conn = core.conn().unwrap();
+            store::mark_sent(&conn, &accepted.id).unwrap();
+            store::record_verdict(
+                &conn,
+                &accepted.id,
+                &store::Answered {
+                    verdict: Verdict::Accepted,
+                    reason: None,
+                    answer: None,
+                    conflicted_copy_id: None,
+                },
+            )
+            .unwrap();
+        }
+        (core, [edited.id, refused.id, accepted.id, waiting.id])
+    }
+
+    #[test]
+    fn taking_answered_writes_returns_what_a_clearing_takes_as_the_queue_showed_it() {
+        let (core, [edited, refused, accepted, waiting]) = answered_queue();
+        let before = core.queue().unwrap();
+        let taken = core.take_answered().unwrap();
+        let shown: Vec<_> = before
+            .into_iter()
+            .filter(|write| write.id == refused || write.id == accepted)
+            .collect();
+        assert_eq!(
+            taken, shown,
+            "a take returned other writes than the answered ones it cleared, or not as the queue showed them"
+        );
+        let left: Vec<_> = core.queue().unwrap().into_iter().map(|w| w.id).collect();
+        assert_eq!(
+            left,
+            vec![edited.clone(), waiting],
+            "a take cleared the refused edit's content, or a write with no answer"
+        );
+        assert_eq!(core.take_answered().unwrap(), Vec::new());
+    }
+
+    #[test]
+    fn taking_answered_writes_clears_what_forgetting_them_clears() {
+        let (taker, taker_ids) = answered_queue();
+        let (forgetter, forgetter_ids) = answered_queue();
+        let taken = taker.take_answered().unwrap().len();
+        assert_eq!(forgetter.forget_answered().unwrap(), taken);
+        // Each copy mints its own ids, so a write is named by its place.
+        let left = |core: &Core, ids: &[String; 4]| {
+            core.queue()
+                .unwrap()
+                .into_iter()
+                .map(|write| ids.iter().position(|id| *id == write.id))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(left(&taker, &taker_ids), left(&forgetter, &forgetter_ids));
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn two_takes_at_once_each_return_a_write_to_one_of_them() {
+        let (core, [_, refused, accepted, _]) = answered_queue();
+        let point = "answered-taking";
+        crate::fault::arm(point);
+        let (first, second) = std::thread::scope(|scope| {
+            let first = scope.spawn(|| core.take_answered());
+            let waited = std::time::Instant::now();
+            while crate::fault::waiting(point) == 0 {
+                assert!(
+                    waited.elapsed() < std::time::Duration::from_secs(10),
+                    "the first take never reached its read"
+                );
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            let second = scope.spawn(|| core.take_answered());
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            crate::fault::release(point);
+            (
+                first.join().unwrap().unwrap(),
+                second.join().unwrap().unwrap(),
+            )
+        });
+        let ids = |taken: &[QueuedWrite]| taken.iter().map(|w| w.id.clone()).collect::<Vec<_>>();
+        let (first, second) = (ids(&first), ids(&second));
+        assert!(
+            first.iter().all(|id| !second.contains(id)),
+            "both takes returned one answer: {first:?} and {second:?}"
+        );
+        let mut every = [first, second].concat();
+        every.sort();
+        let mut answered = vec![refused, accepted];
+        answered.sort();
+        assert_eq!(
+            every, answered,
+            "an answer was cleared and returned to neither take"
+        );
+    }
+
     #[test]
     fn every_edge_of_one_type_is_read_at_once() {
         let core = Core::open_in_memory(None).unwrap();
@@ -7268,6 +7409,7 @@ mod tests {
                 "forget_answered_ids",
                 reader.forget_answered_ids(&[]).unwrap_err(),
             ),
+            ("take_answered", reader.take_answered().unwrap_err()),
             ("discard", reader.discard("refused").unwrap_err()),
             (
                 "put_blob",
@@ -7427,7 +7569,7 @@ mod tests {
         );
         assert_eq!(
             refusals.len(),
-            50,
+            51,
             "an entry has gone from the list above, and a door dropped from \
              it is a door nothing here covers"
         );

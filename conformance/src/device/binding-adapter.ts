@@ -713,6 +713,19 @@ export class BindingDevice {
     return this.call("discard", id);
   }
 
+  takeAnswered(): Call<BindingQueuedWrite[]> {
+    return this.call("takeAnswered");
+  }
+
+  /** Clears the answered writes and counts them, as a take clears them. */
+  forgetAnswered(): Call<number> {
+    return this.call("forgetAnswered");
+  }
+
+  addTag(id: string, tag: string): Call<BindingQueuedWrite> {
+    return this.call("addTag", id, tag);
+  }
+
   /**
    * What a debug build lets a fixture hold. An armed point makes the engine
    * wait the next time it reaches it, until it is released.

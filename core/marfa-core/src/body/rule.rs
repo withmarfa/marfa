@@ -1482,6 +1482,13 @@ pub(crate) fn after_answers(conn: &mut Connection) -> Result<()> {
 /// where it is, read again by the next call that names it or names none.
 pub(crate) fn after_answers_of(conn: &mut Connection, named: Option<&[String]>) -> Result<()> {
     let tx = conn.transaction()?;
+    after_answers_in(&tx, named)?;
+    tx.commit()?;
+    Ok(())
+}
+
+/// `after_answers_of`, inside a transaction the caller holds.
+pub(crate) fn after_answers_in(tx: &Connection, named: Option<&[String]>) -> Result<()> {
     let made: Vec<(String, String, String, String)> = {
         let mut statement =
             tx.prepare("SELECT write_id, item_id, kind, other_id FROM body_edges")?;
@@ -1491,7 +1498,7 @@ pub(crate) fn after_answers_of(conn: &mut Connection, named: Option<&[String]>) 
         rows.collect::<rusqlite::Result<_>>()?
     };
     for (write, host, kind, other) in made {
-        let row = store::queued_write(&tx, &write)?;
+        let row = store::queued_write(tx, &write)?;
         let done = match row.as_ref().and_then(|row| row.verdict) {
             None if row.is_none() => true,
             Some(Verdict::Accepted | Verdict::Merged | Verdict::Conflicted) => true,
@@ -1505,7 +1512,7 @@ pub(crate) fn after_answers_of(conn: &mut Connection, named: Option<&[String]>) 
                 if duplicate || row.reason.as_deref() == Some(LOST) {
                     // Refused while a write still waits on it, a delete of the
                     // same edge say, it goes once that one is answered.
-                    named.is_none_or(|named| named.contains(&write)) && store::discard(&tx, &write)?
+                    named.is_none_or(|named| named.contains(&write)) && store::discard(tx, &write)?
                 } else {
                     let reason = row
                         .refusal
@@ -1513,7 +1520,7 @@ pub(crate) fn after_answers_of(conn: &mut Connection, named: Option<&[String]>) 
                         .and_then(|refusal| refusal.message.clone())
                         .or_else(|| row.reason.clone())
                         .unwrap_or_else(|| "refused".into());
-                    refuse_names_of(&tx, &host, Kind::parse(&kind), &other, &reason)?;
+                    refuse_names_of(tx, &host, Kind::parse(&kind), &other, &reason)?;
                     true
                 }
             }
@@ -1528,27 +1535,26 @@ pub(crate) fn after_answers_of(conn: &mut Connection, named: Option<&[String]>) 
         let rows = statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
         rows.collect::<rusqlite::Result<_>>()?
     };
-    let catalog = Catalog::load(&tx)?;
+    let catalog = Catalog::load(tx)?;
     for (write, host, old) in checks {
-        match store::queued_write(&tx, &write)?.and_then(|row| row.verdict) {
+        match store::queued_write(tx, &write)?.and_then(|row| row.verdict) {
             Some(Verdict::Accepted | Verdict::Merged | Verdict::Conflicted) => {
                 // A body that lost is not the item's, and the one kept is its
                 // writer's to read.
-                if !lost_on_body(&tx, &write)?
-                    && let Some(item) = store::item_by_id(&tx, &host)?
+                if !lost_on_body(tx, &write)?
+                    && let Some(item) = store::item_by_id(tx, &host)?
                 {
-                    let latest = latest_body_write(&tx, &host)?.unwrap_or(write.clone());
-                    derive(&tx, &catalog, &old, &item, &latest)?;
+                    let latest = latest_body_write(tx, &host)?.unwrap_or(write.clone());
+                    derive(tx, &catalog, &old, &item, &latest)?;
                 }
             }
             Some(Verdict::Refused) => {}
-            None if store::queued_write(&tx, &write)?.is_none() => {}
+            None if store::queued_write(tx, &write)?.is_none() => {}
             _ => continue,
         }
         tx.execute("DELETE FROM body_checks WHERE write_id = ?1", [&write])?;
     }
-    release_pins(&tx)?;
-    tx.commit()?;
+    release_pins(tx)?;
     Ok(())
 }
 

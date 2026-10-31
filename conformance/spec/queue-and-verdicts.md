@@ -1494,6 +1494,28 @@ If a caller names an id that no write in the queue carries, then a device MUST i
 
 **Tests:** `device/queue.test.ts › clears only the answered writes it is told to, and keeps every other answered write`.
 
+### `queue-and-verdicts/take-answered`
+
+When a caller takes the answered writes, a device MUST take out of the queue exactly the writes that clearing the answered writes would take out at that moment.
+
+**Reason:** a take is a clear that also returns what it cleared, so it keeps what a clear keeps, such as a refused write that carried content (`queue-and-verdicts/clear-keeps-content`).
+
+**Tests:** `device/binding-queue.test.ts › takes out of the queue what a clearing takes, returns each as the queue showed it, and keeps a refused write's content`, `› takes a refused write that carried no content, and leaves a write the drain has not answered`, `› clears what clearing the answered writes clears, on a second device in the same state`.
+
+### `queue-and-verdicts/take-returns-taken`
+
+When a caller takes the answered writes, a device MUST return each write it took out of the queue, as the queue reported it before the take, and no other write.
+
+**Tests:** `device/binding-queue.test.ts › takes out of the queue what a clearing takes, returns each as the queue showed it, and keeps a refused write's content`.
+
+### `queue-and-verdicts/take-once`
+
+When two callers take the answered writes at the same time, a device MUST return each write taken to only one of them.
+
+**Reason:** two windows, or a drain report and a refresh, that each read the answers and then clear them can both show one answer, or clear one the other has not shown yet.
+
+**Tests:** `device/binding-queue.test.ts › returns each answer to only one of two takes at once, and every answer to one of them`.
+
 ### `queue-and-verdicts/queue-shows-body`
 
 A device MUST report in the queue the body each write carries, as it was or will be sent.
