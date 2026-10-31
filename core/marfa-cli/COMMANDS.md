@@ -2947,7 +2947,7 @@ Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 
 ### marfa device items link-parts
 
-The `[[links]]` in a text, in order and repeats included, each with its name, heading and alias and where each sits in the text, counted in UTF-16 code units. A link in code or a comment, an embed and a `[[` that a line break or another `[[` comes before its `]]` are not links. Reads no copy.
+The `[[links]]` in a text, in order and repeats included, each with its name, heading and alias and where each sits in the text, counted in UTF-16 code units. A link in code or a comment, an embed, and a `[[` followed by a line break or another `[[` before its `]]` are not links. Reads no copy.
 
 ```text
 marfa device items link-parts [OPTIONS] [TEXT]
