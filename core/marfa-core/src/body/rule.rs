@@ -1,7 +1,9 @@
 //! A body written through a working copy, read as the edges it names: a
-//! `references` edge for each link, and a file item's `attached-to` edge for
-//! each embed of a file. A folder reads its own files and keeps its own
-//! record, so the edges its sync makes do not come through here.
+//! `references` edge for each link and for each embed of a file. An embed
+//! shows a file and attaches nothing: whether the file is part of the item
+//! is its `attached-to` edge, which a body neither makes nor takes away. A
+//! folder reads its own files and keeps its own record, so the edges its
+//! sync makes do not come through here.
 
 use std::cell::OnceCell;
 use std::collections::BTreeMap;
@@ -178,6 +180,30 @@ fn candidate(conn: &Connection, catalog: &Catalog, item: &Item) -> Result<Candid
     })
 }
 
+/// The file items `host` already references, a link or an embed's edge, that
+/// the copy holds outside the bin and `attached` does not list.
+fn referenced_files(
+    conn: &Connection,
+    catalog: &Catalog,
+    host: &str,
+    attached: &[Candidate],
+) -> Result<Vec<Candidate>> {
+    let mut found: Vec<Candidate> = Vec::new();
+    for other in references_of(conn, host)? {
+        if attached.iter().chain(&found).any(|held| held.id == other) {
+            continue;
+        }
+        if !store::in_bin(conn, &other)?
+            && let Some(item) = store::item_by_id(conn, &other)?
+            && catalog.matches(FILE_TYPE, &item.r#type)
+            && bytes_of(&item, catalog).is_some()
+        {
+            found.push(candidate(conn, catalog, &item)?);
+        }
+    }
+    Ok(found)
+}
+
 /// The file items attached to `host` that the copy holds, outside the bin.
 fn attachments(conn: &Connection, catalog: &Catalog, host: &str) -> Result<Vec<Candidate>> {
     let mut found: Vec<Candidate> = Vec::new();
@@ -252,8 +278,9 @@ fn pick(candidates: &[Candidate], host_paths: &[String], name: &str, by_name: bo
         .collect())
 }
 
-/// How a body's embeds are read against the copy, the held file items
-/// loaded only for an embed its attachments do not answer.
+/// How a body's embeds are read against the copy: its attachments first,
+/// then the files it already references, the held file items loaded only for
+/// an embed neither answers.
 /// `files` may be shared by the bodies of many hosts read against one
 /// catalog.
 struct Embeds<'c> {
@@ -261,6 +288,7 @@ struct Embeds<'c> {
     catalog: &'c Catalog,
     host_paths: Vec<String>,
     attachments: Vec<Candidate>,
+    referenced: Vec<Candidate>,
     files: &'c OnceCell<Vec<Candidate>>,
 }
 
@@ -271,13 +299,24 @@ impl<'c> Embeds<'c> {
         files: &'c OnceCell<Vec<Candidate>>,
         host: &str,
     ) -> Result<Embeds<'c>> {
+        let attachments = attachments(conn, catalog, host)?;
         Ok(Embeds {
             conn,
             catalog,
             host_paths: Placements.of(conn, host)?,
-            attachments: attachments(conn, catalog, host)?,
+            referenced: referenced_files(conn, catalog, host, &attachments)?,
+            attachments,
             files,
         })
+    }
+
+    /// The file the host's own edges say an embed names: an attachment, or
+    /// else a file the host references.
+    fn held(&self, name: &str, by_name: bool) -> Pick {
+        match pick(&self.attachments, &self.host_paths, name, by_name) {
+            Pick::None => pick(&self.referenced, &self.host_paths, name, by_name),
+            picked => picked,
+        }
     }
 
     fn files(&self) -> Result<&[Candidate]> {
@@ -288,7 +327,7 @@ impl<'c> Embeds<'c> {
     }
 
     /// `None` for an embed of a note, which is text. Otherwise the file
-    /// item an attachment says, or what the copy alone can say of it.
+    /// item the host's edges say, or what the copy alone can say of it.
     fn offline(&self, embed: &Embed) -> Result<Option<(String, Resolved)>> {
         let Some((name, by_name)) = read_as(embed) else {
             return Ok(match embed {
@@ -301,7 +340,7 @@ impl<'c> Embeds<'c> {
         if is_note(name) {
             return Ok(None);
         }
-        let resolved = match pick(&self.attachments, &self.host_paths, name, by_name) {
+        let resolved = match self.held(name, by_name) {
             Pick::One(id) => Resolved::Found { id, r#type: None },
             Pick::Many => Resolved::Ambiguous,
             Pick::None => match pick(self.files()?, &self.host_paths, name, by_name) {
@@ -394,34 +433,21 @@ fn references_of(conn: &Connection, host: &str) -> Result<Vec<String>> {
         .collect())
 }
 
-/// The edge of `kind` between the item and `other`, as the copy holds it.
-fn held_edges(conn: &Connection, kind: Kind, host: &str, other: &str) -> Result<Vec<Edge>> {
-    Ok(match kind {
-        Kind::Link => store::edges_from(conn, host)?
-            .into_iter()
-            .filter(|edge| edge.edge_type == LINK_EDGE && edge.target_id == other)
-            .collect(),
-        Kind::Embed => store::edges_to(conn, host)?
-            .into_iter()
-            .filter(|edge| edge.edge_type == ATTACHMENT_EDGE && edge.source_id == other)
-            .collect(),
-    })
+/// The `references` edge from the item to `other` that a link or an embed
+/// of it stands for, as the copy holds it.
+fn held_edges(conn: &Connection, host: &str, other: &str) -> Result<Vec<Edge>> {
+    Ok(store::edges_from(conn, host)?
+        .into_iter()
+        .filter(|edge| edge.edge_type == LINK_EDGE && edge.target_id == other)
+        .collect())
 }
 
-fn draft(kind: Kind, host: &str, other: &str) -> EdgeDraft {
-    match kind {
-        Kind::Link => EdgeDraft {
-            source_id: host.to_string(),
-            target_id: other.to_string(),
-            edge_type: LINK_EDGE.into(),
-            ..Default::default()
-        },
-        Kind::Embed => EdgeDraft {
-            source_id: other.to_string(),
-            target_id: host.to_string(),
-            edge_type: ATTACHMENT_EDGE.into(),
-            ..Default::default()
-        },
+fn draft(host: &str, other: &str) -> EdgeDraft {
+    EdgeDraft {
+        source_id: host.to_string(),
+        target_id: other.to_string(),
+        edge_type: LINK_EDGE.into(),
+        ..Default::default()
     }
 }
 
@@ -553,7 +579,7 @@ fn made_to(
     if store::in_bin(conn, &other)? {
         return Ok(None);
     }
-    Ok((!held_edges(conn, kind, host, &other)?.is_empty()).then_some(other))
+    Ok((!held_edges(conn, host, &other)?.is_empty()).then_some(other))
 }
 
 /// `resolved`, or the item the name was made to where it is not found.
@@ -583,11 +609,14 @@ struct Read {
 }
 
 impl Read {
-    fn targets(&self, kind: Kind) -> Vec<String> {
-        let mut targets: Vec<String> = Vec::new();
-        for (of, _, other) in &self.found {
-            if *of == kind && !targets.contains(other) {
-                targets.push(other.clone());
+    /// Each item the body's links and embeds name, once, with the kind of
+    /// the first to name it: a link and an embed of one item stand for one
+    /// `references` edge.
+    fn targets(&self) -> Vec<(Kind, String)> {
+        let mut targets: Vec<(Kind, String)> = Vec::new();
+        for (kind, _, other) in &self.found {
+            if !targets.iter().any(|(_, held)| held == other) {
+                targets.push((*kind, other.clone()));
             }
         }
         targets
@@ -704,33 +733,34 @@ pub(crate) fn derive(
         Reading::Written(Some(&kept)),
     )?;
     let waits: Vec<String> = unanswered(conn, Some(write))?.into_iter().collect();
-    for kind in [Kind::Link, Kind::Embed] {
-        let (had, now) = (had.targets(kind), now.targets(kind));
-        for other in &now {
-            if held_edges(conn, kind, host, other)?.is_empty() {
-                let queued = crate::queue_edge(conn, &draft(kind, host, other), &waits)?;
-                remember_edge(
-                    conn,
-                    &queued.id,
-                    host,
-                    kind,
-                    other,
-                    waits.first().map(String::as_str),
-                )?;
-            }
+    let (had, now_targets) = (had.targets(), now.targets());
+    for (kind, other) in &now_targets {
+        if held_edges(conn, host, other)?.is_empty() {
+            let queued = crate::queue_edge(conn, &draft(host, other), &waits)?;
+            remember_edge(
+                conn,
+                &queued.id,
+                host,
+                *kind,
+                other,
+                waits.first().map(String::as_str),
+            )?;
         }
-        for other in had.iter().filter(|other| !now.contains(other)) {
-            for edge in held_edges(conn, kind, host, other)? {
-                let queued = crate::queue_edge_delete(conn, &edge, &waits)?;
-                remember_edge(
-                    conn,
-                    &queued.id,
-                    host,
-                    kind,
-                    other,
-                    waits.first().map(String::as_str),
-                )?;
-            }
+    }
+    for (kind, other) in &had {
+        if now_targets.iter().any(|(_, kept)| kept == other) {
+            continue;
+        }
+        for edge in held_edges(conn, host, other)? {
+            let queued = crate::queue_edge_delete(conn, &edge, &waits)?;
+            remember_edge(
+                conn,
+                &queued.id,
+                host,
+                *kind,
+                other,
+                waits.first().map(String::as_str),
+            )?;
         }
     }
     release_pins(conn)?;
@@ -803,8 +833,9 @@ pub(crate) fn derive_on_answer(
     Ok(())
 }
 
-/// The items whose bodies link to `id` or embed it: the sources of its
-/// `references` edges and the targets of its `attached-to` edges.
+/// The items whose bodies link to `id` or embed it, or may: the sources of
+/// its `references` edges, and the items it is attached to, whose embeds read
+/// their attachments first.
 fn linking(conn: &Connection, id: &str) -> Result<Vec<String>> {
     let mut statement = conn.prepare(
         "SELECT source_id FROM edges WHERE edge_type = ?1 AND target_id = ?3 AND source_id <> ?3
@@ -868,8 +899,7 @@ fn record_host(conn: &Connection, catalog: &Catalog, host: &str) -> Result<()> {
         Others::held,
     )?;
     for (kind, text, other) in read.found {
-        if !open.contains(&(kind, text.clone())) || held_edges(conn, kind, host, &other)?.is_empty()
-        {
+        if !open.contains(&(kind, text.clone())) || held_edges(conn, host, &other)?.is_empty() {
             return Ok(());
         }
         // The write that left the body carrying the text still did, so a
@@ -963,7 +993,7 @@ pub(crate) fn item_changing(conn: &Connection, id: &str, next: Option<&WireItem>
     record_unrecorded(conn, &catalog, &linking(conn, id)?)
 }
 
-/// Whether any body links to `id` or embeds it.
+/// Whether any body links to `id` or embeds it, or may (`linking`).
 fn linked(conn: &Connection, id: &str) -> Result<bool> {
     Ok(conn
         .prepare_cached(
@@ -995,13 +1025,13 @@ pub(crate) fn before_rebuild(conn: &Connection) -> Result<()> {
 
 /// Called before the copy writes an edge, whoever wrote it. An edge from a
 /// body to an item it did not reference before can make a link's name answer
-/// two of the items it references, and a placement that moves changes the
-/// path its item is named by, so what the affected links name is recorded
-/// first.
+/// two of the items it references, a new attachment can do the same for an
+/// embed, and a placement that moves changes the path its item is named by,
+/// so what the affected links and embeds name is recorded first.
 pub(crate) fn edge_changing(conn: &Connection, edge: &WireEdge) -> Result<()> {
-    let (kind, host, other) = match edge.edge_type.as_str() {
-        LINK_EDGE => (Kind::Link, &edge.source_id, &edge.target_id),
-        ATTACHMENT_EDGE => (Kind::Embed, &edge.target_id, &edge.source_id),
+    let (host, other) = match edge.edge_type.as_str() {
+        LINK_EDGE => (&edge.source_id, &edge.target_id),
+        ATTACHMENT_EDGE => (&edge.target_id, &edge.source_id),
         PLACEMENT_EDGE => {
             let held = store::edge_by_id_with(
                 conn,
@@ -1029,14 +1059,14 @@ pub(crate) fn edge_changing(conn: &Connection, edge: &WireEdge) -> Result<()> {
     if !recording(conn)? || edge_held(conn, &edge.edge_type, &edge.source_id, &edge.target_id)? {
         return Ok(());
     }
-    let others = match kind {
-        Kind::Link => "SELECT 1 FROM edges WHERE source_id = ?1 AND edge_type = ?2 LIMIT 1",
-        Kind::Embed => "SELECT 1 FROM edges WHERE target_id = ?1 AND edge_type = ?2 LIMIT 1",
-    };
-    // With no edge of its kind yet, no link or embed of the body has an edge
-    // to be recorded against.
+    // A link and an embed alike stand for a `references` edge, so with none
+    // yet no link or embed of the body has an edge to be recorded against.
     let any = conn
-        .query_row(others, params![host, edge.edge_type], |_| Ok(()))
+        .query_row(
+            "SELECT 1 FROM edges WHERE source_id = ?1 AND edge_type = ?2 LIMIT 1",
+            params![host, LINK_EDGE],
+            |_| Ok(()),
+        )
         .optional()?
         .is_some();
     if !any || other == host {
@@ -1128,6 +1158,10 @@ fn unanswered(conn: &Connection, write: Option<&str>) -> Result<Option<String>> 
 }
 
 const RECHECK: &str = "body_recheck";
+
+/// Set once the copy has read every body it holds under the rule that an
+/// embed is a `references` edge.
+const REDERIVED: &str = "body_embeds_references";
 
 /// Notes that the copy's rows changed while a name waits that the server
 /// answered naming nothing or more than one item, so the next pass counts
@@ -1289,7 +1323,7 @@ fn embed_online(
         let Some((name, by_name)) = read_as(embed) else {
             return Ok(None);
         };
-        let local = match pick(&reader.attachments, &reader.host_paths, name, by_name) {
+        let local = match reader.held(name, by_name) {
             Pick::One(id) => return Ok(Some((Resolved::Found { id, r#type: None }, 1))),
             Pick::Many => return Ok(Some((Resolved::Ambiguous, 2))),
             Pick::None => match pick(reader.files()?, &reader.host_paths, name, by_name) {
@@ -1343,8 +1377,7 @@ fn settle_one(core: &Core, row: &Row, resolved: Resolved, held: i64) -> Result<(
         return Ok(());
     }
     // Pinned, as a folder pins the other end of a line, so the copy can say
-    // what the name names offline; and the file item's own row is where an
-    // `attached-to` edge starts, which a copy holds only from a held row.
+    // what the name names offline.
     if core.get(&found)?.is_none() {
         match core.pin(&found) {
             Ok(false) => {
@@ -1361,11 +1394,11 @@ fn settle_one(core: &Core, row: &Row, resolved: Resolved, held: i64) -> Result<(
     let mut conn = core.conn()?;
     let tx = conn.transaction()?;
     if unchanged(&tx, row)? {
-        if held_edges(&tx, row.kind, &row.item_id, &found)?.is_empty() {
+        if held_edges(&tx, &row.item_id, &found)?.is_empty() {
             let waits: Vec<String> = unanswered(&tx, row.write_id.as_deref())?
                 .into_iter()
                 .collect();
-            let queued = crate::queue_edge(&tx, &draft(row.kind, &row.item_id, &found), &waits)?;
+            let queued = crate::queue_edge(&tx, &draft(&row.item_id, &found), &waits)?;
             remember_edge(
                 &tx,
                 &queued.id,
@@ -1420,7 +1453,83 @@ pub(crate) fn has_answer_work(conn: &Connection) -> Result<bool> {
         [],
         |row| row.get(0),
     )?;
-    Ok(tracked || !releasable_pins(conn)?.is_empty())
+    Ok(tracked || !releasable_pins(conn)?.is_empty() || rederive_due(conn)?)
+}
+
+/// Whether the copy is still to read its bodies once under the rule that an
+/// embed is a `references` edge (`device/body-embed-rederived`), and can: it
+/// holds a body that embeds something, and is whole, since a copy that is
+/// not takes no edge write. A folder's store keeps its own record and has
+/// nothing to read.
+fn rederive_due(conn: &Connection) -> Result<bool> {
+    if store::meta_get(conn, REDERIVED)?.is_some()
+        || store::meta_get(conn, crate::folder::settings_file::META_FOLDER)?.is_some()
+        || store::refuse_unless_whole(conn).is_err()
+    {
+        return Ok(false);
+    }
+    Ok(conn.query_row(
+        "SELECT EXISTS (SELECT 1 FROM items
+                         WHERE state IN ('active', 'archived') AND instr(properties, '![') > 0)",
+        [],
+        |row| row.get(0),
+    )?)
+}
+
+/// Reads, once, every body the copy holds that embeds something, and queues
+/// the `references` edge of each embed of a file that has none. An embed
+/// once made the file's `attached-to` edge, which stays: whether the file is
+/// part of the item is no longer the body's to say. Nothing is taken out.
+/// Each create is tracked as a body's, so where another device made the same
+/// edge first the server's duplicate refusal settles it as one edge.
+fn rederive(conn: &Connection) -> Result<()> {
+    if !rederive_due(conn)? {
+        return Ok(());
+    }
+    let catalog = Catalog::load(conn)?;
+    let ids: Vec<String> = {
+        let mut statement = conn.prepare(
+            "SELECT id FROM items
+              WHERE state IN ('active', 'archived') AND instr(properties, '![') > 0
+              ORDER BY id",
+        )?;
+        let rows = statement.query_map([], |row| row.get(0))?;
+        rows.collect::<rusqlite::Result<_>>()?
+    };
+    for host in ids {
+        match rederive_host(conn, &catalog, &host) {
+            // A row whose stored properties cannot be read, the host's or one
+            // its reading reaches, keeps the edges it has.
+            Err(error) if store::unreadable(&error) => {}
+            other => other?,
+        }
+    }
+    store::meta_set(conn, REDERIVED, "1")
+}
+
+fn rederive_host(conn: &Connection, catalog: &Catalog, host: &str) -> Result<()> {
+    let Some(item) = store::item_by_id(conn, host)? else {
+        return Ok(());
+    };
+    let body = body_of(catalog, &item);
+    if text::embeds(body).is_empty() {
+        return Ok(());
+    }
+    let read = read_offline(
+        conn,
+        catalog,
+        host,
+        body,
+        &recorded(conn, host)?,
+        Reading::Previous,
+    )?;
+    for (kind, other) in read.targets() {
+        if kind == Kind::Embed && held_edges(conn, host, &other)?.is_empty() {
+            let queued = crate::queue_edge(conn, &draft(host, &other), &[])?;
+            remember_edge(conn, &queued.id, host, kind, &other, None)?;
+        }
+    }
+    Ok(())
 }
 
 /// Why a body's edge write must not go, where the body's write it was made
@@ -1489,15 +1598,13 @@ pub(crate) fn after_answers_of(conn: &mut Connection, named: Option<&[String]>) 
 
 /// `after_answers_of`, inside a transaction the caller holds.
 pub(crate) fn after_answers_in(tx: &Connection, named: Option<&[String]>) -> Result<()> {
-    let made: Vec<(String, String, String, String)> = {
-        let mut statement =
-            tx.prepare("SELECT write_id, item_id, kind, other_id FROM body_edges")?;
-        let rows = statement.query_map([], |row| {
-            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
-        })?;
+    rederive(tx)?;
+    let made: Vec<(String, String, String)> = {
+        let mut statement = tx.prepare("SELECT write_id, item_id, other_id FROM body_edges")?;
+        let rows = statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
         rows.collect::<rusqlite::Result<_>>()?
     };
-    for (write, host, kind, other) in made {
+    for (write, host, other) in made {
         let row = store::queued_write(tx, &write)?;
         let done = match row.as_ref().and_then(|row| row.verdict) {
             None if row.is_none() => true,
@@ -1520,7 +1627,7 @@ pub(crate) fn after_answers_in(tx: &Connection, named: Option<&[String]>) -> Res
                         .and_then(|refusal| refusal.message.clone())
                         .or_else(|| row.reason.clone())
                         .unwrap_or_else(|| "refused".into());
-                    refuse_names_of(tx, &host, Kind::parse(&kind), &other, &reason)?;
+                    refuse_names_of(tx, &host, &other, &reason)?;
                     true
                 }
             }
@@ -1579,17 +1686,11 @@ fn latest_body_write(conn: &Connection, host: &str) -> Result<Option<String>> {
         .optional()?)
 }
 
-/// Every name in the host's body that reads as `other` takes the refusal of
-/// the edge it asked for.
-fn refuse_names_of(
-    conn: &Connection,
-    host: &str,
-    kind: Kind,
-    other: &str,
-    reason: &str,
-) -> Result<()> {
+/// Every link and embed in the host's body that reads as `other` takes the
+/// refusal of the edge it asked for, which stands for all of them.
+fn refuse_names_of(conn: &Connection, host: &str, other: &str, reason: &str) -> Result<()> {
     for row in rows_of(conn, host)? {
-        if row.kind == kind && row.other_id.as_deref() == Some(other) {
+        if row.other_id.as_deref() == Some(other) {
             put_row(
                 conn,
                 &Row {
@@ -2559,6 +2660,7 @@ mod tests {
             .unwrap();
         as_the_server_s(&core);
         land_remote_body(&core, &host, "![[photo.png]]");
+        land_remote_edge(&core, link_edge(&host, &file));
         edit(&core, &file, serde_json::json!({ "title": "renamed.png" }));
         assert_eq!(
             targets(&core.body_links(&host).unwrap().embeds),
@@ -2661,7 +2763,7 @@ mod tests {
         let core = copy(&dir);
         let gone = note(&core, "Plan", "");
         let host = note(&core, "Host", "");
-        core.create_edge(&draft(Kind::Link, &host, &gone)).unwrap();
+        core.create_edge(&draft(&host, &gone)).unwrap();
         edit(&core, &host, serde_json::json!({ "body": "see [[Plan]]" }));
         assert_eq!(recorded_texts(&core, &host), vec!["Plan".to_string()]);
         as_the_server_s(&core);
@@ -2758,6 +2860,7 @@ mod tests {
         attached.version = 1;
         land_remote_edge(&core, attached);
         land_remote_body(&core, &host, "![[photo.png]]");
+        land_remote_edge(&core, link_edge(&host, &file));
         second.properties.insert("blob_ref".into(), blob);
         second.version = 2;
         second.updated_at = "2026-01-02T00:00:00Z".into();
@@ -2965,7 +3068,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let core = copy(&dir);
         let (host, plan, taker) = plan_renamed_and_taken(&core, "Plan");
-        core.create_edge(&draft(Kind::Link, &host, &taker)).unwrap();
+        core.create_edge(&draft(&host, &taker)).unwrap();
         core.conn()
             .unwrap()
             .execute("DELETE FROM queue", [])
@@ -3000,8 +3103,7 @@ mod tests {
             &host,
             serde_json::json!({ "body": format!("[[{absent}]]") }),
         );
-        core.create_edge(&draft(Kind::Link, &host, &titled))
-            .unwrap();
+        core.create_edge(&draft(&host, &titled)).unwrap();
         put_row(
             &core.conn().unwrap(),
             &Row {
@@ -3226,9 +3328,9 @@ mod tests {
             serde_json::json!({ "body": "![[photo 2.png]] and ![](photo%202.png)" }),
         );
         assert_eq!(
-            edge_writes(&core).len(),
-            before,
-            "the embed made a second edge"
+            edge_writes(&core)[before..],
+            [(WriteKind::CreateEdge, host.clone(), files[1].clone())],
+            "two embeds of one file made other than its one reference"
         );
         let embeds = core.body_links(&host).unwrap().embeds;
         assert_eq!(
@@ -3246,16 +3348,230 @@ mod tests {
         let deleted = edge_writes(&core).pop().unwrap();
         assert_eq!(
             deleted,
-            (WriteKind::DeleteEdge, files[1].clone(), host.clone()),
-            "taking the embed out left its edge"
+            (WriteKind::DeleteEdge, host.clone(), files[1].clone()),
+            "taking the embed out left its reference"
         );
-        assert!(
-            core.edges_to(&host)
-                .unwrap()
-                .iter()
-                .any(|edge| edge.source_id == files[0]),
-            "an attachment no body embedded was removed"
+        assert_eq!(
+            held_in(&core, &host, ATTACHMENT_EDGE).len(),
+            3,
+            "taking an embed out took an attachment away"
         );
+    }
+
+    /// The targets of `host`'s edges of `edge_type`, and the sources of the
+    /// edges of that type to it, as the copy holds them.
+    fn held_out(core: &Core, host: &str, edge_type: &str) -> Vec<String> {
+        core.edges_from(host)
+            .unwrap()
+            .into_iter()
+            .filter(|edge| edge.edge_type == edge_type)
+            .map(|edge| edge.target_id)
+            .collect()
+    }
+
+    fn held_in(core: &Core, host: &str, edge_type: &str) -> Vec<String> {
+        core.edges_to(host)
+            .unwrap()
+            .into_iter()
+            .filter(|edge| edge.edge_type == edge_type)
+            .map(|edge| edge.source_id)
+            .collect()
+    }
+
+    /// A host with `photo.png` attached to it, as an attach makes it.
+    fn host_with_attachment(core: &Core, dir: &tempfile::TempDir) -> (String, String) {
+        let host = note(core, "Host", "");
+        let photo = dir.path().join("photo.png");
+        std::fs::write(&photo, b"not really a png").unwrap();
+        let file = core
+            .attach(&host, &photo, &Attachment::default())
+            .unwrap()
+            .item
+            .item_id
+            .unwrap();
+        (host, file)
+    }
+
+    #[test]
+    fn an_embed_by_name_or_by_path_is_a_references_edge_and_attaches_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = copy(&dir);
+        let (host, file) = host_with_attachment(&core, &dir);
+        let attaches = edge_writes(&core).len();
+        edit(
+            &core,
+            &host,
+            serde_json::json!({ "body": "![[photo.png]]" }),
+        );
+        assert_eq!(
+            edge_writes(&core)[attaches..],
+            [(WriteKind::CreateEdge, host.clone(), file.clone())],
+            "the embed queued no edge from the item to the file"
+        );
+        assert_eq!(held_out(&core, &host, LINK_EDGE), [file.clone()]);
+        assert_eq!(held_in(&core, &host, ATTACHMENT_EDGE), [file.clone()]);
+        edit(
+            &core,
+            &host,
+            serde_json::json!({ "body": "![](photo.png)" }),
+        );
+        assert_eq!(
+            edge_writes(&core).len(),
+            attaches + 1,
+            "the same file embedded by its path churned its edge"
+        );
+        assert_eq!(
+            targets(&core.body_links(&host).unwrap().embeds),
+            vec![BodyTarget::Item { id: file }]
+        );
+    }
+
+    #[test]
+    fn taking_an_embed_out_takes_its_reference_and_leaves_the_attachment() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = copy(&dir);
+        let (host, file) = host_with_attachment(&core, &dir);
+        edit(
+            &core,
+            &host,
+            serde_json::json!({ "body": "![[photo.png]]" }),
+        );
+        // The witness: the embed made its reference.
+        assert_eq!(held_out(&core, &host, LINK_EDGE), [file.clone()]);
+        edit(&core, &host, serde_json::json!({ "body": "text alone" }));
+        assert_eq!(
+            edge_writes(&core).pop().unwrap(),
+            (WriteKind::DeleteEdge, host.clone(), file.clone()),
+            "taking the embed out did not take its reference"
+        );
+        assert!(held_out(&core, &host, LINK_EDGE).is_empty());
+        assert_eq!(
+            held_in(&core, &host, ATTACHMENT_EDGE),
+            [file],
+            "taking the embed out took the attachment"
+        );
+    }
+
+    #[test]
+    fn taking_the_attachment_away_leaves_the_embed_s_reference() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = copy(&dir);
+        let (host, file) = host_with_attachment(&core, &dir);
+        edit(
+            &core,
+            &host,
+            serde_json::json!({ "body": "![[photo.png]]" }),
+        );
+        let attachment = core
+            .edges_to(&host)
+            .unwrap()
+            .into_iter()
+            .find(|edge| edge.edge_type == ATTACHMENT_EDGE)
+            .unwrap();
+        core.delete_edge(&attachment.id).unwrap();
+        assert!(held_in(&core, &host, ATTACHMENT_EDGE).is_empty());
+        assert_eq!(held_out(&core, &host, LINK_EDGE), [file.clone()]);
+        edit(
+            &core,
+            &host,
+            serde_json::json!({ "body": "![[photo.png]] and more" }),
+        );
+        assert_eq!(
+            held_out(&core, &host, LINK_EDGE),
+            [file.clone()],
+            "an edit elsewhere in the body took the embed's reference"
+        );
+        assert_eq!(
+            targets(&core.body_links(&host).unwrap().embeds),
+            vec![BodyTarget::Item { id: file }],
+            "an embed of a file the item references and has not attached names nothing"
+        );
+    }
+
+    #[test]
+    fn taking_out_an_embed_keeps_the_reference_a_link_to_the_same_file_makes() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = copy(&dir);
+        let (host, file) = host_with_attachment(&core, &dir);
+        edit(
+            &core,
+            &host,
+            serde_json::json!({ "body": format!("![[photo.png]] [[{file}]]") }),
+        );
+        let made = edge_writes(&core).len();
+        assert_eq!(held_out(&core, &host, LINK_EDGE), [file.clone()]);
+        edit(
+            &core,
+            &host,
+            serde_json::json!({ "body": format!("[[{file}]]") }),
+        );
+        assert_eq!(
+            edge_writes(&core).len(),
+            made,
+            "taking the embed out took the edge the link still makes"
+        );
+        assert_eq!(held_out(&core, &host, LINK_EDGE), [file]);
+    }
+
+    /// A host whose body embeds a file attached to it, as the earlier rule
+    /// left it: the attachment and no reference.
+    fn embedded_by_the_earlier_rule(core: &Core, dir: &tempfile::TempDir) -> (String, String) {
+        let (host, file) = host_with_attachment(core, dir);
+        as_the_server_s(core);
+        land_remote_body(core, &host, "![[photo.png]]");
+        assert!(held_out(core, &host, LINK_EDGE).is_empty());
+        (host, file)
+    }
+
+    #[test]
+    fn a_copy_reads_its_bodies_once_and_adds_each_embed_s_reference() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = copy(&dir);
+        let (host, file) = embedded_by_the_earlier_rule(&core, &dir);
+        core.conn()
+            .unwrap()
+            .execute("DELETE FROM meta WHERE key = ?1", [REDERIVED])
+            .unwrap();
+        assert!(has_answer_work(&core.conn().unwrap()).unwrap());
+        after_answers(&mut core.conn().unwrap()).unwrap();
+        assert_eq!(
+            edge_writes(&core),
+            [(WriteKind::CreateEdge, host.clone(), file.clone())],
+            "the embed's reference was not added"
+        );
+        assert_eq!(held_out(&core, &host, LINK_EDGE), [file.clone()]);
+        assert_eq!(
+            held_in(&core, &host, ATTACHMENT_EDGE),
+            [file.clone()],
+            "the attachment went"
+        );
+        assert_eq!(
+            targets(&core.body_links(&host).unwrap().embeds),
+            vec![BodyTarget::Item { id: file }]
+        );
+        as_the_server_s(&core);
+        core.conn()
+            .unwrap()
+            .execute("DELETE FROM edges WHERE edge_type = ?1", [LINK_EDGE])
+            .unwrap();
+        after_answers(&mut core.conn().unwrap()).unwrap();
+        assert!(edge_writes(&core).is_empty(), "the bodies were read again");
+        assert!(!has_answer_work(&core.conn().unwrap()).unwrap());
+    }
+
+    #[test]
+    fn a_copy_that_holds_an_embed_s_reference_adds_none() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = copy(&dir);
+        let (host, file) = embedded_by_the_earlier_rule(&core, &dir);
+        land_remote_edge(&core, link_edge(&host, &file));
+        core.conn()
+            .unwrap()
+            .execute("DELETE FROM meta WHERE key = ?1", [REDERIVED])
+            .unwrap();
+        after_answers(&mut core.conn().unwrap()).unwrap();
+        assert!(edge_writes(&core).is_empty());
+        assert_eq!(held_out(&core, &host, LINK_EDGE), [file]);
     }
 
     #[test]
