@@ -1299,8 +1299,12 @@ describe("what a pull does with a file whose item stops matching", () => {
 
   /** A folder holding one item, and a stream that trashes it and then
    *  restores it. */
-  async function departure(label: string): Promise<FolderHarness> {
+  async function departure(
+    label: string,
+    files?: Record<string, string>,
+  ): Promise<FolderHarness> {
     return folderHarness(label, {
+      files,
       rows: { "core.note": [{ item: departed }] },
       events: [
         copyReplay("2", [
@@ -1376,6 +1380,84 @@ describe("what a pull does with a file whose item stops matching", () => {
       read(harness, "going.md"),
       "a restored item did not come back as a file",
     ).toContain("body");
+  });
+
+  /** The file a pull writes for `departed`, as a folder added later over
+   *  the same directory finds it: byte for byte its item's render, written
+   *  by a copy the new folder does not have. */
+  async function departedAsRendered(label: string): Promise<string> {
+    const earlier = await departure(`${label}-earlier`);
+    try {
+      scriptFolderWrites(earlier);
+      const pulled = await earlier.folder.pull();
+      expect(pulled.ok && pulled.value.written).toBe(1);
+      return read(earlier, "going.md");
+    } finally {
+      await earlier.stop();
+    }
+  }
+
+  /** A folder added over `departed`'s rendered file, whose first pull
+   *  leaves the file as it is. */
+  async function addedOverItsRender(label: string): Promise<FolderHarness> {
+    const rendered = await departedAsRendered(label);
+    expect(rendered).toContain(departed.id);
+    const added = await departure(label, { "going.md": rendered });
+    scriptFolderWrites(added);
+    const first = await added.folder.pull();
+    expect(first.ok).toBe(true);
+    if (first.ok) {
+      expect(
+        first.value.written + first.value.rewritten,
+        "the file is not the item's render, so nothing below is about a file the folder found as it renders",
+      ).toBe(0);
+    }
+    expect(read(added, "going.md")).toBe(rendered);
+    return added;
+  }
+
+  it("removes the file of an item put in the bin that it found as its item renders", async () => {
+    harness = await addedOverItsRender("folder-found-trashed");
+    const caught = await harness.folder.device().catchUp();
+    expect(caught.ok ? caught.value.applied : 0).toBe(1);
+    const pulled = await harness.folder.pull();
+    expect(pulled.ok).toBe(true);
+    if (!pulled.ok) return;
+    expect(
+      [pulled.value.removed, pulled.value.kept],
+      "the file of an item in the bin stayed, because this copy never wrote the bytes it found",
+    ).toEqual([1, 0]);
+    expect(existsSync(join(harness.dir, "going.md"))).toBe(false);
+  });
+
+  it("trashes the item of a file it found as its item renders once the person deletes it", async () => {
+    harness = await addedOverItsRender("folder-found-deleted");
+    rmSync(join(harness.dir, "going.md"));
+    const scanned = await harness.folder.scan();
+    expect(scanned.ok && scanned.value.missing).toBe(1);
+    const pulled = await harness.folder.pull();
+    expect(pulled.ok).toBe(true);
+    if (!pulled.ok) return;
+    expect(
+      pulled.value.revived + pulled.value.written + pulled.value.rewritten,
+      "the person's delete was written back as a change made elsewhere",
+    ).toBe(0);
+    expect(existsSync(join(harness.dir, "going.md"))).toBe(false);
+
+    await new Promise((resolve) => setTimeout(resolve, 6_000));
+    const swept = await harness.folder.scan();
+    expect(swept.ok).toBe(true);
+    if (!swept.ok) return;
+    expect(swept.value.deleted).toBe(1);
+    const queued = await harness.folder.device().queue();
+    expect(queued.ok).toBe(true);
+    if (!queued.ok) return;
+    expect(
+      queued.value
+        .filter((row) => row.kind === "delete_item")
+        .map((row) => row.item_id),
+      "the person's delete was never sent, and the item stays active on every other device",
+    ).toEqual([departed.id]);
   });
 
   /** A folder whose stream is the edge door's, holding `departed` placed at
