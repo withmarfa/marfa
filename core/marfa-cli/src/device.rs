@@ -653,6 +653,24 @@ pub enum EdgesCommand {
         #[arg(long)]
         id: Option<String>,
     },
+    /// Say whether `edges create` would refuse an edge now, from what the copy holds, and queue nothing. The server still judges an edge the copy finds nothing against.
+    Check {
+        /// The item the edge starts from.
+        #[arg(long, value_name = "ID")]
+        source: String,
+        /// The item the edge points at.
+        #[arg(long, value_name = "ID")]
+        target: String,
+        /// The edge type.
+        #[arg(long = "type", value_name = "TYPE")]
+        type_: String,
+        /// The edge's properties, as a JSON object.
+        #[arg(long, value_name = "JSON", default_value = "{}")]
+        properties: String,
+        /// The id it would be minted under.
+        #[arg(long)]
+        id: Option<String>,
+    },
     /// Change an edge's properties, or move one of its ends. An edit that names no property and no new end queues no write.
     Update {
         /// The edge id.
@@ -1642,6 +1660,26 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
                         id,
                     };
                     output::queued_one(&core.create_edge(&draft)?, json)
+                }
+                EdgesCommand::Check {
+                    source,
+                    target,
+                    type_,
+                    properties: props,
+                    id,
+                } => {
+                    let draft = EdgeDraft {
+                        source_id: source,
+                        target_id: target,
+                        edge_type: type_,
+                        properties: item_properties(&props)?,
+                        id,
+                    };
+                    core.check_edge(&draft)?;
+                    output::report(&serde_json::json!({ "refused": false }), json, || {
+                        "the copy finds nothing to refuse; the server judges the edge once it is sent"
+                            .to_string()
+                    })
                 }
                 EdgesCommand::Update {
                     id,

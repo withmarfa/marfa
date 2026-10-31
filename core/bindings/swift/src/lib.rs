@@ -700,6 +700,11 @@ pub struct EdgeType {
     pub cascade_on_delete: String,
     pub properties: Vec<TypeField>,
     pub shipped: bool,
+    /// Whether the server refuses an edge of this type that closes a cycle
+    /// through other edges of the type.
+    pub acyclic: bool,
+    /// Whether the server refuses a source its own target constraints admit.
+    pub flat: bool,
 }
 
 /// A server's two catalogs as it lists them now.
@@ -765,6 +770,8 @@ impl From<marfa_core::EdgeType> for EdgeType {
             cascade_on_delete: held.cascade_on_delete,
             properties: held.properties.into_iter().map(Into::into).collect(),
             shipped: held.shipped,
+            acyclic: held.acyclic,
+            flat: held.flat,
         }
     }
 }
@@ -2716,6 +2723,20 @@ impl Core {
         queued(self.inner.transition_item(&id, state.into())?)
     }
 
+    /// Throws the error `create_edge` would throw for `draft` now, and
+    /// queues nothing. Returning is not the server's verdict, which a queued
+    /// edge still meets.
+    pub fn check_edge(&self, draft: EdgeDraft) -> Result<(), MarfaError> {
+        let draft = marfa_core::EdgeDraft {
+            properties: draft.properties.into_map()?,
+            source_id: draft.source_id,
+            target_id: draft.target_id,
+            edge_type: draft.edge_type,
+            id: draft.id,
+        };
+        Ok(self.inner.check_edge(&draft)?)
+    }
+
     /// Links two items. An edge is its own write.
     pub fn create_edge(&self, draft: EdgeDraft) -> Result<QueuedWrite, MarfaError> {
         let draft = marfa_core::EdgeDraft {
@@ -3879,6 +3900,8 @@ mod tests {
                 definition: serde_json::json!({ "type": "string" }),
             }],
             shipped: false,
+            acyclic: false,
+            flat: false,
         };
         let crossed = EdgeType::from(held.clone());
         assert_eq!(crossed.reverse_name.as_deref(), Some("mentored-by"));

@@ -327,7 +327,18 @@ it("puts the edge back at its old parent when the server refuses the move for a 
     const middle = await note("middle");
     const bottom = await note("bottom");
     const upper = await parentOf(top, middle);
-    await parentOf(middle, bottom);
+    // The cycle runs through a task outside the slice, and the copy holds no
+    // edge from it, so only the server can see it (`queue-and-verdicts/edge-judged-held`).
+    const between = await client.createItem({
+      type: "core.task",
+      source: ctx.source,
+      tier: "library",
+      properties: { title: "between" },
+    });
+    expect(between.ok, JSON.stringify(between.error)).toBe(true);
+    trackItem(ctx, between.data.item.id);
+    await parentOf(middle, between.data.item.id);
+    await parentOf(between.data.item.id, bottom);
     const device = new CliDevice({
       binary: requireBinary(),
       store,

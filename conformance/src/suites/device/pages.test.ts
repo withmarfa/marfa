@@ -519,14 +519,21 @@ describe("creates in pages", () => {
 
   it("sends no create in a page ahead of a write queued before it that is not a create", async () => {
     const target = "01a00000-0000-7000-8000-0000000000bb";
+    // A row of its own, since an edge to a row in the bin is refused before
+    // it is queued (`queue-and-verdicts/edge-end-in-bin-refused`).
+    const gone = "01a00000-0000-7000-8000-0000000000cc";
     const sources = Array.from(
       { length: 50 },
       (_, at) => `01a00000-0000-7000-8000-${String(at).padStart(12, "0")}`,
     );
-    const made = await start("pages-behind-a-delete", [target, ...sources]);
+    const made = await start("pages-behind-a-delete", [
+      target,
+      gone,
+      ...sources,
+    ]);
     harness = made.harness;
     const { door } = made;
-    const removed = value(await harness.device.deleteItem(target));
+    const removed = value(await harness.device.deleteItem(gone));
     const edges: QueuedWrite[] = [];
     for (const source of sources)
       edges.push(
@@ -543,7 +550,7 @@ describe("creates in pages", () => {
 
     const deletes = harness.server.requests.filter(
       (request) =>
-        request.method === "DELETE" && request.pathname === `/items/${target}`,
+        request.method === "DELETE" && request.pathname === `/items/${gone}`,
     );
     expect(deletes, JSON.stringify(drained)).toHaveLength(1);
     const deleted = deletes[0]?.seq ?? Infinity;

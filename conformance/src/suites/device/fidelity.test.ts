@@ -1925,6 +1925,8 @@ describe("the scripted answers match the server's", () => {
       reverse_name: row?.reverse_name,
       written_at: row?.written_at,
       shipped: row?.shipped,
+      acyclic: row?.acyclic,
+      flat: row?.flat,
     });
     for (const scripted of SCRIPTED_EDGE_TYPES) {
       const real = served.find((row) => row.id === scripted.id);

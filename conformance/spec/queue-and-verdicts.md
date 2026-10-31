@@ -2480,7 +2480,7 @@ When the create a waiting move names as its new end is answered with another row
 
 If an edge edit moves both ends, or moves an end of a type whose end that stays may hold more than one edge of it where the held catalog names that type, then a device MUST refuse it in the `validation` class carrying the server's code `validation_error`, queueing nothing.
 
-**Reason:** the server refuses either body `400 validation_error` whatever its rows hold (`edges/move-many` and `edges/move-both-ends`). A refusal that turns on rows, a second edge at the new end, a cycle through other edges, or a new end the server does not hold, is left to the server, since the copy may not hold the rows that decide it.
+**Reason:** the server refuses either body `400 validation_error` whatever its rows hold (`edges/move-many` and `edges/move-both-ends`). A refusal that turns on rows the copy holds is the copy's to give (`queue-and-verdicts/edge-endpoint-refused` to `queue-and-verdicts/edge-judged-held`); a second edge at the new end, or a new end the server does not hold, is left to the server.
 
 **Tests:** `device/edge-move.test.ts › refuses a move the server refuses whatever its rows hold, queueing nothing`.
 
@@ -2491,3 +2491,57 @@ If an edge create or an edge move would leave the edge running from a row to its
 **Reason:** the server refuses a self-loop `400 edge_cycle` on every edge type, because one edge closes it (`edges/cycle-self-loop` and `edges/move-cycle-self`).
 
 **Tests:** `device/edge-move.test.ts › refuses a move the server refuses whatever its rows hold, queueing nothing`.
+
+## An edge the server would refuse
+
+A device judges an edge write from the catalog, rows and edges its copy holds, as the server judges it, so a caller offline learns of a refusal when it writes and not at the next drain. An edge write here is an edge create, a move of an edge's end and an inline edge of an item create.
+
+### `queue-and-verdicts/edge-endpoint-refused`
+
+If an edge write would leave an end the copy holds, or the item a create makes, of a type that the held catalog says the edge type does not admit at that end, by type, by a type above it or by a role it plays (`edges/endpoint-source`, `edges/endpoint-target` and `edges/endpoint-subtype`), then a device MUST refuse it in the `validation` class carrying the server's code `edge_constraint_violation`, queueing nothing.
+
+**Tests:** `device/edge-checks-live.test.ts › refuses locally each edge the server refuses for its ends, with the server's code`, `› refuses an inline edge of a create and a move of an edge as the server refuses them`.
+
+### `queue-and-verdicts/edge-nesting-refused`
+
+If an edge write would leave an edge of a type the held catalog marks `flat` running from an end the copy holds, or from the item a create makes, whose type the edge type's `target_type_constraints` admit (`edges/collection-no-nesting`), then a device MUST refuse it in the `validation` class carrying the server's code `edge_constraint_violation`, queueing nothing.
+
+**Tests:** `device/edge-checks-live.test.ts › refuses locally each edge the server refuses for its ends, with the server's code`, `› refuses an inline edge of a create and a move of an edge as the server refuses them`.
+
+### `queue-and-verdicts/edge-end-in-bin-refused`
+
+If an edge write would leave an end at a row the copy holds in the bin, then a device MUST refuse it in the `not_found` class carrying the server's code `item_not_found`, queueing nothing.
+
+**Reason:** the server answers an end in the bin as it answers one no item holds (`edges/create-end-in-bin` and `edges/move-end-in-bin`).
+
+**Tests:** `device/edge-checks-live.test.ts › refuses locally each edge the server refuses for its ends, with the server's code`.
+
+### `queue-and-verdicts/edge-cycle-refused`
+
+If an edge write would leave an edge of a type the held catalog marks `acyclic` closing a cycle through other edges of that type the copy holds, its own waiting writes among them, then a device MUST refuse it in the `validation` class carrying the server's code `edge_cycle`, queueing nothing.
+
+**Reason:** the server refuses such an edge `400 edge_cycle` (`edges/cycle` and `edges/move-cycle`), and every edge the copy holds is one the server holds or one the copy will send before it.
+
+**Tests:** `device/edge-checks-live.test.ts › refuses locally an edge that closes a cycle through edges the copy holds, with the server's code`, `› refuses an inline edge of a create and a move of an edge as the server refuses them`.
+
+### `queue-and-verdicts/edge-judged-held`
+
+Where the copy does not hold the edge type, the type of an end, an end, or an edge that a cycle runs through, a device MUST NOT refuse an edge write for what it does not hold, and MUST queue it for the server to judge.
+
+**Reason:** a slice holds part of the server, so the server stays the judge; refusing on a guess would refuse writes the server takes. A write queued this way and refused by the server is kept with its verdict, as any other refused write is.
+
+**Tests:** `device/edge-checks-live.test.ts › queues an edge whose cycle closes through an edge outside the copy, and the server refuses it`, `device/edge-move-live.test.ts › puts the edge back at its old parent when the server refuses the move for a cycle`.
+
+### `queue-and-verdicts/retype-edge-refused`
+
+If an item update moves a row to a type that an edge the copy holds at the row would not admit, at either end or as nesting (`edges/retype-endpoint` and `edges/retype-nesting`), then a device MUST refuse it in the `validation` class carrying the server's code `edge_constraint_violation`, queueing nothing.
+
+**Tests:** `device/edge-checks-live.test.ts › refuses locally a move to a type an edge at the item does not admit, with the server's code`.
+
+### `queue-and-verdicts/edge-check`
+
+When a caller asks whether an edge can be written, a device MUST answer with the refusal an edge create of it would give, or that it finds none, and MUST queue nothing.
+
+**Reason:** an app can disable a control before the person tries it, and learns of a refusal without a write to undo.
+
+**Tests:** `device/edge-checks-live.test.ts › refuses locally each edge the server refuses for its ends, with the server's code`.
