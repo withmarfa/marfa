@@ -172,11 +172,11 @@ When a device takes the pin off a row its slice does not take and no write of it
 
 ### `device/unpin-edges`
 
-When a device lets an unpinned row go, a device MUST let go the edges the row draws, but those of a type its slice holds whole and one a queued write names.
+When a device lets an unpinned row go, a device MUST let go the edges the row draws, but those of a type its slice holds whole.
 
-**Reason:** an unpin lets a row go as a row leaves the copy does (`device/catch-up-leaving-edges`).
+**Reason:** a row an edge write of its own waits on is not let go at all (`device/unpin-waiting`), so the edge that write names stays with it; the eviction of a row that leaves the slice keeps such an edge too (`device/catch-up-leaving-edges`).
 
-**Tests:** `device/catch-up.test.ts › keeps the edges of a type held whole when it unpins a row`, `› keeps an edge a queued write names when it unpins the row the edge leaves from`.
+**Tests:** `device/catch-up.test.ts › keeps the edges of a type held whole when it unpins a row`, `› keeps the row and the edge a queued write names when it unpins the row the edge leaves from`.
 
 ### `device/unpin-waiting`
 

@@ -3687,7 +3687,7 @@ describe("catch-up keeps the copy to its slice", () => {
     ).toEqual(["kept-beneath"]);
   });
 
-  it("keeps an edge a queued write names when it unpins the row the edge leaves from", async () => {
+  it("keeps the row and the edge a queued write names when it unpins the row the edge leaves from", async () => {
     harness = await startHarness("unpin-queued-edge");
     const { server, device } = harness;
     scriptHydration(server, {
@@ -3710,8 +3710,10 @@ describe("catch-up keeps the copy to its slice", () => {
     const queued = await device.queue();
 
     expect((await device.unpin("settings")).ok).toBe(true);
-    // The witness: the row the edge leaves from went.
-    expect((await device.get("settings")).ok).toBe(false);
+    expect(
+      (await device.get("settings")).ok,
+      "an unpin let go a row an edge write of its own still waits on",
+    ).toBe(true);
     const edges = await device.edgesTo("note");
     expect(edges.ok, JSON.stringify(edges)).toBe(true);
     expect(
