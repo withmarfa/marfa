@@ -114,6 +114,12 @@ describe("the core's live checks under Full CI", () => {
       needs: "changes",
       if: "${{ !cancelled() && github.event_name == 'pull_request' && (needs.changes.result != 'success' || needs.changes.outputs.core != 'false') }}",
       uses: CALLED,
+      // `Core checks` builds the Swift package in the same run, so the live
+      // job does not build it again.
+      with: {
+        "swift-built":
+          "${{ needs.changes.outputs.core-checks != 'false' && needs.changes.outputs.swift-package != 'false' }}",
+      },
     });
     expect(jobs.changes?.outputs?.core).toBe(
       "${{ steps.classify.outputs.core }}",
@@ -146,7 +152,18 @@ describe("the core's live checks under Full CI", () => {
     const { on, jobs, concurrency, permissions } = workflow("core-live.yml");
     // A called workflow's `github.workflow` is the caller's, so a group
     // here would be the caller's own and cancel the run that called it.
-    expect(on).toEqual({ workflow_call: null });
+    expect(on).toEqual({
+      workflow_call: {
+        inputs: {
+          "swift-built": {
+            description:
+              "The caller already built the Swift FFI crate for the Apple targets",
+            type: "boolean",
+            default: false,
+          },
+        },
+      },
+    });
     expect(concurrency).toBeUndefined();
     expect(permissions).toEqual({ contents: "read" });
     expect(Object.keys(jobs)).toEqual(["live"]);

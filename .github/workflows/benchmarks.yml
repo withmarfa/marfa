@@ -20,7 +20,7 @@ permissions:
 jobs:
   benchmarks:
     name: Performance, load and hydration
-    timeout-minutes: 120
+    timeout-minutes: 100
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7

@@ -648,21 +648,25 @@ such as the owner, boots its own server with `bootFreshServer` in
 ## CI
 
 The contract's gate is `Conformance` in `.github/workflows/ci.yml`, on every pull
-request that can affect it and every push to `main`, on Ubuntu; it also runs on
-macOS every night and when the workflow is dispatched with `macos`. It is a
+request that can affect it and every push to `main`, on Ubuntu. The nightly
+runs only what needs a Mac, the device shards and the CLI scenarios, on macOS,
+and a dispatch with `macos` runs those two there too. It is a
 check that collects the jobs below and passes when every one that ran passed,
 or when the classifier skipped them all.
 
 - **Shards.** The server's fixtures run in three groups, each on runners of
   its own that boot their own object store and server: correctness and sync on
-  one, compliance over four and the device over four. The fixtures isolate
+  one, compliance over eight and the device over six. The fixtures isolate
   themselves by credential, so a runner takes any part of a group. A group of
-  more than one shard splits its files with `pnpm test:compliance --shard=1/4`,
+  more than one shard splits its files with `pnpm test:compliance --shard=1/8`,
   weighed by the seconds each file takes (`src/utils/shard-weights.ts`) rather
   than by Vitest's own split by path, which can leave one shard with far more
   of the slow files than another. A file not in the weights is still run, by
-  exactly one shard. Only the device shards build or restore the `marfa`
-  binary and the Node module.
+  exactly one shard, at the median time of every file. Each shard compares the
+  time of every file it ran with its weight, warns about a file that took more
+  than half as long again or half as long, and writes the slow files to the job
+  summary (`pnpm check:shard-drift`); update the weight when it does. Only the
+  device shards build or restore the `marfa` binary and the Node module.
 - **Offline lane.** `pnpm test:generators` runs as a job of its own, with no
   server.
 - **Statuses.** Each shard holds the statuses its server answered to their

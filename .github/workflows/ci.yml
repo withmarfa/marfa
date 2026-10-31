@@ -8,15 +8,17 @@ on:
   pull_request:
     branches: [main]
     types: [opened, synchronize, reopened, ready_for_review]
-  # Conformance and CLI scenarios run on Ubuntu, and on macOS every night and
-  # when `macos` is set, so that what only macOS has stays tested: file
-  # watching, name case, Finder packages and a real keychain.
+  # The nightly runs only what needs a Mac, on macOS: the device fixtures,
+  # the CLI scenarios, the core's checks and the control socket, for file
+  # watching, name case, Finder packages and a real keychain. Every push to
+  # `main` runs the rest on Linux. A dispatch runs everything, and runs the
+  # device fixtures and the CLI scenarios on macOS when `macos` is set.
   schedule:
     - cron: "7 4 * * *"
   workflow_dispatch:
     inputs:
       macos:
-        description: Run Conformance and CLI scenarios on macOS
+        description: Run the device fixtures and CLI scenarios on macOS
         type: boolean
         default: false
 
@@ -49,7 +51,7 @@ jobs:
   changes:
     name: Classify changes
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 3
     permissions:
       contents: read
       actions: read
@@ -92,7 +94,7 @@ jobs:
     needs: changes
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.ci-sqlite != 'false') }}
     name: CI (SQLite)
-    timeout-minutes: 30
+    timeout-minutes: 8
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -106,17 +108,95 @@ jobs:
       - run: pnpm install --frozen-lockfile
       # Prettier reads Markdown as well as code, and the classifier's test
       # and the contract's reference check read the whole tree, so a
-      # documentation change stops after these. The tests are the next job.
+      # documentation change stops after these. The build, typecheck and lint
+      # are jobs of their own, so that each one reports as soon as it can.
       - run: pnpm format:check
       - run: pnpm vitest run ci/ci-required.test.ts
       - working-directory: conformance
         run: pnpm exec vitest run --project generators src/utils/spec-citations.test.ts
-      - if: ${{ needs.changes.outputs.workspace != 'false' }}
-        run: pnpm build
-      - if: ${{ needs.changes.outputs.workspace != 'false' }}
-        run: pnpm typecheck
-      - if: ${{ needs.changes.outputs.workspace != 'false' }}
-        run: pnpm lint
+
+  typecheck:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.workspace != 'false') }}
+    name: Typecheck
+    timeout-minutes: 10
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          dest: ${{ runner.temp }}/setup-pnpm
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - run: pnpm typecheck
+
+  lint:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.workspace != 'false') }}
+    name: Lint
+    timeout-minutes: 12
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          dest: ${{ runner.temp }}/setup-pnpm
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - run: pnpm lint
+
+  # A format, typecheck or lint failure is certain and known within minutes,
+  # and the slow jobs would run on for twenty more. On a pull request that is
+  # ready for review, each of these stops the run the moment its quick job
+  # fails. The run ends as cancelled, and `Full CI` still reports and fails,
+  # because the gate runs after a cancel and fails for the failed job. A
+  # draft runs no slow job, and a push to `main` is never stopped.
+  stop-after-format:
+    name: Stop the run after a failed format check
+    needs: ci-sqlite
+    if: ${{ failure() && github.event_name == 'pull_request' && !github.event.pull_request.draft }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    permissions:
+      actions: write
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh run cancel "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" || echo "::warning::The run could not be cancelled; the slow jobs run on."
+
+  stop-after-typecheck:
+    name: Stop the run after a failed typecheck
+    needs: typecheck
+    if: ${{ failure() && github.event_name == 'pull_request' && !github.event.pull_request.draft }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    permissions:
+      actions: write
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh run cancel "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" || echo "::warning::The run could not be cancelled; the slow jobs run on."
+
+  stop-after-lint:
+    name: Stop the run after a failed lint
+    needs: lint
+    if: ${{ failure() && github.event_name == 'pull_request' && !github.event.pull_request.draft }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    permissions:
+      actions: write
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh run cancel "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" || echo "::warning::The run could not be cancelled; the slow jobs run on."
 
   # The workspace's tests, in three shards on runners of their own. Vitest
   # gives each shard a third of the test files, chosen by a hash of the path,
@@ -128,7 +208,7 @@ jobs:
     needs: changes
     if: ${{ !cancelled() && (needs.changes.result != 'success' || (needs.changes.outputs.workspace != 'false' && needs.changes.outputs.full != 'false')) }}
     name: CI (SQLite) tests ${{ matrix.shard }}/3
-    timeout-minutes: 45
+    timeout-minutes: 22
     runs-on: ubuntu-latest
     strategy:
       # Every shard reports, so one failure shows all the others there are.
@@ -164,7 +244,7 @@ jobs:
     needs: changes
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.core-checks != 'false') }}
     name: Core checks
-    timeout-minutes: 30
+    timeout-minutes: 24
     runs-on: macos-26
     steps:
       - uses: actions/checkout@v7
@@ -206,14 +286,16 @@ jobs:
 
   # The core workspace on Linux, where the credential store that is not the
   # macOS keychain, and the in-memory test keychain it uses, are built, linted
-  # and tested. `Core checks` keeps the macOS keychain and the Apple builds.
-  # It leaves out the login keychain check, which needs macOS's `security`,
-  # and the Swift crate, which ships only to Apple systems.
+  # and tested. `Core checks` keeps the macOS keychain and the Apple builds,
+  # and a pull request runs it only for what a Linux run cannot vouch for
+  # (`scripts/ci-required.ts` names the paths). It leaves out the login
+  # keychain check, which needs macOS's `security`, and the Swift crate's
+  # tests and Apple builds.
   core-checks-linux:
     needs: changes
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.core-checks-linux != 'false') }}
     name: Core checks (Linux)
-    timeout-minutes: 30
+    timeout-minutes: 17
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -226,7 +308,9 @@ jobs:
           tool: nextest@0.9
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: core
+          workspaces: |
+            core
+            core/bindings/swift
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Install socket ACL inspection
         run: sudo apt-get update && sudo apt-get install -y acl
@@ -246,6 +330,15 @@ jobs:
           # build of every target is the cheapest proof that it is.
           cargo check --locked --release --workspace --all-targets
           cargo check --locked --release -p marfa-core --all-targets
+      # A pull request that leaves the bindings, keychain and file watching
+      # alone skips the macOS job, so the Swift FFI crate's format, lints and
+      # compile are checked here too. Its tests and the Apple builds stay on
+      # macOS.
+      - name: Check the Swift FFI crate
+        working-directory: core/bindings/swift
+        run: |
+          cargo fmt --check
+          cargo clippy --locked --all-targets -- -D warnings
 
   # The contract, run against the server in this same checkout.
   #
@@ -272,15 +365,15 @@ jobs:
     needs: changes
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.conformance-shards != '[]') }}
     name: Conformance shard (${{ matrix.name }})
-    timeout-minutes: 30
-    runs-on: ${{ (github.event_name == 'schedule' || inputs.macos) && 'macos-26' || 'ubuntu-latest' }}
+    timeout-minutes: 20
+    runs-on: ${{ matrix.device && (github.event_name == 'schedule' || inputs.macos) && 'macos-26' || 'ubuntu-latest' }}
     strategy:
       # Every shard reports, so one failure shows all the others there are.
       fail-fast: false
       matrix:
         # The whole layout, for a classifier that did not answer; the
         # classifier's test holds it to `conformanceShards`.
-        include: ${{ fromJSON(needs.changes.outputs.conformance-shards || '[{"name":"correctness and sync","slug":"correctness-sync","args":"--project correctness --project sync","device":false},{"name":"compliance 1/4","slug":"compliance-1","args":"--project compliance --shard=1/4","device":false},{"name":"compliance 2/4","slug":"compliance-2","args":"--project compliance --shard=2/4","device":false},{"name":"compliance 3/4","slug":"compliance-3","args":"--project compliance --shard=3/4","device":false},{"name":"compliance 4/4","slug":"compliance-4","args":"--project compliance --shard=4/4","device":false},{"name":"device 1/4","slug":"device-1","args":"--project device --shard=1/4","device":true},{"name":"device 2/4","slug":"device-2","args":"--project device --shard=2/4","device":true},{"name":"device 3/4","slug":"device-3","args":"--project device --shard=3/4","device":true},{"name":"device 4/4","slug":"device-4","args":"--project device --shard=4/4","device":true}]') }}
+        include: ${{ fromJSON(needs.changes.outputs.conformance-shards || '[{"name":"correctness and sync","slug":"correctness-sync","args":"--project correctness --project sync","device":false},{"name":"compliance 1/8","slug":"compliance-1","args":"--project compliance --shard=1/8","device":false},{"name":"compliance 2/8","slug":"compliance-2","args":"--project compliance --shard=2/8","device":false},{"name":"compliance 3/8","slug":"compliance-3","args":"--project compliance --shard=3/8","device":false},{"name":"compliance 4/8","slug":"compliance-4","args":"--project compliance --shard=4/8","device":false},{"name":"compliance 5/8","slug":"compliance-5","args":"--project compliance --shard=5/8","device":false},{"name":"compliance 6/8","slug":"compliance-6","args":"--project compliance --shard=6/8","device":false},{"name":"compliance 7/8","slug":"compliance-7","args":"--project compliance --shard=7/8","device":false},{"name":"compliance 8/8","slug":"compliance-8","args":"--project compliance --shard=8/8","device":false},{"name":"device 1/6","slug":"device-1","args":"--project device --shard=1/6","device":true},{"name":"device 2/6","slug":"device-2","args":"--project device --shard=2/6","device":true},{"name":"device 3/6","slug":"device-3","args":"--project device --shard=3/6","device":true},{"name":"device 4/6","slug":"device-4","args":"--project device --shard=4/6","device":true},{"name":"device 5/6","slug":"device-5","args":"--project device --shard=5/6","device":true},{"name":"device 6/6","slug":"device-6","args":"--project device --shard=6/6","device":true}]') }}
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
@@ -394,8 +487,11 @@ jobs:
         working-directory: conformance
         env:
           ARGS: ${{ matrix.args }}
+          MARFA_SHARD_TIMES: ${{ runner.temp }}/shard-times.json
         run: |
           read -r -a args <<< "$ARGS"
+          # The reporter writes each file's time for the drift check below.
+          args+=(--reporter=default --reporter=./src/utils/shard-times-reporter.ts)
           if [ "$RUNNER_OS" = macOS ]; then
             ../core/scripts/login-keychain-unchanged.sh pnpm exec vitest run "${args[@]}"
           else
@@ -413,6 +509,14 @@ jobs:
         working-directory: conformance
         run: pnpm check:statuses --state "$RUNNER_TEMP/marfa"
 
+      # Warns, and never fails, when a file takes much longer or shorter than
+      # the weight `shard-weights.ts` gives it, and lists the slow files in the
+      # job summary. Only a split group has weights to compare.
+      - name: Compare each file's time with its weight
+        if: ${{ !cancelled() && contains(matrix.args, '--shard') }}
+        working-directory: conformance
+        run: pnpm check:shard-drift "$RUNNER_TEMP/shard-times.json"
+
       # What `Conformance statuses` needs besides the log: the document this
       # build serves, which the log is held to.
       - name: Keep the document the server served
@@ -422,7 +526,8 @@ jobs:
       # the log is in it. The server is still running here, which costs
       # nothing: the log is appended to and what a failure needs is already
       # written. Kept whether or not the shard passed, since the statuses job
-      # reads every shard's.
+      # reads every shard's: this is its input and not only a diagnostic, so it
+      # is the one artifact that is not failure-only.
       - name: Keep the server log
         if: always()
         uses: actions/upload-artifact@v7
@@ -457,8 +562,8 @@ jobs:
     needs: changes
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.conformance-offline != 'false') }}
     name: Conformance offline lane
-    timeout-minutes: 20
-    runs-on: ${{ (github.event_name == 'schedule' || inputs.macos) && 'macos-26' || 'ubuntu-latest' }}
+    timeout-minutes: 12
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
@@ -492,7 +597,7 @@ jobs:
     needs: [changes, conformance-shards]
     if: ${{ !cancelled() && needs.conformance-shards.result == 'success' && (needs.changes.result != 'success' || needs.changes.outputs.conformance-statuses != 'false') }}
     name: Conformance statuses
-    timeout-minutes: 15
+    timeout-minutes: 8
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -520,7 +625,7 @@ jobs:
     needs: changes
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.mcp-conformance != 'false') }}
     name: MCP conformance
-    timeout-minutes: 15
+    timeout-minutes: 10
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -575,7 +680,7 @@ jobs:
       ]
     if: ${{ !cancelled() }}
     name: Conformance
-    timeout-minutes: 5
+    timeout-minutes: 3
     runs-on: ubuntu-latest
     steps:
       - name: Require every conformance job that ran to have passed
@@ -622,7 +727,7 @@ jobs:
     needs: changes
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.cli-scenarios != 'false') }}
     name: CLI scenarios
-    timeout-minutes: 60
+    timeout-minutes: 30
     runs-on: ${{ (github.event_name == 'schedule' || inputs.macos) && 'macos-26' || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v7
@@ -717,12 +822,12 @@ jobs:
   # attach. Litestream streams the database and the server's own
   # replication carries the blobs; `conformance/scripts/restore-drill.ts`
   # says what it proves and prints its report, which is kept as an
-  # artifact whether or not it passed.
+  # artifact when it failed.
   restore-drill:
     needs: changes
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.restore-drill != 'false') }}
     name: Restore drill
-    timeout-minutes: 30
+    timeout-minutes: 20
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -775,7 +880,7 @@ jobs:
         run: pnpm garage:down --state "$RUNNER_TEMP/garage"
 
       - name: Keep the report
-        if: always()
+        if: failure()
         uses: actions/upload-artifact@v7
         with:
           name: restore-drill-report
@@ -795,7 +900,7 @@ jobs:
     needs: changes
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.image != 'false') }}
     name: Server image
-    timeout-minutes: 30
+    timeout-minutes: 15
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -808,7 +913,7 @@ jobs:
     needs: changes
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.types-freshness != 'false') }}
     name: Types codegen freshness
-    timeout-minutes: 15
+    timeout-minutes: 8
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -835,7 +940,7 @@ jobs:
     needs: changes
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.openapi-freshness != 'false') }}
     name: OpenAPI spec freshness
-    timeout-minutes: 15
+    timeout-minutes: 8
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -862,7 +967,7 @@ jobs:
     needs: changes
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.version-fields != 'false') }}
     name: No file holds a version
-    timeout-minutes: 10
+    timeout-minutes: 8
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -899,7 +1004,7 @@ jobs:
     needs: changes
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.clients-freshness != 'false') }}
     name: Generated clients are fresh
-    timeout-minutes: 15
+    timeout-minutes: 10
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -945,6 +1050,8 @@ jobs:
     if: ${{ !cancelled() && github.event_name == 'pull_request' && (needs.changes.result != 'success' || needs.changes.outputs.core != 'false') }}
     name: Core
     uses: ./.github/workflows/core-live.yml
+    with:
+      swift-built: ${{ needs.changes.outputs.core-checks != 'false' && needs.changes.outputs.swift-package != 'false' }}
 
   # The private control socket's tests on macOS, the only run of them there.
   # Linux runs them in `CI (SQLite) tests`, which installs the `getfacl` they call.
@@ -952,7 +1059,7 @@ jobs:
     needs: changes
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.control-socket != 'false') }}
     name: Control socket (macOS)
-    timeout-minutes: 15
+    timeout-minutes: 12
     runs-on: macos-26
     steps:
       - uses: actions/checkout@v7
@@ -971,15 +1078,24 @@ jobs:
   # skips most jobs, so on a draft this job is named `Draft CI`: the required
   # `Full CI` stays expected, which blocks a merge, until the run that marking
   # the pull request ready starts has finished every job.
-  # It runs after a failed job and fails then. A cancelled run skips it, and a
-  # skipped job never reports as `Full CI`, so a cancel cannot leave it green.
-  # It waits for every job but `report-failure`, which only reports.
+  # It runs after a failed job and fails then. It also runs after the run was
+  # cancelled, when a job it waits for failed: the fail-fast jobs above cancel
+  # the run once the format check, typecheck or lint fails, and a gate that
+  # skipped would leave `Full CI` expected forever. A run cancelled with no
+  # failed job (a newer push replaced it) skips it, as it always has. Cancelled
+  # slow jobs and the failed quick one make it fail, so a cancel cannot leave
+  # it green. It waits for every job but `report-failure`, which only reports.
   gate:
     name: ${{ github.event.pull_request.draft && 'Draft CI' || 'Full CI' }}
     needs:
       [
         changes,
         ci-sqlite,
+        typecheck,
+        lint,
+        stop-after-format,
+        stop-after-typecheck,
+        stop-after-lint,
         ci-sqlite-tests,
         core-checks,
         core-checks-linux,
@@ -998,9 +1114,9 @@ jobs:
         core,
         control-socket,
       ]
-    if: ${{ !cancelled() }}
+    if: ${{ !cancelled() || contains(needs.*.result, 'failure') }}
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 3
     steps:
       - env:
           RESULTS: ${{ join(needs.*.result, ' ') }}
@@ -1020,6 +1136,11 @@ jobs:
       [
         changes,
         ci-sqlite,
+        typecheck,
+        lint,
+        stop-after-format,
+        stop-after-typecheck,
+        stop-after-lint,
         ci-sqlite-tests,
         core-checks,
         core-checks-linux,
