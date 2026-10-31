@@ -29,6 +29,7 @@ The server (`packages/`), the Rust core every native client embeds (`core/`), an
 ## Writing
 
 - Public prose (README, docs, issues, pull requests) follows the Google developer documentation style guide, in American English, with docs organized by Diátaxis: tutorials, how-to guides, reference and explanation kept apart.
+- A change that a reader of the docs at docs.marfa.so would notice, or a fault found in them, opens an issue on withmarfa/docs saying what changed or is wrong, why and for whom, and which release carries it. It does not edit the docs; they are rewritten from those issues after each release.
 - Every summary, description and example in `openapi.json` follows `packages/server/API-STYLE.md`.
 - Code comments follow the language's own conventions. A comment stays only if it says what the code cannot: a constraint from outside, a non-obvious reason, a trap. Never what the code does, history, removed code, a ticket or a person. When in doubt, it goes.
 - The contract in `conformance/spec/` follows the standard in `conformance/spec/README.md`: one requirement per statement, in RFC 2119 keywords and the EARS pattern, each with a permanent ID that every reference uses.
