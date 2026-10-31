@@ -1576,7 +1576,7 @@ A device MUST NOT answer a row in the bin to a local search, whatever state the 
 
 **Reason:** the server keeps a trashed row out of its search index (`search-and-filters/search-bin`).
 
-**Tests:** `device/working-copy.test.ts › keeps a row in the bin out of the index, whatever state a search names`, `› stops finding a row once an event puts it in the bin`, `device/search-file-text-live.test.ts › leaves a file in the bin unmatched, as the server does`, `device/restore-search.test.ts › finds a restored row by its title, body and tags`.
+**Tests:** `device/working-copy.test.ts › keeps a row in the bin out of the index, whatever state a search names`, `› stops finding a row once an event puts it in the bin`, `device/search-file-text-live.test.ts › leaves a file in the bin unmatched, as the server does`, `device/restore-search.test.ts › finds a restored row by its title, body and tags`, `› finds a row moved from the bin to the archive`.
 
 ### `device/list-bounds-exclusive`
 
