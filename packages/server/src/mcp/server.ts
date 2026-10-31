@@ -24,6 +24,7 @@ import {
   registerRevokeKey,
 } from "./tools/keys.js";
 import { registerOverview } from "./tools/overview.js";
+import { registerNameSource, registerSources } from "./tools/sources.js";
 import { registerMoveItems, registerSaveType } from "./tools/types.js";
 import { registerUpdate } from "./tools/update.js";
 import { registerSaveView } from "./tools/views.js";
@@ -63,6 +64,8 @@ export const TOOL_OPERATIONS = {
   marfa_move_items: ["moveType", "getBulkActionJob"],
   marfa_bulk_save: ["bulkUpsertItems"],
   marfa_search_docs: [],
+  marfa_sources: ["listSources", "getSource"],
+  marfa_name_source: ["updateSource"],
   marfa_health: ["getHealth", "getInstanceMetrics", "listConnectors"],
   marfa_audit: ["listAuditLog"],
   marfa_keys: ["listKeys"],
@@ -92,6 +95,8 @@ export const TOOL_GROUPS: Record<ToolName, McpGroup> = {
   marfa_move_items: "schema",
   marfa_bulk_save: "schema",
   marfa_search_docs: "schema",
+  marfa_sources: "schema",
+  marfa_name_source: "schema",
   marfa_health: "admin",
   marfa_audit: "admin",
   marfa_keys: "admin",
@@ -113,6 +118,8 @@ function registerSchemaTools(server: McpServer, ctx: ToolContext): void {
     registerBulkSave(server, ctx);
   }
   registerSearchDocs(server);
+  registerSources(server, ctx);
+  registerNameSource(server, ctx);
 }
 
 function registerAdminTools(server: McpServer, ctx: ToolContext): void {

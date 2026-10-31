@@ -2,7 +2,7 @@
 
 The MCP endpoint, `/mcp`, serves Marfa's tools to an agent over Streamable HTTP. A request carries an API key or an app's access token as a Bearer credential, and every tool call is a call to the API with that credential, so the API's own rules for the credential hold for it. The tools are `marfa_overview`, `marfa_find`, `marfa_get`, `marfa_create`, `marfa_update` and `marfa_delete`.
 
-Two more endpoints serve the same tools and a group of their own. `/mcp/schema` adds `marfa_save_type`, `marfa_save_view`, `marfa_move_items`, `marfa_bulk_save` and `marfa_search_docs`, for shaping what the instance holds. `/mcp/admin` adds `marfa_health`, `marfa_audit`, `marfa_keys`, `marfa_manage_key`, `marfa_revoke_key`, `marfa_webhooks` and `marfa_manage_webhook`, for running it. Unless a statement names an endpoint, it holds at all three.
+Two more endpoints serve the same tools and a group of their own. `/mcp/schema` adds `marfa_save_type`, `marfa_save_view`, `marfa_move_items`, `marfa_bulk_save`, `marfa_search_docs`, `marfa_sources` and `marfa_name_source`, for shaping what the instance holds. `/mcp/admin` adds `marfa_health`, `marfa_audit`, `marfa_keys`, `marfa_manage_key`, `marfa_revoke_key`, `marfa_webhooks` and `marfa_manage_webhook`, for running it. Unless a statement names an endpoint, it holds at all three.
 
 ## Who may call it
 
@@ -66,11 +66,11 @@ While a credential's type map grants no type, the server MUST NOT declare the `t
 
 ### `mcp/tools-for-schema`
 
-When a credential calls `/mcp/schema`, the server MUST list to it the tools `/mcp` lists it and `marfa_search_docs`, with `marfa_save_type` while it may register types or holds `schema.write`, `marfa_save_view` while its type map grants `write` on `system.view`, and `marfa_move_items` and `marfa_bulk_save` while its type map grants `write` on at least one type.
+When a credential calls `/mcp/schema`, the server MUST list to it the tools `/mcp` lists it, `marfa_search_docs`, `marfa_sources` and `marfa_name_source`, with `marfa_save_type` while it may register types or holds `schema.write`, `marfa_save_view` while its type map grants `write` on `system.view`, and `marfa_move_items` and `marfa_bulk_save` while its type map grants `write` on at least one type.
 
 **Reason:** a tool the credential can never use costs the agent's context and invites calls that fail.
 
-**Tests:** `compliance/mcp.test.ts › lists the six tools and every schema tool at /mcp/schema to a credential that may use each`, `› lists only the read tools and marfa_search_docs at /mcp/schema to a credential that only reads`, `› lists each schema tool at /mcp/schema to a credential that holds only the one thing it needs`.
+**Tests:** `compliance/mcp.test.ts › lists the six tools and every schema tool at /mcp/schema to a credential that may use each`, `› lists only the read tools and the schema tools every credential gets at /mcp/schema to a credential that only reads`, `› lists each schema tool at /mcp/schema to a credential that holds only the one thing it needs`.
 
 ### `mcp/tools-for-admin`
 

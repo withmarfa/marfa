@@ -16,6 +16,7 @@ import {
   ALL_TOOLS,
   callTool,
   connectMcp,
+  EVERY_CREDENTIAL_SCHEMA_TOOLS,
   READ_TOOLS,
   SCHEMA_TOOLS,
   toolError,
@@ -264,11 +265,11 @@ describe("which tools a credential is offered", () => {
       await none.close();
     }
     // The group endpoints offer the same credential the tools that need no
-    // type: the documentation search, and the webhook tools its permission
-    // allows, which work.
+    // type: the documentation search and the source tools, and the webhook
+    // tools its permission allows, which work.
     const schema = await connectMcp(apiUrl, key, "2026-07-28", "/mcp/schema");
     try {
-      expect(await toolNames(schema)).toEqual(["marfa_search_docs"]);
+      expect(await toolNames(schema)).toEqual(EVERY_CREDENTIAL_SCHEMA_TOOLS);
     } finally {
       await schema.close();
     }
@@ -631,7 +632,7 @@ describe("the schema and admin endpoints", () => {
     }
   });
 
-  it("lists only the read tools and marfa_search_docs at /mcp/schema to a credential that only reads", async () => {
+  it("lists only the read tools and the schema tools every credential gets at /mcp/schema to a credential that only reads", async () => {
     const reader = await connectMcp(
       apiUrl,
       await keyWith("schema-reader", { "core.note": "read" }),
@@ -640,7 +641,7 @@ describe("the schema and admin endpoints", () => {
     );
     try {
       expect(await toolNames(reader)).toEqual(
-        [...READ_TOOLS, "marfa_search_docs"].sort(),
+        [...READ_TOOLS, ...EVERY_CREDENTIAL_SCHEMA_TOOLS].sort(),
       );
     } finally {
       await reader.close();
@@ -711,26 +712,34 @@ describe("the schema and admin endpoints", () => {
         name: "read only",
         type_map: reads,
         reach: {},
-        tools: [...READ_TOOLS, "marfa_search_docs"],
+        tools: [...READ_TOOLS, ...EVERY_CREDENTIAL_SCHEMA_TOOLS],
       },
       {
         name: "schema.write alone",
         type_map: reads,
         reach: { permissions: ["schema.write"] },
-        tools: [...READ_TOOLS, "marfa_search_docs", "marfa_save_type"],
+        tools: [
+          ...READ_TOOLS,
+          ...EVERY_CREDENTIAL_SCHEMA_TOOLS,
+          "marfa_save_type",
+        ],
       },
       {
         name: "metadata.types alone",
         type_map: reads,
         reach: { metadata_permissions: { types: "write" } },
-        tools: [...READ_TOOLS, "marfa_search_docs", "marfa_save_type"],
+        tools: [
+          ...READ_TOOLS,
+          ...EVERY_CREDENTIAL_SCHEMA_TOOLS,
+          "marfa_save_type",
+        ],
       },
       {
         name: "write on system.view alone",
         type_map: { "system.view": "write" },
         reach: {},
         tools: [
-          "marfa_search_docs",
+          ...EVERY_CREDENTIAL_SCHEMA_TOOLS,
           "marfa_save_view",
           "marfa_move_items",
           "marfa_bulk_save",
@@ -748,7 +757,7 @@ describe("the schema and admin endpoints", () => {
         reach: {},
         tools: [
           ...ALL_TOOLS,
-          "marfa_search_docs",
+          ...EVERY_CREDENTIAL_SCHEMA_TOOLS,
           "marfa_move_items",
           "marfa_bulk_save",
         ],
