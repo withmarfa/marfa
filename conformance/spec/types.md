@@ -28,6 +28,7 @@ Every instance ships these types, core and `system`, each a row of the table bel
 | `core.media.book`    | core   | `core.media`  | `title`                        | A book. Inherits all core.media fields.                                                                                                                                                                                                                                                                                  |
 | `core.media.episode` | core   | `core.media`  | `title`                        | Any member of an ongoing series: a TV episode, a podcast episode, one part of a serial. Inherits all core.media fields. Joins its series through the in-collection edge, so one episode can belong to several series and outlives any of them.                                                                           |
 | `core.media.film`    | core   | `core.media`  | `title`                        | A film. Inherits all core.media fields.                                                                                                                                                                                                                                                                                  |
+| `core.media.game`    | core   | `core.media`  | `title`                        | A video, board or card game. Inherits all core.media fields.                                                                                                                                                                                                                                                             |
 | `core.media.series`  | core   | `core.media`  | `title`                        | Any ongoing media container: a TV show, a podcast, a radio serial, a video series. Inherits all core.media fields. Episodes join it through the in-collection edge; containment is never part of a type name.                                                                                                            |
 | `core.media.song`    | core   | `core.media`  | `title`                        | A song. Inherits all core.media fields.                                                                                                                                                                                                                                                                                  |
 | `core.message`       | core   | None          | `from`                         | A light, cross-platform message. Threading is edge-based via in-thread; reply trees via parent-of. Tool-specific richness lives in app namespaces.                                                                                                                                                                       |
@@ -675,6 +676,22 @@ The server MUST ship `core.task` declaring an optional field named `assignees`, 
 
 **Tests:** `compliance/attendees.test.ts › lists attendees on core.event and assignees on core.task`, `› takes a task with an assignee and refuses a response on it`.
 
+### `types/shipped-rating`
+
+The server MUST ship `core.media` declaring an optional field named `rating` of the `integer` kind with a `minimum` of 1 and a `maximum` of 5, which every subtype of `core.media` inherits.
+
+**Reason:** `rating` is the owner's overall view of the work, from 1 (lowest) to 5 (highest). One whole-number scale on the parent means an app reads a rating the same way on a film as on a book, with no half steps to guess at. A rating outside the range, or one that is not a whole number, is refused by the field's range (`types/range-value-refused`).
+
+**Tests:** `compliance/media-rating-game.test.ts › is an optional integer from 1 to 5 on core.media and every type under it`, `› takes a book rated %s and reads it back`, `› refuses a rating of %s, naming rating`.
+
+### `types/shipped-game`
+
+The server MUST ship `core.media.game`, a child of `core.media`, declaring the optional fields `platforms`, an `array` of `string`, and `min_players` and `max_players`, each an `integer` with a `minimum` of 1.
+
+**Reason:** a video game and a board game are both played on something and by some number of people, so one type covers both without two near-identical types. The type does not require `max_players` to be at least `min_players`, and it declares no other game property.
+
+**Tests:** `compliance/media-rating-game.test.ts › lists core.media.game beneath core.media`, `› declares its own fields and inherits progress and rating`, `› takes a game on two platforms for one to four players`, `› takes a game with a title alone`, `› is found by a listing of core.media`, `› refuses %s of %s, naming the field`, `› refuses a platform that is not text, naming the field and the position`.
+
 ## Thumbnails
 
 A `thumbnail` field holds a small image the writer supplies; what a value may be is `items/thumbnail-format`.
@@ -1225,7 +1242,7 @@ The server MUST NOT apply `enforcement.source_filter` to the item or edge a read
 
 ### `types/shipped`
 
-The server MUST ship `core.bookmark`, `core.collection`, `core.entity`, `core.entity.person`, `core.entity.place`, `core.event`, `core.file`, `core.file.audio`, `core.file.image`, `core.file.video`, `core.file.webpage`, `core.highlight`, `core.media`, `core.media.album`, `core.media.article`, `core.media.book`, `core.media.episode`, `core.media.film`, `core.media.series`, `core.media.song`, `core.message`, `core.note` and `core.task`, each with fields and a label, and no other `core.*` type.
+The server MUST ship `core.bookmark`, `core.collection`, `core.entity`, `core.entity.person`, `core.entity.place`, `core.event`, `core.file`, `core.file.audio`, `core.file.image`, `core.file.video`, `core.file.webpage`, `core.highlight`, `core.media`, `core.media.album`, `core.media.article`, `core.media.book`, `core.media.episode`, `core.media.film`, `core.media.game`, `core.media.series`, `core.media.song`, `core.message`, `core.note` and `core.task`, each with fields and a label, and no other `core.*` type.
 
 **Tests:** `compliance/types.test.ts › ships exactly the core types, each with fields and a label`, `compliance/type-registry.test.ts › lists registered types including core types`, `› gets a single type by type identifier`, `compliance/type-inheritance.test.ts › core entity/file/media subtypes resolve`, `compliance/type-label.test.ts › built-in types have labels`, `› get single type includes label`.
 

@@ -145,6 +145,7 @@ const coreMedia: TypeSchema = {
     image_url: { type: "url", description: "Cover art, poster, or thumbnail" },
     language: { type: "string", description: "BCP 47 language code", format: "bcp47" },
     progress: { type: "status", description: "Where the owner is with the work: want to read, watch, listen to or play it, started, finished, or gave up", status_values: [{ value: "planned", group: "not_started" }, { value: "started", group: "in_progress" }, { value: "finished", group: "completed" }, { value: "abandoned", group: "canceled" }] },
+    rating: { type: "integer", description: "The owner's overall view of the work, from 1 (lowest) to 5 (highest)", minimum: 1, maximum: 5 },
     notes: { type: "string", description: "Personal annotations" },
     thumbnail: { type: "thumbnail", description: "A small preview of the work, supplied by the writer" },
   },
@@ -396,6 +397,7 @@ const coreMediaAlbum: TypeSchema = {
     image_url: { type: "url", description: "Cover art, poster, or thumbnail" },
     language: { type: "string", description: "BCP 47 language code", format: "bcp47" },
     progress: { type: "status", description: "Where the owner is with the work: want to read, watch, listen to or play it, started, finished, or gave up", status_values: [{ value: "planned", group: "not_started" }, { value: "started", group: "in_progress" }, { value: "finished", group: "completed" }, { value: "abandoned", group: "canceled" }] },
+    rating: { type: "integer", description: "The owner's overall view of the work, from 1 (lowest) to 5 (highest)", minimum: 1, maximum: 5 },
     notes: { type: "string", description: "Personal annotations" },
     thumbnail: { type: "thumbnail", description: "A small preview of the work, supplied by the writer" },
     release_type: { type: "string", description: "Recommended values: album, ep, single" },
@@ -423,6 +425,7 @@ const coreMediaArticle: TypeSchema = {
     image_url: { type: "url", description: "Cover art, poster, or thumbnail" },
     language: { type: "string", description: "BCP 47 language code", format: "bcp47" },
     progress: { type: "status", description: "Where the owner is with the work: want to read, watch, listen to or play it, started, finished, or gave up", status_values: [{ value: "planned", group: "not_started" }, { value: "started", group: "in_progress" }, { value: "finished", group: "completed" }, { value: "abandoned", group: "canceled" }] },
+    rating: { type: "integer", description: "The owner's overall view of the work, from 1 (lowest) to 5 (highest)", minimum: 1, maximum: 5 },
     notes: { type: "string", description: "Personal annotations" },
     thumbnail: { type: "thumbnail", description: "A small preview of the work, supplied by the writer" },
     doi: { type: "string", description: "Digital Object Identifier (ISO 26324)" },
@@ -450,6 +453,7 @@ const coreMediaBook: TypeSchema = {
     image_url: { type: "url", description: "Cover art, poster, or thumbnail" },
     language: { type: "string", description: "BCP 47 language code", format: "bcp47" },
     progress: { type: "status", description: "Where the owner is with the work: want to read, watch, listen to or play it, started, finished, or gave up", status_values: [{ value: "planned", group: "not_started" }, { value: "started", group: "in_progress" }, { value: "finished", group: "completed" }, { value: "abandoned", group: "canceled" }] },
+    rating: { type: "integer", description: "The owner's overall view of the work, from 1 (lowest) to 5 (highest)", minimum: 1, maximum: 5 },
     notes: { type: "string", description: "Personal annotations" },
     thumbnail: { type: "thumbnail", description: "A small preview of the work, supplied by the writer" },
     isbn: { type: "string", description: "International Standard Book Number (ISO 2108)" },
@@ -477,6 +481,7 @@ const coreMediaEpisode: TypeSchema = {
     image_url: { type: "url", description: "Cover art, poster, or thumbnail" },
     language: { type: "string", description: "BCP 47 language code", format: "bcp47" },
     progress: { type: "status", description: "Where the owner is with the work: want to read, watch, listen to or play it, started, finished, or gave up", status_values: [{ value: "planned", group: "not_started" }, { value: "started", group: "in_progress" }, { value: "finished", group: "completed" }, { value: "abandoned", group: "canceled" }] },
+    rating: { type: "integer", description: "The owner's overall view of the work, from 1 (lowest) to 5 (highest)", minimum: 1, maximum: 5 },
     notes: { type: "string", description: "Personal annotations" },
     thumbnail: { type: "thumbnail", description: "A small preview of the work, supplied by the writer" },
     medium: { type: "enum", description: "What the episode is made of.", enum_values: ["tv", "podcast", "radio", "video", "mixed"] },
@@ -507,6 +512,7 @@ const coreMediaFilm: TypeSchema = {
     image_url: { type: "url", description: "Cover art, poster, or thumbnail" },
     language: { type: "string", description: "BCP 47 language code", format: "bcp47" },
     progress: { type: "status", description: "Where the owner is with the work: want to read, watch, listen to or play it, started, finished, or gave up", status_values: [{ value: "planned", group: "not_started" }, { value: "started", group: "in_progress" }, { value: "finished", group: "completed" }, { value: "abandoned", group: "canceled" }] },
+    rating: { type: "integer", description: "The owner's overall view of the work, from 1 (lowest) to 5 (highest)", minimum: 1, maximum: 5 },
     notes: { type: "string", description: "Personal annotations" },
     thumbnail: { type: "thumbnail", description: "A small preview of the work, supplied by the writer" },
     duration: { type: "number", description: "Runtime in seconds" },
@@ -516,6 +522,34 @@ const coreMediaFilm: TypeSchema = {
     mime_type: { type: "string", description: "MIME type of the resource at media_url, such as audio/mpeg or video/mp4. Describes what media_url points at, not what this item is." },
   },
   display_hints: { icon: "lucide:film" },
+  merge_policy: { fields: { body: "keep_both_copies", notes: "keep_both_copies" }, default: "last_writer_wins" },
+};
+
+const coreMediaGame: TypeSchema = {
+  id: "core.media.game",
+  parent: "core.media",
+  label: "Game",
+  description: "A video, board or card game. Inherits all core.media fields.",
+  version: 0,
+  fields: {
+    title: { type: "string", description: "Name of the work", required: true },
+    body: { type: "string", description: "Text content or description" },
+    author: { type: "string", description: "Who created the work" },
+    url: { type: "url", description: "Web address" },
+    description: { type: "string", description: "Summary or blurb" },
+    publisher: { type: "string", description: "Who published the work" },
+    published_at: { type: "datetime", description: "When originally published or released" },
+    image_url: { type: "url", description: "Cover art, poster, or thumbnail" },
+    language: { type: "string", description: "BCP 47 language code", format: "bcp47" },
+    progress: { type: "status", description: "Where the owner is with the work: want to read, watch, listen to or play it, started, finished, or gave up", status_values: [{ value: "planned", group: "not_started" }, { value: "started", group: "in_progress" }, { value: "finished", group: "completed" }, { value: "abandoned", group: "canceled" }] },
+    rating: { type: "integer", description: "The owner's overall view of the work, from 1 (lowest) to 5 (highest)", minimum: 1, maximum: 5 },
+    notes: { type: "string", description: "Personal annotations" },
+    thumbnail: { type: "thumbnail", description: "A small preview of the work, supplied by the writer" },
+    platforms: { type: "array", description: "What the game is played on, such as Nintendo Switch, PC or Tabletop", items_type: "string" },
+    min_players: { type: "integer", description: "Fewest players the game supports", minimum: 1 },
+    max_players: { type: "integer", description: "Most players the game supports", minimum: 1 },
+  },
+  display_hints: { icon: "lucide:gamepad-2" },
   merge_policy: { fields: { body: "keep_both_copies", notes: "keep_both_copies" }, default: "last_writer_wins" },
 };
 
@@ -536,6 +570,7 @@ const coreMediaSeries: TypeSchema = {
     image_url: { type: "url", description: "Cover art, poster, or thumbnail" },
     language: { type: "string", description: "BCP 47 language code", format: "bcp47" },
     progress: { type: "status", description: "Where the owner is with the work: want to read, watch, listen to or play it, started, finished, or gave up", status_values: [{ value: "planned", group: "not_started" }, { value: "started", group: "in_progress" }, { value: "finished", group: "completed" }, { value: "abandoned", group: "canceled" }] },
+    rating: { type: "integer", description: "The owner's overall view of the work, from 1 (lowest) to 5 (highest)", minimum: 1, maximum: 5 },
     notes: { type: "string", description: "Personal annotations" },
     thumbnail: { type: "thumbnail", description: "A small preview of the work, supplied by the writer" },
     medium: { type: "enum", description: "What the series is made of.", enum_values: ["tv", "podcast", "radio", "video", "mixed"] },
@@ -563,6 +598,7 @@ const coreMediaSong: TypeSchema = {
     image_url: { type: "url", description: "Cover art, poster, or thumbnail" },
     language: { type: "string", description: "BCP 47 language code", format: "bcp47" },
     progress: { type: "status", description: "Where the owner is with the work: want to read, watch, listen to or play it, started, finished, or gave up", status_values: [{ value: "planned", group: "not_started" }, { value: "started", group: "in_progress" }, { value: "finished", group: "completed" }, { value: "abandoned", group: "canceled" }] },
+    rating: { type: "integer", description: "The owner's overall view of the work, from 1 (lowest) to 5 (highest)", minimum: 1, maximum: 5 },
     notes: { type: "string", description: "Personal annotations" },
     thumbnail: { type: "thumbnail", description: "A small preview of the work, supplied by the writer" },
     duration: { type: "number", description: "Track length in seconds" },
@@ -598,6 +634,7 @@ export const ALL_TYPES: TypeSchema[] = [
   coreMediaBook,
   coreMediaEpisode,
   coreMediaFilm,
+  coreMediaGame,
   coreMediaSeries,
   coreMediaSong,
 ];
@@ -626,11 +663,11 @@ const systemFolder: TypeSchema = {
   version: 0,
   fields: {
     title: { type: "string", description: "The folder's name", required: true },
-    query: { type: "object", description: "Which items the folder holds. `types`: type identifiers, each with its subtypes; empty or absent holds every type the folder's key reads. `tier`: `library`, `feed`, or `all` for both tiers; absent is `library`. `state`: `active`, `archived` or both; absent is both. `filter`: an expression in the listing grammar's `filter`. `beneath`: an item id; the item and everything under it by `parent-of`." },
+    query: { type: "object", description: "Which items the folder holds. `types`: type identifiers, each with its subtypes; empty or absent holds every type the folder's key reads. `tier`: `library`, `feed`, or `all` for both tiers; absent is `library`. `state`: `active`, `archived` or both; absent is both. `filter`: an expression in the listing grammar's `filter`, with no `backref` condition. `beneath`: an item id; the item and everything under it by `parent-of`." },
     defaults: { type: "object", description: "What a new file takes where its frontmatter leaves a blank, never applied to an edit: `type`, `tier`, `properties`, `tags`, and `edges` as a map from edge type to item ids, each edge running from the new file to the item named except `parent-of`, which runs from the item named so the new file is its child; a folder whose query follows an edge gives every new file that edge." },
     include: { type: "array", description: "Paths the folder takes, as gitignore patterns relative to its root; empty or absent takes every path. A dot-led path is taken only where a line names a dot-led name on its way, and no line reaches what the built-in lists name", items_type: "string" },
     ignore: { type: "array", description: "Paths the folder leaves alone, as gitignore patterns relative to its root, winning over `include`; the built-in lists, of files a machine or an editor writes for itself and of secrets, apply whatever either list says", items_type: "string" },
-    first_placement: { type: "object", description: "Where a new item of a type made elsewhere first appears: a map from type identifier to a directory relative to the folder's root. Placement only; it never decides membership." },
+    first_placement: { type: "object", description: "Where a new item of a type made elsewhere first appears: a map from type identifier to a directory relative to the folder's root, with no `..` name. Placement only; it never decides membership." },
     removal_threshold: { type: "object", description: "When a removal pauses for confirmation: more than `files` files and more than `fraction` of the folder at once. Absent members are 10 and 0.25." },
     revoked_at: { type: "datetime", description: "When the folder was revoked" },
   },
@@ -674,6 +711,7 @@ export const ALL_TYPE_IDS = [
   "core.media.book",
   "core.media.episode",
   "core.media.film",
+  "core.media.game",
   "core.media.series",
   "core.media.song",
   "core.message",
@@ -1451,6 +1489,11 @@ export const SHIPPED_TYPE_SHAPES = {
       "publisher": {
         "type": "string"
       },
+      "rating": {
+        "maximum": 5,
+        "minimum": 1,
+        "type": "integer"
+      },
       "thumbnail": {
         "type": "thumbnail"
       },
@@ -1524,6 +1567,11 @@ export const SHIPPED_TYPE_SHAPES = {
       },
       "publisher": {
         "type": "string"
+      },
+      "rating": {
+        "maximum": 5,
+        "minimum": 1,
+        "type": "integer"
       },
       "release_type": {
         "type": "string"
@@ -1605,6 +1653,11 @@ export const SHIPPED_TYPE_SHAPES = {
       },
       "publisher": {
         "type": "string"
+      },
+      "rating": {
+        "maximum": 5,
+        "minimum": 1,
+        "type": "integer"
       },
       "section": {
         "type": "string"
@@ -1692,6 +1745,11 @@ export const SHIPPED_TYPE_SHAPES = {
       },
       "publisher": {
         "type": "string"
+      },
+      "rating": {
+        "maximum": 5,
+        "minimum": 1,
+        "type": "integer"
       },
       "thumbnail": {
         "type": "thumbnail"
@@ -1787,6 +1845,11 @@ export const SHIPPED_TYPE_SHAPES = {
       "publisher": {
         "type": "string"
       },
+      "rating": {
+        "maximum": 5,
+        "minimum": 1,
+        "type": "integer"
+      },
       "season_number": {
         "type": "integer"
       },
@@ -1877,6 +1940,100 @@ export const SHIPPED_TYPE_SHAPES = {
       "publisher": {
         "type": "string"
       },
+      "rating": {
+        "maximum": 5,
+        "minimum": 1,
+        "type": "integer"
+      },
+      "thumbnail": {
+        "type": "thumbnail"
+      },
+      "title": {
+        "required": true,
+        "type": "string"
+      },
+      "url": {
+        "type": "url"
+      }
+    },
+    "merge_policy": {
+      "default": "last_writer_wins",
+      "fields": {
+        "body": "keep_both_copies",
+        "notes": "keep_both_copies"
+      }
+    },
+    "parent": "core.media",
+    "version": 0
+  },
+  "core.media.game": {
+    "display_hints": {
+      "icon": "lucide:gamepad-2"
+    },
+    "fields": {
+      "author": {
+        "type": "string"
+      },
+      "body": {
+        "type": "string"
+      },
+      "description": {
+        "type": "string"
+      },
+      "image_url": {
+        "type": "url"
+      },
+      "language": {
+        "format": "bcp47",
+        "type": "string"
+      },
+      "max_players": {
+        "minimum": 1,
+        "type": "integer"
+      },
+      "min_players": {
+        "minimum": 1,
+        "type": "integer"
+      },
+      "notes": {
+        "type": "string"
+      },
+      "platforms": {
+        "items_type": "string",
+        "type": "array"
+      },
+      "progress": {
+        "status_values": [
+          {
+            "group": "not_started",
+            "value": "planned"
+          },
+          {
+            "group": "in_progress",
+            "value": "started"
+          },
+          {
+            "group": "completed",
+            "value": "finished"
+          },
+          {
+            "group": "canceled",
+            "value": "abandoned"
+          }
+        ],
+        "type": "status"
+      },
+      "published_at": {
+        "type": "datetime"
+      },
+      "publisher": {
+        "type": "string"
+      },
+      "rating": {
+        "maximum": 5,
+        "minimum": 1,
+        "type": "integer"
+      },
       "thumbnail": {
         "type": "thumbnail"
       },
@@ -1958,6 +2115,11 @@ export const SHIPPED_TYPE_SHAPES = {
       },
       "publisher": {
         "type": "string"
+      },
+      "rating": {
+        "maximum": 5,
+        "minimum": 1,
+        "type": "integer"
       },
       "status": {
         "enum_values": [
@@ -2056,6 +2218,11 @@ export const SHIPPED_TYPE_SHAPES = {
       },
       "publisher": {
         "type": "string"
+      },
+      "rating": {
+        "maximum": 5,
+        "minimum": 1,
+        "type": "integer"
       },
       "thumbnail": {
         "type": "thumbnail"

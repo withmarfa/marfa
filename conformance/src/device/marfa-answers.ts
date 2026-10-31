@@ -506,7 +506,7 @@ export const SCRIPTED_EDGE_TYPES: ReadonlyArray<WireEdgeType> = [
       path: {
         type: "string",
         description:
-          "The file's path relative to the folder's root, with `/` between names; required, and it may not climb out of the folder. The edge takes no other property.",
+          "The file's path relative to the folder's root, with `/` between names; required, with no `..` name. The edge takes no other property.",
       },
     },
   }),

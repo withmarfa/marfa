@@ -92,6 +92,7 @@ describe("type registration and listing", () => {
       "core.media.book",
       "core.media.episode",
       "core.media.film",
+      "core.media.game",
       "core.media.series",
       "core.media.song",
       "core.message",

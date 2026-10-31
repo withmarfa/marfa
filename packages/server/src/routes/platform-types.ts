@@ -168,7 +168,7 @@ const deleteRetiredRoute = createRoute({
  * **A parent supplies fields to its children, not items.** An abstract
  * parent carries no items of its own by construction, so the item count is
  * zero for exactly the types whose removal does the most damage: the
- * shipped set has seven types under `core.media` alone. Removing one would
+ * shipped set has eight types under `core.media` alone. Removing one would
  * leave every child resolving with the inherited half of its field set
  * gone, silently, because ancestor collection degrades to a partial view
  * on an unresolvable parent rather than failing.
