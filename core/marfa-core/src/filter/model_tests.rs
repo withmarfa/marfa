@@ -187,20 +187,21 @@ fn reads_one_condition_joined_by_any_as_all_since_the_text_carries_no_join() {
 }
 
 #[test]
-fn refuses_a_value_the_grammar_cannot_quote() {
-    // Witness: the same value without its last backslash is written.
-    assert_eq!(
-        condition(property("a"), FilterOperator::Eq, text("x\\y"))
-            .encode()
-            .unwrap(),
-        "properties.a eq \"x\\y\""
-    );
-    for value in ["\\", "x\\", "x\\\\", "\"\\"] {
-        let (code, message) =
-            refusal(condition(property("a"), FilterOperator::Eq, text(value)).encode());
-        assert_eq!(code, "validation_error");
-        assert!(message.contains("cannot end in a backslash"), "{message}");
+fn writes_any_backslash_escaped_so_a_value_may_end_in_one() {
+    for (value, written) in [
+        ("\\", "properties.a eq \"\\\\\""),
+        ("x\\", "properties.a eq \"x\\\\\""),
+        ("x\\\\", "properties.a eq \"x\\\\\\\\\""),
+        ("\"\\", "properties.a eq \"\\\"\\\\\""),
+    ] {
+        let expression = condition(property("a"), FilterOperator::Eq, text(value));
+        assert_eq!(expression.encode().unwrap(), written);
+        assert_eq!(FilterExpression::decode(written).unwrap(), expression);
     }
+}
+
+#[test]
+fn refuses_a_number_that_is_not_finite() {
     for number in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
         let (code, _) = refusal(
             condition(

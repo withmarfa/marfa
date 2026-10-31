@@ -13,8 +13,7 @@ fn not_a_model(error: serde_json::Error) -> Error {
 }
 
 /// The expression's text in the listing grammar, thrown as the server's
-/// `validation_error` where the server would refuse it, and where a value
-/// ends in a backslash, which the grammar cannot quote.
+/// `validation_error` where the server would refuse it.
 #[napi]
 pub fn encode_filter(
     env: Env,

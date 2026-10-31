@@ -173,6 +173,15 @@ describe("parseFilter", () => {
       expect(result.conditions[0]!.value).toBe('The "Great" Gatsby');
     });
 
+    it("reads an escaped backslash as one, and any other backslash as itself", () => {
+      expect(
+        parseFilter('properties.path eq "C:\\\\"').conditions[0]!.value,
+      ).toBe("C:\\");
+      expect(
+        parseFilter('properties.path eq "C:\\dir"').conditions[0]!.value,
+      ).toBe("C:\\dir");
+    });
+
     it("parses all system fields", () => {
       const fields = [
         "state",

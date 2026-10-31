@@ -34,9 +34,9 @@ test("throws the server's code and message", () => {
     () =>
       encodeFilter({
         join: "all",
-        conditions: [{ field: { kind: "property", name: "a" }, operator: "eq", value: "ends in \\" }],
+        conditions: [{ field: { kind: "property", name: "a" }, operator: "eq" }],
       }),
-    { serverCode: "validation_error", message: /cannot end in a backslash/ },
+    { serverCode: "validation_error", message: /takes a value/ },
   );
 });
 

@@ -541,8 +541,9 @@ fn tokenize(input: &str) -> Result<Vec<Token>> {
             i += 1;
             let mut value = String::new();
             while i < chars.len() && chars[i] != '"' {
-                if chars[i] == '\\' && chars.get(i + 1) == Some(&'"') {
-                    value.push('"');
+                if let ('\\', Some(escaped @ ('"' | '\\'))) = (chars[i], chars.get(i + 1).copied())
+                {
+                    value.push(escaped);
                     i += 2;
                 } else {
                     value.push(chars[i]);

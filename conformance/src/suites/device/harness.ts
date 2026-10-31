@@ -540,8 +540,8 @@ function asciiLower(text: string): string {
   return text.replace(/[A-Z]/g, (letter) => letter.toLowerCase());
 }
 
-/** A name lookup's filter read as the server's grammar reads it, where only
- *  `\"` escapes, so a string ending in a backslash never closes. */
+/** A name lookup's filter read as the server's grammar reads it, where `\"`
+ *  and `\\` escape and every other backslash is itself. */
 function containsFilter(
   filter: string,
 ): { field: string; text: string } | Answer {
@@ -552,8 +552,9 @@ function containsFilter(
   let text = "";
   let at = head[0].length;
   while (at < filter.length && filter[at] !== '"') {
-    if (filter[at] === "\\" && filter[at + 1] === '"') {
-      text += '"';
+    const next = filter[at + 1];
+    if (filter[at] === "\\" && (next === '"' || next === "\\")) {
+      text += next;
       at += 2;
     } else {
       text += filter[at];

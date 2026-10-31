@@ -90,8 +90,7 @@ pub enum FilterValue {
 }
 
 /// The expression's text in the listing grammar, refused with the server's
-/// `validation_error` where the server would refuse it, and where a value
-/// ends in a backslash, which the grammar cannot quote.
+/// `validation_error` where the server would refuse it.
 #[uniffi::export]
 pub fn encode_filter(expression: FilterExpression) -> Result<String, MarfaError> {
     Ok(marfa_core::FilterExpression::from(expression).encode()?)

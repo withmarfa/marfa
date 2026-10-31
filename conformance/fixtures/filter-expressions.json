@@ -52,8 +52,8 @@
       }
     },
     {
-      "description": "a value holding backslashes not before a quote",
-      "text": "properties.path eq \"C:\\dir\\file\"",
+      "description": "a value holding backslashes, each escaped",
+      "text": "properties.path eq \"C:\\\\dir\\\\file\"",
       "expression": {
         "join": "all",
         "conditions": [
@@ -70,7 +70,7 @@
     },
     {
       "description": "a value holding a backslash before a quote",
-      "text": "properties.path eq \"a\\\\\"b\"",
+      "text": "properties.path eq \"a\\\\\\\"b\"",
       "expression": {
         "join": "all",
         "conditions": [
@@ -81,6 +81,23 @@
             },
             "operator": "eq",
             "value": "a\\\"b"
+          }
+        ]
+      }
+    },
+    {
+      "description": "a value ending in a backslash",
+      "text": "properties.path eq \"C:\\\\\"",
+      "expression": {
+        "join": "all",
+        "conditions": [
+          {
+            "field": {
+              "kind": "property",
+              "name": "path"
+            },
+            "operator": "eq",
+            "value": "C:\\"
           }
         ]
       }
@@ -637,6 +654,11 @@
     }
   ],
   "variants": [
+    {
+      "description": "a backslash before neither a quote nor a backslash, which is itself",
+      "text": "properties.path eq \"C:\\dir\\file\"",
+      "canonical": "properties.path eq \"C:\\\\dir\\\\file\""
+    },
     {
       "description": "spaces and tabs around tokens",
       "text": "  state   eq\t\"active\"  ",

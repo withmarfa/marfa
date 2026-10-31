@@ -189,8 +189,9 @@ function tokenize(input: string): Token[] {
       i++; // skip opening quote
       let value = "";
       while (i < input.length && charAt(input, i) !== '"') {
-        if (charAt(input, i) === "\\" && charAt(input, i + 1) === '"') {
-          value += '"';
+        const next = charAt(input, i + 1);
+        if (charAt(input, i) === "\\" && (next === '"' || next === "\\")) {
+          value += next;
           i += 2;
         } else {
           value += charAt(input, i);

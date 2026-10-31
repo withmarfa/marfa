@@ -7,7 +7,8 @@
 //! expression, but for the join of an expression of one condition, which the
 //! text does not carry and which reads back as `All`. `encode` of a decoded
 //! text is its canonical form: one space between tokens, a string quoted with
-//! only its quotes escaped, and a number in its shortest decimal spelling.
+//! every quote and backslash escaped, and a number in its shortest decimal
+//! spelling.
 
 use serde::{Deserialize, Serialize};
 
@@ -136,8 +137,7 @@ impl FilterExpression {
     /// The expression's text in the listing grammar, refused with the
     /// server's `validation_error` where the server would refuse it: empty,
     /// longer than 2,048 UTF-16 code units, more than 10 conditions, or a
-    /// field and operator it does not take together. A value the grammar
-    /// cannot quote, one that ends in a backslash, is refused too.
+    /// field and operator it does not take together.
     pub fn encode(&self) -> Result<String> {
         let mut parts = Vec::with_capacity(self.conditions.len());
         for condition in &self.conditions {
@@ -409,18 +409,10 @@ impl FilterOperator {
 impl FilterValue {
     fn encode(&self) -> Result<String> {
         match self {
-            // The grammar reads `\"` as a quote and every other backslash as
-            // itself, so only a quote is escaped, and a backslash before the
-            // closing quote cannot be written.
-            FilterValue::Text(text) => {
-                if text.ends_with('\\') {
-                    return Err(refused(format!(
-                        "A filter value cannot end in a backslash, which the grammar would read with the closing quote as a quote: {}",
-                        serde_json::Value::String(text.clone())
-                    )));
-                }
-                Ok(format!("\"{}\"", text.replace('"', "\\\"")))
-            }
+            FilterValue::Text(text) => Ok(format!(
+                "\"{}\"",
+                text.replace('\\', "\\\\").replace('"', "\\\"")
+            )),
             // Rust writes a float in fixed notation with the fewest digits
             // that read back as the same double, which the grammar's
             // number, with no exponent, takes.
