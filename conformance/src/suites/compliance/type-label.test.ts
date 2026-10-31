@@ -322,30 +322,28 @@ describe("type label compliance", () => {
     expect(listed!.fields.website.label).toBe("Home Page");
   });
 
-  it.each([
-    ["label", (text: unknown) => ({ label: text, fields: {} })],
-    ["plural", (text: unknown) => ({ plural: text, fields: {} })],
-    [
-      "fields.value.label",
-      (text: unknown) => ({
-        fields: { value: { type: "string", label: text } },
-      }),
-    ],
-    [
-      "fields.entries.items_fields.value.label",
-      (text: unknown) => ({
-        fields: {
-          entries: {
-            type: "array",
-            items_type: "object",
-            items_fields: { value: { type: "string", label: text } },
+  it("refuses a label or plural longer than 100 characters or not text", async () => {
+    const shapes: [string, (text: unknown) => object][] = [
+      ["label", (text) => ({ label: text, fields: {} })],
+      ["plural", (text) => ({ plural: text, fields: {} })],
+      [
+        "fields.value.label",
+        (text) => ({ fields: { value: { type: "string", label: text } } }),
+      ],
+      [
+        "fields.entries.items_fields.value.label",
+        (text) => ({
+          fields: {
+            entries: {
+              type: "array",
+              items_type: "object",
+              items_fields: { value: { type: "string", label: text } },
+            },
           },
-        },
-      }),
-    ],
-  ])(
-    "refuses a %s longer than 100 characters or not text",
-    async (path, body) => {
+        }),
+      ],
+    ];
+    for (const [path, body] of shapes) {
       for (const bad of ["x".repeat(101), 7]) {
         const typeId = `user.long-label-${Math.random().toString(36).slice(2, 10)}`;
         const r = await client.registerType({
@@ -362,10 +360,10 @@ describe("type label compliance", () => {
         id: typeId,
         ...body("é".repeat(99) + "😀"),
       } as never);
-      expect(ok.status, JSON.stringify(ok.error)).toBe(201);
+      expect(ok.status, `${path}: ${JSON.stringify(ok.error)}`).toBe(201);
       trackType(ctx, typeId, client);
-    },
-  );
+    }
+  });
 
   it("ships labels and plurals where a core field's name or type's label reads badly", async () => {
     const person = (await client.getType("core.entity.person")).data;

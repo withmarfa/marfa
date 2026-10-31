@@ -210,7 +210,7 @@ If `POST /types` or `PUT /types/{id}` names a `label` or `plural` for the type, 
 
 **Reason:** a label is a short name an app shows in a list, a heading or a form; a longer text is a `description`.
 
-**Tests:** `compliance/type-label.test.ts › refuses a %s longer than 100 characters or not text`.
+**Tests:** `compliance/type-label.test.ts › refuses a label or plural longer than 100 characters or not text`.
 
 ## Reading the registry
 
