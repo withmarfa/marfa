@@ -327,6 +327,12 @@ export const ItemSchema = z
       .describe(
         "When the item was last written, in UTC. A tag or extension write moves it too.",
       ),
+    trashed_at: z
+      .string()
+      .nullable()
+      .describe(
+        "When the item went to the trash, in UTC, or when a `system.*` item was revoked. A later write to the item leaves it as it is, and a restore clears it. `null` for an item outside the trash, and for one an archive restored to the trash without a time.",
+      ),
     trashed_by_cascade: z
       .boolean()
       .optional()

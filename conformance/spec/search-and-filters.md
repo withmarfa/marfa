@@ -640,6 +640,22 @@ If a `filter` compares `status_group` with a value other than `"not_started"`, `
 
 **Tests:** `compliance/status-groups.test.ts › refuses %s with validation_error`.
 
+## The order of the bin
+
+### `search-and-filters/bin-order`
+
+When `GET /items` names `state=trashed` alone and no `sort` or `updated_after`, the server MUST order the items by `trashed_at`, newest first unless `direction=asc`, then by `id` in the same direction, ordering an item without a `trashed_at` by its `updated_at`.
+
+**Reason:** a bin reads as what went there most recently first, and creation order would put an old item binned a minute ago at the bottom. An item an archive restored to the bin without its time (`items/trash-archive-identity`) has no `trashed_at`, and its `updated_at` is no earlier than the move. A listing of any other set of states keeps the creation order, because its rows have no one time in common.
+
+**Tests:** `compliance/trashed-at.test.ts › lists the bin newest binned first when no sort is named`, `› reverses it with direction=asc`, `› walks the same order one page at a time`, `› orders a listing of several states by creation`.
+
+### `search-and-filters/bin-order-sort`
+
+When `GET /items` names `state=trashed` and a `sort`, the server MUST order the items by that `sort`.
+
+**Tests:** `compliance/trashed-at.test.ts › still honors a named sort`.
+
 ## Sorting by a property
 
 ### `search-and-filters/sort-property`

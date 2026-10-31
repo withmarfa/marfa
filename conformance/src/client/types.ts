@@ -14,6 +14,8 @@ export interface MarfaItem {
   schema_version: number; // Type schema version this item was validated against
   capture_latitude: number | null;
   capture_longitude: number | null;
+  /** When the item went to the bin; null outside it. */
+  trashed_at: string | null;
   /** Present on a row a cascading edge took into the bin, while it stays there. */
   trashed_by_cascade?: boolean;
   /** The item whose trash took this one, to a key that may read its type. */

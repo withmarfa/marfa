@@ -214,6 +214,7 @@ function item(id: string, type = "core.note"): Item {
     properties: { title: id },
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
+    trashed_at: null,
   };
 }
 

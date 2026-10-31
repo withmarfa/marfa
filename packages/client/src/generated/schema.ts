@@ -2377,6 +2377,8 @@ export interface components {
             created_at: string;
             /** @description When the item was last written, in UTC. A tag or extension write moves it too. */
             updated_at: string;
+            /** @description When the item went to the trash, in UTC, or when a `system.*` item was revoked. A later write to the item leaves it as it is, and a restore clears it. `null` for an item outside the trash, and for one an archive restored to the trash without a time. */
+            trashed_at: string | null;
             /** @description Always `true` where present: the item went to the trash with another item, through a cascading edge such as `parent-of`. Present while it stays in the trash. Absent on an item trashed on its own. */
             trashed_by_cascade?: boolean;
             /** @description The ID of the item whose trash took this one into the trash, beside `trashed_by_cascade`, whatever became of that item since. Present only if you can read that item's type. */
@@ -6466,9 +6468,9 @@ export interface operations {
                 tags?: string;
                 /** @description A filter expression. A term naming an edge type, `edge[<type>]` or `backref[<type>]`, needs read on it; `edge[<type>]=<id>` also works as a query parameter. `status_group` matches by status group; `properties.<field>.<member>`, by a list entry. */
                 filter?: string;
-                /** @description Field to sort by: `created_at`, `updated_at`, `occurred_at` or `properties.<field>`, such as `properties.due_at`. Properties sort by stored value, so an enum property sorts alphabetically, not by meaning. */
+                /** @description Field to sort by: `created_at`, `updated_at`, `occurred_at` or `properties.<field>`. Properties sort by stored value, so an enum sorts alphabetically. Defaults to `created_at`, or to `trashed_at` when `state` is `trashed` alone. */
                 sort?: string;
-                /** @description Sort direction */
+                /** @description Sort direction. Defaults to `desc`. */
                 direction?: "asc" | "desc";
                 /** @description Only return items whose own time (`occurred_at`, else `created_at`) is after this time. For the modification time, use `updated_after`. */
                 occurred_after?: string;

@@ -70,6 +70,9 @@ export interface Item {
   schema_version: number;
   capture_latitude?: number;
   capture_longitude?: number;
+  /** When the item entered its soft-deleted state; null outside it, and for
+   *  a row an archive restored to the bin without one. */
+  trashed_at: string | null;
   /** Present on a row a cascading edge took into the bin, for as long as it
    *  stays there. */
   trashed_by_cascade?: true;

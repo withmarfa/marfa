@@ -1058,6 +1058,26 @@ When a listing names `state=trashed` or `state=any`, the server MUST list the it
 
 **Tests:** `compliance/state-default.test.ts › a named state and the sentinel still reach every row`, `sync/catchup.test.ts › reads across every lifecycle state in one pass`.
 
+### `items/trashed-at`
+
+When an item moves to the bin, or a `system.*` item is revoked, the server MUST record the time in its `trashed_at` and answer it on the item to every key that may read the item.
+
+**Reason:** a client orders and labels its bin by when each item went there. `trashed_by` stays on `GET /trash` (`items/owner-trash-summary`), because it names the sign-in or app that moved the item, which a key reading the item has no claim to.
+
+**Tests:** `compliance/trashed-at.test.ts › records the time an item went to the bin, to any key that may read it, and clears it on restore`.
+
+### `items/trashed-at-null`
+
+The server MUST answer `trashed_at` on every item, `null` while the item is outside the bin.
+
+**Tests:** `compliance/trashed-at.test.ts › is null on a live item, never missing`, `› records the time an item went to the bin, to any key that may read it, and clears it on restore`.
+
+### `items/trashed-at-fresh`
+
+When an item that left the bin moves to it again, the server MUST record the new time in its `trashed_at`.
+
+**Tests:** `compliance/trashed-at.test.ts › takes a new time when a restored item goes to the bin again`.
+
 ### `items/archived-hidden`
 
 The server MUST leave an archived item out of a listing that names no `state`.

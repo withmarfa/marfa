@@ -595,9 +595,12 @@ const listItemsRoute = createRoute({
         )
         .optional()
         .describe(
-          "Field to sort by: `created_at`, `updated_at`, `occurred_at` or `properties.<field>`, such as `properties.due_at`. Properties sort by stored value, so an enum property sorts alphabetically, not by meaning.",
+          "Field to sort by: `created_at`, `updated_at`, `occurred_at` or `properties.<field>`. Properties sort by stored value, so an enum sorts alphabetically. Defaults to `created_at`, or to `trashed_at` when `state` is `trashed` alone.",
         ),
-      direction: z.enum(["asc", "desc"]).optional().describe("Sort direction"),
+      direction: z
+        .enum(["asc", "desc"])
+        .optional()
+        .describe("Sort direction. Defaults to `desc`."),
       ...listingBoundKeys,
       limit: pageLimit({
         max: MAX_LISTING_LIMIT,
