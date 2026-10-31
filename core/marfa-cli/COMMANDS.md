@@ -2683,8 +2683,8 @@ marfa device items list [OPTIONS]
 
 | Option | Description |
 | --- | --- |
-| `--type <TYPE>` | A type identifier; its subtypes are included. |
-| `--state <STATE>` | Exactly one state. Unset answers the active state. One of `active`, `archived`, `trashed`, `revoked`. |
+| `--type <TYPE>` | A type identifier, with its subtypes; repeat it or separate types with commas, up to ten. |
+| `--state <STATE>` | A state to answer; repeat it or separate states with commas. Unset answers the active state. One of `active`, `archived`, `trashed`, `revoked`. |
 | `--all-states` | Every state, not just the active one. |
 | `--tier <TIER>` | Only items at this tier. One of `library`, `feed`. |
 | `--tag <TAG>` | Items must carry every tag given. |
@@ -3139,9 +3139,9 @@ marfa device search [OPTIONS] <QUERY>
 
 | Option | Description |
 | --- | --- |
-| `--state <STATE>` | Exactly one state. Unset answers the active state. One of `active`, `archived`, `trashed`, `revoked`. |
+| `--state <STATE>` | A state to answer; repeat it or separate states with commas. Unset answers the active state. One of `active`, `archived`, `trashed`, `revoked`. |
 | `--all-states` | Every state, not just the active one. |
-| `--type <TYPE>` | A type identifier; its subtypes are included. |
+| `--type <TYPE>` | A type identifier, with its subtypes; repeat it or separate types with commas, up to ten. |
 | `--tier <TIER>` | Only hits at this tier. One of `library`, `feed`. |
 | `--tag <TAG>` | Hits must carry every tag given. |
 | `--occurred-after <TIME>` | Exclusive lower bound on the item's own time, RFC 3339. |

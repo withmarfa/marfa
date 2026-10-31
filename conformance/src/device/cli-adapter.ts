@@ -160,6 +160,18 @@ export function newStore(label: string): string {
   );
 }
 
+/** A flag once for each value of a filter that takes one or several. */
+function repeated(
+  flag: string,
+  value: string | string[] | undefined,
+): string[] {
+  if (value === undefined) return [];
+  return (Array.isArray(value) ? value : [value]).flatMap((entry) => [
+    flag,
+    entry,
+  ]);
+}
+
 export class CliDevice implements DeviceUnderTest {
   constructor(private readonly options: CliDeviceOptions) {}
 
@@ -249,8 +261,8 @@ export class CliDevice implements DeviceUnderTest {
   /** `list`, with whether the copy it read is whole (`device/read-partial-says`). */
   async listAnswer(filters: ListFilters = {}): Promise<Outcome<Listing>> {
     const args = ["items", "list"];
-    if (filters.type !== undefined) args.push("--type", filters.type);
-    if (filters.state !== undefined) args.push("--state", filters.state);
+    args.push(...repeated("--type", filters.type));
+    args.push(...repeated("--state", filters.state));
     if (filters.allStates === true) args.push("--all-states");
     if (filters.occurredAfter !== undefined)
       args.push("--occurred-after", filters.occurredAfter);
@@ -361,9 +373,9 @@ export class CliDevice implements DeviceUnderTest {
     limit?: number,
   ): Promise<Outcome<Found>> {
     const args = ["search", query];
-    if (filters.state !== undefined) args.push("--state", filters.state);
+    args.push(...repeated("--state", filters.state));
     if (filters.allStates === true) args.push("--all-states");
-    if (filters.type !== undefined) args.push("--type", filters.type);
+    args.push(...repeated("--type", filters.type));
     if (filters.tier !== undefined) args.push("--tier", filters.tier);
     if (filters.occurredAfter !== undefined)
       args.push("--occurred-after", filters.occurredAfter);

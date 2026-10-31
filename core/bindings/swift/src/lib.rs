@@ -137,15 +137,18 @@ pub struct Edge {
     pub unreadable_properties: Option<String>,
 }
 
-/// Narrowing for a search: the state rule a list takes, a type with its
-/// subtree, tags, a listing-grammar expression and `beneath`, each read as
-/// the list reads it.
+/// Narrowing for a search: the states and types a list takes, tags, a
+/// listing-grammar expression and `beneath`, each read as the list reads it.
 #[derive(Debug, Clone, Default, uniffi::Record)]
 pub struct SearchFilters {
+    /// The types to answer, each with its subtree: up to ten. An empty list
+    /// is refused.
     #[uniffi(default = None)]
-    pub r#type: Option<String>,
+    pub types: Option<Vec<String>>,
+    /// The states to answer; none answers the active state. An empty list
+    /// is refused, and so is a list beside `all_states`.
     #[uniffi(default = None)]
-    pub state: Option<ItemState>,
+    pub states: Option<Vec<ItemState>>,
     #[uniffi(default = false)]
     pub all_states: bool,
     /// One tier; none answers both.
@@ -170,14 +173,15 @@ pub struct SearchFilters {
     pub beneath: Option<String>,
 }
 
-/// Narrowing for a list. Leaving `state` unset answers the active state, as
-/// the server does; `all_states` lifts that, and a named state wins.
+/// Narrowing for a list. Leaving `states` unset answers the active state, as
+/// the server does; `all_states` lifts that. An empty `states` or `types` is
+/// refused, as is `states` beside `all_states` and more than ten types.
 #[derive(Debug, Clone, Default, uniffi::Record)]
 pub struct ListFilters {
     #[uniffi(default = None)]
-    pub r#type: Option<String>,
+    pub types: Option<Vec<String>>,
     #[uniffi(default = None)]
-    pub state: Option<ItemState>,
+    pub states: Option<Vec<ItemState>>,
     #[uniffi(default = false)]
     pub all_states: bool,
     #[uniffi(default = None)]
@@ -1692,8 +1696,10 @@ fn edge(edge: marfa_core::Edge, unreadable_properties: Option<String>) -> Edge {
 impl From<ListFilters> for marfa_core::ListFilters {
     fn from(filters: ListFilters) -> Self {
         marfa_core::ListFilters {
-            r#type: filters.r#type,
-            state: filters.state.map(Into::into),
+            types: filters.types,
+            states: filters
+                .states
+                .map(|states| states.into_iter().map(Into::into).collect()),
             all_states: filters.all_states,
             tier: filters.tier.map(Into::into),
             tags: filters.tags,
@@ -1781,9 +1787,11 @@ impl From<BlockedReason> for marfa_core::BlockedReason {
 impl From<SearchFilters> for marfa_core::SearchFilters {
     fn from(filters: SearchFilters) -> Self {
         marfa_core::SearchFilters {
-            state: filters.state.map(Into::into),
+            states: filters
+                .states
+                .map(|states| states.into_iter().map(Into::into).collect()),
             all_states: filters.all_states,
-            r#type: filters.r#type,
+            types: filters.types,
             tier: filters.tier.map(Into::into),
             tags: filters.tags,
             occurred_after: filters.occurred_after,
@@ -3623,8 +3631,8 @@ mod tests {
     #[test]
     fn list_filters_cross_whole() {
         let crossed: marfa_core::ListFilters = ListFilters {
-            r#type: Some("core.note".into()),
-            state: Some(ItemState::Archived),
+            types: Some(vec!["core.note".into(), "core.task".into()]),
+            states: Some(vec![ItemState::Archived, ItemState::Trashed]),
             all_states: true,
             tier: Some(Tier::Feed),
             tags: vec!["a".into()],
@@ -3642,8 +3650,11 @@ mod tests {
         assert_eq!(
             crossed,
             marfa_core::ListFilters {
-                r#type: Some("core.note".into()),
-                state: Some(marfa_core::ItemState::Archived),
+                types: Some(vec!["core.note".into(), "core.task".into()]),
+                states: Some(vec![
+                    marfa_core::ItemState::Archived,
+                    marfa_core::ItemState::Trashed,
+                ]),
                 all_states: true,
                 tier: Some(marfa_core::Tier::Feed),
                 tags: vec!["a".into()],
@@ -3663,9 +3674,9 @@ mod tests {
     #[test]
     fn search_filters_cross_whole() {
         let crossed: marfa_core::SearchFilters = SearchFilters {
-            state: Some(ItemState::Archived),
+            states: Some(vec![ItemState::Archived, ItemState::Trashed]),
             all_states: true,
-            r#type: Some("core.note".into()),
+            types: Some(vec!["core.note".into(), "core.task".into()]),
             tier: Some(Tier::Feed),
             tags: vec!["a".into(), "b".into()],
             occurred_after: Some("after".into()),
@@ -3677,9 +3688,12 @@ mod tests {
         assert_eq!(
             crossed,
             marfa_core::SearchFilters {
-                state: Some(marfa_core::ItemState::Archived),
+                states: Some(vec![
+                    marfa_core::ItemState::Archived,
+                    marfa_core::ItemState::Trashed,
+                ]),
                 all_states: true,
-                r#type: Some("core.note".into()),
+                types: Some(vec!["core.note".into(), "core.task".into()]),
                 tier: Some(marfa_core::Tier::Feed),
                 tags: vec!["a".into(), "b".into()],
                 occurred_after: Some("after".into()),

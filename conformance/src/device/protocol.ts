@@ -534,9 +534,11 @@ export interface EdgeDraft {
  *  tags, a listing-grammar expression and `beneath`, each read as the list
  *  reads it. */
 export interface SearchFilters {
-  state?: string;
+  /** One state, or several: a row in any of them matches. */
+  state?: string | string[];
   allStates?: boolean;
-  type?: string;
+  /** One type, or several: a row any of them selects matches. */
+  type?: string | string[];
   tier?: Tier;
   tags?: string[];
   /** Exclusive lower bound on the item's own time. */
@@ -550,8 +552,10 @@ export interface SearchFilters {
 }
 
 export interface ListFilters {
-  type?: string;
-  state?: string;
+  /** One type, or several: a row any of them selects matches. */
+  type?: string | string[];
+  /** One state, or several: a row in any of them matches. */
+  state?: string | string[];
   allStates?: boolean;
   /** Exclusive lower bound on the item's own time. */
   occurredAfter?: string;

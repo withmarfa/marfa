@@ -1068,7 +1068,7 @@ When a row leaves the copy, a device MUST keep the edges a row it holds draws to
 
 When an event says a row was purged, a device MUST let go the row and every edge at either end of it.
 
-**Tests:** `device/catch-up.test.ts › drops the edges at both ends of a purged row`.
+**Tests:** `device/catch-up.test.ts › drops the edges at both ends of a purged row`, `device/bin-held.test.ts › drops a row purged while the copy was offline, at its next catch-up`.
 
 ### `device/catch-up-purged-pin`
 
@@ -1552,9 +1552,51 @@ When a local search names no state, a device MUST answer only rows in the active
 
 ### `device/read-named-state`
 
-When a local list or a local search names a state, a device MUST answer the rows in that state.
+When a local list or a local search names one state or several, a device MUST answer the rows in any state it names.
 
-**Tests:** `device/working-copy.test.ts › answers the active state on a local list that names none`, `› answers the active state on a local search that names none`.
+**Reason:** the server reads a `state` list the same way (`search-and-filters/state-list`). A search still answers no row in the bin (`device/search-no-bin`).
+
+**Tests:** `device/working-copy.test.ts › answers the active state on a local list that names none`, `› answers the active state on a local search that names none`, `device/read-lists.test.ts › answers the rows in any state it names, and a search still never the bin`.
+
+### `device/read-states-beside-all`
+
+If a local list or a local search names states and also asks for every state, then a device MUST refuse it `validation` with the code `validation_error`.
+
+**Reason:** the server refuses `any` beside another state (`search-and-filters/state-any-alone`), and answering either half would drop the other without a word.
+
+**Tests:** `device/read-lists.test.ts › refuses states named beside every state`.
+
+### `device/read-type-list`
+
+When a local list or a local search names several types, a device MUST answer the rows that any of them selects, each with its subtree.
+
+**Reason:** the server reads a `type` list the same way (`search-and-filters/type-list`), so an app that shows several types at once reads them in one call, online or offline.
+
+**Tests:** `device/read-lists.test.ts › answers the rows any type names, on a list and a search`.
+
+### `device/read-type-list-max`
+
+If a local list or a local search names more than 10 types, then a device MUST refuse it `validation` with the code `validation_error`.
+
+**Reason:** the server's bound (`search-and-filters/type-list-max`), so a call the copy answers offline is never refused online.
+
+**Tests:** `device/read-lists.test.ts › refuses more than ten types`.
+
+### `device/read-list-empty`
+
+If a local list or a local search names a type list or a state list that holds no entry, then a device MUST refuse it `validation` with the code `validation_error`.
+
+**Reason:** a caller who names a list means to narrow, so reading an empty one as the default would answer a selection the caller did not make. The server refuses a filter that names nothing the same way (`search-and-filters/empty-narrowing` and `search-and-filters/state-empty`). A list left unset is not empty: it narrows nothing, or, for states, answers the active state.
+
+**Tests:** `device/binding-read-lists.test.ts › refuses an empty type or state list rather than reading the default`.
+
+### `device/read-limit-after-filter`
+
+When a local list or a local search names a limit, a device MUST count toward it only the rows that its type, state and other filters keep.
+
+**Reason:** the server applies its limit the same way (`search-and-filters/limit-after-filter`); a limit counted first would answer a short or empty page while matching rows remain.
+
+**Tests:** `device/read-lists.test.ts › counts only the rows the type and state lists keep`.
 
 ### `device/get-archived`
 
@@ -5290,7 +5332,7 @@ If a purge is sent and no answer comes, then a device MUST keep the row and refu
 
 When a caller reads the bin, a device MUST answer the server's bin, a page at a time.
 
-**Reason:** a local read answers no row in the bin, and a copy holds a row in the bin only while its slice or a pin takes it, so the bin a person is shown is the server's `GET /items?state=trashed`. The server answers no time a row went to the bin, so a row's `updated_at` stands for it.
+**Reason:** a copy holds a row in the bin only while its slice or a pin takes it, so the whole bin is the server's `GET /items?state=trashed`. The rows of it the copy holds answer a local list naming the bin (`device/bin-local`). The server answers no time a row went to the bin, so a row's `updated_at` stands for it.
 
 **Tests:** `device/bin-live.test.ts › reads the server's bin a page at a time, holding nothing`.
 
@@ -5306,9 +5348,41 @@ When a caller reads the bin, a device MUST NOT hold what it reads in the copy.
 
 If the server cannot be reached when a caller reads the bin, then a device MUST refuse `network`.
 
-**Reason:** a bin answered from the copy offline would read as the whole bin while missing every row outside the slice.
+**Reason:** a read of the bin names the whole bin, and one answered from the copy offline would read as whole while missing every row outside the slice. A local list naming the bin answers the rows the copy holds there, with the server away (`device/bin-local`).
 
 **Tests:** `device/purge.test.ts › refuses to read the bin while the server cannot be reached`.
+
+### `device/bin-held-delete`
+
+When a device puts a row it holds in the bin, a device MUST keep the row in the copy, in the bin.
+
+**Reason:** a person who binned a row offline can find it again and restore it before the server hears.
+
+**Tests:** `device/bin-held.test.ts › holds a row the device puts in the bin, and lists it there with the server away`.
+
+### `device/bin-held-event`
+
+When an event says a row the copy holds went to the bin, a device MUST keep the row in the copy, in the bin.
+
+**Reason:** a slice holds its rows in the bin as in any other state, so the bin a copy lists offline holds what another client binned as well as what this device binned.
+
+**Tests:** `device/bin-held.test.ts › holds a row an event puts in the bin, and lists it there with the server away`.
+
+### `device/bin-local`
+
+When a local list names the bin's state, a device MUST answer the rows the copy holds in the bin from the copy alone, whether or not the server can be reached.
+
+**Reason:** a person reads and restores what they binned while offline. Marfa answers no time a row went to the bin on the row itself, so `updated_at`, which a move to the bin sets, stands for it, and a list sorted by `updated_at`, newest first, answers the most recently binned first. A row this device binned keeps the `updated_at` it had until the server's answer or event brings the server's.
+
+**Tests:** `device/bin-held.test.ts › holds a row the device puts in the bin, and lists it there with the server away`, `› holds a row an event puts in the bin, and lists it there with the server away`, `› orders the bin newest first by the time each row last changed`.
+
+### `device/bin-restored-one-row`
+
+When one catch-up carries a row's move to the bin and its move out, in either order, a device MUST hold one row for it, in the state the later event gives.
+
+**Reason:** a row that went to the bin and back before the copy heard is one row in one state on the server, and a copy that kept both would show it twice.
+
+**Tests:** `device/bin-held.test.ts › holds one row, in the state the last event gives`.
 
 ### `device/pin-trashed`
 
@@ -5848,19 +5922,19 @@ Where a working copy names no server, if a caller reads the server's item types 
 
 ### `device/type-grammar`
 
-If a local list or search names a `type` outside the server's type grammar (`types/id-grammar` and `types/id-reserved-scope-root`), then a device MUST refuse it `validation` with the code `validation_error`.
+If a local list or search names a `type`, or a type list with an entry, outside the server's type grammar (`types/id-grammar` and `types/id-reserved-scope-root`), then a device MUST refuse it `validation` with the code `validation_error`.
 
-**Reason:** a local read that answered an empty list would say the type holds nothing where the server says the name is no type at all, so a mistyped name would go unnoticed offline and fail only online.
+**Reason:** a local read that answered an empty list would say the type holds nothing where the server says the name is no type at all, so a mistyped name would go unnoticed offline and fail only online. One bad entry refuses the whole list, as on the server (`search-and-filters/type-list`).
 
-**Tests:** `device/local-refusals.test.ts › refuses a list or a search naming a type outside the server's grammar`.
+**Tests:** `device/local-refusals.test.ts › refuses a list or a search naming a type outside the server's grammar`, `device/read-lists.test.ts › refuses the list for an entry it would refuse alone`.
 
 ### `device/type-unknown`
 
-If a local list or search names a `type` that is a well-formed concrete type identifier (`device/type-grammar`) and the working copy's catalog does not hold it, then a device MUST refuse it with the code `unknown_type`.
+If a local list or search names a `type`, or a type list with an entry, that is a well-formed concrete type identifier (`device/type-grammar`) and the working copy's catalog does not hold it, then a device MUST refuse it with the code `unknown_type`.
 
 **Reason:** an empty page is the one answer a caller cannot tell from a type that holds nothing, so a mistyped name, a type registered under another handle and a type deleted since the copy last read the catalog would read as nothing here offline and fail only online, where the server refuses them (`search-and-filters/type-unknown`). The copy holds the server's whole registry whatever its key reads, so a registered type the key may not read is not refused here, and a wildcard is not refused, because what it names may be nothing (`search-and-filters/type-wildcard-none`). A copy answers by the catalog it last read: a type registered since is refused until the copy reads the catalog again.
 
-**Tests:** `device/local-refusals.test.ts › refuses a list or a search naming a type its catalog does not hold, as the server does`.
+**Tests:** `device/local-refusals.test.ts › refuses a list or a search naming a type its catalog does not hold, as the server does`, `device/read-lists.test.ts › refuses the list for an entry it would refuse alone`.
 
 ## The docs site
 

@@ -196,15 +196,17 @@ pub enum DeviceCommand {
         /// phrase.
         #[arg(allow_hyphen_values = true)]
         query: String,
-        /// Exactly one state. Unset answers the active state.
-        #[arg(long)]
-        state: Option<ItemState>,
+        /// A state to answer; repeat it or separate states with commas.
+        /// Unset answers the active state.
+        #[arg(long, value_delimiter = ',')]
+        state: Vec<ItemState>,
         /// Every state, not just the active one.
         #[arg(long)]
         all_states: bool,
-        /// A type identifier; its subtypes are included.
-        #[arg(long = "type", value_name = "TYPE")]
-        type_: Option<String>,
+        /// A type identifier, with its subtypes; repeat it or separate types
+        /// with commas, up to ten.
+        #[arg(long = "type", value_name = "TYPE", value_delimiter = ',')]
+        type_: Vec<String>,
         /// Only hits at this tier.
         #[arg(long)]
         tier: Option<Tier>,
@@ -851,12 +853,14 @@ pub struct UpdateArgs {
 
 #[derive(Debug, Args)]
 pub struct ListArgs {
-    /// A type identifier; its subtypes are included.
-    #[arg(long = "type", value_name = "TYPE")]
-    pub type_: Option<String>,
-    /// Exactly one state. Unset answers the active state.
-    #[arg(long)]
-    pub state: Option<ItemState>,
+    /// A type identifier, with its subtypes; repeat it or separate types
+    /// with commas, up to ten.
+    #[arg(long = "type", value_name = "TYPE", value_delimiter = ',')]
+    pub type_: Vec<String>,
+    /// A state to answer; repeat it or separate states with commas. Unset
+    /// answers the active state.
+    #[arg(long, value_delimiter = ',')]
+    pub state: Vec<ItemState>,
     /// Every state, not just the active one.
     #[arg(long)]
     pub all_states: bool,
@@ -1253,8 +1257,8 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
                         .map(|()| Exit::Done);
                     }
                     let filters = ListFilters {
-                        r#type: args.type_,
-                        state: args.state.map(Into::into),
+                        types: given(args.type_),
+                        states: given(args.state.into_iter().map(Into::into).collect()),
                         all_states: args.all_states,
                         tier: args.tier.map(Into::into),
                         tags: args.tags,
@@ -1497,9 +1501,9 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
                 .map(|()| Exit::Done);
             }
             let filters = SearchFilters {
-                state: state.map(Into::into),
+                states: given(state.into_iter().map(Into::into).collect()),
                 all_states,
-                r#type: type_,
+                types: given(type_),
                 tier: tier.map(Into::into),
                 tags,
                 occurred_after,
@@ -1986,6 +1990,11 @@ fn attachments_text(attachments: &marfa_core::Attachments) -> String {
         }
     }
     text
+}
+
+/// A repeatable flag given no value leaves the filter unset.
+fn given<T>(values: Vec<T>) -> Option<Vec<T>> {
+    (!values.is_empty()).then_some(values)
 }
 
 fn type_line(held: &marfa_core::ItemType) -> String {
