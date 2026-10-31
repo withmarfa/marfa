@@ -3289,7 +3289,7 @@ While a hydration fills the copy, the report also gives the rows its listings ha
 
 The hydration is `never`, `in_progress`, `complete`, `stale` or `expired`. A stale copy is one the server's event log no longer reaches: it answers reads marked stale and takes writes, but not to edges, until a hydration has filled it again in place, and stays stale while that hydration runs. An expired copy refuses reads and writes until a hydration, which empties it first.
 
-`synced_at` is when the copy last finished a pull from the server without error, from this device's clock: a hydration or catch-up that completed, or a follow at the head of the event log, which records it at most every 30 seconds. A pull that fails or ends part way leaves it as it was, and a hydration that empties the copy removes it.
+`synced_at` is when the copy last finished a pull from the server without error, from this device's clock: a hydration or catch-up that completed, or a follow at the head of the event log, which records it at most every 30 seconds. A pull that fails or ends part way leaves it as it was, and a hydration that empties the copy removes it, while one that fills a stale copy in place keeps it until that hydration completes.
 
 ```text
 marfa device status [OPTIONS]

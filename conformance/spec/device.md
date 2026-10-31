@@ -606,7 +606,7 @@ While no hydration is under way and its copy holds a slice and no valid cursor, 
 
 While its store has completed no pull from the server since it was made, a device MUST report `synced_at` as null.
 
-**Tests:** `device/synced-at.test.ts › reports no synced_at on a new store, and the time a hydration completed once one has, across a reopen`.
+**Tests:** `device/synced-at.test.ts › reports no synced_at on a new store, and the time a hydration completed once one has, across a reopen`, `device/binding-synced-at.test.ts › tells no syncedAt before a hydration, an RFC 3339 UTC time once one completes, and the same time after the store is opened again`.
 
 ### `device/synced-at-hydration`
 
@@ -614,7 +614,7 @@ When a hydration completes, a device MUST report as `synced_at` the time its own
 
 **Reason:** an app shows `synced_at` as how current the copy is, such as "updated 5 minutes ago" or "offline since 10:42".
 
-**Tests:** `device/synced-at.test.ts › reports no synced_at on a new store, and the time a hydration completed once one has, across a reopen`.
+**Tests:** `device/synced-at.test.ts › reports no synced_at on a new store, and the time a hydration completed once one has, across a reopen`, `device/refill.test.ts › keeps synced_at through an interrupted refill in place, and moves it when the refill completes`, `device/binding-synced-at.test.ts › tells no syncedAt before a hydration, an RFC 3339 UTC time once one completes, and the same time after the store is opened again`.
 
 ### `device/synced-at-catch-up`
 
@@ -624,9 +624,11 @@ When a catch-up completes, a device MUST report as `synced_at` the time its own 
 
 ### `device/synced-at-follow`
 
-When a follow it runs reaches the head of the event log, a device MUST report as `synced_at` the time its own clock gave then.
+While a follow it runs is at the head of the event log, when the follow reads a frame from the server, a device MUST report as `synced_at` a time its own clock gave at most 30 seconds before it read that frame.
 
-**Tests:** `device/synced-at.test.ts › moves synced_at when a follow reaches the head of the log`.
+**Reason:** a busy stream would otherwise cost a store write for every event, and a time at most 30 seconds old still reads as current to a person.
+
+**Tests:** `device/synced-at.test.ts › moves synced_at when a follow reaches the head of the log`, `device/binding-synced-at.test.ts › tells a time its clock gave within the last thirty seconds each time a follow at the head reads a frame`.
 
 ### `device/synced-at-failed-pull`
 
@@ -634,7 +636,15 @@ If a hydration, a catch-up or a follow fails, is refused, makes the copy stale o
 
 **Reason:** a time moved by a pull that did not finish tells a person their rows are current when they are not.
 
-**Tests:** `device/synced-at.test.ts › keeps synced_at when a catch-up fails, and moves it on the next that completes`, `› keeps synced_at when the server refuses the credential a catch-up sends`, `› keeps synced_at when a catch-up ends part way, though it applied what came before`, `› keeps synced_at when the copy goes stale`, `› keeps synced_at through a follow that applies events but never reaches the head`.
+**Tests:** `device/synced-at.test.ts › keeps synced_at when a catch-up fails, and moves it on the next that completes`, `› keeps synced_at when the server refuses the credential a catch-up sends`, `› keeps synced_at when a catch-up ends part way, though it applied what came before`, `› keeps synced_at when the copy goes stale`, `› keeps synced_at through a follow that applies events but never reaches the head`, `device/refill.test.ts › keeps synced_at through an interrupted refill in place, and moves it when the refill completes`.
+
+### `device/synced-at-refill`
+
+While a hydration fills a stale copy in place and has not completed, a device MUST report the `synced_at` it reported before that hydration began.
+
+**Reason:** the copy still holds the rows the last completed pull brought, marked stale, so that pull's time still describes them.
+
+**Tests:** `device/refill.test.ts › keeps synced_at through an interrupted refill in place, and moves it when the refill completes`.
 
 ### `device/synced-at-drain`
 
@@ -648,7 +658,7 @@ When a drain sends the queue to the server, a device MUST NOT change `synced_at`
 
 When its store is opened again, a device MUST report the `synced_at` it reported before the store was closed.
 
-**Tests:** `device/synced-at.test.ts › reports no synced_at on a new store, and the time a hydration completed once one has, across a reopen`.
+**Tests:** `device/synced-at.test.ts › reports no synced_at on a new store, and the time a hydration completed once one has, across a reopen`, `device/binding-synced-at.test.ts › tells no syncedAt before a hydration, an RFC 3339 UTC time once one completes, and the same time after the store is opened again`.
 
 ### `device/synced-at-emptied`
 
