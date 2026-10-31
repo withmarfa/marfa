@@ -1607,12 +1607,24 @@ impl Folder {
 
 const LOCAL_ADMISSION_REFUSAL: &str = "refused: local item validation: ";
 
+/// A local refusal as a refused write records it, as the server's reads.
+fn local_refusal_reason(error: &CoreError) -> String {
+    let prefix = LOCAL_ADMISSION_REFUSAL
+        .strip_prefix(state::REFUSED)
+        .unwrap_or(LOCAL_ADMISSION_REFUSAL);
+    format!("{prefix}{error}")
+}
+
 /// What the copy refuses a write for before queueing it: a field the type
-/// does not take, a type it does not hold, and a tag or property name the
-/// server would refuse.
+/// does not take, a type it does not hold, a tag or property name the
+/// server would refuse, and an edge, or a move of an item to another type,
+/// that the edge rules refuse. A folder holds the file it refuses as it
+/// holds one the server refuses, and the scan goes on.
 fn local_admission_refusal(error: &CoreError) -> bool {
     matches!(error, CoreError::Validation {code, ..}
-        if code == "invalid_properties" || code == "validation_error")
+        if matches!(code.as_str(), "invalid_properties" | "validation_error"
+            | "edge_constraint_violation" | "edge_cycle"))
+        || matches!(error, CoreError::NotFound {code, ..} if code == "item_not_found")
         || matches!(error, CoreError::UnknownType { .. })
 }
 
@@ -1942,17 +1954,21 @@ impl Folder {
         let bounds = state::every_bound(&*self.core.conn()?)?;
         for mut bound in bounds {
             let mut changed = false;
-            for at in 0..bound.writes.queued.len() {
+            let mut at = 0;
+            while at < bound.writes.queued.len() {
                 let Some(row) = queue
                     .iter()
                     .find(|row| row.id == bound.writes.queued[at].id)
                 else {
+                    at += 1;
                     continue;
                 };
                 if !gone_before_its_move(row) {
+                    at += 1;
                     continue;
                 }
                 let Some(moved) = moved_line(&*self.core.conn()?, row, &bound)? else {
+                    at += 1;
                     continue;
                 };
                 let body: Value =
@@ -1961,16 +1977,36 @@ impl Folder {
                     crate::catalog::End::Source => (bound.item_id.clone(), moved.to.other.clone()),
                     crate::catalog::End::Target => (moved.to.other.clone(), bound.item_id.clone()),
                 };
-                let created = self.core.create_edge(&crate::model::EdgeDraft {
+                let made_again = self.core.create_edge(&crate::model::EdgeDraft {
                     source_id,
                     target_id,
                     edge_type: moved.to.edge_type.clone(),
                     properties: body["properties"].as_object().cloned().unwrap_or_default(),
                     id: None,
-                })?;
-                bound.writes.queued[at].id = created.id;
+                });
                 changed = true;
-                made += 1;
+                match made_again {
+                    // Held as the server's refusal of the move would hold it.
+                    Err(error) if local_admission_refusal(&error) => {
+                        let save = bound.writes.queued.remove(at).save;
+                        let refused = state::Refused {
+                            change: state::Change::Edge {
+                                line: moved.to,
+                                shown: true,
+                            },
+                            save,
+                            reason: local_refusal_reason(&error),
+                        };
+                        if !bound.writes.refused.contains(&refused) {
+                            bound.writes.refused.push(refused);
+                        }
+                    }
+                    other => {
+                        bound.writes.queued[at].id = other?.id;
+                        made += 1;
+                        at += 1;
+                    }
+                }
             }
             if changed {
                 state::bind(&*self.core.conn()?, &bound)?;
@@ -5350,5 +5386,313 @@ mod tests {
         let pulled = folder.pull().unwrap();
         assert_eq!(pulled.unwritten, 0, "{pulled:?}");
         assert!(read(dir.path(), "a.md").unwrap().contains("from b"));
+    }
+
+    const BINNED_SHELF: &str = "01a00000-0000-7000-8000-0000000000b1";
+    const SHELF: &str = "01a00000-0000-7000-8000-0000000000b2";
+
+    /// A folder whose copy holds the built-in catalog, a collection, `SHELF`,
+    /// and one in the bin, `BINNED_SHELF`.
+    fn folder_beside_shelves(settings: Value) -> (ScannedDir, Folder) {
+        let (dir, folder) = scanned_folder_with(settings, Some(serde_json::json!([])));
+        {
+            let conn = folder.core.conn().unwrap();
+            for (id, state) in [(BINNED_SHELF, "trashed"), (SHELF, "active")] {
+                crate::store::upsert_item(
+                    &conn,
+                    &crate::store::testing::wire_item(
+                        id,
+                        "core.collection",
+                        state,
+                        "2026-01-01T00:00:00Z",
+                        serde_json::json!({ "title": id }),
+                    ),
+                    None,
+                    &Default::default(),
+                )
+                .unwrap();
+            }
+        }
+        (dir, folder)
+    }
+
+    fn queued_kinds(folder: &Folder, kind: WriteKind) -> usize {
+        folder
+            .core
+            .queue()
+            .unwrap()
+            .iter()
+            .filter(|row| row.kind == kind)
+            .count()
+    }
+
+    fn refused_at<'a>(report: &'a ScanReport, path: &str) -> Vec<&'a str> {
+        report
+            .flagged
+            .iter()
+            .filter(|flagged| flagged.path == path && flagged.flag == "refused")
+            .map(|flagged| flagged.reason.as_str())
+            .collect()
+    }
+
+    #[test]
+    fn a_default_edge_the_copy_refuses_flags_the_file_and_its_item_is_made_once() {
+        let (dir, folder) = folder_beside_shelves(serde_json::json!({
+            "query": {},
+            "defaults": { "edges": { "in-collection": [SHELF, BINNED_SHELF] } }
+        }));
+        std::fs::write(dir.path().join("a.md"), "a note\n").unwrap();
+        std::fs::write(dir.path().join("archive.bin"), [0x80_u8, 0x81, 0x82]).unwrap();
+
+        let report = folder.scan().unwrap();
+        assert_eq!(report.created, 2, "{report:?}");
+        for path in ["a.md", "archive.bin"] {
+            let refused = refused_at(&report, path);
+            assert_eq!(refused.len(), 1, "{path}: {report:?}");
+            assert!(refused[0].contains("item_not_found"), "{refused:?}");
+            let bound = state::bound_at(&folder.core.conn().unwrap(), path)
+                .unwrap()
+                .unwrap_or_else(|| panic!("{path} is not bound"));
+            assert!(folder.core.get(&bound.item_id).unwrap().is_some());
+        }
+        // The witness: the default the copy takes is queued for each file.
+        assert_eq!(queued_kinds(&folder, WriteKind::CreateItem), 2);
+        let shelved = folder
+            .core
+            .queue()
+            .unwrap()
+            .into_iter()
+            .filter(|row| {
+                row.kind == WriteKind::CreateEdge && row.target_id.as_deref() == Some(SHELF)
+            })
+            .count();
+        assert_eq!(shelved, 2);
+
+        std::fs::write(dir.path().join("b.md"), "another note\n").unwrap();
+        let again = folder.scan().unwrap();
+        assert_eq!(again.created, 1, "{again:?}");
+        assert_eq!(queued_kinds(&folder, WriteKind::CreateItem), 3);
+        assert_eq!(refused_at(&again, "b.md").len(), 1, "{again:?}");
+        assert!(refused_at(&again, "a.md").is_empty(), "{again:?}");
+    }
+
+    #[test]
+    fn a_retype_the_copy_refuses_for_a_standing_edge_holds_the_file_and_the_scan_goes_on() {
+        const NOTE: &str = "01a00000-0000-7000-8000-0000000000c1";
+        let (dir, folder) = folder_beside_shelves(serde_json::json!({ "query": {} }));
+        {
+            let conn = folder.core.conn().unwrap();
+            crate::store::put_server_item(
+                &conn,
+                &crate::store::testing::note(NOTE, "n", "", "2026-01-01T00:00:00Z"),
+                None,
+                &crate::catalog::Catalog::empty(),
+            )
+            .unwrap();
+            crate::store::put_server_edge(
+                &conn,
+                &crate::store::testing::wire_edge("shelved", NOTE, SHELF, "in-collection"),
+            )
+            .unwrap();
+        }
+        let file = |r#type: &str| {
+            format!("---\nmarfa_id: {NOTE}\nmarfa_version: 1\ntype: {type}\ntitle: n\n---\n")
+        };
+        std::fs::write(dir.path().join("n.md"), file("core.note")).unwrap();
+        let first = folder.scan().unwrap();
+        assert!(refused_at(&first, "n.md").is_empty(), "{first:?}");
+        let updates = queued_kinds(&folder, WriteKind::UpdateItem);
+
+        std::fs::write(dir.path().join("n.md"), file("core.collection")).unwrap();
+        std::fs::write(dir.path().join("late.md"), "a later note\n").unwrap();
+        let report = folder.scan().unwrap();
+        let refused = refused_at(&report, "n.md");
+        assert_eq!(refused.len(), 1, "{report:?}");
+        assert!(
+            refused[0].contains("edge_constraint_violation"),
+            "{refused:?}"
+        );
+        assert_eq!(report.created, 1, "{report:?}");
+        assert_eq!(queued_kinds(&folder, WriteKind::UpdateItem), updates);
+        assert_eq!(folder.core.get(NOTE).unwrap().unwrap().r#type, "core.note");
+        // Held, the file is asked again at the next scan, and refused again.
+        let again = folder.scan().unwrap();
+        assert_eq!(refused_at(&again, "n.md").len(), 1, "{again:?}");
+
+        // The witness: a retype no standing edge refuses is queued.
+        std::fs::write(dir.path().join("n.md"), file("core.task")).unwrap();
+        let taken = folder.scan().unwrap();
+        assert!(refused_at(&taken, "n.md").is_empty(), "{taken:?}");
+        assert_eq!(queued_kinds(&folder, WriteKind::UpdateItem), updates + 1);
+    }
+
+    #[test]
+    fn a_line_the_copy_refuses_keeps_the_edges_queued_before_it_and_is_held_by_its_line() {
+        const OTHER: &str = "01a00000-0000-7000-8000-0000000000d1";
+        let (dir, folder) = folder_beside_shelves(serde_json::json!({ "query": {} }));
+        crate::store::put_server_item(
+            &folder.core.conn().unwrap(),
+            &crate::store::testing::note(OTHER, "other", "", "2026-01-01T00:00:00Z"),
+            None,
+            &crate::catalog::Catalog::empty(),
+        )
+        .unwrap();
+        // `about` is read before `in-collection`, and a note is no container.
+        std::fs::write(
+            dir.path().join("a.md"),
+            format!("---\nabout: \"[[{OTHER}]]\"\nin-collection: \"[[{OTHER}]]\"\n---\nbody\n"),
+        )
+        .unwrap();
+        let report = folder.scan().unwrap();
+        assert_eq!(report.created, 1, "{report:?}");
+        let refused = refused_at(&report, "a.md");
+        assert_eq!(refused.len(), 1, "{report:?}");
+        assert!(
+            refused[0].contains("edge_constraint_violation"),
+            "{refused:?}"
+        );
+
+        let bound = state::bound_at(&folder.core.conn().unwrap(), "a.md")
+            .unwrap()
+            .unwrap();
+        let about = folder
+            .core
+            .edges_from(&bound.item_id)
+            .unwrap()
+            .into_iter()
+            .find(|edge| edge.edge_type == "about")
+            .expect("the about edge is queued");
+        let queue = folder.core.queue().unwrap();
+        let about_write = queue
+            .iter()
+            .find(|row| {
+                row.kind == WriteKind::CreateEdge && row.edge_id.as_deref() == Some(&about.id)
+            })
+            .expect("the about edge's write");
+        assert!(
+            bound
+                .writes
+                .queued
+                .iter()
+                .any(|queued| queued.id == about_write.id),
+            "{bound:?}"
+        );
+        let shelved = state::Line {
+            edge_type: "in-collection".into(),
+            end: crate::catalog::End::Source,
+            other: OTHER.into(),
+        };
+        assert!(bound.lines.contains(&shelved), "{bound:?}");
+        assert!(
+            bound.writes.refused.iter().any(|refused| refused.change
+                == state::Change::Edge {
+                    line: shelved.clone(),
+                    shown: true
+                }),
+            "{bound:?}"
+        );
+
+        // Unchanged, the file queues nothing again.
+        let edges = queued_kinds(&folder, WriteKind::CreateEdge);
+        folder.scan().unwrap();
+        assert_eq!(queued_kinds(&folder, WriteKind::CreateEdge), edges);
+
+        // The line taken out, the file is held by it no longer.
+        std::fs::write(
+            dir.path().join("a.md"),
+            format!("---\nabout: \"[[{OTHER}]]\"\n---\nbody\n"),
+        )
+        .unwrap();
+        let cleared = folder.scan().unwrap();
+        assert!(refused_at(&cleared, "a.md").is_empty(), "{cleared:?}");
+        let bound = state::bound_at(&folder.core.conn().unwrap(), "a.md")
+            .unwrap()
+            .unwrap();
+        assert!(bound.writes.refused.is_empty(), "{bound:?}");
+    }
+
+    #[test]
+    fn an_edge_remade_after_its_move_found_it_gone_is_held_where_the_copy_refuses_it() {
+        const NOTE: &str = "01a00000-0000-7000-8000-0000000000e1";
+        const FIRST: &str = "01a00000-0000-7000-8000-0000000000e2";
+        const SECOND: &str = "01a00000-0000-7000-8000-0000000000e3";
+        let (dir, folder) = folder_beside_shelves(serde_json::json!({ "query": {} }));
+        let held = |id: &str, title: &str, state: &str| {
+            let mut item = crate::store::testing::note(id, title, "", "2026-01-01T00:00:00Z");
+            item.state = state.into();
+            crate::store::put_server_item(
+                &folder.core.conn().unwrap(),
+                &item,
+                None,
+                &crate::catalog::Catalog::empty(),
+            )
+            .unwrap();
+        };
+        held(NOTE, "a", "active");
+        held(FIRST, "first", "active");
+        held(SECOND, "second", "active");
+        crate::store::put_server_edge(
+            &folder.core.conn().unwrap(),
+            &crate::store::testing::wire_edge("threaded", NOTE, FIRST, "in-thread"),
+        )
+        .unwrap();
+        let file = |thread: &str| {
+            format!(
+                "---\nmarfa_id: {NOTE}\nmarfa_version: 1\ntitle: a\nin-thread: \"[[{thread}]]\"\n---\n"
+            )
+        };
+        std::fs::write(dir.path().join("a.md"), file(FIRST)).unwrap();
+        folder.scan().unwrap();
+        std::fs::write(dir.path().join("a.md"), file(SECOND)).unwrap();
+        folder.scan().unwrap();
+        let moved = folder
+            .core
+            .queue()
+            .unwrap()
+            .into_iter()
+            .find(|row| row.kind == WriteKind::UpdateEdge)
+            .expect("the move is queued");
+        // Another machine deleted the edge before the move reached it, and
+        // the item the line names went to the bin since.
+        folder
+            .core
+            .conn()
+            .unwrap()
+            .execute(
+                "UPDATE queue SET verdict = 'refused', reason = 'edge_not_found' WHERE id = ?1",
+                [&moved.id],
+            )
+            .unwrap();
+        held(SECOND, "second", "trashed");
+
+        assert_eq!(folder.make_edges_gone_before_their_move().unwrap(), 0);
+        let bound = state::bound_at(&folder.core.conn().unwrap(), "a.md")
+            .unwrap()
+            .unwrap();
+        assert!(
+            !bound
+                .writes
+                .queued
+                .iter()
+                .any(|queued| queued.id == moved.id),
+            "{bound:?}"
+        );
+        let refused = bound
+            .writes
+            .refused
+            .iter()
+            .find(|refused| {
+                refused.change
+                    == state::Change::Edge {
+                        line: state::Line {
+                            edge_type: "in-thread".into(),
+                            end: crate::catalog::End::Source,
+                            other: SECOND.into(),
+                        },
+                        shown: true,
+                    }
+            })
+            .unwrap_or_else(|| panic!("{bound:?}"));
+        assert!(refused.reason.contains("item_not_found"), "{refused:?}");
     }
 }

@@ -816,19 +816,17 @@ impl Folder {
             };
             match claim {
                 None => {
-                    match self.queue_create(
+                    if self.queue_create(
                         file,
                         (settings, embedded.contains(&file.key)),
                         catalog,
                         edge_types,
                         &withheld,
                         &mut work,
+                        &mut report.flagged,
                     )? {
-                        Some(flagged) => report.flagged.push(flagged),
-                        None => {
-                            report.created += 1;
-                            report.warnings.extend(near_limit(&file.key, &file.text));
-                        }
+                        report.created += 1;
+                        report.warnings.extend(near_limit(&file.key, &file.text));
                     }
                 }
                 Some(Claim {
@@ -1012,14 +1010,16 @@ impl Folder {
             pending.embeds = shown.remove(&pending.path).unwrap_or_default();
         }
         for pending in work {
-            // A failure is this file's alone: it waits, and the scan goes on.
+            // A failure is this file's alone: it waits, and the scan goes on,
+            // and what was queued before it stays the file's.
+            let mut queued = Vec::new();
             let outcome = self
-                .queue_edges(&pending, edge_types, catalog, &mut resolver)
+                .queue_edges(&pending, edge_types, catalog, &mut resolver, &mut queued)
                 .unwrap_or_else(|error| lines::Outcome {
                     links: pending.had_links.clone(),
                     lines: pending.had_lines.clone(),
                     held: Some(format!("{}{error}", state::EDGES_WAITING)),
-                    queued: Vec::new(),
+                    refused: Vec::new(),
                     embeds: Vec::new(),
                 });
             report.embeds.extend(
@@ -1038,7 +1038,7 @@ impl Folder {
                 let save = writes.save;
                 writes
                     .queued
-                    .extend(outcome.queued.into_iter().map(|id| state::Queued {
+                    .extend(queued.into_iter().map(|id| state::Queued {
                         id,
                         save,
                         line: None,
@@ -1048,6 +1048,24 @@ impl Folder {
                     state::Change::Edge { line, shown } => outcome.lines.contains(line) == *shown,
                     _ => true,
                 });
+                // Refused by the copy, a line is held as one the server refused.
+                for (line, reason) in outcome.refused {
+                    report.flagged.push(Flagged {
+                        path: pending.path.clone(),
+                        flag: "refused",
+                        reason: reason.clone(),
+                        item: None,
+                    });
+                    let change = state::Change::Edge { line, shown: true };
+                    writes
+                        .refused
+                        .retain(|refused| !change.supersedes(&refused.change));
+                    writes.refused.push(state::Refused {
+                        change,
+                        save,
+                        reason,
+                    });
+                }
                 state::bind(
                     &conn,
                     &state::Bound {
