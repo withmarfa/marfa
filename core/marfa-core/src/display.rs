@@ -1,6 +1,9 @@
 //! An item's name and preview, read from its properties and its type's
-//! effective display hints: `types/item-name-fields`, `types/item-name-text`,
-//! `device/item-name-none` and the `device/item-preview-*` statements.
+//! effective display hints: the `types/item-name-*` statements but
+//! `types/item-name-empty`, `device/item-name-none` and the
+//! `device/item-preview-*` statements. `itemName` in `packages/shared` is the
+//! server's copy of the name; `conformance/fixtures/item-display.json` holds
+//! both to the same cases.
 
 use serde_json::{Map, Value};
 
@@ -28,39 +31,83 @@ pub(crate) fn display(
     let preview = properties
         .get(body_property)
         .and_then(Value::as_str)
-        .and_then(|body| match &named {
-            Some((field, _)) if *field == body_property => preview(after_first_line(body)),
-            _ => preview(body),
+        .and_then(|body| {
+            let skipped = named
+                .as_ref()
+                .filter(|named| named.field == body_property)
+                .map(|named| named.line);
+            preview(body, skipped)
         });
     ItemDisplay {
-        name: named.map(|(_, name)| name),
+        name: named.map(|named| named.text),
         preview,
     }
 }
 
-/// The name, and the property it was taken from.
+/// A name, the property it was taken from, and the index of the line in
+/// that property's value it was taken from.
+struct Named<'a> {
+    field: &'a str,
+    line: usize,
+    text: String,
+}
+
+/// The name, by `types/item-name-fields`, `types/item-name-markdown` and
+/// `types/item-name-text`.
 fn name<'a>(
     properties: &Map<String, Value>,
     title_field: Option<&'a str>,
     body_field: Option<&'a str>,
-) -> Option<(&'a str, String)> {
+) -> Option<Named<'a>> {
     let candidates = [
-        title_field,
-        Some("title"),
-        Some("name"),
-        body_field,
-        Some(BODY_PROPERTY),
-        Some("text"),
-        Some("filename"),
-        Some("url"),
-        Some("address"),
+        (title_field, false),
+        (Some("title"), false),
+        (Some("name"), false),
+        (body_field, true),
+        (Some(BODY_PROPERTY), true),
+        (Some("text"), true),
+        (Some("filename"), false),
+        (Some("url"), false),
+        (Some("address"), false),
     ];
-    candidates.into_iter().flatten().find_map(|field| {
+    let mut tried: Vec<&str> = Vec::with_capacity(candidates.len());
+    candidates.into_iter().find_map(|(field, markdown)| {
+        let field = field?;
+        if tried.contains(&field) {
+            return None;
+        }
+        tried.push(field);
         let value = properties.get(field)?.as_str()?;
-        let mut plain = Plain::new(NAME_POINTS);
-        plain.push_str(first_line(value));
-        plain.finish().map(|name| (field, name))
+        let (line, text) = if markdown {
+            markdown_name(value)
+        } else {
+            plain_name(value)
+        }?;
+        Some(Named { field, line, text })
     })
+}
+
+/// The first line holding more than whitespace, read as plain text.
+fn plain_name(value: &str) -> Option<(usize, String)> {
+    let (at, line) = lines(value)
+        .enumerate()
+        .find(|(_, line)| line.chars().any(|c| !is_space(c)))?;
+    let mut plain = Plain::new(NAME_POINTS);
+    plain.push_str(line);
+    plain.finish().map(|text| (at, text))
+}
+
+/// The first line holding more than whitespace once its Markdown is
+/// removed.
+fn markdown_name(value: &str) -> Option<(usize, String)> {
+    for (at, line) in Markdown::new(value) {
+        let mut plain = Plain::new(NAME_POINTS);
+        line.write(&mut plain);
+        if plain.seen {
+            return plain.finish().map(|text| (at, text));
+        }
+    }
+    None
 }
 
 /// The whitespace ECMAScript's `trim` and `\s` match, which the server's
@@ -85,20 +132,31 @@ fn is_space(c: char) -> bool {
 
 const LINE_BREAKS: [char; 4] = ['\n', '\r', '\u{2028}', '\u{2029}'];
 
-fn first_line(text: &str) -> &str {
-    let text = text.trim_matches(is_space);
-    text.split(LINE_BREAKS).next().unwrap_or("")
+/// A text's lines, each ended by CR LF or one of `LINE_BREAKS`.
+struct Lines<'a> {
+    rest: Option<&'a str>,
 }
 
-fn after_first_line(text: &str) -> &str {
-    let text = text.trim_matches(is_space);
-    match text.find(LINE_BREAKS) {
-        Some(at) if text[at..].starts_with("\r\n") => &text[at + 2..],
-        Some(at) => {
-            let rest = &text[at..];
-            &rest[rest.chars().next().map_or(0, char::len_utf8)..]
-        }
-        None => "",
+fn lines(text: &str) -> Lines<'_> {
+    Lines { rest: Some(text) }
+}
+
+impl<'a> Iterator for Lines<'a> {
+    type Item = &'a str;
+
+    fn next(&mut self) -> Option<&'a str> {
+        let rest = self.rest?;
+        let Some(at) = rest.find(LINE_BREAKS) else {
+            self.rest = None;
+            return Some(rest);
+        };
+        let width = if rest[at..].starts_with("\r\n") {
+            2
+        } else {
+            rest[at..].chars().next().map_or(1, char::len_utf8)
+        };
+        self.rest = Some(&rest[at + width..]);
+        Some(&rest[..at])
     }
 }
 
@@ -110,6 +168,9 @@ struct Plain {
     text: String,
     points: usize,
     space: bool,
+    /// Whether it was given anything but whitespace, a control character
+    /// included.
+    seen: bool,
     limit: usize,
 }
 
@@ -119,6 +180,7 @@ impl Plain {
             text: String::new(),
             points: 0,
             space: false,
+            seen: false,
             limit,
         }
     }
@@ -131,6 +193,7 @@ impl Plain {
         if self.full() {
             return;
         }
+        self.seen |= !is_space(c);
         let c = if c.is_control() { ' ' } else { c };
         if is_space(c) {
             self.space = self.points > 0;
@@ -171,34 +234,82 @@ impl Plain {
 }
 
 /// The body's text with its Markdown removed, by the `device/item-preview-*`
-/// statements from `device/item-preview-fence` to `device/item-preview-text`.
-fn preview(text: &str) -> Option<String> {
+/// statements from `device/item-preview-after-name` to
+/// `device/item-preview-text`, leaving out the lines up to and including
+/// the index `skipped`.
+fn preview(text: &str, skipped: Option<usize>) -> Option<String> {
     let mut plain = Plain::new(PREVIEW_POINTS);
-    let mut fence: Option<(char, usize)> = None;
-    let mut lines = text.split("\r\n").flat_map(|part| part.split(LINE_BREAKS));
-    while !plain.full() {
-        let Some(line) = lines.next() else { break };
-        let content = line.trim_start_matches(is_space);
-        if let Some((mark, length)) = fence {
-            if closes_fence(content, mark, length) {
-                fence = None;
-            } else {
-                plain.push_str(line);
-                plain.push(' ');
-            }
+    for (at, line) in Markdown::new(text) {
+        if plain.full() {
+            break;
+        }
+        if skipped.is_some_and(|skipped| at <= skipped) {
             continue;
         }
-        if let Some(opened) = opens_fence(content) {
-            fence = Some(opened);
-            continue;
-        }
-        if is_break(content) || is_reference(content) {
-            continue;
-        }
-        inline(strip_blocks(content), &mut plain);
+        line.write(&mut plain);
         plain.push(' ');
     }
     plain.finish()
+}
+
+/// A line that Markdown removal keeps.
+enum Line<'a> {
+    /// Inside a fence, as written.
+    Code(&'a str),
+    /// Outside a fence, with its block markers removed.
+    Text(&'a str),
+}
+
+impl Line<'_> {
+    fn write(&self, out: &mut Plain) {
+        match self {
+            Line::Code(line) => out.push_str(line),
+            Line::Text(line) => inline(line, out),
+        }
+    }
+}
+
+/// The lines of a text that Markdown removal keeps, each with its index
+/// among all the text's lines: `device/item-preview-fence`,
+/// `device/item-preview-lines` and `device/item-preview-prefixes`.
+struct Markdown<'a> {
+    lines: std::iter::Enumerate<Lines<'a>>,
+    fence: Option<(char, usize)>,
+}
+
+impl<'a> Markdown<'a> {
+    fn new(text: &'a str) -> Self {
+        Markdown {
+            lines: lines(text).enumerate(),
+            fence: None,
+        }
+    }
+}
+
+impl<'a> Iterator for Markdown<'a> {
+    type Item = (usize, Line<'a>);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            let (at, line) = self.lines.next()?;
+            let content = line.trim_start_matches(is_space);
+            if let Some((mark, length)) = self.fence {
+                if closes_fence(content, mark, length) {
+                    self.fence = None;
+                    continue;
+                }
+                return Some((at, Line::Code(line)));
+            }
+            if let Some(opened) = opens_fence(content) {
+                self.fence = Some(opened);
+                continue;
+            }
+            if is_break(content) || is_reference(content) {
+                continue;
+            }
+            return Some((at, Line::Text(strip_blocks(content))));
+        }
+    }
 }
 
 fn run_of(text: &str, mark: char) -> usize {
@@ -224,9 +335,7 @@ fn is_break(content: &str) -> bool {
         return false;
     };
     let same = marks.iter().all(|&c| c == first);
-    same && (first == '='
-        && !content.starts_with(is_space)
-        && content.trim_end_matches(is_space).chars().all(|c| c == '=')
+    same && (first == '=' && content.trim_end_matches(is_space).chars().all(|c| c == '=')
         || matches!(first, '-' | '*' | '_') && marks.len() >= 3)
 }
 
@@ -332,6 +441,27 @@ fn autolink_end(chars: &[char], open: usize) -> Option<usize> {
     None
 }
 
+fn run_at(chars: &[char], at: usize, mark: char) -> usize {
+    chars[at..].iter().take_while(|&&c| c == mark).count()
+}
+
+/// The start of the next run of exactly `length` backticks from `from`.
+fn closing_run(chars: &[char], from: usize, length: usize) -> Option<usize> {
+    let mut at = from;
+    while at < chars.len() {
+        if chars[at] != '`' {
+            at += 1;
+            continue;
+        }
+        let run = run_at(chars, at, '`');
+        if run == length {
+            return Some(at);
+        }
+        at += run;
+    }
+    None
+}
+
 fn word(c: Option<&char>) -> bool {
     c.is_some_and(|c| c.is_alphanumeric())
 }
@@ -352,17 +482,14 @@ fn inline_chars(chars: &[char], out: &mut Plain) {
                 at += 2;
             }
             '`' => {
-                let length = chars[at..].iter().take_while(|&&c| c == '`').count();
-                let fence = vec!['`'; length];
-                let close = find(chars, at + length, &fence)
-                    .filter(|&close| chars.get(close + length) != Some(&'`'));
-                match close {
+                let length = run_at(chars, at, '`');
+                match closing_run(chars, at + length, length) {
                     Some(close) => {
                         chars[at + length..close].iter().for_each(|&c| out.push(c));
                         at = close + length;
                     }
                     None => {
-                        fence.iter().for_each(|&c| out.push(c));
+                        (0..length).for_each(|_| out.push('`'));
                         at += length;
                     }
                 }
@@ -419,7 +546,7 @@ fn inline_chars(chars: &[char], out: &mut Plain) {
                 }
             },
             '*' | '_' | '~' => {
-                let length = chars[at..].iter().take_while(|&&m| m == c).count();
+                let length = run_at(chars, at, c);
                 let removed = if length >= 2 {
                     true
                 } else if c == '~' {
@@ -518,19 +645,6 @@ mod tests {
         let shown = catalog.display("user.nothing-registered", properties.as_object().unwrap());
         assert_eq!(shown.name.as_deref(), Some("Fallback"));
         assert_eq!(shown.preview.as_deref(), Some("rest"));
-    }
-
-    #[test]
-    fn reads_an_unclosed_fence_and_unclosed_markup_as_text() {
-        let properties = serde_json::json!({
-            "title": "T",
-            "body": "[not a link\n`open code and *open em\n```\nkept *as* code"
-        });
-        let shown = display(properties.as_object().unwrap(), None, None);
-        assert_eq!(
-            shown.preview.as_deref(),
-            Some("[not a link `open code and open em kept *as* code")
-        );
     }
 
     #[test]

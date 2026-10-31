@@ -1566,7 +1566,7 @@ In these statements, whitespace is the ECMAScript `WhiteSpace` and `LineTerminat
 
 ### `types/item-name-fields`
 
-When computing an item's name, the server MUST use the first property among its effective `display_hints.title_field`, `title`, `name`, effective `display_hints.body_field`, `body`, `text`, `filename`, `url` and `address`, in that order, whose value is a string that produces nonblank text by `types/item-name-text`.
+When computing an item's name, the server MUST use the first property among its effective `display_hints.title_field`, `title`, `name`, effective `display_hints.body_field`, `body`, `text`, `filename`, `url` and `address`, in that order, whose value is a string that produces nonblank text by `types/item-name-markdown` and `types/item-name-text`.
 
 **Reason:** Existing display hints, inherited as in `types/read-display-hint`, let a custom type choose its name without a second naming configuration; a file's existing `title` also holds its filename.
 
@@ -1579,6 +1579,14 @@ When a name field contains text, the server MUST trim its surrounding whitespace
 **Reason:** A device names an item by the same rule (`device/item-name`), so the server and a device show one name for one item.
 
 **Tests:** `compliance/item-summaries.test.ts › names every built-in and custom type with bounded plain text and fallback fields`, `› names every shared display case as a device does, and Untitled where a device answers no name`.
+
+### `types/item-name-markdown`
+
+When computing an item's name from its effective `display_hints.body_field`, `body` or `text`, the server MUST apply `types/item-name-text` to that property's value with its Markdown removed: each line that `device/item-preview-fence` or `device/item-preview-lines` removes left out, each line inside a fence kept as written, and each other line as `device/item-preview-prefixes` through `device/item-preview-unclosed` leave it.
+
+**Reason:** A body is Markdown, so a note whose body starts `# Plan` is named `Plan`, and a body that is only Markdown syntax gives no name. The other name fields hold plain text and keep every character.
+
+**Tests:** `compliance/item-summaries.test.ts › names every shared display case as a device does, and Untitled where a device answers no name`.
 
 ### `types/item-name-empty`
 

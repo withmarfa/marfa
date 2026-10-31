@@ -133,6 +133,92 @@
       "preview": null
     },
     {
+      "description": "names a note by its body's heading without the heading marker",
+      "type": "core.note",
+      "properties": {
+        "body": "# Plan ##\n\nBuy **milk**"
+      },
+      "name": "Plan",
+      "preview": "Buy milk"
+    },
+    {
+      "description": "removes emphasis from a name taken from the body",
+      "type": "core.note",
+      "properties": {
+        "body": "**Weekly** _review_ ~~draft~~ notes\nrest"
+      },
+      "name": "Weekly review draft notes",
+      "preview": "rest"
+    },
+    {
+      "description": "names a note by a link's text in its body",
+      "type": "core.note",
+      "properties": {
+        "body": "[Project plan](https://example.test/p) for `Q3`\nmore"
+      },
+      "name": "Project plan for Q3",
+      "preview": "more"
+    },
+    {
+      "description": "names a note by the first line its Markdown leaves, and previews the lines after it",
+      "type": "core.note",
+      "properties": {
+        "body": "---\n# \n![cover](https://example.test/c.png)\n> ## Agenda ##\n- first\n- [ ] second"
+      },
+      "name": "Agenda",
+      "preview": "first second"
+    },
+    {
+      "description": "passes over a body that is only Markdown syntax to the next name field",
+      "type": "user.plain",
+      "properties": {
+        "body": "***\n# \n**\n[ref]: https://example.test/",
+        "text": "## From text",
+        "filename": "f.pdf"
+      },
+      "name": "From text",
+      "preview": null
+    },
+    {
+      "description": "answers no name for a body that is only Markdown syntax",
+      "type": "core.note",
+      "properties": {
+        "body": "===\n> \n![[photo.png]]\n```\n```"
+      },
+      "name": null,
+      "preview": null
+    },
+    {
+      "description": "keeps Markdown in a name taken from a title field",
+      "type": "user.plain",
+      "properties": {
+        "title": "# Not a heading **here**",
+        "body": "**b**"
+      },
+      "name": "# Not a heading **here**",
+      "preview": "b"
+    },
+    {
+      "description": "closes a code span only at a run of backticks of the same length",
+      "type": "core.note",
+      "properties": {
+        "title": "Code",
+        "body": "`a``b` and ``c`d`` and `open``"
+      },
+      "name": "Code",
+      "preview": "a``b and c`d and `open``"
+    },
+    {
+      "description": "keeps unclosed inline markup as text, and reads an unclosed fence to the end",
+      "type": "core.note",
+      "properties": {
+        "title": "Unclosed",
+        "body": "[not a link\n`open code and [x](open\n~~~\nkept *as* code"
+      },
+      "name": "Unclosed",
+      "preview": "[not a link `open code and [x](open kept *as* code"
+    },
+    {
       "description": "shows wiki links, autolinks and reference links as their text, and drops embeds",
       "type": "core.note",
       "properties": {

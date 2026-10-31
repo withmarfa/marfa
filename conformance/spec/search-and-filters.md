@@ -2396,7 +2396,7 @@ When `GET /items/summaries` carries direct owner browser authority or private lo
 
 ### `search-and-filters/owner-summaries-projection`
 
-When `GET /items/summaries` succeeds, the server MUST return each item as exactly `id`, `type`, `version`, `name`, `source` and `created_at`, with its name computed as in `types/item-name-fields`, `types/item-name-text` and `types/item-name-empty`.
+When `GET /items/summaries` succeeds, the server MUST return each item as exactly `id`, `type`, `version`, `name`, `source` and `created_at`, with its name computed as in `types/item-name-fields`, `types/item-name-markdown`, `types/item-name-text` and `types/item-name-empty`.
 
 **Tests:** `compliance/item-summaries.test.ts › pages name matches without leaking content or widening other owner reads`.
 

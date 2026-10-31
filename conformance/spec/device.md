@@ -4246,11 +4246,11 @@ If a catch-up fails after it changed the catalog the copy holds, then a device M
 
 ## An item's name and preview
 
-An app shows an item in a list by a name and a line of preview text. Whitespace, a line end and a control character are as `types.md` defines them under its item names. The cases are in `conformance/fixtures/item-display.json`, which the server's names are held to as well.
+An app shows an item in a list by a name and a line of preview text. Whitespace, a line end and a control character are as `types.md` defines them under its item names, and the Markdown rules below also decide the name taken from a body (`types/item-name-markdown`). The cases are in `conformance/fixtures/item-display.json`, which the server's names are held to as well.
 
 ### `device/item-name`
 
-When an app asks a device for an item's name, a device MUST compute it by `types/item-name-fields` and `types/item-name-text`, reading the effective display hints from the catalog the working copy holds, and none for a type that catalog does not hold, without a request to the server.
+When an app asks a device for an item's name, a device MUST compute it by `types/item-name-fields`, `types/item-name-markdown` and `types/item-name-text`, reading the effective display hints from the catalog the working copy holds, and none for a type that catalog does not hold, without a request to the server.
 
 **Reason:** An app shows the name offline that the server's summaries show online.
 
@@ -4274,9 +4274,9 @@ When an app asks a device for an item's preview, a device MUST compute it from t
 
 ### `device/item-preview-after-name`
 
-If an item's name is taken from the property its preview is computed from, then a device MUST compute the preview from the text after the first line of that property's trimmed value.
+If an item's name is taken from the property its preview is computed from, then a device MUST leave out of the preview the line of that property's value the name was taken from and every line before it.
 
-**Reason:** A note without a title is named by its body's first line, and a preview that began with that line would show it twice.
+**Reason:** A note without a title is named by the first line of its body that holds text, and a preview that began with that line would show it twice.
 
 **Tests:** `device/binding-item-display.test.ts › names and previews every shared case from the copy's catalog, without asking the server`.
 
