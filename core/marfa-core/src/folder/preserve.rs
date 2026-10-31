@@ -29,6 +29,21 @@ fn parse(source: &str) -> Result<tree_sitter::Tree> {
     Ok(tree)
 }
 
+/// Whether YAML holds a comment, or cannot be parsed well enough to say.
+pub(super) fn commented(source: &str) -> bool {
+    let Ok(tree) = parse(source) else {
+        return true;
+    };
+    let mut nodes = vec![tree.root_node()];
+    while let Some(node) = nodes.pop() {
+        if node.kind() == "comment" {
+            return true;
+        }
+        nodes.extend(node.named_children(&mut node.walk()));
+    }
+    false
+}
+
 fn children(node: Node<'_>) -> Vec<Node<'_>> {
     node.named_children(&mut node.walk())
         .filter(|n| n.kind() != "comment")

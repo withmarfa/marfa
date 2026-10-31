@@ -4645,14 +4645,60 @@ mod tests {
     /// file's line when the new copy first holds it, through changes in
     /// nothing the file shows.
     fn added_over_its_render_behind(behind: i64) -> (ScannedDir, Folder, String) {
+        added_over_its_render_as(Over {
+            behind,
+            ..Over::default()
+        })
+    }
+
+    /// How `added_over_its_render_as` sets the file up.
+    struct Over {
+        /// The new copy's folder settings.
+        settings: Value,
+        behind: i64,
+        /// The item archived before the earlier copy wrote its file.
+        archived: bool,
+        /// A change made to the file while no copy watched it.
+        edit: Edit,
+    }
+
+    type Edit = fn(String) -> String;
+
+    impl Default for Over {
+        fn default() -> Self {
+            Over {
+                settings: serde_json::json!({ "query": {} }),
+                behind: 0,
+                archived: false,
+                edit: |text| text,
+            }
+        }
+    }
+
+    fn added_over_its_render_as(over: Over) -> (ScannedDir, Folder, String) {
         const FOLDER: &str = "01a00000-0000-7000-8000-000000000001";
+        let behind = over.behind;
         let (dir, folder) = answered_notes(&["a.md"]);
         let id = id_at(&folder, "a.md");
+        if over.archived {
+            folder
+                .core
+                .conn()
+                .unwrap()
+                .execute("UPDATE items SET state = 'archived' WHERE id = ?1", [&id])
+                .unwrap();
+        }
         folder.pull().unwrap();
         let rendered = std::fs::read(dir.path().join("a.md")).unwrap();
         assert!(
             String::from_utf8_lossy(&rendered).contains(&id),
             "the pull wrote no id line"
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&rendered).contains("state: archived\n"),
+            over.archived,
+            "{}",
+            String::from_utf8_lossy(&rendered)
         );
         // The row as the new copy's hydration brings it back.
         let (columns, row) = {
@@ -4670,8 +4716,10 @@ mod tests {
         };
         drop(folder);
         std::fs::remove_dir_all(dir.path().join(STATE_DIR)).unwrap();
+        let rendered = (over.edit)(String::from_utf8(rendered).unwrap()).into_bytes();
+        std::fs::write(dir.path().join("a.md"), &rendered).unwrap();
 
-        let folder = folder_over(dir.path(), FOLDER, serde_json::json!({ "query": {} }), None);
+        let folder = folder_over(dir.path(), FOLDER, over.settings, None);
         folder
             .core
             .conn()
@@ -4727,6 +4775,26 @@ mod tests {
         drop(conn);
         assert_eq!(folder.pull().unwrap().written, 0);
         assert!(!dir.path().join("a.md").exists(), "{id} was written back");
+    }
+
+    #[test]
+    fn a_sweep_trashes_the_item_of_a_found_file_the_person_commented_once_they_delete_it() {
+        let (dir, folder, _) = added_over_its_render_as(Over {
+            edit: |text| text.replacen("---\n", "---\n# remember to ring Sam\n", 1),
+            ..Over::default()
+        });
+        std::fs::remove_file(dir.path().join("a.md")).unwrap();
+        assert_eq!(folder.scan().unwrap().missing, 1);
+        let pulled = folder.pull().unwrap();
+        assert_eq!(
+            pulled.revived + pulled.written + pulled.rewritten,
+            0,
+            "{pulled:?}"
+        );
+        past_the_grace(&folder, "a.md");
+        let swept = folder.scan().unwrap();
+        assert_eq!(swept.trashed, ["a.md"], "{swept:?}");
+        assert_eq!(deletes_queued(&folder).len(), 1);
     }
 
     #[test]
@@ -4951,6 +5019,114 @@ mod tests {
         assert!(!dir.path().join("a.md").exists());
         let scanned = folder.scan().unwrap();
         assert_eq!((scanned.lost, scanned.missing), (0, 0), "{scanned:?}");
+    }
+
+    /// The binding as a build that recorded neither the bytes nor the
+    /// own-field lines of a found file left it.
+    fn unrecorded(folder: &Folder) {
+        folder
+            .core
+            .conn()
+            .unwrap()
+            .execute(
+                "UPDATE folder_files SET own = NULL, written_hash = NULL WHERE path = 'a.md'",
+                [],
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn a_pull_keeps_a_found_file_the_person_commented_or_left_an_empty_property_in_once_binned() {
+        let edits: [(&str, Edit, (usize, usize)); 3] = [
+            // The witness: the same file unchanged is removed.
+            ("unchanged", |text| text, (1, 0)),
+            (
+                "a comment",
+                |text| text.replacen("---\n", "---\n# remember to ring Sam\n", 1),
+                (0, 1),
+            ),
+            (
+                "an empty property",
+                |text| text.replacen("---\n", "---\ndue:\n", 1),
+                (0, 1),
+            ),
+        ];
+        let mut wrong = Vec::new();
+        for (named, edit, expected) in edits {
+            for before_the_fix in [false, true] {
+                let (dir, folder, id) = added_over_its_render_as(Over {
+                    edit,
+                    ..Over::default()
+                });
+                let path = dir.path().join("a.md");
+                let found = std::fs::read_to_string(&path).unwrap();
+                if before_the_fix {
+                    unrecorded(&folder);
+                }
+                binned_elsewhere(&folder, &id);
+                let pulled = folder.pull().unwrap();
+                let left = std::fs::read_to_string(&path).ok();
+                if (pulled.removed, pulled.kept) != expected
+                    || left != (expected.1 == 1).then(|| found.clone())
+                {
+                    wrong.push(format!(
+                        "a found file with {named}, recorded before the fix: {before_the_fix}: \
+                         removed {}, kept {}\n{found}",
+                        pulled.removed, pulled.kept
+                    ));
+                }
+            }
+        }
+        assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+    }
+
+    #[test]
+    fn a_pull_removes_a_found_file_whose_item_leaves_by_its_state() {
+        // Archived out of a query for active items, and binned from a file
+        // that shows it archived.
+        let cases: [(&str, Value, bool, &str); 2] = [
+            (
+                "archived",
+                serde_json::json!({ "query": { "state": ["active"] } }),
+                false,
+                "archived",
+            ),
+            (
+                "binned",
+                serde_json::json!({ "query": {} }),
+                true,
+                "trashed",
+            ),
+        ];
+        let mut wrong = Vec::new();
+        for (named, settings, archived, state) in cases {
+            let (dir, folder, id) = added_over_its_render_as(Over {
+                settings,
+                archived,
+                ..Over::default()
+            });
+            unrecorded(&folder);
+            folder
+                .core
+                .conn()
+                .unwrap()
+                .execute(
+                    "UPDATE items SET state = ?1, version = version + 1 WHERE id = ?2",
+                    [state, &id],
+                )
+                .unwrap();
+            let pulled = folder.pull().unwrap();
+            if (pulled.removed, pulled.kept) != (1, 0) || dir.path().join("a.md").exists() {
+                wrong.push(format!(
+                    "the file of an item {named} elsewhere stayed: removed {}, kept {}",
+                    pulled.removed, pulled.kept
+                ));
+                continue;
+            }
+            let scanned = folder.scan().unwrap();
+            assert_eq!((scanned.lost, scanned.missing), (0, 0), "{scanned:?}");
+        }
+        assert!(wrong.is_empty(), "{}", wrong.join("\n"));
     }
 
     #[cfg(debug_assertions)]

@@ -33,6 +33,16 @@ impl Document {
             body: self.body.clone(),
         }
     }
+
+    /// Whether the frontmatter holds a comment, or cannot be read well
+    /// enough to say it holds none.
+    pub(super) fn commented(&self) -> bool {
+        self.unreadable.is_some()
+            || self
+                .source
+                .as_ref()
+                .is_some_and(|source| super::preserve::commented(&source.yaml))
+    }
 }
 
 impl Presentation {

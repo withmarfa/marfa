@@ -11,6 +11,25 @@ use super::{
 /// What a render of an item's file reads besides the item.
 pub(super) type Basis<'a> = (&'a Catalog, &'a EdgeTypes, &'a Names);
 
+/// Where `Folder::found_as_written` meets a found file.
+#[derive(Clone, Copy)]
+enum Found<'a> {
+    /// At its placement, with the hash of what the pull would write there.
+    InPlace(&'a str),
+    /// Its item has left the folder.
+    Departed,
+}
+
+/// The state a file's state line shows: active where it has none.
+fn shown_state(front: &serde_json::Map<String, Value>) -> Option<ItemState> {
+    match front.get(fields::STATE_FIELD) {
+        None | Some(Value::Null) => Some(ItemState::Active),
+        Some(Value::String(state)) if state == "active" => Some(ItemState::Active),
+        Some(Value::String(state)) if state == "archived" => Some(ItemState::Archived),
+        Some(_) => None,
+    }
+}
+
 /// Bounded, so a copy that keeps changing ends the pull with
 /// `local_copy_changed` rather than holding it for good.
 const PULL_ATTEMPTS: usize = 3;
@@ -1038,7 +1057,7 @@ impl Folder {
             return Ok(PlacementWrite::Done);
         }
         if in_place && let Some(bound) = bound {
-            let found = self.found_as_written(item, bound, Some(&hash), rendering)?;
+            let found = self.found_as_written(item, bound, Found::InPlace(&hash), rendering)?;
             return self.stay(
                 item,
                 found.as_ref().unwrap_or(bound),
@@ -1899,26 +1918,29 @@ impl Folder {
             crate::store::items_by_ids(&conn, std::slice::from_ref(&row.item_id))?.pop()
         };
         match held {
-            Some(item) => self.found_as_written(&item, row, None, rendering),
+            Some(item) => self.found_as_written(&item, row, Found::Departed, rendering),
             None => Ok(None),
         }
     }
 
-    /// The binding of a file left in place that this folder never wrote but
-    /// found holding byte for byte what it would write there at the version
-    /// line the file shows, or at the item's own version where `rendered`
-    /// is the hash of what it would write now, as a folder added over files
-    /// an earlier copy wrote finds them, with those bytes recorded as its
-    /// own. `None` where the file is not such a file.
+    /// The binding of a file that this folder never wrote but found holding
+    /// byte for byte what it would write there at the version line the file
+    /// shows, or at the item's own version where the file is in place and
+    /// holds what the pull would write now, as a folder added over files an
+    /// earlier copy wrote finds them, with those bytes recorded as its own.
+    /// `None` where the file is not such a file.
     ///
     /// A document this folder wrote has its own-field lines on record, and a
     /// later change to it is the person's, even one a render would keep: a
-    /// render keeps the formatting of the file it renders over.
+    /// render keeps the formatting of the file it renders over. For the same
+    /// reason a found document holding a comment, or an empty property its
+    /// item does not hold, is the person's: a render keeps both, and neither
+    /// is in the item, so removing the file would lose them.
     fn found_as_written(
         &self,
         item: &Item,
         bound: &state::Bound,
-        rendered: Option<&str>,
+        found: Found<'_>,
         rendering: &Rendering<'_>,
     ) -> Result<Option<state::Bound>> {
         let document = carries_frontmatter(Path::new(&bound.path));
@@ -1929,26 +1951,52 @@ impl Folder {
         {
             return Ok(None);
         }
-        let Ok(found) = self.read(self.root.join(&bound.path)) else {
+        let Ok(bytes) = self.read(self.root.join(&bound.path)) else {
             return Ok(None);
         };
-        if state::hash(&found) != bound.content_hash {
+        if state::hash(&bytes) != bound.content_hash {
             return Ok(None);
         }
-        let line = if rendered == Some(bound.content_hash.as_str()) {
+        let typed = if document {
+            let Ok(text) = std::str::from_utf8(&bytes) else {
+                return Ok(None);
+            };
+            let typed = document::read(text);
+            if typed.commented()
+                || typed.front.iter().any(|(name, value)| {
+                    value.is_null() && item.properties.get(name) != Some(&Value::Null)
+                })
+            {
+                return Ok(None);
+            }
+            Some(typed)
+        } else {
+            None
+        };
+        let line = if let Found::InPlace(rendered) = found
+            && rendered == bound.content_hash
+        {
             item.version
-        } else if document
-            && let Ok(text) = std::str::from_utf8(&found)
-            && let typed = document::read(text)
+        } else if let Some(typed) = &typed
             && let Some(line) = line_of(&typed.front).filter(|line| *line < item.version)
+            && let Some(shown) = match found {
+                Found::InPlace(_) => Some(std::borrow::Cow::Borrowed(item)),
+                // Leaving the folder is no change the file shows.
+                Found::Departed => shown_state(&typed.front).map(|state| {
+                    std::borrow::Cow::Owned(Item {
+                        state,
+                        ..item.clone()
+                    })
+                }),
+            }
             && self
                 .render(
-                    item,
+                    &shown,
                     &bound.path,
                     Some(line),
                     rendering.catalog,
                     rendering.edge_types,
-                    (rendering.names, Some(&typed), &bound.lines),
+                    (rendering.names, Some(typed), &bound.lines),
                 )?
                 .text
                 .is_ok_and(|text| state::hash(text.as_bytes()) == bound.content_hash)
