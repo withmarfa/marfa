@@ -1476,11 +1476,19 @@ When an authenticated caller sends `POST /types/normalize`, the server MUST admi
 
 ### `types/normalize-answer`
 
-When a valid candidate is sent to `POST /types/normalize`, the server MUST return its canonical declared definition in `type`, the canonical declared registered definition in `registered_type` and the canonical registered definition resolved as on `GET /types/{id}`, with the author's icon and not the owner's (`types/icon-read`), in `resolved_type`, from one registry view. The server MUST NOT include in any of the three a `plural`, or a label of a field or of a member of a field's entries, that no type in the chain declares (`types/plural`, `types/label-write-back`).
+When a valid candidate is sent to `POST /types/normalize`, the server MUST return its canonical declared definition in `type`, the canonical declared registered definition in `registered_type` and the canonical registered definition resolved as on `GET /types/{id}`, with the author's icon and not the owner's (`types/icon-read`), in `resolved_type`, from one registry view.
+
+**Reason:** a connector compares what it would register with what is registered without write authority, so both come from one view of the registry.
+
+**Tests:** `compliance/connector-interfaces.test.ts › normalizes equivalent declarations without write authority and retains inherited refinements`, `compliance/type-icons.test.ts › normalizes on the author's side, with the author's icon in resolved_type`.
+
+### `types/normalize-declared-only`
+
+When the server answers `POST /types/normalize`, the server MUST NOT include in `type`, `registered_type` or `resolved_type` a `plural`, or a label of a field or of a member of a field's entries, that no type in the chain declares (`types/plural`, `types/label-write-back`).
 
 **Reason:** normalize answers what the server would store for a declaration, and a made plural or label is never stored. `GET /types/{id}` answers the made ones for display; a comparison of the two would otherwise find a difference no author made.
 
-**Tests:** `compliance/connector-interfaces.test.ts › normalizes equivalent declarations without write authority and retains inherited refinements`, `compliance/type-icons.test.ts › normalizes on the author's side, with the author's icon in resolved_type`.
+**Tests:** `compliance/connector-interfaces.test.ts › normalizes equivalent declarations without write authority and retains inherited refinements`.
 
 ### `types/normalize-absent`
 
