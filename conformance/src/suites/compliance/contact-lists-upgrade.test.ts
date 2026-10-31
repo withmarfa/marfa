@@ -71,6 +71,19 @@ const STORED: Record<
       phones: [{ value: "+1 555 0199" }],
     },
   },
+  held: {
+    type: "core.entity.person",
+    properties: {
+      name: "Held",
+      email: "held@example.com",
+      emails: [
+        { value: "main@example.com" },
+        { value: "held@example.com", label: "work" },
+      ],
+      place: "3 Side Lane",
+      addresses: [{ street_address: "3 Side Lane", locality: "Town" }],
+    },
+  },
   binned: {
     type: "core.entity.place",
     properties: { name: "Binned", place: "2 Low Road" },
@@ -139,15 +152,28 @@ describe("starting on a database written before the contact lists", () => {
     expect(after.invalid!.version).toBe(made.invalid!.version);
   });
 
-  it("gives a moved item its next version, with the old one in its history and an item.updated event", async () => {
+  it("removes an email and a place their lists already hold, and leaves the lists as they were", () => {
+    expect(after.held!.properties).toEqual({
+      name: "Held",
+      emails: [
+        { value: "main@example.com" },
+        { value: "held@example.com", label: "work" },
+      ],
+      addresses: [{ street_address: "3 Side Lane", locality: "Town" }],
+    });
+  });
+
+  it("gives a changed item its next version, with the old one in its history and an item.updated event", async () => {
     const moved = after.moved!;
-    expect(moved.version).toBe(made.moved!.version + 1);
-    const history = await working().getVersions(moved.id);
-    expect(history.ok, JSON.stringify(history.error)).toBe(true);
-    const old = history.data.data.find(
-      (version) => version.version === made.moved!.version,
-    );
-    expect(old?.properties).toEqual(STORED.moved!.properties);
+    for (const name of ["moved", "held"]) {
+      expect(after[name]!.version, name).toBe(made[name]!.version + 1);
+      const history = await working().getVersions(made[name]!.id);
+      expect(history.ok, JSON.stringify(history.error)).toBe(true);
+      const old = history.data.data.find(
+        (version) => version.version === made[name]!.version,
+      );
+      expect(old?.properties, name).toEqual(STORED[name]!.properties);
+    }
     const sentinel = await working().createItem({
       type: "core.note",
       source: SOURCE,
@@ -174,12 +200,14 @@ describe("starting on a database written before the contact lists", () => {
           .filter((frame) => frame.event === "item.updated")
           .map((frame) => (frame.data as { item: MarfaItem }).item);
         expect(updated.map((item) => item.id).sort()).toEqual(
-          [made.moved!.id, made.odd!.id, made.binned!.id].sort(),
+          [made.moved!.id, made.odd!.id, made.held!.id, made.binned!.id].sort(),
         );
-        expect(updated.find((item) => item.id === moved.id)).toMatchObject({
-          version: moved.version,
-          properties: moved.properties,
-        });
+        for (const item of [moved, after.held!]) {
+          expect(updated.find((frame) => frame.id === item.id)).toMatchObject({
+            version: item.version,
+            properties: item.properties,
+          });
+        }
       },
     );
 

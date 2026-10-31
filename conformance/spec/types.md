@@ -1314,41 +1314,49 @@ When an item of `core.entity` or a type under it is written with entries in `ema
 
 ### `types/entity-contact-upgrade`
 
-When the server updates a database under `instance/upgrade-in-place` from a schema version before 4, the server MUST replace each `email`, `phone` and `place` that an item of `core.entity` or a type under it holds as a non-empty string with a one-entry list in `emails`, `phones` or `addresses`, holding the string as `value`, `value` or `street_address`, unless the type or an ancestor below `core.entity` declares the old or the new field itself.
+When the server updates a database under `instance/upgrade-in-place` from a schema version before 4, and an item of `core.entity` or a type under it holds `email`, `phone` or `place` as a string with a character other than white space and holds no `emails`, `phones` or `addresses` field for it, the server MUST replace the field with a one-entry list in `emails`, `phones` or `addresses`, holding the string as `value`, `value` or `street_address`, unless the type or an ancestor below `core.entity` declares the old or the new field itself or `types/entity-contact-upgrade-kept` applies.
 
-**Reason:** the update keeps what an owner wrote under the fields the type no longer declares, in the shape it declares now. An item in the bin is updated too, so it comes back in that shape. A type declares a field itself when it holds the field and its parent does not, or holds it with another definition; such a field means what that type says, not what `core.entity` said. A value the update cannot move stays where it was (`types/entity-contact-upgrade-kept`).
+**Reason:** the update keeps what an owner wrote under the fields the type no longer declares, in the shape it declares now. An item in the bin is updated too, so it comes back in that shape. A type registered through `POST /types` declares a field itself when its own fields hold it. A type Marfa ships holds the fields it inherits as well, so it declares a field itself when it holds the field and its parent does not, or holds it with another definition. Such a field means what that type says, not what `core.entity` said. A value the update cannot move stays where it was (`types/entity-contact-upgrade-kept`).
 
 **Tests:** `compliance/contact-lists-upgrade.test.ts › moves a stored email, phone and place into one-entry lists`.
 
 ### `types/entity-contact-upgrade-empty`
 
-When the server updates a database under `types/entity-contact-upgrade` and an item holds `email`, `phone` or `place` as an empty string, a string of only spaces, or `null`, the server MUST remove the field and add no entry for it.
+When the server updates a database under `types/entity-contact-upgrade` and an item holds `email`, `phone` or `place` as an empty string, a string of only white space, or `null`, the server MUST remove the field and add no entry for it.
 
 **Tests:** `compliance/contact-lists-upgrade.test.ts › removes an empty email and keeps a value it cannot move under its own field`.
 
 ### `types/entity-contact-upgrade-kept`
 
-When the server updates a database under `types/entity-contact-upgrade` and an item holds `email`, `phone` or `place` as a value other than a string, as an `email` the `value` member refuses, or beside the field it would move into, the server MUST keep the value under its own field and leave the other field as it was.
+When the server updates a database under `types/entity-contact-upgrade` and an item holds `email`, `phone` or `place` as a value other than a string, as an `email` the `value` member refuses, when `emails` does not already hold an entry with that string, or beside the field it would move into, when that field does not already hold an entry with that string, the server MUST keep the value under its own field and leave the other field as it was.
 
 **Reason:** the update never drops what it cannot move. The value stays where an owner or an agent can read it and move it by hand.
 
 **Tests:** `compliance/contact-lists-upgrade.test.ts › removes an empty email and keeps a value it cannot move under its own field`.
 
+### `types/entity-contact-upgrade-held`
+
+When the server updates a database under `types/entity-contact-upgrade` and an item holds `email`, `phone` or `place` beside a list in `emails`, `phones` or `addresses` that already holds an entry whose `value` or `street_address` is that string, the server MUST remove the old field and leave the list as it was.
+
+**Reason:** the value is already where the type declares it, and the version the item leaves keeps the old field.
+
+**Tests:** `compliance/contact-lists-upgrade.test.ts › removes an email and a place their lists already hold, and leaves the lists as they were`.
+
 ### `types/entity-contact-upgrade-version`
 
-When the server changes an item under `types/entity-contact-upgrade` or `types/entity-contact-upgrade-empty`, the server MUST give it the next version, keep the version it held in its history, and record no writer for the new version.
+When the server changes an item under `types/entity-contact-upgrade`, `types/entity-contact-upgrade-empty` or `types/entity-contact-upgrade-held`, the server MUST give it the next version, keep the version it held in its history, and record no writer for the new version.
 
 **Reason:** a device that edits the item at its old version then meets an ordinary stale write, which the server merges against the version in the history (`versions/merge-stale`), rather than one with no ancestor (`versions/ancestor-none`).
 
-**Tests:** `compliance/contact-lists-upgrade.test.ts › gives a moved item its next version, with the old one in its history and an item.updated event`.
+**Tests:** `compliance/contact-lists-upgrade.test.ts › gives a changed item its next version, with the old one in its history and an item.updated event`.
 
 ### `types/entity-contact-upgrade-event`
 
-When the server changes an item under `types/entity-contact-upgrade` or `types/entity-contact-upgrade-empty`, the server MUST append an `item.updated` event carrying the changed item to the event stream.
+When the server changes an item under `types/entity-contact-upgrade`, `types/entity-contact-upgrade-empty` or `types/entity-contact-upgrade-held`, the server MUST append an `item.updated` event carrying the changed item to the event stream.
 
 **Reason:** devices and connectors catch up from the event stream, so without the event their copies would keep the old fields.
 
-**Tests:** `compliance/contact-lists-upgrade.test.ts › gives a moved item its next version, with the old one in its history and an item.updated event`.
+**Tests:** `compliance/contact-lists-upgrade.test.ts › gives a changed item its next version, with the old one in its history and an item.updated event`.
 
 ### `types/connection`
 
