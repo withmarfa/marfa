@@ -395,7 +395,7 @@ function parseTypeEntries(entries: ArchiveTypeEntry[]): {
  */
 function archiveSourceNaming(line: unknown): ArchiveSourceNaming {
   const raw: { source?: unknown; name?: unknown; mark?: unknown } | null =
-    typeof line === "object" ? (line as object | null) : null;
+    typeof line === "object" ? line : null;
   const code = raw?.source;
   if (
     typeof code !== "string" ||

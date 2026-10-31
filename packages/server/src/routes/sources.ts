@@ -30,7 +30,7 @@ const SOURCE_CODE_MAX = 200;
 const NAME_FROM = ["set", "app", "key", "code"] as const;
 type NameFrom = (typeof NAME_FROM)[number];
 
-export interface SourceView {
+interface SourceView {
   source: string;
   name: string;
   name_from: NameFrom;
@@ -295,12 +295,34 @@ async function appName(
 }
 
 /**
- * Each source's name and mark. The name is the one set on the source, then
- * the name of the app signed in under it, then the label of the live key
- * whose own source it is, then the code. A claimed source takes no key's
- * label: the key that claims it is not what it names.
+ * A source's name and mark. The name is the one set on the source, then the
+ * name of the app signed in under it, then the label of the live key whose
+ * own source it is, then the code. A claimed source takes no key's label:
+ * the key that claims it is not what it names.
  */
-export async function sourceViews(
+async function sourceView(
+  storage: Storage,
+  source: string,
+  row: SourceNaming | undefined,
+  labels: ReadonlyMap<string, string>,
+): Promise<SourceView> {
+  const mark = row?.mark ?? undefined;
+  const view = (name: string, name_from: NameFrom): SourceView => ({
+    source,
+    name,
+    name_from,
+    ...(mark === undefined ? {} : { mark }),
+  });
+  if (row?.name != null) return view(row.name, "set");
+  const app = await appName(storage, source);
+  if (app !== undefined) return view(app, "app");
+  const label = usableSignInName(labels.get(source));
+  if (label !== undefined) return view(label, "key");
+  return view(source, "code");
+}
+
+/** Each source's name and mark, ordered by code. */
+async function sourceViews(
   storage: Storage,
   codes: Iterable<string>,
   named?: ReadonlyMap<string, SourceNaming>,
@@ -311,34 +333,22 @@ export async function sourceViews(
   const labels = await storage.keys.ownSourceLabels();
   const views: SourceView[] = [];
   for (const source of [...new Set(codes)].sort(byCode)) {
-    const row = rows.get(source);
-    const mark = row?.mark ?? undefined;
-    const set = row?.name ?? undefined;
-    let name: string;
-    let name_from: NameFrom;
-    const app = set === undefined ? await appName(storage, source) : undefined;
-    const label = usableSignInName(labels.get(source));
-    if (set !== undefined) {
-      name = set;
-      name_from = "set";
-    } else if (app !== undefined) {
-      name = app;
-      name_from = "app";
-    } else if (label !== undefined) {
-      name = label;
-      name_from = "key";
-    } else {
-      name = source;
-      name_from = "code";
-    }
-    views.push({
-      source,
-      name,
-      name_from,
-      ...(mark === undefined ? {} : { mark }),
-    });
+    views.push(await sourceView(storage, source, rows.get(source), labels));
   }
   return views;
+}
+
+/** One source's name and mark. */
+async function oneSourceView(
+  storage: Storage,
+  source: string,
+): Promise<SourceView> {
+  return sourceView(
+    storage,
+    source,
+    (await storage.sources.get(source)) ?? undefined,
+    await storage.keys.ownSourceLabels(),
+  );
 }
 
 export function sourceRoutes(storage: Storage) {
@@ -374,7 +384,7 @@ export function sourceRoutes(storage: Storage) {
           ownedSources(c).has(source) ||
           (await readableItemSources(c, storage, source)).length > 0;
         if (!visible) return null;
-        return (await sourceViews(storage, [source]))[0]!;
+        return oneSourceView(storage, source);
       },
       { signal: c.req.raw.signal },
     );
@@ -406,7 +416,7 @@ export function sourceRoutes(storage: Storage) {
         const name = body.name === undefined ? (held?.name ?? null) : body.name;
         const mark = body.mark === undefined ? (held?.mark ?? null) : body.mark;
         await storage.sources.set(source, name, mark);
-        return (await sourceViews(storage, [source]))[0]!;
+        return oneSourceView(storage, source);
       },
       {
         client_ip: c.get("clientIp") ?? null,
