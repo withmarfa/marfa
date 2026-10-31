@@ -9,11 +9,15 @@ import {
   statSync,
 } from "node:fs";
 import { basename, dirname, join } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import { createClient, type Client, type Transaction } from "@libsql/client";
-import { lucideIconId } from "@withmarfa/shared";
+import { generateId, lucideIconId } from "@withmarfa/shared";
+import * as z from "zod";
 import * as clock from "../../clock.js";
 import { errorMessage } from "../../error-text.js";
 import { log } from "../../middleware/logger.js";
+import { storedFrame } from "../../pubsub.js";
+import { rowToItem, rowToMetadata, type ItemRow } from "./helpers.js";
 import { RefusedDatabaseError } from "./refused-database.js";
 import {
   currentShape,
@@ -76,6 +80,11 @@ export const MIGRATIONS: readonly Migration[] = [
       ),
   },
   { to: 3, changes: ["types", "type_icons"], apply: iconsAsIconifyIds },
+  {
+    to: 4,
+    changes: ["items", "versions", "event_log"],
+    apply: contactListsOnEntities,
+  },
 ];
 
 /**
@@ -125,6 +134,198 @@ async function iconsAsIconifyIds(db: Writer): Promise<void> {
     await db.execute({
       sql: "UPDATE types SET schema = ? WHERE id = ?",
       args: [JSON.stringify(schema), row.id as string],
+    });
+  }
+}
+
+const ENTITY = "core.entity";
+
+/** The single-value fields `core.entity` replaced with lists of entries. */
+const CONTACT_LISTS = [
+  {
+    old: "email",
+    list: "emails",
+    member: "value",
+    accepts: (value: string) => z.email().safeParse(value).success,
+  },
+  { old: "phone", list: "phones", member: "value", accepts: () => true },
+  {
+    old: "place",
+    list: "addresses",
+    member: "street_address",
+    accepts: () => true,
+  },
+] as const;
+
+const ITEM_COLUMNS =
+  "id, type, state, tier, json(properties) AS properties, created_at, updated_at, occurred_at, " +
+  "version, source, source_id, schema_version, capture_latitude, capture_longitude";
+
+/**
+ * Moves the `email`, `phone` and `place` an item of `core.entity`, or of a
+ * type under it, holds into `emails`, `phones` and `addresses`, as one entry
+ * each, in the bin too. A string of only spaces, an empty one or null is
+ * removed. A value the list cannot take, or one beside a list that does not
+ * already hold it, stays under its own field, and so does every value of a
+ * pair a type below `core.entity` declares itself.
+ *
+ * Each changed item gets its next version, as a write would give it: the
+ * version it leaves is kept in its history, it has no writer, since no one
+ * wrote it, and an `item.updated` event lets every device and connector that
+ * follows the log see the change. The edit is made on the stored JSON, so no
+ * other value is parsed and written back.
+ */
+async function contactListsOnEntities(db: Writer): Promise<void> {
+  // A stored schema holds the fields its type inherits as well as its own.
+  const declared = new Map<
+    string,
+    { parent?: string; fields: Map<string, unknown> }
+  >();
+  const defined = await db.execute(
+    "SELECT id, schema FROM types WHERE json_valid(schema)",
+  );
+  for (const row of defined.rows) {
+    const schema = JSON.parse(row.schema as string) as {
+      parent?: unknown;
+      fields?: unknown;
+    };
+    declared.set(row.id as string, {
+      ...(typeof schema.parent === "string" && { parent: schema.parent }),
+      fields: new Map(
+        schema.fields !== null && typeof schema.fields === "object"
+          ? Object.entries(schema.fields)
+          : [],
+      ),
+    });
+  }
+  /** The types from `type` up to `core.entity`, or undefined when it is not under it. */
+  const belowEntity = (type: string): string[] | undefined => {
+    const chain: string[] = [];
+    let at: string | undefined = type;
+    while (at !== ENTITY) {
+      if (at === undefined || chain.includes(at)) return undefined;
+      chain.push(at);
+      at = declared.get(at)?.parent;
+    }
+    return chain;
+  };
+  /** Whether `type` declares `field` itself, rather than as its parent does. */
+  const declaresItself = (type: string, field: string): boolean => {
+    const own = declared.get(type);
+    if (own?.fields.has(field) !== true) return false;
+    const parent =
+      own.parent === undefined ? undefined : declared.get(own.parent);
+    return (
+      parent?.fields.has(field) !== true ||
+      !isDeepStrictEqual(parent.fields.get(field), own.fields.get(field))
+    );
+  };
+
+  const found = await db.execute(
+    `SELECT ${ITEM_COLUMNS}, writer_kind, writer_id, writer_name FROM items ` +
+      "WHERE json_valid(properties, 9) AND json_type(properties) = 'object' AND (" +
+      CONTACT_LISTS.map(
+        ({ old }) => `json_type(properties, '$.${old}') IS NOT NULL`,
+      ).join(" OR ") +
+      ")",
+  );
+  const now = clock.now().toISOString();
+  for (const row of found.rows) {
+    const chain = belowEntity(row.type as string);
+    if (chain === undefined) continue;
+    const properties = JSON.parse(row.properties as string) as Record<
+      string,
+      unknown
+    >;
+    const removed: string[] = [];
+    const lists: [string, unknown[]][] = [];
+    for (const { old, list, member, accepts } of CONTACT_LISTS) {
+      if (!(old in properties)) continue;
+      if (
+        chain.some(
+          (type) => declaresItself(type, old) || declaresItself(type, list),
+        )
+      ) {
+        continue;
+      }
+      const value = properties[old];
+      if (
+        value === null ||
+        (typeof value === "string" && value.trim() === "")
+      ) {
+        removed.push(old);
+        continue;
+      }
+      if (typeof value !== "string" || !accepts(value)) continue;
+      const present = properties[list];
+      if (present === undefined) {
+        removed.push(old);
+        lists.push([list, [{ [member]: value }]]);
+      } else if (
+        Array.isArray(present) &&
+        present.some(
+          (entry: unknown) =>
+            entry !== null &&
+            typeof entry === "object" &&
+            (entry as Record<string, unknown>)[member] === value,
+        )
+      ) {
+        removed.push(old);
+      }
+    }
+    if (removed.length === 0) continue;
+
+    const id = row.id as string;
+    await db.execute({
+      sql:
+        "INSERT INTO versions (id, item_id, version, properties, tier, occurred_at, source_id, type, created_at, writer_kind, writer_id, writer_name) " +
+        "SELECT ?, id, version, json(properties), tier, occurred_at, source_id, type, ?, writer_kind, writer_id, writer_name FROM items WHERE id = ?",
+      args: [generateId(), now, id],
+    });
+    const edited = lists.reduce(
+      (expression) => `jsonb_set(${expression}, ?, json(?))`,
+      `jsonb_remove(properties, ${removed.map(() => "?").join(", ")})`,
+    );
+    await db.execute({
+      sql:
+        `UPDATE items SET properties = ${edited}, version = version + 1, updated_at = ?, ` +
+        "writer_kind = NULL, writer_id = NULL, writer_name = NULL WHERE id = ?",
+      args: [
+        ...removed.map((key) => `$.${key}`),
+        ...lists.flatMap(([key, entries]) => [
+          `$.${key}`,
+          JSON.stringify(entries),
+        ]),
+        now,
+        id,
+      ],
+    });
+    const updated = await db.execute({
+      sql: `SELECT ${ITEM_COLUMNS} FROM items WHERE id = ?`,
+      args: [id],
+    });
+    const tagged = await db.execute({
+      sql: "SELECT item_id, tags, extensions FROM metadata WHERE item_id = ?",
+      args: [id],
+    });
+    const metadata = tagged.rows[0]
+      ? rowToMetadata(
+          tagged.rows[0] as unknown as Parameters<typeof rowToMetadata>[0],
+        )
+      : { item_id: id, tags: [], extensions: {} };
+    await db.execute({
+      sql: "INSERT INTO event_log (event_type, item_id, edge_id, payload, enable_fanout, created_at) VALUES ('updated', ?, NULL, ?, 1, ?)",
+      args: [
+        id,
+        JSON.stringify(
+          storedFrame({
+            type: "updated",
+            item: rowToItem(updated.rows[0] as unknown as ItemRow),
+            metadata,
+          }),
+        ),
+        now,
+      ],
     });
   }
 }
