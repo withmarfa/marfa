@@ -453,6 +453,23 @@ pub struct EdgeType {
     pub shipped: bool,
 }
 
+/// An item to name and preview: its type and properties.
+#[napi(object)]
+pub struct ItemDisplayInput {
+    #[napi(js_name = "type")]
+    pub type_: String,
+    #[napi(ts_type = "Record<string, unknown>")]
+    pub properties: Option<serde_json::Value>,
+}
+
+/// How a device shows an item: its name and a line of preview text, each
+/// null where the item has nothing to show.
+#[napi(object)]
+pub struct ItemDisplay {
+    pub name: Option<String>,
+    pub preview: Option<String>,
+}
+
 /// A server's two catalogs as it lists them now.
 #[napi(object)]
 pub struct ServerCatalog {
@@ -2555,6 +2572,34 @@ impl MarfaCore {
                 .item_type(&id)
                 .map_err(|error| failure(env, error))?,
         ))
+    }
+
+    /// The name and preview text of each item, in order, by the copy's
+    /// catalog alone. An unknown type is named by the fallback fields.
+    #[napi]
+    pub fn item_displays(
+        &self,
+        env: Env,
+        items: Vec<ItemDisplayInput>,
+    ) -> Result<Vec<ItemDisplay>> {
+        let items = items
+            .into_iter()
+            .map(|item| Ok((item.type_, object(item.properties)?)))
+            .collect::<Result<Vec<_>>>()?;
+        let items: Vec<_> = items
+            .iter()
+            .map(|(item_type, properties)| (item_type.as_str(), properties))
+            .collect();
+        Ok(self
+            .inner
+            .item_displays(&items)
+            .map_err(|error| failure(env, error))?
+            .into_iter()
+            .map(|display| ItemDisplay {
+                name: display.name,
+                preview: display.preview,
+            })
+            .collect())
     }
 
     /// Every edge type the copy holds, by id, read from the copy alone.

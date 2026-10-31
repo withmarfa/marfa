@@ -1562,25 +1562,29 @@ When `PUT /types/{id}/icon` or `DELETE /types/{id}/icon` succeeds, the server MU
 
 ## Item names
 
+In these statements, whitespace is the ECMAScript `WhiteSpace` and `LineTerminator` characters, a line ends at CR LF, LF, CR, U+2028 or U+2029, and a control character is one in the Unicode general category `Cc`. So U+0085 is a control character and neither whitespace nor a line end, and U+FEFF is whitespace. The cases both implementations are held to are in `conformance/fixtures/item-display.json`.
+
 ### `types/item-name-fields`
 
-When computing an item's name, the server MUST use the first nonblank string among its effective `display_hints.title_field`, `title`, `name`, effective `display_hints.body_field`, `body`, `text`, `filename`, `url` and `address`, in that order.
+When computing an item's name, the server MUST use the first property among its effective `display_hints.title_field`, `title`, `name`, effective `display_hints.body_field`, `body`, `text`, `filename`, `url` and `address`, in that order, whose value is a string that produces nonblank text by `types/item-name-text`.
 
 **Reason:** Existing display hints, inherited as in `types/read-display-hint`, let a custom type choose its name without a second naming configuration; a file's existing `title` also holds its filename.
 
-**Tests:** `compliance/item-summaries.test.ts › names every built-in and custom type with bounded plain text and fallback fields`.
+**Tests:** `compliance/item-summaries.test.ts › names every built-in and custom type with bounded plain text and fallback fields`, `› names every shared display case as a device does, and Untitled where a device answers no name`.
 
 ### `types/item-name-text`
 
-When a name field contains text, the server MUST return its first line after trimming surrounding whitespace, replacing control characters with spaces and collapsing whitespace, limited to 120 Unicode code points with the last point replaced by `…` when shortened.
+When a name field contains text, the server MUST trim its surrounding whitespace, take its first line, replace each control character with a space, collapse each run of whitespace to one space and trim the result, limited to 120 Unicode code points with the last point replaced by `…` when shortened.
 
-**Tests:** `compliance/item-summaries.test.ts › names every built-in and custom type with bounded plain text and fallback fields`.
+**Reason:** A device names an item by the same rule (`device/item-name`), so the server and a device show one name for one item.
+
+**Tests:** `compliance/item-summaries.test.ts › names every built-in and custom type with bounded plain text and fallback fields`, `› names every shared display case as a device does, and Untitled where a device answers no name`.
 
 ### `types/item-name-empty`
 
 When no name candidate produces nonblank text, the server MUST return `Untitled` as the item's name.
 
-**Tests:** `compliance/item-summaries.test.ts › names every built-in and custom type with bounded plain text and fallback fields`.
+**Tests:** `compliance/item-summaries.test.ts › names every built-in and custom type with bounded plain text and fallback fields`, `› names every shared display case as a device does, and Untitled where a device answers no name`.
 
 ### `types/delete-owner`
 

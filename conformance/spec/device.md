@@ -4244,6 +4244,126 @@ If a catch-up fails after it changed the catalog the copy holds, then a device M
 
 **Tests:** `device/catalog.test.ts › says a failed catch-up changed the catalog before it failed`.
 
+## An item's name and preview
+
+An app shows an item in a list by a name and a line of preview text. Whitespace, a line end and a control character are as `types.md` defines them under its item names. The cases are in `conformance/fixtures/item-display.json`, which the server's names are held to as well.
+
+### `device/item-name`
+
+When an app asks a device for an item's name, a device MUST compute it by `types/item-name-fields` and `types/item-name-text`, reading the effective display hints from the catalog the working copy holds, and none for a type that catalog does not hold, without a request to the server.
+
+**Reason:** An app shows the name offline that the server's summaries show online.
+
+**Tests:** `device/binding-item-display.test.ts › names and previews every shared case from the copy's catalog, without asking the server`.
+
+### `device/item-name-none`
+
+When no name candidate produces nonblank text, a device MUST answer that the item has no name.
+
+**Reason:** An app chooses its own placeholder, in its own language and style. The server's `Untitled` (`types/item-name-empty`) is a word for the owner console, not the item's name.
+
+**Tests:** `device/binding-item-display.test.ts › names and previews every shared case from the copy's catalog, without asking the server`.
+
+### `device/item-preview-field`
+
+When an app asks a device for an item's preview, a device MUST compute it from the string under the type's effective `display_hints.body_field`, or under `body` where no type in its chain declares one.
+
+**Reason:** The server answers no preview. Its only summary of an item, `GET /items/summaries`, has one caller, the owner console, which shows names, and it leaves item content out by design (`search-and-filters/owner-summaries-projection`).
+
+**Tests:** `device/binding-item-display.test.ts › names and previews every shared case from the copy's catalog, without asking the server`.
+
+### `device/item-preview-after-name`
+
+If an item's name is taken from the property its preview is computed from, then a device MUST compute the preview from the text after the first line of that property's trimmed value.
+
+**Reason:** A note without a title is named by its body's first line, and a preview that began with that line would show it twice.
+
+**Tests:** `device/binding-item-display.test.ts › names and previews every shared case from the copy's catalog, without asking the server`.
+
+### `device/item-preview-fence`
+
+When computing a preview, a device MUST remove each line that opens or closes a fence and keep the lines inside it as written, where a fence opens at a line that begins, after any leading whitespace, with three or more backticks or tildes, closes at a line that holds only the same character at least as many times, and runs to the end of the text where nothing closes it.
+
+**Reason:** A body is Markdown, and a preview shows what a person wrote, not its syntax. The code in a fence is what was written, so none of the rules below applies inside it.
+
+**Tests:** `device/binding-item-display.test.ts › names and previews every shared case from the copy's catalog, without asking the server`.
+
+### `device/item-preview-lines`
+
+When computing a preview, a device MUST remove each line outside a fence that is a thematic break (three or more of one of `-`, `*` and `_`, with only whitespace besides), holds only `=` or is a link reference definition (`[label]: destination`).
+
+**Reason:** These lines are syntax alone, so a body that is only syntax has no preview (`device/item-preview-none`).
+
+**Tests:** `device/binding-item-display.test.ts › names and previews every shared case from the copy's catalog, without asking the server`.
+
+### `device/item-preview-prefixes`
+
+When computing a preview, a device MUST remove from the start of every other line outside a fence, until none is left, leading whitespace, `>`, a list marker (`-`, `*`, `+`, or one to nine digits and then `.` or `)`, followed by whitespace or the line's end) with any task box `[ ]`, `[x]` or `[X]` after it, and a heading marker (one to six `#` followed by whitespace or the line's end) with its closing run of `#`.
+
+**Reason:** Quotes and lists nest, so a line can open with several markers.
+
+**Tests:** `device/binding-item-display.test.ts › names and previews every shared case from the copy's catalog, without asking the server`.
+
+### `device/item-preview-escape`
+
+When computing a preview, a device MUST replace a backslash and the ASCII punctuation character after it with that character.
+
+**Reason:** An escaped character is one the person meant as text, so no rule below removes it.
+
+**Tests:** `device/binding-item-display.test.ts › names and previews every shared case from the copy's catalog, without asking the server`.
+
+### `device/item-preview-code`
+
+When computing a preview, a device MUST replace a code span, a run of backticks and the next run of the same length on the line, with the text between them as written.
+
+**Tests:** `device/binding-item-display.test.ts › names and previews every shared case from the copy's catalog, without asking the server`.
+
+### `device/item-preview-images`
+
+When computing a preview, a device MUST remove an embed (`![[target]]`) and an image (`![alt](destination)` or `![alt][label]`).
+
+**Reason:** A preview is text, and an embed's target or an image's description is not text the person wrote in the body.
+
+**Tests:** `device/binding-item-display.test.ts › names and previews every shared case from the copy's catalog, without asking the server`.
+
+### `device/item-preview-links`
+
+When computing a preview, a device MUST replace a wiki link with its label (`[[target|label]]`) or its target (`[[target]]`), a link (`[text](destination)` or `[text][label]`) with its text read by these rules again, and an autolink (`<scheme:rest>`) with its URI.
+
+**Tests:** `device/binding-item-display.test.ts › names and previews every shared case from the copy's catalog, without asking the server`.
+
+### `device/item-preview-emphasis`
+
+When computing a preview, a device MUST remove each run of two or more `*`, `_` or `~`, and each single `*` or `_` with a letter or digit on exactly one side of it.
+
+**Reason:** `snake_case` and `2 * 3` keep their characters, because neither is emphasis.
+
+**Tests:** `device/binding-item-display.test.ts › names and previews every shared case from the copy's catalog, without asking the server`.
+
+### `device/item-preview-unclosed`
+
+If inline markup is not closed on its line, then a device MUST keep it in the preview as text.
+
+**Reason:** A rule that names each removal, and keeps everything else, lets two implementations agree byte for byte.
+
+**Tests:** `device/binding-item-display.test.ts › names and previews every shared case from the copy's catalog, without asking the server`.
+
+### `device/item-preview-text`
+
+When computing a preview, a device MUST join the lines with spaces, replace each control character with a space, collapse each run of whitespace to one space and trim the result, limited to 240 Unicode code points with the last point replaced by `…` when shortened.
+
+**Reason:** 240 code points, twice the name's bound, is more than a list row shows, so an app shortens the preview to its own width and never runs short of text, while a device stops reading a long body once the preview is full. The bound and its ellipsis follow `types/item-name-text`.
+
+**Tests:** `device/binding-item-display.test.ts › names and previews every shared case from the copy's catalog, without asking the server`.
+
+### `device/item-preview-none`
+
+When the preview text is blank, a device MUST answer that the item has no preview.
+
+**Reason:** An app leaves the line out, rather than showing an empty one.
+
+**Tests:** `device/binding-item-display.test.ts › names and previews every shared case from the copy's catalog, without asking the server`.
+
 ## Certified read access
 
 A device keeps its copy under the reach the server certifies (`reach.md`): it holds the instance, cursor and reach of the copy stream that hydrated it, and presents them back on every read that fills the copy.
