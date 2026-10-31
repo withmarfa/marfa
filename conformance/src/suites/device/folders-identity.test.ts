@@ -1316,9 +1316,7 @@ describe("what a pull does with a file whose item stops matching", () => {
             wireItem({ ...held, state: "trashed" }),
           ),
         ]),
-        copyReplay("3", [
-          copyItemEvent("3", "item.restored", wireItem(held)),
-        ]),
+        copyReplay("3", [copyItemEvent("3", "item.restored", wireItem(held))]),
       ],
     });
   }
