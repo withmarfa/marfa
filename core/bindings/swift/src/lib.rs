@@ -635,6 +635,10 @@ pub struct Status {
     /// Moves each time a refresh changes the catalog; none where the copy has
     /// never held one.
     pub catalog_version: Option<u64>,
+    /// When the copy last finished a pull from the server without error, an
+    /// RFC 3339 UTC timestamp; none where it has not since the store was made
+    /// or a hydration last cleared it.
+    pub synced_at: Option<String>,
     pub file_cache: FileCache,
 }
 
@@ -2566,6 +2570,7 @@ impl Core {
             items_listed: status.items_listed,
             edges: status.edges,
             catalog_version: status.catalog_version,
+            synced_at: status.synced_at,
             file_cache: status.file_cache.into(),
         })
     }
@@ -3635,6 +3640,38 @@ mod tests {
         drop(held);
         assert_eq!(core.trim_files().unwrap(), bytes.len() as u64);
         assert!(!blobs.join(hex).exists());
+    }
+
+    /// The stamp is seeded where a pull would write it, since no server is
+    /// reachable here; the device suite asserts what writes it.
+    #[test]
+    fn synced_at_crosses_the_swift_boundary_and_survives_a_reopen() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("core.sqlite").display().to_string();
+        let core = Core::open(path.clone(), None, None, None).unwrap();
+        assert_eq!(
+            core.status().unwrap().synced_at,
+            None,
+            "a store that never pulled says it synced"
+        );
+
+        let stamp = "2026-10-31T09:15:02.123Z";
+        rusqlite::Connection::open(&path)
+            .unwrap()
+            .execute(
+                "INSERT OR REPLACE INTO meta VALUES ('synced_at', ?1)",
+                [stamp],
+            )
+            .unwrap();
+        assert_eq!(core.status().unwrap().synced_at.as_deref(), Some(stamp));
+
+        drop(core);
+        let reopened = Core::open(path, None, None, None).unwrap();
+        assert_eq!(
+            reopened.status().unwrap().synced_at.as_deref(),
+            Some(stamp),
+            "the stamp was lost when the store was opened again"
+        );
     }
 
     #[test]

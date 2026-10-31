@@ -62,6 +62,10 @@ pub const META_STORE_ID: &str = "store_id";
 /// The latest change of an edge `edge_changes` no longer records
 /// (`prune_edge_changes`).
 pub const META_EDGE_CHANGES_FLOOR: &str = "edge_changes_floor";
+/// When the copy last finished a pull from the server without error, as the
+/// clock gave it: set by a completed hydration or catch-up and by a follow at
+/// the log's head, and removed by a hydration that clears the copy.
+pub const META_SYNCED_AT: &str = "synced_at";
 /// How many of the latest changes `edge_changes` keeps whatever they name.
 /// The writer, as it opens the store, lets go of older rows of edges the
 /// copy no longer holds once there are more than twice this many.
@@ -2229,6 +2233,13 @@ pub fn now_millis() -> i64 {
     clock()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |since| since.as_millis() as i64)
+}
+
+/// Records the clock's time as when the copy last finished a pull, even where
+/// it is earlier than the time it replaces: a clock set back is still the
+/// clock.
+pub(crate) fn mark_synced(conn: &Connection) -> Result<(), CoreError> {
+    meta_set(conn, META_SYNCED_AT, &iso_at(crate::clock::system_time()))
 }
 
 pub(crate) fn iso_at(now: std::time::SystemTime) -> String {

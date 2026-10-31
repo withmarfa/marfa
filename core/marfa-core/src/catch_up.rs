@@ -38,6 +38,9 @@ pub(crate) struct Pace {
     /// stream at once is asked at most every `reconnect_most`.
     pub(crate) reconnect_first: Duration,
     pub(crate) reconnect_most: Duration,
+    /// The least time between two records of when a follow at the head of the
+    /// log last synced, so a busy stream does not write one per event.
+    pub(crate) synced_every: Duration,
     /// How long a stream stayed open is read from this clock, so a test can
     /// hold it still and a slow machine cannot make a stream that ended at
     /// once look like one that was held.
@@ -51,6 +54,7 @@ impl std::fmt::Debug for Pace {
             .field("silence", &self.silence)
             .field("reconnect_first", &self.reconnect_first)
             .field("reconnect_most", &self.reconnect_most)
+            .field("synced_every", &self.synced_every)
             .finish_non_exhaustive()
     }
 }
@@ -60,6 +64,7 @@ pub(crate) const PACE: Pace = Pace {
     silence: Duration::from_secs(90),
     reconnect_first: Duration::from_secs(1),
     reconnect_most: Duration::from_secs(30),
+    synced_every: Duration::from_secs(30),
     clock: &crate::clock::now,
 };
 
@@ -460,7 +465,21 @@ pub(crate) fn catch_up(
     let scoped = context.http(http);
     let result = replay_build(core, &scoped, &context, idle, stop, catalog_changed)
         .map_err(|error| context.failed(core, error).unwrap_or_else(|error| error));
-    unless_stopped(result, stop)
+    let report = unless_stopped(result, stop)?;
+    mark_synced_if_same(core, &context)?;
+    Ok(report)
+}
+
+/// A copy replaced while the pull ran was not the one it brought up to date,
+/// so it keeps whatever its own pulls recorded.
+fn mark_synced_if_same(core: &Core, context: &Context) -> Result<()> {
+    let mut conn = core.conn()?;
+    let tx = conn.transaction()?;
+    if context.same_copy(&tx).is_ok() {
+        store::mark_synced(&tx)?;
+        tx.commit()?;
+    }
+    Ok(())
 }
 
 pub(crate) fn replay_build(
@@ -912,6 +931,7 @@ fn follow_paced(
         // its caller was last told the server could not be reached.
         let mut reachable: Option<bool> = told_unreachable.then_some(false);
         let mut owes_drain = owes_drain;
+        let mut synced = None;
         while !stop.load(Ordering::Relaxed) {
             on_live(false);
             recovery.tell(&report.cursor, on_change);
@@ -987,6 +1007,7 @@ fn follow_paced(
                 &crate::clock::now,
                 &mut report,
                 &mut refreshed,
+                &mut synced,
                 &recovery,
                 on_change,
                 on_live,
@@ -1150,6 +1171,7 @@ fn read_stream(
     now: &dyn Fn() -> Instant,
     report: &mut FollowReport,
     refreshed: &mut HashSet<Unexplained>,
+    synced: &mut Option<Instant>,
     recovery: &Recovery,
     on_change: &mut dyn FnMut(&Change),
     on_live: &mut dyn FnMut(bool),
@@ -1178,6 +1200,10 @@ fn read_stream(
         };
         heard = now();
         let Frame::Event { id, name, data } = frame else {
+            // A heartbeat at the head says the copy is still current.
+            if live_confirmed {
+                mark_synced_while_live(core, context, pace, now, synced)?;
+            }
             continue;
         };
         let payload = reach::event_payload(name.as_deref(), id.as_deref(), &data)?;
@@ -1213,6 +1239,9 @@ fn read_stream(
                 }
                 live_confirmed = reach::cursor(&report.cursor).is_some_and(|cursor| cursor >= live);
                 on_live(live_confirmed);
+                if live_confirmed {
+                    mark_synced_while_live(core, context, pace, now, synced)?;
+                }
             }
             "stream_incomplete" => return Ok(Ended::Over),
             kind => {
@@ -1257,9 +1286,30 @@ fn read_stream(
                 }
                 report.cursor = id;
                 on_live(live_confirmed);
+                if live_confirmed {
+                    mark_synced_while_live(core, context, pace, now, synced)?;
+                }
             }
         }
     }
+}
+
+/// Events applied before the stream reaches the head are a backlog that can
+/// still be cut off part way, so only a follow at the head records a sync.
+fn mark_synced_while_live(
+    core: &Core,
+    context: &Context,
+    pace: &Pace,
+    now: &dyn Fn() -> Instant,
+    synced: &mut Option<Instant>,
+) -> Result<()> {
+    let at = now();
+    if synced.is_some_and(|last| at.saturating_duration_since(last) < pace.synced_every) {
+        return Ok(());
+    }
+    mark_synced_if_same(core, context)?;
+    *synced = Some(at);
+    Ok(())
 }
 
 /// The instance the server's root names, its catalog and its stream.
@@ -1461,6 +1511,7 @@ mod tests {
         silence: Duration::from_millis(150),
         reconnect_first: Duration::from_millis(10),
         reconnect_most: Duration::from_millis(40),
+        synced_every: Duration::from_secs(30),
         clock: &frozen,
     };
 
@@ -2604,6 +2655,7 @@ mod tests {
                 &|| reading.now(),
                 &mut FollowReport::default(),
                 &mut HashSet::new(),
+                &mut None,
                 &recovery,
                 &mut |_| {},
                 &mut |_| {},
@@ -4040,5 +4092,80 @@ mod tests {
                 "disconnection invalidates a completed marker before the next pass"
             );
         }
+    }
+
+    fn synced_at(core: &Core) -> Option<String> {
+        store::meta_get(&core.conn().unwrap(), store::META_SYNCED_AT).unwrap()
+    }
+
+    #[test]
+    fn a_catch_up_records_the_clocks_time_even_where_it_is_earlier_than_the_last() {
+        let server = Scripted::start();
+        server.on("/types", vec![types(&[(NOTE, None)])]);
+        server.on(
+            "/events",
+            vec![stream(
+                vec![connected(), stream_cursor("10"), stream_live(Some("10"))],
+                held(),
+            )],
+        );
+        let (_dir, core) = hydrated(&server);
+        let later = "2999-01-01T00:00:00.000Z";
+        store::meta_set(&core.conn().unwrap(), store::META_SYNCED_AT, later).unwrap();
+
+        core.catch_up().unwrap();
+
+        let recorded = synced_at(&core).expect("the catch-up recorded no time");
+        assert!(
+            recorded.as_str() < later && recorded.starts_with('2'),
+            "a clock behind the last record was refused or not believed: {recorded}"
+        );
+    }
+
+    #[test]
+    fn a_follow_at_the_head_records_its_sync_at_most_once_each_synced_every() {
+        let heard = |synced_every| {
+            let server = Scripted::start();
+            server.on("/types", vec![types(&[(NOTE, None)])]);
+            server.on(
+                "/events",
+                vec![stream(
+                    vec![connected(), stream_cursor("10"), stream_live(Some("10"))],
+                    held(),
+                )],
+            );
+            let (dir, core) = hydrated(&server);
+            let run = follow_on(
+                &core,
+                Pace {
+                    synced_every,
+                    ..STILL
+                },
+                None,
+            );
+            wait_until("the follow at the head recorded no sync", || {
+                synced_at(&core).is_some()
+            });
+            let first = synced_at(&core);
+            // Heartbeats arrive every few milliseconds meanwhile.
+            thread::sleep(MS(60));
+            let after = synced_at(&core);
+            run.stop();
+            run.ended().unwrap();
+            drop(dir);
+            (first, after)
+        };
+
+        let (first, after) = heard(Duration::from_secs(30));
+        assert_eq!(
+            first, after,
+            "heartbeats inside synced_every each wrote a record"
+        );
+        // Witness: the same heartbeats, with no wait between records, move it.
+        let (first, after) = heard(Duration::ZERO);
+        assert!(
+            after > first,
+            "heartbeats at the head never moved the record"
+        );
     }
 }

@@ -119,6 +119,7 @@ export interface BindingStatus {
   items: number;
   edges: number;
   catalogVersion?: number;
+  syncedAt?: string;
 }
 
 /** What a held stream or a watch tells, told apart by `kind`. */

@@ -3008,6 +3008,7 @@ impl Core {
             items_listed: filling(store::META_ITEMS_LISTED)?,
             edges: store::count(&tx, "edges")?,
             catalog_version: store::catalog_version(&tx)?,
+            synced_at: store::meta_get(&tx, store::META_SYNCED_AT)?,
             file_cache: self.file_cache_with(&tx)?,
         };
         tx.commit()?;

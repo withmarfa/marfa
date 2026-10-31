@@ -516,9 +516,9 @@ While its copy has never hydrated, a device MUST answer a local read from what t
 
 ### `device/report-fields`
 
-A device MUST report its state as the origin it is bound to, the instance it was hydrated from, its slice's types and tier, the edge types it holds whole, the rows it holds pinned, its cursor, how many items and edges it holds, the version of the catalog it holds and its hydration, with the items expected under `device/report-items-expected` and the items listed under `device/report-items-listed`.
+A device MUST report its state as the origin it is bound to, the instance it was hydrated from, its slice's types and tier, the edge types it holds whole, the rows it holds pinned, its cursor, how many items and edges it holds, the version of the catalog it holds, when it last synced (`device/synced-at-hydration`) and its hydration, with the items expected under `device/report-items-expected` and the items listed under `device/report-items-listed`.
 
-**Tests:** `device/working-copy.test.ts › reports its slice, cursor and hydration state before it has hydrated`, `› holds a named edge type whole, whichever end it holds`, `device/catch-up.test.ts › keeps a pinned row outside the slice current`, `› answers reads marked stale after the cursor ages out, until a hydration fills it in place`, `device/queue.test.ts › sends nothing to another instance at the same address, keeping the queue`, `device/catalog.test.ts › moves the catalog version when a catch-up reads a changed catalog, and only then`.
+**Tests:** `device/working-copy.test.ts › reports its slice, cursor and hydration state before it has hydrated`, `› holds a named edge type whole, whichever end it holds`, `device/catch-up.test.ts › keeps a pinned row outside the slice current`, `› answers reads marked stale after the cursor ages out, until a hydration fills it in place`, `device/queue.test.ts › sends nothing to another instance at the same address, keeping the queue`, `device/catalog.test.ts › moves the catalog version when a catch-up reads a changed catalog, and only then`, `device/synced-at.test.ts › reports no synced_at on a new store, and the time a hydration completed once one has, across a reopen`.
 
 ### `device/report-before-hydration`
 
@@ -601,6 +601,72 @@ While no hydration is under way and its copy holds a slice and no valid cursor, 
 **Reason:** `expired` and `never` are the two a caller must not confuse: the first is a copy owed a hydration, whose reads are refused, and the second is a copy that holds only what this device wrote.
 
 **Tests:** `device/queue.test.ts › sends nothing to another instance at the same address, keeping the queue`, `device/reach.test.ts › reports a hydration that ended on an invalid page as expired, not in progress`, `› refuses reads of a stored copy that lost its instance, through a reader as through the writer`.
+
+### `device/synced-at-never`
+
+While its store has completed no pull from the server since it was made, a device MUST report `synced_at` as null.
+
+**Tests:** `device/synced-at.test.ts › reports no synced_at on a new store, and the time a hydration completed once one has, across a reopen`, `device/binding-synced-at.test.ts › tells no syncedAt before a hydration, an RFC 3339 UTC time once one completes, and the same time after the store is opened again`.
+
+### `device/synced-at-hydration`
+
+When a hydration completes, a device MUST report as `synced_at` the time its own clock gave then, as an RFC 3339 timestamp in UTC.
+
+**Reason:** an app shows `synced_at` as how current the copy is, such as "updated 5 minutes ago" or "offline since 10:42".
+
+**Tests:** `device/synced-at.test.ts › reports no synced_at on a new store, and the time a hydration completed once one has, across a reopen`, `device/refill.test.ts › keeps synced_at through an interrupted refill in place, and moves it when the refill completes`, `device/binding-synced-at.test.ts › tells no syncedAt before a hydration, an RFC 3339 UTC time once one completes, and the same time after the store is opened again`.
+
+### `device/synced-at-catch-up`
+
+When a catch-up completes, a device MUST report as `synced_at` the time its own clock gave then.
+
+**Tests:** `device/synced-at.test.ts › moves synced_at when a catch-up completes`, `› keeps synced_at when a catch-up fails, and moves it on the next that completes`, `› keeps synced_at when the server refuses the credential a catch-up sends`.
+
+### `device/synced-at-follow`
+
+While a follow it runs is at the head of the event log, when the follow reads a frame from the server, a device MUST report as `synced_at` a time its own clock gave at most 30 seconds before it read that frame.
+
+**Reason:** a busy stream would otherwise cost a store write for every event, and a time at most 30 seconds old still reads as current to a person.
+
+**Tests:** `device/synced-at.test.ts › moves synced_at when a follow reaches the head of the log`, `device/binding-synced-at.test.ts › tells a time its clock gave within the last thirty seconds each time a follow at the head reads a frame`.
+
+### `device/synced-at-failed-pull`
+
+If a hydration, a catch-up or a follow fails, is refused, makes the copy stale or ends before it reaches the head of the event log, then a device MUST NOT change `synced_at`, even where the pull applied events before it ended.
+
+**Reason:** a time moved by a pull that did not finish tells a person their rows are current when they are not.
+
+**Tests:** `device/synced-at.test.ts › keeps synced_at when a catch-up fails, and moves it on the next that completes`, `› keeps synced_at when the server refuses the credential a catch-up sends`, `› keeps synced_at when a catch-up ends part way, though it applied what came before`, `› keeps synced_at when the copy goes stale`, `› keeps synced_at through a follow that applies events but never reaches the head`, `device/refill.test.ts › keeps synced_at through an interrupted refill in place, and moves it when the refill completes`.
+
+### `device/synced-at-refill`
+
+While a hydration fills a stale copy in place and has not completed, a device MUST report the `synced_at` it reported before that hydration began.
+
+**Reason:** the copy still holds the rows the last completed pull brought, marked stale, so that pull's time still describes them.
+
+**Tests:** `device/refill.test.ts › keeps synced_at through an interrupted refill in place, and moves it when the refill completes`.
+
+### `device/synced-at-drain`
+
+When a drain sends the queue to the server, a device MUST NOT change `synced_at`.
+
+**Reason:** a drain sends writes and pulls nothing, so the rows it did not write are as current as before.
+
+**Tests:** `device/synced-at.test.ts › keeps synced_at through a drain`.
+
+### `device/synced-at-reopen`
+
+When its store is opened again, a device MUST report the `synced_at` it reported before the store was closed.
+
+**Tests:** `device/synced-at.test.ts › reports no synced_at on a new store, and the time a hydration completed once one has, across a reopen`, `device/binding-synced-at.test.ts › tells no syncedAt before a hydration, an RFC 3339 UTC time once one completes, and the same time after the store is opened again`.
+
+### `device/synced-at-emptied`
+
+When a hydration empties the copy before it fills it, a device MUST report `synced_at` as null until a pull completes.
+
+**Reason:** the rows the last pull brought are gone, so its time describes nothing the copy holds.
+
+**Tests:** `device/synced-at.test.ts › removes synced_at when a hydration clears the copy`.
 
 ## Hydration
 

@@ -351,6 +351,7 @@ fn attempt(
             } else {
                 store::meta_delete(&tx, store::META_REFILL)?;
                 store::clear_slice(&tx)?;
+                store::meta_delete(&tx, store::META_SYNCED_AT)?;
             }
             store::replace_catalog(&tx, &catalog_rows)?;
             // A copy filling up answers reads, so it shows what is waiting
@@ -624,6 +625,7 @@ fn attempt(
                 store::sweep_refill(&tx)?;
             }
             store::attachments_whole(&tx)?;
+            store::mark_synced(&tx)?;
             let counts = (store::count(&tx, "items")?, store::count(&tx, "edges")?);
             tx.commit()?;
             counts

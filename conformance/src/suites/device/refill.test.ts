@@ -286,6 +286,59 @@ describe("a copy whose cursor aged out", () => {
     expect(await hydration(h)).toBe("complete");
   });
 
+  it("keeps synced_at through an interrupted refill in place, and moves it when the refill completes", async () => {
+    const rows: Rows = {
+      "core.note": [
+        { item: { id: "a" } },
+        { item: { id: "b" } },
+        { item: { id: "c" } },
+      ],
+    };
+    let dropping = false;
+    const { h } = await agedOut("refill-synced-at", rows, {
+      pageSize: 1,
+      drop: () => {
+        if (!dropping) return false;
+        dropping = false;
+        return true;
+      },
+    });
+    const syncedAt = async (): Promise<string | null> => {
+      const status = await h.device.status();
+      expect(status.ok, JSON.stringify(status)).toBe(true);
+      return status.ok ? status.value.synced_at : null;
+    };
+    const stamp = await syncedAt();
+    expect(
+      stamp,
+      "the hydration before the copy went stale told no time",
+    ).toMatch(/Z$/);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    dropping = true;
+    const interrupted = await h.device.hydrate(["core.note"], "library");
+    expect(
+      interrupted.ok,
+      "the refill was not interrupted, so nothing below is about one that was",
+    ).toBe(false);
+    expect(
+      await hydration(h),
+      "the interrupted hydration did not fill in place, so nothing below is about a refill",
+    ).toBe("stale");
+    expect(
+      await syncedAt(),
+      "a refill in place that has not completed moved or dropped the time the copy last synced",
+    ).toBe(stamp);
+
+    const carried = await h.device.hydrate(["core.note"], "library");
+    expect(carried.ok, JSON.stringify(carried)).toBe(true);
+    expect(carried.ok && carried.value.in_place).toBe(true);
+    expect(
+      Date.parse((await syncedAt()) ?? ""),
+      "a refill in place that completed left the time of the hydration before it",
+    ).toBeGreaterThan(Date.parse(stamp ?? ""));
+  });
+
   it("clears rather than fill again where the log ends before the head its refill started from", async () => {
     const rows: Rows = {
       "core.note": [{ item: { id: "a" } }, { item: { id: "b" } }],
