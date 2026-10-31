@@ -500,9 +500,11 @@ fn entries_declaration(kind: &str, definition: &Value) -> Result<Option<String>,
 
 /// A field's definition as the registry holds it (`normalizeFieldDefinition`):
 /// a string whose `format` is a kind of its own is that kind, an array of
-/// strings with such a format is an array of that kind, and each member of a
-/// list's entries is folded the same way. The format is then carried by the
-/// kind alone. Every other format annotates the string and stays.
+/// strings whose `format` is `url`, `email`, `datetime` or `date` is an array
+/// of that kind, and each member of a list's entries is folded the same way.
+/// The format is then carried by the kind alone. Every other format annotates
+/// the string and stays, and so does a `thumbnail` format on an array, which
+/// the server refuses (`types/format-collapses`).
 fn normalized(definition: &Value) -> Result<Value, CoreError> {
     let Some(row) = definition.as_object() else {
         return Ok(definition.clone());
@@ -517,9 +519,9 @@ fn normalized(definition: &Value) -> Result<Value, CoreError> {
                 .get(format)
                 .cloned()
         });
-    if let Some(kind) = kind {
+    let is_list = row.get("type").and_then(Value::as_str) == Some("array");
+    if let Some(kind) = kind.filter(|kind| !(is_list && kind == "thumbnail")) {
         row.remove("format");
-        let is_list = row.get("type").and_then(Value::as_str) == Some("array");
         if is_list && row.get("items_type").is_some_and(Value::is_string) {
             row.insert("items_type".into(), Value::String(kind));
         } else if !is_list && row.get("type").is_some_and(Value::is_string) {
@@ -2335,6 +2337,27 @@ mod tests {
             (labelled.label.as_str(), labelled.reverse_label.as_str()),
             ("Reviews", "Reviews")
         );
+    }
+
+    #[test]
+    fn a_list_of_strings_is_folded_to_its_kind_but_a_thumbnail_list_is_not() {
+        let folded = normalized(&serde_json::json!(
+            {"type": "array", "items_type": "string", "format": "url"}
+        ))
+        .unwrap();
+        assert_eq!(
+            folded,
+            serde_json::json!({"type": "array", "items_type": "url"})
+        );
+        let held = serde_json::json!(
+            {"type": "array", "items_type": "string", "format": "thumbnail"}
+        );
+        assert_eq!(normalized(&held).unwrap(), held);
+        let single = normalized(&serde_json::json!(
+            {"type": "string", "format": "thumbnail"}
+        ))
+        .unwrap();
+        assert_eq!(single, serde_json::json!({"type": "thumbnail"}));
     }
 
     #[test]

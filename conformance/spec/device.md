@@ -4450,7 +4450,7 @@ If an app declares a field, or a member of a list's entries (`items_fields`), th
 
 ### `device/declared-format-kind`
 
-Where an app declares a `string` field, or a member of a list's entries, whose `format` is `url`, `email`, `datetime`, `date` or `thumbnail`, or an `array` field of `string` elements with such a `format`, a device MUST hold the field as one of that type, as the server does (`types/format-collapses`).
+Where an app declares a `string` field, or a member of a list's entries, whose `format` is `url`, `email`, `datetime`, `date` or `thumbnail`, or an `array` field of `string` elements whose `format` is `url`, `email`, `datetime` or `date`, a device MUST hold the field as one of that type, as the server does (`types/format-collapses`).
 
 **Reason:** a device that read the declared `type` alone would take a member the server refuses, and keep a `url` untrimmed that the server trims (`types/url-stored`).
 
