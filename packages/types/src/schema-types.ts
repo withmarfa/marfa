@@ -65,7 +65,7 @@ export type FieldFormat =
   | "currency"
   | "phone";
 
-/** The most characters a field's, a member's or a type's `plural` label holds. */
+/** The most characters, counted as code points, that a type's label or plural, or a field's or member's label, holds. */
 export const MAX_LABEL_LENGTH = 100;
 
 export interface FieldDefinition {

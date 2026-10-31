@@ -200,7 +200,7 @@ When a credential sends `GET /types/{id}` for a registered type, the server MUST
 
 When `GET /types` lists a type, the server MUST answer the `label` of each field and member that the type itself declares, and none it only inherits or makes from a name.
 
-**Reason:** `GET /types/{id}` answers the label each field is shown by (`types/field-label`); the listing shows what each registration says.
+**Reason:** a working copy resolves each type from the listing as `GET /types/{id}` does (`device/catalog-type-read`), and a made or inherited label listed as the type's own could not be told from a declared one, so it would take the place of a label a type above names. `GET /types/{id}` answers the label each field is shown by (`types/field-label`).
 
 **Tests:** `compliance/type-label.test.ts › lists only the field labels a type declares`.
 
@@ -1570,7 +1570,7 @@ When the definition stored for a type sets none of a display hint (`title_field`
 
 When the definition stored for a type names no `plural`, or no `label` for a field or a member of a field's entries, and the value a caller submits for it to `PUT /types/{id}` equals the value `GET /types/{id}` answers for it, the server MUST store no value for it.
 
-**Reason:** a caller that reads a type and writes the answer back sends every plural and label the server made (`types/plural`, `types/field-label`) as if the author had chosen it; storing them would stop the plural following a later change of label and a field following a label an ancestor names. A value other than the one the type reads as is kept.
+**Reason:** a caller that reads a type and writes the answer back sends every plural and label the server made (`types/plural`, `types/field-label`) as if the author had chosen it; storing them would stop the plural following a later change of label and a field following a label an ancestor names. A value other than the one the type reads as is kept. So an author cannot fix a plural or label that equals the one the type already reads as: it goes on following its label, name or ancestor, and to keep it through a later change, the author names it after that change.
 
 **Tests:** `compliance/type-label.test.ts › does not freeze a made plural or field label when a read is written back`.
 
