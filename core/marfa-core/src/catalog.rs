@@ -4,6 +4,7 @@ use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
+use crate::display::ItemDisplay;
 use crate::error::CoreError;
 use crate::model::{Item, Shown};
 use crate::store;
@@ -1235,6 +1236,15 @@ impl Catalog {
             body: text(self.body_property(&item.r#type)),
             unreadable_properties: None,
         }
+    }
+
+    /// The name and preview an item of `type_id` with these properties shows.
+    pub(crate) fn display(&self, type_id: &str, properties: &Map<String, Value>) -> ItemDisplay {
+        crate::display::display(
+            properties,
+            self.title_field(type_id),
+            self.body_field(type_id),
+        )
     }
 
     /// `shown`, naming why the properties are empty where the read kept a

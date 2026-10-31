@@ -226,6 +226,20 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
     ["workspace", "conformance-offline", "conformance-compliance"],
   ],
   [/^conformance\/spec\//, ["workspace", "conformance-offline"]],
+  // The item names and previews both implementations are held to: the
+  // core's unit tests, the shared package's, and the compliance and device
+  // fixtures read it.
+  [
+    /^conformance\/fixtures\/item-display\.json$/,
+    [
+      "workspace",
+      "core-checks",
+      "core-checks-linux",
+      "conformance-offline",
+      "conformance-compliance",
+      "conformance-device",
+    ],
+  ],
   // The binary's command reference is generated from its command tree, and
   // a unit test in `marfa-cli` holds the committed file to it. Only the core
   // checks run the Rust tests.

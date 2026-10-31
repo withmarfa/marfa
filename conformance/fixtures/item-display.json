@@ -1,0 +1,421 @@
+{
+  "types": [
+    {
+      "id": "user.displayed",
+      "fields": {
+        "heading": {
+          "type": "string"
+        },
+        "content": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "body": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        },
+        "filename": {
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        },
+        "address": {
+          "type": "string"
+        }
+      },
+      "display_hints": {
+        "title_field": "heading",
+        "body_field": "content"
+      }
+    },
+    {
+      "id": "user.displayed.inherits",
+      "parent": "user.displayed",
+      "fields": {
+        "extra": {
+          "type": "string"
+        }
+      }
+    },
+    {
+      "id": "user.plain",
+      "fields": {
+        "title": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "body": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        },
+        "filename": {
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        },
+        "address": {
+          "type": "string"
+        }
+      }
+    }
+  ],
+  "cases": [
+    {
+      "description": "takes the title and body hints a type inherits from an ancestor",
+      "type": "user.displayed.inherits",
+      "properties": {
+        "heading": "  Weekly plan ",
+        "content": "Buy **milk** and _eggs_",
+        "title": "Not this"
+      },
+      "name": "Weekly plan",
+      "preview": "Buy milk and eggs"
+    },
+    {
+      "description": "names an item whose title field is blank by its body's first line, and starts the preview after it",
+      "type": "user.displayed.inherits",
+      "properties": {
+        "heading": " \t ",
+        "content": "\n  First line here  \nSecond *line*\n"
+      },
+      "name": "First line here",
+      "preview": "Second line"
+    },
+    {
+      "description": "names a note with no title by its body, and previews the rest",
+      "type": "core.note",
+      "properties": {
+        "body": "Shopping list\n- milk\n- [x] eggs"
+      },
+      "name": "Shopping list",
+      "preview": "milk eggs"
+    },
+    {
+      "description": "answers no preview where the body's only line is the name",
+      "type": "core.note",
+      "properties": {
+        "body": "Only line"
+      },
+      "name": "Only line",
+      "preview": null
+    },
+    {
+      "description": "removes headings, links, images, fences, quotes, lists, breaks, code and emphasis",
+      "type": "core.note",
+      "properties": {
+        "title": "Markdown",
+        "body": "## Heading ##\n\nSome [link text](https://example.test/a) and ![an image](https://example.test/a.png) here.\n\n```js\nconst x = 1;\n```\n> quoted *text*\n1. first\n2) second\n---\nend `a_b*c` ~~gone~~ snake_case **bold** and __strong__"
+      },
+      "name": "Markdown",
+      "preview": "Heading Some link text and here. const x = 1; quoted text first second end a_b*c gone snake_case bold and strong"
+    },
+    {
+      "description": "answers no preview for a body that is only Markdown syntax",
+      "type": "core.note",
+      "properties": {
+        "title": "Empty",
+        "body": "# \n---\n```\n```\n- \n> \n**\n![](https://example.test/x.png)\n[ref]: https://example.test/\n***\n===="
+      },
+      "name": "Empty",
+      "preview": null
+    },
+    {
+      "description": "names a note by its body's heading without the heading marker",
+      "type": "core.note",
+      "properties": {
+        "body": "# Plan ##\n\nBuy **milk**"
+      },
+      "name": "Plan",
+      "preview": "Buy milk"
+    },
+    {
+      "description": "removes emphasis from a name taken from the body",
+      "type": "core.note",
+      "properties": {
+        "body": "**Weekly** _review_ ~~draft~~ notes\nrest"
+      },
+      "name": "Weekly review draft notes",
+      "preview": "rest"
+    },
+    {
+      "description": "names a note by a link's text in its body",
+      "type": "core.note",
+      "properties": {
+        "body": "[Project plan](https://example.test/p) for `Q3`\nmore"
+      },
+      "name": "Project plan for Q3",
+      "preview": "more"
+    },
+    {
+      "description": "names a note by the first line its Markdown leaves, and previews the lines after it",
+      "type": "core.note",
+      "properties": {
+        "body": "---\n# \n![cover](https://example.test/c.png)\n> ## Agenda ##\n- first\n- [ ] second"
+      },
+      "name": "Agenda",
+      "preview": "first second"
+    },
+    {
+      "description": "passes over a body that is only Markdown syntax to the next name field",
+      "type": "user.plain",
+      "properties": {
+        "body": "***\n# \n**\n[ref]: https://example.test/",
+        "text": "## From text",
+        "filename": "f.pdf"
+      },
+      "name": "From text",
+      "preview": null
+    },
+    {
+      "description": "answers no name for a body that is only Markdown syntax",
+      "type": "core.note",
+      "properties": {
+        "body": "===\n> \n![[photo.png]]\n```\n```"
+      },
+      "name": null,
+      "preview": null
+    },
+    {
+      "description": "keeps Markdown in a name taken from a title field",
+      "type": "user.plain",
+      "properties": {
+        "title": "# Not a heading **here**",
+        "body": "**b**"
+      },
+      "name": "# Not a heading **here**",
+      "preview": "b"
+    },
+    {
+      "description": "closes a code span only at a run of backticks of the same length",
+      "type": "core.note",
+      "properties": {
+        "title": "Code",
+        "body": "`a``b` and ``c`d`` and `open``"
+      },
+      "name": "Code",
+      "preview": "a``b and c`d and `open``"
+    },
+    {
+      "description": "keeps unclosed inline markup as text, and reads an unclosed fence to the end",
+      "type": "core.note",
+      "properties": {
+        "title": "Unclosed",
+        "body": "[not a link\n`open code and [x](open\n~~~\nkept *as* code"
+      },
+      "name": "Unclosed",
+      "preview": "[not a link `open code and [x](open kept *as* code"
+    },
+    {
+      "description": "shows wiki links, autolinks and reference links as their text, and drops embeds",
+      "type": "core.note",
+      "properties": {
+        "title": "Links",
+        "body": "See [[Project plan|the plan]], [[Inbox]], ![[photo.png]], <https://example.test/a> and [ref text][r]."
+      },
+      "name": "Links",
+      "preview": "See the plan, Inbox, , https://example.test/a and ref text."
+    },
+    {
+      "description": "keeps escaped markup and a lone asterisk as text",
+      "type": "core.note",
+      "properties": {
+        "title": "Escapes",
+        "body": "\\*not em\\* and 2 * 3 and \\# not a heading\n\\- not a list"
+      },
+      "name": "Escapes",
+      "preview": "*not em* and 2 * 3 and # not a heading - not a list"
+    },
+    {
+      "description": "removes a heading's underline",
+      "type": "core.note",
+      "properties": {
+        "title": "Setext",
+        "body": "Title\n=====\ntext"
+      },
+      "name": "Setext",
+      "preview": "Title text"
+    },
+    {
+      "description": "removes task boxes and nested quote and list markers",
+      "type": "core.note",
+      "properties": {
+        "title": "Tasks",
+        "body": "> - [ ] open task\n>> deeper\n* [X] done\n+ plus item\n10. tenth"
+      },
+      "name": "Tasks",
+      "preview": "open task deeper done plus item tenth"
+    },
+    {
+      "description": "replaces control characters with spaces",
+      "type": "user.plain",
+      "properties": {
+        "title": "Tab\there\u0007bell\u000bvt\u0085nel",
+        "body": "a\u0001b\u001fc\u007fd\u009fe"
+      },
+      "name": "Tab here bell vt nel",
+      "preview": "a b c d e"
+    },
+    {
+      "description": "passes over a field whose first line is only a control character",
+      "type": "user.plain",
+      "properties": {
+        "title": "\u0085\nhidden",
+        "name": "Fallback name"
+      },
+      "name": "Fallback name",
+      "preview": null
+    },
+    {
+      "description": "trims a byte order mark as whitespace",
+      "type": "user.plain",
+      "properties": {
+        "title": "\ufeff\nReal name"
+      },
+      "name": "Real name",
+      "preview": null
+    },
+    {
+      "description": "collapses non-breaking and ideographic spaces, and breaks lines at line and paragraph separators",
+      "type": "user.plain",
+      "properties": {
+        "title": "a\u00a0\u00a0b\u3000c",
+        "body": "x\u2028y\u2029z"
+      },
+      "name": "a b c",
+      "preview": "x y z"
+    },
+    {
+      "description": "cuts a very long first line at 120 code points, and a long body at 240",
+      "type": "user.plain",
+      "properties": {
+        "title": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\nsecond",
+        "body": "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+      },
+      "name": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\u2026",
+      "preview": "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy\u2026"
+    },
+    {
+      "description": "keeps a name of exactly 120 code points whole",
+      "type": "user.plain",
+      "properties": {
+        "title": "\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00"
+      },
+      "name": "\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00",
+      "preview": null
+    },
+    {
+      "description": "cuts emoji by code point",
+      "type": "user.plain",
+      "properties": {
+        "title": "\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00"
+      },
+      "name": "\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\u2026",
+      "preview": null
+    },
+    {
+      "description": "cuts combining marks by code point, not by character",
+      "type": "user.plain",
+      "properties": {
+        "title": "e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301"
+      },
+      "name": "e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u2026",
+      "preview": null
+    },
+    {
+      "description": "cuts joined emoji by code point, not by character",
+      "type": "user.plain",
+      "properties": {
+        "title": "\ud83d\udc69\u200d\ud83d\udc69\u200d\ud83d\udc67\ud83d\udc69\u200d\ud83d\udc69\u200d\ud83d\udc67\ud83d\udc69\u200d\ud83d\udc69\u200d\ud83d\udc67\ud83d\udc69\u200d\ud83d\udc69\u200d\ud83d\udc67\ud83d\udc69\u200d\ud83d\udc69\u200d\ud83d\udc67\ud83d\udc69\u200d\ud83d\udc69\u200d\ud83d\udc67\ud83d\udc69\u200d\ud83d\udc69\u200d\ud83d\udc67\ud83d\udc69\u200d\ud83d\udc69\u200d\ud83d\udc67\ud83d\udc69\u200d\ud83d\udc69\u200d\ud83d\udc67\ud83d\udc69\u200d\ud83d\udc69\u200d\ud83d\udc67\ud83d\udc69\u200d\ud83d\udc69\u200d\ud83d\udc67\ud83d\udc69\u200d\ud83d\udc69\u200d\ud83d\udc67\ud83d\udc69\u200d\ud83d\udc69\u200d\ud83d\udc67\ud83d\udc69\u200d\ud83d\udc69\u200d\ud83d\udc67\ud83d\udc69\u200d\ud83d\udc69\u200d\ud83d\udc67\ud83d\udc69\u200d\ud83d\udc69\u200d\ud83d\udc67\ud83d\udc69\u200d\ud83d\udc69\u200d\ud83d\udc67\ud83d\udc69\u200d\ud83d\udc69\u200d\ud83d\udc67\ud83d\udc69\u200d\ud83d\udc69\u200d\ud83d\udc67\ud83d\udc69\u200d\ud83d\udc69\u200d\ud83d\udc67\ud83d\udc69\u200d\ud83d\udc69\u200d\ud83d\udc67\ud83d\udc69\u200d\ud83d\udc69\u200d\ud83d\udc67\ud83d\udc69\u200d\ud83d\udc69\u200d\ud83d\udc67\ud83d\udc69\u200d\ud83d\udc69\u200d\ud83d\udc67\ud83d\udc69\u200d\ud83d\udc69\u200d\ud83d\udc67"
+      },
+      "name": "\ud83d\udc69\u200d\ud83d\udc69\u200d\ud83d\udc67\ud83d\udc69\u200d\ud83d\udc69\u200d\ud83d\udc67\ud83d\udc69\u200d\ud83d\udc69\u200d\ud83d\udc67\ud83d\udc69\u200d\ud83d\udc69\u200d\ud83d\udc67\ud83d\udc69\u200d\ud83d\udc69\u200d\ud83d\udc67\ud83d\udc69\u200d\ud83d\udc69\u200d\ud83d\udc67\ud83d\udc69\u200d\ud83d\udc69\u200d\ud83d\udc67\ud83d\udc69\u200d\ud83d\udc69\u200d\ud83d\udc67\ud83d\udc69\u200d\ud83d\udc69\u200d\ud83d\udc67\ud83d\udc69\u200d\ud83d\udc69\u200d\ud83d\udc67\ud83d\udc69\u200d\ud83d\udc69\u200d\ud83d\udc67\ud83d\udc69\u200d\ud83d\udc69\u200d\ud83d\udc67\ud83d\udc69\u200d\ud83d\udc69\u200d\ud83d\udc67\ud83d\udc69\u200d\ud83d\udc69\u200d\ud83d\udc67\ud83d\udc69\u200d\ud83d\udc69\u200d\ud83d\udc67\ud83d\udc69\u200d\ud83d\udc69\u200d\ud83d\udc67\ud83d\udc69\u200d\ud83d\udc69\u200d\ud83d\udc67\ud83d\udc69\u200d\ud83d\udc69\u200d\ud83d\udc67\ud83d\udc69\u200d\ud83d\udc69\u200d\ud83d\udc67\ud83d\udc69\u200d\ud83d\udc69\u200d\ud83d\udc67\ud83d\udc69\u200d\ud83d\udc69\u200d\ud83d\udc67\ud83d\udc69\u200d\ud83d\udc69\u200d\ud83d\udc67\ud83d\udc69\u200d\ud83d\udc69\u200d\ud83d\udc67\ud83d\udc69\u200d\ud83d\udc69\u200d\u2026",
+      "preview": null
+    },
+    {
+      "description": "cuts a preview across lines at 240 code points",
+      "type": "user.plain",
+      "properties": {
+        "title": "Long",
+        "body": "word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word \nword word word word word word word word word word word word word word word word word word word word word word word word word word word word word word \nword word word word word word word word word word word word word word word word word word word word word word word word word word word word word word \n"
+      },
+      "name": "Long",
+      "preview": "word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word\u2026"
+    },
+    {
+      "description": "names a file by its filename",
+      "type": "user.plain",
+      "properties": {
+        "filename": " report final.pdf "
+      },
+      "name": "report final.pdf",
+      "preview": null
+    },
+    {
+      "description": "falls back to text before filename",
+      "type": "user.plain",
+      "properties": {
+        "text": "From text",
+        "filename": "f.pdf"
+      },
+      "name": "From text",
+      "preview": null
+    },
+    {
+      "description": "falls back to a url",
+      "type": "user.plain",
+      "properties": {
+        "url": "https://example.test/page"
+      },
+      "name": "https://example.test/page",
+      "preview": null
+    },
+    {
+      "description": "falls back to the first line of an address",
+      "type": "user.plain",
+      "properties": {
+        "address": "1 Example Street\nTown"
+      },
+      "name": "1 Example Street",
+      "preview": null
+    },
+    {
+      "description": "falls back to body where the body field is blank, and previews only the body field",
+      "type": "user.displayed",
+      "properties": {
+        "content": "",
+        "body": "Body fallback\nmore"
+      },
+      "name": "Body fallback",
+      "preview": null
+    },
+    {
+      "description": "answers no name and no preview for blank text",
+      "type": "user.plain",
+      "properties": {
+        "title": "   ",
+        "body": "\n\t"
+      },
+      "name": null,
+      "preview": null
+    },
+    {
+      "description": "answers no name and no preview for an item with no properties",
+      "type": "user.plain",
+      "properties": {},
+      "name": null,
+      "preview": null
+    }
+  ]
+}

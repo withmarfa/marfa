@@ -1,6 +1,31 @@
+import { readFileSync } from "node:fs";
 import { expect, it } from "vitest";
 import { ALL_TYPES } from "./type-registry.js";
-import { itemName } from "./item-name.js";
+import { itemName, itemPreview } from "./item-name.js";
+
+interface DisplayHints {
+  title_field?: string;
+  body_field?: string;
+}
+
+interface Shared {
+  types: { id: string; parent?: string; display_hints?: DisplayHints }[];
+  cases: {
+    description: string;
+    type: string;
+    properties: Record<string, unknown>;
+    name: string | null;
+    preview?: string | null;
+  }[];
+}
+
+// The cases the core's own name is held to, so the two cannot drift.
+const SHARED = JSON.parse(
+  readFileSync(
+    new URL("../../../conformance/fixtures/item-display.json", import.meta.url),
+    "utf8",
+  ),
+) as Shared;
 
 it("names every built-in type through its display hints", () => {
   const fields: Record<string, string> = {
@@ -63,4 +88,53 @@ it("uses custom hints and a bounded fallback with blank or untidy input", () => 
   );
   expect(itemName({ title: "  " })).toBe("Untitled");
   expect(itemName({ title: "😀".repeat(121) })).toBe("😀".repeat(119) + "…");
+});
+
+it("names every case the core is held to as the core does, and Untitled where the core answers none", () => {
+  const types = new Map<
+    string,
+    { parent?: string; display_hints?: DisplayHints }
+  >([...ALL_TYPES, ...SHARED.types].map((type) => [type.id, type]));
+  // Each hint from the nearest type in the chain that declares it.
+  const nearest = (id: string, hint: keyof DisplayHints) => {
+    for (let at = types.get(id); at; at = types.get(at.parent ?? "")) {
+      const value = at.display_hints?.[hint];
+      if (value !== undefined) return value;
+    }
+    return undefined;
+  };
+  expect(SHARED.cases.length).toBeGreaterThan(0);
+  for (const { description, type, properties, name, preview } of SHARED.cases) {
+    const hints: DisplayHints = {};
+    const title = nearest(type, "title_field");
+    const body = nearest(type, "body_field");
+    if (title !== undefined) hints.title_field = title;
+    if (body !== undefined) hints.body_field = body;
+    expect(itemName(properties, hints), description).toBe(name ?? "Untitled");
+    expect(itemPreview(properties, hints), description).toBe(
+      preview ?? undefined,
+    );
+  }
+});
+
+it("reads a 100,000-character hostile line in linear time", () => {
+  const n = 100_000;
+  const hostile = [
+    " ".repeat(n) + "x",
+    "x" + " ".repeat(n) + "x",
+    "# a " + "#".repeat(n) + "x",
+    "# " + "#".repeat(n) + " " + " ".repeat(n) + "x",
+    ">".repeat(n) + "x",
+    "- ".repeat(n / 2) + "x",
+    "> ".repeat(n / 2) + "x",
+    "a".repeat(n),
+  ];
+  const hints = { title_field: "title", body_field: "body" };
+  const start = performance.now();
+  for (const line of hostile) {
+    itemName({ title: line }, hints);
+    itemPreview({ body: line }, hints);
+    itemPreview({ body: `${line}\n${line}` }, hints);
+  }
+  expect(performance.now() - start).toBeLessThan(1500);
 });

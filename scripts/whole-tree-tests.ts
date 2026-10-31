@@ -48,6 +48,8 @@ export const ROOT_FILTERS: readonly string[] = [
   "storage/idempotency-store.test.ts",
   "test-utils-sse.test.ts",
   "shutdown-stream.test.ts",
+  // The item names the core is held to, in `conformance/fixtures/`.
+  "packages/shared/src/item-name.test.ts",
   // The schema and registry files under `packages/types/`, read from disk.
   "packages/types/src/",
   // Everything under `ci/` checks the workflows and manifests, not a package.

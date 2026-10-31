@@ -14,6 +14,7 @@ mod directory_vfs;
 #[cfg(not(unix))]
 #[path = "directory_vfs_unsupported.rs"]
 mod directory_vfs;
+mod display;
 mod drain;
 mod error;
 /// Public so the binary can name a fault of its own.
@@ -84,12 +85,13 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
 use rusqlite::Connection;
-use serde_json::Value;
+use serde_json::{Map, Value};
 
 pub use blob::{file_type_for, mime_type_for};
 pub use body::{BodyLinks, BodyName, BodyTarget};
 pub use catalog::{EdgeType, End, ItemType, ServerCatalog, TypeField, WrittenAt};
 pub use catch_up::{Change, ChangeEvent, FollowReport};
+pub use display::ItemDisplay;
 pub use drain::{DrainReport, DrainVerdict};
 pub use error::{CODES as ERROR_CODES, CoreError, CoreErrorKind, FolderStore};
 pub use file_cache::{
@@ -3080,6 +3082,18 @@ impl Core {
     /// Refused `NotFound` where the catalog holds no such type.
     pub fn item_type(&self, id: &str) -> Result<ItemType> {
         catalog::item_type(&*self.conn()?, id)
+    }
+
+    /// Each item's name and preview, in the order given, from its type's
+    /// display hints in the catalog the copy holds; read from the copy
+    /// alone. A type the catalog does not hold has no hints, so its items
+    /// are named by the fallback fields.
+    pub fn item_displays(&self, items: &[(&str, &Map<String, Value>)]) -> Result<Vec<ItemDisplay>> {
+        let catalog = catalog::Catalog::load(&*self.conn()?)?;
+        Ok(items
+            .iter()
+            .map(|(item_type, properties)| catalog.display(item_type, properties))
+            .collect())
     }
 
     /// Every edge type the copy holds, by id, read from the copy alone.

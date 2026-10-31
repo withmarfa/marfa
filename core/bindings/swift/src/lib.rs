@@ -111,6 +111,30 @@ pub struct Item {
     pub unreadable_properties: Option<String>,
 }
 
+/// An item to name and preview: its type and properties.
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct ItemDisplayInput {
+    pub r#type: String,
+    pub properties: JsonObject,
+}
+
+/// How a device shows an item: its name and a line of preview text, each
+/// none where the item has nothing to show.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct ItemDisplay {
+    pub name: Option<String>,
+    pub preview: Option<String>,
+}
+
+impl From<marfa_core::ItemDisplay> for ItemDisplay {
+    fn from(display: marfa_core::ItemDisplay) -> Self {
+        ItemDisplay {
+            name: display.name,
+            preview: display.preview,
+        }
+    }
+}
+
 /// A page of the server's bin.
 #[derive(Debug, Clone, uniffi::Record)]
 pub struct BinPage {
@@ -2443,6 +2467,28 @@ impl Core {
         Ok(self.inner.item_type(&id)?.into())
     }
 
+    /// The name and preview text of each item, in order, by the copy's
+    /// catalog alone. An unknown type is named by the fallback fields.
+    pub fn item_displays(
+        &self,
+        items: Vec<ItemDisplayInput>,
+    ) -> Result<Vec<ItemDisplay>, MarfaError> {
+        let items = items
+            .into_iter()
+            .map(|item| Ok((item.r#type, item.properties.into_map()?)))
+            .collect::<Result<Vec<_>, MarfaError>>()?;
+        let items: Vec<_> = items
+            .iter()
+            .map(|(item_type, properties)| (item_type.as_str(), properties))
+            .collect();
+        Ok(self
+            .inner
+            .item_displays(&items)?
+            .into_iter()
+            .map(Into::into)
+            .collect())
+    }
+
     /// Every edge type the copy holds, by id, read from the copy alone.
     pub fn edge_types(&self) -> Result<Vec<EdgeType>, MarfaError> {
         Ok(self
@@ -3577,6 +3623,51 @@ mod tests {
                 .any(|held| held.id == "core.note")
         );
         assert_eq!(core.edge_type("parent-of".into()).unwrap().id, "parent-of");
+    }
+
+    #[test]
+    fn names_and_previews_items_in_order_and_refuses_a_key_that_repeats() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("core.sqlite").display().to_string();
+        let core = Core::open(path, None, None, None).unwrap();
+        let item = |r#type: &str, properties: JsonObject| ItemDisplayInput {
+            r#type: r#type.into(),
+            properties,
+        };
+        let shown = core
+            .item_displays(vec![
+                item(
+                    "core.note",
+                    object(serde_json::json!({ "body": "Groceries\n- **milk**" })),
+                ),
+                item("acme.unknown", object(serde_json::json!({}))),
+            ])
+            .unwrap();
+        assert_eq!(
+            shown,
+            vec![
+                ItemDisplay {
+                    name: Some("Groceries".into()),
+                    preview: Some("milk".into()),
+                },
+                ItemDisplay {
+                    name: None,
+                    preview: None,
+                },
+            ]
+        );
+        let repeated = JsonObject {
+            members: ["body", "body"]
+                .map(|key| JsonMember {
+                    key: key.into(),
+                    value: JsonValue::Null,
+                })
+                .into(),
+        };
+        assert!(matches!(
+            core.item_displays(vec![item("core.note", repeated)]),
+            Err(MarfaError::Invalid { .. })
+        ));
     }
 
     #[test]

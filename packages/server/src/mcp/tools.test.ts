@@ -15,7 +15,7 @@ import {
   type ServerResponse,
 } from "node:http";
 import type { Client } from "@modelcontextprotocol/client";
-import { generateId } from "@withmarfa/shared";
+import { generateId, PERMISSIONS } from "@withmarfa/shared";
 import { advanceClock, resetClockForTests } from "../clock.js";
 import { activeFaults, clearFaults, setFault } from "../control/faults.js";
 import {
@@ -338,6 +338,94 @@ describe("marfa_find and marfa_get", () => {
     expect(answer.edge_types).toEqual(
       expect.arrayContaining([expect.objectContaining({ id: "references" })]),
     );
+  });
+});
+
+describe("names and previews of items", () => {
+  let hinted: Client;
+  let adminKey: string;
+
+  beforeAll(async () => {
+    adminKey = await mintWorkingKey(ctx, { permissions: [...PERMISSIONS] });
+    const registered = await request(ctx.app, "POST", "/types", {
+      key: adminKey,
+      body: {
+        id: "user.dossier",
+        fields: {
+          heading: { type: "string" },
+          content: { type: "string" },
+        },
+        display_hints: { title_field: "heading", body_field: "content" },
+      },
+    });
+    expect(registered.status).toBe(201);
+    hinted = await connectMcp(ctx, adminKey);
+  });
+
+  afterAll(async () => {
+    await hinted.close();
+  });
+
+  async function saveDossier(properties: Record<string, unknown>) {
+    const response = await request(ctx.app, "POST", "/items", {
+      key: adminKey,
+      body: { type: "user.dossier", properties },
+    });
+    expect(response.status).toBe(201);
+    return ((await response.json()) as { item: Saved }).item;
+  }
+
+  it("leaves a one-line body out of the preview once its name has the Markdown removed", async () => {
+    const plan = await saveNote({ body: "# Plan" });
+    const longer = await saveNote({ body: "# Plan\n\nBuy **milk**" });
+    const found = payloadOf(
+      await callTool(client, "marfa_find", { type: "core.note" }),
+    );
+    const rows = found.items as {
+      id: string;
+      title: string;
+      snippet?: string;
+    }[];
+    const one = rows.find((row) => row.id === plan.id);
+    expect(one).toMatchObject({ title: "Plan" });
+    expect(one?.snippet).toBeUndefined();
+    // The witness: the same path does produce a preview when text follows.
+    expect(rows.find((row) => row.id === longer.id)).toMatchObject({
+      title: "Plan",
+      snippet: "Buy milk",
+    });
+  });
+
+  it("names a custom type's items by its display hints in find, create and delete", async () => {
+    const dossier = await saveDossier({
+      heading: "Harbor file",
+      content: "First paragraph",
+    });
+    const found = payloadOf(
+      await callTool(hinted, "marfa_find", { type: "user.dossier" }),
+    );
+    expect(found.items).toEqual([
+      expect.objectContaining({
+        id: dossier.id,
+        title: "Harbor file",
+        snippet: "First paragraph",
+      }),
+    ]);
+
+    const created = payloadOf(
+      await callTool(hinted, "marfa_create", {
+        type: "user.dossier",
+        properties: { heading: "Created file", title: "Not this" },
+      }),
+    );
+    expect(created).toMatchObject({ title: "Created file" });
+
+    const preview = payloadOf(
+      await callTool(hinted, "marfa_delete", { ids: [dossier.id] }),
+    );
+    expect(preview.preview).toEqual([
+      expect.objectContaining({ id: dossier.id, title: "Harbor file" }),
+    ]);
   });
 });
 

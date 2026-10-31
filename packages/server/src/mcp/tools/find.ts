@@ -1,9 +1,10 @@
 import type { McpServer } from "@modelcontextprotocol/server";
-import { itemName } from "@withmarfa/shared";
+import { itemName, itemPreview, type DisplayHints } from "@withmarfa/shared";
 import { itemId } from "../args.js";
 import * as z from "zod";
 import type { ToolContext } from "../context.js";
 import { fail, ok, refused } from "../results.js";
+import { displayHintsOf } from "./display.js";
 
 export const FIND_DEFAULT_LIMIT = 20;
 export const FIND_MAX_LIMIT = 50;
@@ -69,9 +70,19 @@ function clip(text: string, limit: number): string {
     : text;
 }
 
-/** The first text of an item that is not its title, as a short preview. */
-function preview(properties: Record<string, unknown>, title: string): string {
-  for (const field of ["body", "text", "description", "notes", "summary"]) {
+/**
+ * A short preview of an item that never repeats its title: the body without
+ * its Markdown and without the line the title came from, as a device shows it,
+ * or else the first other text field that is not the title.
+ */
+function preview(
+  properties: Record<string, unknown>,
+  title: string,
+  hints: DisplayHints | undefined,
+): string {
+  const body = itemPreview(properties, hints);
+  if (body !== undefined) return clip(body, SNIPPET_CHARS);
+  for (const field of ["description", "notes", "summary"]) {
     const value = properties[field];
     if (typeof value !== "string") continue;
     const text = collapsed(value);
@@ -80,12 +91,17 @@ function preview(properties: Record<string, unknown>, title: string): string {
   return "";
 }
 
-function rowOf(item: ListedItem, snippetHtml?: string): Row {
-  const title = itemName(item.properties);
+function rowOf(
+  item: ListedItem,
+  hints: ReadonlyMap<string, DisplayHints | undefined>,
+  snippetHtml?: string,
+): Row {
+  const typeHints = hints.get(item.type);
+  const title = itemName(item.properties, typeHints);
   const snippet =
     snippetHtml !== undefined
       ? clip(excerptText(snippetHtml), SNIPPET_CHARS)
-      : preview(item.properties, title);
+      : preview(item.properties, title, typeHints);
   return {
     id: item.id,
     type: item.type,
@@ -99,6 +115,19 @@ function rowOf(item: ListedItem, snippetHtml?: string): Row {
         occurred_at: item.occurred_at,
       }),
   };
+}
+
+async function rowsOf(
+  ctx: ToolContext,
+  entries: { item: ListedItem; snippetHtml?: string }[],
+): Promise<Row[]> {
+  const hints = await displayHintsOf(
+    ctx,
+    entries.map(({ item }) => item.type),
+  );
+  return entries.map(({ item, snippetHtml }) =>
+    rowOf(item, hints, snippetHtml),
+  );
 }
 
 function page(rows: Row[], next: string | null | undefined) {
@@ -228,7 +257,10 @@ export function registerFind(server: McpServer, ctx: ToolContext): void {
         );
         if (!answer.ok) return refused(answer.refusal);
         return page(
-          answer.data.data.map((item) => rowOf(item)),
+          await rowsOf(
+            ctx,
+            answer.data.data.map((item) => ({ item })),
+          ),
           answer.data.next_cursor,
         );
       }
@@ -267,8 +299,12 @@ export function registerFind(server: McpServer, ctx: ToolContext): void {
         );
         if (!answer.ok) return refused(answer.refusal);
         return page(
-          answer.data.data.map((hit) =>
-            rowOf(hit.item as ListedItem, hit.snippet_html),
+          await rowsOf(
+            ctx,
+            answer.data.data.map((hit) => ({
+              item: hit.item,
+              snippetHtml: hit.snippet_html,
+            })),
           ),
           answer.data.next_cursor,
         );
@@ -293,7 +329,10 @@ export function registerFind(server: McpServer, ctx: ToolContext): void {
       );
       if (!answer.ok) return refused(answer.refusal);
       return page(
-        answer.data.data.map((row) => rowOf(row as ListedItem)),
+        await rowsOf(
+          ctx,
+          answer.data.data.map((row) => ({ item: row as ListedItem })),
+        ),
         answer.data.next_cursor,
       );
     },

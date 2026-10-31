@@ -95,6 +95,12 @@ export interface BindingItemType {
   fields: Array<{ name: string; type: string; declaredBy: string }>;
 }
 
+/** Absent where the item has none. */
+export interface BindingItemDisplay {
+  name?: string;
+  preview?: string;
+}
+
 export interface BindingEdgeType {
   id: string;
   label: string;
@@ -662,6 +668,13 @@ export class BindingDevice {
 
   itemTypes(): Call<BindingItemType[]> {
     return this.call("itemTypes");
+  }
+
+  /** Each item's name and preview text, in order, by the copy's catalog alone. */
+  itemDisplays(
+    items: { type: string; properties: Record<string, unknown> }[],
+  ): Call<BindingItemDisplay[]> {
+    return this.call("itemDisplays", items);
   }
 
   edgeTypes(): Call<BindingEdgeType[]> {

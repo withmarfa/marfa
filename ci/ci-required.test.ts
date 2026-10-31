@@ -362,6 +362,19 @@ describe("what a change runs", () => {
       ["ci-sqlite", "workspace", ...OFFLINE, "conformance-device"],
     ],
     [
+      "the item names and previews the server and the core share",
+      ["conformance/fixtures/item-display.json"],
+      [
+        "ci-sqlite",
+        "workspace",
+        "core-checks",
+        "core-checks-linux",
+        ...OFFLINE,
+        "conformance-compliance",
+        "conformance-device",
+      ],
+    ],
+    [
       "a compliance fixture",
       ["conformance/src/suites/compliance/owner.test.ts"],
       ["ci-sqlite", "workspace", ...OFFLINE, "conformance-compliance"],

@@ -11,6 +11,7 @@ import {
 } from "../confirm.js";
 import type { ToolContext } from "../context.js";
 import { fail, ok, refused } from "../results.js";
+import { displayHintsOf } from "./display.js";
 
 export const DELETE_MAX_IDS = 20;
 
@@ -62,8 +63,12 @@ async function titles(
   );
   const found = new Map<string, string>();
   if (!answer.ok) return found;
+  const hints = await displayHintsOf(
+    ctx,
+    answer.data.items.map((item) => item.type),
+  );
   for (const item of answer.data.items) {
-    found.set(item.id, itemName(item.properties));
+    found.set(item.id, itemName(item.properties, hints.get(item.type)));
   }
   return found;
 }
