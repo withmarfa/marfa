@@ -86,6 +86,8 @@ export interface EdgeTypeDefinition extends EdgeTypeRegistration {
   /** Always listed: the label again where none was registered. */
   reverse_label: string;
   shipped: boolean;
+  acyclic: boolean;
+  flat: boolean;
   created_at?: string;
   updated_at?: string;
 }

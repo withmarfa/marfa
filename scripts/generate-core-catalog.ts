@@ -21,6 +21,10 @@ import {
   listTypes,
 } from "../packages/shared/src/index.js";
 import { resolveRoles } from "../packages/server/src/storage/policy.js";
+import {
+  isAcyclicEdgeType,
+  isFlatEdgeType,
+} from "../packages/server/src/storage/edge-type-behavior.js";
 
 const resolve = (id: string) => listTypes().find((schema) => schema.id === id);
 
@@ -32,7 +36,12 @@ const types = listTypes()
   .sort((a, b) => a.id.localeCompare(b.id));
 
 const edgeTypes = listEdgeTypes()
-  .map((schema) => ({ ...schema, shipped: true }))
+  .map((schema) => ({
+    ...schema,
+    shipped: true,
+    acyclic: isAcyclicEdgeType(schema.id),
+    flat: isFlatEdgeType(schema.id),
+  }))
   .sort((a, b) => a.id.localeCompare(b.id));
 
 writeFileSync(

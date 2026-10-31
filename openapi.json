@@ -96,6 +96,14 @@
           "shipped": {
             "type": "boolean",
             "description": "`true` if Marfa ships the edge type: it exists on every instance, and you can't register or delete it. `false` for one registered through `POST /edge-types`."
+          },
+          "acyclic": {
+            "type": "boolean",
+            "description": "`true` if the server refuses an edge of this type that closes a cycle through other edges of the type. Every edge type refuses an edge from an item to itself."
+          },
+          "flat": {
+            "type": "boolean",
+            "description": "`true` if the server refuses an edge of this type whose source type its `target_type_constraints` admit, so an item that can be a target is never a source."
           }
         },
         "required": [
@@ -108,7 +116,9 @@
           "cascade_on_delete",
           "property_schema",
           "written_at",
-          "shipped"
+          "shipped",
+          "acyclic",
+          "flat"
         ],
         "description": "An edge type says how edges of that type behave: its cardinality, what a delete does to the items they join, and which item types they can join."
       },

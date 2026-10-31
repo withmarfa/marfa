@@ -25,6 +25,10 @@ import { requireAuth } from "../middleware/auth.js";
 import { CLOSED_BY_HANDLER } from "./_unknown-body-keys.js";
 import type { Storage } from "../storage/interface.js";
 import {
+  isAcyclicEdgeType,
+  isFlatEdgeType,
+} from "../storage/edge-type-behavior.js";
+import {
   createOpenAPIRouter,
   OkResponseSchema,
   makeErrorResponseSchema,
@@ -200,6 +204,16 @@ const EdgeTypeResponseSchema = z
       .describe(
         "`true` if Marfa ships the edge type: it exists on every instance, and you can't register or delete it. `false` for one registered through `POST /edge-types`.",
       ),
+    acyclic: z
+      .boolean()
+      .describe(
+        "`true` if the server refuses an edge of this type that closes a cycle through other edges of the type. Every edge type refuses an edge from an item to itself.",
+      ),
+    flat: z
+      .boolean()
+      .describe(
+        "`true` if the server refuses an edge of this type whose source type its `target_type_constraints` admit, so an item that can be a target is never a source.",
+      ),
   })
   .describe(
     "An edge type says how edges of that type behave: its cardinality, what a delete does to the items they join, and which item types they can join.",
@@ -213,6 +227,8 @@ function edgeTypeResponse(schema: EdgeTypeSchema) {
     ...schema,
     reverse_label: schema.reverse_label ?? schema.label,
     shipped: isCoreEdgeType(schema.id),
+    acyclic: isAcyclicEdgeType(schema.id),
+    flat: isFlatEdgeType(schema.id),
   };
 }
 

@@ -2238,6 +2238,10 @@ export interface components {
             written_at: "source" | "target" | "none";
             /** @description `true` if Marfa ships the edge type: it exists on every instance, and you can't register or delete it. `false` for one registered through `POST /edge-types`. */
             shipped: boolean;
+            /** @description `true` if the server refuses an edge of this type that closes a cycle through other edges of the type. Every edge type refuses an edge from an item to itself. */
+            acyclic: boolean;
+            /** @description `true` if the server refuses an edge of this type whose source type its `target_type_constraints` admit, so an item that can be a target is never a source. */
+            flat: boolean;
         };
         /** @description One property an edge of an edge type can carry. */
         EdgePropertyDefinition: {
