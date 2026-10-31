@@ -309,30 +309,6 @@ export const SCRIPTED_TYPES: ReadonlyArray<Record<string, unknown>> = [
     fields: FILE_FIELDS,
     mergePolicy: { fields: {}, default: "last_writer_wins" },
   }),
-  wireType("core.file.audio", {
-    parent: "core.file",
-    titleField: "title",
-    fields: {
-      ...FILE_FIELDS,
-      duration: {
-        type: "number",
-        description:
-          "Length in seconds (server enrichment: derived from the file when the client does not supply it)",
-      },
-    },
-    mergePolicy: { fields: {}, default: "last_writer_wins" },
-  }),
-  wireType("core.file.video", {
-    parent: "core.file",
-    titleField: "title",
-    fields: {
-      ...FILE_FIELDS,
-      width: { type: "integer", description: "Width in pixels" },
-      height: { type: "integer", description: "Height in pixels" },
-      duration: { type: "number", description: "Length in seconds" },
-    },
-    mergePolicy: { fields: {}, default: "last_writer_wins" },
-  }),
   wireType("core.file.image", {
     parent: "core.file",
     titleField: "title",
@@ -412,6 +388,38 @@ export function scriptedType(id: string): Record<string, unknown> {
   }
   return found;
 }
+
+/**
+ * The audio and video file types, which only the fixtures that type a file by
+ * its MIME type register. They stay out of `SCRIPTED_TYPES` so the catalog
+ * every other fixture reads is the one it always was.
+ */
+export const MEDIA_FILE_TYPES: ReadonlyArray<Record<string, unknown>> = [
+  wireType("core.file.audio", {
+    parent: "core.file",
+    titleField: "title",
+    fields: {
+      ...FILE_FIELDS,
+      duration: {
+        type: "number",
+        description:
+          "Length in seconds (server enrichment: derived from the file when the client does not supply it)",
+      },
+    },
+    mergePolicy: { fields: {}, default: "last_writer_wins" },
+  }),
+  wireType("core.file.video", {
+    parent: "core.file",
+    titleField: "title",
+    fields: {
+      ...FILE_FIELDS,
+      width: { type: "integer", description: "Width in pixels" },
+      height: { type: "integer", description: "Height in pixels" },
+      duration: { type: "number", description: "Length in seconds" },
+    },
+    mergePolicy: { fields: {}, default: "last_writer_wins" },
+  }),
+];
 
 /** The scripted types, and any a fixture registers beside them. */
 export function typeCatalog(

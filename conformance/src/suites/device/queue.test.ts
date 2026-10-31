@@ -9,6 +9,7 @@ import {
   copyItemEvent,
   refusal,
   copyReplay,
+  MEDIA_FILE_TYPES,
   wireEdge,
   type WireEdgeOptions,
   wireItem,
@@ -5302,7 +5303,10 @@ describe("an upload is a queued write", () => {
   });
 
   it("types an added file by the MIME type it is told, whatever its kind, parameter and case", async () => {
-    harness = await hydratedHarness("upload-mime-kinds", { rows: held() });
+    harness = await hydratedHarness("upload-mime-kinds", {
+      rows: held(),
+      registered: MEDIA_FILE_TYPES,
+    });
     const { device } = harness;
     for (const [mime, type] of [
       ["image/png", "core.file.image"],
