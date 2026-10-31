@@ -1082,15 +1082,15 @@ If a key without read on `system.folder` sends `POST /edges` for an `in-folder` 
 
 ### `edges/collection-target`
 
-If `POST /edges` names an `in-collection` edge to a target whose type does not declare the `container` role, then the server MUST answer `400 edge_constraint_violation`.
+If `POST /edges` names an `in-collection` edge to a target whose type does not play the `container` role, declared or inherited, then the server MUST answer `400 edge_constraint_violation`.
 
-**Reason:** `in-collection` constrains its target by role rather than by type, so a publisher's registered type that declares `container` is a target too; the shipped `core.collection`, `core.media.album` and `core.media.series` declare it.
+**Reason:** `in-collection` constrains its target by role rather than by type, so a publisher's registered type that plays `container`, as declared or inherited, is a target too; the shipped `core.collection`, `core.media.album` and `core.media.series` declare it.
 
 **Tests:** `compliance/edge-permissions.test.ts › $name answers an unreadable target as a missing one, whatever its type`.
 
 ### `edges/collection-no-nesting`
 
-If `POST /edges` names an `in-collection` edge from a source whose type declares the `container` role, then the server MUST answer `400 edge_constraint_violation` with `details.constraint` `nesting`, naming the `source_id` and `source_type`.
+If `POST /edges` names an `in-collection` edge from a source whose type plays the `container` role, declared or inherited, then the server MUST answer `400 edge_constraint_violation` with `details.constraint` `nesting`, naming the `source_id` and `source_type`.
 
 **Reason:** a container holds items, never other containers, and `parent-of` is for hierarchy.
 
@@ -1098,7 +1098,7 @@ If `POST /edges` names an `in-collection` edge from a source whose type declares
 
 ### `edges/collection-no-nesting-others`
 
-If an entry of `POST /edges/bulk`, or `POST /items` with an inline edge, names an `in-collection` edge from a source whose type declares the `container` role, then the server MUST refuse it `edge_constraint_violation` with `details.constraint` `nesting`.
+If an entry of `POST /edges/bulk`, or `POST /items` with an inline edge, names an `in-collection` edge from a source whose type plays the `container` role, declared or inherited, then the server MUST refuse it `edge_constraint_violation` with `details.constraint` `nesting`.
 
 **Tests:** `correctness/edges/edges-type-constraints.test.ts › in-collection refuses a source that is itself a container, as nesting`.
 

@@ -22,7 +22,11 @@ const MUST_SAY: Record<(typeof PERMISSIONS)[number], RegExp[]> = {
   "grants.manage": [/see/i, /disconnect/i, /apps/i],
   "config.manage": [/see/i, /change/i, /settings/i],
   "instance.read": [/health/i, /metrics/i, /status/i],
-  "instance.maintain": [/housekeeping/i, /reset/i, /bulk jobs/i],
+  "instance.maintain": [
+    /housekeeping/i,
+    /retired platform types/i,
+    /bulk jobs/i,
+  ],
   "schema.write": [/replace/i, /remove/i, /type definitions/i],
   "blobs.manage": [/read/i, /add/i, /file/i, /storage/i],
   "webhooks.manage": [/manage/i, /webhooks/i],

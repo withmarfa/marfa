@@ -400,13 +400,13 @@ When a tag holds a `?`, the server MUST count it under its own name on `GET /met
 
 ### `search-and-filters/filter-max-length`
 
-The server MUST take a `filter` of 2,048 characters on `GET /items` and `GET /search`.
+The server MUST take a `filter` of 2,048 UTF-16 code units on `GET /items` and `GET /search`.
 
 **Tests:** `compliance/validation.test.ts › takes a filter of 2,048 characters and refuses one of 2,049, on the listing and the search`.
 
 ### `search-and-filters/filter-over-length`
 
-If a `filter` on `GET /items` or `GET /search` is longer than 2,048 characters, then the server MUST answer `400 validation_error`.
+If a `filter` on `GET /items` or `GET /search` is longer than 2,048 UTF-16 code units, then the server MUST answer `400 validation_error`.
 
 **Tests:** `compliance/validation.test.ts › takes a filter of 2,048 characters and refuses one of 2,049, on the listing and the search`.
 

@@ -1452,7 +1452,9 @@ When a `POST /items/bulk` entry under `mode: create_only` names an `id` an item 
 
 ### `items/bulk-skipped-id`
 
-When the server reports a `POST /items/bulk` entry `skipped` for an item of a type the key may not read, the server MUST NOT name the item's `id`.
+When the server reports a `POST /items/bulk` entry `skipped` for an item of a type the key may not read, the server MUST NOT name the item's `id`, except under `reason: "duplicate_id"`, where the `id` is the one the entry itself sent.
+
+**Reason:** a caller that sent an id already knows it, so naming it back discloses nothing (`items/bulk-create-only-id`).
 
 **Tests:** `compliance/claimed-sources.test.ts › tells a key its natural key is taken, and nothing of a row it may not read`, `compliance/bulk.test.ts › create_only skips a repeated (source, source_id) as duplicate_source`.
 

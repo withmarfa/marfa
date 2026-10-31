@@ -3687,6 +3687,42 @@ describe("catch-up keeps the copy to its slice", () => {
     ).toEqual(["kept-beneath"]);
   });
 
+  it("keeps the row and the edge a queued write names when it unpins the row the edge leaves from", async () => {
+    harness = await startHarness("unpin-queued-edge");
+    const { server, device } = harness;
+    scriptHydration(server, {
+      head: "10",
+      rows: { "core.note": [{ item: { id: "note" } }] },
+    });
+    server.copyAnswer(
+      "GET",
+      "/items/settings",
+      answers.updated(wireItem({ id: "settings", type: "core.bookmark" })),
+    );
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    expect((await device.pin("settings")).ok).toBe(true);
+    const linked = await device.createEdge({
+      source: "settings",
+      target: "note",
+      type: "core.related",
+    });
+    expect(linked.ok, JSON.stringify(linked)).toBe(true);
+    const queued = await device.queue();
+
+    expect((await device.unpin("settings")).ok).toBe(true);
+    expect(
+      (await device.get("settings")).ok,
+      "an unpin let go a row an edge write of its own still waits on",
+    ).toBe(true);
+    const edges = await device.edgesTo("note");
+    expect(edges.ok, JSON.stringify(edges)).toBe(true);
+    expect(
+      edges.ok && edges.value.map((edge) => edge.source_id),
+      "an unpin took an edge the person is still waiting to send",
+    ).toEqual(["settings"]);
+    expect(await device.queue()).toEqual(queued);
+  });
+
   it("keeps a row it unpins while a write to it still waits, and lets it go once answered", async () => {
     harness = await startHarness("unpin-waiting");
     const { server, device } = harness;

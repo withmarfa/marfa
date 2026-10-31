@@ -116,7 +116,9 @@ When a push or pull reports a refused settings edit, the CLI MUST say that the e
 
 ### `folders/settings-refusal-no-repeat`
 
-When the folder operation refuses a settings edit with `400`, `403`, `404`, `409`, or `422`, a device MUST NOT resend the same text.
+When the folder operation refuses a settings edit with `400`, `403`, `404`, `422`, or a `409` other than `instance_changed`, a device MUST NOT resend the same text.
+
+**Reason:** `409 instance_changed` ends the call and expires the copy instead (`device/instance-changed-one-write`).
 
 **Tests:** `device/folders-contract-a.test.ts › holds a settings edit refused with status %s without resending its text`.
 
@@ -1666,9 +1668,9 @@ When a file at a document name (`.md`, `.markdown` or `.txt`, in any letter case
 
 ### `folders/file-item-doc-name-replaced`
 
-When a file that names a note's item ID replaces the file of a file item at a document name (`.md`, `.markdown` or `.txt`, in any letter case) and no other file in the folder is that note's, a device MUST keep the file bound to that note.
+When a file that names a note's item ID replaces the file of a file item at a Markdown name (`.md` or `.markdown`, in any letter case) and no other file in the folder is that note's, a device MUST keep the file bound to that note.
 
-**Reason:** the file's item ID, not the file it replaced, says whose file it is, in a plain scan and in a folder watch's pass alike. A device that judged the file by the item bound at its path would send the note as the file item's bytes and lose the note. While the note's own file is still in the folder, the new file is a copy of it and stays the file item's.
+**Reason:** the file's item ID, not the file it replaced, says whose file it is, in a plain scan and in a folder watch's pass alike. A device that judged the file by the item bound at its path would send the note as the file item's bytes and lose the note. While the note's own file is still in the folder, the new file is a copy of it and stays the file item's. A `.txt` file carries no ID line (`folders/raw-text-body`), so it never names a note and stays the file item's.
 
 **Tests:** `device/folders-placement.test.ts › keeps a note whose file replaces a file item's at a document name`.
 
@@ -3918,7 +3920,7 @@ When an embedded or attached file item becomes archived outside the folder’s q
 
 ### `folders/binary-created`
 
-When a nonempty non-document file is admitted by a folder’s query or an embed, a device MUST create a file item typed from its MIME type whose create waits for the bytes’ upload.
+When a nonempty non-document file is admitted by a folder’s query or an embed, a device MUST create a file item typed from its MIME type, or `core.file` where the held catalog holds no type for it, whose create waits for the bytes’ upload.
 
 **Tests:** `device/folders-placement.test.ts › pushes a file that is not a document as a file item, its bytes uploaded first`, `device/folders-frontmatter.test.ts › sends an embedded file with its file`.
 

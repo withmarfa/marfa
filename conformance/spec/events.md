@@ -1607,7 +1607,7 @@ When an ordinary write follows a bulk write of 50,000 items with fan-out disable
 
 ### `events/audit-records-write`
 
-When a credential's write commits, other than a connector's heartbeat, run report, hold, hold release, state write or agreement write, or an inbound delivery's receipt or handled mark, the server MUST record an entry at `GET /audit` naming the credential as `key_id`, the `action`, the `resource_type`, the `resource_id` and the `details`.
+When a credential's write commits, other than a connector's heartbeat, run report, hold, hold release, state write or agreement write, a folder-copy status report (`PUT /folders/{id}/status`), or an inbound delivery's receipt or handled mark, the server MUST record an entry at `GET /audit` naming the credential as `key_id` (`owner:<session ID>` for an owner browser session, `local:process` for the private local process), the `action`, the `resource_type`, the `resource_id` and the `details`.
 
 **Tests:** `compliance/audit.test.ts › records a write with the acting key, the resource and the action`, `compliance/edge-events.test.ts › audit log records edge mutations with edge_id in resource_id`.
 
