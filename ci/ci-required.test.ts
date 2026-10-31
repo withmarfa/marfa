@@ -375,6 +375,11 @@ describe("what a change runs", () => {
       ],
     ],
     [
+      "the filter expressions the server and the core share",
+      ["conformance/fixtures/filter-expressions.json"],
+      ["ci-sqlite", "workspace", "core-checks", "core-checks-linux", "core"],
+    ],
+    [
       "a compliance fixture",
       ["conformance/src/suites/compliance/owner.test.ts"],
       ["ci-sqlite", "workspace", ...OFFLINE, "conformance-compliance"],
