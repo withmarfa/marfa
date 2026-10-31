@@ -5372,7 +5372,7 @@ When an event says a row the copy holds went to the bin, a device MUST keep the 
 
 When a local list names the bin's state, a device MUST answer the rows the copy holds in the bin from the copy alone, whether or not the server can be reached.
 
-**Reason:** a person reads and restores what they binned while offline. Marfa answers no time a row went to the bin on the row itself, so `updated_at`, which a move to the bin sets, stands for it, and a list sorted by `updated_at`, newest first, answers the most recently binned first. A row this device binned keeps the `updated_at` it had until the server's answer or event brings the server's.
+**Reason:** a person reads and restores what they binned while offline. Marfa answers no time a row went to the bin on the row itself, so `updated_at` stands for it: a move to the bin sets it, and so does any later write to the row in the bin, such as a tag. A list sorted by `updated_at`, newest first, answers the most recently binned or changed first. A row this device binned keeps the `updated_at` it had until the server's answer or event brings the server's.
 
 **Tests:** `device/bin-held.test.ts › holds a row the device puts in the bin, and lists it there with the server away`, `› holds a row an event puts in the bin, and lists it there with the server away`, `› orders the bin newest first by the time each row last changed`.
 

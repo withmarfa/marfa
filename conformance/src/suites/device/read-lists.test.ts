@@ -210,9 +210,9 @@ describe("a local read naming several states", () => {
 describe("the limit on a local read", () => {
   it("counts only the rows the type and state lists keep", async () => {
     const device = await seeded("read-limit-after-filter");
-    // The two newest rows, the bookmark and the live task, are rows the
-    // lists leave out, and the archived task is the newest they keep: a
-    // limit applied before the filter answers an empty page or one of them.
+    // The newest row, the bookmark, is one the lists leave out, and the
+    // archived event is the newest they keep: a limit applied before the
+    // filter answers an empty page or the bookmark.
     const page = await device.list({
       state: ["archived", "trashed"],
       type: ["core.event", "core.note"],
