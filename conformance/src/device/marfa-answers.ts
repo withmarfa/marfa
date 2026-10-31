@@ -458,6 +458,8 @@ export interface WireEdgeType {
   reverse_name?: string;
   written_at: "source" | "target" | "none";
   shipped: boolean;
+  acyclic: boolean;
+  flat: boolean;
 }
 
 /**
@@ -480,6 +482,8 @@ export function edgeType(
     property_schema: {},
     written_at: "source",
     shipped: false,
+    acyclic: false,
+    flat: false,
     ...options,
   };
 }
@@ -505,6 +509,7 @@ export const SCRIPTED_EDGE_TYPES: ReadonlyArray<WireEdgeType> = [
   shipped("derived-from", "Derived from", "Basis for"),
   shipped("in-collection", "In collection", "Contents", {
     target_type_constraints: ["role:container"],
+    flat: true,
     property_schema: {
       position: {
         type: "number",
@@ -537,10 +542,12 @@ export const SCRIPTED_EDGE_TYPES: ReadonlyArray<WireEdgeType> = [
     cascade_on_delete: "cascade",
     reverse_name: "child-of",
     written_at: "target",
+    acyclic: true,
   }),
   shipped("references", "References", "Referenced by"),
   shipped("supersedes", "Supersedes", "Superseded by", {
     cardinality: "one-to-one",
+    acyclic: true,
   }),
 ];
 

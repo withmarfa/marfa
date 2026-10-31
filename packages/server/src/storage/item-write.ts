@@ -65,7 +65,10 @@ import type { InlineEdgeChanges } from "../routes/_edges-inline.js";
 import { undeclaredPropertyRefusal } from "../routes/_undeclared-property.js";
 import { sourceAllowlistRefusal } from "../routes/_source-allowlist.js";
 import { assertTierApplicable } from "../routes/_tier-rules.js";
-import { edgeTargetNotFound } from "./edge-constraints.js";
+import {
+  assertRetypeKeepsEdges,
+  edgeTargetNotFound,
+} from "./edge-constraints.js";
 import { planCascadeDelete } from "./edge-cascade.js";
 import {
   readableBlockingEdges,
@@ -819,6 +822,17 @@ async function changeRow(
           ),
         };
       }
+    }
+    if (retypeTo !== undefined) {
+      const replaced = change.edges;
+      await assertRetypeKeepsEdges(
+        storage,
+        row.id,
+        retypeTo,
+        (edge) =>
+          replaced?.[edge.edge_type] !== undefined &&
+          !replaced[edge.edge_type]?.includes(edge.target_id),
+      );
     }
     const writesRow =
       upsert ||

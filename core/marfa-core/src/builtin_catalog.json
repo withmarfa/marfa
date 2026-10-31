@@ -2500,7 +2500,9 @@
    "cascade_on_delete": "orphan",
    "written_at": "source",
    "property_schema": {},
-   "shipped": true
+   "shipped": true,
+   "acyclic": false,
+   "flat": false
   },
   {
    "id": "attached-to",
@@ -2518,7 +2520,9 @@
    "reverse_name": "has-attachment",
    "written_at": "source",
    "property_schema": {},
-   "shipped": true
+   "shipped": true,
+   "acyclic": false,
+   "flat": false
   },
   {
    "id": "derived-from",
@@ -2535,7 +2539,9 @@
    "cascade_on_delete": "orphan",
    "written_at": "source",
    "property_schema": {},
-   "shipped": true
+   "shipped": true,
+   "acyclic": false,
+   "flat": false
   },
   {
    "id": "in-collection",
@@ -2557,7 +2563,9 @@
      "description": "Ordering within the collection (1-based)."
     }
    },
-   "shipped": true
+   "shipped": true,
+   "acyclic": false,
+   "flat": true
   },
   {
    "id": "in-folder",
@@ -2579,7 +2587,9 @@
      "description": "The file's path relative to the folder's root, with `/` between names; required, with no `..` name. The edge takes no other property."
     }
    },
-   "shipped": true
+   "shipped": true,
+   "acyclic": false,
+   "flat": false
   },
   {
    "id": "in-thread",
@@ -2601,7 +2611,9 @@
      "description": "Ordering within the thread (1-based)."
     }
    },
-   "shipped": true
+   "shipped": true,
+   "acyclic": false,
+   "flat": false
   },
   {
    "id": "parent-of",
@@ -2619,7 +2631,9 @@
    "reverse_name": "child-of",
    "written_at": "target",
    "property_schema": {},
-   "shipped": true
+   "shipped": true,
+   "acyclic": true,
+   "flat": false
   },
   {
    "id": "references",
@@ -2636,7 +2650,9 @@
    "cascade_on_delete": "orphan",
    "written_at": "source",
    "property_schema": {},
-   "shipped": true
+   "shipped": true,
+   "acyclic": false,
+   "flat": false
   },
   {
    "id": "supersedes",
@@ -2653,7 +2669,9 @@
    "cascade_on_delete": "orphan",
    "written_at": "source",
    "property_schema": {},
-   "shipped": true
+   "shipped": true,
+   "acyclic": true,
+   "flat": false
   }
  ],
  "field_types": [

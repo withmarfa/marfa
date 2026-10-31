@@ -3494,6 +3494,24 @@ marfa device edges create [OPTIONS] --source <ID> --target <ID> --type <TYPE>
 
 Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 
+### marfa device edges check
+
+Say whether `edges create` would refuse an edge now, from what the copy holds, and queue nothing. The server still judges an edge the copy finds nothing against.
+
+```text
+marfa device edges check [OPTIONS] --source <ID> --target <ID> --type <TYPE>
+```
+
+| Option | Description |
+| --- | --- |
+| `--source <ID>` | The item the edge starts from. |
+| `--target <ID>` | The item the edge points at. |
+| `--type <TYPE>` | The edge type. |
+| `--properties <JSON>` | The edge's properties, as a JSON object. Default: `{}`. |
+| `--id <ID>` | The id it would be minted under. |
+
+Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
+
 ### marfa device edges update
 
 Change an edge's properties, or move one of its ends. An edit that names no property and no new end queues no write.

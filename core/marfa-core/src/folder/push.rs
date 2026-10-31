@@ -1,7 +1,7 @@
 use super::{
     BoundFiles, Catalog, CoreError, Draft, EdgeTypes, EdgeWork, Edit, FILE_TYPE, Flagged, Folder,
-    HashSet, Item, ItemState, Kept, LOCAL_ADMISSION_REFUSAL, Map, Names, Path, Result, Retitle,
-    Scanned, Settings, Value, blank, bytes_of, bytes_type, carries_frontmatter, document,
+    HashSet, Item, ItemState, Kept, LOCAL_ADMISSION_REFUSAL, Map, Names, Path, Resolver, Result,
+    Retitle, Scanned, Settings, Value, blank, bytes_of, bytes_type, carries_frontmatter, document,
     executable, fields, identity, local_admission_refusal, local_properties_refusal, name_of,
     names, placement, state, title_of,
 };
@@ -283,7 +283,10 @@ pub(super) fn admission_hold(catalog: &Catalog, key: &str, draft: &Draft) -> Opt
 }
 
 impl Folder {
-    /// A file naming a type no document can be is flagged instead.
+    /// Whether the file's item was made. A file naming a type no document
+    /// can be is flagged instead; a default edge the copy refuses flags the
+    /// file and leaves its item made and bound.
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn queue_create(
         &self,
         file: &Scanned,
@@ -292,27 +295,32 @@ impl Folder {
         edge_types: &EdgeTypes,
         withheld: &placement::Withheld,
         work: &mut Vec<EdgeWork>,
-    ) -> Result<Option<Flagged>> {
+        flagged: &mut Vec<Flagged>,
+    ) -> Result<bool> {
         // An embedded file goes as its bytes' type whatever the query holds.
         let file_type = self
             .file_type_of(&file.path, settings, catalog)
             .or_else(|| embedded.then(|| bytes_type(&file.path, catalog)).flatten());
         if let Some(file_type) = file_type {
-            self.queue_create_file(file, file_type, settings, catalog, withheld)?;
-            return Ok(None);
+            self.queue_create_file(file, file_type, settings, catalog, withheld, flagged)?;
+            return Ok(true);
         }
         let document = file.document();
         let NewDocument { draft, read } =
             match new_document(&file.key, &document, (settings, catalog, edge_types)) {
                 Ok(made) => made,
-                Err(held) => return Ok(Some(held)),
+                Err(held) => {
+                    flagged.push(held);
+                    return Ok(false);
+                }
             };
         let created = match self.core.write_create(&draft, crate::Body::Folder) {
             Err(error) if local_admission_refusal(&error) => {
-                return Ok(Some(Flagged::of(
+                flagged.push(Flagged::of(
                     &file.key,
                     &format!("{LOCAL_ADMISSION_REFUSAL}{error}"),
-                )));
+                ));
+                return Ok(false);
             }
             other => other?,
         };
@@ -331,7 +339,13 @@ impl Folder {
         }
         // Before the links, so a link naming a default's target adds no
         // second edge; a line the file writes fills that blank itself.
-        self.queue_default_edges(&item_id, settings, Some((&document.front, edge_types)))?;
+        self.queue_default_edges(
+            &file.key,
+            &item_id,
+            settings,
+            Some((&document.front, edge_types)),
+            flagged,
+        )?;
         self.place(&item_id, &file.key, withheld)?;
         self.bind_scanned(
             file,
@@ -344,7 +358,7 @@ impl Folder {
             },
         )?;
         work.push(self.edge_work(file, &item_id, None));
-        Ok(None)
+        Ok(true)
     }
 
     /// Its type is its bytes', so of the defaults it takes only the tier, the
@@ -356,6 +370,7 @@ impl Folder {
         settings: &Settings,
         catalog: &Catalog,
         withheld: &placement::Withheld,
+        flagged: &mut Vec<Flagged>,
     ) -> Result<()> {
         let mut properties = Map::new();
         properties.insert(
@@ -382,7 +397,7 @@ impl Folder {
             )?,
             &file.key,
         )?;
-        self.queue_default_edges(&item_id, settings, None)?;
+        self.queue_default_edges(&file.key, &item_id, settings, None, flagged)?;
         self.place(&item_id, &file.key, withheld)?;
         let kept = Kept {
             bytes: true,
@@ -395,12 +410,15 @@ impl Folder {
     /// The defaults' edges for a new item. A `parent-of` default names the
     /// parent, as the child's file writes it, so a new file lands beneath
     /// what the query follows. A type the file's own frontmatter writes a
-    /// line for is no blank.
+    /// line for is no blank. One the copy refuses, as the server would, flags
+    /// the file at `path` and leaves the rest queued.
     fn queue_default_edges(
         &self,
+        path: &str,
         item_id: &str,
         settings: &Settings,
         front: Option<(&Map<String, Value>, &EdgeTypes)>,
+        flagged: &mut Vec<Flagged>,
     ) -> Result<()> {
         for (edge_type, targets) in &settings.defaults.edges {
             let end = if edge_type == crate::filter::PARENT_OF {
@@ -419,12 +437,20 @@ impl Folder {
                     crate::catalog::End::Target => (target.clone(), item_id.to_string()),
                     crate::catalog::End::Source => (item_id.to_string(), target.clone()),
                 };
-                self.core.create_edge(&crate::model::EdgeDraft {
+                match self.core.create_edge(&crate::model::EdgeDraft {
                     source_id,
                     target_id,
                     edge_type: edge_type.clone(),
                     ..Default::default()
-                })?;
+                }) {
+                    Err(error) if local_admission_refusal(&error) => flagged.push(Flagged::of(
+                        path,
+                        &format!("{LOCAL_ADMISSION_REFUSAL}{error}"),
+                    )),
+                    other => {
+                        other?;
+                    }
+                }
             }
         }
         Ok(())
@@ -672,6 +698,25 @@ impl Folder {
                     replace_properties: whole,
                     ..Edit::default()
                 };
+                // The edges the file's lines no longer name go before a
+                // retype, which the server holds to every edge still standing,
+                // so taking out the line that blocks it works in one save.
+                let mut removed: Vec<state::Line> = Vec::new();
+                if changes.r#type.is_some() && bound.is_some() {
+                    let mut ids = Vec::new();
+                    let mut resolver = Resolver::new(&self.core, catalog, &BoundFiles);
+                    // A line that cannot be read yet removes nothing, and the
+                    // retype is judged with its edge standing.
+                    let _ = self.queue_edges(
+                        &self.edge_work(file, item_id, bound),
+                        edge_types,
+                        catalog,
+                        &mut resolver,
+                        &mut ids,
+                        Some(&mut removed),
+                    );
+                    queued.extend(ids.into_iter().map(|id| (id, None)));
+                }
                 let updated = if read_at.is_some() {
                     self.core.write_update(
                         item_id,
@@ -691,8 +736,26 @@ impl Folder {
                     Err(error) if local_admission_refusal(&error) => {
                         let held_for = format!("{LOCAL_ADMISSION_REFUSAL}{error}");
                         flagged.push(Flagged::of(&file.key, &held_for));
+                        // The removals stand: the file no longer names them.
+                        let removing = bound.filter(|_| !queued.is_empty()).map(|bound| {
+                            let mut kept = bound.clone();
+                            kept.lines.retain(|line| !removed.contains(line));
+                            kept.writes.save = save;
+                            kept.writes.queued.extend(
+                                queued
+                                    .drain(..)
+                                    .map(|(id, line)| state::Queued { id, save, line }),
+                            );
+                            kept
+                        });
                         return self
-                            .bind_held(file, item_id, bound, held_for, named.as_ref())
+                            .bind_held(
+                                file,
+                                item_id,
+                                removing.as_ref().or(bound),
+                                held_for,
+                                named.as_ref(),
+                            )
                             .map(|()| false);
                     }
                     other => other?.id,

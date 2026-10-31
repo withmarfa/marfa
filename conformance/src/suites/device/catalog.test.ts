@@ -208,6 +208,8 @@ describe("The type catalog a working copy holds", () => {
         },
       ],
       shipped: false,
+      acyclic: false,
+      flat: false,
     };
     expect(
       mentor,
@@ -217,6 +219,11 @@ describe("The type catalog a working copy holds", () => {
       [parent.reverse_name, parent.written_at, parent.shipped],
       "a shipped edge type's reverse name did not reach the caller",
     ).toEqual(["child-of", "target", true]);
+    const collected = edges.find((type) => type.id === "in-collection");
+    expect(
+      [parent.acyclic, parent.flat, collected?.acyclic, collected?.flat],
+      "a shipped edge type's cycle and nesting rules did not reach the caller",
+    ).toEqual([true, false, false, true]);
   });
 
   it("reads a type's icon from the nearest type that sets it, from the copy alone", async () => {

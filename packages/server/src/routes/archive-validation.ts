@@ -40,8 +40,8 @@ import {
 import { yieldBulkWork } from "../bulk-actions/yield.js";
 import { faultsArmed, holdAt } from "../control/faults.js";
 import type { DiskReserve } from "../storage/disk-space.js";
+import { CYCLE_RISK_EDGE_TYPES } from "../storage/edge-type-behavior.js";
 import {
-  CYCLE_RISK_EDGE_TYPES,
   assertEdgesFitGraph,
   type EdgeGraph,
   type EdgeProposal,

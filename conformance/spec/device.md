@@ -4220,7 +4220,7 @@ When a device replaces its item type catalog, a device MUST hold each type's `di
 
 ### `device/catalog-edge-type-read`
 
-A device MUST answer an edge type as `GET /edge-types` lists it (`edges/types-list`, `edges/types-shipped-flag`, `edges/types-reverse-label`, `edges/types-reverse-listed` and `edges/types-written-at-listed`): its label, reverse label, cardinality, reverse name, the end whose file writes it, its endpoint constraints, its cascade, its properties and whether Marfa ships it.
+A device MUST answer an edge type as `GET /edge-types` lists it (`edges/types-list`, `edges/types-shipped-flag`, `edges/types-reverse-label`, `edges/types-reverse-listed`, `edges/types-written-at-listed`, `edges/types-acyclic` and `edges/types-flat`): its label, reverse label, cardinality, reverse name, the end whose file writes it, its endpoint constraints, its cascade, its properties, whether Marfa ships it, and whether it refuses a cycle or nesting.
 
 **Tests:** `device/catalog.test.ts › reads a registered type with its label and inherited fields, and an edge type's reverse name, from the copy alone`, `device/fidelity.test.ts › reads a registered type and edge type from a working copy as the server answers them`, `› matches the edge types a working copy holds and a folder reads its frontmatter lines by`.
 

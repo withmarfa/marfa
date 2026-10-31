@@ -462,6 +462,11 @@ pub struct EdgeType {
     pub cascade_on_delete: String,
     pub properties: Vec<TypeField>,
     pub shipped: bool,
+    /// Whether the server refuses an edge of this type that closes a cycle
+    /// through other edges of the type.
+    pub acyclic: bool,
+    /// Whether the server refuses a source its own target constraints admit.
+    pub flat: bool,
 }
 
 /// An item to name and preview: its type and properties.
@@ -538,6 +543,8 @@ fn edge_type(held: marfa_core::EdgeType) -> EdgeType {
         cascade_on_delete: held.cascade_on_delete,
         properties: held.properties.into_iter().map(type_field).collect(),
         shipped: held.shipped,
+        acyclic: held.acyclic,
+        flat: held.flat,
     }
 }
 
@@ -2860,6 +2867,23 @@ impl MarfaCore {
                 .transition_item(&id, state.into())
                 .map_err(|error| failure(env, error))?,
         )
+    }
+
+    /// Throws the error `createEdge` would throw for `draft` now, and
+    /// queues nothing. Returning is not the server's verdict, which a queued
+    /// edge still meets.
+    #[napi]
+    pub fn check_edge(&self, env: Env, draft: EdgeDraft) -> Result<()> {
+        let draft = marfa_core::EdgeDraft {
+            source_id: draft.source_id,
+            target_id: draft.target_id,
+            edge_type: draft.edge_type,
+            properties: object(draft.properties)?,
+            id: draft.id,
+        };
+        self.inner
+            .check_edge(&draft)
+            .map_err(|error| failure(env, error))
     }
 
     /// Links two items. An edge is its own write.

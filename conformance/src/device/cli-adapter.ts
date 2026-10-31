@@ -808,20 +808,11 @@ export class CliDevice implements DeviceUnderTest {
   }
 
   async createEdge(edge: EdgeDraft): Promise<Outcome<QueuedWrite>> {
-    const args = [
-      "edges",
-      "create",
-      "--source",
-      edge.source,
-      "--target",
-      edge.target,
-      "--type",
-      edge.type,
-      "--properties",
-      edge.propertiesText ?? JSON.stringify(edge.properties ?? {}),
-    ];
-    if (edge.id !== undefined) args.push("--id", edge.id);
-    return this.json<QueuedWrite>(args);
+    return this.json<QueuedWrite>(edgeDraftArgs("create", edge));
+  }
+
+  async checkEdge(edge: EdgeDraft): Promise<Outcome<{ refused: false }>> {
+    return this.json<{ refused: false }>(edgeDraftArgs("check", edge));
   }
 
   async updateEdge(
@@ -1730,4 +1721,21 @@ export interface RegisteredFolder {
   folder: string;
   /** An opaque identity of the directory the folder opened. */
   root?: string;
+}
+
+function edgeDraftArgs(command: "create" | "check", edge: EdgeDraft): string[] {
+  const args = [
+    "edges",
+    command,
+    "--source",
+    edge.source,
+    "--target",
+    edge.target,
+    "--type",
+    edge.type,
+    "--properties",
+    edge.propertiesText ?? JSON.stringify(edge.properties ?? {}),
+  ];
+  if (edge.id !== undefined) args.push("--id", edge.id);
+  return args;
 }

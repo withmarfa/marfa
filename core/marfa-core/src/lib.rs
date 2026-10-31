@@ -16,6 +16,7 @@ mod directory_vfs;
 mod directory_vfs;
 mod display;
 mod drain;
+mod edge_rules;
 mod error;
 /// Public so the binary can name a fault of its own.
 pub mod fault;
@@ -2040,6 +2041,16 @@ impl Core {
         Ok(queued)
     }
 
+    /// Answers the refusal `create_edge` would give `draft` now, without
+    /// queueing anything: what the copy can judge of the edge from the
+    /// catalog, rows and edges it holds. `Ok` is not the server's verdict,
+    /// which the queued write still meets.
+    pub fn check_edge(&self, draft: &EdgeDraft) -> Result<()> {
+        let conn = self.conn()?;
+        store::refuse_unless_whole(&conn)?;
+        refuse_unqueueable_edge(&conn, draft)
+    }
+
     pub fn create_edge(&self, draft: &EdgeDraft) -> Result<QueuedWrite> {
         self.lock.refuse_unless_writer()?;
         let mut conn = self.conn()?;
@@ -3526,6 +3537,23 @@ fn queue_create(
         .id
         .clone()
         .unwrap_or_else(|| uuid::Uuid::now_v7().to_string());
+    let source_id = target.as_ref().map_or(id.as_str(), |held| held.id.as_str());
+    for (edge_type, targets) in &draft.edges {
+        for target_id in targets {
+            edge_rules::refuse_unwritable_edge(
+                tx,
+                &edge_rules::Proposed {
+                    edge_type,
+                    source: edge_rules::Source::Made {
+                        id: source_id,
+                        r#type: &draft.r#type,
+                    },
+                    target_id,
+                    replacing: None,
+                },
+            )?;
+        }
+    }
     let payload = draft.payload(&id)?;
     let mut row = draft.wire(&id);
     row.tier = shown_tier.map(|tier| tier.as_str().into());
@@ -3708,6 +3736,9 @@ fn queue_update(
             held.version
         )));
     }
+    if let Some(r#type) = &edit.r#type {
+        edge_rules::refuse_retype_breaking_edges(tx, id, r#type)?;
+    }
     let payload = edit.payload(base)?;
     let projected = catalog.projected_properties(
         edit.r#type.as_deref().unwrap_or(&held.r#type),
@@ -3847,23 +3878,32 @@ fn refuse_edge_move(conn: &Connection, held: &model::Edge, edit: &EdgeEdit) -> R
         Ok(_) | Err(CoreError::NotFound { .. } | CoreError::NoCatalog) => {}
         Err(error) => return Err(error),
     }
-    refuse_self_loop(source_id, target_id)
+    refuse_self_loop(source_id, target_id)?;
+    edge_rules::refuse_unwritable_edge(
+        conn,
+        &edge_rules::Proposed {
+            edge_type: &held.edge_type,
+            source: edge_rules::Source::Held(source_id),
+            target_id,
+            replacing: Some(&held.id),
+        },
+    )
 }
 
 /// An edge the copy could not take is refused: no event about it would
-/// reach the copy, so it would sit there as written for good. It waits on
-/// its ends' creates and on `after`.
-fn queue_edge(tx: &Connection, draft: &EdgeDraft, after: &[String]) -> Result<QueuedWrite> {
+/// reach the copy, so it would sit there as written for good. So is one the
+/// server would refuse for what the copy holds.
+fn refuse_unqueueable_edge(conn: &Connection, draft: &EdgeDraft) -> Result<()> {
     if let Some(id) = &draft.id {
         validation::id("id", id)?;
     }
     refuse_self_loop(&draft.source_id, &draft.target_id)?;
     integers::refuse_in_value(&draft.properties)?;
     if !store::takes_edge(
-        tx,
+        conn,
         &draft.source_id,
         &draft.edge_type,
-        &store::whole_edge_types(tx)?,
+        &store::whole_edge_types(conn)?,
     )? {
         return Err(CoreError::Invalid(format!(
             "{source} is not a row this copy holds, and {edge_type} is not an edge type its slice holds whole, so the copy cannot hold an edge from it",
@@ -3871,6 +3911,20 @@ fn queue_edge(tx: &Connection, draft: &EdgeDraft, after: &[String]) -> Result<Qu
             edge_type = draft.edge_type,
         )));
     }
+    edge_rules::refuse_unwritable_edge(
+        conn,
+        &edge_rules::Proposed {
+            edge_type: &draft.edge_type,
+            source: edge_rules::Source::Held(&draft.source_id),
+            target_id: &draft.target_id,
+            replacing: None,
+        },
+    )
+}
+
+/// Queues an edge, which waits on its ends' creates and on `after`.
+fn queue_edge(tx: &Connection, draft: &EdgeDraft, after: &[String]) -> Result<QueuedWrite> {
+    refuse_unqueueable_edge(tx, draft)?;
     let id = draft
         .id
         .clone()

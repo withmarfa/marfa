@@ -1,11 +1,12 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { MarfaClient } from "../../../client/api.js";
-import type { TestContext } from "../../../client/types.js";
+import type { BulkActionJob, TestContext } from "../../../client/types.js";
 import {
   createTestContext,
   trackItem,
   trackEdge,
   trackEdgeType,
+  trackType,
   cleanup,
 } from "../../../utils/setup.js";
 import {
@@ -362,5 +363,289 @@ describe("endpoint constraints on every write path", () => {
     expect(placed.status).toBe(201);
     trackItem(ctx, placed.data.item.id);
     expect(await stored(placed.data.item.id)).toEqual([note]);
+  });
+});
+
+describe("moving an item that holds edges to another type", () => {
+  it("refuses a move into a type an edge at the item does not admit, on either side", async () => {
+    const edgeTypeId = `mock.retype.${ctx.runId}`;
+    const reg = await client.registerEdgeType({
+      label: "Retype edge type",
+      id: edgeTypeId,
+      cardinality: "many-to-many",
+      source_type_constraints: ["core.note"],
+      target_type_constraints: ["core.note"],
+      cascade_on_delete: "orphan",
+    });
+    expect(reg.ok, JSON.stringify(reg.error)).toBe(true);
+    trackEdgeType(ctx, edgeTypeId);
+
+    const source = await makeItem(createNote({ source: ctx.source }));
+    const target = await makeItem(createNote({ source: ctx.source }));
+    const loose = await makeItem(createNote({ source: ctx.source }));
+    const edge = await client.createEdge({
+      source_id: source,
+      target_id: target,
+      edge_type: edgeTypeId,
+    });
+    expect(edge.status, JSON.stringify(edge.error)).toBe(201);
+    trackEdge(ctx, edge.data.edge.id);
+
+    // The witness: a note that holds no edge moves to a task, so the
+    // refusals below are the edge and not the move itself.
+    const moved = await client.updateItem(loose, {
+      type: "core.task",
+      retype: true,
+      version: 1,
+    });
+    expect(moved.status, JSON.stringify(moved.error)).toBe(200);
+
+    const fromSource = await client.updateItem(source, {
+      type: "core.task",
+      retype: true,
+      version: 1,
+    });
+    expect(fromSource.status).toBe(400);
+    expect(fromSource.error?.error.code).toBe("edge_constraint_violation");
+    expect(fromSource.error?.error.details).toEqual({
+      edge_type: edgeTypeId,
+      source_type: "core.task",
+      allowed: ["core.note"],
+    });
+
+    const atTarget = await client.updateItem(target, {
+      type: "core.task",
+      retype: true,
+      version: 1,
+    });
+    expect(atTarget.status).toBe(400);
+    expect(atTarget.error?.error.code).toBe("edge_constraint_violation");
+    expect(atTarget.error?.error.details).toEqual({
+      edge_type: edgeTypeId,
+      target_type: "core.task",
+      allowed: ["core.note"],
+    });
+
+    for (const id of [source, target]) {
+      const held = await client.getItem(id);
+      expect(held.data.item.type).toBe("core.note");
+      expect(held.data.item.version).toBe(1);
+    }
+
+    // A bulk entry that moves the item is refused the same way, and only
+    // that entry.
+    const page = await client.bulkItems({
+      atomic: false,
+      retype: true,
+      items: [
+        { id: source, type: "core.task", properties: { title: "t" } },
+        { id: loose, type: "core.note", properties: { title: "t" } },
+      ],
+    });
+    expect(page.status, JSON.stringify(page.error)).toBe(200);
+    expect(page.data.results[0]).toMatchObject({
+      outcome: "errored",
+      error: {
+        code: "edge_constraint_violation",
+        details: { edge_type: edgeTypeId, source_type: "core.task" },
+      },
+    });
+    expect(page.data.results[1]).toMatchObject({ outcome: "updated" });
+  });
+
+  it("refuses a move that makes a collection member a container, as nesting", async () => {
+    const album = await makeItem(createAlbum({ source: ctx.source }));
+    const member = await makeItem(createNote({ source: ctx.source }));
+    const loose = await makeItem(createNote({ source: ctx.source }));
+    const joined = await client.createEdge({
+      source_id: member,
+      target_id: album,
+      edge_type: "in-collection",
+    });
+    expect(joined.status, JSON.stringify(joined.error)).toBe(201);
+    trackEdge(ctx, joined.data.edge.id);
+
+    // The witness: a note in no collection becomes one.
+    const moved = await client.updateItem(loose, {
+      type: "core.collection",
+      retype: true,
+      version: 1,
+    });
+    expect(moved.status, JSON.stringify(moved.error)).toBe(200);
+
+    const refused = await client.updateItem(member, {
+      type: "core.collection",
+      retype: true,
+      version: 1,
+    });
+    expect(refused.status).toBe(400);
+    expect(refused.error?.error.code).toBe("edge_constraint_violation");
+    expect(refused.error?.error.details).toEqual({
+      edge_type: "in-collection",
+      source_id: member,
+      source_type: "core.collection",
+      constraint: "nesting",
+    });
+    const held = await client.getItem(member);
+    expect(held.data.item.type).toBe("core.note");
+  });
+  it("refuses a natural-key upsert and a type move job that would move an item out of what its edges admit", async () => {
+    const album = await makeItem(createAlbum({ source: ctx.source }));
+    const sourceId = `member-${ctx.runId}`;
+    const member = await makeItem(
+      createNote({ source: ctx.source, source_id: sourceId }),
+    );
+    const joined = await client.createEdge({
+      source_id: member,
+      target_id: album,
+      edge_type: "in-collection",
+    });
+    expect(joined.status, JSON.stringify(joined.error)).toBe(201);
+    trackEdge(ctx, joined.data.edge.id);
+
+    // A bulk entry that lands on the member by its natural key is refused
+    // as nesting, as the same move on PATCH is.
+    const upsert = await client.bulkItems({
+      atomic: false,
+      retype: true,
+      items: [
+        {
+          source: ctx.source,
+          source_id: sourceId,
+          type: "core.collection",
+          properties: { title: "c" },
+        },
+      ],
+    });
+    expect(upsert.status, JSON.stringify(upsert.error)).toBe(200);
+    expect(upsert.data.results[0]).toMatchObject({
+      outcome: "errored",
+      error: {
+        code: "edge_constraint_violation",
+        details: {
+          edge_type: "in-collection",
+          source_id: member,
+          constraint: "nesting",
+        },
+      },
+    });
+    expect((await client.getItem(member)).data.item.type).toBe("core.note");
+
+    // A type move job refuses the item whose edge does not admit the type
+    // it enters, and moves the others.
+    const from = `user.mvfrom-r${ctx.runId}`;
+    const to = `user.mvto-r${ctx.runId}`;
+    for (const id of [from, to]) {
+      const r = await client.registerType({
+        id,
+        fields: { title: { type: "string" } },
+      });
+      expect(r.ok, JSON.stringify(r.error)).toBe(true);
+      trackType(ctx, id);
+    }
+    const edgeTypeId = `mock.retypejob.${ctx.runId}`;
+    const reg = await client.registerEdgeType({
+      label: "Retype job edge type",
+      id: edgeTypeId,
+      cardinality: "many-to-many",
+      source_type_constraints: [from],
+      target_type_constraints: ["core.note"],
+      cascade_on_delete: "orphan",
+    });
+    expect(reg.ok, JSON.stringify(reg.error)).toBe(true);
+    trackEdgeType(ctx, edgeTypeId);
+    const note = await makeItem(createNote({ source: ctx.source }));
+    const linked = await makeItem({
+      type: from,
+      properties: { title: "linked" },
+      source: ctx.source,
+    });
+    const loose = await makeItem({
+      type: from,
+      properties: { title: "loose" },
+      source: ctx.source,
+    });
+    const edge = await client.createEdge({
+      source_id: linked,
+      target_id: note,
+      edge_type: edgeTypeId,
+    });
+    expect(edge.status, JSON.stringify(edge.error)).toBe(201);
+    trackEdge(ctx, edge.data.edge.id);
+
+    const started = await client.moveType(from, { to });
+    expect(started.status, JSON.stringify(started.error)).toBe(202);
+    const job = await client.pollBulkActionToTerminal(
+      (started.data as BulkActionJob).id,
+    );
+    expect(job.status, job.error).toBe("completed");
+    expect(job.result?.succeeded).toBe(1);
+    expect(job.result?.errors).toEqual([
+      expect.objectContaining({
+        id: linked,
+        code: "edge_constraint_violation",
+      }),
+    ]);
+    expect((await client.getItem(linked)).data.item.type).toBe(from);
+    expect((await client.getItem(loose)).data.item.type).toBe(to);
+  });
+
+  it("moves an item whose edges the same write removes, on PATCH and on a bulk entry", async () => {
+    const album = await makeItem(createAlbum({ source: ctx.source }));
+    const patched = await makeItem(createNote({ source: ctx.source }));
+    const bulked = await makeItem(createNote({ source: ctx.source }));
+    for (const member of [patched, bulked]) {
+      const joined = await client.createEdge({
+        source_id: member,
+        target_id: album,
+        edge_type: "in-collection",
+      });
+      expect(joined.status, JSON.stringify(joined.error)).toBe(201);
+      trackEdge(ctx, joined.data.edge.id);
+    }
+
+    // The witness: a write that keeps the edge is still refused.
+    const kept = await client.updateItem(patched, {
+      type: "core.collection",
+      retype: true,
+      version: 1,
+      edges: { "in-collection": [album] },
+    });
+    expect(kept.status).toBe(400);
+    expect(kept.error?.error.code).toBe("edge_constraint_violation");
+
+    const moved = await client.updateItem(patched, {
+      type: "core.collection",
+      retype: true,
+      version: 1,
+      edges: { "in-collection": [] },
+    });
+    expect(moved.status, JSON.stringify(moved.error)).toBe(200);
+    expect(moved.data.item.type).toBe("core.collection");
+
+    const page = await client.bulkItems({
+      atomic: false,
+      retype: true,
+      items: [
+        {
+          id: bulked,
+          type: "core.collection",
+          properties: { title: "c" },
+          edges: { "in-collection": [] },
+        },
+      ],
+    });
+    expect(page.status, JSON.stringify(page.error)).toBe(200);
+    expect(page.data.results[0]).toMatchObject({ outcome: "updated" });
+
+    for (const id of [patched, bulked]) {
+      const held = await client.getItem(id);
+      expect(held.data.item.type).toBe("core.collection");
+      const edges = await client.listItemEdges(id, {
+        edge_type: "in-collection",
+      });
+      expect(edges.status).toBe(200);
+      expect(edges.data.data).toEqual([]);
+    }
   });
 });

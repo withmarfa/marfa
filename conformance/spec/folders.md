@@ -226,6 +226,14 @@ When a refused folder document is corrected or its type becomes available in the
 
 **Tests:** `device/folders-frontmatter.test.ts › refuses an empty null property name before deciding a save is unchanged`, `device/property-validation.test.ts › contains document refusals, preserves bytes through a rename and retries corrected files`, `device/property-validation.test.ts › retries unchanged document bytes after their destination type is registered`, `device/property-validation.test.ts › flags a document whose list holds an element of the wrong type, keeps its bytes and takes it once mended`.
 
+### `folders/refused-line-retried`
+
+When a folder scan finds an unchanged frontmatter line whose edge the device refused before and the device would now take that edge, a device MUST queue the edge and clear the refusal.
+
+**Reason:** what the device refused the edge for, such as an edge type's endpoint constraints or the other item's type, can change on another machine while the file stays as it was. A refusal the server gave stands until the file changes.
+
+**Tests:** `device/folders-frontmatter.test.ts › queues a line the copy refused once the edge type admits it, the file unchanged`.
+
 ### `folders/first-sync-waits`
 
 When a folder is added without confirmation and has files to write or send, a device MUST hold its first sync for confirmation.

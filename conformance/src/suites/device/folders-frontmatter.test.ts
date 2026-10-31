@@ -30,7 +30,12 @@ import {
   wireType,
 } from "../../device/marfa-answers.js";
 import { acceptUploads, folderHarness, hashOf, scriptBlob } from "./harness.js";
-import { CliFolder, type FolderSettings } from "../../device/cli-adapter.js";
+import {
+  CliFolder,
+  type FolderSettings,
+  type PushReport,
+} from "../../device/cli-adapter.js";
+import type { Outcome } from "../../device/protocol.js";
 import { FolderDoor } from "../../device/folder-door.js";
 import type { FolderHarness } from "./harness.js";
 import type {
@@ -704,6 +709,69 @@ describe("edges in frontmatter", () => {
       quiet.value.catch_up.hydrated,
       "a type registered while no file changed was never read",
     ).not.toBeNull();
+  });
+
+  it("queues a line the copy refused once the edge type admits it, the file unchanged", async () => {
+    let widened = false;
+    const catalog = (): Answer => ({
+      kind: "json",
+      status: 200,
+      body: {
+        data: [
+          ...SCRIPTED_EDGE_TYPES,
+          edgeType("shelved-in", {
+            target_type_constraints: widened
+              ? ["core.collection", "core.note"]
+              : ["core.collection"],
+          }),
+        ],
+        next_cursor: null,
+      },
+    });
+    harness = await folderHarness("folder-edge-refused-retried", {
+      rows: edgeRows([titled(alpha, "Alpha"), titled(beta, "Beta")], []),
+      edgeTypes: catalog,
+    });
+    const door = new EdgeDoor();
+    scriptFolderWrites(harness, { edges: door });
+    expect((await harness.folder.pull()).ok).toBe(true);
+    const refusedAlpha = (report: Outcome<PushReport>) =>
+      report.ok
+        ? report.value.scan.flagged.filter(
+            (entry) => entry.path === "Alpha.md" && entry.flag === "refused",
+          )
+        : [];
+
+    edit(harness, "Alpha.md", /marfa_id:/, 'shelved-in: "[[Beta]]"\nmarfa_id:');
+    const refused = await harness.folder.push();
+    expect(refused.ok, JSON.stringify(refused)).toBe(true);
+    expect(refusedAlpha(refused).map((entry) => entry.reason)).toEqual([
+      expect.stringContaining("edge_constraint_violation"),
+    ]);
+    expect(sentEdgeWrites(harness)).toEqual([]);
+
+    // Unchanged and still refused, the file is reported again and sends nothing.
+    const again = await harness.folder.push();
+    expect(refusedAlpha(again)).toHaveLength(1);
+    expect(sentEdgeWrites(harness)).toEqual([]);
+
+    // The server widens the edge type; the file is left as it was.
+    widened = true;
+    expect((await harness.folder.device().catchUp()).ok).toBe(true);
+    const taken = await harness.folder.push();
+    expect(taken.ok, JSON.stringify(taken)).toBe(true);
+    expect(
+      refusedAlpha(taken),
+      "a line the copy refused stayed refused after the edge type admitted it",
+    ).toEqual([]);
+    expect(sentEdgeWrites(harness)).toEqual([
+      `create ${alpha} shelved-in ${beta}`,
+    ]);
+    expect(heldEdges(door)).toEqual([`${alpha} shelved-in ${beta}`]);
+
+    // Taken, the line sends nothing more.
+    expect((await harness.folder.push()).ok).toBe(true);
+    expect(sentEdgeWrites(harness)).toHaveLength(1);
   });
 
   it("flags only the file whose name cannot be looked up, and goes on with the rest", async () => {

@@ -9,35 +9,7 @@ import {
 import type { Edge, EdgeTypeSchema, Item } from "@withmarfa/shared";
 import { depthInsideFolder } from "../folder-path.js";
 import type { Storage } from "./interface.js";
-
-/**
- * Edge types that can reach around and close a cycle over more than one
- * edge: hierarchy for `parent-of`, version chain for `supersedes`. Reachability
- * is skipped for every other edge type, where the graph is DAG-by-construction
- * or unordered. A self-loop is the exception and is refused on all of them,
- * because one edge closing on itself needs no walk to find.
- */
-export const CYCLE_RISK_EDGE_TYPES = new Set(["parent-of", "supersedes"]);
-
-/**
- * Collection membership is a flat relation on purpose: a container holds
- * items, never other containers. The declarative target constraint pins the
- * target to the container family, but nothing declarative can say "and the
- * source must not be one of those", so the refusal lives here.
- *
- * The refused-source rule is the edge's own target constraint, re-evaluated
- * against the source and read from the same resolved schema, never a second
- * literal: a copy drifted once when the membership edge gained two container
- * types the copy did not, and two series could then hold each other. That
- * derivation is what makes this survive the target constraint becoming a role
- * rather than a list: a type declaring `container` is refused as a source the
- * day it declares it, with nothing here to update. It is also what makes a
- * membership cycle impossible without a reachability query: every cycle needs a container
- * standing as a source somewhere, and no such edge can exist. Hierarchy is
- * what `parent-of` is for, and mixing the two gives an item two competing
- * notions of where it sits.
- */
-const COLLECTION_EDGE_TYPE = "in-collection";
+import { CYCLE_RISK_EDGE_TYPES, isFlatEdgeType } from "./edge-type-behavior.js";
 
 const FOLDER_EDGE_TYPE = "in-folder";
 
@@ -159,6 +131,72 @@ export function edgeSourceNotFound(sourceId: string): MarfaError {
     ErrorCode.ITEM_NOT_FOUND,
     `Edge source item not found: ${sourceId}`,
   );
+}
+
+/**
+ * Holds every edge standing at an item to the type a retype moves it into,
+ * as a new edge at that type would be held: the item's end must meet the
+ * edge type's constraint on that side, and a flat edge type must not take it
+ * as a source once its target constraints admit it. An edge whose type is no
+ * longer registered has nothing to meet. `leaving` names outbound edges the
+ * same write removes, which are not held.
+ *
+ * The refusal names the edge type and the item's own side, never the other
+ * end, which the writer may not be able to read.
+ */
+export async function assertRetypeKeepsEdges(
+  storage: Pick<Storage, "edges">,
+  itemId: string,
+  nextType: string,
+  leaving: (edge: Edge) => boolean = () => false,
+): Promise<void> {
+  const { outbound, inbound } = await storage.edges.listAllByItem(itemId);
+  for (const edge of outbound) {
+    if (edge.target_id === itemId || leaving(edge)) continue;
+    const schema = getEdgeTypeSchema(edge.edge_type);
+    if (schema === undefined) continue;
+    if (!satisfiesEdgeConstraint(nextType, schema.source_type_constraints)) {
+      throw new MarfaError(
+        ErrorCode.EDGE_CONSTRAINT_VIOLATION,
+        `Item ${itemId} can't become "${nextType}": edge "${edge.edge_type}" does not allow source type "${nextType}"`,
+        {
+          edge_type: edge.edge_type,
+          source_type: nextType,
+          allowed: schema.source_type_constraints,
+        },
+      );
+    }
+    if (
+      isFlatEdgeType(edge.edge_type) &&
+      satisfiesEdgeConstraint(nextType, schema.target_type_constraints)
+    ) {
+      throw new MarfaError(
+        ErrorCode.EDGE_CONSTRAINT_VIOLATION,
+        `Item ${itemId} can't become "${nextType}": edge "${edge.edge_type}" does not nest collections`,
+        {
+          edge_type: edge.edge_type,
+          source_id: itemId,
+          source_type: nextType,
+          constraint: "nesting",
+        },
+      );
+    }
+  }
+  for (const edge of inbound) {
+    const schema = getEdgeTypeSchema(edge.edge_type);
+    if (schema === undefined) continue;
+    if (!satisfiesEdgeConstraint(nextType, schema.target_type_constraints)) {
+      throw new MarfaError(
+        ErrorCode.EDGE_CONSTRAINT_VIOLATION,
+        `Item ${itemId} can't become "${nextType}": edge "${edge.edge_type}" does not allow target type "${nextType}"`,
+        {
+          edge_type: edge.edge_type,
+          target_type: nextType,
+          allowed: schema.target_type_constraints,
+        },
+      );
+    }
+  }
 }
 
 export interface EdgeProposal {
@@ -327,7 +365,7 @@ export async function assertEdgesFitGraph(
       );
     }
     if (
-      p.edge_type === COLLECTION_EDGE_TYPE &&
+      isFlatEdgeType(p.edge_type) &&
       satisfiesEdgeConstraint(source.type, schema.target_type_constraints)
     ) {
       throw new MarfaError(

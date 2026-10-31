@@ -114,7 +114,10 @@ pub struct WireType {
 /// refused rather than held with a default that says something else. The two
 /// labels are the exception: a catalog held or listed before every edge type
 /// carried them has none, so [`WireEdgeType::label`] and
-/// [`WireEdgeType::reverse_label`] fill them as the server does.
+/// [`WireEdgeType::reverse_label`] fill them as the server does. So are
+/// `acyclic` and `flat`, which such a catalog reads as `false`: the copy then
+/// judges no cycle or nesting of its own and the server, which still does,
+/// answers for them.
 #[derive(Debug, Clone, Deserialize)]
 pub struct WireEdgeType {
     pub id: String,
@@ -133,6 +136,10 @@ pub struct WireEdgeType {
     pub cascade_on_delete: String,
     pub property_schema: Map<String, Value>,
     pub shipped: bool,
+    #[serde(default)]
+    pub acyclic: bool,
+    #[serde(default)]
+    pub flat: bool,
 }
 
 impl WireEdgeType {

@@ -6,7 +6,10 @@ use serde_json::{Map, Value};
 use super::edge_types::{self, EdgeTypes};
 use super::embeds::{self, ATTACHMENT_EDGE, Target};
 use super::state::{self, Line};
-use super::{FILE_TYPE, Folder, LINK_EDGE, PLACEMENT_EDGE, bytes_of, fields};
+use super::{
+    FILE_TYPE, Folder, LINK_EDGE, PLACEMENT_EDGE, bytes_of, fields, local_admission_refusal,
+    local_refusal_reason,
+};
 use crate::Result;
 use crate::body::resolve::{self, Names, Paths, Resolved, Resolver, is_id, resolve_reference};
 use crate::body::text::{self, Typed};
@@ -29,8 +32,9 @@ pub(super) struct Outcome {
     pub links: Vec<String>,
     pub lines: Vec<Line>,
     pub held: Option<String>,
-    /// The edge writes the lines queued, so only their refusal holds the file.
-    pub queued: Vec<String>,
+    /// The lines whose edge write the copy refused, as the server would have,
+    /// each with the reason; the record shows each as the file does.
+    pub refused: Vec<(Line, String)>,
     /// Embeds that name no file the folder sends, and why.
     pub embeds: Vec<String>,
 }
@@ -328,19 +332,33 @@ impl Folder {
         })
     }
 
-    /// Queues what a file's links, embeds and lines change; a line read no way
-    /// it was written changes nothing of its type.
+    /// Queues what a file's links, embeds and lines change, adding each write
+    /// to `queued` as it is made, so a failure later keeps the earlier ones
+    /// tied to the file; a line read no way it was written changes nothing of
+    /// its type.
+    ///
+    /// With `removals`, only the edges the file's lines no longer name are
+    /// removed, each line added to it, and the outcome is not the file's: a
+    /// retype is queued after them, as the server holds it to every edge
+    /// still standing.
     pub(super) fn queue_edges(
         &self,
         work: &EdgeWork,
         types: &EdgeTypes,
         catalog: &Catalog,
         resolver: &mut Resolver<'_>,
+        queued: &mut Vec<String>,
+        mut removals: Option<&mut Vec<Line>>,
     ) -> Result<Outcome> {
         let item_id = work.item_id.as_str();
         let mut reasons: Vec<String> = Vec::new();
-        let mut queued: Vec<String> = Vec::new();
+        let mut refused: Vec<(Line, String)> = Vec::new();
         let mut waiting = false;
+        let line_of = |edge_type: &str, end: End, other: &str| Line {
+            edge_type: edge_type.to_string(),
+            end,
+            other: other.to_string(),
+        };
 
         let edges = self.edges_at(item_id)?;
         let references: Vec<&Edge> = edges
@@ -349,7 +367,12 @@ impl Folder {
             .collect();
         let mut named: Vec<String> = Vec::new();
         let mut links_resolved = true;
-        for raw in &work.links {
+        let links = if removals.is_some() {
+            &[][..]
+        } else {
+            &work.links[..]
+        };
+        for raw in links {
             let typed = Typed::new(raw);
             let resolved = resolve_reference(&typed, |text| {
                 self.resolve_typed(
@@ -480,6 +503,9 @@ impl Folder {
             )?;
             let links_group = edge_type == LINK_EDGE && end == End::Source;
             let embeds_group = edge_type == ATTACHMENT_EDGE && end == End::Target;
+            if removals.is_some() && (links_group || embeds_group) {
+                continue;
+            }
             let Some(desired) = desired else {
                 lines.extend(recorded.into_iter().map(|other| Line {
                     edge_type: edge_type.to_string(),
@@ -550,7 +576,18 @@ impl Folder {
                     ..Default::default()
                 },
             };
-            if group.edge_type.one_at(end) && adds.len() == 1 && !current.is_empty() {
+            let moves = group.edge_type.one_at(end) && adds.len() == 1 && !current.is_empty();
+            if let Some(removed) = removals.as_deref_mut() {
+                // A move keeps its edge, and is the whole pass's to make.
+                if !moves {
+                    for edge in removes {
+                        queued.push(self.core.delete_edge(&edge.id)?.id);
+                        removed.push(line_of(edge_type, end, &other_of(edge)));
+                    }
+                }
+                continue;
+            }
+            if moves && adds.len() == 1 && !current.is_empty() {
                 // Only an edge this file showed is its to replace; one it never
                 // showed would be dropped unseen.
                 let Some(old) = current
@@ -580,12 +617,35 @@ impl Folder {
                     target_id: (end == End::Source).then_some(moved.target_id),
                 };
                 // The end moved to differs from the one the edge holds, so
-                // the edit is always a write.
-                queued.extend(self.core.update_edge(&old.id, &edit)?.map(|write| write.id));
+                // the edit is always a write. Refused, the edge stays where it
+                // was, and the record names it there.
+                match self.core.update_edge(&old.id, &edit) {
+                    Err(error) if local_admission_refusal(&error) => {
+                        refused.push((
+                            line_of(edge_type, end, adds[0]),
+                            local_refusal_reason(&error),
+                        ));
+                        let (to, from) = (adds[0].clone(), other_of(old));
+                        for shown in &mut shown {
+                            if *shown == to {
+                                shown.clone_from(&from);
+                            }
+                        }
+                    }
+                    other => queued.extend(other?.map(|write| write.id)),
+                }
                 removes.retain(|edge| edge.id != old.id);
             } else {
                 for other in adds {
-                    queued.push(self.core.create_edge(&draft(other))?.id);
+                    match self.core.create_edge(&draft(other)) {
+                        Err(error) if local_admission_refusal(&error) => {
+                            refused.push((
+                                line_of(edge_type, end, other),
+                                local_refusal_reason(&error),
+                            ));
+                        }
+                        written => queued.push(written?.id),
+                    }
                 }
             }
             for edge in removes {
@@ -622,7 +682,7 @@ impl Folder {
             links,
             lines,
             held,
-            queued,
+            refused,
             embeds: embed_reasons,
         })
     }

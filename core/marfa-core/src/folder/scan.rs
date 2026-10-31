@@ -7,8 +7,8 @@ use super::{
     EdgeTypes, EdgeWork, Flagged, Folder, HashMap, HashSet, ID_FIELD, Item, ItemState,
     LOCAL_ADMISSION_REFUSAL, Lists, Look, Names, OnceCell, Path, PathBuf, Peers, RENAME_GRACE,
     Resolver, Result, ScanReport, Scanned, Settings, Unsure, Value, Waiting, Walked, beside,
-    bytes_of, captured_identities, carries_frontmatter, changed_within, document, embeds,
-    executable, fields, id_named, identity, is_document, landing, line_of, lines,
+    bytes_of, captured_identities, carries_frontmatter, changed_within, copy_refused, document,
+    embeds, executable, fields, id_named, identity, is_document, landing, line_of, lines,
     local_properties_refusal, name_of, named_by_its_file, near_limit, one_per_name, placement,
     stat_metadata, state, suited, swap_root, text_of, typed_title,
 };
@@ -816,19 +816,17 @@ impl Folder {
             };
             match claim {
                 None => {
-                    match self.queue_create(
+                    if self.queue_create(
                         file,
                         (settings, embedded.contains(&file.key)),
                         catalog,
                         edge_types,
                         &withheld,
                         &mut work,
+                        &mut report.flagged,
                     )? {
-                        Some(flagged) => report.flagged.push(flagged),
-                        None => {
-                            report.created += 1;
-                            report.warnings.extend(near_limit(&file.key, &file.text));
-                        }
+                        report.created += 1;
+                        report.warnings.extend(near_limit(&file.key, &file.text));
                     }
                 }
                 Some(Claim {
@@ -873,10 +871,16 @@ impl Folder {
                         }
                         // Lines only the server can resolve are asked again
                         // at each scan that can ask it.
+                        // So are lines the copy refused, since what refused
+                        // them can change without the file.
                         if bound
                             .held
                             .as_deref()
                             .is_some_and(|held| held.starts_with(state::EDGES_WAITING))
+                            || bound.writes.refused.iter().any(|refused| {
+                                matches!(refused.change, state::Change::Edge { .. })
+                                    && copy_refused(refused)
+                            })
                         {
                             work.push(self.edge_work(file, &item_id, Some(&bound)));
                         }
@@ -1012,16 +1016,25 @@ impl Folder {
             pending.embeds = shown.remove(&pending.path).unwrap_or_default();
         }
         for pending in work {
-            // A failure is this file's alone: it waits, and the scan goes on.
-            let outcome = self
-                .queue_edges(&pending, edge_types, catalog, &mut resolver)
-                .unwrap_or_else(|error| lines::Outcome {
-                    links: pending.had_links.clone(),
-                    lines: pending.had_lines.clone(),
-                    held: Some(format!("{}{error}", state::EDGES_WAITING)),
-                    queued: Vec::new(),
-                    embeds: Vec::new(),
-                });
+            // A failure is this file's alone: it waits, and the scan goes on,
+            // and what was queued before it stays the file's.
+            let mut queued = Vec::new();
+            let judged = self.queue_edges(
+                &pending,
+                edge_types,
+                catalog,
+                &mut resolver,
+                &mut queued,
+                None,
+            );
+            let rejudged = judged.is_ok();
+            let outcome = judged.unwrap_or_else(|error| lines::Outcome {
+                links: pending.had_links.clone(),
+                lines: pending.had_lines.clone(),
+                held: Some(format!("{}{error}", state::EDGES_WAITING)),
+                refused: Vec::new(),
+                embeds: Vec::new(),
+            });
             report.embeds.extend(
                 outcome
                     .embeds
@@ -1038,16 +1051,36 @@ impl Folder {
                 let save = writes.save;
                 writes
                     .queued
-                    .extend(outcome.queued.into_iter().map(|id| state::Queued {
+                    .extend(queued.into_iter().map(|id| state::Queued {
                         id,
                         save,
                         line: None,
                     }));
-                // A refused edge the file no longer asks for holds it no longer.
+                // A refused edge the file no longer asks for holds it no longer,
+                // and one the copy refused was judged again in this pass.
                 writes.refused.retain(|refused| match &refused.change {
+                    state::Change::Edge { .. } if rejudged && copy_refused(refused) => false,
                     state::Change::Edge { line, shown } => outcome.lines.contains(line) == *shown,
                     _ => true,
                 });
+                // Refused by the copy, a line is held as one the server refused.
+                for (line, reason) in outcome.refused {
+                    report.flagged.push(Flagged {
+                        path: pending.path.clone(),
+                        flag: "refused",
+                        reason: reason.clone(),
+                        item: None,
+                    });
+                    let change = state::Change::Edge { line, shown: true };
+                    writes
+                        .refused
+                        .retain(|refused| !change.supersedes(&refused.change));
+                    writes.refused.push(state::Refused {
+                        change,
+                        save,
+                        reason,
+                    });
+                }
                 state::bind(
                     &conn,
                     &state::Bound {

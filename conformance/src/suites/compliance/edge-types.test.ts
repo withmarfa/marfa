@@ -919,6 +919,31 @@ describe("custom edge-type registration", () => {
     expect(shipped[etId]).toBe(false);
   });
 
+  it("says which edge types refuse a cycle and which refuse nesting, on the list and on registration", async () => {
+    const etId = `mock.acyclic.${ctx.runId}`;
+    const reg = await client.registerEdgeType({
+      label: "Test edge type",
+      id: etId,
+      cardinality: "many-to-many",
+    });
+    expect(reg.status).toBe(201);
+    trackEdgeType(ctx, etId);
+    expect(reg.data.edge_type.acyclic).toBe(false);
+    expect(reg.data.edge_type.flat).toBe(false);
+
+    const r = await client.listEdgeTypes();
+    expect(r.ok).toBe(true);
+    await expectMatchesSchema("GET", "/edge-types", 200, r.data);
+    const listed = Object.fromEntries(
+      r.data.data.map((t) => [t.id, { acyclic: t.acyclic, flat: t.flat }]),
+    );
+    expect(listed["parent-of"]).toEqual({ acyclic: true, flat: false });
+    expect(listed["supersedes"]).toEqual({ acyclic: true, flat: false });
+    expect(listed["in-collection"]).toEqual({ acyclic: false, flat: true });
+    expect(listed["references"]).toEqual({ acyclic: false, flat: false });
+    expect(listed[etId]).toEqual({ acyclic: false, flat: false });
+  });
+
   it("lists the reverse names the shipped edge types declare", async () => {
     const r = await client.listEdgeTypes();
     expect(r.ok).toBe(true);

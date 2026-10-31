@@ -277,6 +277,10 @@ export interface EdgeType {
   cascade_on_delete: string;
   properties: TypeField[];
   shipped: boolean;
+  /** Whether the server refuses an edge of this type that closes a cycle. */
+  acyclic: boolean;
+  /** Whether the server refuses an edge of this type from an item its targets could be. */
+  flat: boolean;
 }
 
 /** What a pin or an unpin answers. */
@@ -709,6 +713,11 @@ export interface DeviceUnderTest {
   transitionItem(id: string, state: string): Promise<Outcome<QueuedWrite>>;
   /** Link two items. An edge is its own write. */
   createEdge(edge: EdgeDraft): Promise<Outcome<QueuedWrite>>;
+  /**
+   * Judge an edge as a create of it would be judged, queueing nothing. It
+   * answers `ok` where the copy finds nothing to refuse.
+   */
+  checkEdge(edge: EdgeDraft): Promise<Outcome<{ refused: false }>>;
   /**
    * Change an edge's properties, or move one of its ends, in one write. An
    * edit that names no property and no new end queues no write and answers

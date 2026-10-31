@@ -161,6 +161,11 @@ pub struct EdgeType {
     /// By name.
     pub properties: Vec<TypeField>,
     pub shipped: bool,
+    /// Whether the server refuses an edge of this type that closes a cycle
+    /// through other edges of the type.
+    pub acyclic: bool,
+    /// Whether the server refuses a source its own target constraints admit.
+    pub flat: bool,
 }
 
 impl EdgeType {
@@ -205,6 +210,8 @@ impl EdgeType {
             cascade_on_delete: "orphan".into(),
             properties: Vec::new(),
             shipped: false,
+            acyclic: false,
+            flat: false,
         }
     }
 }
@@ -807,6 +814,74 @@ fn resolve(
     })
 }
 
+/// A held type with the types above it, itself first, and every role it
+/// plays, declared or inherited, as an edge type's constraint reads them.
+pub(crate) struct Lineage {
+    pub ancestors: Vec<String>,
+    pub roles: Vec<String>,
+    /// Whether the walk reached the top of the chain: a parent the copy does
+    /// not hold, or a chain that loops, leaves what is above unknown.
+    pub whole: bool,
+}
+
+impl Lineage {
+    /// Whether an edge type's constraint list for one end admits this type,
+    /// by the server's rule: an empty list or `*` admits every type, a
+    /// `role:<name>` a type that plays it, and a type id that type and every
+    /// type beneath it. `None` where only the part of the chain the copy
+    /// could not read would tell.
+    pub fn admitted_by(&self, constraints: &[String]) -> Option<bool> {
+        let admitted = constraints.is_empty()
+            || constraints.iter().any(|allowed| {
+                allowed == "*"
+                    || match allowed.strip_prefix("role:") {
+                        Some(role) => self.roles.iter().any(|held| held == role),
+                        None => self.ancestors.iter().any(|held| held == allowed),
+                    }
+            });
+        (admitted || self.whole).then_some(admitted)
+    }
+}
+
+/// `None` for a type the copy does not hold, or where it holds no catalog.
+pub(crate) fn lineage(conn: &Connection, id: &str) -> Result<Option<Lineage>, CoreError> {
+    if !store::catalog_held(conn)? {
+        return Ok(None);
+    }
+    let held = held_types(conn)?;
+    if !held.contains_key(id) {
+        return Ok(None);
+    }
+    let mut lineage = Lineage {
+        ancestors: Vec::new(),
+        roles: Vec::new(),
+        whole: true,
+    };
+    let mut current = Some(id);
+    while let Some(at) = current {
+        if lineage.ancestors.len() >= MAX_PARENT_WALK
+            || lineage.ancestors.iter().any(|seen| seen == at)
+        {
+            lineage.whole = false;
+            break;
+        }
+        // A parent the copy does not hold is still an ancestor a type
+        // constraint can name.
+        lineage.ancestors.push(at.to_string());
+        let Some(row) = held.get(at) else {
+            lineage.whole = false;
+            break;
+        };
+        for role in texts(row, "roles") {
+            if !lineage.roles.contains(&role) {
+                lineage.roles.push(role);
+            }
+        }
+        current = row.get("parent").and_then(Value::as_str);
+    }
+    Ok(Some(lineage))
+}
+
 fn type_not_found(id: &str) -> CoreError {
     CoreError::NotFound {
         code: "type_not_found".into(),
@@ -862,6 +937,8 @@ fn edge_type_of(id: &str, json: &str) -> Result<EdgeType, CoreError> {
         cascade_on_delete: wire.cascade_on_delete,
         properties,
         shipped: wire.shipped,
+        acyclic: wire.acyclic,
+        flat: wire.flat,
     })
 }
 
