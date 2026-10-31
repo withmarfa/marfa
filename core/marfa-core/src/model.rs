@@ -1566,6 +1566,10 @@ pub struct Status {
     /// Moves each time a refresh changes the catalog; `None` where the copy
     /// has never held one.
     pub catalog_version: Option<u64>,
+    /// When the copy last finished a pull from the server without error, an
+    /// RFC 3339 UTC timestamp from the device's clock; `None` where it has not
+    /// since the store was made or a hydration last cleared it.
+    pub synced_at: Option<String>,
     /// The file cache's budget and what it holds.
     pub file_cache: crate::file_cache::FileCache,
 }

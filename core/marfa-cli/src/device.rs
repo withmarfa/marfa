@@ -322,6 +322,12 @@ pub enum DeviceCommand {
     /// edges, until a hydration has filled it again in place, and stays
     /// stale while that hydration runs. An expired copy refuses reads and writes until a
     /// hydration, which empties it first.
+    ///
+    /// `synced_at` is when the copy last finished a pull from the server
+    /// without error, from this device's clock: a hydration or catch-up that
+    /// completed, or a follow at the head of the event log, which records it
+    /// at most every 30 seconds. A pull that fails or ends part way leaves it
+    /// as it was, and a hydration that empties the copy removes it.
     Status,
     /// The item types the copy holds, read from it alone, the ones an app
     /// declares for it, and the server's.
@@ -1807,7 +1813,7 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
                     }
                 };
                 format!(
-                    "server {}\ninstance {}\nslice {} at {}\nedge types held whole {}\npinned {}\ncursor {}\nhydration {}\ncatalog version {}\n{} item(s), {} edge(s){}",
+                    "server {}\ninstance {}\nslice {} at {}\nedge types held whole {}\npinned {}\ncursor {}\nhydration {}\nsynced at {}\ncatalog version {}\n{} item(s), {} edge(s){}",
                     status.server_origin.as_deref().unwrap_or("(none)"),
                     status.instance_id.as_deref().unwrap_or("(none)"),
                     listed(&status.slice_types),
@@ -1819,6 +1825,7 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
                     listed(&status.pinned),
                     status.event_cursor.as_deref().unwrap_or("(none)"),
                     status.hydration.as_str(),
+                    status.synced_at.as_deref().unwrap_or("(never)"),
                     status
                         .catalog_version
                         .map_or_else(|| "(none)".into(), |version| version.to_string()),

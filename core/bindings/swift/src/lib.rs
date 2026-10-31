@@ -635,6 +635,10 @@ pub struct Status {
     /// Moves each time a refresh changes the catalog; none where the copy has
     /// never held one.
     pub catalog_version: Option<u64>,
+    /// When the copy last finished a pull from the server without error, an
+    /// RFC 3339 UTC timestamp; none where it has not since the store was made
+    /// or a hydration last cleared it.
+    pub synced_at: Option<String>,
     pub file_cache: FileCache,
 }
 
@@ -2566,6 +2570,7 @@ impl Core {
             items_listed: status.items_listed,
             edges: status.edges,
             catalog_version: status.catalog_version,
+            synced_at: status.synced_at,
             file_cache: status.file_cache.into(),
         })
     }

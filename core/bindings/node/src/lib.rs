@@ -385,6 +385,10 @@ pub struct Status {
     /// Moves each time a refresh changes the catalog; absent where the copy
     /// has never held one.
     pub catalog_version: Option<i64>,
+    /// When the copy last finished a pull from the server without error, an
+    /// RFC 3339 UTC timestamp; absent where it has not since the store was
+    /// made or a hydration last cleared it.
+    pub synced_at: Option<String>,
     pub file_cache: FileCache,
 }
 
@@ -2658,6 +2662,7 @@ impl MarfaCore {
             items_listed: status.items_listed.map(count),
             edges: count(status.edges),
             catalog_version: status.catalog_version.map(count),
+            synced_at: status.synced_at,
             file_cache: status.file_cache.into(),
         })
     }
