@@ -5698,7 +5698,7 @@ When a create or an edit through a working copy changes an item's body, a device
 
 **Reason:** an app on a binding or the command line has no folder, so without this a link it saves names nothing, and every app would need its own copy of the rule.
 
-**Tests:** `device/body-edges-live.test.ts › makes a references edge for a link to a held item, to one created earlier in the queue, and to one only the server holds`, `› makes an embed of an image and of a video, by name and by path, the file's attached-to edge`.
+**Tests:** `device/body-edges-live.test.ts › makes a references edge for a link to a held item, to one created earlier in the queue, and to one only the server holds`, `› makes an embed of an image and of a video, by name and by path, a references edge to the file`.
 
 ### `device/body-field`
 
@@ -5776,17 +5776,33 @@ When a body carries a link to an item whose create waits in the queue, a device 
 
 ### `device/body-embed`
 
-When a body carries an embed of a file, by `![[name]]` or `![](path)`, a device MUST queue an `attached-to` edge from the one file item it names to the item.
+When a body carries an embed of a file, by `![[name]]` or `![](path)`, a device MUST queue a `references` edge from the item to the one file item it names.
 
-**Reason:** the embed is how the body says which file it shows, so an app can find the file item and show or play it, and a photo, a recording and a PDF are embedded alike.
+**Reason:** the embed is how the body says which file it shows, so an app can find the file item and show or play it, and a photo, a recording and a PDF are embedded alike. Showing a file is not owning it: whether the file is part of the item is the `attached-to` edge an attach makes, so an edit to the body never decides whether a file goes to the bin with the item.
 
-**Tests:** `device/body-edges-live.test.ts › makes an embed of an image and of a video, by name and by path, the file's attached-to edge`.
+**Tests:** `device/body-edges-live.test.ts › makes an embed of an image and of a video, by name and by path, a references edge to the file`.
+
+### `device/body-embed-not-attached`
+
+When a body carries an embed of a file, a device MUST NOT queue an `attached-to` edge for it.
+
+**Reason:** attaching is a separate act (`device/body-embed`).
+
+**Tests:** `device/body-edges-live.test.ts › makes an embed of an image and of a video, by name and by path, a references edge to the file`.
+
+### `device/body-embed-rederived`
+
+When a working copy is whole and has not read its bodies since its device came to read an embed as a `references` edge, a device MUST read once every active or archived body the copy holds that carries an embed, and queue the `references` edge of each embed of a file that the item has none to.
+
+**Reason:** an embed once made the file's `attached-to` edge instead, so a body written before has no reference until it is read again, and reading once keeps a later drain from reading every body. The `attached-to` edge an earlier embed made stays (`device/body-link-removed-only`). Two copies that read at once each send the create, and the second is settled as one edge (`device/body-edge-duplicate`).
+
+**Tests:** `device/body-edges-live.test.ts › adds each embed's reference once on each copy, keeps the attachment an earlier embed made, and settles two copies' references as one`.
 
 ### `device/body-embed-note`
 
 When a body carries an embed of a note, a device MUST read it as text and make no edge of it.
 
-**Tests:** `device/body-edges-live.test.ts › makes an embed of an image and of a video, by name and by path, the file's attached-to edge`.
+**Tests:** `device/body-edges-live.test.ts › makes an embed of an image and of a video, by name and by path, a references edge to the file`.
 
 ### `device/body-edge-own-write`
 
@@ -5806,9 +5822,9 @@ When a body's link names an item only the server holds, a device MUST pin that i
 
 ### `device/body-pin-release`
 
-When no `references` edge reaches an item a body's link pinned, a device MUST let that pin go, unless the caller or a folder has pinned the item since, or a pinned create has been answered with it since (`device/pin-create-lasts`).
+When no `references` edge reaches an item a body's link or embed pinned, and no `attached-to` edge leaves it, a device MUST let that pin go, unless the caller or a folder has pinned the item since, or a pinned create has been answered with it since (`device/pin-create-lasts`).
 
-**Reason:** the pin was made for the edge alone.
+**Reason:** the pin was made for the edge alone, and a file attached to an item is held for that item.
 
 **Tests:** `device/body-edges-live.test.ts › pins an item only the server holds before its edge is queued, and lets the pin go once no edge needs it`.
 
@@ -5818,7 +5834,7 @@ When a body names an edge of a type and ends the copy holds already, a device MU
 
 **Reason:** one triple is one edge (`edges/create-duplicate`), so a body naming an item twice, or naming an item a folder, an attach or another device linked already, makes none.
 
-**Tests:** `device/body-edges-live.test.ts › makes a references edge for a link to a held item, to one created earlier in the queue, and to one only the server holds`, `› makes an embed of an image and of a video, by name and by path, the file's attached-to edge`, `› embeds an attached file by the text the attach answers, with no second edge`, `› agrees with a folder on the same item, and neither repeats the other's edge`.
+**Tests:** `device/body-edges-live.test.ts › makes a references edge for a link to a held item, to one created earlier in the queue, and to one only the server holds`, `› makes an embed of an image and of a video, by name and by path, a references edge to the file`, `› embeds an attached file by the text the attach answers, and references it beside the attachment`, `› agrees with a folder on the same item, and neither repeats the other's edge`.
 
 ### `device/body-edge-refused`
 
@@ -5868,7 +5884,7 @@ When an item that a waiting name names reaches the copy by a catch-up or a hydra
 
 While a device has not asked the server about a name in a body, a device MUST answer the name `pending` when a caller reads the item's links and embeds.
 
-**Tests:** `device/body-edges-live.test.ts › makes a references edge for a link to a held item, to one created earlier in the queue, and to one only the server holds`, `› makes an embed of an image and of a video, by name and by path, the file's attached-to edge`, `› waits offline, and resolves and sends at the drain after reconnecting`.
+**Tests:** `device/body-edges-live.test.ts › makes a references edge for a link to a held item, to one created earlier in the queue, and to one only the server holds`, `› makes an embed of an image and of a video, by name and by path, a references edge to the file`, `› waits offline, and resolves and sends at the drain after reconnecting`.
 
 ### `device/body-name-missing`
 
@@ -5894,7 +5910,7 @@ When a caller reads an item's links and embeds, a device MUST answer each link a
 
 **Reason:** an app shows a link it can follow and an embedded file it can show or play, and has to show a name that resolves to nothing as unresolved rather than guess. The CLI reads them with `device items links`.
 
-**Tests:** `device/body-edges-live.test.ts › reads an alias and a heading as the name before them, and a link in code as text`, `› makes an embed of an image and of a video, by name and by path, the file's attached-to edge`.
+**Tests:** `device/body-edges-live.test.ts › reads an alias and a heading as the name before them, and a link in code as text`, `› makes an embed of an image and of a video, by name and by path, a references edge to the file`.
 
 ### `device/body-links-offline`
 
@@ -5904,19 +5920,19 @@ When a caller reads an item's links and embeds, a device MUST answer from the co
 
 ### `device/body-link-removed`
 
-When a write takes a link or an embed out of a body, a device MUST queue the delete of the edge the body named through it.
+When a write takes a link or an embed out of a body, a device MUST queue the delete of the `references` edge the body named through it.
 
 **Reason:** taking a link out removes its edge as in a folder (`folders/body-link-removal`). The body before the write is read against the same edges as the body after it, so a link both carry reads alike in both and is never removed by an edit elsewhere in the body.
 
-**Tests:** `device/body-edges-live.test.ts › takes the edge with a link taken out, and leaves edges of another type and ones no body named`, `› makes an embed of an image and of a video, by name and by path, the file's attached-to edge`, `› agrees with a folder on the same item, and neither repeats the other's edge`.
+**Tests:** `device/body-edges-live.test.ts › takes the edge with a link taken out, and leaves edges of another type and ones no body named`, `› makes an embed of an image and of a video, by name and by path, a references edge to the file`, `› agrees with a folder on the same item, and neither repeats the other's edge`.
 
 ### `device/body-link-removed-only`
 
-When a write takes a link out of a body, a device MUST NOT delete an edge of another type between the same items, or a `references` edge no body named.
+When a write takes a link or an embed out of a body, a device MUST NOT delete an edge of another type between the same items, or a `references` edge no body named.
 
-**Reason:** a body makes only `references` and `attached-to`, so any other edge was made by somebody else.
+**Reason:** a body makes only `references`, so any other edge, an `attached-to` edge included, was made by somebody else. Taking an embed out leaves the file attached.
 
-**Tests:** `device/body-edges-live.test.ts › takes the edge with a link taken out, and leaves edges of another type and ones no body named`.
+**Tests:** `device/body-edges-live.test.ts › takes the edge with a link taken out, and leaves edges of another type and ones no body named`, `› embeds an attached file by the text the attach answers, and references it beside the attachment`.
 
 ### `device/body-edge-waits`
 
@@ -6006,9 +6022,9 @@ When an embed's name answers to a file attached to the item and to other file it
 
 When a device attaches a file to an item under a title that names it alone among the item's attachments, a device MUST answer the attach with the text that embeds it, `![[title]]`.
 
-**Reason:** an app attaches a photo and writes its embed into the body, and saving that body reads back as the edge the attach made, not a second edge or a second file item.
+**Reason:** an app attaches a photo and writes its embed into the body, and saving that body references the file item the attach made, not a second file item, while the attach alone makes the file part of the item.
 
-**Tests:** `device/body-edges-live.test.ts › embeds an attached file by the text the attach answers, with no second edge`.
+**Tests:** `device/body-edges-live.test.ts › embeds an attached file by the text the attach answers, and references it beside the attachment`.
 
 ### `device/embed-text`
 
@@ -6016,13 +6032,13 @@ When a caller asks for the text that embeds a file attached to an item, a device
 
 **Reason:** an app can write the embed of a file attached earlier. The CLI asks with `device items embed`.
 
-**Tests:** `device/body-edges-live.test.ts › embeds an attached file by the text the attach answers, with no second edge`.
+**Tests:** `device/body-edges-live.test.ts › embeds an attached file by the text the attach answers, and references it beside the attachment`.
 
 ### `device/embed-text-not-file`
 
 If the item named for an embed text is not a file item, then a device MUST refuse `invalid`.
 
-**Tests:** `device/body-edges-live.test.ts › embeds an attached file by the text the attach answers, with no second edge`.
+**Tests:** `device/body-edges-live.test.ts › embeds an attached file by the text the attach answers, and references it beside the attachment`.
 
 ### `device/embed-text-not-attached`
 
@@ -6030,7 +6046,7 @@ If the file named for an embed text is not attached to the item named, then a de
 
 **Reason:** an embed is read against the item's attachments first, and only those can be told apart offline.
 
-**Tests:** `device/body-edges-live.test.ts › embeds an attached file by the text the attach answers, with no second edge`.
+**Tests:** `device/body-edges-live.test.ts › embeds an attached file by the text the attach answers, and references it beside the attachment`.
 
 ### `device/attach-title`
 
@@ -6038,7 +6054,7 @@ When a file is attached to an item under no title its caller gave, a device MUST
 
 **Reason:** two attachments of one item under one name would make an embed of either name both, which is the usual case for pasted images, all called `image.png`.
 
-**Tests:** `device/body-edges-live.test.ts › embeds an attached file by the text the attach answers, with no second edge`.
+**Tests:** `device/body-edges-live.test.ts › embeds an attached file by the text the attach answers, and references it beside the attachment`.
 
 ### `device/attach-title-given`
 
