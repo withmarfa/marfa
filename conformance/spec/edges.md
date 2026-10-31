@@ -1696,9 +1696,9 @@ If a write names `null` for a property its edge type's `property_schema` declare
 
 ### `edges/properties-format`
 
-Where an edge type's `property_schema` declares a property as `url`, `email`, `date` or `datetime`, or as a `string` with that `format`, if a write names a value that is not of that format, then the server MUST answer `400 invalid_properties` with `details.errors` naming the property in `field`.
+Where an edge type's `property_schema` declares a property as `url`, `email`, `date` or `datetime`, or as a `string` with that `format`, or as a `string` with the `format` `currency`, if a write names a value that is not of that format, then the server MUST answer `400 invalid_properties` with `details.errors` naming the property in `field`.
 
-**Tests:** `compliance/edge-property-schema.test.ts › registers a string property with a format as the type of that format, and judges its values on every edge write`.
+**Tests:** `compliance/edge-property-schema.test.ts › registers a string property with a format as the type of that format, and judges its values on every edge write`, `› keeps a currency property a string with its format, and judges its values on every edge write`.
 
 ### `edges/types-register-format`
 

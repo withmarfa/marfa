@@ -648,6 +648,59 @@ describe("null and format", () => {
     });
   });
 
+  it("keeps a currency property a string with its format, and judges its values on every edge write", async () => {
+    const edgeType = await register({
+      code: { type: "string", format: "currency" },
+    });
+    const listed = await client.listEdgeTypes();
+    expect(
+      listed.data.data.find((t) => t.id === edgeType)?.property_schema,
+    ).toEqual({ code: { type: "string", format: "currency" } });
+
+    const source = await note();
+    const target = await note();
+    const refused = await client.createEdge({
+      source_id: source,
+      target_id: target,
+      edge_type: edgeType,
+      properties: { code: "gbp" },
+    });
+    expect(refused.status).toBe(400);
+    expect(refused.error?.error.code).toBe("invalid_properties");
+    expect(named(refused.error?.error)).toEqual(["code"]);
+
+    const ok = await client.createEdge({
+      source_id: source,
+      target_id: target,
+      edge_type: edgeType,
+      properties: { code: "GBP" },
+    });
+    expect(ok.status, JSON.stringify(ok.error)).toBe(201);
+    trackEdge(ctx, ok.data.edge.id);
+
+    const patched = await client.updateEdge(ok.data.edge.id, {
+      version: ok.data.edge.version,
+      properties: { code: "gbp" },
+    });
+    expect(patched.status).toBe(400);
+    expect(named(patched.error?.error)).toEqual(["code"]);
+    const bulk = await client.bulkEdges({
+      atomic: false,
+      edges: [
+        {
+          source_id: source,
+          target_id: await note(),
+          edge_type: edgeType,
+          properties: { code: "gbp" },
+        },
+      ],
+    });
+    expect(bulk.data.results[0]).toMatchObject({
+      outcome: "errored",
+      error: { code: "invalid_properties" },
+    });
+  });
+
   it("refuses a registration that puts a format on a property it does not suit, naming the property", async () => {
     const r = await client.registerEdgeType({
       label: "Test edge type",
