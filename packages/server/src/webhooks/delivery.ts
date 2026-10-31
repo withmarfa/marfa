@@ -451,7 +451,13 @@ export function validWebhookFrame(
       EdgeSchema.safeParse(frame.edge).success &&
       (frame.source_type === undefined || typeof frame.source_type === "string")
     : !("edge" in frame) &&
-      ItemSchema.safeParse(frame.item).success &&
+      // The event log keeps frames written before items carried
+      // `trashed_at`, and they stay valid as stored.
+      ItemSchema.safeParse(
+        typeof frame.item === "object" && frame.item !== null
+          ? { trashed_at: null, ...frame.item }
+          : frame.item,
+      ).success &&
       ((frame.metadata === undefined && eventType !== "metadata.changed") ||
         MetadataSchema.safeParse(frame.metadata).success);
   return (
