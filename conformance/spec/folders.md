@@ -1668,9 +1668,9 @@ When a file at a document name (`.md`, `.markdown` or `.txt`, in any letter case
 
 ### `folders/file-item-doc-name-replaced`
 
-When a file that names a note's item ID replaces the file of a file item at a document name (`.md`, `.markdown` or `.txt`, in any letter case) and no other file in the folder is that note's, a device MUST keep the file bound to that note.
+When a file that names a note's item ID replaces the file of a file item at a Markdown name (`.md` or `.markdown`, in any letter case) and no other file in the folder is that note's, a device MUST keep the file bound to that note.
 
-**Reason:** the file's item ID, not the file it replaced, says whose file it is, in a plain scan and in a folder watch's pass alike. A device that judged the file by the item bound at its path would send the note as the file item's bytes and lose the note. While the note's own file is still in the folder, the new file is a copy of it and stays the file item's.
+**Reason:** the file's item ID, not the file it replaced, says whose file it is, in a plain scan and in a folder watch's pass alike. A device that judged the file by the item bound at its path would send the note as the file item's bytes and lose the note. While the note's own file is still in the folder, the new file is a copy of it and stays the file item's. A `.txt` file carries no ID line (`folders/raw-text-body`), so it never names a note and stays the file item's.
 
 **Tests:** `device/folders-placement.test.ts › keeps a note whose file replaces a file item's at a document name`.
 
