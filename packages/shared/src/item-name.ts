@@ -14,11 +14,20 @@ const SCHEME = /^[A-Za-z0-9+.-]$/u;
 
 const isSpace = (c: string | undefined) => c !== undefined && SPACE.test(c);
 
-/** The plain, bounded name used by item summaries and their name search. */
-export function itemName(
+const PREVIEW_POINTS = 240;
+
+interface Named {
+  field: string;
+  /** The index, among the value's lines, of the line the name came from. */
+  line: number;
+  text: string;
+}
+
+/** The name, the property it came from and the line of that property. */
+function named(
   properties: Record<string, unknown>,
   hints?: DisplayHints,
-): string {
+): Named | undefined {
   // Whether the field holds Markdown (`types/item-name-markdown`); a field
   // listed twice is read as it is first listed.
   const fields: [string | undefined, boolean][] = [
@@ -38,10 +47,43 @@ export function itemName(
     tried.add(field);
     const value = properties[field];
     if (typeof value !== "string") continue;
-    const name = markdown ? markdownName(value) : plainName(value);
-    if (name !== undefined) return name;
+    const found = markdown ? markdownName(value) : plainName(value);
+    if (found !== undefined) return { field, ...found };
   }
-  return "Untitled";
+  return undefined;
+}
+
+/** The plain, bounded name used by item summaries and their name search. */
+export function itemName(
+  properties: Record<string, unknown>,
+  hints?: DisplayHints,
+): string {
+  return named(properties, hints)?.text ?? "Untitled";
+}
+
+/**
+ * The text of an item's body with its Markdown removed, leaving out the line
+ * its name came from and every line before it, or `undefined` where nothing
+ * is left (`device/item-preview-*`).
+ */
+export function itemPreview(
+  properties: Record<string, unknown>,
+  hints?: DisplayHints,
+): string | undefined {
+  const property = hints?.body_field ?? "body";
+  const body = properties[property];
+  if (typeof body !== "string") return undefined;
+  const source = named(properties, hints);
+  const skipped = source?.field === property ? source.line : undefined;
+  const plain = new Plain(PREVIEW_POINTS);
+  for (const line of markdownLines(body)) {
+    if (plain.full()) break;
+    if (skipped !== undefined && line.at <= skipped) continue;
+    if (line.code) plain.pushAll(line.text);
+    else inline(Array.from(line.text), plain);
+    plain.push(" ");
+  }
+  return plain.finish();
 }
 
 function* lines(text: string): Generator<string> {
@@ -55,22 +97,30 @@ function* lines(text: string): Generator<string> {
 
 const blank = (line: string) => !/\S/u.test(line);
 
-function plainName(value: string): string | undefined {
-  for (const line of lines(value)) {
-    if (blank(line)) continue;
+function plainName(value: string): { line: number; text: string } | undefined {
+  let line = -1;
+  for (const text of lines(value)) {
+    line++;
+    if (blank(text)) continue;
     const plain = new Plain(NAME_POINTS);
-    plain.pushAll(line);
-    return plain.finish();
+    plain.pushAll(text);
+    const name = plain.finish();
+    return name === undefined ? undefined : { line, text: name };
   }
   return undefined;
 }
 
-function markdownName(value: string): string | undefined {
+function markdownName(
+  value: string,
+): { line: number; text: string } | undefined {
   for (const line of markdownLines(value)) {
     const plain = new Plain(NAME_POINTS);
     if (line.code) plain.pushAll(line.text);
     else inline(Array.from(line.text), plain);
-    if (plain.seen) return plain.finish();
+    if (plain.seen) {
+      const text = plain.finish();
+      return text === undefined ? undefined : { line: line.at, text };
+    }
   }
   return undefined;
 }
@@ -138,9 +188,11 @@ function runOf(text: string, mark: string): number {
 /** The lines Markdown removal keeps, fenced lines as written. */
 function* markdownLines(
   text: string,
-): Generator<{ code: boolean; text: string }> {
+): Generator<{ at: number; code: boolean; text: string }> {
   let fence: { mark: string; length: number } | undefined;
+  let at = -1;
   for (const line of lines(text)) {
+    at++;
     const content = trimStart(line);
     if (fence) {
       const closing = trimEnd(content);
@@ -149,7 +201,7 @@ function* markdownLines(
         runOf(closing, fence.mark) === closing.length
       )
         fence = undefined;
-      else yield { code: true, text: line };
+      else yield { at, code: true, text: line };
       continue;
     }
     const mark = ["`", "~"].find((m) => runOf(content, m) >= 3);
@@ -158,7 +210,7 @@ function* markdownLines(
       continue;
     }
     if (isBreak(content) || isReference(content)) continue;
-    yield { code: false, text: stripBlocks(content) };
+    yield { at, code: false, text: stripBlocks(content) };
   }
 }
 

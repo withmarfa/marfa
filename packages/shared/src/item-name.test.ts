@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { expect, it } from "vitest";
 import { ALL_TYPES } from "./type-registry.js";
-import { itemName } from "./item-name.js";
+import { itemName, itemPreview } from "./item-name.js";
 
 interface DisplayHints {
   title_field?: string;
@@ -15,6 +15,7 @@ interface Shared {
     type: string;
     properties: Record<string, unknown>;
     name: string | null;
+    preview?: string | null;
   }[];
 }
 
@@ -103,12 +104,15 @@ it("names every case the core is held to as the core does, and Untitled where th
     return undefined;
   };
   expect(SHARED.cases.length).toBeGreaterThan(0);
-  for (const { description, type, properties, name } of SHARED.cases) {
+  for (const { description, type, properties, name, preview } of SHARED.cases) {
     const hints: DisplayHints = {};
     const title = nearest(type, "title_field");
     const body = nearest(type, "body_field");
     if (title !== undefined) hints.title_field = title;
     if (body !== undefined) hints.body_field = body;
     expect(itemName(properties, hints), description).toBe(name ?? "Untitled");
+    expect(itemPreview(properties, hints), description).toBe(
+      preview ?? undefined,
+    );
   }
 });
