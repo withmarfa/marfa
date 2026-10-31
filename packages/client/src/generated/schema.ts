@@ -2265,10 +2265,10 @@ export interface components {
             /** @description The types an edge's target item can have, in the same form as `source_type_constraints`. */
             target_type_constraints: string[];
             /**
-             * @description What happens when an item an edge joins is deleted. `cascade`: deleting the source trashes the target. `orphan`: the other item stays. `block`: the delete fails while the edge exists.
+             * @description What happens when an item an edge joins is deleted. `cascade`: deleting the source trashes the target. `orphan`: the other item stays. `block`: the delete fails while the edge exists. `with-hosts`: the source is a part of the target, its host; the part goes to the trash when all its hosts are in the trash, and comes back when any of them is restored.
              * @enum {string}
              */
-            cascade_on_delete: "cascade" | "orphan" | "block";
+            cascade_on_delete: "cascade" | "orphan" | "block" | "with-hosts";
             /** @description The properties an edge of the type can carry, by name. Marfa checks an edge's properties against it each time the edge is written, and accepts a property it doesn't list. */
             property_schema: {
                 [key: string]: components["schemas"]["EdgePropertyDefinition"];
@@ -3941,10 +3941,10 @@ export interface components {
             /** @description The types an edge's target item can have, in the same form as `source_type_constraints`. Leave it out to allow any type. */
             target_type_constraints?: string[];
             /**
-             * @description What happens when an item an edge joins is deleted. `cascade`: deleting the source trashes the target. `orphan`: the other item stays. `block`: the delete fails while the edge exists. Leave it out for `orphan`.
+             * @description What happens when an item an edge joins is deleted. `cascade`: deleting the source trashes the target. `orphan`: the other item stays. `block`: the delete fails while the edge exists. `with-hosts`: the source is a part of the target, its host; the part goes to the trash when all its hosts are in the trash, and comes back when any of them is restored. Leave it out for `orphan`.
              * @enum {string}
              */
-            cascade_on_delete?: "cascade" | "orphan" | "block";
+            cascade_on_delete?: "cascade" | "orphan" | "block" | "with-hosts";
             /** @description The properties an edge of the type can carry, by name. Marfa checks an edge's properties against it each time the edge is written, and accepts a property it doesn't list. Leave it out for none. */
             property_schema?: {
                 [key: string]: components["schemas"]["EdgePropertyDefinition"];

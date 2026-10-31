@@ -296,6 +296,60 @@ describe("calling a tool", () => {
   });
 });
 
+describe("marfa_find", () => {
+  it("names a part after a host the caller may read, and never after one it may not", async () => {
+    const tag = `mcp-parts-${ctx.runId}`;
+    const minted = await client.createKey({
+      label: `${ctx.source}-parts`,
+      source: `${ctx.source}-parts`,
+      permissions: [],
+      type_permissions: { "core.note": "read" },
+      edge_permissions: { "*": "read" },
+    });
+    expect(minted.ok, JSON.stringify(minted.error)).toBe(true);
+    trackKey(ctx, minted.data.id);
+    const reader = await connectMcp(apiUrl, minted.data.key);
+    try {
+      const made = async (type: string, properties: Record<string, unknown>) => {
+        const r = await client.createItem({ type, properties, tags: [tag] });
+        expect(r.status, JSON.stringify(r.error)).toBe(201);
+        trackItem(ctx, r.data.item.id);
+        return r.data.item.id;
+      };
+      const on = async (source_id: string, target_id: string) => {
+        const r = await client.createEdge({
+          source_id,
+          target_id,
+          edge_type: "comments-on",
+        });
+        expect(r.status, JSON.stringify(r.error)).toBe(201);
+        trackEdge(ctx, r.data.edge.id);
+      };
+      const host = await made("core.note", { title: "Plan" });
+      const secret = await made("core.bookmark", {
+        title: "Secret host",
+        url: "https://example.test/secret",
+      });
+      const seen = await made("core.note", { body: "Looks good" });
+      const hidden = await made("core.note", { body: "On the secret" });
+      await on(seen, host);
+      await on(hidden, secret);
+
+      const found = toolResult(
+        await callTool(reader, "marfa_find", { type: "core.note", tags: [tag] }),
+      ) as { items: { id: string; title: string; snippet?: string }[] };
+      const byId = new Map(found.items.map((row) => [row.id, row]));
+      expect(byId.get(seen)?.title).toBe("Comment on Plan");
+      // The body is no longer the name, so the preview shows all of it.
+      expect(byId.get(seen)?.snippet).toBe("Looks good");
+      expect(byId.get(hidden)?.title).toBe("On the secret");
+      expect(JSON.stringify(found)).not.toContain("Secret host");
+    } finally {
+      await reader.close();
+    }
+  });
+});
+
 describe("marfa_get", () => {
   /** How long a tool answer's text may be. */
   const ANSWER_BUDGET = 40_000;

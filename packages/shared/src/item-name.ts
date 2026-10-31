@@ -62,18 +62,50 @@ export function itemName(
 }
 
 /**
+ * The name an item takes from its effective `display_hints.title_field`,
+ * `title` or `name` alone, or `undefined` where none produces nonblank text.
+ */
+export function titleName(
+  properties: Record<string, unknown>,
+  hints?: DisplayHints,
+): string | undefined {
+  const tried = new Set<string>();
+  for (const field of [hints?.title_field, "title", "name"]) {
+    if (field === undefined || tried.has(field)) continue;
+    tried.add(field);
+    const value = properties[field];
+    if (typeof value !== "string") continue;
+    const found = plainName(value);
+    if (found !== undefined) return found.text;
+  }
+  return undefined;
+}
+
+/**
+ * A part's name: its host edge type's label, a space and its host's name,
+ * bounded as every name is.
+ */
+export function partName(label: string, hostName: string): string {
+  const plain = new Plain(NAME_POINTS);
+  plain.pushAll(`${label} ${hostName}`);
+  return plain.finish() ?? hostName;
+}
+
+/**
  * The text of an item's body with its Markdown removed, leaving out the line
  * its name came from and every line before it, or `undefined` where nothing
- * is left (`device/item-preview-*`).
+ * is left (`device/item-preview-*`). `whole` keeps every line, for an item
+ * whose name does not come from its body: a part named after its host.
  */
 export function itemPreview(
   properties: Record<string, unknown>,
   hints?: DisplayHints,
+  whole = false,
 ): string | undefined {
   const property = hints?.body_field ?? "body";
   const body = properties[property];
   if (typeof body !== "string") return undefined;
-  const source = named(properties, hints);
+  const source = whole ? undefined : named(properties, hints);
   const skipped = source?.field === property ? source.line : undefined;
   const plain = new Plain(PREVIEW_POINTS);
   for (const line of markdownLines(body)) {

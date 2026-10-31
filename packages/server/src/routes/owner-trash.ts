@@ -2,8 +2,6 @@ import { createRoute, z } from "@hono/zod-openapi";
 import {
   ErrorCode,
   MarfaError,
-  itemName,
-  getTypeSchema,
   isValidId,
   isValidTypeIdentifier,
   type Item,
@@ -24,7 +22,7 @@ import { runAuditedTransaction } from "../storage/audited-transaction.js";
 import { readInstanceConfig } from "../storage/instance-config.js";
 import { writeItem } from "../storage/item-write.js";
 import type { ItemSummary, Storage } from "../storage/interface.js";
-import { resolveTypeSchema } from "../storage/policy.js";
+import { nameOf } from "../storage/part-names.js";
 import { ItemSummarySchema, summaryFilters } from "./item-summaries.js";
 import { pageOf, VersionWriterSchema } from "./_schemas.js";
 import { isWriteOutcomeUnknown } from "./_bulk-rollback.js";
@@ -300,14 +298,15 @@ const emptyRoute = createRoute({
   },
 });
 
-function summary(row: Item): ItemSummary {
+async function summary(storage: Storage, row: Item): Promise<ItemSummary> {
   return {
     id: row.id,
     type: row.type,
     version: row.version,
-    name: itemName(
-      row.properties,
-      resolveTypeSchema(row.type, getTypeSchema)?.display_hints,
+    name: nameOf(
+      row,
+      (await storage.items.partHosts([row.id])).get(row.id),
+      () => true,
     ),
     source: row.source,
     created_at: row.created_at,
@@ -393,13 +392,13 @@ export function ownerTrashRoutes(storage: Storage, config: AppConfig) {
         async () => {
           const row = await visibleRow(storage, id);
           if (row.version !== version)
-            return { stale: true as const, current: summary(row) };
+            return { stale: true as const, current: await summary(storage, row) };
           await writeItem(
             storage,
             { kind: "platform", by: requestWriter(c) },
             { op, id },
           );
-          return { stale: false as const, current: summary(row) };
+          return { stale: false as const, current: await summary(storage, row) };
         },
         (result) =>
           result.stale

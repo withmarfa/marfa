@@ -1,6 +1,5 @@
 import type { McpServer } from "@modelcontextprotocol/server";
 import type { components } from "@withmarfa/client";
-import { itemName } from "@withmarfa/shared";
 import { itemId } from "../args.js";
 import * as z from "zod";
 import type { ApiRefusal } from "../api.js";
@@ -11,7 +10,7 @@ import {
 } from "../confirm.js";
 import type { ToolContext } from "../context.js";
 import { fail, ok, refused } from "../results.js";
-import { displayHintsOf } from "./display.js";
+import { itemNamesOf } from "./display.js";
 
 export const DELETE_MAX_IDS = 20;
 
@@ -63,12 +62,8 @@ async function titles(
   );
   const found = new Map<string, string>();
   if (!answer.ok) return found;
-  const hints = await displayHintsOf(
-    ctx,
-    answer.data.items.map((item) => item.type),
-  );
-  for (const item of answer.data.items) {
-    found.set(item.id, itemName(item.properties, hints.get(item.type)));
+  for (const [id, { name }] of await itemNamesOf(ctx, answer.data.items)) {
+    found.set(id, name);
   }
   return found;
 }

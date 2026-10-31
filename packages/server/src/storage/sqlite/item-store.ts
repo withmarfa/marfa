@@ -14,6 +14,7 @@ import {
   lt,
   gt,
   gte,
+  ne,
   desc,
   asc,
   sql,
@@ -24,8 +25,8 @@ import {
   type SQL,
 } from "drizzle-orm";
 import { softDeleteClock } from "../soft-delete-clock.js";
+import { nameOf } from "../part-names.js";
 import {
-  itemName,
   markStructuralReadChange,
   generateId,
   isValidId,
@@ -87,6 +88,7 @@ import type {
 import type {
   BlobProof,
   CascadeRoot,
+  PartHost,
   ItemStore,
   ResolvedItem,
   ItemFilters,
@@ -1338,7 +1340,6 @@ export class SqliteItemStore implements ItemStore {
     if (filters.type !== undefined)
       conditions.push(eq(items.type, filters.type));
     const data: ItemSummary[] = [];
-    const hints = new Map<string, ReturnType<typeof resolveTypeSchema>>();
     // Search skips matching names in one bounded scan. Unfiltered pages skip
     // in SQL so late console pages never replay earlier pages or their names.
     for (;;) {
@@ -1363,16 +1364,21 @@ export class SqliteItemStore implements ItemStore {
         .limit(batchSize)
         .offset(query ? 0 : offset)
         .all();
+      // The owner reads every row, so a part is named after its oldest
+      // host out of the bin.
+      const hosts = await this.partHosts(rows.map((row) => row.id));
       for (const row of rows) {
-        if (!hints.has(row.type))
-          hints.set(row.type, resolveTypeSchema(row.type, getTypeSchema));
-        const name = itemName(
-          safeJsonParse<Record<string, unknown>>(
-            row.properties,
-            {},
-            "item summary",
-          ),
-          hints.get(row.type)?.display_hints,
+        const name = nameOf(
+          {
+            type: row.type,
+            properties: safeJsonParse<Record<string, unknown>>(
+              row.properties,
+              {},
+              "item summary",
+            ),
+          },
+          hosts.get(row.id),
+          () => true,
         );
         if (!name.toLowerCase().includes(query)) continue;
         if (skipMatches > 0) {
@@ -2505,6 +2511,50 @@ export class SqliteItemStore implements ItemStore {
         .where(inArray(trash_with_hosts.item_id, ids.slice(offset, offset + 500)))
         .all();
       for (const row of rows) out.add(row.id);
+    }
+    return out;
+  }
+
+  async partHosts(ids: readonly string[]): Promise<Map<string, PartHost[]>> {
+    const types = withHostsEdgeTypes();
+    const out = new Map<string, PartHost[]>();
+    if (types.length === 0) return out;
+    for (let offset = 0; offset < ids.length; offset += 500) {
+      const rows = await this.db
+        .select({
+          part: edges.source_id,
+          edge_type: edges.edge_type,
+          id: items.id,
+          type: items.type,
+          properties: sql<string>`json(${items.properties})`,
+        })
+        .from(edges)
+        .innerJoin(items, eq(items.id, edges.target_id))
+        .where(
+          and(
+            inArray(edges.source_id, ids.slice(offset, offset + 500)),
+            inArray(edges.edge_type, types),
+            ne(items.state, "trashed"),
+          ),
+        )
+        .orderBy(asc(edges.created_at), asc(edges.id))
+        .all();
+      for (const row of rows) {
+        const hosts = out.get(row.part) ?? [];
+        hosts.push({
+          edge_type: row.edge_type,
+          host: {
+            id: row.id,
+            type: row.type,
+            properties: safeJsonParse<Record<string, unknown>>(
+              row.properties,
+              {},
+              "part host",
+            ),
+          },
+        });
+        out.set(row.part, hosts);
+      }
     }
     return out;
   }

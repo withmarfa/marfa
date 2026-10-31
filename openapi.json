@@ -69,9 +69,10 @@
             "enum": [
               "cascade",
               "orphan",
-              "block"
+              "block",
+              "with-hosts"
             ],
-            "description": "What happens when an item an edge joins is deleted. `cascade`: deleting the source trashes the target. `orphan`: the other item stays. `block`: the delete fails while the edge exists."
+            "description": "What happens when an item an edge joins is deleted. `cascade`: deleting the source trashes the target. `orphan`: the other item stays. `block`: the delete fails while the edge exists. `with-hosts`: the source is a part of the target, its host; the part goes to the trash when all its hosts are in the trash, and comes back when any of them is restored."
           },
           "property_schema": {
             "type": "object",
@@ -4119,9 +4120,10 @@
             "enum": [
               "cascade",
               "orphan",
-              "block"
+              "block",
+              "with-hosts"
             ],
-            "description": "What happens when an item an edge joins is deleted. `cascade`: deleting the source trashes the target. `orphan`: the other item stays. `block`: the delete fails while the edge exists. Leave it out for `orphan`."
+            "description": "What happens when an item an edge joins is deleted. `cascade`: deleting the source trashes the target. `orphan`: the other item stays. `block`: the delete fails while the edge exists. `with-hosts`: the source is a part of the target, its host; the part goes to the trash when all its hosts are in the trash, and comes back when any of them is restored. Leave it out for `orphan`."
           },
           "property_schema": {
             "type": "object",

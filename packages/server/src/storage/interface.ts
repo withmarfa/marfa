@@ -805,6 +805,12 @@ export type TombstoneSelector =
   | { source: string; source_ids: readonly string[] };
 
 /** The row a trash named, as each row its cascade took records it. */
+/** A host of a part, as `ItemStore.partHosts` reads it. */
+export interface PartHost {
+  edge_type: string;
+  host: Pick<Item, "id" | "type" | "properties">;
+}
+
 export interface CascadeRoot {
   id: string;
   type: string;
@@ -960,6 +966,12 @@ export interface ItemStore {
   partsInBinWithHosts(hosts: readonly string[]): Promise<string[]>;
   /** Which of `ids` went to the bin with their hosts and are still there. */
   wentWithHosts(ids: readonly string[]): Promise<Set<string>>;
+  /**
+   * The hosts out of the bin of each of `ids` that is a part, each with the
+   * edge type that makes it a host, oldest edge first (by `created_at`,
+   * then id). An id with no such host is absent.
+   */
+  partHosts(ids: readonly string[]): Promise<Map<string, PartHost[]>>;
   transition(id: string, state: ItemState): Promise<Item>;
   /**
    * How many items carry this exact type identifier.

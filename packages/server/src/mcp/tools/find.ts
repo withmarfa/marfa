@@ -4,7 +4,7 @@ import { itemId } from "../args.js";
 import * as z from "zod";
 import type { ToolContext } from "../context.js";
 import { fail, ok, refused } from "../results.js";
-import { displayHintsOf } from "./display.js";
+import { displayHintsOf, itemNamesOf, type ItemNaming } from "./display.js";
 
 export const FIND_DEFAULT_LIMIT = 20;
 export const FIND_MAX_LIMIT = 50;
@@ -77,10 +77,11 @@ function clip(text: string, limit: number): string {
  */
 function preview(
   properties: Record<string, unknown>,
-  title: string,
+  naming: ItemNaming,
   hints: DisplayHints | undefined,
 ): string {
-  const body = itemPreview(properties, hints);
+  const title = naming.name;
+  const body = itemPreview(properties, hints, naming.fromHost);
   if (body !== undefined) return clip(body, SNIPPET_CHARS);
   for (const field of ["description", "notes", "summary"]) {
     const value = properties[field];
@@ -94,14 +95,15 @@ function preview(
 function rowOf(
   item: ListedItem,
   hints: ReadonlyMap<string, DisplayHints | undefined>,
+  naming: ItemNaming,
   snippetHtml?: string,
 ): Row {
   const typeHints = hints.get(item.type);
-  const title = itemName(item.properties, typeHints);
+  const title = naming.name;
   const snippet =
     snippetHtml !== undefined
       ? clip(excerptText(snippetHtml), SNIPPET_CHARS)
-      : preview(item.properties, title, typeHints);
+      : preview(item.properties, naming, typeHints);
   return {
     id: item.id,
     type: item.type,
@@ -125,8 +127,20 @@ async function rowsOf(
     ctx,
     entries.map(({ item }) => item.type),
   );
+  const names = await itemNamesOf(
+    ctx,
+    entries.map(({ item }) => item),
+  );
   return entries.map(({ item, snippetHtml }) =>
-    rowOf(item, hints, snippetHtml),
+    rowOf(
+      item,
+      hints,
+      names.get(item.id) ?? {
+        name: itemName(item.properties, hints.get(item.type)),
+        fromHost: false,
+      },
+      snippetHtml,
+    ),
   );
 }
 

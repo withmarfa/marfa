@@ -4,7 +4,11 @@
 // producing the thing.
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { MarfaClient } from "../../../client/api.js";
-import type { MarfaItem, TestContext } from "../../../client/types.js";
+import type {
+  BulkActionResponse,
+  MarfaItem,
+  TestContext,
+} from "../../../client/types.js";
 import {
   createTestContext,
   trackItem,
@@ -505,6 +509,15 @@ describe("the part filter term", () => {
     const listed = await client.listViewItems(view.data.item.id);
     expect(listed.status).toBe(200);
     expect(listed.data.data.map((item) => item.id).sort()).toEqual(rest);
+
+    const bulk = await client.bulkAction({
+      action: "update_tags",
+      add: [`${tag}-probe`],
+      filter: { tags: [tag], filter: "part eq true" },
+      dry_run: true,
+    });
+    expect(bulk.status, JSON.stringify(bulk.error)).toBe(200);
+    expect((bulk.data as BulkActionResponse).ids).toEqual([part]);
   });
 
   it("refuses any other operator or value with a validation error", async () => {

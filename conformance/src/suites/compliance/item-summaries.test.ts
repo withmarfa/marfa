@@ -309,3 +309,73 @@ it("keeps archived items, exact types and source filtering while excluding syste
   const unaffected = await owner("/items/summaries?type=core.bookmark");
   expect(((await unaffected.json()) as Page).data).toHaveLength(1);
 });
+
+it("names a part with no title after its oldest host out of the bin, at read time", async () => {
+  const send = async (method: string, path: string, body?: unknown) => {
+    const response = await fetch(`${server.apiUrl}${path}`, {
+      method,
+      headers: {
+        authorization: `Bearer ${server.workingKey}`,
+        "content-type": "application/json",
+      },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    });
+    const text = await response.text();
+    expect(response.status, `${method} ${path}: ${text}`).toBeLessThan(300);
+    return JSON.parse(text) as { item: { id: string; version: number } };
+  };
+  const made = async (properties: Record<string, unknown>) =>
+    (await send("POST", "/items", { type: "core.note", properties })).item;
+  const edge = (source_id: string, target_id: string, edge_type: string) =>
+    send("POST", "/edges", { source_id, target_id, edge_type });
+  // Newest first, so the rows made here are on the first page.
+  const nameOf = async (id: string) => {
+    const result = await owner("/items/summaries?type=core.note&limit=20");
+    expect(result.status).toBe(200);
+    return ((await result.json()) as Page).data.find((row) => row.id === id)
+      ?.name;
+  };
+
+  const host = await made({ title: "Plan", body: "The plan" });
+  const comment = await made({ body: "Looks good\nsecond line" });
+  const reply = await made({ body: "Agreed" });
+  const titled = await made({ title: "Kept", body: "Its own name" });
+  await edge(comment.id, host.id, "comments-on");
+  await edge(reply.id, comment.id, "comments-on");
+  await edge(titled.id, host.id, "attached-to");
+
+  expect(await nameOf(comment.id)).toBe("Comment on Plan");
+  // A host is named by its own fields, never as a part.
+  expect(await nameOf(reply.id)).toBe("Comment on Looks good");
+  expect(await nameOf(titled.id)).toBe("Kept");
+  // The name search reads the same names.
+  const searched = await owner(
+    `/items/summaries?type=core.note&q=${encodeURIComponent("comment on plan")}`,
+  );
+  expect(((await searched.json()) as Page).data.map((row) => row.id)).toEqual(
+    [comment.id],
+  );
+
+  // Computed at read time, so a rename of the host renames the part.
+  await send("PATCH", `/items/${host.id}`, {
+    properties: { title: "Plan v2" },
+    version: host.version,
+  });
+  expect(await nameOf(comment.id)).toBe("Comment on Plan v2");
+
+  // A newer host does not take the name while the oldest is out of the bin,
+  // and takes it once the oldest is in the bin.
+  const later = await made({ title: "Later" });
+  await edge(comment.id, later.id, "attached-to");
+  expect(await nameOf(comment.id)).toBe("Comment on Plan v2");
+  await send("DELETE", `/items/${host.id}`);
+  expect(await nameOf(comment.id)).toBe("Attached to Later");
+
+  // The name is bounded as every name is.
+  const long = await made({ title: "😀".repeat(121) });
+  const bounded = await made({ body: "bounded" });
+  await edge(bounded.id, long.id, "attached-to");
+  expect(await nameOf(bounded.id)).toBe(
+    `Attached to ${"😀".repeat(119 - "Attached to ".length)}…`,
+  );
+});
