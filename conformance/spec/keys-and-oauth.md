@@ -16,7 +16,7 @@ A credential holds any of these permissions, each a row of the table below, whic
 | `instance.maintain` | Running housekeeping, removing retired platform types and cancelling bulk jobs.                                                                         |
 | `instance.read`     | Reading detailed health, metrics, housekeeping status, retired platform types, blob storage diagnostics and bulk job status.                            |
 | `items.purge`       | Destroying a trashed row irrecoverably, through the single-row operation and the bulk one alike.                                                        |
-| `keys.manage`       | Listing and revoking keys across the instance, and changing their metadata or narrowing access.                                                         |
+| `keys.manage`       | Listing and revoking keys across the instance, changing their metadata or narrowing access, and setting the name and mark of any source.                |
 | `keys.mint`         | Minting keys within the caller's current access, and listing, changing and revoking keys within that access.                                            |
 | `schema.write`      | Removing type and edge type definitions that already exist, and replacing them, only those the credential's type or edge map grants write on.           |
 | `webhooks.manage`   | Reading, registering, changing and removing the outbound subscriptions that send an instance's events out, and redelivering what they sent.             |
