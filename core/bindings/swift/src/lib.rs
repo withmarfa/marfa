@@ -3032,6 +3032,18 @@ impl Core {
         Ok(self.inner.forget_answered_ids(&ids)? as u64)
     }
 
+    /// Clears what `forget_answered` clears and returns each write it took,
+    /// as `queue` showed it, in one step: two callers taking at once never
+    /// both get one answer, and none is cleared unreturned. A refused write
+    /// that carried content stays until it is discarded.
+    pub fn take_answered(&self) -> Result<Vec<QueuedWrite>, MarfaError> {
+        self.inner
+            .take_answered()?
+            .into_iter()
+            .map(queued)
+            .collect()
+    }
+
     /// Takes a refused write out of the queue, with the content it carried.
     /// Answers whether the row was one a discard takes: refused, and with no
     /// write still waiting on it, or a create refused onto a row its natural

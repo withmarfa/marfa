@@ -713,6 +713,10 @@ export class BindingDevice {
     return this.call("discard", id);
   }
 
+  takeAnswered(): Call<BindingQueuedWrite[]> {
+    return this.call("takeAnswered");
+  }
+
   /**
    * What a debug build lets a fixture hold. An armed point makes the engine
    * wait the next time it reaches it, until it is released.

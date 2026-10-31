@@ -3208,6 +3208,19 @@ impl MarfaCore {
         ))
     }
 
+    /// Clears what `forgetAnswered` clears and returns each write it took,
+    /// as `queue` showed it, in one step: two callers taking at once never
+    /// both get one answer, and none is cleared unreturned. A refused write
+    /// that carried content stays until it is discarded. Off the JavaScript
+    /// thread, because it waits while a drain records an answer.
+    #[napi(ts_return_type = "Promise<Array<QueuedWrite>>")]
+    pub fn take_answered(&self) -> AsyncTask<TakeAnswered> {
+        AsyncTask::new(TakeAnswered {
+            core: Arc::clone(&self.inner),
+            failed: None,
+        })
+    }
+
     /// Takes a refused write out of the queue, with the content it carried.
     /// Answers whether the row was one a discard takes: refused, and with no
     /// write still waiting on it, or a create refused onto a row its natural
@@ -3273,6 +3286,31 @@ impl Task for Discard {
 
     fn resolve(&mut self, _: Env, taken: Self::Output) -> Result<Self::JsValue> {
         Ok(taken)
+    }
+}
+
+pub struct TakeAnswered {
+    core: Arc<marfa_core::Core>,
+    failed: Option<marfa_core::CoreError>,
+}
+
+#[napi]
+impl Task for TakeAnswered {
+    type Output = Vec<marfa_core::QueuedWrite>;
+    type JsValue = Vec<QueuedWrite>;
+
+    fn reject(&mut self, env: Env, error: Error) -> Result<Self::JsValue> {
+        Err(rethrown(env, self.failed.take(), error))
+    }
+
+    fn compute(&mut self) -> Result<Self::Output> {
+        self.core
+            .take_answered()
+            .map_err(|error| record(&mut self.failed, error))
+    }
+
+    fn resolve(&mut self, env: Env, taken: Self::Output) -> Result<Self::JsValue> {
+        taken.into_iter().map(|write| queued(env, write)).collect()
     }
 }
 
