@@ -176,15 +176,15 @@ When `POST /types` or `PUT /types/{id}` names a non-empty `label`, the server MU
 
 ### `types/plural`
 
-When the definition stored for a type names no `plural`, or an empty one, the server MUST answer on every read of the type a plural made from its current label: a label that ends in a lowercase consonant and `y` takes `ies` in place of the `y`, a label that ends in `s`, `x`, `z`, `ch` or `sh` takes `es`, and any other label takes `s`.
+When the definition stored for a type names no `plural`, or an empty one, the server MUST answer on every `GET /types/{id}`, and in the answer to `POST /types` and `PUT /types/{id}`, a plural made from its current label: a label that ends in a lowercase consonant and `y` takes `ies` in place of the `y`, a label that ends in `s`, `x`, `z`, `ch` or `sh` takes `es`, and any other label takes `s`.
 
-**Reason:** an app names a list of a type's items, such as a sidebar's "Notes", and takes the name from Marfa rather than making its own from the identifier. The rule is the regular English one, so `Story` makes `Stories` and `URL` makes `URLs`; a word it gets wrong, such as `Person`, is named by its type (`types/plural-kept`). A subtype's plural comes from its own label, never from its parent's plural.
+**Reason:** an app names a list of a type's items, such as a sidebar's "Notes", and takes the name from Marfa rather than making its own from the identifier. `GET /types` answers only a plural a type declares (`types/list-declared-plural`). The rule is the regular English one, so `Story` makes `Stories` and `URL` makes `URLs`; a word it gets wrong, such as `Person`, is named by its type (`types/plural-kept`). A subtype's plural comes from its own label, never from its parent's plural.
 
 **Tests:** `compliance/type-label.test.ts › makes a plural from the label when a type names none`, `› keeps a plural the type names`.
 
 ### `types/plural-kept`
 
-When `POST /types` or `PUT /types/{id}` names a non-empty `plural`, the server MUST store it and answer it on every read of the type.
+When `POST /types` or `PUT /types/{id}` names a non-empty `plural`, the server MUST store it and answer it on every read of the type, `GET /types` included.
 
 **Tests:** `compliance/type-label.test.ts › keeps a plural the type names`, `compliance/type-evolution.test.ts › admits a change to the plural and to a kept field's labels on metadata.types:write alone`.
 
@@ -203,6 +203,14 @@ When `GET /types` lists a type, the server MUST answer the `label` of each field
 **Reason:** a working copy resolves each type from the listing as `GET /types/{id}` does (`device/catalog-type-read`), and a made or inherited label listed as the type's own could not be told from a declared one, so it would take the place of a label a type above names. `GET /types/{id}` answers the label each field is shown by (`types/field-label`).
 
 **Tests:** `compliance/type-label.test.ts › lists only the field labels a type declares`.
+
+### `types/list-declared-plural`
+
+When `GET /types` lists a type, the server MUST answer the `plural` the type itself declares, and none when it declares none.
+
+**Reason:** a working copy makes the plural of each type from the listing as `GET /types/{id}` does (`device/catalog-type-read`), and a made plural listed as the type's own could not be told from a declared one, so it would freeze at the label the type had when listed. It is the same rule as for field labels (`types/list-declared-label`). `GET /types/{id}` answers the plural a type is shown by (`types/plural`).
+
+**Tests:** `compliance/type-label.test.ts › lists only the plural a type declares`.
 
 ### `types/label-refused`
 
@@ -576,7 +584,7 @@ When a write names a value for a `string` field whose `format` is `currency`, th
 
 ### `types/phone-value`
 
-When a write names a string value for a `string` field or member whose `format` is `phone`, the server MUST take it whatever it holds.
+When a write names a string value for a `string` field or member whose `format` is `phone`, the server MUST NOT refuse it for its form.
 
 **Reason:** phone numbers are written in many forms, with extensions, letters and national prefixes, and a vendor sends the form it holds, so a check would refuse real numbers from a connector. The format tells an app it can offer to call or message the number.
 

@@ -3941,7 +3941,8 @@ export interface components {
             next_cursor: string | null;
         };
         /** @description A type in the list of types: its own definition, with the roles it declares and the roles it plays. */
-        ListedType: components["schemas"]["RegisteredType"] & {
+        ListedType: components["schemas"]["TypeDefinition"] & {
+            provenance: components["schemas"]["TypeProvenance"] & unknown;
             /** @description The structural roles the type declares itself, without those it only inherits. Empty if it declares none. */
             own_roles: components["schemas"]["TypeRole"][];
         };
@@ -4031,16 +4032,12 @@ export interface components {
             [key: string]: unknown;
         };
         /** @description A type says which fields the items of that type hold, and what else Marfa does for them. */
-        RegisteredType: components["schemas"]["TypeDefinition"] & {
-            provenance: components["schemas"]["TypeProvenance"] & unknown;
-        };
-        /** @description A type says which fields the items of that type hold, and what else Marfa does for them. */
         TypeDefinition: {
             /** @description Unique identifier for the type. */
             id: string;
             /** @description The type's name for people to read. */
             label?: string;
-            /** @description The type's plural name for people to read, such as `People`. Never inherited. */
+            /** @description The type's plural name for people to read, such as `People`. Never inherited. Left out of the list of types where the type declares none. */
             plural?: string;
             /** @description What the type is for. */
             description?: string;
@@ -4062,6 +4059,12 @@ export interface components {
             version_policy?: components["schemas"]["VersionPolicy"] & unknown;
             merge_policy?: components["schemas"]["MergePolicy"] & unknown;
             retention_policy?: components["schemas"]["RetentionPolicy"] & unknown;
+        };
+        /** @description A type says which fields the items of that type hold, and what else Marfa does for them. */
+        RegisteredType: components["schemas"]["TypeDefinition"] & {
+            /** @description The type's plural name for people to read, such as `People`: the one the type declares, else one made from its label. Never inherited. */
+            plural: string;
+            provenance: components["schemas"]["TypeProvenance"] & unknown;
         };
         /** @description An error response. */
         TypeNotFoundRefusal: {

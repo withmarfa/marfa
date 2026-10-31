@@ -1,6 +1,7 @@
 import { expect, it } from "vitest";
 import {
   labelFromId,
+  labelFromName,
   labelledTypeDefinition,
   pluralFromLabel,
   pluralOf,
@@ -19,6 +20,20 @@ const LABELS: [string, string][] = [
 
 it.each(LABELS)("makes the label of %s", (id, label) => {
   expect(labelFromId(id)).toBe(label);
+});
+
+// The same table as `NAMES` in core/marfa-core/src/wire.rs.
+const NAMES: [string, string][] = [
+  ["résumé", "Résumé"],
+  ["éclair", "Éclair"],
+  ["straße_nummer", "Straße Nummer"],
+  ["naïve-café", "Naïve Café"],
+  ["due__at", "Due  At"],
+  ["2nd-pass", "2nd Pass"],
+];
+
+it.each(NAMES)("makes the label of the name %s", (name, label) => {
+  expect(labelFromName(name)).toBe(label);
 });
 
 it("labels a definition that names none or an empty one, and keeps a label it names", () => {

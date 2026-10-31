@@ -4223,11 +4223,21 @@
       "ListedType": {
         "allOf": [
           {
-            "$ref": "#/components/schemas/RegisteredType"
+            "$ref": "#/components/schemas/TypeDefinition"
           },
           {
             "type": "object",
             "properties": {
+              "provenance": {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/TypeProvenance"
+                  },
+                  {
+                    "description": "The type's recorded origin and creator."
+                  }
+                ]
+              },
               "own_roles": {
                 "type": "array",
                 "items": {
@@ -4237,6 +4247,7 @@
               }
             },
             "required": [
+              "provenance",
               "own_roles"
             ]
           }
@@ -4450,32 +4461,6 @@
         "additionalProperties": {},
         "description": "One member of the entries of an `array` field."
       },
-      "RegisteredType": {
-        "allOf": [
-          {
-            "$ref": "#/components/schemas/TypeDefinition"
-          },
-          {
-            "type": "object",
-            "properties": {
-              "provenance": {
-                "allOf": [
-                  {
-                    "$ref": "#/components/schemas/TypeProvenance"
-                  },
-                  {
-                    "description": "The type's recorded origin and creator."
-                  }
-                ]
-              }
-            },
-            "required": [
-              "provenance"
-            ]
-          }
-        ],
-        "description": "A type says which fields the items of that type hold, and what else Marfa does for them."
-      },
       "TypeDefinition": {
         "type": "object",
         "properties": {
@@ -4489,7 +4474,7 @@
           },
           "plural": {
             "type": "string",
-            "description": "The type's plural name for people to read, such as `People`. Never inherited."
+            "description": "The type's plural name for people to read, such as `People`. Never inherited. Left out of the list of types where the type declares none."
           },
           "description": {
             "type": "string",
@@ -4574,6 +4559,37 @@
           "id",
           "fields",
           "version"
+        ],
+        "description": "A type says which fields the items of that type hold, and what else Marfa does for them."
+      },
+      "RegisteredType": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/TypeDefinition"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "plural": {
+                "type": "string",
+                "description": "The type's plural name for people to read, such as `People`: the one the type declares, else one made from its label. Never inherited."
+              },
+              "provenance": {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/TypeProvenance"
+                  },
+                  {
+                    "description": "The type's recorded origin and creator."
+                  }
+                ]
+              }
+            },
+            "required": [
+              "plural",
+              "provenance"
+            ]
+          }
         ],
         "description": "A type says which fields the items of that type hold, and what else Marfa does for them."
       },

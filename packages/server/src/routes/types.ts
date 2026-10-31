@@ -19,6 +19,7 @@ import {
   FIELD_FORMATS,
   malformedTypeIdentifier,
   labelledTypeDefinition,
+  namedLabel,
   pluralOf,
   iconNameIssue,
 } from "@withmarfa/shared";
@@ -613,7 +614,7 @@ const TypeSchemaResponse = z
       .string()
       .optional()
       .describe(
-        "The type's plural name for people to read, such as `People`. Never inherited.",
+        "The type's plural name for people to read, such as `People`. Never inherited. Left out of the list of types where the type declares none.",
       ),
     description: z.string().optional().describe("What the type is for."),
     parent: z
@@ -663,12 +664,20 @@ const TypeSchemaResponse = z
   .openapi("TypeDefinition");
 
 const RegisteredTypeResponse = TypeSchemaResponse.extend({
+  plural: z
+    .string()
+    .describe(
+      "The type's plural name for people to read, such as `People`: the one the type declares, else one made from its label. Never inherited.",
+    ),
   provenance: TypeProvenanceSchema.describe(
     "The type's recorded origin and creator.",
   ),
 }).openapi("RegisteredType");
 
-const ListedTypeResponse = RegisteredTypeResponse.extend({
+const ListedTypeResponse = TypeSchemaResponse.extend({
+  provenance: TypeProvenanceSchema.describe(
+    "The type's recorded origin and creator.",
+  ),
   own_roles: TypeSchemaResponse.shape.roles
     .unwrap()
     .describe(
@@ -1385,9 +1394,10 @@ export function typeRoutes(storage: Storage) {
           .map((schema) => {
             const roles = resolveRoles(schema.id, resolve);
             const row = rows.get(schema.id);
+            const { plural, ...declared } = schema;
             return {
-              ...schema,
-              plural: pluralOf(schema),
+              ...declared,
+              ...(namedLabel(plural) === undefined ? {} : { plural }),
               ...(roles ? { roles } : {}),
               own_roles: [...(schema.roles ?? [])].sort(),
               provenance: {
@@ -1414,7 +1424,11 @@ export function typeRoutes(storage: Storage) {
             ErrorCode.TYPE_NOT_FOUND,
             `Type "${id}" not found`,
           );
-        return { ...schema, provenance: await storage.types.provenance(id) };
+        return {
+          ...schema,
+          plural: pluralOf(schema),
+          provenance: await storage.types.provenance(id),
+        };
       },
       { signal: c.req.raw.signal },
     );
@@ -1629,7 +1643,11 @@ export function typeRoutes(storage: Storage) {
       throw new MarfaError(ErrorCode.TYPE_NOT_FOUND, `Type "${id}" not found`);
     }
     return {
-      type: { ...schema, provenance: await storage.types.provenance(id) },
+      type: {
+        ...schema,
+        plural: pluralOf(schema),
+        provenance: await storage.types.provenance(id),
+      },
     };
   }
 

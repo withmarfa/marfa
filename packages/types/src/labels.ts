@@ -2,14 +2,20 @@ import type { FieldDefinition } from "./schema-types.js";
 
 /**
  * The label a name gets when nothing names one: each hyphen and underscore
- * made a space and each word capitalized. `due_at` becomes `Due At`.
+ * made a space and the first letter after the start or a space capitalized,
+ * whatever its script. `due_at` becomes `Due At` and `résumé` becomes `Résumé`.
  *
  * The Rust core carries the same function (`label_from_name` in
  * `marfa-core`'s `wire.rs`); a test on each side holds them to the same
  * answers.
  */
 export function labelFromName(name: string): string {
-  return name.replace(/[_-]/g, " ").replace(/\b\w/g, (ch) => ch.toUpperCase());
+  return name
+    .replace(/[_-]/g, " ")
+    .replace(
+      /(^| )([^ ])/gu,
+      (_, lead: string, ch: string) => lead + ch.toUpperCase(),
+    );
 }
 
 /**

@@ -1641,7 +1641,11 @@ mod tests {
 
         let plural = |id: &str| item_type(&conn, id).unwrap().plural;
         assert_eq!(plural("acme.person"), "People");
-        assert_eq!(plural("acme.author"), "Stories", "a plural was inherited");
+        assert_eq!(
+            plural("acme.author"),
+            "Stories",
+            "a plural made from its own label, not its parent's"
+        );
         assert_eq!(plural("acme.editor"), "Editors", "a type with no label");
     }
 

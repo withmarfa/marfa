@@ -246,11 +246,30 @@ describe("type label compliance", () => {
       expect(r.status, JSON.stringify(r.error)).toBe(201);
       trackType(ctx, typeId, client);
       expect((await client.getType(typeId)).data.plural, label).toBe(plural);
-      const listed = (await client.listTypes()).data.data.find(
-        (t) => t.id === typeId,
-      );
-      expect(listed!.plural, label).toBe(plural);
     }
+  });
+
+  it("lists only the plural a type declares", async () => {
+    const made = `user.plural-listed-made-${ctx.runId}`;
+    const declared = `user.plural-listed-declared-${ctx.runId}`;
+    for (const body of [
+      { id: made, label: "Story" },
+      { id: declared, label: "Person", plural: "People" },
+    ]) {
+      const r = await client.registerType({
+        ...body,
+        fields: { value: { type: "number" } },
+      } as never);
+      expect(r.status, JSON.stringify(r.error)).toBe(201);
+      trackType(ctx, body.id, client);
+    }
+
+    const listed = (await client.listTypes()).data.data;
+    // The read answers the made plural, so the list leaving it out is a
+    // choice and not a type that has none.
+    expect((await client.getType(made)).data.plural).toBe("Stories");
+    expect(listed.find((t) => t.id === made)).not.toHaveProperty("plural");
+    expect(listed.find((t) => t.id === declared)!.plural).toBe("People");
   });
 
   it("keeps a plural the type names", async () => {
