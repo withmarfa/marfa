@@ -5,6 +5,7 @@ import {
   copyReplay,
   refusal,
   wireItem,
+  writeAnswers,
 } from "../../device/marfa-answers.js";
 import type { Answer } from "../../device/scripted-server.js";
 import type { BindingQueuedWrite } from "../../device/binding-adapter.js";
@@ -492,6 +493,97 @@ describe("taking the answered writes", () => {
     expect(left[0]?.body.properties).toMatchObject({ title: "refused" });
     const again = await device.takeAnswered();
     expect(again.ok && again.value, JSON.stringify(again)).toEqual([]);
+  });
+
+  /**
+   * A refused tag (a write with no content), an accepted tag, drained, and a
+   * tag queued after it that no drain has answered.
+   */
+  async function answeredTags(label: string): Promise<{
+    harness: Followed;
+    refused: string;
+    accepted: string;
+    waiting: string;
+  }> {
+    const own = await bindingHarness(label, { rows: held() });
+    const { device, server } = own;
+    const refused = await device.addTag(HELD.id, "refused");
+    const accepted = await device.addTag(HELD.id, "accepted");
+    expect(refused.ok && accepted.ok, JSON.stringify([refused, accepted])).toBe(
+      true,
+    );
+    if (!refused.ok || !accepted.ok) throw new Error("the tags did not queue");
+    scriptWrites(server, {
+      read: [answers.updated(wireItem({ id: HELD.id, version: HELD.version }))],
+      tags: [
+        refusal(422, "validation_error", "the tag is refused"),
+        writeAnswers.metadata(HELD.id, ["accepted"]),
+      ],
+    });
+    const drained = await device.drain();
+    expect(drained.ok && drained.value.answered, JSON.stringify(drained)).toBe(
+      2,
+    );
+    const waiting = await device.addTag(HELD.id, "waiting");
+    expect(waiting.ok, JSON.stringify(waiting)).toBe(true);
+    if (!waiting.ok) throw new Error("the tag did not queue");
+    const queue = await queueOf(device);
+    expect(
+      queue.map((write) => write.verdict?.verdict ?? null),
+      "the drain did not leave one refused, one accepted and one unanswered write",
+    ).toEqual(["refused", "accepted", null]);
+    return {
+      harness: own,
+      refused: refused.value.id,
+      accepted: accepted.value.id,
+      waiting: waiting.value.id,
+    };
+  }
+
+  it("takes a refused write that carried no content, and leaves a write the drain has not answered", async () => {
+    const tags = await answeredTags("binding-take-answered-tags");
+    harness = tags.harness;
+    const { device } = tags.harness;
+    const before = await queueOf(device);
+    const took = await device.takeAnswered();
+    expect(took.ok, JSON.stringify(took)).toBe(true);
+    expect(
+      took.ok ? took.value.map((write) => write.id) : [],
+      "a take left a refused write that carried no content, or took one the drain had not answered",
+    ).toEqual([tags.refused, tags.accepted]);
+    expect(took.ok ? took.value : []).toEqual(
+      before.filter((write) => write.id !== tags.waiting),
+    );
+    expect(
+      (await queueOf(device)).map((write) => write.id),
+      "a take did not leave the write waiting for an answer",
+    ).toEqual([tags.waiting]);
+  });
+
+  it("clears what clearing the answered writes clears, on a second device in the same state", async () => {
+    const taker = await answeredTags("binding-take-answered-same-take");
+    harness = taker.harness;
+    const forgetter = await answeredTags("binding-take-answered-same-forget");
+    try {
+      const took = await taker.harness.device.takeAnswered();
+      const forgot = await forgetter.harness.device.forgetAnswered();
+      expect(took.ok && forgot.ok, JSON.stringify([took, forgot])).toBe(true);
+      expect(
+        took.ok && forgot.ok && took.value.length === forgot.value,
+        "a take took a different number of writes than a clearing cleared",
+      ).toBe(true);
+      // Each device mints its own ids, so a write is named by its place.
+      const left = async (tags: typeof taker) => {
+        const ids = [tags.refused, tags.accepted, tags.waiting];
+        return (await queueOf(tags.harness.device)).map((write) =>
+          ids.indexOf(write.id),
+        );
+      };
+      expect(await left(taker)).toEqual(await left(forgetter));
+      expect(await left(taker)).toEqual([2]);
+    } finally {
+      await forgetter.harness.stop();
+    }
   });
 
   it("returns each answer to only one of two takes at once, and every answer to one of them", async () => {

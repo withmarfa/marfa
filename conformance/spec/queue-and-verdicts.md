@@ -1500,7 +1500,7 @@ When a caller takes the answered writes, a device MUST take out of the queue exa
 
 **Reason:** a take is a clear that also returns what it cleared, so it keeps what a clear keeps, such as a refused write that carried content (`queue-and-verdicts/clear-keeps-content`).
 
-**Tests:** `device/binding-queue.test.ts › takes out of the queue what a clearing takes, returns each as the queue showed it, and keeps a refused write's content`.
+**Tests:** `device/binding-queue.test.ts › takes out of the queue what a clearing takes, returns each as the queue showed it, and keeps a refused write's content`, `› takes a refused write that carried no content, and leaves a write the drain has not answered`, `› clears what clearing the answered writes clears, on a second device in the same state`.
 
 ### `queue-and-verdicts/take-returns-taken`
 
