@@ -1039,15 +1039,15 @@ impl Folder {
         }
         if in_place && let Some(bound) = bound {
             // Bytes the pull would write are the folder's own, however they
-            // came: a folder added over files an earlier copy wrote never
-            // wrote them itself, and its person's delete of one, or another
-            // device's bin, would otherwise never let the file go.
-            if bound.path == want
+            // came. A folder added over files an earlier copy wrote never
+            // wrote them, and without this a delete of one, or another
+            // device's bin, would never let the file go.
+            if bound.written_hash.as_deref() != Some(hash.as_str())
+                && bound.path == want
                 && bound.content_hash == hash
                 && bound.held.is_none()
                 && bound.writes.queued.is_empty()
                 && self.exists(&path)
-                && bound.written_hash.as_deref() != Some(hash.as_str())
             {
                 let recorded = state::Bound {
                     written_hash: Some(hash.clone()),
