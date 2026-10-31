@@ -318,8 +318,21 @@ fn serve_health(port: u16, state: &Path, stop: &AtomicBool) {
         };
         match accepted {
             Ok((mut stream, _)) => {
+                // macOS gives an accepted socket the listener's non-blocking
+                // mode, so a single read can return before the request has
+                // arrived. Closing with request bytes unread then resets the
+                // connection, and the client reports the server as down. The
+                // head is read whole before the answer goes.
+                let _ = stream.set_nonblocking(false);
+                let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
+                let mut head = Vec::new();
                 let mut buffer = [0u8; 512];
-                let _ = stream.read(&mut buffer);
+                while !head.windows(4).any(|window| window == b"\r\n\r\n") {
+                    match stream.read(&mut buffer) {
+                        Ok(0) | Err(_) => break,
+                        Ok(size) => head.extend_from_slice(&buffer[..size]),
+                    }
+                }
                 let answer: &[u8] = if state.join("unhealthy").exists() {
                     b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 2\r\nConnection: close\r\n\r\nno"
                 } else {
