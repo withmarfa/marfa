@@ -110,6 +110,9 @@ export interface UpdateItemInput {
   /** Whether `properties` lays over the row's or is the whole of them, so a
    *  field left out is cleared (`versions/merge-replace-clear` for a stale write). */
   properties_mode?: "merge" | "replace";
+  /** Properties to remove, leaving every other as it stands
+   *  (`items/update-clear`). */
+  clear_properties?: string[];
   /** Move the item to this type, with `retype`. */
   type?: string;
   retype?: boolean;

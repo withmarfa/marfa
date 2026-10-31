@@ -771,6 +771,18 @@ const updateItemRoute = createRoute({
             properties: WrittenPropertiesSchema.optional().describe(
               "The properties to write. They lay over the item's properties, or become all of them when `properties_mode` is `replace`. As in `POST /items`, strict mode refuses an undeclared property, and a whole number whose digits a 64-bit float doesn't keep is refused.",
             ),
+            /** Removes what a merge cannot, naming only what it removes, so
+             *  a writer that could not read a property, or read the row at
+             *  an older version, never drops one it did not name. Held to
+             *  the version like a value: at a stale version a property
+             *  changed since collides, and one the caller's version never
+             *  held is left. */
+            clear_properties: z
+              .array(z.string().min(1))
+              .optional()
+              .describe(
+                "Properties to remove from the item. Every other property stays as it is. Naming one the item doesn't have isn't an error. A name can't also be in `properties`.",
+              ),
             /** The item's own type, and only that. This route does not
              *  re-type the row it addresses, so the field exists to be
              *  checked rather than applied: equal to the item's type it is
@@ -2011,9 +2023,12 @@ export function itemRoutes(storage: Storage) {
     const hasTier = body.tier !== undefined;
     const hasOccurredAt = body.occurred_at !== undefined;
     const hasSourceId = body.source_id !== undefined;
+    const clearProperties = [...new Set(body.clear_properties ?? [])];
+    const hasClear = clearProperties.length > 0;
 
     if (
       !hasProperties &&
+      !hasClear &&
       !hasEdges &&
       !hasTier &&
       !hasOccurredAt &&
@@ -2022,7 +2037,17 @@ export function itemRoutes(storage: Storage) {
     ) {
       throw new MarfaError(
         ErrorCode.VALIDATION_ERROR,
-        "At least one of `properties`, `edges`, `tier`, `occurred_at`, `source_id`, or `retype` is required.",
+        "At least one of `properties`, `clear_properties`, `edges`, `tier`, `occurred_at`, `source_id`, or `retype` is required.",
+      );
+    }
+    const setAndCleared = clearProperties.filter(
+      (name) => hasProperties && Object.hasOwn(body.properties ?? {}, name),
+    );
+    if (setAndCleared.length > 0) {
+      throw new MarfaError(
+        ErrorCode.VALIDATION_ERROR,
+        `A property can't be both set and cleared: ${setAndCleared.join(", ")}`,
+        { clear_properties: setAndCleared },
       );
     }
     if (body.occurred_at !== undefined && !isValidTimestamp(body.occurred_at)) {
@@ -2059,6 +2084,7 @@ export function itemRoutes(storage: Storage) {
             ...(body.properties_mode !== undefined && {
               properties_mode: body.properties_mode,
             }),
+            ...(hasClear && { clear_properties: clearProperties }),
             ...(hasTier && { tier: body.tier }),
             ...(hasOccurredAt && { occurred_at: body.occurred_at }),
             ...(hasSourceId && { source_id: body.source_id }),

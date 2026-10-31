@@ -432,6 +432,10 @@ pub struct UpdateArgs {
     /// Replace the properties whole instead of merging the ones given.
     #[arg(long)]
     pub replace: bool,
+    /// A property to remove from the item, leaving every other as it is.
+    /// Repeat it to remove more than one.
+    #[arg(long = "clear-property", value_name = "NAME")]
+    pub clear_properties: Vec<String>,
     /// Move the item to this type.
     #[arg(long = "type", value_name = "TYPE")]
     pub type_: Option<String>,
@@ -706,6 +710,12 @@ pub fn update_request(args: &UpdateArgs) -> Result<Request, CliError> {
     }
     if args.replace {
         body.insert("properties_mode".into(), Value::String("replace".into()));
+    }
+    if !args.clear_properties.is_empty() {
+        body.insert(
+            "clear_properties".into(),
+            Value::from(args.clear_properties.clone()),
+        );
     }
     insert_opt(&mut body, "type", args.type_.clone());
     if args.retype {

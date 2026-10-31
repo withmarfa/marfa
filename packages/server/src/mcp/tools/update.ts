@@ -37,6 +37,7 @@ interface FieldArgs {
   version: number;
   properties?: Record<string, unknown> | undefined;
   properties_mode?: "merge" | "replace" | undefined;
+  clear_properties?: string[] | undefined;
   tier?: string | undefined;
   occurred_at?: string | undefined;
 }
@@ -108,7 +109,8 @@ type Snapshot = Pick<
 /**
  * The fields the call would change that a write since `base` changed too,
  * on the API's own rule: a field sent at the value it had at `base` is not
- * a change, and a field `replace` leaves out is cleared, which is.
+ * a change, and a field `replace` leaves out or `clear_properties` names is
+ * cleared, which is where `base` held it.
  */
 function conflictingFields(
   args: FieldArgs,
@@ -127,6 +129,9 @@ function conflictingFields(
     for (const key of Object.keys(before)) {
       if (!Object.hasOwn(sent, key)) changed.add(key);
     }
+  }
+  for (const key of args.clear_properties ?? []) {
+    if (Object.hasOwn(before, key)) changed.add(key);
   }
   const fields = [...changed].filter(
     (key) => !isDeepStrictEqual(now[key], before[key]),
@@ -170,16 +175,14 @@ export function registerUpdate(server: McpServer, ctx: ToolContext): void {
     {
       title: "Change an item",
       description:
-        "Use to change an existing note, task, record or other item: its fields, tags, edges, or whether it is archived, or to restore it from the trash. Send the version you read with marfa_get; if the item has changed since, nothing is written and you get it as it is now and which of your fields changed.",
+        "Use to change an item's fields, tags or edges, archive it, or restore it from the trash. Send the version you read with marfa_get; if the item changed since, nothing is written and you get it as it is now and which of your fields changed.",
       inputSchema: z.strictObject({
         id: itemId.describe("The item's ID."),
         version: z
           .number()
           .int()
           .min(1)
-          .describe(
-            "The item's version, as you last read it. Moving an item to the trash keeps its version.",
-          ),
+          .describe("The version you last read. Moving to the trash keeps it."),
         properties: z
           .record(z.string(), z.unknown())
           .optional()
@@ -190,8 +193,12 @@ export function registerUpdate(server: McpServer, ctx: ToolContext): void {
           .enum(["merge", "replace"])
           .optional()
           .describe(
-            "`replace` makes properties the item's whole set of fields; `merge` when left out.",
+            "`replace` makes properties all the item's fields; `merge` by default.",
           ),
+        clear_properties: z
+          .array(z.string())
+          .optional()
+          .describe("Fields to remove; not also in properties."),
         tier: z.enum(["library", "feed"]).optional(),
         occurred_at: z
           .string()
@@ -211,7 +218,7 @@ export function registerUpdate(server: McpServer, ctx: ToolContext): void {
           .enum(["active", "archived"])
           .optional()
           .describe(
-            "`archived` to archive the item; `active` to bring it back from the archive or the trash. An item in the trash takes no other change until it is restored.",
+            "`archived` archives the item; `active` brings it back from the archive or the trash. An item in the trash takes no other change until restored.",
           ),
       }),
       outputSchema,
@@ -264,6 +271,8 @@ export function registerUpdate(server: McpServer, ctx: ToolContext): void {
       let { version, state } = current;
       const patching =
         args.properties !== undefined ||
+        (args.clear_properties !== undefined &&
+          args.clear_properties.length > 0) ||
         args.tier !== undefined ||
         args.occurred_at !== undefined;
 
@@ -291,6 +300,10 @@ export function registerUpdate(server: McpServer, ctx: ToolContext): void {
               ...(args.properties_mode !== undefined && {
                 properties_mode: args.properties_mode,
               }),
+              ...(args.clear_properties !== undefined &&
+                args.clear_properties.length > 0 && {
+                  clear_properties: args.clear_properties,
+                }),
               ...(args.tier !== undefined && { tier: args.tier }),
               ...(args.occurred_at !== undefined && {
                 occurred_at: args.occurred_at,

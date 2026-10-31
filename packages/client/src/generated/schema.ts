@@ -7366,6 +7366,8 @@ export interface operations {
                     properties?: {
                         [key: string]: unknown;
                     };
+                    /** @description Properties to remove from the item. Every other property stays as it is. Naming one the item doesn't have isn't an error. A name can't also be in `properties`. */
+                    clear_properties?: string[];
                     /** @description The item's type. It must match the item's current type unless `retype` is `true`. */
                     type?: string;
                     /**

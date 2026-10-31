@@ -126,6 +126,13 @@ export interface UpdateItemInput {
    */
   properties_mode?: "merge" | "replace";
   /**
+   * Properties the write removes, which a merge cannot. At a stale version
+   * each is a change the caller made, as a new value is: it collides with a
+   * change to that property since, and is a no-op where the property is
+   * already gone or the caller's version never held it.
+   */
+  clear_properties?: readonly string[];
+  /**
    * Move the item to this type.
    *
    * Absent on every ordinary write, and the doors above this refuse a

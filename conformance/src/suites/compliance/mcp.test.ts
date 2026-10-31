@@ -405,6 +405,29 @@ describe("marfa_update", () => {
       version: moved.data.item.version,
     });
     expect(error.conflicting_fields).toEqual(["body"]);
+
+    // A clear is a change: a field cleared that a write since changed is
+    // named, and one cleared that nothing changed since is not.
+    const held = await client.createItem({
+      type: "core.note",
+      properties: { body: "kept", title: "Old" },
+    });
+    expect(held.status, JSON.stringify(held.error)).toBe(201);
+    trackItem(ctx, held.data.item.id);
+    const retitled = await client.updateItem(held.data.item.id, {
+      version: held.data.item.version,
+      properties: { title: "New" },
+    });
+    expect(retitled.ok, JSON.stringify(retitled.error)).toBe(true);
+    const cleared = toolError(
+      await callTool(mcp, "marfa_update", {
+        id: held.data.item.id,
+        version: held.data.item.version,
+        clear_properties: ["title", "body"],
+      }),
+    );
+    expect(cleared.code).toBe("version_conflict");
+    expect(cleared.conflicting_fields).toEqual(["title"]);
   });
 
   it("leaves the item unchanged when called with a stale version", async () => {

@@ -12085,6 +12085,14 @@
                     "additionalProperties": {},
                     "description": "The properties to write. They lay over the item's properties, or become all of them when `properties_mode` is `replace`. As in `POST /items`, strict mode refuses an undeclared property, and a whole number whose digits a 64-bit float doesn't keep is refused."
                   },
+                  "clear_properties": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "description": "Properties to remove from the item. Every other property stays as it is. Naming one the item doesn't have isn't an error. A name can't also be in `properties`."
+                  },
                   "type": {
                     "type": "string",
                     "description": "The item's type. It must match the item's current type unless `retype` is `true`."

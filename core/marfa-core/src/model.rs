@@ -733,6 +733,10 @@ pub struct Edit {
     pub clear_occurred_at: bool,
     /// A property left out is cleared; otherwise they merge over the row's.
     pub replace_properties: bool,
+    /// Properties removed from the item; every other stays as the row holds
+    /// it, those this copy cannot read included. Refused where a name is
+    /// also in `properties`.
+    pub clear_properties: Vec<String>,
 }
 
 impl Edit {
@@ -744,6 +748,12 @@ impl Edit {
         body.insert("version".into(), Value::from(base_version));
         if self.replace_properties {
             body.insert("properties_mode".into(), Value::String("replace".into()));
+        }
+        if !self.clear_properties.is_empty() {
+            body.insert(
+                "clear_properties".into(),
+                Value::from(self.clear_properties.clone()),
+            );
         }
         if let Some(key) = &self.source_id {
             body.insert("source_id".into(), Value::String(key.clone()));

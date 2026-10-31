@@ -559,6 +559,9 @@ export interface Edit {
   /** The properties are the row's whole properties, so one left out is
    *  cleared (`queue-and-verdicts/whole-sent-replace`). */
   replace?: boolean;
+  /** Properties to remove from the row, leaving every other
+   *  (`queue-and-verdicts/clear-property-sent`). */
+  clear?: string[];
 }
 
 /** An edge, before it is queued. */

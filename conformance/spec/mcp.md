@@ -154,7 +154,7 @@ If a `marfa_update` call names a version other than the item's current version, 
 
 ### `mcp/update-stale-fields`
 
-If a `marfa_update` call names a version other than the item's current version, and the credential can read the item's snapshot of the version named, then the server MUST answer under `conflicting_fields` each field the call would set that a write since that version also changed, and no other.
+If a `marfa_update` call names a version other than the item's current version, and the credential can read the item's snapshot of the version named, then the server MUST answer under `conflicting_fields` each field the call would set or clear that a write since that version also changed, and no other.
 
 **Reason:** the agent decides from these whether its change still applies.
 

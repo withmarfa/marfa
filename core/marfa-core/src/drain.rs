@@ -2224,14 +2224,28 @@ fn back_to(
         Ok(body
             .get("properties")
             .and_then(serde_json::Value::as_object)
-            .map(|properties| properties.keys().cloned().collect())
-            .unwrap_or_default())
+            .into_iter()
+            .flat_map(|properties| properties.keys().cloned())
+            .chain(store::cleared(&body).map(str::to_string))
+            .collect())
     };
     let ahead_carries = carried(&row.id)?;
     let shared = carried(id)?
         .iter()
         .any(|property| ahead_carries.contains(property));
     Ok(shared.then_some(ahead))
+}
+
+/// What an item edit's body sends for `key`: its value, null where it clears
+/// the property, and nothing where it leaves the property alone.
+fn sent_value<'a>(body: &'a serde_json::Value, key: &str) -> Option<&'a serde_json::Value> {
+    const CLEARED: serde_json::Value = serde_json::Value::Null;
+    body.pointer(&format!("/properties/{}", pointer_token(key)))
+        .or_else(|| {
+            store::cleared(body)
+                .any(|name| name == key)
+                .then_some(&CLEARED)
+        })
 }
 
 /// A property carried at the value read is not checked: a move drops it.
@@ -2249,7 +2263,7 @@ fn holds(conn: &rusqlite::Connection, id: &str, at: &AnsweredAt<'_>) -> Result<b
     let null = serde_json::Value::Null;
     if let Some(serde_json::Value::Object(properties)) = read.get("properties") {
         for (key, value) in properties {
-            let sent = body.pointer(&format!("/properties/{}", pointer_token(key)));
+            let sent = sent_value(&body, key);
             if sent == Some(value) {
                 continue;
             }
@@ -2280,7 +2294,7 @@ fn against_its_own(
     let mut kept = 0;
     for field in &resolution.fields {
         let token = pointer_token(field);
-        let Some(sent) = body.pointer(&format!("/properties/{token}")) else {
+        let Some(sent) = sent_value(&body, field) else {
             continue;
         };
         let held = answer.item.properties.get(field).unwrap_or(&null);

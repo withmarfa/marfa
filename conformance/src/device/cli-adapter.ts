@@ -441,6 +441,7 @@ export class CliDevice implements DeviceUnderTest {
     if (edit.occurredAt !== undefined)
       args.push("--occurred-at", edit.occurredAt);
     if (edit.clearOccurredAt === true) args.push("--clear-occurred-at");
+    for (const name of edit.clear ?? []) args.push("--clear-property", name);
     return this.json<QueuedWrite>(args);
   }
 

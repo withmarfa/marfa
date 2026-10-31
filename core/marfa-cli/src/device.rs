@@ -870,9 +870,18 @@ pub struct CreateArgs {
 pub struct UpdateArgs {
     /// The item id.
     pub id: String,
-    /// The properties to write, as a JSON object. Whole values.
-    #[arg(long, value_name = "JSON")]
-    pub properties: String,
+    /// The properties to write, as a JSON object. Whole values. Required
+    /// unless `--clear-property` is given.
+    #[arg(
+        long,
+        value_name = "JSON",
+        required_unless_present = "clear_properties"
+    )]
+    pub properties: Option<String>,
+    /// A property to remove from the item, leaving every other as it is.
+    /// Repeat it to remove more than one.
+    #[arg(long = "clear-property", value_name = "NAME")]
+    pub clear_properties: Vec<String>,
     /// The version the edit was based on. Required: the device refuses an
     /// update that names no version, as the server does.
     #[arg(long)]
@@ -894,8 +903,8 @@ pub struct UpdateArgs {
     #[arg(long)]
     pub tier: Option<Tier>,
     /// The properties are the item's whole properties: one they leave out is
-    /// cleared rather than kept.
-    #[arg(long)]
+    /// cleared rather than kept. Requires `--properties`.
+    #[arg(long, requires = "properties")]
     pub replace: bool,
     /// The item's own time, RFC 3339.
     #[arg(long, value_name = "TIME", conflicts_with = "clear_occurred_at")]
@@ -1371,7 +1380,12 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
                 }
                 ItemsCommand::Update(args) => {
                     let edit = Edit {
-                        properties: item_properties(&args.properties)?,
+                        properties: args
+                            .properties
+                            .as_deref()
+                            .map(item_properties)
+                            .transpose()?
+                            .unwrap_or_default(),
                         base_version: args.version,
                         source_id: args.source_id,
                         r#type: args.type_,
@@ -1379,6 +1393,7 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
                         occurred_at: args.occurred_at,
                         clear_occurred_at: args.clear_occurred_at,
                         replace_properties: args.replace,
+                        clear_properties: args.clear_properties,
                     };
                     let queued = if args.as_read {
                         core.update_item_as_read(&args.id, &edit)?
