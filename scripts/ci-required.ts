@@ -5,9 +5,10 @@
  * otherwise, and a skipped job satisfies a required check where a workflow
  * filtered out by `paths` would leave it pending. `core` is the job that
  * calls `core-live.yml`. `Full CI`, the gate job of `ci.yml`, waits for the
- * rest and is what a ruleset requires. The nightly and a dispatch answer
- * `true` for every job, and so does a change that could not be read, so a
- * skip only ever comes from a diff that was read and classified.
+ * rest and is what a ruleset requires. A dispatch answers `true` for every
+ * job, and so does a change that could not be read, so a skip only ever
+ * comes from a diff that was read and classified. The nightly runs only
+ * `NIGHTLY_JOBS`, the ones that need a Mac.
  *
  * A push to `main` runs every job too, unless `forPush` finds that it
  * changes only what no job but the format check reads and that this
@@ -112,13 +113,13 @@ export const CONFORMANCE_GROUPS: readonly ConformanceGroup[] = [
   {
     job: "conformance-compliance",
     projects: ["compliance"],
-    shards: 4,
+    shards: 8,
     device: false,
   },
   {
     job: "conformance-device",
     projects: ["device"],
-    shards: 4,
+    shards: 6,
     device: true,
   },
 ];
@@ -168,17 +169,29 @@ const PAGE_MARKUP: readonly Job[] = [
 ];
 
 /**
- * Every job that builds the `marfa` binary, and the core's own checks. Of
- * the conformance jobs only the device fixtures drive the binary.
+ * Every job that builds the `marfa` binary and runs on Linux, and the core's
+ * own checks there. Of the conformance jobs only the device fixtures drive
+ * the binary.
  */
-const RUST: readonly Job[] = [
-  "core-checks",
+const RUST_LINUX: readonly Job[] = [
   "core-checks-linux",
   "conformance-offline",
   "conformance-device",
   "cli-scenarios",
-  "core",
 ];
+
+/**
+ * The jobs that run on macOS for a pull request: the core's checks and its
+ * live checks. Linux builds, lints and tests the same Rust, so a pull request
+ * runs these only for a path that has a macOS-only part (`RULES` names them);
+ * a push to `main`, the nightly and a dispatch run `core-checks` whatever
+ * changed, and `core.yml`, not this workflow, runs the live checks for a push
+ * to `main` and every night.
+ */
+const MACOS: readonly Job[] = ["core-checks", "core"];
+
+/** Every job a change to the core's manifests or to a macOS-only part can reach. */
+const RUST: readonly Job[] = [...RUST_LINUX, ...MACOS];
 
 /** Every job that installs or builds the pnpm workspace, but `core`. */
 const WORKSPACE: readonly Job[] = [
@@ -233,7 +246,6 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
     /^conformance\/fixtures\/item-display\.json$/,
     [
       "workspace",
-      "core-checks",
       "core-checks-linux",
       "conformance-offline",
       "conformance-compliance",
@@ -245,12 +257,12 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
   // read it.
   [
     /^conformance\/fixtures\/filter-expressions\.json$/,
-    ["workspace", "core-checks", "core-checks-linux", "core"],
+    ["workspace", "core-checks-linux", "core"],
   ],
   // The binary's command reference is generated from its command tree, and
   // a unit test in `marfa-cli` holds the committed file to it. Only the core
   // checks run the Rust tests.
-  [/^core\/marfa-cli\/COMMANDS\.md$/, ["core-checks", "core-checks-linux"]],
+  [/^core\/marfa-cli\/COMMANDS\.md$/, ["core-checks-linux"]],
   // Markdown anywhere else is read only by Prettier and the contract's
   // reference check, which `CI (SQLite)` runs for every change, and a
   // package's README by the version check. A fixture is test input and a
@@ -391,6 +403,18 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
     ["workspace", "conformance-offline"],
   ],
   [/^conformance\/src\/suites\//, ["workspace", ...CONFORMANCE]],
+  // The device suites' adapters and scripted server. A CLI scenario imports
+  // one, and the offline lane tests the scripted server.
+  [
+    /^conformance\/src\/device\//,
+    ["workspace", "conformance-offline", "conformance-device", "cli-scenarios"],
+  ],
+  // A test beside the helpers runs in the offline lane alone: the `generators`
+  // project's `src/utils/**/*.test.ts`. No server fixture imports a test.
+  [
+    /^conformance\/src\/utils\/(.*\/)?[^/]*\.test\.ts$/,
+    ["workspace", "conformance-offline"],
+  ],
   [
     /^conformance\/src\/utils\//,
     [
@@ -428,11 +452,11 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
   // budget.
   [
     /^core\/marfa-core\/src\/contract\.rs$/,
-    [...RUST, "clients-freshness", "workspace"],
+    [...RUST_LINUX, "core", "clients-freshness", "workspace"],
   ],
   [
     /^core\/marfa-core\/src\/builtin_catalog\.json$/,
-    [...RUST, "clients-freshness", "workspace"],
+    [...RUST_LINUX, "core", "clients-freshness", "workspace"],
   ],
   [/^core\/Cargo\.toml$/, [...RUST, "workspace"]],
   [/^core\/Cargo\.lock$/, RUST],
@@ -473,10 +497,31 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
     ["core-checks", "core-checks-linux", "core", "conformance-device"],
   ],
   [/^core\/bindings\//, ["core-checks", "core-checks-linux", "core"]],
-  // A crate's tests are not in the binary.
+  // A crate's tests are not in the binary, but they may exercise a macOS-only
+  // side (a keychain, a watched folder) that nothing here names, so a Mac
+  // runs them too.
   [/^core\/[^/]+\/tests\//, ["core-checks", "core-checks-linux", "core"]],
-  // Any other crate can be one the binary is built from.
-  [/^core\//, RUST],
+  // Every crate's manifest: a dependency bump or a macOS-only dependency
+  // (`core-foundation`, `xattr`) can break an Apple build.
+  [/^core\/[^/]+\/Cargo\.toml$/, RUST],
+  // The parts of the core with a macOS-only side, which only a Mac runs: the
+  // command line, with its login keychain, key files by path and launchd
+  // autostart, and the core's folder watching and what it reads and writes,
+  // which FSEvents, name case and Finder packages change, and the files with
+  // an Apple-only `cfg` block. `ci/ci-required.test.ts` searches `core/` for
+  // `target_os = "macos"`, `"ios"` and `target_vendor = "apple"` and requires
+  // every file it finds here.
+  [
+    /^core\/(marfa-cli\/|marfa-core\/src\/(folder\/|watch\.rs$|file_cache\.rs$|lock\.rs$|priority\.rs$|blob\.rs$|lib\.rs$|stop_tests\.rs$|directory[^/]*$))/,
+    RUST,
+  ],
+  // The core's other source is what the live tests (`tests/live*.rs`) run
+  // against, and only the `core` job runs them, so it stays on a pull
+  // request.
+  [/^core\/marfa-core\/src\//, [...RUST_LINUX, "core"]],
+  // Any other crate can be one the binary is built from, and Linux builds,
+  // lints and tests the rest of the core's Rust, but not the live tests.
+  [/^core\//, RUST_LINUX],
 
   // The server's tests, the clients, the core's tests and the offline lane
   // all read the committed document.
@@ -484,13 +529,11 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
     /^openapi\.json$/,
     [
       "workspace",
-      "core-checks",
       "core-checks-linux",
       ...CONFORMANCE,
       "cli-scenarios",
       "openapi-freshness",
       "clients-freshness",
-      "core",
     ],
   ],
 
@@ -595,6 +638,30 @@ export function classify(paths: readonly string[]): Record<Job, boolean> {
 export function forDraft(answer: Record<Job, boolean>): Record<Job, boolean> {
   return Object.fromEntries(
     JOBS.map((job) => [job, DRAFT_JOBS.includes(job) && answer[job]]),
+  ) as Record<Job, boolean>;
+}
+
+/**
+ * What the nightly run does: only what needs a Mac, because every push to
+ * `main` already runs the rest on Linux. The device fixtures drive the
+ * `marfa` binary on macOS's file watching, name case, Finder packages and
+ * keychain, the CLI scenarios drive it as a person does, the core's checks run
+ * its macOS-only code, the control socket has macOS-only behavior and the
+ * Swift package builds only on a Mac.
+ * `core.yml` runs the core's live checks on the same night.
+ */
+export const NIGHTLY_JOBS: readonly Job[] = [
+  "conformance-device",
+  "cli-scenarios",
+  "core-checks",
+  "control-socket",
+  "swift-package",
+];
+
+/** The nightly's answer: `NIGHTLY_JOBS` and nothing else. */
+export function forNightly(): Record<Job, boolean> {
+  return Object.fromEntries(
+    JOBS.map((job) => [job, NIGHTLY_JOBS.includes(job)]),
   ) as Record<Job, boolean>;
 }
 
@@ -774,6 +841,8 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
       );
     } else if (process.env.GITHUB_EVENT_NAME === "push") {
       answer = forPush(readEvent() as PushEvent);
+    } else if (process.env.GITHUB_EVENT_NAME === "schedule") {
+      answer = forNightly();
     }
   } catch {
     // An unreadable diff must never turn a code change into a skipped job.

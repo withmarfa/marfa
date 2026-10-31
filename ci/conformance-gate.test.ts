@@ -35,7 +35,7 @@ interface Job {
   name?: string;
   needs?: string | string[];
   if?: string;
-  "timeout-minutes"?: number;
+  "timeout-minutes"?: number | string;
   strategy?: {
     "fail-fast"?: boolean;
     matrix?: { include?: string };
@@ -177,7 +177,10 @@ describe("the shard matrix", () => {
 
   it("reports every shard, with a limit on how long one may take", () => {
     expect(job?.strategy?.["fail-fast"]).toBe(false);
-    expect(job?.["timeout-minutes"]).toBeLessThanOrEqual(30);
+    // The limit is an expression: 30 on a Mac, 20 on Linux.
+    const limits = String(job?.["timeout-minutes"]).match(/\d+/g) ?? [];
+    expect(limits.length).toBeGreaterThan(0);
+    expect(Math.max(...limits.map(Number))).toBeLessThanOrEqual(30);
   });
 
   it("keeps each shard's server log under a name of its own, and stops what it started whatever happened", () => {

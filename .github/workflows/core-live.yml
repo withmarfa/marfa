@@ -9,6 +9,13 @@ name: Core live
 # the caller's own and cancel the run that called it.
 on:
   workflow_call:
+    inputs:
+      # `Core checks` in `ci.yml` builds the same three Swift targets with
+      # `build.sh`, so the run that did needs no second build here.
+      swift-built:
+        description: The caller already built the Swift FFI crate for the Apple targets
+        type: boolean
+        default: false
 
 env:
   CARGO_BUILD_JOBS: 2
@@ -21,7 +28,7 @@ permissions:
 jobs:
   live:
     name: Rust, bindings, live
-    timeout-minutes: 90
+    timeout-minutes: 25
     runs-on: macos-26
     env:
       DEVELOPER_DIR: /Applications/Xcode.app/Contents/Developer
@@ -77,6 +84,7 @@ jobs:
       # C this build compiles targets the same oldest systems the shipped
       # framework does.
       - name: Build the Swift FFI crate
+        if: ${{ !inputs.swift-built }}
         working-directory: core/bindings/swift
         run: |
           macos="$(sed -n 's/^macos=//p' build.sh)"

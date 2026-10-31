@@ -24,14 +24,16 @@ const MAC_JOBS = new Set([
 ]);
 
 // Ubuntu for a pull request, a push and a dispatch that does not ask, macOS
-// for the nightly and a dispatch that does.
+// for the nightly and a dispatch that does. The nightly runs only what needs
+// a Mac, so of the conformance shards it is the device ones alone.
 const NIGHTLY_MAC_RUNNER =
   "${{ (github.event_name == 'schedule' || inputs.macos) && 'macos-26' || 'ubuntu-latest' }}";
+const DEVICE_MAC_RUNNER =
+  "${{ matrix.device && (github.event_name == 'schedule' || inputs.macos) && 'macos-26' || 'ubuntu-latest' }}";
 
-// The statuses job and `Conformance`, the check that collects the others,
-// only read what the shards kept, so they run on Ubuntu.
+// The offline lane, the statuses job and `Conformance`, the check that
+// collects the others, need no Mac, so they run on Ubuntu.
 const NIGHTLY_MAC_JOBS = new Set([
-  "ci.yml:conformance-offline",
   "ci.yml:conformance-shards",
   "ci.yml:cli-scenarios",
 ]);
@@ -106,9 +108,11 @@ describe("jobs use standard GitHub-hosted runners", () => {
       }
       const expected = MAC_JOBS.has(key)
         ? "macos-26"
-        : NIGHTLY_MAC_JOBS.has(key)
-          ? NIGHTLY_MAC_RUNNER
-          : "ubuntu-latest";
+        : key === "ci.yml:conformance-shards"
+          ? DEVICE_MAC_RUNNER
+          : NIGHTLY_MAC_JOBS.has(key)
+            ? NIGHTLY_MAC_RUNNER
+            : "ubuntu-latest";
       expect(config["runs-on"], `${file}: ${job}`).toEqual(expected);
       expect(config.concurrency, `${file}: ${job}`).toBeUndefined();
     }

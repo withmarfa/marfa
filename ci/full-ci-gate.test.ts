@@ -26,6 +26,7 @@ interface Job {
   needs?: string | string[];
   if?: string;
   "runs-on"?: string;
+  permissions?: Record<string, string>;
   steps: Step[];
 }
 
@@ -79,11 +80,58 @@ describe("Full CI", () => {
     expect(needsOf(jobs[REPORT]), REPORT).not.toContain(GATE);
   });
 
-  it("runs after a failed job, and is skipped when the run is cancelled", () => {
-    // Not `always()`: a cancelled run would report `Full CI` green. A skipped
-    // job keeps its raw name and never reports as `Full CI`.
-    expect(jobs[GATE]?.if).toBe("${{ !cancelled() }}");
+  it("runs after a failed job, also in a cancelled run, and is skipped when a run is cancelled with nothing failed", () => {
+    // Not `always()`: a run replaced by a newer push is cancelled with every
+    // job green or cancelled, and its gate must stay skipped, as a skipped job
+    // never reports as `Full CI`. A run the fail-fast jobs cancelled has a
+    // failed job, and its gate must still run to fail, or `Full CI` would
+    // stay expected.
+    expect(jobs[GATE]?.if).toBe(
+      "${{ !cancelled() || contains(needs.*.result, 'failure') }}",
+    );
     expect(jobs[GATE]?.["runs-on"]).toBe("ubuntu-latest");
+  });
+
+  describe("when a quick job fails on a pull request", () => {
+    const quick = [
+      ["stop-after-format", "ci-sqlite"],
+      ["stop-after-typecheck", "typecheck"],
+      ["stop-after-lint", "lint"],
+    ] as const;
+
+    it.each(quick)(
+      "%s cancels the run once %s has failed, and only then",
+      (id, after) => {
+        const job = jobs[id];
+        expect(needsOf(job)).toEqual(["changes", after]);
+        // Never on `main`, a nightly or a dispatch, and never for a draft,
+        // which runs no slow job.
+        expect(job?.if).toBe(
+          "${{ failure() && needs.changes.result == 'success' && github.event_name == 'pull_request' && !github.event.pull_request.draft }}",
+        );
+        expect(job?.permissions).toEqual({ actions: "write" });
+        expect(job?.steps).toHaveLength(1);
+        expect(job?.steps[0]?.run).toContain('gh run cancel "$GITHUB_RUN_ID"');
+      },
+    );
+
+    it("leaves the gate waiting for the stopping jobs, so a run that stopped reports `Full CI` red", () => {
+      for (const [id, after] of quick) {
+        expect(needsOf(jobs[GATE])).toContain(id);
+        expect(needsOf(jobs[GATE])).toContain(after);
+      }
+    });
+
+    it("is read by the shell step as failed, whatever else was cancelled", () => {
+      const script = jobs[GATE]?.steps[0]?.run ?? "exit 99";
+      const results = "failure cancelled cancelled skipped cancelled";
+      expect(() =>
+        execFileSync("bash", ["-e", "-c", script], {
+          env: { ...process.env, RESULTS: results },
+          stdio: "pipe",
+        }),
+      ).toThrow();
+    });
   });
 
   it("reads the results of the jobs it waits for, and does nothing else", () => {
