@@ -2452,13 +2452,29 @@ If the server refuses every move of an edge's source a drain sends, then a devic
 
 **Tests:** `device/edge-move.test.ts › leaves the copy current where the server refuses every move`.
 
+### `queue-and-verdicts/retype-expires`
+
+When the server takes an edit of an item that moves it to another type, a device MUST expire the copy, whatever rows the copy holds.
+
+**Reason:** a retype changes the reach (`reach/moves-retype`) on the edit alone, and the item may leave or enter what the copy's slice reads, which no answer tells a device; the next hydration holds the item where the server does. An edit that names the type the row already has moves nothing, and a device queues none (`reach/keeps-same-type`).
+
+**Tests:** `device/retype-drain.test.ts › sends the writes queued behind it and expires the copy once, at the end`.
+
+### `queue-and-verdicts/retype-carries-on`
+
+When a device expires the copy for a retype, a device MUST send the writes queued behind the retype in the same drain, and end the drain `copy_expired` once, after the last write it sent, leaving the read after each answer owed as it does after a move of an edge's source (`queue-and-verdicts/edge-source-move-reads-owed`).
+
+**Reason:** only the copy is stale; the writes are the person's, and stopping at the retype would cost a hydration for every retype a batch holds.
+
+**Tests:** `device/retype-drain.test.ts › sends the writes queued behind it and expires the copy once, at the end`.
+
 ### `queue-and-verdicts/reach-change-ends-drain`
 
-If a drain meets a changed reach anywhere but in the read after the answer it has just had to a move of an edge's source, then a device MUST end the drain `copy_expired` at once, sending no further write.
+If a drain meets a changed reach anywhere but in the read after the answer it has just had to a move of an edge's source or to a retype, then a device MUST end the drain `copy_expired` at once, sending no further write.
 
-**Reason:** only a move of a source answered in the drain at hand is known to have changed the reach; a change from any other cause, or met by a read an earlier drain left owed, is news the drain had no part in, and the caller learns of it before more is sent.
+**Reason:** only a move of a source or a retype answered in the drain at hand is known to have changed the reach (`reach/moves-edge-source`, `reach/moves-retype`); a change from any other cause, or met by a read an earlier drain left owed, is news the drain had no part in, and the caller learns of it before more is sent.
 
-**Tests:** `device/edge-move.test.ts › ends at once where the read of a write that moves no source meets a changed reach`, `› ends at once where a read owed from an earlier drain meets a changed reach`, `› expires the copy where another client changed the reach during a drain whose moves were all refused`.
+**Tests:** `device/edge-move.test.ts › ends at once where the read of a write that moves no source meets a changed reach`, `› ends at once where a read owed from an earlier drain meets a changed reach`, `› expires the copy where another client changed the reach during a drain whose moves were all refused`, `device/retype-drain.test.ts › ends at once where the read of an edit that retypes nothing meets a changed reach`.
 
 ### `queue-and-verdicts/edge-move-waits-new-end`
 

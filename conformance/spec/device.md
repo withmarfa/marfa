@@ -4306,7 +4306,7 @@ If a catch-up or a held stream ends `decoding` on an event whose data the device
 
 ### `device/reach-changed`
 
-If the server says the copy's reach has changed, other than in the read after the answer a drain has just had to a move of an edge's source (`queue-and-verdicts/edge-source-move-carries-on`), then a device MUST end the operation `copy_expired` with the reason `reach_changed`, expiring the copy and keeping its queue.
+If the server says the copy's reach has changed, other than in the read after the answer a drain has just had to a move of an edge's source or to a retype (`queue-and-verdicts/edge-source-move-carries-on`, `queue-and-verdicts/retype-carries-on`), then a device MUST end the operation `copy_expired` with the reason `reach_changed`, expiring the copy and keeping its queue.
 
 **Reason:** a retype, a narrowed grant or a changed source filter cannot then leave old rows readable as current.
 

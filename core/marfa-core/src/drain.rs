@@ -2519,7 +2519,7 @@ fn settle_success(
             &owed,
             Bin::Held,
             pass,
-            answered_now && moves_source(row),
+            answered_now && changes_reach(row),
         )
     }) {
         Ok(read) => read,
@@ -3188,26 +3188,33 @@ impl ReachChange {
     }
 }
 
-/// Whether a write moves an edge's source, which the server answers by
-/// changing the reach (`reach/moves-edge-source`). Only a move
-/// answered in the pass at hand is known to have changed it; a receipt a
-/// pass finds from an earlier one is not.
-fn moves_source(row: &QueuedWrite) -> bool {
-    row.kind == WriteKind::UpdateEdge && row.body.get("source_id").is_some()
+/// Whether a write is one the server answers by changing the reach: a move
+/// of an edge's source (`reach/moves-edge-source`) or a retype
+/// (`reach/moves-retype`). A write queued with an unchanged type carries no
+/// `retype`, so only a real type change counts (`reach/keeps-same-type`).
+/// Only one answered in the pass at hand is known to have changed it; a
+/// receipt a pass finds from an earlier one is not.
+fn changes_reach(row: &QueuedWrite) -> bool {
+    match row.kind {
+        WriteKind::UpdateEdge => row.body.get("source_id").is_some(),
+        WriteKind::UpdateItem => row.body.get("retype") == Some(&serde_json::Value::Bool(true)),
+        _ => false,
+    }
 }
 
 /// Reads the row an answer or a refusal owes the copy. Where the read meets a
-/// changed reach and `source_move` says the write was a move of an edge's
-/// source, the pass notes it and goes on, and every read after it is left
+/// changed reach and `reach_write` says the write was a move of an edge's
+/// source or a retype, the pass notes it and goes on, and every read after it is left
 /// unmade, since the server would refuse each the same way
-/// (`queue-and-verdicts/edge-source-move-carries-on`); any other change ends
+/// (`queue-and-verdicts/edge-source-move-carries-on`,
+/// `queue-and-verdicts/retype-carries-on`); any other change ends
 /// the pass here, with the copy expired.
 fn read_owed(
     core: &Core,
     owed: &store::Owed,
     bin: Bin,
     pass: &mut ReachChange,
-    source_move: bool,
+    reach_write: bool,
 ) -> Result<ReadBack> {
     if pass.changed() {
         return Ok(ReadBack::Unread);
@@ -3220,7 +3227,7 @@ fn read_owed(
         )
     };
     match read_held(core, owed, bin, &context, before) {
-        Err(CoreError::CopyExpired { reason }) if source_move && reason == "reach_changed" => {
+        Err(CoreError::CopyExpired { reason }) if reach_write && reason == "reach_changed" => {
             pass.seen = Some((context, reason));
             Ok(ReadBack::Unread)
         }
