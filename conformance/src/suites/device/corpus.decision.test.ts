@@ -197,15 +197,32 @@ describe("every device statement is asserted by something", () => {
     // request.
     const ON_MACOS = /\.runIf\(process\.platform === "darwin"\)/g;
     const skips = (text: string) => SKIPS.test(text.replace(ON_MACOS, ""));
+    // GitHub's hosted Macs clamp every process at utility, so no run there
+    // can show a thread lowered to it: the priority fixture skips where its
+    // sibling reads the clamp, and asserts `folders/watch-utility-priority`
+    // on a Mac that does not clamp. The core's own tests read each thread's
+    // class from inside the process, which a clamp does not hide.
+    const CLAMPED = {
+      file: "folders-autostart.test.ts",
+      written: "context.skip(CLAMPED);",
+    };
+    const read = (file: string) => {
+      const text = readFileSync(resolve(here, file), "utf8");
+      return file === CLAMPED.file ? text.replace(CLAMPED.written, "") : text;
+    };
+    // The witness: the exception names a skip that is there, once, so it
+    // goes when the skip does.
+    expect(
+      readFileSync(resolve(here, CLAMPED.file), "utf8").split(CLAMPED.written)
+        .length - 1,
+    ).toBe(1);
     expect(skips('describe.runIf(process.platform === "darwin")("a")')).toBe(
       false,
     );
     expect(skips('describe.runIf(process.platform === "linux")("a")')).toBe(
       true,
     );
-    const skipping = fixtureFiles.filter((file) =>
-      skips(readFileSync(resolve(here, file), "utf8")),
-    );
+    const skipping = fixtureFiles.filter((file) => skips(read(file)));
     expect(
       skipping,
       "a device fixture skips itself, so the statement citing it is asserted by nothing",
