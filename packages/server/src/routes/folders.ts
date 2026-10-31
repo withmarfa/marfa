@@ -342,7 +342,7 @@ const notFound = {
 };
 
 const SETTING_MALFORMED =
-  "a setting is malformed or undeclared, such as a `system.*` type, a `first_placement` directory outside the folder or with a `..` name, or a `query.filter` with a `backref` condition. `details.errors[0].path` or `details.unknown_body_fields` names it.";
+  "a setting is malformed or undeclared, such as a `system.*` type, a `..` placement or a `backref` filter. `details.errors[0].path` or `details.unknown_body_fields` names it.";
 
 const SETTING_TYPE_UNKNOWN = "- `unknown_type`: a setting's type is unknown.";
 
