@@ -104,6 +104,32 @@ describe("a range, a currency and a list of entries in a type", () => {
       mended: { x: { type: "string", format: "currency" } },
     },
     {
+      what: "a maxLength on a currency field",
+      bad: { x: { type: "string", format: "currency", maxLength: 2 } },
+      named: "fields.x.maxLength",
+      mended: { x: { type: "string", format: "currency" } },
+    },
+    {
+      what: "a maxLength on a currency member",
+      bad: {
+        x: {
+          type: "array",
+          items_type: "object",
+          items_fields: {
+            m: { type: "string", format: "currency", maxLength: 2 },
+          },
+        },
+      },
+      named: "fields.x.items_fields.m.maxLength",
+      mended: {
+        x: {
+          type: "array",
+          items_type: "object",
+          items_fields: { m: { type: "string", format: "currency" } },
+        },
+      },
+    },
+    {
       what: "items_fields on a string",
       bad: { x: { type: "string", items_fields: CONTACTS.items_fields } },
       named: "fields.x.items_fields",
@@ -363,6 +389,30 @@ describe("a value in a field with a range, a currency or entries", () => {
       expect(fieldsOf(refused), what).toContain(named);
     },
   );
+
+  it("refuses a member named __proto__ as undeclared, which a JSON text makes an own key", async () => {
+    const text = (entry: string) =>
+      `{"type":${JSON.stringify(typeId)},"source":${JSON.stringify(ctx.source)},"properties":{"contacts":[${entry}]}}`;
+    const send = (entry: string) =>
+      client.rawRequest<{ item: { id: string } }>("/items", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: text(entry),
+      });
+    const refused = await send(
+      '{"value":"a@example.test","__proto__":{"x":1}}',
+    );
+    expect(refused.status, JSON.stringify(refused.error)).toBe(400);
+    expect(refused.error?.error.code).toBe("invalid_properties");
+    expect(fieldsOf(refused)).toContain("contacts.0.__proto__");
+    const alone = await send('{"__proto__":1}');
+    expect(alone.status).toBe(400);
+    expect(fieldsOf(alone)).toContain("contacts.0.__proto__");
+    // The witness: the same entry without the member is taken.
+    const taken = await send('{"value":"a@example.test"}');
+    expect(taken.status, JSON.stringify(taken.error)).toBe(201);
+    trackItem(ctx, taken.data.item.id);
+  });
 
   it("checks the entries on an update and a bulk entry, naming the member, and on entries stored before the field declared its members", async () => {
     const made = await create({

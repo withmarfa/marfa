@@ -369,9 +369,9 @@ If a `merge_policy` names a field the type does not declare or inherit, or a str
 
 ### `types/field-grammar`
 
-If a type names a field definition with an unknown `type` or `format`, an `enum` whose `enum_values` is missing or empty or holds a value that is not a string, a status field `types/status-refused` refuses, an `array` with no `items_type`, or a `maxLength` or `maxItems` that is not a whole number of at least 1 or on a type it does not apply to, or a `minimum`, `maximum` or `items_fields` that `types/range-refused` or `types/items-fields-refused` refuses, or the type names `states`, `default_state` or `transitions`, a `required` entry naming a field that neither the type nor an ancestor declares, a role other than `container`, or a `display_hints` `title_field` or `body_field` naming a field neither it nor an ancestor declares, then the server MUST answer `400 invalid_schema` naming the member.
+If a type names a field definition with an unknown `type` or `format`, an `enum` whose `enum_values` is missing or empty or holds a value that is not a string, a status field `types/status-refused` refuses, an `array` with no `items_type`, or a `maxLength` or `maxItems` that is not a whole number of at least 1 or on a type it does not apply to, a `maxLength` on a `string` field whose `format` is `currency`, or a `minimum`, `maximum` or `items_fields` that `types/range-refused` or `types/items-fields-refused` refuses, or the type names `states`, `default_state` or `transitions`, a `required` entry naming a field that neither the type nor an ancestor declares, a role other than `container`, or a `display_hints` `title_field` or `body_field` naming a field neither it nor an ancestor declares, then the server MUST answer `400 invalid_schema` naming the member.
 
-**Tests:** `compliance/field-types.test.ts › refuses a field definition the grammar does not take`, `› takes a required entry naming a field only an ancestor declares`.
+**Tests:** `compliance/field-types.test.ts › refuses a field definition the grammar does not take`, `› takes a required entry naming a field only an ancestor declares`, `compliance/field-rules.test.ts › refuses $what with invalid_schema, naming the member`.
 
 ### `types/unknown-key`
 
@@ -457,7 +457,7 @@ If an item names a `datetime` value with a time and no zone, or outside the boun
 
 ### `types/url-value`
 
-When an item names a value for a `url` field, or an element of an array field whose `items_type` is `url`, the server MUST take the value where the WHATWG URL standard parses it as an absolute URL after the whitespace of JavaScript's `String.prototype.trim` is removed from both ends: the characters Unicode counts as white space except U+0085, and U+FEFF.
+When an item names a value for a `url` field, an element of an array field whose `items_type` is `url`, or a `url` member of an entry of a list, the server MUST take the value where the WHATWG URL standard parses it as an absolute URL after the whitespace of JavaScript's `String.prototype.trim` is removed from both ends: the characters Unicode counts as white space except U+0085, and U+FEFF.
 
 **Reason:** a device judges the same value offline as the server does online (`device/url-trimmed`), so a padded value that the standard takes is taken on both. The Node versions the server supports judge some hosts differently from each other and from the standard, so the server runs the standard with `whatwg-url`, its reference implementation, and does not use the platform's `URL`.
 
@@ -489,13 +489,13 @@ If a `url` value of a special scheme has a host that holds a forbidden domain co
 
 ### `types/url-stored`
 
-When the server takes a `url` value, the server MUST store the value without the whitespace trimmed from its ends and without tab, line feed and carriage return characters anywhere in it.
+When the server takes a `url` value, an element of an array of `url` or a `url` member of an entry of a list, the server MUST store the value without the whitespace trimmed from its ends and without tab, line feed and carriage return characters anywhere in it.
 
 **Tests:** `device/property-validation-live.test.ts › treats %s in a url the same on both paths and stores the same value`.
 
 ### `types/array-items`
 
-When an item names an `array` field whose `items_type` is a field type other than `status`, the server MUST take each element that a field of that type takes as its value, an `enum` taking the field's `enum_values`.
+When an item names an `array` field whose `items_type` is a field type other than `status`, the server MUST take each element that a field of that type takes as its value, an `enum` taking the field's `enum_values` and, where the field names `items_fields`, an `object` taking only the entries `types/array-entries` takes.
 
 **Reason:** a type is a promise a reader can rely on, and a list of strings that may hold a number makes every reader check each element again. `attachments` is a list of `object` and `links` a list of `string` on every type.
 

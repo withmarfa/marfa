@@ -580,6 +580,15 @@ function validateFieldShape(
         hint: "maxLength bounds string length. Use maxItems for arrays; drop it elsewhere.",
       }),
     );
+  } else if (fd.maxLength !== undefined && fd.format === "currency") {
+    errors.push(
+      issue({
+        field: `${path}.maxLength`,
+        expected: "no maxLength on a currency field",
+        actual: describe(fd.maxLength),
+        hint: "A currency code is always three capital letters, so a length bound would be ignored. Drop maxLength.",
+      }),
+    );
   }
 
   if (fd.maxItems !== undefined && fd.type !== "array") {

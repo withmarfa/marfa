@@ -14,6 +14,7 @@ import {
   ALL_TYPE_IDS,
   EDGE_PROPERTY_KEYS,
   EDGE_TYPE_SCHEMA_KEYS,
+  ENTRY_MEMBER_TYPES,
   FIELD_FORMATS,
   FIELD_TYPES,
   RESERVED_ITEM_FIELDS,
@@ -105,7 +106,12 @@ export {
 // The field vocabularies the validator enforces, re-exported for the same
 // reason: the door that declares what a field definition looks like reads
 // the validator's own lists rather than restating them.
-export { ALWAYS_SEARCHED_FIELDS, FIELD_TYPES, FIELD_FORMATS };
+export {
+  ALWAYS_SEARCHED_FIELDS,
+  ENTRY_MEMBER_TYPES,
+  FIELD_TYPES,
+  FIELD_FORMATS,
+};
 
 // The fixed status groups and how a chain joins a status field's words.
 export {
@@ -886,7 +892,12 @@ const bounded = (
  * The schema of one entry of a list whose `items_fields` names its members: a
  * non-empty object holding only those members, each required one and each
  * value a field of the member's definition takes. A member with no value is
- * left out; a `null` is no value.
+ * left out; a `null` is no value. The entry is stored from what each member's
+ * schema answers, so a `url` member is held trimmed (`types/url-stored`).
+ *
+ * The members are read from the raw input and not from a record's output,
+ * which drops a key named `__proto__` that JSON.parse made an own key, so an
+ * entry carrying one would be taken and stored without it.
  */
 function entryToZod(members: Readonly<Record<string, EntryMember>>): z.ZodType {
   const checks = new Map(
@@ -895,40 +906,59 @@ function entryToZod(members: Readonly<Record<string, EntryMember>>): z.ZodType {
       valueToZod(member.type, member) ?? z.unknown(),
     ]),
   );
-  return z.record(z.string(), z.unknown()).superRefine((entry, ctx) => {
+  const plain = z.record(z.string(), z.unknown());
+  return z.unknown().transform((raw, ctx) => {
+    const typed = plain.safeParse(raw);
+    if (!typed.success) {
+      ctx.addIssue({
+        code: "custom",
+        message: typed.error.issues[0]?.message ?? "Must be an object",
+      });
+      return z.NEVER;
+    }
+    const entry = raw as Record<string, unknown>;
     const given = Object.keys(entry);
     if (given.length === 0) {
       ctx.addIssue({
         code: "custom",
         message: "Must have at least one member",
       });
-      return;
+      return z.NEVER;
     }
+    const stored: [string, unknown][] = [];
+    let refused = false;
     for (const name of given) {
-      if (!checks.has(name)) {
+      const check = checks.get(name);
+      if (!check) {
+        refused = true;
         ctx.addIssue({
           code: "custom",
           path: [name],
           message: "Is not a member of the entry",
         });
-      }
-    }
-    for (const [name, member] of Object.entries(members)) {
-      if (!Object.hasOwn(entry, name)) {
-        if (member.required) {
-          ctx.addIssue({
-            code: "custom",
-            path: [name],
-            message: "Required",
-          });
-        }
         continue;
       }
-      const verdict = checks.get(name)?.safeParse(entry[name]);
-      for (const found of verdict?.error?.issues ?? []) {
+      const verdict = check.safeParse(entry[name]);
+      if (verdict.success) {
+        stored.push([name, verdict.data]);
+        continue;
+      }
+      refused = true;
+      for (const found of verdict.error.issues) {
         ctx.addIssue({ ...found, path: [name, ...found.path] });
       }
     }
+    for (const [name, member] of Object.entries(members)) {
+      if (member.required && !Object.hasOwn(entry, name)) {
+        refused = true;
+        ctx.addIssue({
+          code: "custom",
+          path: [name],
+          message: "Required",
+        });
+      }
+    }
+    return refused ? z.NEVER : Object.fromEntries(stored);
   });
 }
 
