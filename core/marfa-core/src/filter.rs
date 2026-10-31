@@ -12,6 +12,13 @@ use crate::error::CoreError;
 use crate::js;
 use crate::query::escape_like;
 
+mod model;
+
+pub use model::{
+    EdgeDirection, FilterCondition, FilterExpression, FilterField, FilterJoin, FilterOperator,
+    FilterValue, SystemField,
+};
+
 /// Measured in UTF-16 code units, which is what the server's `length` counts.
 const MAX_INPUT_LENGTH: usize = 2048;
 const MAX_CONDITIONS: usize = 10;
@@ -245,19 +252,12 @@ impl Condition {
         statuses: &[StatusField],
     ) -> Result<String> {
         Ok(match &self.term {
-            Term::System { column, compare } => {
-                let literal = if matches!(*column, "created_at" | "updated_at" | "occurred_at")
-                    && !matches!(compare, Compare::Contains | Compare::StartsWith)
-                {
-                    let Literal::Text(text) = &self.value else {
-                        return Err(crate::time::invalid(column, "expected a timestamp"));
-                    };
-                    Literal::Text(crate::time::normalize(text, column)?)
-                } else {
-                    self.value.clone()
-                };
-                compared(&format!("items.{column}"), *compare, &literal, values)
-            }
+            Term::System { column, compare } => compared(
+                &format!("items.{column}"),
+                *compare,
+                &system_literal(column, *compare, &self.value)?,
+                values,
+            ),
             Term::Property { name, op } => {
                 values.push(Value::String(format!("$.{name}")));
                 let extract = "json_extract(items.properties, ?)";
@@ -368,6 +368,21 @@ impl Condition {
             Term::StatusGroup(op) => status_group(*op, &self.value, statuses, values),
         })
     }
+}
+
+/// The literal a system field is compared with: a time column compared as
+/// an instant takes a timestamp, which is normalized, and refuses anything
+/// else as the server's SQL builder refuses it.
+fn system_literal(column: &str, compare: Compare, value: &Literal) -> Result<Literal> {
+    if !matches!(column, "created_at" | "updated_at" | "occurred_at")
+        || matches!(compare, Compare::Contains | Compare::StartsWith)
+    {
+        return Ok(value.clone());
+    }
+    let Literal::Text(text) = value else {
+        return Err(crate::time::invalid(column, "expected a timestamp"));
+    };
+    Ok(Literal::Text(crate::time::normalize(text, column)?))
 }
 
 /// A `status_group` term, answered through each type's status field: the
@@ -836,7 +851,8 @@ fn expect<'a>(tokens: &'a [Token], pos: usize, context: &str) -> Result<&'a Toke
 }
 
 fn parse(input: &str) -> Result<Expression> {
-    if input.trim().is_empty() {
+    // JavaScript's `trim`, which takes U+FEFF and leaves U+0085.
+    if input.chars().all(js::is_space) {
         return Err(refused("Filter expression cannot be empty"));
     }
     let length = input.encode_utf16().count();

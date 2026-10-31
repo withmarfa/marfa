@@ -98,6 +98,10 @@ pub use file_cache::{
     Attachments, DEFAULT_FLOOR as FILE_BUDGET_FLOOR, FileBudget, FileCache, KeptFetch, NotHeld,
     NotHeldReason,
 };
+pub use filter::{
+    EdgeDirection, FilterCondition, FilterExpression, FilterField, FilterJoin, FilterOperator,
+    FilterValue, SystemField,
+};
 pub use folder::{
     CaughtUp, Confirmed, Drained, FOLDER_TYPE, FileStatus, FirstSync, Folder, Paused, PullReport,
     Removal, Restored, ScanReport, SendReport, Settings, SettingsFileReport, StatusReport,
