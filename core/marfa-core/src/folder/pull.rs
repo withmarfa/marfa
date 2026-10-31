@@ -1925,7 +1925,8 @@ impl Folder {
 
     /// The binding of a file that this folder never wrote but found holding
     /// byte for byte what it would write there at the version line the file
-    /// shows, or at the item's own version where the file is in place and
+    /// shows, and at the state it shows where the item has left the folder,
+    /// or at the item's own version where the file is in place and
     /// holds what the pull would write now, as a folder added over files an
     /// earlier copy wrote finds them, with those bytes recorded as its own.
     /// `None` where the file is not such a file.
