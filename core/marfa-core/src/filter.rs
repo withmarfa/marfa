@@ -184,6 +184,11 @@ enum Term {
         name: String,
         op: Op,
     },
+    /// `properties.<field>.<member> eq <value>`, the only operator it takes.
+    Entry {
+        field: String,
+        member: String,
+    },
     TagHeld,
     TagsPresent(bool),
     Edge {
@@ -287,6 +292,37 @@ impl Condition {
                     Op::NotExists => format!("{extract} IS NULL"),
                 };
                 format!("CASE WHEN json_valid(items.properties) THEN ({clause}) ELSE 0 END")
+            }
+            // The server's `entryMemberSql`: some entry of the list is an
+            // object whose member equals the value. `CASE` keeps
+            // `json_extract` off an entry that is not an object.
+            Term::Entry { field, member } => {
+                let list = format!("$.{field}");
+                let path = format!("$.{member}");
+                let extract = "json_extract(entry.value, ?)";
+                let member_value = if matches!(self.value, Literal::Number(_)) {
+                    values.extend([
+                        Value::String(list.clone()),
+                        Value::String(list),
+                        Value::String(path.clone()),
+                        Value::String(path.clone()),
+                        Value::String(path),
+                    ]);
+                    format!(
+                        "CASE WHEN entry.type <> 'object' THEN NULL WHEN json_type(entry.value, ?) IN ('integer', 'real') THEN CAST({extract} AS REAL) ELSE {extract} END"
+                    )
+                } else {
+                    values.extend([
+                        Value::String(list.clone()),
+                        Value::String(list),
+                        Value::String(path),
+                    ]);
+                    format!("CASE WHEN entry.type = 'object' THEN {extract} END")
+                };
+                values.push(self.value.bound());
+                format!(
+                    "CASE WHEN json_valid(items.properties) THEN EXISTS (SELECT 1 FROM json_each(items.properties, ?) AS entry WHERE json_type(items.properties, ?) = 'array' AND {member_value} = ?) ELSE 0 END"
+                )
             }
             // `+` takes the column's text affinity off, so a number is
             // compared as the number it is, as it is against the server's
@@ -595,6 +631,7 @@ fn tokenize(input: &str) -> Result<Vec<Token>> {
 enum Field {
     System(&'static str),
     Property(String),
+    Entry { field: String, member: String },
     Tags,
     StatusGroup,
     Edge { edge_type: String, backref: bool },
@@ -626,23 +663,32 @@ fn field(token: &Token) -> Result<Field> {
                 token.pos
             )));
         }
-        if path.contains('.') {
+        let names: Vec<&str> = path.split('.').collect();
+        if names.len() > 2 {
             return Err(refused(format!(
-                "Nested property paths are not supported. Use \"properties.<field>\" at position {}",
+                "Nested property paths are not supported. Use \"properties.<field>\", or \"properties.<field>.<member>\" for a member of a list's entries, at position {}",
                 token.pos
             )));
         }
-        let mut chars = path.chars();
-        let valid = chars
-            .next()
-            .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
-            && chars.all(|c| c.is_ascii_alphanumeric() || c == '_');
-        if !valid {
-            return Err(refused(format!(
-                "Invalid property name \"{path}\". Property names must match /^[a-zA-Z_][a-zA-Z0-9_]*$/"
-            )));
+        for name in &names {
+            let mut chars = name.chars();
+            let valid = chars
+                .next()
+                .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+                && chars.all(|c| c.is_ascii_alphanumeric() || c == '_');
+            if !valid {
+                return Err(refused(format!(
+                    "Invalid property name \"{name}\". Property names must match /^[a-zA-Z_][a-zA-Z0-9_]*$/"
+                )));
+            }
         }
-        return Ok(Field::Property(path.to_string()));
+        return Ok(match names.as_slice() {
+            [field, member] => Field::Entry {
+                field: (*field).to_string(),
+                member: (*member).to_string(),
+            },
+            _ => Field::Property(path.to_string()),
+        });
     }
     if let Some(column) = SYSTEM_FIELDS.iter().find(|column| **column == name) {
         return Ok(Field::System(column));
@@ -723,6 +769,15 @@ fn term(field: Field, op: Op) -> Result<Term> {
             }
         },
         Field::Property(name) => Term::Property { name, op },
+        Field::Entry { field, member } => match op {
+            Op::Compare(Compare::Eq) => Term::Entry { field, member },
+            _ => {
+                return Err(refused(format!(
+                    "Operator \"{}\" is not valid for a member of a list's entries. Use: eq",
+                    op.name()
+                )));
+            }
+        },
     })
 }
 
@@ -742,6 +797,9 @@ fn refuse_null(token: &Token, term: &Term, op: Op) -> CoreError {
             "{never} Use \"not_exists\" to ask for rows that draw no edge of this type, and \"exists\" for rows that draw one"
         ),
         Term::System { column, .. } => format!("{never} Compare \"{column}\" with a value"),
+        Term::Entry { field, member } => {
+            format!("{never} Compare \"properties.{field}.{member}\" with a value")
+        }
         Term::TagHeld | Term::TagsPresent(_) => format!("{never} Name the tag to look for"),
         Term::StatusGroup(_) => format!(
             "{never} Use \"not_exists\" to ask for items with no status word their type declares, and \"exists\" for items with one"
@@ -909,7 +967,10 @@ mod tests {
         for input in [
             "",
             "  \t ",
-            "properties.a.b eq 1",
+            "properties.a.b.c eq 1",
+            "properties.a.b neq 1",
+            "properties.a.b exists",
+            "properties.a.1b eq 1",
             "properties. eq 1",
             "properties.1a eq 1",
             "properties eq 1",
@@ -1239,6 +1300,60 @@ mod tests {
         let conn = family();
         assert!(ids(&conn, Some("status_group eq \"completed\""), None).is_empty());
         assert_eq!(ids(&conn, Some("status_group not_exists"), None).len(), 4);
+    }
+
+    #[test]
+    fn a_member_term_matches_any_entry_and_no_field_that_is_not_a_list_of_objects() {
+        let conn = conn();
+        for (id, properties) in [
+            (
+                "second",
+                json!({ "emails": [{ "value": "a@x.test" }, { "value": "b@x.test" }] }),
+            ),
+            (
+                "first",
+                json!({ "emails": [{ "value": "b@x.test", "label": "work" }] }),
+            ),
+            ("other", json!({ "emails": [{ "value": "c@x.test" }] })),
+            ("text", json!({ "emails": "b@x.test" })),
+            ("object", json!({ "emails": { "value": "b@x.test" } })),
+            (
+                "objects",
+                json!({ "emails": { "x": { "value": "b@x.test" } } }),
+            ),
+            ("scalars", json!({ "emails": ["b@x.test", 1, null] })),
+            ("member", json!({ "emails": [{ "address": "b@x.test" }] })),
+            (
+                "number",
+                json!({ "ranks": [{ "value": 5.0 }, { "value": "5" }] }),
+            ),
+        ] {
+            let item = wire_item(
+                id,
+                "core.note",
+                "active",
+                "2026-01-01T00:00:00Z",
+                properties,
+            );
+            store::upsert_item(&conn, &item, None, &Indexing::default()).unwrap();
+        }
+        conn.execute(
+            "UPDATE items SET properties = '{\"emails\":' WHERE id = 'other'",
+            [],
+        )
+        .unwrap();
+        for (filter, matched) in [
+            (
+                "properties.emails.value eq \"b@x.test\"",
+                &["first", "second"][..],
+            ),
+            ("properties.emails.label eq \"work\"", &["first"]),
+            ("properties.ranks.value eq 5", &["number"]),
+            ("properties.ranks.value eq \"5\"", &["number"]),
+            ("properties.emails.value eq 1", &[]),
+        ] {
+            assert_eq!(ids(&conn, Some(filter), None), matched, "{filter}");
+        }
     }
 
     fn ids(conn: &Connection, filter: Option<&str>, beneath: Option<&str>) -> Vec<String> {
