@@ -104,9 +104,11 @@ If `POST /edges` names a `source_id` or a `target_id` that no item holds, then t
 
 ### `edges/create-end-in-bin`
 
-If `POST /edges` names a `source_id` or a `target_id` whose item is in the bin, then the server MUST answer `404 item_not_found`.
+If `POST /edges` names a `source_id` whose item is in the bin, or a `target_id` whose item is in the bin for an edge type whose `cascade_on_delete` is not `with-hosts`, then the server MUST answer `404 item_not_found`.
 
-**Tests:** `compliance/edge-move.test.ts › refuses a move of an edge whose end that stays is in the bin, as its create is refused`, `compliance/edge-gaps.test.ts › answers a target in the bin as item_not_found`.
+**Reason:** an edge of a `with-hosts` type to a host in the bin is a part that arrives late, such as an offline write that syncs after the host's trash (`edges/parts-late-accepted`).
+
+**Tests:** `correctness/edges/edges-parts.test.ts › is refused from a source in the bin`, `compliance/edge-move.test.ts › refuses a move of an edge whose end that stays is in the bin, as its create is refused`, `compliance/edge-gaps.test.ts › answers a target in the bin as item_not_found`.
 
 ## Client-minted edge ids
 
@@ -592,7 +594,7 @@ If `PATCH /edges/{id}` moves an end onto an item that does not exist, then the s
 
 ### `edges/move-end-in-bin`
 
-If `PATCH /edges/{id}` moves an edge whose end that stays is in the bin, then the server MUST answer `404 item_not_found`, as a create of the edge is refused.
+If `PATCH /edges/{id}` moves an edge whose end that stays is in the bin, then the server MUST answer `404 item_not_found`, as a create of the edge is refused (`edges/create-end-in-bin`).
 
 **Tests:** `compliance/edge-move.test.ts › refuses a move of an edge whose end that stays is in the bin, as its create is refused`.
 
@@ -1156,11 +1158,11 @@ When `DELETE /items/{id}` names an item that holds outbound edges of a registere
 
 ### `edges/orphan-shipped`
 
-When `DELETE /items/{id}` names an item that holds an edge of a shipped type other than `parent-of`, the server MUST leave the other end of the edge active.
+When `DELETE /items/{id}` names an item that holds an edge of a shipped type whose `cascade_on_delete` is `orphan`, the server MUST leave the other end of the edge active.
 
-**Reason:** the shipped types other than `parent-of` declare `cascade_on_delete` `orphan`, and the edge row stays while its item is in the bin.
+**Reason:** the edge row stays while its item is in the bin. What a `with-hosts` edge takes is `edges/parts-trash`, and it takes nothing from the host when its part is deleted.
 
-**Tests:** `correctness/edges/edges-cascade.test.ts › supersedes defaults to orphan: deleting head leaves predecessor intact`, `› about defaults to orphan: deleting source leaves target intact`, `› attached-to defaults to orphan: deleting the host leaves the attachment intact`, `› references defaults to orphan: deleting the referenced target leaves the source intact`.
+**Tests:** `correctness/edges/edges-cascade.test.ts › supersedes defaults to orphan: deleting head leaves predecessor intact`, `› about defaults to orphan: deleting source leaves target intact`, `› references defaults to orphan: deleting the referenced target leaves the source intact`, `› attached-to takes nothing from the attachment's side: deleting the attachment leaves the host intact`.
 
 ### `edges/excerpt-of-source-binned`
 
@@ -1244,6 +1246,126 @@ When a key deletes an item whose `parent-of` children include children whose typ
 
 **Tests:** `compliance/edge-hidden-limits.test.ts › trashes a hidden child with the parent the key deletes`.
 
+## Parts and their hosts
+
+An edge type whose `cascade_on_delete` is `with-hosts`, shipped or registered, makes its source a part and its target that part's host. A part goes to the bin when its last host does, and comes back with any of them. A part whose hosts are all in the bin stays a part in the bin only while it went there with them.
+
+### `edges/parts-trash`
+
+When `DELETE /items/{id}`, a transition into the bin or a bulk transition into the bin moves items into the bin, the server MUST also move into the bin each item out of the bin that is the source of a `with-hosts` edge and whose `with-hosts` targets are then all in the bin, at every depth, together with what the `cascade` edges of each such item take.
+
+**Reason:** a comment, a reply to it and an attached file are kept with the item they belong to, and a person who bins the item does not want them left behind in lists.
+
+**Tests:** `correctness/edges/edges-parts.test.ts › stays out while one host is out, goes with the last, and comes back with any`, `› takes a reply with the comment it answers, at every depth, and the part's own children`, `› takes the parts a transition into the bin takes, and brings them back on a transition out`, `› takes a part on a bulk transition into the bin and brings it back on one out`, `› treats a registered edge type that declares with-hosts as a shipped one`.
+
+### `edges/parts-trash-kept`
+
+While an item is the source of a `with-hosts` edge whose target is out of the bin, the server MUST NOT move the item into the bin because another of its hosts goes to the bin.
+
+**Tests:** `correctness/edges/edges-parts.test.ts › stays out while one host is out, goes with the last, and comes back with any`, `› names the parts a trash would take in its preview`.
+
+### `edges/parts-trash-marked`
+
+When the server moves a part into the bin with its hosts, the server MUST mark the part with `trashed_by_cascade` `true` and with `trashed_with` naming the host whose trash took it, on its rows and on its `item.deleted` frame.
+
+**Tests:** `correctness/edges/edges-parts.test.ts › stays out while one host is out, goes with the last, and comes back with any`, `› takes a reply with the comment it answers, at every depth, and the part's own children`, `compliance/cascade-marks.test.ts › marks a part's item.deleted, item.restored and item.purged with its host, and the edge the host's purge took`.
+
+### `edges/parts-restore`
+
+When `POST /items/{id}/restore`, a transition out of the bin or a bulk transition out of the bin brings an item back, the server MUST also bring back each item in the bin, at every depth, that went to the bin with its hosts and has a `with-hosts` target out of the bin again.
+
+**Reason:** a comment restored on its own brings back the replies its host's trash took, because the replies went with their hosts, not with the item restored.
+
+**Tests:** `correctness/edges/edges-parts.test.ts › stays out while one host is out, goes with the last, and comes back with any`, `› brings back with a comment restored on its own the replies its host's trash took`, `› takes the parts a transition into the bin takes, and brings them back on a transition out`, `› takes a part on a bulk transition into the bin and brings it back on one out`.
+
+### `edges/parts-restore-marked`
+
+When the server brings a part back with a host, the server MUST name that host in `restored_with` on the part's `item.restored` frame.
+
+**Tests:** `compliance/cascade-marks.test.ts › marks a part's item.deleted, item.restored and item.purged with its host, and the edge the host's purge took`.
+
+### `edges/parts-restore-own`
+
+The server MUST NOT bring an item back from the bin because one of its hosts comes back, while the item went to the bin on its own or with a `cascade` edge.
+
+**Tests:** `correctness/edges/edges-parts.test.ts › does not bring back with its host a part trashed on its own`.
+
+### `edges/parts-unlink`
+
+When `DELETE /edges/{id}` deletes an edge of a `with-hosts` type, the server MUST NOT move either end of the edge into the bin, even when the source is left with only hosts in the bin.
+
+**Reason:** removing an attachment's edge keeps the file as an item of its own, which must never bin it.
+
+**Tests:** `correctness/edges/edges-parts.test.ts › bins nothing when an edge is removed, even the last to a host out of the bin`.
+
+### `edges/parts-archive`
+
+When a transition archives a host, the server MUST NOT change the state of the host's parts.
+
+**Tests:** `correctness/edges/edges-parts.test.ts › changes nothing when a host is archived`.
+
+### `edges/parts-late-accepted`
+
+When `POST /edges`, an entry of `POST /edges/bulk`, `PATCH /edges/{id}` or the `edges` of `POST /items` or `PATCH /items/{id}` names an edge of a `with-hosts` type whose source is out of the bin and whose target is in the bin, the server MUST write the edge.
+
+**Reason:** a comment or a file written offline can sync after its host went to the bin, and refusing it would drop what the person made.
+
+**Tests:** `correctness/edges/edges-parts.test.ts › is accepted to a host in the bin and goes to the bin in the same write`, `› arriving later, as an offline write syncs, behaves the same at every door`.
+
+### `edges/parts-late-binned`
+
+When the server writes an edge of a `with-hosts` type whose target is in the bin and the source then has no `with-hosts` target out of the bin, the server MUST move the source into the bin, with its hosts, in the same write, marked `trashed_with` that target.
+
+**Tests:** `correctness/edges/edges-parts.test.ts › is accepted to a host in the bin and goes to the bin in the same write`, `› arriving later, as an offline write syncs, behaves the same at every door`, `› stays out of the bin while it has a host out of the bin`.
+
+### `edges/parts-purge`
+
+When `POST /items/{id}/purge`, a bulk purge or the `trash-purge` job purges an item, the server MUST also purge each item in the bin that went there with its hosts and has no `with-hosts` edge left, at every depth, whatever its own time in the bin.
+
+**Tests:** `correctness/edges/edges-parts.test.ts › purges a part it leaves with no host, at every depth`, `› counts a part a bulk purge took with its host, and is not refused for it`, `compliance/housekeeping-retention.test.ts › purges a part with the host that took it, however recently, and leaves one trashed on its own`.
+
+### `edges/parts-purge-kept`
+
+When the server purges a host, the server MUST NOT purge a part that still holds a `with-hosts` edge, or a part that went to the bin on its own.
+
+**Reason:** a part trashed on its own waits for its own purge or the bin's expiry; a part with another host in the bin comes back with that host's restore.
+
+**Tests:** `correctness/edges/edges-parts.test.ts › keeps a part whose other host is in the bin, which a restore of that host brings back`, `› leaves in the bin a part trashed on its own`, `compliance/housekeeping-retention.test.ts › purges a part with the host that took it, however recently, and leaves one trashed on its own`.
+
+### `edges/parts-purge-marked`
+
+When the server purges a part with its host, the server MUST name the host in `purged_with` on the `edge.deleted` frame of each edge the host's purge took, and in `trashed_with` on the part's `item.purged` frame.
+
+**Tests:** `compliance/cascade-marks.test.ts › marks a part's item.deleted, item.restored and item.purged with its host, and the edge the host's purge took`.
+
+### `edges/parts-cycle`
+
+If `POST /edges` names an edge of a `with-hosts` type that would close a cycle through `with-hosts` edges of any type, then the server MUST answer `400 edge_constraint_violation` with `details.constraint` `cycle`.
+
+**Reason:** a part that is its own host, through any chain, could never go to the bin with its hosts or come back with them.
+
+**Tests:** `correctness/edges/edges-parts.test.ts › is refused across attached-to and comments-on`.
+
+### `edges/parts-preview`
+
+When `POST /items/trash-preview` names an item, the server MUST list in its `takes` each part the trash would take with its hosts.
+
+**Tests:** `correctness/edges/edges-parts.test.ts › names the parts a trash would take in its preview`.
+
+### `edges/parts-hidden`
+
+When a key moves into the bin or brings back an item, the server MUST apply the parts rules over every host and part, whatever types the key may read.
+
+**Reason:** a limit accepted, as a delete takes children whatever their types (`edges/cascade-hidden-children`).
+
+**Tests:** `compliance/edge-hidden-limits.test.ts › takes and brings back a part whose other host is hidden and in the bin, naming no hidden row`, `› keeps a part whose hidden host is out of the bin, naming it nowhere`, `› takes and brings back a hidden part with the host the key trashes, naming it nowhere`.
+
+### `edges/parts-hidden-unnamed`
+
+When a key moves into the bin, brings back or previews an item, the server MUST NOT name in its answer a part or a host whose type the key may not read.
+
+**Tests:** `compliance/edge-hidden-limits.test.ts › takes and brings back a part whose other host is hidden and in the bin, naming no hidden row`, `› keeps a part whose hidden host is out of the bin, naming it nowhere`, `› takes and brings back a hidden part with the host the key trashes, naming it nowhere`.
+
 ## Edge types
 
 Where one registration meets more than one rule of this section, `edges/types-register-order` says which answer it gets.
@@ -1256,19 +1378,19 @@ When `POST /edge-types` meets more than one of the answers this chapter gives it
 
 ### `edges/types-shipped`
 
-When a credential sends `GET /edge-types`, the server MUST list the ten shipped edge types `about`, `parent-of`, `in-thread`, `attached-to`, `derived-from`, `excerpt-of`, `supersedes`, `references`, `in-collection` and `in-folder`.
+When a credential sends `GET /edge-types`, the server MUST list the eleven shipped edge types `about`, `parent-of`, `in-thread`, `attached-to`, `comments-on`, `derived-from`, `excerpt-of`, `supersedes`, `references`, `in-collection` and `in-folder`.
 
 **Tests:** `compliance/edge-types.test.ts › lists the shipped edge types and a registered one`.
 
 ### `edges/types-shipped-cardinality`
 
-When a credential sends `GET /edge-types`, the server MUST list `parent-of` as `one-to-many`, `in-thread` and `excerpt-of` as `many-to-one`, `supersedes` as `one-to-one` and the other six shipped types as `many-to-many`.
+When a credential sends `GET /edge-types`, the server MUST list `parent-of` as `one-to-many`, `in-thread`, `comments-on` and `excerpt-of` as `many-to-one`, `supersedes` as `one-to-one` and the other six shipped types as `many-to-many`.
 
 **Tests:** `device/fidelity.test.ts › matches the edge types a working copy holds and a folder reads its frontmatter lines by`, `compliance/edge-types.test.ts › core-first resolution: edge_type="about" always routes to core semantics`.
 
 ### `edges/types-shipped-cascade`
 
-When a credential sends `GET /edge-types`, the server MUST list `parent-of` with `cascade_on_delete` `cascade` and the other nine shipped types with `orphan`.
+When a credential sends `GET /edge-types`, the server MUST list `parent-of` with `cascade_on_delete` `cascade`, `attached-to` and `comments-on` with `with-hosts`, and the other eight shipped types with `orphan`.
 
 **Tests:** `device/fidelity.test.ts › matches the edge types a working copy holds and a folder reads its frontmatter lines by`.
 
@@ -1326,9 +1448,9 @@ When the server answers an edge type, on `GET /edge-types` and on the `201` of `
 
 ### `edges/types-acyclic`
 
-When the server answers an edge type, on `GET /edge-types` and on the `201` of `POST /edge-types`, the server MUST give `acyclic` `true` for an edge type it refuses to close a cycle over more than one edge (`edges/cycle`), and `false` for every other.
+When the server answers an edge type, on `GET /edge-types` and on the `201` of `POST /edge-types`, the server MUST give `acyclic` `true` for an edge type it refuses to close a cycle of its own edges over more than one edge (`edges/cycle`), and `false` for every other.
 
-**Reason:** a device judges a cycle from the catalog it holds, not from a list of edge type names.
+**Reason:** a device judges a cycle from the catalog it holds, not from a list of edge type names. The cycle a `with-hosts` edge may not close runs through edges of every `with-hosts` type (`edges/parts-cycle`), so a device reads it from `cascade_on_delete`.
 
 **Tests:** `compliance/edge-types.test.ts › says which edge types refuse a cycle and which refuse nesting, on the list and on registration`.
 

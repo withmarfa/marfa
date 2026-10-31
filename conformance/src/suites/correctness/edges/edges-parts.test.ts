@@ -64,7 +64,11 @@ async function stateOf(id: string): Promise<string | undefined> {
 }
 
 async function trashed(tag: string): Promise<Map<string, MarfaItem>> {
-  const r = await client.listItems({ tags: [tag], state: "trashed", limit: 100 });
+  const r = await client.listItems({
+    tags: [tag],
+    state: "trashed",
+    limit: 100,
+  });
   expect(r.status).toBe(200);
   return new Map(r.data.data.map((item) => [item.id, item]));
 }
@@ -472,7 +476,7 @@ describe("a cycle of parts", () => {
 });
 
 describe("the part filter term", () => {
-  it("selects parts with a host out of the bin on GET /items, stats and a saved view", async () => {
+  it("selects parts with a host out of the bin on GET /items, stats, a saved view and a bulk filter", async () => {
     const tag = `parts-filter-${ctx.runId}`;
     const host = await note(tag);
     const part = await note(tag);

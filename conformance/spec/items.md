@@ -1148,6 +1148,8 @@ If `DELETE /items/{id}` or `POST /items/{id}/purge` names a `version` that is no
 
 When a delete or a transition into the bin moves an item, on its own operation or in a bulk action, the server MUST move into the bin every item a cascading edge (`edges/cascade-parent-of` and `edges/cascade-custom`) reaches from it, at every depth.
 
+**Reason:** the same trash also takes the parts that go with their hosts (`edges/parts-trash`), and what it takes is one set, so a `block` edge on any of it refuses the whole (`items/trash-blocked`).
+
 **Tests:** `correctness/edges/edges-cascade.test.ts › a transition into the bin takes what a delete takes, and a restore brings it back`, `› takes what a cascade reaches on a bulk transition into the bin, and brings it back on a restore`.
 
 ### `items/trash-cascade-announced`
@@ -1164,7 +1166,7 @@ When a delete or a transition into the bin moves an item into the bin, the serve
 
 ### `items/trash-blocked`
 
-If a delete or a transition into the bin would move an item that a `block` edge holds, as its source or its target, the item named or one the cascade reaches, then the server MUST answer `400 edge_constraint_violation`.
+If a delete or a transition into the bin would move an item that a `block` edge holds, as its source or its target, the item named or one the trash takes with it, then the server MUST answer `400 edge_constraint_violation`.
 
 **Tests:** `correctness/edges/edges-cascade.test.ts › a block edge refuses a transition into the bin as it refuses a delete`, `› refuses a transition into the bin held by a block edge into the row, or on a row the cascade reaches`.
 
@@ -1322,7 +1324,7 @@ If `POST /items/{id}/restore` names an item not in the bin, then the server MUST
 
 When a restore, or a transition out of the bin on its own operation or in a bulk action, moves an item, the server MUST bring back every item that item's trash took through a cascading edge at every depth, and no item already in the bin when that trash ran.
 
-**Reason:** a person who trashed a project by mistake gets it back whole, and nothing they had trashed before comes back with it.
+**Reason:** a person who trashed a project by mistake gets it back whole, and nothing they had trashed before comes back with it. The parts that come back with a host are `edges/parts-restore`.
 
 **Tests:** `correctness/edges/edges-cascade.test.ts › restoring a parent brings back what its trash took, at every depth, and nothing trashed on its own`, `› does not restore with a parent a child that left the bin and was trashed on its own since`, `› a transition out of the bin brings back what the trash took, as a restore does`, `compliance/events-contract.test.ts › announces item.restored for a row the restore of its parent brings back`, `› announces item.restored for a row a transition out of the bin brings back, at any depth`, `compliance/bulk.test.ts › restores a row and what its trash took in one transition, counting each row once`.
 
