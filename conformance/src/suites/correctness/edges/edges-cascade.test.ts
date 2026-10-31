@@ -278,8 +278,10 @@ describe("edge cascade semantics", () => {
     expect(fetched.data.item.state).toBe("active");
   });
 
-  it("attached-to defaults to orphan: deleting the host leaves the attachment intact", async () => {
-    // attached-to direction: source = attachment, target = host.
+  it("attached-to takes nothing from the attachment's side: deleting the attachment leaves the host intact", async () => {
+    // attached-to direction: source = attachment, target = host. The host's
+    // side goes the other way: its attachments go with it
+    // (`edges-parts.test.ts`).
     const attachment = await makeItem("attachment");
     const host = await makeItem("host");
 
@@ -291,10 +293,10 @@ describe("edge cascade semantics", () => {
     expect(edge.ok).toBe(true);
     trackEdge(ctx, edge.data.edge.id);
 
-    const del = await client.deleteItem(host);
+    const del = await client.deleteItem(attachment);
     expect(del.ok).toBe(true);
 
-    const fetched = await client.getItem(attachment);
+    const fetched = await client.getItem(host);
     expect(fetched.ok).toBe(true);
     expect(fetched.data.item.state).toBe("active");
   });

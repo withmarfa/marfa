@@ -989,6 +989,58 @@ describe("a purge says which edges it took", () => {
   });
 });
 
+describe("a part's frames name the host that moved it", () => {
+  it("marks a part's item.deleted, item.restored and item.purged with its host, and the edge the host's purge took", async ({
+    signal,
+  }) => {
+    const tag = `parts-${ctx.runId}`;
+    const host = await note("host", tag);
+    const part = await note("part", tag);
+    const link = await edge(part, host, "comments-on");
+
+    const paths = await framesOf(
+      tag,
+      async () => {
+        expect((await client.deleteItem(host)).ok).toBe(true);
+        expect((await client.restoreItem(host)).ok).toBe(true);
+      },
+      signal,
+    );
+    for (const [path, events] of paths) {
+      const taken = frame(events, "item.deleted", part)?.item;
+      expect(taken?.trashed_with, `${path}: the part's item.deleted`).toBe(
+        host,
+      );
+      expect(taken?.trashed_by_cascade, path).toBe(true);
+      expect(
+        frame(events, "item.restored", part)?.restored_with,
+        `${path}: the part's item.restored`,
+      ).toBe(host);
+      const own = frame(events, "item.restored", host);
+      expect(own, `${path}: the host's item.restored`).toBeDefined();
+      expect(own).not.toHaveProperty("restored_with");
+    }
+
+    expect((await client.deleteItem(host)).ok).toBe(true);
+    const purged = await framesOf(
+      tag,
+      async () => {
+        expect((await client.purgeItem(host)).ok).toBe(true);
+      },
+      signal,
+    );
+    for (const [path, events] of purged) {
+      expect(
+        frame(events, "edge.deleted", link)?.purged_with,
+        `${path}: edge.deleted for the part's edge`,
+      ).toBe(host);
+      const gone = frame(events, "item.purged", part)?.item;
+      expect(gone?.trashed_with, `${path}: the part's item.purged`).toBe(host);
+      expect(gone?.trashed_by_cascade, path).toBe(true);
+    }
+  });
+});
+
 describe("a purge says which edges it took, a conflicted copy's link among them", () => {
   it("names the purged original on the edge.deleted of the link to its conflicted copy", async ({
     signal,
