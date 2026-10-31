@@ -1632,7 +1632,7 @@ When the bytes of a non-empty file at a document name (`.md`, `.markdown` or `.t
 
 **Reason:** the item's kind, not the file's name, says how its bytes are read, and a pull can place a file item at a document name. Frontmatter that does not parse and bytes that are not UTF-8 are then the file item's own content.
 
-**Tests:** `device/folders-placement.test.ts › sends a file item pulled to a document name as its bytes, whatever they hold`.
+**Tests:** `device/folders-placement.test.ts › sends a file item pulled to a document name as its bytes, whatever they hold, named %s`.
 
 ### `folders/file-item-doc-name-unflagged`
 
@@ -1640,7 +1640,7 @@ When a scan finds a file at a document name (`.md`, `.markdown` or `.txt`, in an
 
 **Reason:** a flag holds a document whose text the device cannot read, and a file item's bytes are not read as text. A document not bound to a file item, a new file included, is still held by `folders/unreadable-yaml` and `folders/encoding-flag`.
 
-**Tests:** `device/folders-placement.test.ts › sends a file item pulled to a document name as its bytes, whatever they hold`.
+**Tests:** `device/folders-placement.test.ts › sends a file item pulled to a document name as its bytes, whatever they hold, named %s`.
 
 ### `folders/file-item-doc-name-emptied`
 
@@ -1648,7 +1648,7 @@ When a file at a document name (`.md`, `.markdown` or `.txt`, in any letter case
 
 **Reason:** the server holds no empty blob, and an editor empties a file before it writes it.
 
-**Tests:** `device/folders-placement.test.ts › waits for a file item emptied at a document name, and still sends the rest`.
+**Tests:** `device/folders-placement.test.ts › waits for a file item emptied at a document name, and still sends the rest, named %s`.
 
 ### `folders/file-item-doc-name-emptied-scan`
 
@@ -1656,7 +1656,7 @@ When a file at a document name (`.md`, `.markdown` or `.txt`, in any letter case
 
 **Reason:** one file waiting for its bytes fails no pass. An emptied document is still sent as an empty document.
 
-**Tests:** `device/folders-placement.test.ts › waits for a file item emptied at a document name, and still sends the rest`.
+**Tests:** `device/folders-placement.test.ts › waits for a file item emptied at a document name, and still sends the rest, named %s`.
 
 ### `folders/file-item-doc-name-moved-out`
 
@@ -1672,7 +1672,7 @@ When a file that names a note's item ID replaces the file of a file item at a Ma
 
 **Reason:** the file's item ID, not the file it replaced, says whose file it is, in a plain scan and in a folder watch's pass alike. A device that judged the file by the item bound at its path would send the note as the file item's bytes and lose the note. While the note's own file is still in the folder, the new file is a copy of it and stays the file item's. A `.txt` file carries no ID line (`folders/raw-text-body`), so it never names a note and stays the file item's.
 
-**Tests:** `device/folders-placement.test.ts › keeps a note whose file replaces a file item's at a document name`.
+**Tests:** `device/folders-placement.test.ts › keeps a note whose file replaces a file item's at a document name, named %s`.
 
 ## Document versions
 
@@ -2212,7 +2212,7 @@ When a file at a document name (`.md`, `.markdown` or `.txt`, in any letter case
 
 **Reason:** a file item's bytes are not read as text, and a pull can place a file item at a document name or a person can rename one to it. A file that only that syntax names stays unsent, as `folders/binary-outside-search` says.
 
-**Tests:** `device/folders-placement.test.ts › follows no embed in a file item's bytes at a document name, and still a note's`.
+**Tests:** `device/folders-placement.test.ts › follows no embed in a file item's bytes at a document name, and still a note's, named %s`.
 
 ### `folders/embed-raw-no-file`
 
@@ -6516,7 +6516,7 @@ When a file at a document name (`.md`, `.markdown` or `.txt`, in any letter case
 
 **Reason:** a file item's file is copied or downloaded as any file that is not a document is, whatever its name, and a half-written file sent is a half-written item.
 
-**Tests:** `device/folders-placement.test.ts › waits for a file item at a document name to stop changing, while every other file goes on`.
+**Tests:** `device/folders-placement.test.ts › waits for a file item at a document name to stop changing, while every other file goes on, named %s`.
 
 ### `folders/settling-rename-identity`
 
