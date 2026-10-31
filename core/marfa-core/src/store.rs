@@ -3559,10 +3559,23 @@ fn rows_of(conn: &Connection, sql: &str) -> Result<Vec<(String, String)>, CoreEr
 }
 
 fn reindex(conn: &Connection) -> Result<(), CoreError> {
+    reindex_where(conn, None)
+}
+
+/// Indexes the row `id` again from what the copy holds, as `reindex` does for
+/// every row. Nothing changes when the copy holds no such row.
+pub fn reindex_item(conn: &Connection, id: &str) -> Result<(), CoreError> {
+    reindex_where(conn, Some(id))
+}
+
+fn reindex_where(conn: &Connection, only: Option<&str>) -> Result<(), CoreError> {
     let catalog = crate::catalog::Catalog::load(conn)?;
     let held: Vec<(i64, String, String, String, String)> = conn
-        .prepare("SELECT seq, id, type, state, properties FROM items")?
-        .query_map([], |row| {
+        .prepare(
+            "SELECT seq, id, type, state, properties FROM items
+             WHERE ?1 IS NULL OR id = ?1",
+        )?
+        .query_map([only], |row| {
             Ok((
                 row.get(0)?,
                 row.get(1)?,
@@ -5938,12 +5951,10 @@ pub fn set_item_state(conn: &Connection, id: &str, state: ItemState) -> Result<b
         params![id, state.as_str()],
     )?;
     attachments_changed(conn, &[id], before)?;
-    if changed > 0 && state == ItemState::Trashed {
-        // A trashed row is out of the local index, as in `index_row`.
-        conn.execute(
-            "DELETE FROM items_fts WHERE rowid IN (SELECT seq FROM items WHERE id = ?1)",
-            [id],
-        )?;
+    if changed > 0 {
+        // The index follows the state as `index_row` has it: a row in the bin
+        // is out of it, and one that leaves the bin is in it again.
+        reindex_item(conn, id)?;
     }
     Ok(changed > 0)
 }

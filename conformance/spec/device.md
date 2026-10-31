@@ -1578,7 +1578,7 @@ A device MUST NOT answer a row in the bin to a local search, whatever state the 
 
 **Reason:** the server keeps a trashed row out of its search index (`search-and-filters/search-bin`).
 
-**Tests:** `device/working-copy.test.ts › keeps a row in the bin out of the index, whatever state a search names`, `› stops finding a row once an event puts it in the bin`, `device/search-file-text-live.test.ts › leaves a file in the bin unmatched, as the server does`.
+**Tests:** `device/working-copy.test.ts › keeps a row in the bin out of the index, whatever state a search names`, `› stops finding a row once an event puts it in the bin`, `device/search-file-text-live.test.ts › leaves a file in the bin unmatched, as the server does`, `device/restore-search.test.ts › finds a restored row by its title, body and tags`, `› finds a row moved from the bin to the archive`.
 
 ### `device/list-bounds-exclusive`
 
@@ -6204,7 +6204,7 @@ When a query holds only spaces, a device MUST match nothing.
 
 While a row is not in the bin, a device MUST match a query against the row's `title`, `body`, `description` and `name` where each is a string, every other string property its type declares or inherits, and its tags.
 
-**Tests:** `device/search-live.test.ts › answers the server's hits, in the server's order: $name: $query`.
+**Tests:** `device/search-live.test.ts › answers the server's hits, in the server's order: $name: $query`, `device/restore-search.test.ts › finds a row moved from the bin to active`, `› finds a row by a tag added here and not by one removed here`.
 
 ### `device/index-order`
 

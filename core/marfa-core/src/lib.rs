@@ -2165,6 +2165,8 @@ impl Core {
         let before = store::tag_count(&tx, id)?;
         apply(&tx)?;
         validation::tag_count(before, store::tag_count(&tx, id)?)?;
+        // The index holds a row's tags, so a tag changed here is changed there.
+        store::reindex_item(&tx, id)?;
         let queued = store::enqueue(
             &tx,
             &store::NewWrite {
