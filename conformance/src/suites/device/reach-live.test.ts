@@ -16,8 +16,12 @@ import { requireBinary } from "./harness.js";
 let client: MarfaClient;
 let ctx: TestContext;
 let apiUrl: string;
+let apiKey: string;
 beforeAll(async () => {
-  ({ client, ctx, apiUrl } = await createTestContext("device", "reach"));
+  ({ client, ctx, apiUrl, apiKey } = await createTestContext(
+    "device",
+    "reach",
+  ));
 });
 afterAll(async () => {
   if (ctx) await cleanup(ctx);
@@ -140,6 +144,87 @@ it.each(["retyping", "grant narrowing"])(
     }
   },
 );
+
+it("sends the writes queued behind a retype in one drain a real server takes, and one hydration covers it", async () => {
+  const notes: { id: string; version: number }[] = [];
+  for (const title of ["retyped", "behind one", "behind two"]) {
+    const made = await client.createItem({
+      type: "core.note",
+      source: ctx.source,
+      tier: "library",
+      properties: { title, body: title },
+    });
+    expect(made.ok, JSON.stringify(made.error)).toBe(true);
+    trackItem(ctx, made.data.item.id);
+    notes.push(made.data.item);
+  }
+  const [retyped, ...behind] = notes as [
+    (typeof notes)[number],
+    ...typeof notes,
+  ];
+  const store = newStore("reach-retype-drain");
+  const device = new CliDevice({
+    binary: requireBinary(),
+    store,
+    url: apiUrl,
+    key: apiKey,
+  });
+  try {
+    value(await device.hydrate(["core.note", "core.task"], "library"));
+    const queued = [
+      value(
+        await device.update(retyped.id, {
+          type: "core.task",
+          version: retyped.version,
+          properties: {},
+        }),
+      ),
+    ];
+    for (const [index, row] of behind.entries()) {
+      queued.push(
+        value(
+          await device.update(row.id, {
+            version: row.version,
+            properties: { body: `edited behind the retype ${index}` },
+          }),
+        ),
+      );
+    }
+
+    // The retype changes the server's reach (`reach/moves-retype`), and the
+    // drain goes on to send the writes behind it, ending once with the
+    // copy expired.
+    const drained = await device.drain();
+    expect(drained.ok).toBe(false);
+    if (!drained.ok) expect(drained.refusal.code).toBe("copy_expired");
+    expect(
+      value(await device.queue()).map((row) => [row.id, row.verdict]),
+      "a write behind the retype was not sent in the same drain",
+    ).toEqual(queued.map((row) => [row.id, "accepted"]));
+    expect(value(await device.status()).hydration).toBe("expired");
+    const held = await client.getItem(retyped.id);
+    expect(held.ok, JSON.stringify(held.error)).toBe(true);
+    expect(held.data.item.type).toBe("core.task");
+    for (const [index, row] of behind.entries()) {
+      const read = await client.getItem(row.id);
+      expect(read.ok, JSON.stringify(read.error)).toBe(true);
+      expect(read.data.item.properties.body).toBe(
+        `edited behind the retype ${index}`,
+      );
+    }
+
+    value(await device.hydrate(["core.note", "core.task"], "library"));
+    expect(value(await device.status()).hydration).toBe("complete");
+    expect(value(await device.get(retyped.id)).type).toBe("core.task");
+    const settled = value(await device.drain());
+    expect(
+      [settled.answered, settled.verdicts],
+      "a drain after the hydration had something left to do",
+    ).toEqual([0, []]);
+  } finally {
+    rmSync(dirname(store), { recursive: true, force: true });
+  }
+});
 
 it("keeps real direct pins separate from source-filtered listing membership", async () => {
   const allowed = ctx.source;
