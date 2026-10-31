@@ -663,6 +663,15 @@ export const typeIcons = sqliteTable("type_icons", {
   updated_at: text("updated_at").notNull(),
 });
 
+// The name and mark someone set for a source code. A source needs no row to
+// be written under; a row exists only while it holds a name or a mark.
+export const sourceNames = sqliteTable("source_names", {
+  source: text("source").primaryKey(),
+  name: text("name"),
+  mark: text("mark"),
+  updated_at: text("updated_at").notNull(),
+});
+
 // The instance's edge-type registrations.
 export const edgeTypes = sqliteTable("edge_types", {
   id: text("id").primaryKey(),

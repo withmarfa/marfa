@@ -724,6 +724,13 @@ CREATE TABLE IF NOT EXISTS `settings` (
 	`value` text NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS `source_names` (
+	`source` text PRIMARY KEY NOT NULL,
+	`name` text,
+	`mark` text,
+	`updated_at` text NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS `trash_cascades` (
 	`item_id` text PRIMARY KEY NOT NULL,
 	`trashed_with` text NOT NULL,

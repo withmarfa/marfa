@@ -789,21 +789,22 @@ describe("starting on a database at schema version 3", () => {
 
 describe("starting on an unstamped database", () => {
   it("updates an unstamped one from the last version a build left unstamped", async () => {
-    // Schema versions 3 and 4 changed rows and not tables, and version 5
-    // adds one index, so an unstamped file of this shape without that index
-    // is at version 2: every build since stamps what it writes.
+    // Schema versions 3 and 4 changed rows and not tables, version 5 adds
+    // one index and version 6 one table, so an unstamped file of this shape
+    // without them is at version 2: every build since stamps what it writes.
     expect(Math.max(...UNSTAMPED_VERSIONS)).toBe(2);
     const path = scratch();
     const client = createClient({ url: `file:${path}` });
     await client.executeMultiple(SCHEMA_SQL);
     await client.executeMultiple(CREATE_FTS);
     await client.execute("DROP INDEX idx_items_state_binned_at");
+    await client.execute("DROP TABLE source_names");
     await fill(client);
     client.close();
     // The fixture's icons are bare names no icon set has, which the update
     // to version 3 removes; every other row stays.
     const tables = ownTables(await currentShape()).filter(
-      (table) => table !== "type_icons",
+      (table) => table !== "type_icons" && table !== "source_names",
     );
     const before = await rowsOf(path, tables);
 
@@ -893,7 +894,7 @@ describe("a migration", () => {
       },
     ];
 
-    await migrateInPlace(path, 1, {}, remake);
+    await migrateInPlace(path, 1, {}, remake, replayedShape(2));
 
     expect(await rowsOf(path, tables)).toEqual(before);
   });
