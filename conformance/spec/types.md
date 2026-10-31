@@ -682,7 +682,7 @@ The server MUST ship `core.media` declaring an optional field named `rating` of 
 
 **Reason:** `rating` is the owner's overall view of the work, from 1 (lowest) to 5 (highest). One whole-number scale on the parent means an app reads a rating the same way on a film as on a book, with no half steps to guess at. A rating outside the range, or one that is not a whole number, is refused by the field's range (`types/range-value-refused`).
 
-**Tests:** `compliance/media-rating-game.test.ts › is an optional integer from 1 to 5 on core.media and the game type`, `› takes a book rated 5 and reads it back`, `› refuses a rating of %s, naming rating`.
+**Tests:** `compliance/media-rating-game.test.ts › is an optional integer from 1 to 5 on core.media and every type under it`, `› takes a book rated %s and reads it back`, `› refuses a rating of %s, naming rating`.
 
 ### `types/shipped-game`
 
@@ -690,7 +690,7 @@ The server MUST ship `core.media.game`, a child of `core.media`, declaring the o
 
 **Reason:** a video game and a board game are both played on something and by some number of people, so one type covers both without two near-identical types. The type does not require `max_players` to be at least `min_players`, and it declares no other game property.
 
-**Tests:** `compliance/media-rating-game.test.ts › lists core.media.game beneath core.media`, `› declares its own fields and inherits progress and rating`, `› takes a game on two platforms for one to four players`, `› refuses 0 players, naming min_players`.
+**Tests:** `compliance/media-rating-game.test.ts › lists core.media.game beneath core.media`, `› declares its own fields and inherits progress and rating`, `› takes a game on two platforms for one to four players`, `› takes a game with a title alone`, `› is found by a listing of core.media`, `› refuses %s of %s, naming the field`, `› refuses a platform that is not text, naming the field and the position`.
 
 ## Thumbnails
 

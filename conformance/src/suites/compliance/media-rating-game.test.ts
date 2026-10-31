@@ -27,9 +27,21 @@ async function create(type: string, properties: Record<string, unknown>) {
   return created;
 }
 
+const MEDIA_TYPES = [
+  "core.media",
+  "core.media.album",
+  "core.media.article",
+  "core.media.book",
+  "core.media.episode",
+  "core.media.film",
+  "core.media.game",
+  "core.media.series",
+  "core.media.song",
+];
+
 describe("the rating of a media item", () => {
-  it("is an optional integer from 1 to 5 on core.media and the game type", async () => {
-    for (const id of ["core.media", "core.media.book", "core.media.game"]) {
+  it("is an optional integer from 1 to 5 on core.media and every type under it", async () => {
+    for (const id of MEDIA_TYPES) {
       const read = await client.getType(id);
       expect(read.status, id).toBe(200);
       expect(read.data.fields.rating, id).toMatchObject({
@@ -41,13 +53,16 @@ describe("the rating of a media item", () => {
     }
   });
 
-  it("takes a book rated 5 and reads it back", async () => {
-    const book = await create("core.media.book", { title: "Rated", rating: 5 });
-    expect(book.status, JSON.stringify(book.error)).toBe(201);
-    expect(book.data.item.properties.rating).toBe(5);
-  });
+  it.each([1, 3, 5])(
+    "takes a book rated %s and reads it back",
+    async (rating) => {
+      const book = await create("core.media.book", { title: "Rated", rating });
+      expect(book.status, JSON.stringify(book.error)).toBe(201);
+      expect(book.data.item.properties.rating).toBe(rating);
+    },
+  );
 
-  it.each([0, 6, 3.5])(
+  it.each([0, 6, 3.5, "3"])(
     "refuses a rating of %s, naming rating",
     async (rating) => {
       const refused = await create("core.media.book", {
@@ -100,13 +115,45 @@ describe("the game type", () => {
     expect(game.data.item.properties).toMatchObject(properties);
   });
 
-  it("refuses 0 players, naming min_players", async () => {
+  it("takes a game with a title alone", async () => {
+    const game = await create("core.media.game", { title: "Only a title" });
+    expect(game.status, JSON.stringify(game.error)).toBe(201);
+  });
+
+  it("is found by a listing of core.media", async () => {
+    const game = await create("core.media.game", { title: "Listed game" });
+    expect(game.status, JSON.stringify(game.error)).toBe(201);
+    const listed = await client.listItems({ type: "core.media" });
+    expect(listed.status, JSON.stringify(listed.error)).toBe(200);
+    expect(listed.data.data.map((item) => item.id)).toContain(
+      game.data.item.id,
+    );
+  });
+
+  it.each([
+    ["min_players", 0],
+    ["min_players", -1],
+    ["min_players", 1.5],
+    ["max_players", 0],
+    ["max_players", -2],
+    ["max_players", 2.5],
+  ])("refuses %s of %s, naming the field", async (field, value) => {
     const refused = await create("core.media.game", {
       title: "A game",
-      min_players: 0,
+      [field]: value,
     });
     expect(refused.status).toBe(400);
     expect(refused.error?.error.code).toBe("invalid_properties");
-    expect(JSON.stringify(refused.error)).toContain("min_players");
+    expect(JSON.stringify(refused.error)).toContain(field);
+  });
+
+  it("refuses a platform that is not text, naming the field and the position", async () => {
+    const refused = await create("core.media.game", {
+      title: "A game",
+      platforms: ["PC", 7],
+    });
+    expect(refused.status).toBe(400);
+    expect(refused.error?.error.code).toBe("invalid_properties");
+    expect(JSON.stringify(refused.error)).toContain("platforms.1");
   });
 });

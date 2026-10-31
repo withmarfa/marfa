@@ -73,6 +73,7 @@ it("names every built-in and custom type with bounded plain text and fallback fi
     "core.media.book": "title",
     "core.media.episode": "title",
     "core.media.film": "title",
+    "core.media.game": "title",
     "core.media.series": "title",
     "core.media.song": "title",
     "core.message": "body",
