@@ -522,6 +522,28 @@ When a `filter` on `GET /items` or `GET /search` compares `created_at`, `updated
 
 **Tests:** `compliance/canonical-time.test.ts › refuses invalid time comparisons while retaining text operators`.
 
+### `search-and-filters/filter-entry-member`
+
+When a `filter` on `GET /items` or `GET /search` compares `properties.<field>.<member>` with a value using `eq`, the server MUST select the rows whose `<field>` is a list holding at least one object whose `<member>` equals the value, compared as `properties.<field>` is.
+
+**Reason:** a person is found by any one of their email addresses, phone numbers or addresses, not only the first. A saved view's `filter` takes the same term (`views/filter-terms`).
+
+**Tests:** `compliance/contact-lists.test.ts › finds a person by their second email, on the listing, the search and a view`.
+
+### `search-and-filters/filter-entry-member-none`
+
+When a `filter` compares `properties.<field>.<member>` and a row's `<field>` is absent or is not a list, or no object in it holds `<member>`, the server MUST NOT select the row by that condition.
+
+**Reason:** the term reads the stored value and not the type's declaration, as every property term does, so it answers the same rows for every type a listing spans.
+
+**Tests:** `compliance/contact-lists.test.ts › selects no row whose field is not a list of objects holding the member`.
+
+### `search-and-filters/filter-entry-member-refused`
+
+If a `filter` compares `properties.<field>.<member>` with an operator other than `eq`, or names a property path of more than two names, then the server MUST answer `400 validation_error`.
+
+**Tests:** `compliance/contact-lists.test.ts › refuses %s with validation_error`.
+
 ## The status group term
 
 A `status_group` term selects items by the group of the word their status field holds, as their own type resolves it (`types/status-groups`, `types/status-inherit`).
