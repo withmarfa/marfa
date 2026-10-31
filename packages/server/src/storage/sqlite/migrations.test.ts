@@ -528,9 +528,7 @@ async function versionThree(
   await client.executeMultiple(BASELINE_SQL);
   for (const migration of MIGRATIONS.filter((m) => m.to <= 3))
     await migration.apply(client);
-  for (const [id, { parent, origin, fields }] of Object.entries(
-    STORED_TYPES,
-  )) {
+  for (const [id, { parent, origin, fields }] of Object.entries(STORED_TYPES)) {
     const schema = {
       id,
       version: 1,
