@@ -451,7 +451,7 @@ export const listingNarrowingKeys = {
     .string()
     .optional()
     .describe(
-      'A filter expression. A term naming an edge type, `edge[<type>]` or `backref[<type>]`, needs read on that edge type; `edge[<type>]=<id>` also works as a query parameter. `status_group`, such as `status_group neq "completed"`, matches by status group.',
+      'A filter expression. A term naming an edge type, `edge[<type>]` or `backref[<type>]`, needs read on that edge type; `edge[<type>]=<id>` also works as a query parameter. `status_group`, such as `status_group neq "completed"`, matches by status group. `properties.<field>.<member> eq <value>` matches a list holding an entry with that member.',
     ),
 };
 
