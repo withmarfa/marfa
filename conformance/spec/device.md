@@ -5996,7 +5996,7 @@ A device MUST read the `[` characters of a line as pairs from the start of the l
 
 ### `device/link-bounds-code`
 
-A device MUST read a link's name, heading and alias from the text as written, code included, between brackets found outside inline code, code blocks and comments: ``[[a `b` c]]`` names ``a `b` c``, and a `]]` inside a code span closes no link.
+A device MUST read a link's name, heading and alias from the text as written, code included, between brackets found outside inline code, code blocks and comments, so a name that holds a code span keeps that code span, and a closing pair of brackets inside a code span closes no link.
 
 **Reason:** the brackets follow `device/body-link-text`, while the name is what the person typed between them.
 
