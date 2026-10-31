@@ -182,9 +182,7 @@ export function registerUpdate(server: McpServer, ctx: ToolContext): void {
           .number()
           .int()
           .min(1)
-          .describe(
-            "The version you last read. Moving to the trash keeps it.",
-          ),
+          .describe("The version you last read. Moving to the trash keeps it."),
         properties: z
           .record(z.string(), z.unknown())
           .optional()
@@ -200,9 +198,7 @@ export function registerUpdate(server: McpServer, ctx: ToolContext): void {
         clear_properties: z
           .array(z.string())
           .optional()
-          .describe(
-            "Fields to remove; not also in properties.",
-          ),
+          .describe("Fields to remove; not also in properties."),
         tier: z.enum(["library", "feed"]).optional(),
         occurred_at: z
           .string()

@@ -560,7 +560,7 @@ export interface Edit {
    *  cleared (`queue-and-verdicts/whole-sent-replace`). */
   replace?: boolean;
   /** Properties to remove from the row, leaving every other
-   *  (`queue-and-verdicts/clear-sent`). */
+   *  (`queue-and-verdicts/clear-property-sent`). */
   clear?: string[];
 }
 

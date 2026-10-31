@@ -332,7 +332,7 @@ When a drain sends an update of an item, a device MUST send it with `conflict=au
 
 **Tests:** `device/queue.test.ts › sends every update with the server asked to resolve`.
 
-### `queue-and-verdicts/clear-sent`
+### `queue-and-verdicts/clear-property-sent`
 
 When a caller queues an update that names properties to clear, a device MUST send their names in `clear_properties`, in the same body as its properties and the version it is based on (`items/update-clear`).
 
@@ -340,13 +340,13 @@ When a caller queues an update that names properties to clear, a device MUST sen
 
 **Tests:** `device/clear-properties-live.test.ts › shows a clear at once, sends it as clear_properties, and keeps every property it does not name`, `› sends a clear made on a version read earlier, and the server judges it there`, `› lands a queued clear over another writer's change to a different property`, `› keeps another writer's change to the property a queued clear names`.
 
-### `queue-and-verdicts/clear-shown`
+### `queue-and-verdicts/clear-property-shown`
 
 While an update that clears properties waits, a device MUST show the row without each property the update clears, and with every other property as the row holds it.
 
 **Tests:** `device/clear-properties-live.test.ts › shows a clear at once, sends it as clear_properties, and keeps every property it does not name`, `› sends a clear made on a version read earlier, and the server judges it there`.
 
-### `queue-and-verdicts/clear-set-refused`
+### `queue-and-verdicts/clear-property-set-refused`
 
 If a caller queues an update that names a property both to set and to clear, then a device MUST refuse it `validation_error` without queuing it.
 
@@ -354,7 +354,7 @@ If a caller queues an update that names a property both to set and to clear, the
 
 **Tests:** `device/clear-properties-live.test.ts › refuses a property both set and cleared, and a required field, queuing nothing`.
 
-### `queue-and-verdicts/clear-required-refused`
+### `queue-and-verdicts/clear-property-required-refused`
 
 If a caller queues an update that names to clear a field the item's type, or the type the update moves it to, requires, then a device MUST refuse it `invalid_properties` without queuing it, whatever version the update is based on.
 
@@ -362,7 +362,7 @@ If a caller queues an update that names to clear a field the item's type, or the
 
 **Tests:** `device/clear-properties-live.test.ts › refuses a property both set and cleared, and a required field, queuing nothing`.
 
-### `queue-and-verdicts/clear-move-drops-unread`
+### `queue-and-verdicts/clear-property-move-drops-unread`
 
 When a device sends an unsent edit that clears properties on a version other than the one it was queued on, a device MUST drop from `clear_properties` each property the edit read no value for.
 
