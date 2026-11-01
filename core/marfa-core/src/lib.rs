@@ -2767,22 +2767,37 @@ impl Core {
     }
 
     fn trim_blobs_under(&self, cache: &blob::Cache, setting: FileBudget) -> u64 {
-        let Some(kept) = self.kept_blobs() else {
-            return 0;
-        };
-        // Held until the trim ends, so no attachment is made between the
-        // read of the bytes attachments keep and the trim that spares them.
-        let Some((_conn, attachments)) = self.attachments_held() else {
-            return 0;
-        };
-        #[cfg(debug_assertions)]
-        crate::fault::hold(|| format!("attachments-read:{:p}", self));
-        cache.trim(&kept, &attachments, |held| {
+        self.take_blobs_under(cache, |held| {
             let volume = (setting == FileBudget::Default)
                 .then(|| cache.volume())
                 .flatten();
             file_cache::in_force(setting, volume, held).bytes
         })
+    }
+
+    /// `blob::Cache::trim` to `budget`, called under `hold`.
+    fn take_blobs_under(
+        &self,
+        cache: &blob::Cache,
+        budget: impl FnOnce(u64) -> Option<u64>,
+    ) -> u64 {
+        // One connection, held until the trim ends, reads both sets, so no
+        // write to the queue and no attachment lands between the reads and
+        // the trim that spares what they name.
+        let Ok(conn) = self.conn() else {
+            return 0;
+        };
+        let Some(kept) = queue_keeps(&conn) else {
+            return 0;
+        };
+        #[cfg(debug_assertions)]
+        crate::fault::hold(|| format!("uploads-read:{:p}", self));
+        let Ok(attachments) = store::kept_attachments(&conn) else {
+            return 0;
+        };
+        #[cfg(debug_assertions)]
+        crate::fault::hold(|| format!("attachments-read:{:p}", self));
+        cache.trim(&kept, &attachments, budget)
     }
 
     pub(crate) fn let_go_blob(&self, hash: &str) {
@@ -2806,14 +2821,7 @@ impl Core {
     }
 
     fn kept_blobs(&self) -> Option<HashSet<String>> {
-        let conn = self.conn().ok()?;
-        let hashes = store::kept_uploads(&conn).ok()?;
-        Some(
-            hashes
-                .iter()
-                .filter_map(|hash| blob::hex_of(hash).ok().map(str::to_string))
-                .collect(),
-        )
+        queue_keeps(&*self.conn().ok()?)
     }
 
     /// The bytes attachments keep, by the hex of their hash, with the
@@ -3159,6 +3167,20 @@ impl Core {
     pub fn trim_files(&self) -> Result<u64> {
         self.lock.refuse_unless_writer()?;
         Ok(self.trim_blobs())
+    }
+
+    /// Takes every file the cache holds that a device can fetch again, and
+    /// answers how many bytes it took. Keeps the bytes of attachments, of
+    /// queued uploads and of reads in progress, and the partial files a
+    /// fetch holds, and leaves the file budget as it was. A cache that cannot
+    /// be read loses nothing. Refused to a reading handle.
+    pub fn remove_fetched_files(&self) -> Result<u64> {
+        self.lock.refuse_unless_writer()?;
+        let Some(cache) = &self.cache else {
+            return Ok(0);
+        };
+        let _held = cache.hold();
+        Ok(self.take_blobs_under(cache, |_| Some(0)))
     }
 
     /// Every item type the copy holds, by id, read from the copy alone.
@@ -4143,6 +4165,18 @@ fn name_bytes(
     if catalog.matches("core.file", r#type) {
         properties.insert("size_bytes".into(), taken.size.into());
     }
+}
+
+/// The bytes the queue keeps, by the hex of their hash. `None` where the
+/// queue cannot be read.
+fn queue_keeps(conn: &Connection) -> Option<HashSet<String>> {
+    let hashes = store::kept_uploads(conn).ok()?;
+    Some(
+        hashes
+            .iter()
+            .filter_map(|hash| blob::hex_of(hash).ok().map(str::to_string))
+            .collect(),
+    )
 }
 
 fn queue_upload(conn: &Connection, hash: &str, mime_type: &str) -> Result<QueuedWrite> {
@@ -7699,6 +7733,10 @@ mod tests {
             ),
             ("trim_files", reader.trim_files().unwrap_err()),
             (
+                "remove_fetched_files",
+                reader.remove_fetched_files().unwrap_err(),
+            ),
+            (
                 "fetch_kept_until",
                 reader
                     .fetch_kept_until(&std::sync::atomic::AtomicBool::new(false))
@@ -8272,6 +8310,56 @@ mod tests {
         });
         assert!(!core.blob_held(&hash).unwrap());
         assert_eq!(core.file_budget().unwrap(), FileBudget::KeepAll);
+    }
+
+    /// The queue is written here without the cache's settling lock, which
+    /// every public call that queues an upload takes, so the trim's own read
+    /// is all that keeps the write from landing between what it read and
+    /// what it takes.
+    #[cfg(debug_assertions)]
+    #[test]
+    fn an_upload_queued_while_a_trim_reads_what_to_keep_waits_for_the_trim() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = Core::open(dir.path().join("core.sqlite"), None).unwrap();
+        core.set_file_budget(FileBudget::Bytes(0)).unwrap();
+        let path = dir.path().join("fetched.txt");
+        std::fs::write(&path, b"fetched once").unwrap();
+        let hash = core
+            .cache()
+            .unwrap()
+            .take_reader(&path, std::fs::File::open(&path).unwrap())
+            .unwrap()
+            .hash;
+        let point = format!("uploads-read:{:p}", &core);
+        crate::fault::arm(&point);
+        std::thread::scope(|scope| {
+            let trim = scope.spawn(|| {
+                let taken = core.trim_files().unwrap();
+                (taken, std::time::Instant::now())
+            });
+            let waited = std::time::Instant::now();
+            while crate::fault::waiting(&point) == 0 {
+                assert!(
+                    waited.elapsed() < std::time::Duration::from_secs(10),
+                    "the trim never read the queue"
+                );
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            let queued = scope.spawn(|| {
+                queue_upload(&core.conn().unwrap(), &hash, "text/plain").unwrap();
+                std::time::Instant::now()
+            });
+            // Long enough for a write that is not held back to land.
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            crate::fault::release(&point);
+            let (taken, trimmed) = trim.join().unwrap();
+            let queued = queued.join().unwrap();
+            assert_eq!(taken, 12);
+            assert!(
+                queued >= trimmed,
+                "an upload was queued between the trim's read of the queue and its removal"
+            );
+        });
     }
 
     #[cfg(unix)]

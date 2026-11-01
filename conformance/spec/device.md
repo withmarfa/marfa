@@ -2556,6 +2556,36 @@ When a caller sets the file budget or asks a device to trim, a device MUST answe
 
 **Tests:** `device/file-cache.test.ts › runs when asked, and the default budget it fits is the volume's at that moment`, `› runs when the budget is set, so a lowered one gives the space back`.
 
+### `device/file-remove-fetched`
+
+When a caller asks a device to remove fetched files, a device MUST take away every file in the file cache that a trim to a file budget of 0 bytes would take, and no other.
+
+**Reason:** a person who removes fetched files gets back the space of every file the device can fetch again. The bytes a trim keeps, such as those of an attachment or a queued upload, stay for the same reasons.
+
+**Tests:** `device/binding-remove-fetched.test.ts › takes the files a trim to nothing would take, answers their bytes and leaves the budget`, `› leaves the budget and the store sound when the handle closes as it runs`.
+
+### `device/file-remove-keeps-budget`
+
+When a caller asks a device to remove fetched files, a device MUST NOT change the file budget setting.
+
+**Reason:** removing files once is not a new choice of budget. An app that set a budget of nothing to remove them, and set the person's choice back after, would leave the budget at nothing if the handle closed between the two.
+
+**Tests:** `device/binding-remove-fetched.test.ts › takes the files a trim to nothing would take, answers their bytes and leaves the budget`, `› leaves the budget and the store sound when the handle closes as it runs`.
+
+### `device/file-remove-reported`
+
+When a caller asks a device to remove fetched files, a device MUST answer the bytes it took.
+
+**Tests:** `device/binding-remove-fetched.test.ts › takes the files a trim to nothing would take, answers their bytes and leaves the budget`.
+
+### `device/file-remove-unreadable-takes-none`
+
+While a device cannot read the folder of the file cache or an entry in it, when a caller asks it to remove fetched files, a device MUST NOT take away any bytes.
+
+**Reason:** a device that cannot list the cache cannot tell which files a queued upload or an attachment needs.
+
+**Tests:** `device/binding-remove-fetched.test.ts › takes nothing from a cache it cannot read`.
+
 ### `device/file-trim-order`
 
 When a device takes bytes away to fit the file budget, a device MUST take those read longest ago first, after any bytes of a file larger than the budget (`device/file-trim-oversize-first`).

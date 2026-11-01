@@ -2976,6 +2976,14 @@ impl Core {
         Ok(self.inner.trim_files()?)
     }
 
+    /// Removes every file the cache holds that can be fetched again and
+    /// answers the bytes it took, leaving the budget as it was. Keeps the
+    /// files of attachments, queued uploads and reads in progress, and the
+    /// part of a file a fetch is writing. Refused to a reading handle.
+    pub fn remove_fetched_files(&self) -> Result<u64, MarfaError> {
+        Ok(self.inner.remove_fetched_files()?)
+    }
+
     /// Fetches the bytes of every file attached to an item the copy holds
     /// that the cache does not hold whole, smallest first, and answers what
     /// it fetched and the attachments after it, resuming the part of one an
@@ -3667,6 +3675,37 @@ mod tests {
         drop(held);
         assert_eq!(core.trim_files().unwrap(), bytes.len() as u64);
         assert!(!blobs.join(hex).exists());
+    }
+
+    #[test]
+    fn fetched_files_are_removed_keeping_an_unsent_upload_and_the_budget() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("core.sqlite");
+        let core = Core::open(path.display().to_string(), None, None, None).unwrap();
+        core.set_file_budget(FileBudget::KeepAll).unwrap();
+        let bytes = b"held while the answer is";
+        let hex = "2f63a37d2ed539e29e938b4460bed85e6e7152782affa23f1c34d273fa9c0bb5";
+        let blobs = dir.path().join("core.sqlite.blobs");
+        std::fs::create_dir_all(&blobs).unwrap();
+        std::fs::write(blobs.join(hex), bytes).unwrap();
+        let source = dir.path().join("unsent.txt");
+        std::fs::write(&source, b"not yet sent").unwrap();
+        core.put_blob(source.display().to_string(), Some("text/plain".into()))
+            .unwrap();
+        let unsent = core.queue().unwrap();
+
+        assert_eq!(core.remove_fetched_files().unwrap(), bytes.len() as u64);
+        assert!(!blobs.join(hex).exists());
+        assert_eq!(core.queue().unwrap().len(), unsent.len());
+        assert_eq!(
+            core.file_cache().unwrap().held,
+            Some(b"not yet sent".len() as u64),
+            "the only copy of an unsent upload was removed"
+        );
+        assert!(matches!(
+            core.file_cache().unwrap().setting,
+            FileBudget::KeepAll
+        ));
     }
 
     /// The stamp is seeded where a pull would write it, since no server is
