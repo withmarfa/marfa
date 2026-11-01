@@ -692,7 +692,7 @@ When a new document or file item has no line for an edge type named by the defau
 
 ### `folders/default-edge-refused-held`
 
-If the device or the server refuses an edge that the defaults ask for on a new document or file item, then a device MUST show that file as refused in the folder's status, with a reason that names the edge type and the other item. For a document the reason MUST say that writing that line in the file applies the edge; for a file item, which has no lines, it MUST say that the edge is made in an app or taken out of the folder's defaults.
+If the device or the server refuses an edge that the defaults ask for on a new document or file item, then a device MUST show that file as refused in the folder's status, with a reason that names the edge type, the other item and the way out: writing that line in a document's file, or, for a file item, making the edge in an app or taking it out of the folder's defaults.
 
 **Reason:** a default edge is written in no line of the file, so without a record against the file the refusal appears only in the report of the scan that made it, and the file reads as in step. A file item has no lines to write, so the way out the reason names is the one its file can take. The refusal holds no other file, and a pull still writes the item's changes into the file, since nothing the person wrote in the file was refused.
 
