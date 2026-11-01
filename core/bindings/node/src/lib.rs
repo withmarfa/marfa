@@ -3125,7 +3125,9 @@ impl MarfaCore {
     /// Removes every file the cache holds that can be fetched again and
     /// answers the bytes it took, leaving the budget as it was. Keeps the
     /// files of attachments, queued uploads and reads in progress, and the
-    /// part of a file a fetch is writing. Refused to a reading handle.
+    /// part of a file a fetch is writing. Takes nothing and fails where the
+    /// cache, the queue or the attachments cannot be read. Refused to a
+    /// reading handle.
     #[napi]
     pub fn remove_fetched_files(&self, env: Env) -> Result<i64> {
         self.inner

@@ -200,6 +200,16 @@ test("fetched files are removed through the module, keeping an unsent upload and
     assert.deepEqual(core.fileCache().setting, budget);
     assert.equal(core.removeFetchedFiles(), 0);
 
+    writeFileSync(held, fetched);
+    chmodSync(blobs, 0o000);
+    try {
+      assert.throws(() => core.removeFetchedFiles(), { code: "store" });
+    } finally {
+      chmodSync(blobs, 0o755);
+    }
+    assert.equal(existsSync(held), true);
+    assert.equal(core.removeFetchedFiles(), Buffer.byteLength(fetched));
+
     const reader = MarfaCore.openReader(path);
     assert.throws(() => reader.removeFetchedFiles(), {
       code: "reading_handle",

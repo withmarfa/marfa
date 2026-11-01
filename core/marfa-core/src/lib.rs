@@ -2781,23 +2781,27 @@ impl Core {
         cache: &blob::Cache,
         budget: impl FnOnce(u64) -> Option<u64>,
     ) -> u64 {
-        // One connection, held until the trim ends, reads both sets, so no
-        // write to the queue and no attachment lands between the reads and
-        // the trim that spares what they name.
+        // Held until the trim ends, so no attachment lands between the reads
+        // and the trim that spares what they name.
         let Ok(conn) = self.conn() else {
             return 0;
         };
-        let Some(kept) = queue_keeps(&conn) else {
+        let Ok((kept, attachments)) = self.keep_sets(&conn) else {
             return 0;
         };
+        cache.trim(&kept, &attachments, budget)
+    }
+
+    /// The bytes the queue keeps and the bytes attachments keep, by the hex
+    /// of their hash, both read on `conn`.
+    fn keep_sets(&self, conn: &Connection) -> Result<(HashSet<String>, HashSet<String>)> {
+        let kept = queue_keeps(conn)?;
         #[cfg(debug_assertions)]
         crate::fault::hold(|| format!("uploads-read:{:p}", self));
-        let Ok(attachments) = store::kept_attachments(&conn) else {
-            return 0;
-        };
+        let attachments = store::kept_attachments(conn)?;
         #[cfg(debug_assertions)]
         crate::fault::hold(|| format!("attachments-read:{:p}", self));
-        cache.trim(&kept, &attachments, budget)
+        Ok((kept, attachments))
     }
 
     pub(crate) fn let_go_blob(&self, hash: &str) {
@@ -2821,7 +2825,7 @@ impl Core {
     }
 
     fn kept_blobs(&self) -> Option<HashSet<String>> {
-        queue_keeps(&*self.conn().ok()?)
+        queue_keeps(&*self.conn().ok()?).ok()
     }
 
     /// The bytes attachments keep, by the hex of their hash, with the
@@ -3172,15 +3176,25 @@ impl Core {
     /// Takes every file the cache holds that a device can fetch again, and
     /// answers how many bytes it took. Keeps the bytes of attachments, of
     /// queued uploads and of reads in progress, and the partial files a
-    /// fetch holds, and leaves the file budget as it was. A cache that cannot
-    /// be read loses nothing. Refused to a reading handle.
+    /// fetch holds, and leaves the file budget as it was. Where the store or
+    /// the cache cannot be read, takes nothing and answers the error. An
+    /// attachment made while the files go can lose its bytes, which the next
+    /// fetch of kept files brings back. Refused to a reading handle.
     pub fn remove_fetched_files(&self) -> Result<u64> {
         self.lock.refuse_unless_writer()?;
         let Some(cache) = &self.cache else {
             return Ok(0);
         };
         let _held = cache.hold();
-        Ok(self.take_blobs_under(cache, |_| Some(0)))
+        // The connection goes before the files do, so other calls are not
+        // held up for every unlink. An upload is queued only under `hold`,
+        // so the queue names no new bytes until this returns.
+        let (kept, attachments) = self.keep_sets(&*self.conn()?)?;
+        #[cfg(debug_assertions)]
+        crate::fault::hold(|| format!("keep-sets-read:{:p}", self));
+        cache
+            .try_trim(&kept, &attachments, |_| Some(0))
+            .map_err(|error| CoreError::Store(format!("the file cache cannot be read: {error}")))
     }
 
     /// Every item type the copy holds, by id, read from the copy alone.
@@ -4167,16 +4181,13 @@ fn name_bytes(
     }
 }
 
-/// The bytes the queue keeps, by the hex of their hash. `None` where the
-/// queue cannot be read.
-fn queue_keeps(conn: &Connection) -> Option<HashSet<String>> {
-    let hashes = store::kept_uploads(conn).ok()?;
-    Some(
-        hashes
-            .iter()
-            .filter_map(|hash| blob::hex_of(hash).ok().map(str::to_string))
-            .collect(),
-    )
+/// The bytes the queue keeps, by the hex of their hash.
+fn queue_keeps(conn: &Connection) -> Result<HashSet<String>> {
+    let hashes = store::kept_uploads(conn)?;
+    Ok(hashes
+        .iter()
+        .filter_map(|hash| blob::hex_of(hash).ok().map(str::to_string))
+        .collect())
 }
 
 fn queue_upload(conn: &Connection, hash: &str, mime_type: &str) -> Result<QueuedWrite> {
@@ -7883,7 +7894,7 @@ mod tests {
         );
         assert_eq!(
             refusals.len(),
-            52,
+            53,
             "an entry has gone from the list above, and a door dropped from \
              it is a door nothing here covers"
         );

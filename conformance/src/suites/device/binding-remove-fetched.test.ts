@@ -174,7 +174,7 @@ describe("removing fetched files", () => {
     expect((await cacheOf(again)).held).toBe(ATTACHED.length + UNSENT.length);
   });
 
-  it("takes nothing from a cache it cannot read", async () => {
+  it("takes nothing from a cache it cannot read, and answers an error", async () => {
     const { device } = await holdingThree("remove-fetched-unreadable");
     const folder = `${device.store}.blobs`;
     chmodSync(folder, 0o000);
@@ -184,8 +184,13 @@ describe("removing fetched files", () => {
     } finally {
       chmodSync(folder, 0o755);
     }
-    expect(removed.ok, JSON.stringify(removed)).toBe(true);
-    expect(removed.ok && removed.value).toBe(0);
+    expect(
+      removed.ok,
+      "a removal that could not read the cache answered success",
+    ).toBe(false);
+    if (!removed.ok) {
+      expect(removed.refusal.code, removed.refusal.raw).toBe("store");
+    }
     expect(
       existsSync(heldAt(device.store, FETCHED)),
       "a removal took bytes from a cache it could not read",

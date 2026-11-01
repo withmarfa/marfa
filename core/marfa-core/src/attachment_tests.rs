@@ -449,7 +449,7 @@ fn removing_fetched_files_keeps_what_the_device_needs_and_leaves_the_budget() {
 
 #[cfg(unix)]
 #[test]
-fn removing_fetched_files_takes_nothing_from_a_cache_it_cannot_read() {
+fn removing_fetched_files_takes_nothing_from_a_cache_it_cannot_read_and_says_so() {
     use std::os::unix::fs::PermissionsExt;
     let dir = tempfile::tempdir().unwrap();
     let core = Core::open(dir.path().join("core.sqlite"), None).unwrap();
@@ -460,7 +460,10 @@ fn removing_fetched_files_takes_nothing_from_a_cache_it_cannot_read() {
     let taken = core.remove_fetched_files();
     std::fs::set_permissions(&folder, std::fs::Permissions::from_mode(0o755)).unwrap();
     assert!(sealed, "the folder could still be read");
-    assert_eq!(taken.unwrap(), 0);
+    assert!(
+        matches!(taken, Err(CoreError::Store(_))),
+        "a removal that could not read the cache answered {taken:?}"
+    );
     assert!(
         core.blob_held(&fetched).unwrap(),
         "a removal took bytes from a cache it could not read"
@@ -469,6 +472,29 @@ fn removing_fetched_files_takes_nothing_from_a_cache_it_cannot_read() {
     // The witness: once the folder can be read, the same call takes them.
     assert_eq!(core.remove_fetched_files().unwrap(), 12);
     assert!(!core.blob_held(&fetched).unwrap());
+}
+
+#[test]
+fn removing_fetched_files_takes_nothing_where_the_kept_attachments_cannot_be_read_and_says_so() {
+    let dir = tempfile::tempdir().unwrap();
+    let core = Core::open(dir.path().join("core.sqlite"), None).unwrap();
+    let fetched = hold(&core, dir.path(), b"fetched once");
+    let rename = |from: &str, to: &str| {
+        core.conn()
+            .unwrap()
+            .execute_batch(&format!("ALTER TABLE {from} RENAME TO {to}"))
+            .unwrap();
+    };
+    rename("attachment_bytes", "attachment_bytes_hidden");
+    let taken = core.remove_fetched_files();
+    rename("attachment_bytes_hidden", "attachment_bytes");
+    assert!(
+        taken.is_err(),
+        "a removal that could not read what attachments keep answered {taken:?}"
+    );
+    assert!(core.blob_held(&fetched).unwrap());
+    // The witness: once the table can be read, the same call takes them.
+    assert_eq!(core.remove_fetched_files().unwrap(), 12);
 }
 
 #[test]
@@ -485,8 +511,36 @@ fn removing_fetched_files_is_refused_to_a_reading_handle() {
     assert!(core.blob_held(&fetched).unwrap());
 }
 
-/// An upload asked for while the removal reads what to keep waits for it,
-/// so its bytes are taken in after the removal and survive it.
+/// Waits until a thread is held at `point`.
+#[cfg(debug_assertions)]
+fn held_at(point: &str) {
+    let waited = Instant::now();
+    while crate::fault::waiting(point) == 0 {
+        assert!(
+            waited.elapsed() < Duration::from_secs(10),
+            "nothing reached {point}"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+/// Whether `thread` ends within a few seconds.
+#[cfg(debug_assertions)]
+fn ends<T>(thread: &std::thread::ScopedJoinHandle<'_, T>) -> bool {
+    let waited = Instant::now();
+    while !thread.is_finished() {
+        if waited.elapsed() > Duration::from_secs(5) {
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    true
+}
+
+/// Guards the cache's settling lock: the removal has read the queue and let
+/// go of the connection before it takes files, so an upload whose bytes the
+/// cache already holds keeps them only because `put_blob` waits on that
+/// lock until the removal ends.
 #[cfg(debug_assertions)]
 #[test]
 fn an_upload_asked_for_during_a_removal_keeps_its_bytes() {
@@ -496,23 +550,18 @@ fn an_upload_asked_for_during_a_removal_keeps_its_bytes() {
     let hash = hold(&core, dir.path(), bytes);
     let source = dir.path().join("upload.txt");
     std::fs::write(&source, bytes).unwrap();
-    let point = format!("uploads-read:{:p}", &core);
+    let point = format!("keep-sets-read:{:p}", &core);
     crate::fault::arm(&point);
     std::thread::scope(|scope| {
         let removal = scope.spawn(|| core.remove_fetched_files().unwrap());
-        let waited = Instant::now();
-        while crate::fault::waiting(&point) == 0 {
-            assert!(
-                waited.elapsed() < Duration::from_secs(10),
-                "the removal never read the queue"
-            );
-            std::thread::sleep(Duration::from_millis(5));
-        }
+        held_at(&point);
         let upload = scope.spawn(|| core.put_blob(&source, Some("text/plain")).unwrap());
         std::thread::sleep(Duration::from_millis(200));
+        let waited = !upload.is_finished();
         crate::fault::release(&point);
         assert_eq!(removal.join().unwrap(), bytes.len() as u64);
         upload.join().unwrap();
+        assert!(waited, "an upload was queued while the removal took files");
     });
     assert!(
         core.blob_held(&hash).unwrap(),
@@ -522,12 +571,73 @@ fn an_upload_asked_for_during_a_removal_keeps_its_bytes() {
     assert!(core.blob_held(&hash).unwrap());
 }
 
-/// The handle an app closes goes while a removal on another thread still
-/// runs; the store opened again holds the budget it had and the bytes the
-/// removal kept.
+/// Other calls go on while a removal takes files: it holds the connection
+/// only to read what to keep.
 #[cfg(debug_assertions)]
 #[test]
-fn a_close_during_a_removal_leaves_the_budget_and_the_store_as_they_were() {
+fn a_removal_lets_other_calls_through_while_it_takes_files() {
+    let dir = tempfile::tempdir().unwrap();
+    let core = Core::open(dir.path().join("core.sqlite"), None).unwrap();
+    let fetched = hold(&core, dir.path(), b"fetched once");
+    let point = format!("keep-sets-read:{:p}", &core);
+    crate::fault::arm(&point);
+    std::thread::scope(|scope| {
+        let removal = scope.spawn(|| core.remove_fetched_files().unwrap());
+        held_at(&point);
+        let read = scope.spawn(|| core.queue().unwrap().len());
+        let through = ends(&read);
+        crate::fault::release(&point);
+        assert!(through, "a read waited on the removal's connection");
+        assert_eq!(read.join().unwrap(), 0);
+        assert_eq!(removal.join().unwrap(), 12);
+    });
+    assert!(!core.blob_held(&fetched).unwrap());
+}
+
+/// An attachment made after the removal read what to keep can lose its
+/// bytes, as one made just after the removal would; the copy still keeps
+/// it, the state report says it is not held, and a fetch of kept files
+/// brings it back.
+#[cfg(debug_assertions)]
+#[test]
+fn an_attachment_made_while_files_are_removed_is_fetched_again() {
+    let server = Scripted::start();
+    let dir = tempfile::tempdir().unwrap();
+    let core = crate::stop_tests::copy_in_keyed(&server, dir.path(), "k");
+    note(&core, "note");
+    file(&core, "photo", b"photo bytes");
+    let photo = hold(&core, dir.path(), b"photo bytes");
+    serve(&server, b"photo bytes");
+    let point = format!("keep-sets-read:{:p}", Arc::as_ptr(&core));
+    crate::fault::arm(&point);
+    std::thread::scope(|scope| {
+        let removal = scope.spawn(|| core.remove_fetched_files().unwrap());
+        held_at(&point);
+        let edge = scope.spawn(|| attach(&core, "e1", "photo", "note"));
+        let made = ends(&edge);
+        crate::fault::release(&point);
+        assert!(made, "the attachment waited on the removal's connection");
+        edge.join().unwrap();
+        assert_eq!(removal.join().unwrap(), 11);
+    });
+    assert!(!core.blob_held(&photo).unwrap());
+    assert_eq!(kept(&core), HashSet::from([hex(&photo)]));
+    assert_eq!(not_held(&core).iter().map(|(_, n)| n).sum::<u64>(), 1);
+    let fetched = core.fetch_kept_until(&AtomicBool::new(false)).unwrap();
+    assert_eq!(fetched.fetched, 1);
+    assert!(core.blob_held(&photo).unwrap());
+    // The witness: an attachment made before the removal keeps its bytes.
+    assert_eq!(core.remove_fetched_files().unwrap(), 0);
+    assert!(core.blob_held(&photo).unwrap());
+}
+
+/// A second handle on the store closes, and the writer is let go of by
+/// every caller but the removal, while the removal is under way; the store
+/// opened again holds the budget it had, its queue and the bytes of its
+/// upload.
+#[cfg(debug_assertions)]
+#[test]
+fn handles_closed_during_a_removal_leave_the_budget_and_the_store_as_they_were() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("core.sqlite");
     let core = Arc::new(Core::open(&path, None).unwrap());
@@ -537,25 +647,28 @@ fn a_close_during_a_removal_leaves_the_budget_and_the_store_as_they_were() {
     std::fs::write(&unsent, b"bytes the server has not taken").unwrap();
     core.put_blob(&unsent, Some("text/plain")).unwrap();
     let unsent = blob::name_of(b"bytes the server has not taken");
-    let point = format!("uploads-read:{:p}", Arc::as_ptr(&core));
+    let second = Core::open(&path, None).unwrap();
+    assert_eq!(second.handle(), crate::Handle::Reader);
+    let point = format!("keep-sets-read:{:p}", Arc::as_ptr(&core));
     crate::fault::arm(&point);
     let removing = {
         let core = Arc::clone(&core);
         std::thread::spawn(move || core.remove_fetched_files())
     };
-    let waited = Instant::now();
-    while crate::fault::waiting(&point) == 0 {
-        assert!(
-            waited.elapsed() < Duration::from_secs(10),
-            "the removal never read the queue"
-        );
-        std::thread::sleep(Duration::from_millis(5));
-    }
+    held_at(&point);
+    drop(second);
+    // The removal's own clone is now the only owner, and the writer
+    // closes with it.
     drop(core);
     crate::fault::release(&point);
     assert_eq!(removing.join().unwrap().unwrap(), 12);
 
     let again = Core::open(&path, None).unwrap();
+    assert_eq!(
+        again.handle(),
+        crate::Handle::Writer,
+        "the writer did not close"
+    );
     assert_eq!(again.file_budget().unwrap(), FileBudget::KeepAll);
     assert_eq!(again.file_cache().unwrap().budget, None);
     assert!(!again.blob_held(&fetched).unwrap());

@@ -2580,11 +2580,11 @@ When a caller asks a device to remove fetched files, a device MUST answer the by
 
 ### `device/file-remove-unreadable-takes-none`
 
-While a device cannot read the folder of the file cache or an entry in it, when a caller asks it to remove fetched files, a device MUST NOT take away any bytes.
+While a device cannot read the folder of the file cache or an entry in it, or cannot read its queue or the attachments its copy holds, when a caller asks it to remove fetched files, a device MUST take away no bytes and answer an error.
 
-**Reason:** a device that cannot list the cache cannot tell which files a queued upload or an attachment needs.
+**Reason:** a device that cannot read these cannot tell which files a queued upload or an attachment needs, and an answer of no bytes taken would tell the person the files were removed.
 
-**Tests:** `device/binding-remove-fetched.test.ts › takes nothing from a cache it cannot read`.
+**Tests:** `device/binding-remove-fetched.test.ts › takes nothing from a cache it cannot read, and answers an error`.
 
 ### `device/file-trim-order`
 
