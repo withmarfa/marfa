@@ -37,7 +37,7 @@ const RULES = {
   earsForm:
     "a rule opens as one of the EARS patterns does and its subject is the server, a device or the CLI",
   testsShape:
-    "a Tests paragraph holds fixture citations ending in a period, or exactly the words waiting on and an issue number, and never both",
+    "a Tests paragraph holds fixture citations ending in a period, exactly the words waiting on and an issue number, or the word none and a reason, and never two of these",
   noServerTests: "a statement never names the server's own tests",
   noNumberedRefs:
     "a chapter refers to a statement by its ID, never by a bare number in parentheses",
@@ -64,6 +64,8 @@ const CITATION =
   "`(?:(?:correctness|compliance|device|sync|cli|backup)/[a-z0-9./-]+\\.test\\.ts › [^`]+|› [^`]+)`";
 const CITATIONS = new RegExp(`^${CITATION}(?:, ${CITATION})*\\.$`);
 const WAITING = /^waiting on #\d+\.$/;
+// A rule judged not worth a fixture, with the reason no fixture asserts it.
+const NONE = /^none: [^`]+\.$/;
 
 function empty(): Record<Rule, string[]> {
   return Object.fromEntries(
@@ -124,7 +126,8 @@ function violations(name: string, text: string): Record<Rule, string[]> {
       const spans = tests.match(/`[^`]+`/g) ?? [];
       const cited =
         CITATIONS.test(tests) && citationsIn(tests).length === spans.length;
-      if (!cited && !WAITING.test(tests)) found.testsShape.push(where(id));
+      if (!cited && !WAITING.test(tests) && !NONE.test(tests))
+        found.testsShape.push(where(id));
     }
 
     const whole = statement.paragraphs.map((p) => p.text).join(" ");
@@ -220,6 +223,12 @@ describe("the form check sees what it is for", () => {
     "The server MUST answer `a. B` and keep it.",
     "",
     "**Tests:** waiting on #2.",
+    "",
+    "### `sample/judged-none`",
+    "",
+    "The CLI MUST warn.",
+    "",
+    "**Tests:** none: no runner has the storage, and a fixture was judged not worth building.",
     "",
   ].join("\n");
 
@@ -323,6 +332,12 @@ describe("the form check sees what it is for", () => {
     "",
     "**Tests:** `› one`.",
     "",
+    "### `sample/none-and-cited`",
+    "",
+    "The server MUST answer.",
+    "",
+    "**Tests:** none: `compliance/a.test.ts › one`.",
+    "",
     "### `sample/server-test`",
     "",
     "The server MUST answer.",
@@ -415,6 +430,7 @@ describe("the form check sees what it is for", () => {
       "sample/feature-event",
       "sample/unwanted",
       "sample/code-span",
+      "sample/judged-none",
     ]);
     expect(violations("sample", GOOD)).toEqual(empty());
   });
@@ -443,7 +459,12 @@ describe("the form check sees what it is for", () => {
         s("wrong-subject"),
         s("old-subject"),
       ],
-      testsShape: [s("both-tests"), s("no-period"), s("orphan-shorthand")],
+      testsShape: [
+        s("both-tests"),
+        s("no-period"),
+        s("orphan-shorthand"),
+        s("none-and-cited"),
+      ],
       noServerTests: [s("server-test")],
       noNumberedRefs: [at("REFS")],
       normativeOutside: [at("INTRO"), at("OUTSIDE")],
