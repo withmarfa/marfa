@@ -1498,9 +1498,14 @@ export function occurrenceRoutes(
     }
 
     results.sort((a, b) => a.starts_at.localeCompare(b.starts_at));
+    const held =
+      results.length > 0 ? await storage.connectors.readOnly() : () => false;
     return c.json(
       {
-        data: results,
+        data: results.map((occurrence) => ({
+          ...occurrence,
+          item: { ...occurrence.item, read_only: held(occurrence.item) },
+        })),
         next_cursor: null,
         window: { from: from.toISOString(), to: to.toISOString() },
         scan: {

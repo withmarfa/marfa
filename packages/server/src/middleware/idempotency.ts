@@ -7,6 +7,8 @@ import {
 import type { Context, ErrorHandler, MiddlewareHandler } from "hono";
 import { createMiddleware } from "hono/factory";
 import { ErrorCode, MarfaError, generateId } from "@withmarfa/shared";
+import type { Item } from "@withmarfa/shared";
+import { oneWithReadOnly } from "../routes/_read-only.js";
 import type { AppEnv } from "./auth.js";
 import { credentialHandle } from "./auth.js";
 import { isJsonContentType } from "./json-content-type.js";
@@ -298,6 +300,40 @@ function replay(status: number, contentType: string | null, body: string) {
   return new Response(body, { status, headers });
 }
 
+/**
+ * A kept answer's `item` with `read_only` as the connector registrations
+ * stand at the replay. The flag is derived when an item is answered and is
+ * no part of what the write did, so a kept value would be stale after a
+ * registration changed, and an answer kept before the field existed has none.
+ */
+async function withCurrentReadOnly(
+  storage: Storage,
+  status: number,
+  body: string,
+): Promise<string> {
+  if (status < 200 || status >= 300) return body;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(body);
+  } catch {
+    return body;
+  }
+  if (typeof parsed !== "object" || parsed === null) return body;
+  const item = (parsed as { item?: unknown }).item;
+  if (
+    typeof item !== "object" ||
+    item === null ||
+    typeof (item as Partial<Item>).source !== "string" ||
+    typeof (item as Partial<Item>).type !== "string"
+  ) {
+    return body;
+  }
+  return JSON.stringify({
+    ...parsed,
+    item: await oneWithReadOnly(storage, item as Item),
+  });
+}
+
 function errorCodeOf(body: string): string | null {
   try {
     const parsed: unknown = JSON.parse(body);
@@ -489,7 +525,11 @@ async function acquire(
         answer: replay(
           held.response_status,
           held.response_content_type,
-          held.response_body,
+          await withCurrentReadOnly(
+            storage,
+            held.response_status,
+            held.response_body,
+          ),
         ),
       };
     }

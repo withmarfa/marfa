@@ -205,9 +205,14 @@ export async function deliveryInReach(
   ) {
     return { cancel: DELIVERY_CANCELED.unselected };
   }
+  const [reach, readOnly] = await Promise.all([
+    deliveryReach(storage, credential),
+    storage.connectors.readOnly(),
+  ]);
   const frame = frameInReach(
-    await deliveryReach(storage, credential),
+    reach,
     stored as Record<string, unknown>,
+    readOnly,
   );
   if (!frame) return { cancel: DELIVERY_CANCELED.unreadable };
   // Deleted so the spread below cannot keep the frame's `event_type` first:
@@ -441,6 +446,10 @@ async function scheduleDeliveryRetry(
   });
 }
 
+/** An item as the event log stores it: `read_only` is worked out when a
+ *  frame is sent, never stored. */
+const StoredItemSchema = ItemSchema.omit({ read_only: true });
+
 export function validWebhookFrame(
   frame: Record<string, unknown>,
   eventType: string,
@@ -453,7 +462,7 @@ export function validWebhookFrame(
     : !("edge" in frame) &&
       // The event log keeps frames written before items carried
       // `trashed_at`, and they stay valid as stored.
-      ItemSchema.safeParse(
+      StoredItemSchema.safeParse(
         typeof frame.item === "object" && frame.item !== null
           ? { trashed_at: null, ...frame.item }
           : frame.item,
@@ -587,7 +596,7 @@ export class WebhookScheduler {
             }
             const standing = await reach;
             eligible =
-              standing !== null && frameInReach(standing, frame) !== null;
+              standing !== null && frameInReach(standing, frame, null) !== null;
           }
           if (eligible) {
             // Allow one valid oversized payload; never reject accepted work.

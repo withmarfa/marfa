@@ -34,6 +34,7 @@ function connector(overrides: Partial<Connector> = {}): Connector {
     name: "mail reader",
     description: null,
     problems: {},
+    read_only_types: [],
     last_heartbeat_at: ago(HOUR),
     last_run: null,
     registered_at: ago(10 * HOUR),

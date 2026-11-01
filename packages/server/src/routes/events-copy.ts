@@ -24,7 +24,11 @@ import {
   reachAuthority,
   type ReachAuthority,
 } from "../storage/reach.js";
-import type { PersistedEvent, Storage } from "../storage/interface.js";
+import type {
+  PersistedEvent,
+  ReadOnlyItems,
+  Storage,
+} from "../storage/interface.js";
 import { announcedEdgeReadable } from "./_edge-visibility.js";
 import {
   itemFrameFor,
@@ -72,6 +76,7 @@ export function copyStreamRequest(c: Context<AppEnv>): {
 function project(
   stored: Record<string, unknown>,
   authority: ReachAuthority,
+  readOnly: ReadOnlyItems,
 ): string | null {
   if (
     typeof stored.event_type !== "string" ||
@@ -102,7 +107,7 @@ function project(
     throw new Error("Unclassifiable item event");
   if (!mayReadType(authority.key, (item as Item).type)) return null;
   return JSON.stringify({
-    ...(JSON.parse(itemFrameFor(stored, authority.key)) as Record<
+    ...(JSON.parse(itemFrameFor(stored, authority.key, readOnly)) as Record<
       string,
       unknown
     >),
@@ -112,8 +117,9 @@ function project(
 function projectLive(
   frame: LiveFrame,
   authority: ReachAuthority,
+  readOnly: ReadOnlyItems,
 ): string | null {
-  return project(storedFrame(frame.event), authority);
+  return project(storedFrame(frame.event), authority, readOnly);
 }
 
 /** SQL scopes end before every enqueue, pacing wait, timer or subscription wait. */
@@ -260,7 +266,10 @@ export async function buildCopyStream(
     return false;
   };
   const decide = <T>(
-    read: (authority: ReachAuthority) => Promise<T> | T,
+    read: (
+      authority: ReachAuthority,
+      readOnly: ReadOnlyItems,
+    ) => Promise<T> | T,
     disclose: (value: T) => void,
     reason: StreamIncompleteReason = "live_delivery_failed",
   ): Promise<void> => {
@@ -270,15 +279,18 @@ export async function buildCopyStream(
         const value = await storage.runInReadSnapshot(
           async (pin) => {
             if (faultsArmed()) failRead("stream-credential");
-            const authority = await reachAuthority(
-              storage,
-              bound,
-              pin,
-              instanceId ?? pin.instanceId,
-              signingKey,
-              expected,
-            );
-            return read(authority);
+            const [authority, readOnly] = await Promise.all([
+              reachAuthority(
+                storage,
+                bound,
+                pin,
+                instanceId ?? pin.instanceId,
+                signingKey,
+                expected,
+              ),
+              storage.connectors.readOnly(),
+            ]);
+            return read(authority, readOnly);
           },
           { signal: abort.signal },
         );
@@ -337,10 +349,10 @@ export async function buildCopyStream(
         ) {
           const batch = next.value.slice(offset, offset + BATCH_SIZE);
           await decide(
-            (authority) =>
+            (authority, readOnly) =>
               batch.map((frame) => ({
                 frame,
-                payload: projectLive(frame, authority),
+                payload: projectLive(frame, authority, readOnly),
               })),
             (projected) => {
               for (const { frame, payload } of projected) {
@@ -424,7 +436,7 @@ export async function buildCopyStream(
       }
       if (!(await paced())) return;
       await decide(
-        async (authority) => {
+        async (authority, readOnly) => {
           if (faultsArmed()) failRead("stream-replay");
           const min = await storage.eventLog.getMinRetainedId();
           const batch = carriers.length
@@ -438,6 +450,7 @@ export async function buildCopyStream(
               payload: project(
                 JSON.parse(row.payload) as Record<string, unknown>,
                 authority,
+                readOnly,
               ),
             })),
           };
@@ -478,13 +491,13 @@ export async function buildCopyStream(
     for (;;) {
       if (isClosed() || !(await paced())) return;
       await decide(
-        (authority) => {
+        (authority, readOnly) => {
           const batch = held.slice(0, BATCH_SIZE);
           return {
             batch,
             projected: batch.map((frame) => ({
               frame,
-              payload: projectLive(frame, authority),
+              payload: projectLive(frame, authority, readOnly),
             })),
             authority,
           };

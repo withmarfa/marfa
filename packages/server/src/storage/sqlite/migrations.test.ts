@@ -809,12 +809,35 @@ describe("starting on a database at schema version 3", () => {
   });
 });
 
+describe("starting on a database at schema version 8", () => {
+  it("gives every connector registration an empty read_only_types, keeping the rest of its row", async () => {
+    const path = scratch();
+    await versionOne(path);
+    await migrateInPlace(path, 1, {}, MIGRATIONS.slice(0, 7), replayedShape(8));
+    const before = await rowsOf(path, ["connectors"]);
+
+    await open(path);
+
+    const client = createClient({ url: `file:${path}` });
+    const declared = await client.execute(
+      "SELECT read_only_types FROM connectors ORDER BY rowid",
+    );
+    client.close();
+    expect(await rowsOf(path, ["connectors"])).toEqual(before);
+    expect(declared.rows.map((row) => row.read_only_types)).toEqual([
+      "[]",
+      "[]",
+    ]);
+  });
+});
+
 describe("starting on an unstamped database", () => {
   it("updates an unstamped one from the last version a build left unstamped", async () => {
     // Schema versions 3 and 4 changed rows and not tables, version 5 adds
-    // one index, versions 6 and 7 one table each and version 8 one column,
-    // so an unstamped file of this shape without them is at version 2: every
-    // build since stamps what it writes.
+    // one index, versions 6 and 7 one table each, version 8 a column of
+    // `auth_passkey` and version 9 one of `connectors`, so an unstamped file
+    // of this shape without them is at version 2: every build since stamps
+    // what it writes.
     expect(Math.max(...UNSTAMPED_VERSIONS)).toBe(2);
     const path = scratch();
     const client = createClient({ url: `file:${path}` });
@@ -824,6 +847,9 @@ describe("starting on an unstamped database", () => {
     await client.execute("DROP TABLE source_names");
     await client.execute("DROP TABLE auth_passkey");
     await client.executeMultiple(baselineTable("auth_passkey"));
+    await client.executeMultiple(
+      `DROP TABLE connectors; ${baselineTable("connectors")}`,
+    );
     await fill(client);
     await client.execute("DROP TABLE trash_with_hosts");
     client.close();

@@ -1377,6 +1377,8 @@ export const connectors = sqliteTable("connectors", {
   registered_at: text("registered_at").notNull(),
   updated_at: text("updated_at").notNull(),
   last_heartbeat_at: text("last_heartbeat_at"),
+  /** A JSON list of the type IDs whose items the connector holds read only. */
+  read_only_types: text("read_only_types").notNull().default("[]"),
 });
 
 export const connectorRuns = sqliteTable(

@@ -30,7 +30,14 @@ import {
   resolveEnforcement,
   malformedTypeIdentifier,
 } from "@withmarfa/shared";
-import type { ApiKey, Item, ItemState, Metadata } from "@withmarfa/shared";
+import type {
+  ApiKey,
+  Item,
+  ItemState,
+  Metadata,
+  ReadItem,
+} from "@withmarfa/shared";
+import { oneWithReadOnly, withReadOnly } from "./_read-only.js";
 import { log } from "../middleware/logger.js";
 import { credentialIdempotencyKey } from "../middleware/idempotency.js";
 import type { Context } from "hono";
@@ -1406,11 +1413,11 @@ async function acknowledgedItemBody(
   storage: Storage,
   apiKey: ApiKey,
   existing: Item,
-): Promise<{ item: Item; metadata: Metadata; acknowledged: true }> {
+): Promise<{ item: ReadItem; metadata: Metadata; acknowledged: true }> {
   const metadata = await storage.metadata.get(existing.id);
   const [item = existing] = await withCascadeMarks(storage, apiKey, [existing]);
   return {
-    item,
+    item: await oneWithReadOnly(storage, item),
     metadata: readableMetadata(metadata, apiKey),
     acknowledged: true,
   };
@@ -1569,7 +1576,10 @@ export function itemRoutes(storage: Storage) {
 
         return c.json(
           {
-            item: { ...updatedItem, edges: hydrated ?? {} },
+            item: {
+              ...(await oneWithReadOnly(storage, updatedItem)),
+              edges: hydrated ?? {},
+            },
             metadata: readableMetadata(updatedMetadata, key),
           },
           200,
@@ -1596,7 +1606,7 @@ export function itemRoutes(storage: Storage) {
     // source filter decides them all at once, as it does for the same block
     // on a read.
     const itemWithEdges = {
-      ...item,
+      ...(await oneWithReadOnly(storage, item)),
       edges: sourceFilterIncludesItem(sourceFilter, item)
         ? groupAndCap(orderedEdges, HYDRATE_PER_TYPE_CAP, ITEM_EDGES_CURSOR_KEY)
         : {},
@@ -1780,7 +1790,10 @@ export function itemRoutes(storage: Storage) {
       cursor: query.cursor,
     });
     if (faultsArmed()) await holdAt("read-hydration");
-    const rows = await withCascadeMarks(storage, requireAuth(c), result.data);
+    const rows = await withReadOnly(
+      storage,
+      await withCascadeMarks(storage, requireAuth(c), result.data),
+    );
 
     const ids = rows.map((item) => item.id);
     const apiKey = c.get("apiKey");
@@ -1877,7 +1890,8 @@ export function itemRoutes(storage: Storage) {
         : Promise.resolve(null),
     ]);
 
-    let neighbors: { item: Item; metadata: Metadata }[] | undefined;
+    const held = await storage.connectors.readOnly();
+    let neighbors: { item: ReadItem; metadata: Metadata }[] | undefined;
     // True when the 1-hop neighbor set was capped (more neighbors exist than
     // were hydrated). Distinct from the per-type edge block's `next_cursor`: several
     // edge types can each sit below their per-type cap while their COMBINED
@@ -1968,7 +1982,7 @@ export function itemRoutes(storage: Storage) {
         );
         const metaById = new Map(metaList.map((m) => [m.item_id, m]));
         neighbors = visible.map((n) => ({
-          item: n,
+          item: { ...n, read_only: held(n) },
           metadata: readableMetadata(
             metaById.get(n.id) ?? { item_id: n.id, tags: [], extensions: {} },
             apiKey,
@@ -1980,7 +1994,7 @@ export function itemRoutes(storage: Storage) {
     const readAuthority = c.get("reachAuthority");
     return c.json(
       {
-        item: { ...item, edges },
+        item: { ...item, read_only: held(item), edges },
         ...(readAuthority && {
           listed: itemListed(readAuthority, item),
         }),
@@ -2145,7 +2159,10 @@ export function itemRoutes(storage: Storage) {
 
     return c.json(
       {
-        item: { ...resolvedItem, edges: hydrated ?? {} },
+        item: {
+          ...(await oneWithReadOnly(storage, resolvedItem)),
+          edges: hydrated ?? {},
+        },
         metadata: readableMetadata(result.metadata, key),
         // Present only where the server actually resolved a collision. It is
         // the only thing that names the sibling: no route reports what a

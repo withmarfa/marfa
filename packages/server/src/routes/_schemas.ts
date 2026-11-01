@@ -304,6 +304,11 @@ export const ItemSchema = z
       .describe(
         "The item's identifier at its source. With `source`, it is the item's natural key. Absent if the writer set none.",
       ),
+    read_only: z
+      .boolean()
+      .describe(
+        "`true` if every connector with a live write key for the item's type that owns or claims its `source` lists the type in `read_only_types`, so it puts back an edit made in Marfa on its next run. Marfa doesn't refuse the edit.",
+      ),
     capture_latitude: z
       .number()
       .optional()

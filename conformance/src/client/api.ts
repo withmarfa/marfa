@@ -1018,6 +1018,7 @@ export class MarfaClient {
   async registerConnector(input: {
     name: string;
     description?: string;
+    read_only_types?: string[];
   }): Promise<ApiResponse<ConnectorRow>> {
     return this.request<ConnectorRow>("/connectors", {
       method: "POST",

@@ -1,6 +1,14 @@
 import type { Edge, Item } from "@withmarfa/shared";
 import { createHmac } from "node:crypto";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 import { hashApiKey } from "../middleware/auth.js";
 import * as clock from "../clock.js";
 import {
@@ -553,6 +561,71 @@ describe("dispatch", () => {
 // ---------------------------------------------------------------------------
 
 describe("what a delivery carries", () => {
+  it("sends read_only as connectors' registrations stand at the attempt", async () => {
+    const { id } = await owner();
+    await subscription(id, ["item.created"]);
+    const connector = await mintWorkingKey(ctx, { source: "read-only-hook" });
+    const registered = await request(ctx.app, "POST", "/connectors", {
+      key: connector,
+      body: { name: "read only hook", read_only_types: ["core.note"] },
+    });
+    expect(registered.status).toBe(201);
+    const http = recorder();
+    await dispatch(http, async () => {
+      await publish({
+        type: "created",
+        item: {
+          ...item("01HREADONLYREADONLYREADON0"),
+          source: "read-only-hook",
+        },
+      });
+      await publish({
+        type: "created",
+        item: item("01HEDITABLEEDITABLEEDITAB0"),
+      });
+    });
+    expect(
+      Object.fromEntries(
+        sentBodies(http).map((body) => {
+          const sent = body.item as { id: string; read_only: boolean };
+          return [sent.id, sent.read_only];
+        }),
+      ),
+    ).toEqual({
+      "01HREADONLYREADONLYREADON0": true,
+      "01HEDITABLEEDITABLEEDITAB0": false,
+    });
+  });
+
+  it("reads connector registrations when it sends a delivery, not when it schedules one", async () => {
+    const { id } = await owner();
+    await subscription(id, ["item.created"]);
+    await publish({
+      type: "created",
+      item: item("01HSCHEDULEDSCHEDULEDSCHE0"),
+    });
+    const readOnly = vi.spyOn(ctx.storage.connectors, "readOnly");
+    try {
+      const scheduler = new WebhookScheduler({
+        storage: ctx.storage,
+        wakePoller: () => Promise.resolve(),
+      });
+      const head = (await ctx.storage.eventLog.getMaxId()) ?? 0n;
+      while (
+        (await ctx.storage.outboundWebhooks.checkpoint()).lastEventId < head
+      ) {
+        await scheduler.runOnce();
+      }
+      expect(readOnly).not.toHaveBeenCalled();
+      const http = recorder();
+      await new WebhookPoller({ storage: ctx.storage, http }).runOnce();
+      expect(http.posts).toHaveLength(1);
+      expect(readOnly).toHaveBeenCalled();
+    } finally {
+      readOnly.mockRestore();
+    }
+  });
+
   it("carries every mark to a credential that may read the rows they name, and no stored type", async () => {
     const { id } = await owner();
     await subscription(id, ["item.restored", "item.deleted", "edge.deleted"]);

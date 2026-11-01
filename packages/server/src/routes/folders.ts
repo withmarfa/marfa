@@ -1,4 +1,5 @@
 import { maxStringLength } from "@withmarfa/shared";
+import { oneWithReadOnly } from "./_read-only.js";
 import { runAuditedTransaction } from "../storage/audited-transaction.js";
 import { rememberItemSubject } from "../middleware/replay-requirements.js";
 /**
@@ -519,7 +520,10 @@ export function folderRoutes(storage: Storage) {
 
     rememberItemSubject(item, "write", true);
     return c.json(
-      { item, metadata: readableMetadata(metadata, c.get("apiKey")) },
+      {
+        item: await oneWithReadOnly(storage, item),
+        metadata: readableMetadata(metadata, c.get("apiKey")),
+      },
       201,
     );
   });
@@ -576,7 +580,10 @@ export function folderRoutes(storage: Storage) {
 
     rememberItemSubject(item, "write", true);
     return c.json(
-      { item, metadata: readableMetadata(metadata, c.get("apiKey")) },
+      {
+        item: await oneWithReadOnly(storage, item),
+        metadata: readableMetadata(metadata, c.get("apiKey")),
+      },
       200,
     );
   });
@@ -621,7 +628,10 @@ export function folderRoutes(storage: Storage) {
 
     rememberItemSubject(item, "write", true);
     return c.json(
-      { item, metadata: readableMetadata(metadata, c.get("apiKey")) },
+      {
+        item: await oneWithReadOnly(storage, item),
+        metadata: readableMetadata(metadata, c.get("apiKey")),
+      },
       200,
     );
   });

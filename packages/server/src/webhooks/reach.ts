@@ -31,7 +31,7 @@ import {
   type SourceFilterSettings,
 } from "../storage/filter-sql.js";
 import { readInstanceConfig } from "../storage/instance-config.js";
-import type { Storage } from "../storage/interface.js";
+import type { ReadOnlyItems, Storage } from "../storage/interface.js";
 
 /** What a subscription's credential may be sent, as it stands now. */
 export interface DeliveryReach {
@@ -62,10 +62,13 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * The frame `key` may be sent for this stored frame, or null where it may
  * be sent none. The stored frame is what a reader of everything is sent,
  * with the types its marks name, as `storedFrame` in `pubsub.ts` builds it.
+ * An item frame carries `read_only` as `readOnly` says; a caller asking only
+ * whether a frame may be sent passes null and loads no registrations.
  */
 export function frameInReach(
   { key, sourceFilter }: DeliveryReach,
   stored: Record<string, unknown>,
+  readOnly: ReadOnlyItems | null,
 ): Record<string, unknown> | null {
   if (isRecord(stored.edge)) {
     const edge = stored.edge as unknown as Edge;
@@ -103,7 +106,11 @@ export function frameInReach(
   ) {
     return null;
   }
-  const frame = frameFor(stored, (type) => mayReadType(key, type));
+  const frame = frameFor(
+    stored,
+    (type) => mayReadType(key, type),
+    readOnly ?? undefined,
+  );
   const metadata = frame.metadata;
   if (!isRecord(metadata)) return frame;
   return {

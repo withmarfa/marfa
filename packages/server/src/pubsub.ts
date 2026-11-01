@@ -3,7 +3,11 @@ import { setImmediate } from "node:timers/promises";
 import { runInBackground } from "./background-context.js";
 import type { Edge, Item, Metadata } from "@withmarfa/shared";
 import { typeAnswersSubtreeFilter } from "@withmarfa/shared";
-import type { CascadeRoot, EventLogStore } from "./storage/interface.js";
+import type {
+  CascadeRoot,
+  EventLogStore,
+  ReadOnlyItems,
+} from "./storage/interface.js";
 import {
   afterCommit,
   onCommitDeliveryUncertain,
@@ -160,6 +164,7 @@ export function cascadeMark(
 export function frameFor(
   stored: Record<string, unknown>,
   mayRead: (type: string) => boolean,
+  readOnly?: ReadOnlyItems,
 ): Record<string, unknown> {
   const {
     trashed_with_type: trashedType,
@@ -183,6 +188,17 @@ export function frameFor(
   }
   if ("restored_with" in frame && !readable(restoredType)) {
     delete frame.restored_with;
+  }
+  // Derived as the frame is sent, like every other read of `read_only`.
+  if (readOnly && typeof frame.item === "object" && frame.item !== null) {
+    const { source, type } = frame.item as Record<string, unknown>;
+    frame.item = {
+      ...frame.item,
+      read_only:
+        typeof source === "string" &&
+        typeof type === "string" &&
+        readOnly({ source, type }),
+    };
   }
   return frame;
 }

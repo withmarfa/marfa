@@ -552,7 +552,10 @@ export function checkAuth(apiKey: ApiKey | undefined): ApiKey {
   return apiKey;
 }
 
-export function mayWriteReserved(_key: ApiKey, type: string): boolean {
+export function mayWriteReserved(
+  _key: Pick<ApiKey, "type_permissions">,
+  type: string,
+): boolean {
   return classifyNamespace(type) !== "system";
 }
 
@@ -567,8 +570,7 @@ export function mayWriteEdge(
   targetType: string,
 ): boolean {
   return (
-    mayWriteReserved(key, sourceType) &&
-    resolveTypePermission(sourceType, key.type_permissions) === "write" &&
+    mayWriteType(key, sourceType) &&
     edgePermissionCovers(key.edge_permissions, edgeType, "write") &&
     mayReadType(key, targetType)
   );
@@ -589,6 +591,18 @@ export function mayWriteEdge(
  */
 export function mayReadType(key: ApiKey, type: string): boolean {
   return resolveTypePermission(type, key.type_permissions) !== "none";
+}
+
+/** Whether this credential may write items of this type, as
+ *  `checkTypeAccess` decides at `write` without refusing. */
+export function mayWriteType(
+  key: Pick<ApiKey, "type_permissions">,
+  type: string,
+): boolean {
+  return (
+    mayWriteReserved(key, type) &&
+    resolveTypePermission(type, key.type_permissions) === "write"
+  );
 }
 
 export function checkTypeAccess(

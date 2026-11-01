@@ -103,6 +103,7 @@ it("reports quiet connectors and preserves a folder concern beside another faile
         name: "Quiet",
         description: null,
         problems: {},
+        read_only_types: [],
         last_heartbeat_at: old,
         last_run: null,
         registered_at: old,

@@ -9,7 +9,12 @@ import { runAuditedTransaction } from "../storage/audited-transaction.js";
  * failed run means.
  */
 import { createRoute, z } from "@hono/zod-openapi";
-import { MarfaError, ErrorCode, isValidTimestamp } from "@withmarfa/shared";
+import {
+  MarfaError,
+  ErrorCode,
+  isValidTimestamp,
+  isValidTypeIdentifier,
+} from "@withmarfa/shared";
 import type { ApiKey } from "@withmarfa/shared";
 import type { Context } from "hono";
 import type { AppEnv } from "../middleware/auth.js";
@@ -95,11 +100,18 @@ const ConnectorSchema = z
     registered_at: z.string().describe("When the connector first registered."),
     updated_at: z
       .string()
-      .describe("When the connector's name or description was last set."),
+      .describe(
+        "When the connector's name, description or `read_only_types` was last set.",
+      ),
     last_heartbeat_at: z
       .string()
       .nullable()
       .describe("When the connector last sent a heartbeat; `null` if never."),
+    read_only_types: z
+      .array(z.string().openapi({ example: "app.github.issue" }))
+      .describe(
+        "The types whose items the connector holds read only, putting back any edit made in Marfa. `[]` if it declared none.",
+      ),
     last_run: nullableRef(ConnectorRunSchema).describe(
       "The connector's most recently reported run; `null` if it has reported none.",
     ),
@@ -118,6 +130,9 @@ const ConnectorSchema = z
   )
   .openapi("Connector");
 
+/** Types one registration may declare read only. */
+const MAX_READ_ONLY_TYPES = 1000;
+
 const RegisterSchema = z
   .object({
     name: maxStringLength(z.string().min(1), 200).describe(
@@ -127,6 +142,18 @@ const RegisterSchema = z
       .optional()
       .describe(
         "What the connector does. Leave it out for none: registering again without it clears the old one.",
+      ),
+    read_only_types: z
+      .array(
+        z
+          .string()
+          .refine(isValidTypeIdentifier, "a type identifier")
+          .openapi({ example: "app.github.issue" }),
+      )
+      .max(MAX_READ_ONLY_TYPES)
+      .optional()
+      .describe(
+        "The types whose items the connector holds read only, putting back any edit made in Marfa. An item reads `read_only` as `true` when every connector for its source whose live key may write its type lists the type. The types needn't be registered. Leaving it out clears the list.",
       ),
   })
   .meta(CLOSED_BY_HANDLER);
@@ -380,7 +407,7 @@ const registerConnectorRoute = createRoute({
   tags: ["Connectors"],
   summary: "Register a connector",
   description:
-    "Registers your key as a connector and returns it. Repeating registration updates its name and description and keeps its ID. A successor key inherits its own source's inbound endpoints and retained deliveries.",
+    "Registers your key as a connector and returns it. Repeating registration replaces its name, description and `read_only_types` and keeps its ID. A successor key inherits its own source's inbound endpoints and retained deliveries.",
   security: [{ bearerAuth: [] }],
   middleware: workingKeyOnly,
   request: {
@@ -390,7 +417,7 @@ const registerConnectorRoute = createRoute({
     200: {
       content: { "application/json": { schema: ConnectorSchema } },
       description:
-        "Returns the existing connector with its name and description updated. Its `id` and `registered_at` don't change.",
+        "Returns the existing connector with its name, description and `read_only_types` replaced. Its `id` and `registered_at` don't change.",
     },
     201: {
       content: { "application/json": { schema: ConnectorSchema } },
@@ -406,7 +433,7 @@ const registerConnectorRoute = createRoute({
         },
       },
       description:
-        "- `missing_required_field`: `name` is missing.\n- `validation_error`: `name` isn't 1 to 200 characters, `description` is over 2,000 characters, or the body has a top-level field this endpoint doesn't take.",
+        "- `missing_required_field`: `name` is missing.\n- `validation_error`: `name` isn't 1 to 200 characters, `description` is over 2,000 characters, `read_only_types` holds a malformed type identifier or over 1,000 entries, or the body has a top-level field this endpoint doesn't take.",
     },
     ...anyKeyResponses,
     ...forbiddenResponse(
@@ -835,6 +862,7 @@ export function connectorRoutes(storage: Storage) {
           { id: key.id, source: key.source },
           body.name,
           body.description ?? null,
+          [...new Set(body.read_only_types ?? [])],
         ),
       ({ connector, created }) => ({
         client_ip: c.get("clientIp") ?? null,

@@ -1,12 +1,13 @@
 import { and, desc, eq, gt, lt, or, sql } from "drizzle-orm";
 import { ErrorCode, MarfaError, generateId } from "@withmarfa/shared";
-import type { PaginatedResult } from "@withmarfa/shared";
+import type { PaginatedResult, TypePermission } from "@withmarfa/shared";
 import type {
   Connector,
   ConnectorHoldOutcome,
   ConnectorRun,
   ConnectorRunInput,
   ConnectorStore,
+  ReadOnlyItems,
 } from "../interface.js";
 import {
   CONNECTOR_RUNS_CURSOR_KEY,
@@ -22,6 +23,8 @@ import {
   connectorStates,
 } from "./schema.js";
 import { notRevokedOrExpired } from "./key-store.js";
+import { safeJsonParse } from "../json-utils.js";
+import { mayWriteType } from "../../middleware/auth.js";
 import type { DrizzleDb } from "./connection.js";
 import * as clock from "../../clock.js";
 
@@ -82,6 +85,11 @@ export class SqliteConnectorStore implements ConnectorStore {
       registered_at: row.registered_at,
       updated_at: row.updated_at,
       last_heartbeat_at: row.last_heartbeat_at,
+      read_only_types: safeJsonParse<string[]>(
+        row.read_only_types,
+        [],
+        "connector read_only_types",
+      ),
       last_run: last ? toRun(last) : null,
       hold_expires_at: hold?.expires_at ?? null,
     };
@@ -91,7 +99,9 @@ export class SqliteConnectorStore implements ConnectorStore {
     key: { id: string; source: string },
     name: string,
     description: string | null,
+    readOnlyTypes: readonly string[],
   ): Promise<{ connector: Connector; created: boolean }> {
+    const declared = JSON.stringify(readOnlyTypes);
     return this.db.transaction(async (tx) => {
       const now = clock.now().toISOString();
       // Revalidate after writer admission: a request authenticated before
@@ -115,6 +125,7 @@ export class SqliteConnectorStore implements ConnectorStore {
           registered_at: now,
           updated_at: now,
           last_heartbeat_at: null,
+          read_only_types: declared,
         })
         .onConflictDoNothing({ target: connectors.key_id })
         .returning()
@@ -124,7 +135,12 @@ export class SqliteConnectorStore implements ConnectorStore {
         (
           await tx
             .update(connectors)
-            .set({ name, description, updated_at: now })
+            .set({
+              name,
+              description,
+              read_only_types: declared,
+              updated_at: now,
+            })
             .where(eq(connectors.key_id, key.id))
             .returning()
             .all()
@@ -144,6 +160,52 @@ export class SqliteConnectorStore implements ConnectorStore {
         created: inserted.length > 0,
       };
     });
+  }
+
+  async readOnly(): Promise<ReadOnlyItems> {
+    const rows = await this.db
+      .select({
+        own: apiKeys.source,
+        claimed: apiKeys.sources,
+        permissions: apiKeys.type_permissions,
+        declared: connectors.read_only_types,
+      })
+      .from(connectors)
+      .innerJoin(apiKeys, eq(apiKeys.id, connectors.key_id))
+      .where(notRevokedOrExpired(clock.now().toISOString()))
+      .all();
+    // Per source, the types every registration for it declares: one that
+    // declares fewer still takes edits to the rest. A declared type the key
+    // may no longer write is one its connector cannot put an edit back to.
+    const held = new Map<string, Set<string>>();
+    for (const row of rows) {
+      const key = {
+        type_permissions: safeJsonParse<Record<string, TypePermission>>(
+          row.permissions,
+          {},
+          "key type_permissions",
+        ),
+      };
+      const declared = safeJsonParse<string[]>(
+        row.declared,
+        [],
+        "connector read_only_types",
+      ).filter((type) => mayWriteType(key, type));
+      const sources = new Set([
+        row.own,
+        ...safeJsonParse<string[]>(row.claimed, [], "key sources"),
+      ]);
+      for (const source of sources) {
+        const types = held.get(source);
+        held.set(
+          source,
+          types === undefined
+            ? new Set(declared)
+            : new Set(declared.filter((type) => types.has(type))),
+        );
+      }
+    }
+    return (item) => held.get(item.source)?.has(item.type) === true;
   }
 
   async list(): Promise<Connector[]> {

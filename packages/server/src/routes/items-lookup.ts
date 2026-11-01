@@ -30,6 +30,7 @@ import type {
 import { normalizeTimeBound } from "../storage/interface.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import { withCascadeMarks } from "./_cascade-marks.js";
+import { withReadOnly } from "./_read-only.js";
 import { assertTypeReadable } from "./_type-filter.js";
 import { hydrateEdgesForItems } from "./_edges-hydrate.js";
 import { ItemSchema } from "./_schemas.js";
@@ -381,7 +382,10 @@ export function itemsLookupRoutes(storage: Storage) {
       readable.push(item);
     }
     if (faultsArmed()) await holdAt("read-hydration");
-    const rows = await withCascadeMarks(storage, apiKey, readable);
+    const rows = await withReadOnly(
+      storage,
+      await withCascadeMarks(storage, apiKey, readable),
+    );
 
     const tombstones =
       selector.kind !== "ids" && mayRead(apiKey, type)

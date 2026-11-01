@@ -1319,7 +1319,7 @@ export interface paths {
         put?: never;
         /**
          * Register a connector
-         * @description Registers your key as a connector and returns it. Repeating registration updates its name and description and keeps its ID. A successor key inherits its own source's inbound endpoints and retained deliveries.
+         * @description Registers your key as a connector and returns it. Repeating registration replaces its name, description and `read_only_types` and keeps its ID. A successor key inherits its own source's inbound endpoints and retained deliveries.
          */
         post: operations["registerConnector"];
         delete?: never;
@@ -2415,6 +2415,8 @@ export interface components {
             source: string;
             /** @description The item's identifier at its source. With `source`, it is the item's natural key. Absent if the writer set none. */
             source_id?: string;
+            /** @description `true` if every connector with a live write key for the item's type that owns or claims its `source` lists the type in `read_only_types`, so it puts back an edit made in Marfa on its next run. Marfa doesn't refuse the edit. */
+            read_only: boolean;
             /** @description The latitude where the item was captured. Absent if the writer set none. */
             capture_latitude?: number;
             /** @description The longitude where the item was captured. Absent if the writer set none. */
@@ -4953,10 +4955,12 @@ export interface components {
             description: string | null;
             /** @description When the connector first registered. */
             registered_at: string;
-            /** @description When the connector's name or description was last set. */
+            /** @description When the connector's name, description or `read_only_types` was last set. */
             updated_at: string;
             /** @description When the connector last sent a heartbeat; `null` if never. */
             last_heartbeat_at: string | null;
+            /** @description The types whose items the connector holds read only, putting back any edit made in Marfa. `[]` if it declared none. */
+            read_only_types: string[];
             /** @description The connector's most recently reported run; `null` if it has reported none. */
             last_run: components["schemas"]["ConnectorRun"] | null;
             problems: components["schemas"]["ConnectorProblems"] & unknown;
@@ -21934,11 +21938,13 @@ export interface operations {
                     name: string;
                     /** @description What the connector does. Leave it out for none: registering again without it clears the old one. */
                     description?: string;
+                    /** @description The types whose items the connector holds read only, putting back any edit made in Marfa. An item reads `read_only` as `true` when every connector for its source whose live key may write its type lists the type. The types needn't be registered. Leaving it out clears the list. */
+                    read_only_types?: string[];
                 };
             };
         };
         responses: {
-            /** @description Returns the existing connector with its name and description updated. Its `id` and `registered_at` don't change. */
+            /** @description Returns the existing connector with its name, description and `read_only_types` replaced. Its `id` and `registered_at` don't change. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -21968,7 +21974,7 @@ export interface operations {
             };
             /**
              * @description - `missing_required_field`: `name` is missing.
-             *     - `validation_error`: `name` isn't 1 to 200 characters, `description` is over 2,000 characters, or the body has a top-level field this endpoint doesn't take.
+             *     - `validation_error`: `name` isn't 1 to 200 characters, `description` is over 2,000 characters, `read_only_types` holds a malformed type identifier or over 1,000 entries, or the body has a top-level field this endpoint doesn't take.
              */
             400: {
                 headers: {

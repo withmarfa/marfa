@@ -5,6 +5,7 @@
  * lists a view's items asks the reader's own type map of every row, so a view
  * never widens what a key reads.
  */
+import { oneWithReadOnly, withReadOnly } from "./_read-only.js";
 import { createRoute, z } from "@hono/zod-openapi";
 import {
   ErrorCode,
@@ -580,7 +581,10 @@ export function viewRoutes(storage: Storage) {
 
     rememberItemSubject(item, "write", true);
     return c.json(
-      { item, metadata: readableMetadata(metadata, c.get("apiKey")) },
+      {
+        item: await oneWithReadOnly(storage, item),
+        metadata: readableMetadata(metadata, c.get("apiKey")),
+      },
       201,
     );
   });
@@ -635,7 +639,13 @@ export function viewRoutes(storage: Storage) {
       },
       { limit, cursor },
     );
-    return c.json(page, 200);
+    return c.json(
+      {
+        data: await withReadOnly(storage, page.data),
+        next_cursor: page.next_cursor,
+      },
+      200,
+    );
   });
 
   router.openapi(updateViewRoute, async (c) => {
@@ -695,7 +705,10 @@ export function viewRoutes(storage: Storage) {
 
     rememberItemSubject(item, "write", true);
     return c.json(
-      { item, metadata: readableMetadata(metadata, c.get("apiKey")) },
+      {
+        item: await oneWithReadOnly(storage, item),
+        metadata: readableMetadata(metadata, c.get("apiKey")),
+      },
       200,
     );
   });

@@ -452,6 +452,10 @@
             "type": "string",
             "description": "The item's identifier at its source. With `source`, it is the item's natural key. Absent if the writer set none."
           },
+          "read_only": {
+            "type": "boolean",
+            "description": "`true` if every connector with a live write key for the item's type that owns or claims its `source` lists the type in `read_only_types`, so it puts back an edit made in Marfa on its next run. Marfa doesn't refuse the edit."
+          },
           "capture_latitude": {
             "type": "number",
             "description": "The latitude where the item was captured. Absent if the writer set none."
@@ -511,6 +515,7 @@
           "version",
           "schema_version",
           "source",
+          "read_only",
           "occurred_at",
           "created_at",
           "updated_at",
@@ -6727,7 +6732,7 @@
           },
           "updated_at": {
             "type": "string",
-            "description": "When the connector's name or description was last set."
+            "description": "When the connector's name, description or `read_only_types` was last set."
           },
           "last_heartbeat_at": {
             "type": [
@@ -6735,6 +6740,14 @@
               "null"
             ],
             "description": "When the connector last sent a heartbeat; `null` if never."
+          },
+          "read_only_types": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "example": "app.github.issue"
+            },
+            "description": "The types whose items the connector holds read only, putting back any edit made in Marfa. `[]` if it declared none."
           },
           "last_run": {
             "anyOf": [
@@ -6774,6 +6787,7 @@
           "registered_at",
           "updated_at",
           "last_heartbeat_at",
+          "read_only_types",
           "last_run",
           "problems",
           "hold_expires_at"
@@ -42077,7 +42091,7 @@
           "Connectors"
         ],
         "summary": "Register a connector",
-        "description": "Registers your key as a connector and returns it. Repeating registration updates its name and description and keeps its ID. A successor key inherits its own source's inbound endpoints and retained deliveries.",
+        "description": "Registers your key as a connector and returns it. Repeating registration replaces its name, description and `read_only_types` and keeps its ID. A successor key inherits its own source's inbound endpoints and retained deliveries.",
         "security": [
           {
             "bearerAuth": []
@@ -42100,6 +42114,15 @@
                     "type": "string",
                     "maxLength": 2000,
                     "description": "What the connector does. Leave it out for none: registering again without it clears the old one."
+                  },
+                  "read_only_types": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "example": "app.github.issue"
+                    },
+                    "maxItems": 1000,
+                    "description": "The types whose items the connector holds read only, putting back any edit made in Marfa. An item reads `read_only` as `true` when every connector for its source whose live key may write its type lists the type. The types needn't be registered. Leaving it out clears the list."
                   }
                 },
                 "required": [
@@ -42112,7 +42135,7 @@
         },
         "responses": {
           "200": {
-            "description": "Returns the existing connector with its name and description updated. Its `id` and `registered_at` don't change.",
+            "description": "Returns the existing connector with its name, description and `read_only_types` replaced. Its `id` and `registered_at` don't change.",
             "content": {
               "application/json": {
                 "schema": {
@@ -42166,7 +42189,7 @@
             }
           },
           "400": {
-            "description": "- `missing_required_field`: `name` is missing.\n- `validation_error`: `name` isn't 1 to 200 characters, `description` is over 2,000 characters, or the body has a top-level field this endpoint doesn't take.",
+            "description": "- `missing_required_field`: `name` is missing.\n- `validation_error`: `name` isn't 1 to 200 characters, `description` is over 2,000 characters, `read_only_types` holds a malformed type identifier or over 1,000 entries, or the body has a top-level field this endpoint doesn't take.",
             "content": {
               "application/json": {
                 "schema": {

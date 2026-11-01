@@ -2441,7 +2441,7 @@ describe("inbound binding transaction boundaries", () => {
     expect(current?.last_run).toBeNull();
     expect(current?.hold_expires_at).toBeNull();
     await expect(
-      ctx.storage.connectors.register(next.oldKey, "late", null),
+      ctx.storage.connectors.register(next.oldKey, "late", null, []),
     ).rejects.toMatchObject({ code: "unauthorized" });
     expect(
       (await ctx.storage.inbound.listEndpoints(answers[0].id)).map((e) => e.id),
@@ -2722,6 +2722,7 @@ it("rejects mismatched and expired registration keys without changing their bind
       { id: key.id, source: "another-source" },
       "mismatched",
       null,
+      [],
     ),
   ).rejects.toMatchObject({ code: "unauthorized" });
   expect(await ctx.storage.connectors.list()).toEqual([]);
@@ -2732,6 +2733,7 @@ it("rejects mismatched and expired registration keys without changing their bind
     key,
     "own source",
     null,
+    [],
   );
   expect(accepted.created).toBe(true);
   expect(accepted.connector.source).toBe(key.source);
@@ -2745,7 +2747,7 @@ it("rejects mismatched and expired registration keys without changing their bind
     ["2020-01-01T00:00:00.000Z", key.id],
   );
   await expect(
-    ctx.storage.connectors.register(key, "expired", null),
+    ctx.storage.connectors.register(key, "expired", null, []),
   ).rejects.toMatchObject({ code: "unauthorized" });
   expect((await ctx.storage.connectors.get(accepted.connector.id))?.name).toBe(
     "own source",

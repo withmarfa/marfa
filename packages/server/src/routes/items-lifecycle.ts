@@ -1,4 +1,5 @@
 import { runAuditedTransaction } from "../storage/audited-transaction.js";
+import { oneWithReadOnly } from "./_read-only.js";
 import { snapshotReadRoute } from "../middleware/read-snapshot.js";
 import { createRoute, z } from "@hono/zod-openapi";
 import { MarfaError, ErrorCode, isValidId } from "@withmarfa/shared";
@@ -537,7 +538,7 @@ export function itemsLifecycleRoutes(storage: Storage) {
 
     return c.json(
       {
-        item: restored,
+        item: await oneWithReadOnly(storage, restored),
         metadata: readableMetadata(metadata, key),
       },
       200,
@@ -606,7 +607,7 @@ export function itemsLifecycleRoutes(storage: Storage) {
     }
     return c.json(
       {
-        item: result.updated,
+        item: await oneWithReadOnly(storage, result.updated),
         metadata: readableMetadata(result.metadata, result.key),
       },
       200,

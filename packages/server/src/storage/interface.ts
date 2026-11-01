@@ -3278,6 +3278,8 @@ export interface Connector {
   registered_at: string;
   updated_at: string;
   last_heartbeat_at: string | null;
+  /** The type IDs whose items the connector holds read only. */
+  read_only_types: string[];
   last_run: ConnectorRun | null;
   problems: Record<string, string>;
   /** When the live hold on the registration lapses; null when none is live. */
@@ -3290,6 +3292,9 @@ export type ConnectorHoldOutcome =
   | { taken: true; expires_at: string; renewed: boolean }
   | { taken: false; expires_at: string };
 
+/** Whether connectors hold an item read only; see `ConnectorStore.readOnly`. */
+export type ReadOnlyItems = (item: { source: string; type: string }) => boolean;
+
 export interface ConnectorStore {
   /** Revalidate and register the key, or update its registration, and bind
    *  its own source's inbound state in one writer transaction. Concurrent
@@ -3298,7 +3303,15 @@ export interface ConnectorStore {
     key: { id: string; source: string },
     name: string,
     description: string | null,
+    readOnlyTypes: readonly string[],
   ): Promise<{ connector: Connector; created: boolean }>;
+  /**
+   * Which items connectors hold read only, from every registration whose key
+   * is live, read once for a page: true for an item when at least one such
+   * registration's key owns or claims the item's source and every one that
+   * does declares the item's type and may write it.
+   */
+  readOnly(): Promise<ReadOnlyItems>;
   /** Every registration, newest first. */
   list(): Promise<Connector[]>;
   get(id: string): Promise<Connector | null>;
