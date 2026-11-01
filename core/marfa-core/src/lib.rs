@@ -8,6 +8,8 @@ mod catch_up;
 /// Public so a debug build's binding can move the clock it waits by.
 pub mod clock;
 pub mod contract;
+#[cfg(test)]
+mod deleted_stays_gone_tests;
 mod directory;
 #[cfg(unix)]
 mod directory_vfs;
@@ -52,6 +54,7 @@ mod reads_tests;
 mod refusal_tests;
 #[cfg(test)]
 mod relocation_tests;
+mod removal;
 #[cfg(test)]
 mod remove_tests;
 #[cfg(test)]
@@ -1792,12 +1795,9 @@ impl Core {
         };
         let http = self.http()?;
         catch_up::refuse_another_instance(self, http)?;
-        catch_up::write_naming_instance(self, http, |http| http.purge_item(id, version))?;
-        let mut conn = self.conn()?;
-        let tx = conn.transaction()?;
-        store::purge_item(&tx, id)?;
-        tx.commit()?;
-        Ok(())
+        self.purge_sent(id, || {
+            catch_up::write_naming_instance(self, http, |http| http.purge_item(id, version))
+        })
     }
 
     pub(crate) fn write_update(
@@ -4053,6 +4053,7 @@ fn queue_edge_delete(tx: &Connection, held: &model::Edge, after: &[String]) -> R
     let payload = serde_json::json!({ "edge_type": held.edge_type }).to_string();
     store::hold_beneath_edge(tx, &held.id)?;
     store::delete_edge(tx, &held.id)?;
+    store::removal_sent(tx, model::Subject::Edge, &held.id)?;
     store::enqueue(
         tx,
         &store::NewWrite {

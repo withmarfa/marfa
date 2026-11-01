@@ -1529,3 +1529,56 @@ fn a_refill_interrupted_and_resumed_under_another_instance_or_reach_says_why_it_
         );
     }
 }
+
+#[test]
+fn a_refill_forgets_the_removals_it_read_past_but_one_still_waiting() {
+    let server = Scripted::start();
+    let core = aged_out_after(&server, copy(&server), |core| {
+        core.delete_edge("stays").unwrap();
+        let conn = core.conn().unwrap();
+        // A removal whose event the copy never read, as one past an aged
+        // cursor.
+        store::removal_sent(&conn, crate::model::Subject::Item, "added").unwrap();
+        store::removal_accepted(&conn, crate::model::Subject::Item, "added").unwrap();
+    });
+    let marks = |core: &Core| -> Vec<String> {
+        let conn = core.conn().unwrap();
+        let mut statement = conn
+            .prepare("SELECT key FROM meta WHERE key LIKE 'removal/%' ORDER BY key")
+            .unwrap();
+        statement
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap()
+    };
+    assert_eq!(marks(&core), ["removal/edge/stays", "removal/item/added"]);
+    server.on("/items", refill_pages());
+    server.on("/items/bulk-get", vec![pinned_row()]);
+    let changed = scripted::item_payload("item.updated", "added", "core.note", 2);
+    let mut changed: Value = serde_json::from_str(&changed).unwrap();
+    changed["listed"] = true.into();
+    server.on(
+        "/events",
+        vec![
+            head("60"),
+            replay(
+                vec![scripted::event("61", "item.updated", &changed.to_string())],
+                "61",
+            ),
+        ],
+    );
+
+    hydrate(&core).unwrap();
+
+    assert_eq!(
+        marks(&core),
+        ["removal/edge/stays"],
+        "a refill kept a removal it read past, or forgot the delete still waiting"
+    );
+    let (_, held) = listed(&core).unwrap();
+    assert!(
+        held.contains(&("added".to_string(), 2)),
+        "a removal the refill read past hid a later change: {held:?}"
+    );
+}
