@@ -1,4 +1,4 @@
-import { createServer, type Server } from "node:http";
+import { createServer, type IncomingMessage, type Server } from "node:http";
 import { connect, type AddressInfo, type Socket } from "node:net";
 import { serve } from "@hono/node-server";
 import { afterAll, afterEach, beforeAll, expect, it, vi } from "vitest";
@@ -19,13 +19,33 @@ interface Listener {
   server: Server;
   port: number;
   sockets: Socket[];
+  /** With a gate: the request the app was handed, settled once it holds it. */
+  arrived: Promise<IncomingMessage>;
 }
 const listeners: Listener[] = [];
 
-/** The app on a real listener, with the request deadline of the public listener when `deadlineMs` is given. */
-async function listen(deadlineMs?: number): Promise<Listener> {
+/**
+ * The app on a real listener, with the request deadline of the public listener
+ * when `deadlineMs` is given, and with every request held until `gate`
+ * settles when it is given, so the connection can end before the app first
+ * touches the body.
+ */
+async function listen(
+  deadlineMs?: number,
+  gate?: Promise<void>,
+): Promise<Listener> {
+  let arrive!: (incoming: IncomingMessage) => void;
+  const arrived = new Promise<IncomingMessage>((resolve) => {
+    arrive = resolve;
+  });
   const server = serve({
-    fetch: ctx.app.fetch,
+    fetch: gate
+      ? async (request, env) => {
+          arrive(env.incoming as IncomingMessage);
+          await gate;
+          return ctx.app.fetch(request, env);
+        }
+      : ctx.app.fetch,
     port: 0,
     hostname: "127.0.0.1",
   }) as Server;
@@ -37,6 +57,7 @@ async function listen(deadlineMs?: number): Promise<Listener> {
     server,
     port: (server.address() as AddressInfo).port,
     sockets,
+    arrived,
   };
   listeners.push(listener);
   return listener;
@@ -154,6 +175,55 @@ it("logs an upload the client dropped as aborted, with no 500 and no exception r
   );
   expect(reported).not.toHaveBeenCalled();
   expect(alerts).toBe(0);
+});
+
+it("logs an upload as dropped when the client left before the server first read the body", async () => {
+  // A slow runner reaches the body after the connection has ended; Node then
+  // hands over a body that is already closed, which reads as empty.
+  lines = captureLogLines();
+  let open!: () => void;
+  const at = await listen(
+    undefined,
+    new Promise<void>((resolve) => {
+      open = resolve;
+    }),
+  );
+  const upload = openUpload(at, 1000, 100_000);
+  await upload.taken;
+  upload.reset();
+  await upload.closed;
+  // The client's own close says nothing of the server's view. Wait until the
+  // server has seen the reset, so the body is always first read after it.
+  const incoming = await at.arrived;
+  // Not events.once: it listens for "error", and a listener there changes
+  // what Node hands the app.
+  if (!incoming.closed) {
+    await new Promise<void>((resolve) => incoming.once("close", resolve));
+  }
+  expect(incoming.complete).toBe(false);
+  open();
+  await vi.waitFor(() => {
+    expect(requestLines()).toHaveLength(1);
+  });
+
+  expectLoggedAs("/blobs", 499);
+});
+
+it("still refuses a complete upload with no bytes as an empty blob", async () => {
+  // The witness for the test above: a body that is empty because its sender
+  // sent none is the caller's mistake, and stays a 400.
+  lines = captureLogLines();
+  const upload = openUpload(main, 0, 0);
+  await upload.closed;
+  await vi.waitFor(() => {
+    expect(requestLines()).toHaveLength(1);
+  });
+
+  expect(requestLines()[0]).toMatchObject({
+    status: 400,
+    error_code: "validation_error",
+  });
+  expect(reported).not.toHaveBeenCalled();
 });
 
 it("still reports a server error on the same route that says it was aborted", async () => {
