@@ -21,7 +21,7 @@ import { scriptHydration, startHarness, type Harness } from "./harness.js";
  * does not hold counts as out of the bin (`device/filter-part`). It applies
  * no part rule of its own on a delete: the parts of a host it deletes
  * offline follow from the server's events once it syncs
- * (`device/delete-parts-follow`).
+ * (`device/bin-parts-follow`).
  */
 
 let harness: Harness | undefined;
