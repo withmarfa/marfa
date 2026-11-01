@@ -1042,6 +1042,9 @@ const invocations: Record<string, () => string[]> = {
   "types move": () => ["user.t", "user.u"],
   "types set-icon": () => ["user.t", "book-open"],
   "types clear-icon": () => ["user.t"],
+  "sources list": () => [],
+  "sources get": () => ["github"],
+  "sources set": () => ["--name", "GitHub", "github"],
   search: () => ["q"],
   "items occurrences": () => ["--from", WHEN, "--to", LATER],
   "metadata tags": () => [],
@@ -1150,6 +1153,8 @@ function codeOf(stderr: string): string {
  */
 const beyondTheTable: Record<string, () => string[]> = {
   "views get": () => [ID],
+  // `sources clear` sends the update operation `sources set` is the entry for.
+  "sources clear": () => ["--name", "github"],
 };
 
 /** Table commands that require private machine authority rather than a key. */
