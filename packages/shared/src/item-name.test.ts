@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { expect, it } from "vitest";
 import { ALL_TYPES } from "./type-registry.js";
-import { itemName, itemPreview } from "./item-name.js";
+import { itemName, itemPreview, partName, titleName } from "./item-name.js";
 
 interface DisplayHints {
   title_field?: string;
@@ -16,6 +16,14 @@ interface Shared {
     properties: Record<string, unknown>;
     name: string | null;
     preview?: string | null;
+  }[];
+  parts: {
+    description: string;
+    host: { type: string; properties: Record<string, unknown> };
+    edge_type: string;
+    part: { type: string; properties: Record<string, unknown> };
+    name: string;
+    preview: string | null;
   }[];
 }
 
@@ -114,6 +122,51 @@ it("names every case the core is held to as the core does, and Untitled where th
     expect(itemPreview(properties, hints), description).toBe(
       preview ?? undefined,
     );
+  }
+});
+
+it("names every part case the core is held to as the core does", () => {
+  // The labels of the built-in edge types the cases use.
+  const labels: Record<string, string> = {
+    "attached-to": "Attached to",
+    "comments-on": "Comment on",
+  };
+  const types = new Map<
+    string,
+    { parent?: string; display_hints?: DisplayHints }
+  >([...ALL_TYPES, ...SHARED.types].map((type) => [type.id, type]));
+  const hints = (id: string): DisplayHints => {
+    const found: DisplayHints = {};
+    for (const hint of ["title_field", "body_field"] as const) {
+      for (let at = types.get(id); at; at = types.get(at.parent ?? "")) {
+        const value = at.display_hints?.[hint];
+        if (value === undefined) continue;
+        found[hint] = value;
+        break;
+      }
+    }
+    return found;
+  };
+  expect(SHARED.parts.length).toBeGreaterThan(0);
+  for (const {
+    description,
+    host,
+    edge_type,
+    part,
+    name,
+    preview,
+  } of SHARED.parts) {
+    const own = titleName(part.properties, hints(part.type));
+    const label = labels[edge_type];
+    expect(label, description).toBeDefined();
+    expect(
+      own ?? partName(label!, itemName(host.properties, hints(host.type))),
+      description,
+    ).toBe(name);
+    expect(
+      itemPreview(part.properties, hints(part.type), own === undefined) ?? null,
+      description,
+    ).toBe(preview);
   }
 });
 

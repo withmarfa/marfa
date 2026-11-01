@@ -50,7 +50,12 @@ fn held_copy(server: &Scripted) -> std::sync::Arc<Core> {
     holding_a_catalog(&core);
     put(
         &core,
-        &row("issue", "core.task", "active", json!({ "title": "Fix login bug" })),
+        &row(
+            "issue",
+            "core.task",
+            "active",
+            json!({ "title": "Fix login bug" }),
+        ),
     );
     put(
         &core,
@@ -121,13 +126,23 @@ fn names_a_part_by_its_body_when_no_host_is_held_out_of_the_bin() {
     // A host in the bin names nothing either.
     put(
         &core,
-        &row("issue", "core.task", "trashed", json!({ "title": "Fix login bug" })),
+        &row(
+            "issue",
+            "core.task",
+            "trashed",
+            json!({ "title": "Fix login bug" }),
+        ),
     );
     assert_eq!(name(&core, "comment").as_deref(), Some("LGTM"));
     // The witness: back out of the bin, it names the comment again.
     put(
         &core,
-        &row("issue", "core.task", "active", json!({ "title": "Fix login bug" })),
+        &row(
+            "issue",
+            "core.task",
+            "active",
+            json!({ "title": "Fix login bug" }),
+        ),
     );
     assert_eq!(
         name(&core, "comment").as_deref(),
@@ -169,7 +184,12 @@ fn keeps_a_parts_own_title_and_takes_the_oldest_held_host() {
     );
     put(
         &core,
-        &row("second", "core.task", "active", json!({ "title": "Second" })),
+        &row(
+            "second",
+            "core.task",
+            "active",
+            json!({ "title": "Second" }),
+        ),
     );
     put(
         &core,
@@ -177,11 +197,37 @@ fn keeps_a_parts_own_title_and_takes_the_oldest_held_host() {
     );
     put(
         &core,
-        &row("file", "core.file", "active", json!({ "filename": "a.pdf" })),
+        &row(
+            "file",
+            "core.file",
+            "active",
+            json!({ "filename": "a.pdf" }),
+        ),
     );
-    edge(&core, "e7", "file", "third", "attached-to", "2026-01-04T00:00:00Z");
-    edge(&core, "e6", "file", "second", "attached-to", "2026-01-03T00:00:00Z");
-    edge(&core, "e5", "file", "first", "attached-to", "2026-01-02T00:00:00Z");
+    edge(
+        &core,
+        "e7",
+        "file",
+        "third",
+        "attached-to",
+        "2026-01-04T00:00:00Z",
+    );
+    edge(
+        &core,
+        "e6",
+        "file",
+        "second",
+        "attached-to",
+        "2026-01-03T00:00:00Z",
+    );
+    edge(
+        &core,
+        "e5",
+        "file",
+        "first",
+        "attached-to",
+        "2026-01-02T00:00:00Z",
+    );
     assert_eq!(name(&core, "file").as_deref(), Some("Attached to Second"));
 }
 
@@ -204,4 +250,84 @@ fn bounds_a_part_name_as_every_name_is_bounded() {
         got,
         format!("Comment on {}…", "x".repeat(120 - "Comment on ".len() - 1))
     );
+}
+
+/// The part cases the server's summaries are held to as well
+/// (`compliance/item-summaries.test.ts`).
+const SHARED: &str = include_str!("../../../conformance/fixtures/item-display.json");
+
+#[derive(serde::Deserialize)]
+struct Shared {
+    types: Vec<Value>,
+    parts: Vec<PartCase>,
+}
+
+#[derive(serde::Deserialize)]
+struct PartCase {
+    description: String,
+    host: Shaped,
+    edge_type: String,
+    part: Shaped,
+    name: Option<String>,
+    preview: Option<String>,
+}
+
+#[derive(serde::Deserialize)]
+struct Shaped {
+    r#type: String,
+    properties: Value,
+}
+
+#[test]
+fn names_every_shared_part_case_as_the_server_does() {
+    let shared: Shared = serde_json::from_str(SHARED).unwrap();
+    assert!(!shared.parts.is_empty());
+    let server = Scripted::start();
+    let core = copy(&server);
+    let mut listed = crate::builtin::catalog().unwrap();
+    for registered in &shared.types {
+        let mut row = registered.clone();
+        row["version"] = Value::from(0);
+        listed.types.push(serde_json::from_value(row).unwrap());
+    }
+    store::replace_catalog(&core.conn().unwrap(), &listed).unwrap();
+    let mut failed = Vec::new();
+    for (at, case) in shared.parts.iter().enumerate() {
+        let (host, part) = (format!("host-{at}"), format!("part-{at}"));
+        put(
+            &core,
+            &row(
+                &host,
+                &case.host.r#type,
+                "active",
+                case.host.properties.clone(),
+            ),
+        );
+        put(
+            &core,
+            &row(
+                &part,
+                &case.part.r#type,
+                "active",
+                case.part.properties.clone(),
+            ),
+        );
+        edge(
+            &core,
+            &format!("edge-{at}"),
+            &part,
+            &host,
+            &case.edge_type,
+            AT,
+        );
+        let got = shown(&core, &part);
+        let want = ItemDisplay {
+            name: case.name.clone(),
+            preview: case.preview.clone(),
+        };
+        if got != want {
+            failed.push(format!("{}: got {got:?}, want {want:?}", case.description));
+        }
+    }
+    assert!(failed.is_empty(), "{}", failed.join("\n"));
 }

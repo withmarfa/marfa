@@ -142,6 +142,13 @@ const SHARED = JSON.parse(
     properties: Record<string, unknown>;
     name: string | null;
   }[];
+  parts: {
+    description: string;
+    host: { type: string; properties: Record<string, unknown> };
+    edge_type: string;
+    part: { type: string; properties: Record<string, unknown> };
+    name: string;
+  }[];
 };
 
 it("names every shared display case as a device does, and Untitled where a device answers no name", async () => {
@@ -164,6 +171,48 @@ it("names every shared display case as a device does, and Untitled where a devic
         ?.name,
       description,
     ).toBe(name ?? "Untitled");
+  }
+});
+
+it("names every shared part case as a device does", async () => {
+  // Registered here too, so the case does not lean on the one above.
+  for (const type of SHARED.types) {
+    const registered = await key("/types", type);
+    expect([201, 409], await registered.text()).toContain(registered.status);
+  }
+  const made = async (shaped: {
+    type: string;
+    properties: Record<string, unknown>;
+  }) => {
+    const response = await key("/items", shaped);
+    expect(response.status, await response.clone().text()).toBe(201);
+    return ((await response.json()) as { item: { id: string } }).item.id;
+  };
+  const nameOf = async (type: string, id: string) => {
+    let cursor: string | null = null;
+    do {
+      const result = await owner(
+        `/items/summaries?type=${type}&limit=100${cursor === null ? "" : `&cursor=${encodeURIComponent(cursor)}`}`,
+      );
+      expect(result.status).toBe(200);
+      const page = (await result.json()) as Page;
+      const found = page.data.find((row) => row.id === id);
+      if (found) return found.name;
+      cursor = page.next_cursor;
+    } while (cursor !== null);
+    return undefined;
+  };
+  expect(SHARED.parts.length).toBeGreaterThan(0);
+  for (const { description, host, edge_type, part, name } of SHARED.parts) {
+    const hostId = await made(host);
+    const partId = await made(part);
+    const edge = await key("/edges", {
+      source_id: partId,
+      target_id: hostId,
+      edge_type,
+    });
+    expect(edge.status, `${description}: ${await edge.text()}`).toBe(201);
+    expect(await nameOf(part.type, partId), description).toBe(name);
   }
 });
 
