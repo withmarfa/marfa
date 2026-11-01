@@ -2415,7 +2415,7 @@ export interface components {
             source: string;
             /** @description The item's identifier at its source. With `source`, it is the item's natural key. Absent if the writer set none. */
             source_id?: string;
-            /** @description `true` if at least one connector with a live key that may write the item's type owns or claims the item's `source` and every such connector lists the type in `read_only_types`, so it puts back an edit made in Marfa on its next run. Marfa doesn't refuse the edit. */
+            /** @description `true` if every connector with a live write key for the item's type that owns or claims its `source` lists the type in `read_only_types`, so it puts back an edit made in Marfa on its next run. Marfa doesn't refuse the edit. */
             read_only: boolean;
             /** @description The latitude where the item was captured. Absent if the writer set none. */
             capture_latitude?: number;
