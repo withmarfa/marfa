@@ -4,6 +4,7 @@ import { join } from "node:path";
 import {
   copyItemEvent,
   copyReplay,
+  refusal,
   wireItem,
   type WireItemOptions,
 } from "../../device/marfa-answers.js";
@@ -20,7 +21,9 @@ import {
 // its name matched no item, or more than one, is resolved again once the
 // working copy changes (`folders/create-before-links`,
 // `folders/edge-held-retried`, `folders/edge-held-quiet`,
-// `folders/edge-held-cleared`, `folders/edge-held-never-guessed`).
+// `folders/edge-held-cleared`, `folders/edge-held-never-guessed`), while a
+// name whose lookup the server refused is not asked again
+// (`folders/edge-lookup-no-repeat`).
 
 let folder: FolderHarness | undefined;
 afterEach(async () => {
@@ -40,8 +43,9 @@ const put = (name: string, text: string) => {
 };
 
 /** A folder of notes whose server holds `items`, takes the folder's writes
- *  as the real one does, and serves the event frames `elsewhere` adds. */
-async function seed(items: WireItemOptions[] = []) {
+ *  as the real one does, refuses the lookup of each name in `refused`, and
+ *  serves the event frames `elsewhere` adds. */
+async function seed(items: WireItemOptions[] = [], refused: string[] = []) {
   const rows: Record<string, { item: WireItemOptions }[]> = {
     "core.note": items.map((item) => ({ item })),
   };
@@ -49,6 +53,10 @@ async function seed(items: WireItemOptions[] = []) {
   folder = await folderHarness("held-links", {
     rows,
     edges: { "parent-of": [], "attached-to": [] },
+    lookup: (text) =>
+      refused.includes(text)
+        ? refusal(403, "forbidden", "This key may not list here")
+        : undefined,
     events: [
       (request) =>
         copyReplay(
@@ -247,6 +255,45 @@ describe("links held until their target exists", () => {
       `create ${created("Ticket")} references ${id(2)}`,
     ]);
     expect((await fileAt("Ticket.md")).status).not.toBe("held");
+  });
+
+  it("asks again for a name that matched no item but not for one the server refused in the same file, which stays flagged", async () => {
+    await seed([], ["Denied"]);
+    put("Ticket.md", "See [[Decision]] and [[Denied]].\n");
+    const first = await push();
+    expect(first.flagged.map((file) => [file.path, file.flag])).toEqual([
+      ["Ticket.md", "edges"],
+    ]);
+    expect(first.flagged[0]?.reason).toContain(
+      "[[Decision]] in its body matches no item",
+    );
+    expect(first.flagged[0]?.reason).toContain(
+      "[[Denied]] in its body could not be looked up",
+    );
+    // The witness: the first push asked the server for the refused name.
+    const denied = () =>
+      folder!.server.requests.filter((request) =>
+        (request.query.get("filter") ?? "").includes('"Denied"'),
+      ).length;
+    const asked = denied();
+    expect(asked).toBeGreaterThan(0);
+
+    put("Decision.md", "The decision.\n");
+    const second = await push();
+    expect(second.created).toBe(1);
+    expect(edges()).toEqual([
+      `create ${created("Ticket")} references ${created("Decision")}`,
+    ]);
+    expect(second.flagged.map((file) => [file.path, file.flag])).toEqual([
+      ["Ticket.md", "edges"],
+    ]);
+    const ticket = await fileAt("Ticket.md");
+    expect(ticket.status).toBe("held");
+    expect(ticket.reason).not.toContain("[[Decision]]");
+    expect(ticket.reason).toContain(
+      "[[Denied]] in its body could not be looked up",
+    );
+    expect(denied(), "the refused name was asked again").toBe(asked);
   });
 
   it("holds a link as waiting while the server is out of reach, and resolves it once it answers", async () => {

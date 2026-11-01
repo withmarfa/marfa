@@ -1968,7 +1968,7 @@ When the server refuses a name lookup, a device MUST flag only the affected file
 
 While a file with a refused name lookup is unchanged, a device MUST NOT repeat that lookup.
 
-**Tests:** `device/folders-frontmatter.test.ts › flags only the file whose name cannot be looked up, and goes on with the rest`.
+**Tests:** `device/folders-frontmatter.test.ts › flags only the file whose name cannot be looked up, and goes on with the rest`, `device/folders-held-links.test.ts › asks again for a name that matched no item but not for one the server refused in the same file, which stays flagged`.
 
 ### `folders/create-before-links`
 
@@ -1984,7 +1984,7 @@ When the working copy has changed since a file was flagged `edges` because a nam
 
 **Reason:** The target may since have been created on this device, pulled in from another, or one of two namesakes moved to the bin. The working copy changes with every write sent or taken in, local or pulled.
 
-**Tests:** `device/folders-held-links.test.ts › resolves a body link once its target is created on this machine, and asks nothing while the folder is quiet`, `› resolves a link once its target, created on another device, is pulled in`, `› creates and links two documents that link each other, A.md written a pass before B.md`, `› creates and links two documents that link each other, B.md written a pass before A.md`, `› never guesses between two items of one name, and resolves once one goes to the bin`.
+**Tests:** `device/folders-held-links.test.ts › resolves a body link once its target is created on this machine, and asks nothing while the folder is quiet`, `› resolves a link once its target, created on another device, is pulled in`, `› creates and links two documents that link each other, A.md written a pass before B.md`, `› creates and links two documents that link each other, B.md written a pass before A.md`, `› never guesses between two items of one name, and resolves once one goes to the bin`, `› asks again for a name that matched no item but not for one the server refused in the same file, which stays flagged`.
 
 ### `folders/edge-held-quiet`
 
@@ -1996,9 +1996,9 @@ While a file flagged `edges` because a name matched no item or more than one ite
 
 ### `folders/edge-held-cleared`
 
-When a held edge name resolves to one item, a device MUST create the edge and clear the file's `edges` flag.
+When a held edge name resolves to one item, a device MUST create the edge, and, when no other line or link holds the file, clear its `edges` flag.
 
-**Tests:** `device/folders-held-links.test.ts › resolves a body link once its target is created on this machine, and asks nothing while the folder is quiet`, `› resolves a link once its target, created on another device, is pulled in`, `› never guesses between two items of one name, and resolves once one goes to the bin`, `› holds a link as waiting while the server is out of reach, and resolves it once it answers`.
+**Tests:** `device/folders-held-links.test.ts › resolves a body link once its target is created on this machine, and asks nothing while the folder is quiet`, `› resolves a link once its target, created on another device, is pulled in`, `› never guesses between two items of one name, and resolves once one goes to the bin`, `› holds a link as waiting while the server is out of reach, and resolves it once it answers`, `› asks again for a name that matched no item but not for one the server refused in the same file, which stays flagged`.
 
 ### `folders/edge-held-never-guessed`
 
@@ -6952,7 +6952,7 @@ When a folder is added, or a watch starts on a folder, whose directory is not be
 
 **Reason:** With iCloud’s “Desktop & Documents” on, `Desktop` and `Documents` are real directories outside `Library/Mobile Documents` that iCloud Drive syncs. macOS reports every File Provider item as ubiquitous, so the key alone does not say which service syncs it.
 
-**Tests:** none: no CI runner has a signed-in iCloud account, and a fixture for it was judged not worth building.
+**Tests:** none, closed in #2027: no CI runner has a signed-in iCloud account, and a fixture for it was judged not worth building.
 
 ### `folders/cloud-storage-warns`
 
@@ -6968,7 +6968,7 @@ When a folder is added, or a watch starts on a folder, whose directory is on a f
 
 **Reason:** A network file system may not send change notifications for what another computer writes.
 
-**Tests:** none: no CI runner has a network file system, and a fixture for one was judged not worth building.
+**Tests:** none, closed in #2027: no CI runner has a network file system, and a fixture for one was judged not worth building.
 
 ### `folders/git-tracked-warns`
 
