@@ -197,6 +197,7 @@ impl<T: Transport> Transport for RefusalTransport<T> {
                 timeout = NextTimeout {
                     after,
                     reason: ureq::Timeout::RecvBody,
+                    ..timeout
                 };
             }
         }
