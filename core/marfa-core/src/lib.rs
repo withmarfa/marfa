@@ -7673,6 +7673,7 @@ mod tests {
                 reader.rebase_on_held("blocked").unwrap_err(),
             ),
             ("withdraw", reader.withdraw("blocked").unwrap_err()),
+            ("withdraw_alone", reader.withdraw_alone("blocked").unwrap_err()),
             // Refused at the handle before the missing server, so not `NoServer`.
             ("drain", reader.drain().unwrap_err()),
             ("forget_answered", reader.forget_answered().unwrap_err()),
@@ -7840,7 +7841,7 @@ mod tests {
         );
         assert_eq!(
             refusals.len(),
-            51,
+            52,
             "an entry has gone from the list above, and a door dropped from \
              it is a door nothing here covers"
         );
