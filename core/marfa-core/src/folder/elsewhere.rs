@@ -734,7 +734,7 @@ impl<'a> Peers<'a> {
                 continue;
             };
             if bound.held.is_some()
-                || !bound.writes.refused.is_empty()
+                || bound.holds_refusal()
                 || bound.written_hash.as_deref() != Some(bound.content_hash.as_str())
                 || !peer.present(&bound.path)
                 || peer.holds(item_id) != Some(false)

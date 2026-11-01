@@ -247,6 +247,7 @@ impl Folder {
             ControlFlow::Continue(work) => work,
         };
         self.queue_edge_work(&mut scan, work)?;
+        self.settle_default_edges(&scan.settings)?;
         if scan.reread_embeds && !scan.incomplete {
             crate::store::meta_set(&*self.core.conn()?, EMBEDS_REREAD, "1")?;
         }
@@ -403,7 +404,7 @@ impl Folder {
             for (path, key) in paths.iter().zip(keys) {
                 if let Some(bound) = by_path.get(key.as_str())
                     && bound.held.is_none()
-                    && bound.writes.refused.is_empty()
+                    && !bound.holds_refusal()
                     // A save set aside is sent again by the next scan.
                     && state::untaken_read_version(&bound.content_hash).is_none()
                     && bound.identity.is_some()
@@ -1018,6 +1019,7 @@ impl Folder {
                             id,
                             save: bound.writes.save + 1,
                             line: None,
+                            default: false,
                         });
                     }
                     let rewritten = retitle
@@ -1124,6 +1126,7 @@ impl Folder {
                         id,
                         save,
                         line: None,
+                        default: false,
                     }));
                 // A refused edge the file no longer asks for holds it no longer,
                 // and one the copy refused was judged again in this pass.
@@ -1356,7 +1359,7 @@ impl Folder {
     /// change of its own, or bytes the device has not read. Moves nothing.
     fn stale_save_refusal(&self, bound: &state::Bound) -> Option<String> {
         let own = |reason: &str| Some(format!("it is an old copy of {}, {reason}", bound.path));
-        if bound.held.is_some() || !bound.writes.refused.is_empty() {
+        if bound.held.is_some() || bound.holds_refusal() {
             return own("which holds a change of its own; keep one of the two");
         }
         match self.read(self.root.join(&bound.path)) {
@@ -1383,7 +1386,7 @@ impl Folder {
         // A held or refused file holds the person's bytes, which the server
         // does not. Any other change read since the move is an earlier old
         // buffer, since an edit of the moved file ends its record.
-        if bound.held.is_some() || !bound.writes.refused.is_empty() {
+        if bound.held.is_some() || bound.holds_refusal() {
             return Ok(own("which holds a change of its own; keep one of the two"));
         }
         let target = self.root.join(&bound.path);
@@ -1803,6 +1806,7 @@ impl Folder {
                     id,
                     save: writes.save,
                     line: None,
+                    default: false,
                 });
             }
             self.place(&bound.item_id, &file.key, withheld)?;

@@ -153,7 +153,7 @@ impl Folder {
             }
             Some(_) => {}
         }
-        if row.held.is_some() || !row.writes.refused.is_empty() {
+        if row.held.is_some() || row.holds_refusal() {
             return Ok(Some(
                 "an edit of it was held or refused, and mending that is the person's".into(),
             ));
