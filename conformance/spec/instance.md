@@ -1484,9 +1484,9 @@ Where `OTEL_EXPORTER_OTLP_ENDPOINT` is set and `OTEL_SDK_DISABLED` is not `true`
 
 **Tests:** `compliance/telemetry-exception-alone.test.ts › are all that a host the token may not travel to stops: traces and logs still go`.
 
-### `instance/telemetry-exception-host-unusable-warning`
+### `instance/telemetry-host-unusable-warning`
 
-Where `OTEL_SDK_DISABLED` is not `true`, if `MARFA_POSTHOG_HOST` is unusable as `instance/telemetry-exception-host-unusable` describes, then the server's boot log MUST warn that exception reports are off, naming the setting and not its value.
+If `MARFA_POSTHOG_HOST` is unusable as `instance/telemetry-exception-host-unusable` describes and `OTEL_SDK_DISABLED` is not `true`, then the server MUST log a warning at boot that exception reports are off, naming the setting and not its value.
 
 **Reason:** the address can carry a credential, so the warning does not repeat it.
 
