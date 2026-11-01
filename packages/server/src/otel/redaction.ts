@@ -1,13 +1,9 @@
 import type { Attributes } from "@opentelemetry/api";
-import type {
-  ReadableSpan,
-  SpanProcessor,
-} from "@opentelemetry/sdk-trace-base";
+import type { ReadableSpan, SpanProcessor } from "@opentelemetry/sdk-trace";
 import type {
   LogRecordProcessor,
   ReadableLogRecord,
 } from "@opentelemetry/sdk-logs";
-import type { AnyValueMap } from "@opentelemetry/api-logs";
 import { loggablePath } from "../inbound/address.js";
 import { withoutFailedQueries } from "../error-text.js";
 
@@ -166,7 +162,7 @@ export class PiiRedactionSpanProcessor implements SpanProcessor {
 
   onEnd(span: ReadableSpan): void {
     const mut = span as MutableSpan;
-    mut.attributes = redactAttributes(span.attributes) as Attributes;
+    mut.attributes = redactAttributes(span.attributes);
     if (span.events.length > 0) {
       mut.events = span.events.map((e) => ({
         ...e,
@@ -200,7 +196,7 @@ export class PiiRedactionLogRecordProcessor implements LogRecordProcessor {
   onEmit(logRecord: ReadableLogRecord): void {
     (logRecord as MutableLogRecord).attributes = redactAttributes(
       logRecord.attributes,
-    ) as AnyValueMap;
+    );
   }
 
   forceFlush(): Promise<void> {

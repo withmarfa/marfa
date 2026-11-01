@@ -4,7 +4,7 @@ import {
   BatchSpanProcessor,
   type ReadableSpan,
   type Span,
-} from "@opentelemetry/sdk-trace-base";
+} from "@opentelemetry/sdk-trace";
 import {
   BATCH_QUEUE_SIZE,
   ErrorBucketFilterSpanProcessor,
@@ -438,7 +438,8 @@ describe("ErrorBucketFilterSpanProcessor — a trace is exported whole or not at
       },
       shutdown: () => Promise.resolve(),
     };
-    const batch = new BatchSpanProcessor(memory, {
+    const batch = new BatchSpanProcessor({
+      exporter: memory,
       maxQueueSize: BATCH_QUEUE_SIZE,
       scheduledDelayMillis: 60_000,
     });

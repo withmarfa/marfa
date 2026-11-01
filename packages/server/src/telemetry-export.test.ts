@@ -511,8 +511,9 @@ async function allowInserts(ctx: TestContext): Promise<void> {
 
 /** The telemetry modules the preload imports when it exports. */
 const TELEMETRY_MODULES = [
-  "@opentelemetry/sdk-trace-node",
-  "@opentelemetry/sdk-trace-base",
+  "@opentelemetry/sdk-trace",
+  "@opentelemetry/context-async-hooks",
+  "@opentelemetry/core",
   "@opentelemetry/exporter-trace-otlp-http",
   "@opentelemetry/instrumentation",
   "@opentelemetry/instrumentation-http",
