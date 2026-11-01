@@ -489,8 +489,7 @@
       "ItemStore.update": 1,
       "MetadataStore.set": 1,
       "ItemStore.restoreDates": 1,
-      "VersionStore.restore": 1,
-      "writeItem": 1
+      "VersionStore.restore": 1
     }
   },
   "storage/retention.ts": {
