@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use rusqlite::Connection;
+use rusqlite::{Connection, OptionalExtension};
 use serde_json::{Map, Value};
 
 use super::edge_types::{self, EdgeTypes};
@@ -403,18 +403,25 @@ impl Folder {
         } else {
             &work.links[..]
         };
+        let standing: Vec<String> = references
+            .iter()
+            .map(|edge| edge.target_id.clone())
+            .collect();
         for raw in links {
             let typed = Typed::new(raw);
-            let resolved = resolve_reference(&typed, |text| {
-                self.resolve_typed(
-                    text,
-                    &references,
-                    &|edge| edge.target_id.clone(),
-                    catalog,
-                    resolver,
-                    &mut unresolved,
-                )
-            })?;
+            let resolved = match self.recorded_link(item_id, raw, &standing)? {
+                Some(id) => Resolved::Found { id, r#type: None },
+                None => resolve_reference(&typed, |text| {
+                    self.resolve_typed(
+                        text,
+                        &references,
+                        &|edge| edge.target_id.clone(),
+                        catalog,
+                        resolver,
+                        &mut unresolved,
+                    )
+                })?,
+            };
             match resolved.settled(raw, "body", &mut reasons, &mut unresolved) {
                 Some((id, _)) if id == item_id => {}
                 Some((id, _)) if !named.contains(&id) => named.push(id),
@@ -851,6 +858,12 @@ impl Folder {
             .collect();
         let mut found = Vec::new();
         for raw in text::links(body) {
+            if let Some(id) = self.recorded_link(&item.id, &raw, &references)? {
+                if id != item.id && !found.contains(&id) {
+                    found.push(id);
+                }
+                continue;
+            }
             let resolved = resolve_reference(&Typed::new(&raw), |text| {
                 if let Some(resolved) =
                     resolve::existing(&*self.core.conn()?, catalog, &BoundFiles, text, &references)?
@@ -883,6 +896,39 @@ impl Folder {
             }
         }
         Ok(found)
+    }
+
+    /// The item this device's link record says `raw` in `item_id`'s body
+    /// names, while the `references` edge to it stands and it is out of the
+    /// bin: a link to an item retitled since names it still, until the folder
+    /// rewrites the link (`folders/body-link-retitled-unflagged`).
+    fn recorded_link(
+        &self,
+        item_id: &str,
+        raw: &str,
+        standing: &[String],
+    ) -> Result<Option<String>> {
+        let conn = self.core.conn()?;
+        let other: Option<String> = conn
+            .query_row(
+                "SELECT other_id FROM body_names
+                  WHERE item_id = ?1 AND kind = 'link' AND text = ?2 AND state = 'resolved'",
+                [item_id, raw],
+                |row| row.get(0),
+            )
+            .optional()?
+            .flatten();
+        let Some(other) = other.filter(|other| standing.contains(other)) else {
+            return Ok(None);
+        };
+        Ok(crate::store::item_by_id(&conn, &other)?
+            .filter(|held| {
+                matches!(
+                    held.state,
+                    crate::model::ItemState::Active | crate::model::ItemState::Archived
+                )
+            })
+            .map(|held| held.id))
     }
 
     /// A typed name as the edge it already names, or else as the resolver

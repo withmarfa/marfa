@@ -237,9 +237,10 @@ pub(crate) fn render_link(target: &str) -> String {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Embed {
-    /// `![[name]]`, the name before any `|` or `#`.
+    /// `![[name]]`, the name before any `|` or `#`, with `\|` read as `|` in
+    /// a table cell.
     Named { raw: String, name: String },
-    /// `![alt](path)`, the path decoded and without its query or fragment.
+    /// `![alt](path)`, the path as `local` reads it.
     Path { raw: String, path: String },
     /// `![alt](a b.png)`: a raw space, which ends a Markdown path, so what
     /// the parentheses hold is kept whole to say so.
@@ -261,6 +262,7 @@ pub(crate) fn embeds(body: &str) -> Vec<Embed> {
         .filter(|found| found.embed)
         .peekable();
     let mut found: Vec<Embed> = Vec::new();
+    let mut table_cells: Option<Vec<Range<usize>>> = None;
     let mut at = 0usize;
     while let Some(start) = text[at..].find("![") {
         let open = at + start;
@@ -272,7 +274,17 @@ pub(crate) fn embeds(body: &str) -> Vec<Embed> {
         let (embed, used) = if rest.starts_with('[') {
             match named.next_if(|bracket| bracket.whole.start == open) {
                 Some(bracket) => {
-                    let name = Typed::new(&body[bracket.inner]).name;
+                    let inner = &body[bracket.inner.clone()];
+                    let in_cell = inner.contains("\\|")
+                        && table_cells
+                            .get_or_insert_with(|| table_cells_of(body))
+                            .iter()
+                            .any(|cell| cell.contains(&bracket.whole.start));
+                    let name = if in_cell {
+                        Typed::new(&inner.replace("\\|", "|")).name
+                    } else {
+                        Typed::new(inner).name
+                    };
                     let embed = (!name.is_empty()).then(|| Embed::Named {
                         raw: body[bracket.whole.clone()].to_string(),
                         name,
@@ -313,6 +325,23 @@ pub(crate) fn embeds(body: &str) -> Vec<Embed> {
         at = open + used;
     }
     found
+}
+
+/// The byte ranges of the table cells in `text`, in a quote or a callout too.
+/// Read from the raw body: a blanked code span would change what a header
+/// row says and so whether a table is one. `![[` is never found in code, so
+/// a table in a fenced block adds no embed.
+fn table_cells_of(text: &str) -> Vec<Range<usize>> {
+    pulldown_cmark::Parser::new_ext(text, pulldown_cmark::Options::ENABLE_TABLES)
+        .into_offset_iter()
+        .filter_map(|(event, range)| {
+            matches!(
+                event,
+                pulldown_cmark::Event::Start(pulldown_cmark::Tag::TableCell)
+            )
+            .then_some(range)
+        })
+        .collect()
 }
 
 /// A body with its code and comments blanked, byte for byte, since Obsidian
@@ -458,21 +487,42 @@ fn is_address(destination: &str) -> bool {
             .all(|glyph| glyph.is_ascii_alphanumeric() || matches!(glyph, '+' | '.' | '-'))
 }
 
+/// The file a destination names, read in CommonMark's order: a backslash
+/// before ASCII punctuation is that character, then the first `?` or `#`
+/// ends the path (an escaped one is literal in the destination, which is
+/// still a URL), then each percent escape is its byte. `%5C` and `%23` so
+/// stay a backslash and a `#` in the name.
 fn local(destination: &str) -> String {
-    let path = destination.split(['?', '#']).next().unwrap_or_default();
-    let bytes = path.as_bytes();
-    let mut decoded = Vec::with_capacity(bytes.len());
+    let bytes = destination.as_bytes();
+    let mut unescaped = Vec::with_capacity(bytes.len());
     let mut at = 0;
     while at < bytes.len() {
-        if bytes[at] == b'%'
-            && let Some(byte) = path
-                .get(at + 1..at + 3)
-                .and_then(|hex| u8::from_str_radix(hex, 16).ok())
-        {
+        if bytes[at] == b'\\' && bytes.get(at + 1).is_some_and(u8::is_ascii_punctuation) {
+            unescaped.push(bytes[at + 1]);
+            at += 2;
+        } else {
+            unescaped.push(bytes[at]);
+            at += 1;
+        }
+    }
+    let end = unescaped
+        .iter()
+        .position(|byte| matches!(byte, b'?' | b'#'))
+        .unwrap_or(unescaped.len());
+    let path = &unescaped[..end];
+    let mut decoded = Vec::with_capacity(path.len());
+    let mut at = 0;
+    while at < path.len() {
+        let byte = (path[at] == b'%')
+            .then(|| path.get(at + 1..at + 3))
+            .flatten()
+            .and_then(|hex| std::str::from_utf8(hex).ok())
+            .and_then(|hex| u8::from_str_radix(hex, 16).ok());
+        if let Some(byte) = byte {
             decoded.push(byte);
             at += 3;
         } else {
-            decoded.push(bytes[at]);
+            decoded.push(path[at]);
             at += 1;
         }
     }
@@ -741,6 +791,65 @@ mod tests {
                 path("![](y.png 'title')", "y.png"),
             ],
             "a raw space was read as ending the path, or a title as part of it"
+        );
+    }
+
+    fn named(raw: &str, name: &str) -> Embed {
+        Embed::Named {
+            raw: raw.into(),
+            name: name.into(),
+        }
+    }
+
+    #[test]
+    fn a_sized_embed_in_a_table_cell_reads_its_escaped_pipe_as_the_bar() {
+        let table = "| h | h |\n| - | - |\n| a | ![[t.png\\|200]] |";
+        assert_eq!(
+            embeds(table),
+            vec![named("![[t.png\\|200]]", "t.png")],
+            "the escaped pipe cut the name at the backslash"
+        );
+        let callout = "> [!note]\n> | h | h |\n> | - | - |\n> | a | ![[t.png\\|200]] |";
+        assert_eq!(embeds(callout), vec![named("![[t.png\\|200]]", "t.png")]);
+        // Witnesses: the same text outside a table keeps the backslash.
+        assert_eq!(
+            embeds("| a | ![[t.png\\|200]] |"),
+            vec![named("![[t.png\\|200]]", "t.png\\")],
+            "a line that is no table cell read the backslash as an escape"
+        );
+        assert_eq!(
+            embeds("![[t.png\\|200]]"),
+            vec![named("![[t.png\\|200]]", "t.png\\")]
+        );
+        // A code span in the header row does not stop the table being one.
+        let coded = "| `a|b` | h |\n| - | - | - |\n| a | ![[t.png\\|200]] | c |";
+        assert_eq!(embeds(coded), vec![named("![[t.png\\|200]]", "t.png")]);
+    }
+
+    #[test]
+    fn an_embed_path_reads_markdown_escapes_and_percent_escapes_once() {
+        let path = |text: &str| match embeds(text).remove(0) {
+            Embed::Path { path, .. } | Embed::Spaced { path, .. } => path,
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(path("![](my\\_pic.png)"), "my_pic.png");
+        assert_eq!(path("![](my\\_pic%20one.png)"), "my_pic one.png");
+        assert_eq!(path("![](<my\\_pic.png>)"), "my_pic.png");
+        assert_eq!(path("![](<my\\_pic one.png>)"), "my_pic one.png");
+        assert_eq!(path("![](my\\_pic one.png)"), "my_pic one.png");
+        assert_eq!(path("![](a\\b.png)"), "a\\b.png");
+        assert_eq!(path("![](my%5C_pic.png)"), "my\\_pic.png");
+        assert_eq!(path("![](a\\%41.png)"), "aA.png");
+        // An escaped `?` or `#` is literal in the destination, which is still
+        // a URL, so it ends the path; a percent escape of either stays.
+        assert_eq!(path("![](a\\#b.png#frag)"), "a");
+        assert_eq!(path("![](a\\?b.png?x=1)"), "a");
+        assert_eq!(path("![](a%23b.png#frag)"), "a#b.png");
+        assert_eq!(path("![](a%3Fb.png?x=1)"), "a?b.png");
+        assert_eq!(
+            embeds("![[my\\_pic.png]]"),
+            vec![named("![[my\\_pic.png]]", "my\\_pic.png")],
+            "a wiki embed's name was unescaped, which Obsidian does not do"
         );
     }
 }

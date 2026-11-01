@@ -745,6 +745,8 @@ impl Folder {
             + pull.removed
             + pull.taken
             + pull.let_go
+            + pull.relinked
+            + pull.unrelinked
             + pull.unwritten
             + pull.absent
             + pull.unplaced

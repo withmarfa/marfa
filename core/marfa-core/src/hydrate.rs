@@ -346,6 +346,7 @@ fn attempt(
                 &serde_json::to_string(edge_types)?,
             )?;
             crate::body::rule::before_rebuild(&tx)?;
+            store::forget_removals(&tx)?;
             if in_place {
                 store::start_refill(&tx)?;
             } else {
@@ -1226,12 +1227,7 @@ fn refuse_unreadable(
         None => {
             let mut refused = Vec::new();
             for name in named {
-                let probe = http.items_page(&ItemsQuery {
-                    r#type: Some(name),
-                    tier: listed_tier(Some(name), tier),
-                    cursor: None,
-                });
-                match probe {
+                match http.lists(name, listed_tier(Some(name), tier)) {
                     Err(CoreError::Forbidden { code, .. }) if code == "type_not_permitted" => {
                         refused.push(name);
                     }

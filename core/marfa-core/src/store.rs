@@ -1174,6 +1174,17 @@ pub fn set_drain_owed(conn: &Connection, owed: bool) -> Result<(), CoreError> {
     }
 }
 
+/// Every key that starts with `prefix`, in order.
+pub fn meta_keys(conn: &Connection, prefix: &str) -> Result<Vec<String>, CoreError> {
+    let mut keys = conn.prepare_cached(
+        "SELECT key FROM meta WHERE substr(key, 1, length(?1)) = ?1 ORDER BY key",
+    )?;
+    let found = keys
+        .query_map([prefix], |row| row.get(0))?
+        .collect::<Result<_, _>>()?;
+    Ok(found)
+}
+
 pub fn meta_delete(conn: &Connection, key: &str) -> Result<(), CoreError> {
     conn.prepare_cached("DELETE FROM meta WHERE key = ?1")?
         .execute([key])?;
@@ -4074,6 +4085,28 @@ fn rename_shown_edges(conn: &Connection, local: &str, answered: &str) -> Result<
         wire.id = crate::model::projected_edge_id(&wire.source_id, &edge_type, &wire.target_id);
         forget_edge(conn, &id)?;
         upsert_edge(conn, &wire)?;
+        readdress_edge_writes(conn, &id, &wire.id, false)?;
+    }
+    // A delete already took its edge out of the copy, so the delete names it.
+    let deletes = read_writes(
+        conn,
+        "WHERE kind = ?1 AND sent = 0 AND (item_id = ?2 OR target_id = ?2)",
+        [WriteKind::DeleteEdge.as_str(), local],
+    )?;
+    for row in deletes {
+        let (Some(id), Some(source), Some(target), Some(edge_type)) = (
+            row.edge_id.as_deref(),
+            row.item_id.as_deref(),
+            row.target_id.as_deref(),
+            row.body.get("edge_type").and_then(Value::as_str),
+        ) else {
+            continue;
+        };
+        if id != crate::model::projected_edge_id(source, edge_type, target) {
+            continue;
+        }
+        let renamed = crate::model::projected_edge_id(&moved(source), edge_type, &moved(target));
+        readdress_edge_writes(conn, id, &renamed, false)?;
     }
     Ok(())
 }
@@ -4333,6 +4366,86 @@ pub fn purged(conn: &Connection, id: &str) -> Result<bool, CoreError> {
 
 pub fn forget_purged(conn: &Connection, id: &str) -> Result<(), CoreError> {
     meta_delete(conn, &purged_key(id))
+}
+
+/// The start of the meta key, `removal/item/<id>` or `removal/edge/<id>`,
+/// of a removal this device sent: `sent` while it is out or waits, then
+/// `accepted` once the server takes it, until the copy reads the event of the
+/// removal or is filled again. Every event before that one is older than the
+/// removal (`device/deleted-stays-gone`).
+const REMOVAL: &str = "removal/";
+const REMOVAL_SENT: &str = "sent";
+const REMOVAL_ACCEPTED: &str = "accepted";
+
+fn removal_key(subject: Subject, id: &str) -> String {
+    let subject = match subject {
+        Subject::Item => "item",
+        Subject::Edge => "edge",
+    };
+    format!("{REMOVAL}{subject}/{id}")
+}
+
+/// Before the removal can reach the server: the event of a removal read
+/// meanwhile takes the mark away, which tells `removal_accepted` the copy is
+/// already past it. An `accepted` mark stays as it is, since the event of
+/// that removal is still ahead whatever becomes of this one.
+pub fn removal_sent(conn: &Connection, subject: Subject, id: &str) -> Result<(), CoreError> {
+    let key = removal_key(subject, id);
+    if meta_get(conn, &key)?.as_deref() != Some(REMOVAL_ACCEPTED) {
+        meta_set(conn, &key, REMOVAL_SENT)?;
+    }
+    Ok(())
+}
+
+pub fn removal_accepted(conn: &Connection, subject: Subject, id: &str) -> Result<(), CoreError> {
+    let key = removal_key(subject, id);
+    if meta_get(conn, &key)?.as_deref() == Some(REMOVAL_SENT) {
+        meta_set(conn, &key, REMOVAL_ACCEPTED)?;
+    }
+    Ok(())
+}
+
+/// A removal refused, withdrawn or never answered, which leaves the row the
+/// server's to tell of. An `accepted` mark belongs to an earlier removal.
+pub fn removal_unsent(conn: &Connection, subject: Subject, id: &str) -> Result<(), CoreError> {
+    let key = removal_key(subject, id);
+    if meta_get(conn, &key)?.as_deref() == Some(REMOVAL_SENT) {
+        meta_delete(conn, &key)?;
+    }
+    Ok(())
+}
+
+/// The event of the removal was read: every event after it is newer.
+pub fn removal_read(conn: &Connection, subject: Subject, id: &str) -> Result<(), CoreError> {
+    meta_delete(conn, &removal_key(subject, id))
+}
+
+/// Whether an event naming the row or edge is from before a removal the
+/// server accepted.
+pub fn removed(conn: &Connection, subject: Subject, id: &str) -> Result<bool, CoreError> {
+    Ok(meta_get(conn, &removal_key(subject, id))?.as_deref() == Some(REMOVAL_ACCEPTED))
+}
+
+/// A copy filled from the first page holds what the server holds after every
+/// removal it accepted. An edge delete still waiting keeps its mark.
+pub fn forget_removals(conn: &Connection) -> Result<(), CoreError> {
+    conn.execute(
+        &format!(
+            "DELETE FROM meta
+              WHERE substr(key, 1, ?1) = ?2
+                AND NOT (value = ?3 AND key IN (
+                  SELECT ?4 || edge_id FROM queue
+                   WHERE kind = ?5 AND edge_id IS NOT NULL AND {WAITING}))"
+        ),
+        params![
+            REMOVAL.len() as i64,
+            REMOVAL,
+            REMOVAL_SENT,
+            removal_key(Subject::Edge, ""),
+            WriteKind::DeleteEdge.as_str(),
+        ],
+    )?;
+    Ok(())
 }
 
 /// Whether it was not pinned already.
@@ -4953,6 +5066,21 @@ fn record_verdict_inner(
     if answered.verdict == Verdict::Accepted {
         meta_delete(conn, &effect_key(id))?;
     }
+    // A delete refused as already gone did what it asked, and the event of
+    // the removal is still ahead wherever its mark is still there.
+    if (answered.verdict == Verdict::Accepted
+        || answered.verdict == Verdict::Refused && answered.reason == Some("edge_not_found"))
+        && let Some(edge) = conn
+            .query_row(
+                "SELECT edge_id FROM queue WHERE id = ?1 AND kind = ?2",
+                params![id, WriteKind::DeleteEdge.as_str()],
+                |row| row.get::<_, Option<String>>(0),
+            )
+            .optional()?
+            .flatten()
+    {
+        removal_accepted(conn, Subject::Edge, &edge)?;
+    }
     if answered.verdict == Verdict::Accepted && !already_accepted {
         learn_dead_effects(conn, &queued_write(conn, id)?.expect("answered row exists"))?;
     }
@@ -5284,6 +5412,29 @@ pub fn held_for(conn: &Connection, id: &str) -> Result<Vec<QueuedWrite>, CoreErr
     )
 }
 
+/// Every write that waits on `id` stops waiting on it.
+pub fn stop_waiting_on(conn: &Connection, id: &str) -> Result<(), CoreError> {
+    for row in read_writes(
+        conn,
+        "WHERE EXISTS (SELECT 1 FROM json_each(queue.depends_on) AS named WHERE named.value = ?1)",
+        [id],
+    )? {
+        let still: Vec<&String> = row.depends_on.iter().filter(|held| *held != id).collect();
+        conn.execute(
+            "UPDATE queue SET depends_on = ?2 WHERE id = ?1",
+            params![
+                row.id,
+                if still.is_empty() {
+                    None
+                } else {
+                    Some(serde_json::to_string(&still)?)
+                }
+            ],
+        )?;
+    }
+    Ok(())
+}
+
 /// Also refuses each of `held`, unsent, and puts the copy back as it was
 /// beneath each. The caller has read their rows back already.
 pub fn withdraw(
@@ -5564,18 +5715,77 @@ pub fn take_server_item(
     Ok(true)
 }
 
-/// `take_server_item` for an edge.
+/// `take_server_item` for an edge. The edge a create was shown with until
+/// the server's came leaves, and each write waiting on it moves onto the
+/// server's (`device/edge-write-waits-projected`).
 pub fn take_server_edge(conn: &Connection, edge: &WireEdge) -> Result<bool, CoreError> {
-    if !put_server_edge(conn, edge)? {
-        return Ok(false);
-    }
-    // The edge a create was shown with until the server's came.
     let shown = crate::model::projected_edge_id(&edge.source_id, &edge.edge_type, &edge.target_id);
+    let moved = shown != edge.id && readdress_edge_writes(conn, &shown, &edge.id, true)?;
+    let taken = put_server_edge(conn, edge)?;
     if shown != edge.id {
         forget_edge(conn, &shown)?;
     }
-    lay_waiting_edge_writes_over(conn, &edge.id)?;
-    Ok(true)
+    if !taken && moved {
+        hold_beneath_edge(conn, &edge.id)?;
+    }
+    if taken || moved {
+        lay_waiting_edge_writes_over(conn, &edge.id)?;
+    }
+    Ok(taken)
+}
+
+/// Moves each unsent write naming the edge `from` onto `to`, answering
+/// whether any moved. Where `to` is the server's edge, which a create made at
+/// version 1, an edit based on the edge the create was shown with, at
+/// version 0, is based on version 1.
+pub fn readdress_edge_writes(
+    conn: &Connection,
+    from: &str,
+    to: &str,
+    made: bool,
+) -> Result<bool, CoreError> {
+    let waiting = read_writes(
+        conn,
+        "WHERE edge_id = ?1 AND sent = 0 AND (verdict IS NULL OR verdict IN (?2, ?3))",
+        [from, Verdict::Blocked.as_str(), Verdict::Dead.as_str()],
+    )?;
+    for row in &waiting {
+        let mut base = row.base_version;
+        let mut payload = payload_of(conn, &row.id)?;
+        if made && row.kind == WriteKind::UpdateEdge && base == Some(0) {
+            base = Some(1);
+            let mut body: Value = serde_json::from_str(&payload)?;
+            body["version"] = Value::from(1);
+            payload = body.to_string();
+        }
+        conn.execute(
+            "UPDATE queue SET edge_id = ?2, base_version = ?3, payload = ?4 WHERE id = ?1",
+            params![row.id, to, base, payload],
+        )?;
+    }
+    Ok(!waiting.is_empty())
+}
+
+/// Refuses, unsent, each write still waiting on the edge `id`, with `reason`.
+pub fn refuse_edge_writes(conn: &Connection, id: &str, reason: &str) -> Result<(), CoreError> {
+    let waiting = read_writes(
+        conn,
+        "WHERE edge_id = ?1 AND sent = 0 AND (verdict IS NULL OR verdict IN (?2, ?3))",
+        [id, Verdict::Blocked.as_str(), Verdict::Dead.as_str()],
+    )?;
+    for row in waiting {
+        record_verdict(
+            conn,
+            &row.id,
+            &Answered {
+                verdict: Verdict::Refused,
+                reason: Some(reason),
+                answer: None,
+                conflicted_copy_id: None,
+            },
+        )?;
+    }
+    drop_beneath(conn, Subject::Edge, id)
 }
 
 /// Call after anything puts the server's row into the copy. The row is
@@ -5872,6 +6082,7 @@ pub fn put_back(conn: &Connection, row: &QueuedWrite) -> Result<(), CoreError> {
             lay_waiting_edge_writes_over(conn, id)?;
             if !edge_write_waits(conn, id)? {
                 drop_beneath(conn, Subject::Edge, id)?;
+                removal_unsent(conn, Subject::Edge, id)?;
             }
             // Where the server moved it to a source the copy does not hold
             // while the refused write waited.
@@ -6230,13 +6441,26 @@ pub fn edge_by_id_with(
 }
 
 /// The only write an edit or a delete of the edge cannot go without; the
-/// writes ahead of one only order it.
+/// writes ahead of one only order it. That is the waiting create that makes
+/// the edge `edge_id`: its own create, or the create of an item shown drawn
+/// with it under an id the copy made.
 pub fn untaken_create_for_edge(conn: &Connection, edge_id: &str) -> Result<Vec<String>, CoreError> {
-    Ok(waiting_writes_for_edge(conn, edge_id)?
+    let mut creates: Vec<String> = waiting_writes_for_edge(conn, edge_id)?
         .into_iter()
         .filter(|row| row.kind == WriteKind::CreateEdge)
         .map(|row| row.id)
-        .collect())
+        .collect();
+    if let Some(edge) = edge_by_id(conn, edge_id)? {
+        for create in untaken_creates_for_item(conn, &edge.source_id)? {
+            let draft = crate::model::Draft::from_payload(&payload_of(conn, &create)?)?;
+            if draft.edge_pairs().iter().any(|(edge_type, target)| {
+                crate::model::projected_edge_id(&edge.source_id, edge_type, target) == edge_id
+            }) {
+                creates.push(create);
+            }
+        }
+    }
+    Ok(creates)
 }
 
 #[cfg(test)]

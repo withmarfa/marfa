@@ -50,9 +50,10 @@ pub struct SendReport {
 impl Folder {
     /// Everything a folder does, once: resumes an unfinished hydration, sends
     /// an edit of the settings file, scans, drains, catches up, pulls, and
-    /// drains again where the pull queued the placement of a file it wrote, or
-    /// the end of one. Where that drain rebuilt the copy for a changed read
-    /// reach, pulls once more, and drains again where that pull placed a file.
+    /// drains again where the pull queued the placement of a file it wrote,
+    /// the end of one, or a body rewritten for a retitled link. Where that
+    /// drain rebuilt the copy for a changed read reach, or sent such a body,
+    /// pulls once more, and drains again where that pull placed a file.
     /// A folder whose first sync waits to be confirmed is only read, and says
     /// what the sync will do.
     pub fn sync(&self) -> Result<Synced> {
@@ -169,10 +170,12 @@ impl Folder {
             let later = self.drain_rebuilding(&mut rebuilt)?;
             self.absorb(&mut drain, later)?;
             // The rebuild read the copy under the new reach after the pull
-            // wrote it out, so the directory is brought to it once more. The
-            // run has rebuilt already, so a change at the drain after this
-            // pull ends it.
-            if !rebuilt_before && rebuilt.is_some() {
+            // wrote it out, and a body rewritten for a retitled link was
+            // written at the version it was sent from, so the directory is
+            // brought to the copy once more. The run has rebuilt already, so
+            // a change at the drain after this pull ends it.
+            let relinked = pull.as_ref().is_some_and(|pulled| pulled.relinked > 0);
+            if !rebuilt_before && rebuilt.is_some() || relinked {
                 let mut again = self.pull()?;
                 let places_again = places(&again);
                 if let Some(first) = &pull {
@@ -371,9 +374,10 @@ fn stopped_by(drain: &crate::DrainReport) -> Option<CoreError> {
         })
 }
 
-/// Whether a pull queued the placement of a file it wrote, or the end of one.
+/// Whether a pull queued the placement of a file it wrote, the end of one, or
+/// a body rewritten for a retitled link.
 fn places(pulled: &PullReport) -> bool {
-    pulled.placed + pulled.ended > 0
+    pulled.placed + pulled.ended + pulled.relinked > 0
 }
 
 /// Not where the first drain or the catch-up shows the server cannot take

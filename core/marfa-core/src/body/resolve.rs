@@ -116,9 +116,10 @@ pub(crate) enum Resolved {
     Unanswered(String),
 }
 
-/// Lookup pages read for one name and title field: a name more common than
-/// this is named by id instead.
-const LOOKUP_PAGES: usize = 5;
+/// Lookup pages read for one name and title field, 1,000 items at
+/// `ITEM_PAGE_LIMIT` a page: a name more common than this is named by id
+/// instead.
+const LOOKUP_PAGES: usize = 2;
 
 pub(crate) struct Resolver<'a> {
     core: &'a Core,

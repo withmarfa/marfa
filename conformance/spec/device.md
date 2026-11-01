@@ -1142,6 +1142,30 @@ When an event says a pinned row was purged, a device MUST take the pin off.
 
 **Tests:** `device/catch-up.test.ts › takes the pin off a purged row`.
 
+### `device/deleted-stays-gone`
+
+While this device holds the server's acceptance of a purge or a view's delete that it sent, and has neither read the event of that removal nor filled the copy again from the first page, a device MUST NOT apply an event that adds or changes the row.
+
+**Reason:** the event of a change made before the removal can still be ahead of the cursor when the answer arrives, and applied as it stands it puts the removed row back, since nothing is left in the copy to compare its version with. The removal's own event ends the rule, so a row made later under the same id still enters, and a fill from the first page reads what the server holds. A device whose answer was lost never took the row out, so it has nothing to keep out.
+
+**Tests:** `device/deleted-stays-gone.test.ts › keeps the row out through an older event read after the purge`, `› shows a row made again under the id once the purge's event is read`.
+
+### `device/deleted-row-edges-stay-gone`
+
+While a device keeps a row out under `device/deleted-stays-gone`, a device MUST NOT apply an event that adds or changes an edge at either end of the row.
+
+**Reason:** the server deletes those edges with the row, and an older event for one of them would draw an edge to a row the copy no longer holds.
+
+**Tests:** `device/deleted-stays-gone.test.ts › keeps out an older event for an edge at either end of the row`.
+
+### `device/deleted-edge-stays-gone`
+
+While this device holds the server's acceptance of an edge delete that it sent, or its refusal because it holds no such edge, and has neither read the event of that delete nor filled the copy again from the first page, a device MUST NOT apply an event that adds or changes the edge.
+
+**Reason:** as for a row, an older event still ahead of the cursor would put the deleted edge back. A refusal because the edge is already gone means another delete took it, and that delete's event ends the rule as this one's would.
+
+**Tests:** `device/deleted-stays-gone.test.ts › keeps the edge out through an older event read after the delete was answered`, `› shows an edge made again under the id once the delete's event is read`.
+
 ### `device/catch-up-never-held`
 
 When an event names a row that is not pinned, that the copy does not hold and that the slice does not take, a device MUST NOT add the row.
@@ -1424,15 +1448,55 @@ When the server accepts a create that names `edges`, a device MUST hold each edg
 
 **Reason:** the server gives the edges it makes ids of its own, so a device that kept both would hold each edge twice.
 
-**Tests:** `device/item-fields-live.test.ts › drains a draft carrying a state, a capture location and edges as one write`, `device/item-fields-live.test.ts › keeps a drawn edge the server's answer cuts off until a read brings the server's own`.
+**Tests:** `device/item-fields-live.test.ts › drains a draft carrying a state, a capture location and edges as one write`, `device/item-fields-live.test.ts › reads the rest of a create's edges the answer cuts off, before the drain returns`.
 
 ### `device/create-edges-kept-short`
 
-When the server accepts a create that names `edges` and its answer carries no block for an edge type, or a block with a `next_cursor` that leaves out a target the create named, a device MUST keep answering the edge it showed to that target until a read brings the server's edge to it.
+When the server accepts a create that names `edges` and its answer carries no block for an edge type, or a block with a `next_cursor` that leaves out a target the create named, a device MUST keep answering the edge it showed to that target until a read of the item's edges of that type succeeds.
 
-**Reason:** a block of an item's edges carries at most 50 edges and a cursor for the rest (`edges/hydrate-cap` and `edges/hydrate-cursor`), so an edge left out of a cut block was made; dropping the one shown would answer the item with fewer edges than it has.
+**Reason:** a block of an item's edges carries at most 50 edges and a cursor for the rest (`edges/hydrate-cap` and `edges/hydrate-cursor`), so an edge left out of a cut block was made; dropping the one shown would answer the item with fewer edges than it has. The read that settles it (`device/create-edges-read-rest`) can fail while the server is out of reach.
 
-**Tests:** `device/item-fields-live.test.ts › keeps a drawn edge the server's answer cuts off until a read brings the server's own`.
+**Tests:** `device/item-fields-live.test.ts › reads the rest of a create's edges the answer cuts off, before the drain returns`, `device/waiting-projections.test.ts › keeps showing a created item's edge while the read of its edges fails, until one succeeds`.
+
+### `device/create-edges-read-rest`
+
+When the server accepts a create that names `edges` and its answer leaves out a target the create named, as `device/create-edges-kept-short` describes, a device MUST read the item's edges of that type, from the block's `next_cursor` where the block is cut and from the start where the answer carries no block, and hold each edge the read brings in place of the one it showed.
+
+**Reason:** the edge the device showed carries an id the device made, which the server never holds (`edges/create-invalid-id`), so an edit or delete of it is refused `edge_not_found` until the device holds the server's edge. A repeat answered as acknowledged carries no edges, and a source filter can leave a block out (`edges/read-source-filter`).
+
+**Tests:** `device/item-fields-live.test.ts › reads the rest of a create's edges the answer cuts off, before the drain returns`, `device/item-fields-live.test.ts › sends a delete of an edge the create's answer cut off to the server's edge`, `device/item-fields-live.test.ts › sends an edit of an edge the create's answer cut off to the server's edge`.
+
+### `device/create-edges-read-again`
+
+If the read `device/create-edges-read-rest` describes fails because the server cannot be reached, then a device MUST make the read again in a later drain, whether or not any write is queued.
+
+**Reason:** until the read succeeds, the device shows the edge under an id the server never gave and holds each edit or delete of it (`device/edge-write-waits-projected`), and a create's edges can be all a device still owes the server.
+
+**Tests:** `device/waiting-projections.test.ts › keeps showing a created item's edge while the read of its edges fails, until one succeeds`.
+
+### `device/edge-write-waits-projected`
+
+While a device owes the read `device/create-edges-read-rest` describes for an edge it answers under an id it made, a device MUST hold an edit or delete of that edge in the queue unsent, and send it to the id of the server's edge once the read brings that edge.
+
+**Reason:** the server refuses a write to an id it never gave (`edges/create-invalid-id`), so a write sent before the read would be refused for an edge the server holds. Only the owed read can bring that id, so a write to an edge no read is owed for is not held.
+
+**Tests:** `device/item-fields-live.test.ts › sends a delete of an edge the create's answer cut off to the server's edge`, `device/item-fields-live.test.ts › sends an edit of an edge the create's answer cut off to the server's edge`.
+
+### `device/create-edges-unread-refused`
+
+If a whole read of a created item's edges of a type, or a whole block of that type in the create's answer, brings no edge to a target the create named, then a device MUST stop answering the edge it showed to that target and keep each waiting edit or delete of it in the queue as refused, unsent.
+
+**Reason:** a source filter leaves the item's edges out of every read the key can make (`edges/read-source-filter`), so no read brings an id the write could be sent to, and what the person queued stays where they can read it back.
+
+**Tests:** `device/item-fields-live.test.ts › refuses a waiting delete of an edge no read of the created item brings, without sending it`.
+
+### `device/create-edges-read-failed`
+
+If the server refuses the read `device/create-edges-read-rest` describes for the request itself, or answers it with a body that is not JSON or a `next_cursor` it gave before, then a device MUST keep answering the edge it showed to each target the read was for, keep each waiting edit or delete of that edge in the queue as refused, unsent, and not make the read again.
+
+**Reason:** the server made the edge, so the device keeps showing it; the same read fails the same way each time, so a device that kept it owed would ask in every drain and hold the edge's writes for ever, and a failure of the read does not undo the create it follows.
+
+**Tests:** `device/waiting-projections.test.ts › keeps a created item's edge and refuses its waiting delete unsent when the read of its edges is refused`.
 
 ### `device/create-edges-refused-whole`
 
@@ -6094,6 +6158,30 @@ If the file named for an embed text is not attached to the item named, then a de
 
 **Tests:** `device/body-edges-live.test.ts › embeds an attached file by the text the attach answers, and references it beside the attachment`.
 
+### `device/embed-table-pipe`
+
+When an embed in a body, `![[name\|size]]`, sits inside a table cell, including a table in a quote or a callout, a device MUST read each `\|` in the embed as `|` before reading its name.
+
+**Reason:** a table cell cannot hold a bare `|`, so an editor writes the size of a picture there as `![[t.png\|200]]`, which Obsidian shows as the file `t.png`. The text as written is what the embed is recorded and answered as.
+
+**Tests:** `device/body-edges-live.test.ts › binds an embed with a size in a table cell, and one with a Markdown escape in its path, to its file`, `device/folders-frontmatter.test.ts › reads an embed's path as Obsidian reads one`.
+
+### `device/embed-path-markdown-escape`
+
+When an embed names a path, `![alt](path)`, a device MUST read the path in this order: first a backslash followed by an ASCII punctuation character as that character, then cut the path at the first `?` or `#`, then each percent escape as its byte.
+
+**Reason:** an editor escapes an underscore in a file name, so `![](my\_pic.png)` shows `my_pic.png`. A path is a URL, so an escaped `?` or `#` is literal in the destination and still starts a query or a fragment: `![](a\?b.png?x=1)` names `a`. A file whose name holds `#` or `?` is written `a%23b.png` or `a%3Fb.png`, which the percent step reads after the cut. Percent escapes come last, so `%5C` stays a backslash that escapes nothing, and `![](my%5C_pic.png)` names `my\_pic.png`. A `![[name]]` embed is no path and is not unescaped, as Obsidian does not.
+
+**Tests:** `device/body-edges-live.test.ts › ends an embed path at an escaped question mark or hash and keeps a percent-encoded one in the name`, `device/body-edges-live.test.ts › binds an embed with a size in a table cell, and one with a Markdown escape in its path, to its file`, `device/folders-frontmatter.test.ts › reads an embed's path as Obsidian reads one`.
+
+### `device/embed-path-other-backslash`
+
+When an embed names a path and a backslash in it is followed by anything but an ASCII punctuation character, a device MUST read the backslash as part of the path.
+
+**Reason:** `![](a\b.png)` names `a\b.png`, as the Markdown rule for an escape leaves it.
+
+**Tests:** `device/body-edges-live.test.ts › binds an embed with a size in a table cell, and one with a Markdown escape in its path, to its file`.
+
 ### `device/attach-title`
 
 When a file is attached to an item under no title its caller gave, a device MUST title the file item with the first of its name, `name 2.ext`, `name 3.ext` that no other attachment of the item answers to.
@@ -6186,9 +6274,9 @@ A device MUST read a link's name, heading and alias from the text as written, co
 
 ### `device/link-backslash`
 
-A device MUST read a backslash in a link, or before its brackets, as part of the text.
+A device MUST read a backslash in a link, or before its brackets, as part of the text, except that `device/embed-table-pipe` reads `\|` in an embed in a table cell as `|`.
 
-**Reason:** Marfa defines no escape in a link, so an editor and the edges read `\[[name]]` alike.
+**Reason:** Marfa defines no escape in a link, so an editor and the edges read `\[[name]]` alike. The one escape is the pipe of an embed's size in a table cell, which a table needs.
 
 **Tests:** `device/link-parts.test.ts › keeps a backslash as part of the text`.
 
