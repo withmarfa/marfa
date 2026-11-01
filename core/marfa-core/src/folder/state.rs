@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
@@ -60,11 +60,25 @@ pub struct Writes {
     /// it was: the line is no edit while it shows that. Any pull ends it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deferred_title: Option<DeferredTitle>,
-    /// Where the copy stood, by `copy_moment`, when the file was held for
-    /// names a change to the copy can resolve; `None` where nothing but an
-    /// edit of the file can.
+    /// When a file held `edges` is judged again while it is unchanged;
+    /// `None` where no judgment since this field was added recorded it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub held_at: Option<String>,
+    pub rejudge: Option<Rejudge>,
+    /// The file's names whose lookup the server refused, folded, each with
+    /// its reason: not asked again until the file changes.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub refused_lookups: BTreeMap<String, String>,
+}
+
+/// When an unchanged file held `edges` is judged again.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Rejudge {
+    /// A name matched no item or more than one: once the copy has moved from
+    /// this `copy_moment`.
+    Moved(String),
+    /// Nothing a change to the copy can resolve holds it.
+    FileChanged,
 }
 
 /// The title line a file went on showing, which is no edit of the title.

@@ -27,6 +27,9 @@ pub(super) struct EdgeWork {
     pub had_embeds: Vec<String>,
     pub had_lines: Vec<Line>,
     pub embeds: Vec<(String, Target)>,
+    /// Names whose lookup the server refused while the file was as it is
+    /// now, answered with that refusal rather than asked again.
+    pub refused_lookups: BTreeMap<String, String>,
 }
 
 pub(super) struct Outcome {
@@ -40,18 +43,21 @@ pub(super) struct Outcome {
     pub refused: Vec<(Line, String)>,
     /// Embeds that name no file the folder sends, and why.
     pub embeds: Vec<String>,
-    /// Whether the server refused a lookup of a name the file holds, which
-    /// is not asked again until the file changes.
-    pub refused_lookup: bool,
+    /// The names whose lookup the server refused, folded, with the reason.
+    pub refused_lookups: BTreeMap<String, String>,
+    /// Whether a name matched no item or more than one, which a change to
+    /// the copy can resolve.
+    pub unmatched: bool,
 }
 
 /// What became of the lookups of a file's names that resolved nothing.
-#[derive(Default)]
-struct Unresolved {
+struct Unresolved<'w> {
+    /// Refusals kept from an earlier judgment of the file as it is.
+    known: &'w BTreeMap<String, String>,
     /// The server could not be reached.
     waiting: bool,
-    /// The server refused one.
-    refused: bool,
+    unmatched: bool,
+    refused: BTreeMap<String, String>,
 }
 
 /// The files on disk a folder has bound to items.
@@ -80,12 +86,16 @@ impl Resolved {
         raw: &str,
         name: &str,
         reasons: &mut Vec<String>,
-        unresolved: &mut Unresolved,
+        unresolved: &mut Unresolved<'_>,
     ) -> Option<(String, Option<String>)> {
         let why = match self {
             Resolved::Found { id, r#type } => return Some((id, r#type)),
-            Resolved::Unmatched => "matches no item".to_string(),
+            Resolved::Unmatched => {
+                unresolved.unmatched = true;
+                "matches no item".to_string()
+            }
             Resolved::Ambiguous => {
+                unresolved.unmatched = true;
                 "matches more than one item; name one by its id, [[<id>]]".to_string()
             }
             Resolved::Waiting => {
@@ -93,7 +103,6 @@ impl Resolved {
                 "is looked up once the server can be asked".to_string()
             }
             Resolved::Unanswered(why) => {
-                unresolved.refused = true;
                 format!("could not be looked up ({why}); name it by its id, [[<id>]]")
             }
         };
@@ -370,7 +379,12 @@ impl Folder {
         let item_id = work.item_id.as_str();
         let mut reasons: Vec<String> = Vec::new();
         let mut refused: Vec<(Line, String)> = Vec::new();
-        let mut unresolved = Unresolved::default();
+        let mut unresolved = Unresolved {
+            known: &work.refused_lookups,
+            waiting: false,
+            unmatched: false,
+            refused: BTreeMap::new(),
+        };
         let line_of = |edge_type: &str, end: End, other: &str| Line {
             edge_type: edge_type.to_string(),
             end,
@@ -398,6 +412,7 @@ impl Folder {
                     &|edge| edge.target_id.clone(),
                     catalog,
                     resolver,
+                    &mut unresolved,
                 )
             })?;
             match resolved.settled(raw, "body", &mut reasons, &mut unresolved) {
@@ -719,7 +734,8 @@ impl Folder {
             held,
             refused,
             embeds: embed_reasons,
-            refused_lookup: unresolved.refused,
+            refused_lookups: unresolved.refused,
+            unmatched: unresolved.unmatched,
         })
     }
 
@@ -749,7 +765,7 @@ impl Folder {
         catalog: &Catalog,
         resolver: &mut Resolver<'_>,
         reasons: &mut Vec<String>,
-        unresolved: &mut Unresolved,
+        unresolved: &mut Unresolved<'_>,
     ) -> Result<Option<Vec<String>>> {
         let name = &group.name;
         let texts = match &group.typed {
@@ -765,7 +781,7 @@ impl Folder {
         for typed in texts {
             let raw = &typed.raw;
             let resolved = resolve_reference(typed, |text| {
-                self.resolve_typed(text, current, other_of, catalog, resolver)
+                self.resolve_typed(text, current, other_of, catalog, resolver, unresolved)
             })?;
             let Some((id, r#type)) =
                 resolved.settled(raw, &format!("{name} line"), reasons, unresolved)
@@ -870,7 +886,8 @@ impl Folder {
     }
 
     /// A typed name as the edge it already names, or else as the resolver
-    /// reads it.
+    /// reads it, but for a name whose lookup was refused while the file was
+    /// as it is (`folders/edge-lookup-no-repeat`).
     fn resolve_typed(
         &self,
         text: &str,
@@ -878,6 +895,7 @@ impl Folder {
         other_of: &dyn Fn(&Edge) -> String,
         catalog: &Catalog,
         resolver: &mut Resolver<'_>,
+        unresolved: &mut Unresolved<'_>,
     ) -> Result<Resolved> {
         let others: Vec<String> = current.iter().map(|edge| other_of(edge)).collect();
         if let Some(resolved) =
@@ -885,6 +903,14 @@ impl Folder {
         {
             return Ok(resolved);
         }
-        resolver.resolve(text)
+        let key = crate::names::folded(text.trim());
+        let resolved = match unresolved.known.get(&key) {
+            Some(why) => Resolved::Unanswered(why.clone()),
+            None => resolver.resolve(text)?,
+        };
+        if let Resolved::Unanswered(why) = &resolved {
+            unresolved.refused.insert(key, why.clone());
+        }
+        Ok(resolved)
     }
 }

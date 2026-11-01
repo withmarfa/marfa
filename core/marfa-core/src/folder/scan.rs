@@ -922,13 +922,15 @@ impl Folder {
                                     line.edge_type == embeds::ATTACHMENT_EDGE
                                         && line.end == crate::catalog::End::Target
                                 }));
+                        let unchanged = || {
+                            let mut pending = self.edge_work(file, &item_id, Some(&bound));
+                            pending.refused_lookups = bound.writes.refused_lookups.clone();
+                            pending
+                        };
                         match edges_again(&bound) {
-                            Again::Now => work.push(self.edge_work(file, &item_id, Some(&bound))),
-                            _ if reread => work.push(self.edge_work(file, &item_id, Some(&bound))),
-                            Again::IfMoved(at) => {
-                                moved_since
-                                    .push((at, self.edge_work(file, &item_id, Some(&bound))));
-                            }
+                            Again::Now => work.push(unchanged()),
+                            _ if reread => work.push(unchanged()),
+                            Again::IfMoved(at) => moved_since.push((at, unchanged())),
                             Again::No => {}
                         }
                         // An editor's atomic save gives the same bytes a new
@@ -1091,7 +1093,8 @@ impl Folder {
                 held: Some(format!("{}{error}", state::EDGES_WAITING)),
                 refused: Vec::new(),
                 embeds: Vec::new(),
-                refused_lookup: false,
+                refused_lookups: pending.refused_lookups.clone(),
+                unmatched: false,
             });
             report.embeds.extend(
                 outcome
@@ -1105,11 +1108,14 @@ impl Folder {
                     report.flagged.push(Flagged::of(&pending.path, held));
                 }
                 let mut writes = bound.writes.clone();
-                let resolvable = outcome
-                    .held
-                    .as_deref()
-                    .is_some_and(|held| held.starts_with(state::EDGES));
-                writes.held_at = (resolvable && !outcome.refused_lookup).then(|| now.clone());
+                writes.rejudge = outcome.held.as_ref().map(|_| {
+                    if outcome.unmatched {
+                        state::Rejudge::Moved(now.clone())
+                    } else {
+                        state::Rejudge::FileChanged
+                    }
+                });
+                writes.refused_lookups = outcome.refused_lookups;
                 let held = outcome.held;
                 let save = writes.save;
                 writes
@@ -2186,8 +2192,8 @@ enum Again {
 /// Lines only the server can resolve are asked again at each scan that can
 /// ask it, and so are lines the copy refused, since what refused them can
 /// change without the file. Names that matched no item, or several, are
-/// asked again once the copy has changed, and a name whose lookup the server
-/// refused not until the file does.
+/// asked again once the copy has changed. A name whose lookup the server
+/// refused is answered with that refusal until the file changes.
 fn edges_again(bound: &state::Bound) -> Again {
     let held = bound.held.as_deref().unwrap_or_default();
     if held.starts_with(state::EDGES_WAITING)
@@ -2197,9 +2203,14 @@ fn edges_again(bound: &state::Bound) -> Again {
     {
         return Again::Now;
     }
-    match &bound.writes.held_at {
-        Some(at) if held.starts_with(state::EDGES) => Again::IfMoved(at.clone()),
-        _ => Again::No,
+    if !held.starts_with(state::EDGES) {
+        return Again::No;
+    }
+    match &bound.writes.rejudge {
+        Some(state::Rejudge::Moved(at)) => Again::IfMoved(at.clone()),
+        Some(state::Rejudge::FileChanged) => Again::No,
+        // Held before any judgment recorded when to judge it again.
+        None => Again::Now,
     }
 }
 

@@ -1573,6 +1573,7 @@ impl Folder {
             had_embeds: bound.map(|bound| bound.embeds.clone()).unwrap_or_default(),
             had_lines: bound.map(|bound| bound.lines.clone()).unwrap_or_default(),
             embeds: Vec::new(),
+            refused_lookups: BTreeMap::new(),
         }
     }
 

@@ -191,3 +191,81 @@ fn a_name_the_server_refused_to_look_up_is_not_asked_again_while_the_file_is_unc
     assert!(held(&folder, "A.md").is_some_and(|held| held.contains("could not be looked up")));
     assert_eq!(lookups(&server), asked, "a refused lookup was asked again");
 }
+
+/// Sets when the file at `path` is judged again, as a store written before
+/// that was recorded holds it with `None`.
+fn set_rejudge(folder: &Folder, path: &str, rejudge: Option<state::Rejudge>) {
+    let conn = folder.core.conn().unwrap();
+    let mut bound = state::bound_at(&conn, path).unwrap().unwrap();
+    bound.writes.rejudge = rejudge;
+    state::bind(&conn, &bound).unwrap();
+}
+
+#[test]
+fn a_hold_from_a_store_that_never_recorded_when_to_judge_it_again_is_judged_again() {
+    let (dir, folder, _server) = online_folder(nothing_found());
+    std::fs::write(dir.path().join("A.md"), "See [[B]].\n").unwrap();
+    folder.scan().unwrap();
+    assert!(held(&folder, "A.md").is_some_and(|held| held.contains("matches no item")));
+    let a = item_at(&folder, "A.md");
+
+    // The witness: held for nothing a change to the copy can fix, the file
+    // is not judged again, even once its target exists.
+    set_rejudge(&folder, "A.md", Some(state::Rejudge::FileChanged));
+    std::fs::write(dir.path().join("B.md"), "B\n").unwrap();
+    assert_eq!(folder.scan().unwrap().created, 1);
+    assert!(held(&folder, "A.md").is_some());
+    assert_eq!(edges_of(&folder, &a, LINK_EDGE), Vec::<String>::new());
+
+    set_rejudge(&folder, "A.md", None);
+    let report = folder.scan().unwrap();
+    assert!(report.flagged.is_empty(), "{report:?}");
+    assert_eq!(held(&folder, "A.md"), None);
+    assert_eq!(edges_of(&folder, &a, LINK_EDGE), [item_at(&folder, "B.md")]);
+}
+
+#[test]
+fn an_unmatched_name_is_asked_again_while_a_refused_name_in_the_same_file_is_not() {
+    // How many lookups one name takes, so the refusal lands on the second.
+    let per_name = {
+        let (dir, folder, server) = online_folder(nothing_found());
+        std::fs::write(dir.path().join("Probe.md"), "See [[Elsewhere]].\n").unwrap();
+        folder.scan().unwrap();
+        lookups(&server)
+    };
+    assert!(per_name > 0);
+    let mut answers = vec![nothing_found(); per_name];
+    answers.push(refusal(403, "forbidden"));
+    let (dir, folder, server) = online_folder(nothing_found());
+    server.on("/items", answers);
+    std::fs::write(dir.path().join("A.md"), "See [[B]] and [[Common]].\n").unwrap();
+    folder.scan().unwrap();
+    let first = held(&folder, "A.md").unwrap();
+    assert!(
+        first.contains("[[B]] in its body matches no item"),
+        "{first}"
+    );
+    assert!(
+        first.contains("[[Common]] in its body could not be looked up"),
+        "{first}"
+    );
+    let asked = lookups(&server);
+    let a = item_at(&folder, "A.md");
+
+    server.on("/items", vec![nothing_found()]);
+    std::fs::write(dir.path().join("B.md"), "B\n").unwrap();
+    assert_eq!(folder.scan().unwrap().created, 1);
+    assert_eq!(edges_of(&folder, &a, LINK_EDGE), [item_at(&folder, "B.md")]);
+    let still = held(&folder, "A.md").unwrap();
+    assert!(!still.contains("[[B]]"), "{still}");
+    assert!(
+        still.contains("[[Common]] in its body could not be looked up"),
+        "{still}"
+    );
+    let since: Vec<_> = server.seen("/items").into_iter().skip(asked).collect();
+    assert_eq!(since.len(), per_name, "{since:?}");
+    assert!(
+        since.iter().all(|seen| !seen.query.contains("Common")),
+        "the refused name was asked again: {since:?}"
+    );
+}
