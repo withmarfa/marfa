@@ -6822,6 +6822,38 @@ A device MUST NOT put markup in an excerpt other than pairs of `<mark>` and `</m
 
 **Tests:** `device/search-live.test.ts › escapes the row's text in an excerpt as the server does`.
 
+## Telemetry
+
+The command line reports a run in two ways, and each has settings of its own: a trace over OTLP, and an exception report to error tracking. One being unset, or unusable, leaves the other as it was.
+
+### `device/cli-trace-endpoint`
+
+When neither `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` nor `OTEL_EXPORTER_OTLP_ENDPOINT` is set, the CLI MUST send no trace.
+
+**Reason:** Some agent hosts remove every `OTEL_` setting from the shells they give an agent, and a trace needs a collector to go to.
+
+**Tests:** `device/cli-exception-report.test.ts › sends one exception and no trace when only the error tracking settings are set`.
+
+### `device/cli-exception-report`
+
+When `MARFA_POSTHOG_HOST` and `MARFA_POSTHOG_PROJECT_TOKEN` are set and a command fails, the CLI MUST send one exception report, whatever the `OTEL_EXPORTER_OTLP_*` settings are.
+
+**Reason:** An agent host that removes the `OTEL_` settings must not also silence the report of a failure, and an endpoint that cannot be used is the trace's trouble alone.
+
+**Tests:** `device/cli-exception-report.test.ts › sends one exception and no trace when only the error tracking settings are set`, `› still sends the exception when the OTLP endpoint is not an address`.
+
+### `device/cli-exception-success`
+
+When a command succeeds, the CLI MUST NOT send an exception report.
+
+**Tests:** `device/cli-exception-report.test.ts › sends no exception when the command succeeds`.
+
+### `device/cli-telemetry-disabled`
+
+When `OTEL_SDK_DISABLED` is `true`, the CLI MUST send neither a trace nor an exception report.
+
+**Tests:** `device/cli-exception-report.test.ts › sends nothing when the SDK is disabled, with an endpoint or without`.
+
 ## What the real server cannot be made to produce
 
 The device fixtures drive a scripted server where the precondition cannot be arranged over the wire against the real one. `device/fidelity.test.ts` asserts that every scripted answer the real server can also give matches the real one's shape; these are the answers it cannot check.

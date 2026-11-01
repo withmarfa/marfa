@@ -705,7 +705,7 @@ fn an_endpoint_that_cannot_be_used_is_ignored_with_one_line_that_does_not_show_i
         assert_eq!(
             said.stderr,
             format!(
-                "marfa: {variable} is not an http or https address, so this run sends no telemetry\n{}",
+                "marfa: {variable} is not an http or https address, so this run sends no traces\n{}",
                 plain_words.stderr
             )
         );
@@ -1247,7 +1247,8 @@ fn nothing_planted_in_the_command_line_the_environment_or_the_data_reaches_posth
 }
 
 #[test]
-fn without_all_of_the_three_settings_nothing_is_sent_and_the_output_is_the_same() {
+fn without_both_posthog_settings_or_with_the_sdk_disabled_no_exception_is_sent_and_the_output_is_the_same()
+ {
     let store = store();
     let args = catch_up(&store);
     let plain = run(&[], &args);
@@ -1256,13 +1257,6 @@ fn without_all_of_the_three_settings_nothing_is_sent_and_the_output_is_the_same(
     let host = posthog.url.as_str();
 
     for (what, env) in [
-        (
-            "no endpoint",
-            vec![
-                ("MARFA_POSTHOG_HOST", host),
-                ("MARFA_POSTHOG_PROJECT_TOKEN", TOKEN),
-            ],
-        ),
         (
             "no token",
             report_to(&collector, &[("MARFA_POSTHOG_HOST", host)]),
@@ -1293,11 +1287,11 @@ fn without_all_of_the_three_settings_nothing_is_sent_and_the_output_is_the_same(
             ),
         ),
         (
-            "an endpoint that cannot be used",
+            "the sdk disabled and no endpoint",
             vec![
-                ("OTEL_EXPORTER_OTLP_ENDPOINT", "not a url"),
                 ("MARFA_POSTHOG_HOST", host),
                 ("MARFA_POSTHOG_PROJECT_TOKEN", TOKEN),
+                ("OTEL_SDK_DISABLED", "true"),
             ],
         ),
     ] {
@@ -1306,9 +1300,116 @@ fn without_all_of_the_three_settings_nothing_is_sent_and_the_output_is_the_same(
     }
     assert_eq!(posthog.connections.load(Ordering::SeqCst), 0);
 
-    // The witness: all three, the same command, and it is sent.
+    // The witness: both PostHog settings, the same command, and it is sent.
     let ran = run(&exceptions_to(&collector, &posthog), &args);
-    same_output(&ran, &plain, "all three set");
+    same_output(&ran, &plain, "both set");
+    assert_eq!(posthog.events().len(), 1);
+}
+
+fn only_posthog<'a>(
+    posthog: &'a Collector,
+    extra: &[(&'a str, &'a str)],
+) -> Vec<(&'a str, &'a str)> {
+    let mut env = vec![
+        ("MARFA_POSTHOG_HOST", posthog.url.as_str()),
+        ("MARFA_POSTHOG_PROJECT_TOKEN", TOKEN),
+    ];
+    env.extend_from_slice(extra);
+    env
+}
+
+#[test]
+fn a_failing_command_sends_its_exception_whatever_the_otlp_settings_are() {
+    let store = store();
+    let args = catch_up(&store);
+    let plain = run(&[], &args);
+    let posthog = Collector::open(Reply::Answer(200));
+
+    // No OTLP setting at all, as in a shell an agent host has cleared.
+    let ran = run(&only_posthog(&posthog, &[]), &args);
+    same_output(&ran, &plain, "no endpoint");
+    let events = posthog.events();
+    assert_eq!(events.len(), 1, "one failed run is one post");
+    assert_eq!(posthog.received()[0].path(), "/i/v0/e/");
+    let properties = &events[0]["properties"];
+    assert_eq!(events[0]["event"], "$exception");
+    assert_eq!(properties["error_code"], "no_cursor");
+    assert_eq!(properties["service.name"], "marfa-cli");
+
+    // The identity and the time budget are read without an endpoint too.
+    let ran = run(
+        &only_posthog(
+            &posthog,
+            &[
+                ("OTEL_SERVICE_NAME", "my-service"),
+                (
+                    "OTEL_RESOURCE_ATTRIBUTES",
+                    "deployment.environment=rehearsal",
+                ),
+                ("OTEL_EXPORTER_OTLP_TIMEOUT", "1500"),
+            ],
+        ),
+        &args,
+    );
+    same_output(&ran, &plain, "named without an endpoint");
+    let events = posthog.events();
+    assert_eq!(events.len(), 2);
+    let properties = &events[1]["properties"];
+    assert_eq!(properties["service.name"], "my-service");
+    assert_eq!(properties["deployment.environment"], "rehearsal");
+    assert_eq!(posthog.received().len(), 2);
+
+    // A run that did not fail sends nothing, with the same settings.
+    let done = run(
+        &only_posthog(&posthog, &[]),
+        &[
+            "--json",
+            "device",
+            "--db",
+            store.to_str().unwrap(),
+            "search",
+            "x",
+        ],
+    );
+    assert_eq!(done.code, 0, "{}", done.stderr);
+    assert_eq!(posthog.received().len(), 2);
+}
+
+#[test]
+fn an_endpoint_that_cannot_be_used_turns_off_the_traces_and_not_the_exception() {
+    let store = store();
+    let words = ["device", "--db", store.to_str().unwrap(), "catch-up"];
+    let plain = run(&[], &words);
+    let posthog = Collector::open(Reply::Answer(200));
+    let bad = format!("not a url {SECRET}");
+
+    let ran = run(
+        &only_posthog(&posthog, &[("OTEL_EXPORTER_OTLP_ENDPOINT", bad.as_str())]),
+        &words,
+    );
+    assert_eq!(ran.code, plain.code);
+    assert_eq!(ran.stdout, plain.stdout);
+    assert_eq!(
+        ran.stderr,
+        format!(
+            "marfa: OTEL_EXPORTER_OTLP_ENDPOINT is not an http or https address, so this run sends no traces\n{}",
+            plain.stderr
+        )
+    );
+    assert!(!ran.stderr.contains(SECRET));
+    assert_eq!(posthog.events().len(), 1);
+
+    // The other way round: a host that cannot be used leaves the trace alone.
+    let collector = Collector::open(Reply::Answer(200));
+    let env = report_to(
+        &collector,
+        &[
+            ("MARFA_POSTHOG_HOST", "ftp://posthog.example"),
+            ("MARFA_POSTHOG_PROJECT_TOKEN", TOKEN),
+        ],
+    );
+    run(&env, &words);
+    assert_eq!(collector.received().len(), 1);
     assert_eq!(posthog.events().len(), 1);
 }
 

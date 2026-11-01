@@ -1,5 +1,5 @@
 //! A failed run as one PostHog `$exception` event, when the environment names
-//! a PostHog project as well as a collector.
+//! a PostHog project. A collector is not needed.
 //!
 //! PostHog's error tracking groups `$exception` events, and a trace does not
 //! produce them, so this is a post of its own. It is sent from a thread of
@@ -59,14 +59,14 @@ impl std::fmt::Debug for Settings {
     }
 }
 
-/// `resource` and `timeout` are the trace's: the exception is reported under
+/// `resource` and `timeout` are the run's identity: a trace is sent under
 /// the same name and attributes and waited for within the same budget.
 pub fn read(
-    get: impl Fn(&str) -> Option<String>,
+    get: &impl Fn(&str) -> Option<String>,
     resource: otlp::Resource,
     timeout: Duration,
 ) -> Reading {
-    let (host, token) = match (text(&get, HOST), text(&get, TOKEN)) {
+    let (host, token) = match (text(get, HOST), text(get, TOKEN)) {
         (None, None) => return Reading::Off,
         (Some(_), None) => return Reading::Said(HOST_ALONE),
         (None, Some(_)) => return Reading::Said(TOKEN_ALONE),
@@ -224,7 +224,7 @@ mod tests {
 
     fn with(pairs: &[(&str, &str)]) -> Reading {
         read(
-            |name| {
+            &|name| {
                 pairs
                     .iter()
                     .find(|(set, _)| *set == name)

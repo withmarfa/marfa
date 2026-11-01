@@ -3,11 +3,12 @@ import { gunzipSync } from "node:zlib";
 import { expect } from "vitest";
 
 /**
- * Where a server under test reports an unhandled fault, in the places a
- * fixture can read: its error webhook, the log records and spans it exports
- * over OTLP, and the exceptions it sends to error tracking. One receiver on
- * the loopback address is all four, so a fixture boots its server with
- * {@link FaultSinks.env} and reads what arrived.
+ * Where a server or the command line under test reports an unhandled fault,
+ * in the places a fixture can read: the error webhook, the log records and
+ * spans it exports over OTLP, and the exceptions it sends to error tracking.
+ * One receiver on the loopback address is all four, so a fixture boots its
+ * server with {@link FaultSinks.env} and reads what arrived. The command line
+ * posts a single event to the capture path where the server posts a batch.
  */
 export interface FaultSinks {
   /** The settings that point the server's four reports at the receiver. */
@@ -33,6 +34,9 @@ export interface FaultSinks {
       request_id?: string;
       method?: string;
       path?: string;
+      command?: string;
+      exit_code?: number;
+      error_code?: string;
       $exception_list?: { type: string; value: string }[];
     };
   }[];
@@ -93,6 +97,8 @@ export async function startFaultSinks(): Promise<FaultSinks> {
         if (path.startsWith("/v1/traces")) traces.push(parsed);
         else if (path.startsWith("/v1/logs")) logRecords.push(parsed);
         else if (path.startsWith("/batch")) trackedErrors.push(parsed);
+        else if (path.startsWith("/i/v0/e/"))
+          trackedErrors.push({ batch: [parsed] });
         else notifications.push(parsed);
       } finally {
         response
