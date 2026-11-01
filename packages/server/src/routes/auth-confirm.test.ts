@@ -14,9 +14,10 @@ vi.setConfig({ testTimeout: 60_000 });
 let ctx: TestContext | undefined;
 
 afterEach(async () => {
-  await ctx?.cleanup();
-  ctx = undefined;
   resetClockForTests();
+  const done = ctx;
+  ctx = undefined;
+  await done?.cleanup();
 });
 
 const ORIGIN = "http://localhost:0";
