@@ -17,6 +17,7 @@ use crate::wire::{WireEdge, WireEdgeAnswer, WireErrorEnvelope, WireItem, WireWri
 use crate::{Core, Result};
 use crate::{reach, store};
 
+mod create_edges;
 mod pages;
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -615,6 +616,16 @@ fn readiness(
             _ => return Readiness::Held,
         }
     }
+    // An id the copy made for an edge a create was shown with names no edge
+    // the server holds (`device/edge-write-waits-projected`).
+    if matches!(row.kind, WriteKind::UpdateEdge | WriteKind::DeleteEdge)
+        && row
+            .edge_id
+            .as_deref()
+            .is_some_and(crate::model::is_projected_edge_id)
+    {
+        return Readiness::Held;
+    }
     if row.kind == WriteKind::DeleteItem && row.base_version.is_none_or(|version| version <= 0) {
         return Readiness::RefusedWith("the delete has no confirmed server version to remove; read the item before deleting it".into());
     }
@@ -1066,6 +1077,13 @@ fn send_queue(
     // is sent.
     let unconfirmed = owed && !confirm(report)?;
     if !unconfirmed && let Some(why) = read_owed_backs(core, stop, pass)? {
+        report.unavailable = Some(why.reason);
+        waited(report, why.retry_after_seconds);
+    }
+    if !unconfirmed
+        && report.unavailable.is_none()
+        && let Some(why) = create_edges::read_all(core, stop)?
+    {
         report.unavailable = Some(why.reason);
         waited(report, why.retry_after_seconds);
     }
@@ -2558,6 +2576,7 @@ fn settle_success(
             store::adopt_answered_id(&tx, local, &parsed.item.id)?;
             store::refollow(&tx, &parsed.item.id, &row.id)?;
             take_answered_edges(&tx, &parsed.item)?;
+            create_edges::owe(&tx, row, &parsed.item)?;
         }
         move_edits_behind(
             &tx,
@@ -2605,6 +2624,20 @@ fn settle_success(
     }
     store::meta_delete(&tx, &receipt_key(&row.id))?;
     tx.commit()?;
+    drop(conn);
+    if row.kind == WriteKind::CreateItem
+        && let Some(parsed) = &item
+    {
+        match create_edges::read(core, &parsed.item.id) {
+            Ok(()) => {}
+            Err(error) if error.is_environmental() => {
+                telemetry::degraded!(&error);
+                settled.unavailable = unavailable_by(&error).or_else(|| Some(error.to_string()));
+                settled.retry_after_seconds = error.retry_after().map(|wait| wait.as_secs());
+            }
+            Err(error) => return Err(error),
+        }
+    }
     Ok(settled)
 }
 
@@ -2613,9 +2646,10 @@ fn settle_success(
 /// with, shows what the server holds in its place: the answer's edges of its
 /// type are whole, or name the same pair. The answer can carry fewer, as one
 /// page of each type, none under a source filter, or none at all for an
-/// acknowledged repeat, so any other stays until a read brings the server's
-/// edge, which takes its place. With no answer, as for a refused create, the
-/// server drew none of them.
+/// acknowledged repeat, so any other stays until the read
+/// [`create_edges::owe`] records brings the server's edge, which takes its
+/// place. With no answer, as for a refused create, the server drew none of
+/// them.
 fn drop_projected_edges(
     conn: &rusqlite::Connection,
     row: &QueuedWrite,
@@ -2642,8 +2676,8 @@ fn drop_projected_edges(
     Ok(())
 }
 
-/// The edges the server answered a create with, first page of each type. A
-/// type with more edges than one page is completed by the next hydration.
+/// The edges the server answered a create with, first page of each type. The
+/// rest are read by [`create_edges::read`].
 fn take_answered_edges(conn: &rusqlite::Connection, item: &WireItem) -> Result<()> {
     for block in item.edges.iter().flat_map(|edges| edges.values()) {
         for edge in &block.data {
@@ -6412,5 +6446,311 @@ mod tests {
         );
         assert_eq!(first.unclaimed_sources, ["a", "b"]);
         assert_eq!(first.retry_after_seconds, Some(5));
+    }
+
+    /// The server's own id for the edge from `made` to target `index`.
+    fn served_id(index: usize) -> String {
+        format!("0190a000-0000-7000-8000-{index:012}")
+    }
+
+    fn served_edge(index: usize) -> serde_json::Value {
+        json!({
+            "id": served_id(index), "source_id": "made", "target_id": format!("t{index:02}"),
+            "edge_type": "references", "properties": {}, "version": 1,
+            "created_at": "2026-01-02T00:00:00Z", "updated_at": "2026-01-02T00:00:00Z",
+        })
+    }
+
+    /// One page of `made`'s `references` edges, as the item's edge listing
+    /// answers it.
+    fn edge_page(targets: std::ops::Range<usize>, next: Option<&str>) -> crate::scripted::Answer {
+        crate::scripted::certified(crate::scripted::json(
+            200,
+            &json!({"data": targets.map(served_edge).collect::<Vec<_>>(), "next_cursor": next})
+                .to_string(),
+        ))
+    }
+
+    /// A copy holding `count` targets and a waiting create of `made` drawn
+    /// to each of them by `references`. The server answers the create with
+    /// `edges` as its edge blocks (`None` for no `edges` at all),
+    /// acknowledged where `acknowledged`, and the read of `made` with it.
+    fn drawn_to(
+        server: &crate::scripted::Scripted,
+        count: usize,
+        edges: Option<serde_json::Value>,
+        acknowledged: bool,
+    ) -> (tempfile::TempDir, Core) {
+        let (dir, core) = deleting(server, &[]);
+        let conn = core.conn().unwrap();
+        let targets: Vec<String> = (0..count).map(|index| format!("t{index:02}")).collect();
+        for id in targets.iter().map(String::as_str).chain(["made"]) {
+            let row = store::testing::note(id, id, "", "2026-01-01T00:00:00Z");
+            store::upsert_item(&conn, &row, None, &Default::default()).unwrap();
+        }
+        let draft = crate::model::Draft {
+            r#type: "core.note".into(),
+            edges: [("references".to_string(), targets)].into(),
+            ..Default::default()
+        };
+        for edge in draft.projected_edges("made", "2026-01-01T00:00:00Z") {
+            store::upsert_edge(&conn, &edge).unwrap();
+        }
+        let payload = draft.payload("made").unwrap();
+        let mut new = write(WriteKind::CreateItem, "made", None, None, &[]);
+        new.payload = &payload;
+        store::enqueue(&conn, &new).unwrap();
+        let mut item = serde_json::from_str::<serde_json::Value>(&crate::scripted::item_payload(
+            "item.created",
+            "made",
+            "core.note",
+            1,
+        ))
+        .unwrap()["item"]
+            .clone();
+        if let Some(edges) = edges {
+            item["edges"] = edges;
+        }
+        server.on(
+            "/items",
+            vec![crate::scripted::json(
+                201,
+                &json!({ "item": item, "acknowledged": acknowledged }).to_string(),
+            )],
+        );
+        server.on(
+            "/items/made",
+            vec![crate::scripted::certified(crate::scripted::json(
+                200,
+                &json!({"item": item, "metadata": {"tags": []}, "listed": true}).to_string(),
+            ))],
+        );
+        // The server never holds an id a device made (`edges/create-invalid-id`).
+        for index in 0..count {
+            server.on(
+                &format!("/edges/{}", projected(index)),
+                vec![
+                    crate::scripted::refusal(404, "edge_not_found"),
+                    crate::scripted::certified(crate::scripted::refusal(404, "edge_not_found")),
+                ],
+            );
+        }
+        drop(conn);
+        (dir, core)
+    }
+
+    /// An edge's door as a delete of it is answered, then read back.
+    fn gone_after_delete() -> Vec<crate::scripted::Answer> {
+        vec![
+            crate::scripted::json(204, ""),
+            crate::scripted::certified(crate::scripted::refusal(404, "edge_not_found")),
+        ]
+    }
+
+    fn projected(index: usize) -> String {
+        crate::model::projected_edge_id("made", "references", &format!("t{index:02}"))
+    }
+
+    /// Every edge path a write was sent to, in order.
+    fn edge_doors(server: &crate::scripted::Scripted, ids: &[String]) -> Vec<String> {
+        ids.iter()
+            .filter(|id| !server.seen(&format!("/edges/{id}")).is_empty())
+            .cloned()
+            .collect()
+    }
+
+    fn shown_ids(core: &Core) -> Vec<String> {
+        let mut ids: Vec<String> = store::edges_from(&core.conn().unwrap(), "made")
+            .unwrap()
+            .into_iter()
+            .map(|edge| edge.id)
+            .collect();
+        ids.sort();
+        ids
+    }
+
+    #[test]
+    fn a_delete_of_an_edge_the_create_answer_cut_off_is_sent_to_the_servers_edge() {
+        let server = crate::scripted::Scripted::start();
+        // The answer's block holds the newest 50 of 60 and a cursor.
+        let block = json!({
+            "data": (10..60).map(served_edge).collect::<Vec<_>>(),
+            "next_cursor": "c1",
+        });
+        let (_dir, core) = drawn_to(&server, 60, Some(json!({ "references": block })), false);
+        server.on("/items/made/edges", vec![edge_page(0..10, None)]);
+        server.on(&format!("/edges/{}", served_id(4)), gone_after_delete());
+        let delete = core.delete_edge(&projected(4)).unwrap();
+        core.drain().unwrap();
+        let reads = server.seen("/items/made/edges");
+        assert_eq!(reads.len(), 1);
+        assert!(reads[0].query.contains("cursor=c1"), "{}", reads[0].query);
+        assert_eq!(
+            edge_doors(&server, &[projected(4), served_id(4)]),
+            [served_id(4)],
+            "the delete went to a door other than the server's edge"
+        );
+        let settled = store::queued_write(&core.conn().unwrap(), &delete.id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(settled.verdict, Some(Verdict::Accepted));
+        assert_eq!(settled.edge_id.as_deref(), Some(served_id(4).as_str()));
+        let mut expected: Vec<String> = (0..60).filter(|i| *i != 4).map(served_id).collect();
+        expected.sort();
+        assert_eq!(
+            shown_ids(&core),
+            expected,
+            "a device-made id outlived the read"
+        );
+    }
+
+    #[test]
+    fn an_answer_with_no_block_is_read_from_the_start_and_an_edit_follows_the_read() {
+        // A source filter that leaves the block out, and a repeat answered as
+        // acknowledged, which carries no edges.
+        for (edges, acknowledged) in [(Some(json!({})), false), (None, true)] {
+            let server = crate::scripted::Scripted::start();
+            let (_dir, core) = drawn_to(&server, 2, edges, acknowledged);
+            server.on("/items/made/edges", vec![edge_page(0..2, None)]);
+            let edited = core
+                .update_edge(
+                    &projected(1),
+                    &crate::model::EdgeEdit {
+                        base_version: Some(0),
+                        properties: json!({ "note": "edited" }).as_object().unwrap().clone(),
+                        ..Default::default()
+                    },
+                )
+                .unwrap()
+                .unwrap();
+            let mut answered = served_edge(1);
+            answered["version"] = 2.into();
+            let answered = json!({ "edge": answered, "acknowledged": false }).to_string();
+            server.on(
+                &format!("/edges/{}", served_id(1)),
+                vec![
+                    crate::scripted::json(200, &answered),
+                    crate::scripted::certified(crate::scripted::json(200, &answered)),
+                ],
+            );
+            core.drain().unwrap();
+            let reads = server.seen("/items/made/edges");
+            assert_eq!(reads.len(), 1, "acknowledged {acknowledged}");
+            assert!(!reads[0].query.contains("cursor="), "{}", reads[0].query);
+            assert_eq!(
+                edge_doors(&server, &[projected(1), served_id(1)]),
+                [served_id(1)]
+            );
+            let sent: serde_json::Value =
+                serde_json::from_slice(&server.seen(&format!("/edges/{}", served_id(1)))[0].body)
+                    .unwrap();
+            assert_eq!(
+                sent["version"], 1,
+                "the edit was not based on the edge the create made"
+            );
+            assert_eq!(
+                store::queued_write(&core.conn().unwrap(), &edited.id)
+                    .unwrap()
+                    .unwrap()
+                    .verdict,
+                Some(Verdict::Accepted)
+            );
+            assert_eq!(shown_ids(&core), [served_id(0), served_id(1)]);
+        }
+    }
+
+    #[test]
+    fn an_offline_read_keeps_the_edge_shown_and_the_delete_held_until_the_next_drain() {
+        let server = crate::scripted::Scripted::start();
+        let (_dir, core) = drawn_to(&server, 2, None, false);
+        server.on(
+            "/items/made/edges",
+            vec![
+                crate::scripted::unnamed(503, "unavailable"),
+                edge_page(0..2, None),
+            ],
+        );
+        server.on(&format!("/edges/{}", served_id(1)), gone_after_delete());
+        let delete = core.delete_edge(&projected(1)).unwrap();
+        let first = core.drain().unwrap();
+        assert!(first.unavailable.is_some(), "{first:?}");
+        let waiting = |core: &Core| {
+            store::queued_write(&core.conn().unwrap(), &delete.id)
+                .unwrap()
+                .unwrap()
+        };
+        assert_eq!(
+            waiting(&core).verdict.filter(|v| *v != Verdict::Blocked),
+            None
+        );
+        assert_eq!(
+            edge_doors(&server, &[projected(1), served_id(1)]),
+            Vec::<String>::new()
+        );
+        assert_eq!(
+            shown_ids(&core),
+            [projected(0)],
+            "the edge went before a read brought the server's"
+        );
+        core.drain().unwrap();
+        assert_eq!(server.seen("/items/made/edges").len(), 2);
+        assert_eq!(
+            edge_doors(&server, &[projected(1), served_id(1)]),
+            [served_id(1)]
+        );
+        assert_eq!(waiting(&core).verdict, Some(Verdict::Accepted));
+        assert_eq!(shown_ids(&core), [served_id(0)]);
+    }
+
+    #[test]
+    fn a_server_edge_that_arrives_before_the_read_takes_the_waiting_delete() {
+        let server = crate::scripted::Scripted::start();
+        let (_dir, core) = drawn_to(&server, 2, None, false);
+        server.on(
+            "/items/made/edges",
+            vec![
+                crate::scripted::unnamed(503, "unavailable"),
+                edge_page(0..2, None),
+            ],
+        );
+        let delete = core.delete_edge(&projected(1)).unwrap();
+        core.drain().unwrap();
+        // The edge's event, as catch-up applies it.
+        let edge: crate::wire::WireEdge = serde_json::from_value(served_edge(1)).unwrap();
+        assert!(store::take_server_edge(&core.conn().unwrap(), &edge).unwrap());
+        let moved = store::queued_write(&core.conn().unwrap(), &delete.id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(moved.edge_id.as_deref(), Some(served_id(1).as_str()));
+        assert!(!shown_ids(&core).contains(&projected(1)));
+        server.on(&format!("/edges/{}", served_id(1)), gone_after_delete());
+        core.drain().unwrap();
+        assert_eq!(
+            edge_doors(&server, &[projected(1), served_id(1)]),
+            [served_id(1)]
+        );
+        assert_eq!(shown_ids(&core), [served_id(0)]);
+    }
+
+    #[test]
+    fn a_whole_read_without_the_edge_refuses_its_waiting_write_unsent() {
+        // A source filter hides the item's edges from the listing as well.
+        let server = crate::scripted::Scripted::start();
+        let (_dir, core) = drawn_to(&server, 1, None, false);
+        server.on("/items/made/edges", vec![edge_page(0..0, None)]);
+        let delete = core.delete_edge(&projected(0)).unwrap();
+        core.drain().unwrap();
+        assert_eq!(server.seen("/items/made/edges").len(), 1);
+        assert_eq!(edge_doors(&server, &[projected(0)]), Vec::<String>::new());
+        let refused = store::queued_write(&core.conn().unwrap(), &delete.id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(refused.verdict, Some(Verdict::Refused));
+        assert!(shown_ids(&core).is_empty());
+        assert!(
+            store::meta_keys(&core.conn().unwrap(), "create_edges/")
+                .unwrap()
+                .is_empty()
+        );
     }
 }

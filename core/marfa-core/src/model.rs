@@ -959,6 +959,13 @@ pub(crate) fn projected_edge_id(source: &str, edge_type: &str, target: &str) -> 
         .to_string()
 }
 
+/// Whether `id` is one [`projected_edge_id`] made: a version 4 UUID, which
+/// the server never gives an edge, since every id it takes or makes is a
+/// UUIDv7 (`edges/create-invalid-id`).
+pub(crate) fn is_projected_edge_id(id: &str) -> bool {
+    uuid::Uuid::parse_str(id).is_ok_and(|id| id.get_version_num() == 4)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum WriteKind {
