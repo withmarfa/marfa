@@ -6,7 +6,10 @@ import {
   FRESH_SERVER_TIMEOUT_MS,
   type FreshServer,
 } from "../../utils/fresh-server.js";
-import { withInstanceDatabase } from "../../utils/instance-database.js";
+import {
+  passkeysBeforeLastUse,
+  withInstanceDatabase,
+} from "../../utils/instance-database.js";
 import { collectUntil, withStream } from "../../utils/stream.js";
 import { streamHead } from "../../utils/stream-tap.js";
 
@@ -117,6 +120,7 @@ beforeAll(async () => {
         db.exec("DROP INDEX idx_items_state_binned_at");
         db.exec("DROP TABLE source_names");
         db.exec("DROP TABLE trash_with_hosts");
+        passkeysBeforeLastUse(db);
         db.exec(`PRAGMA user_version = ${String(BEFORE_CONTACT_LISTS)}`);
       });
     },

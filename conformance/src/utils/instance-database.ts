@@ -24,3 +24,37 @@ export function withInstanceDatabase<T>(
     db.close();
   }
 }
+
+/**
+ * Takes `last_used_at` off `auth_passkey`, as builds before schema version 8
+ * wrote it, keeping every row. `ALTER TABLE ... DROP COLUMN` would leave table
+ * text the server's shape check refuses, so the table is rebuilt from its own
+ * definition without that column.
+ */
+export function passkeysBeforeLastUse(db: DatabaseSync): void {
+  const { sql } = db
+    .prepare(
+      "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'auth_passkey'",
+    )
+    .get() as { sql: string };
+  const without = sql
+    .split("\n")
+    .filter((line) => !line.includes("`last_used_at`"))
+    .join("\n");
+  const columns = (
+    db.prepare("PRAGMA table_info(auth_passkey)").all() as { name: string }[]
+  )
+    .map((column) => column.name)
+    .filter((name) => name !== "last_used_at")
+    .map((name) => `\`${name}\``)
+    .join(", ");
+  db.exec(
+    `CREATE TABLE auth_passkey_was AS SELECT ${columns} FROM auth_passkey ORDER BY rowid;
+DROP TABLE auth_passkey;
+${without};
+INSERT INTO auth_passkey (${columns}) SELECT ${columns} FROM auth_passkey_was;
+DROP TABLE auth_passkey_was;
+CREATE INDEX \`idx_auth_passkey_user_id\` ON \`auth_passkey\` (\`user_id\`);
+CREATE INDEX \`idx_auth_passkey_credential_id\` ON \`auth_passkey\` (\`credential_id\`);`,
+  );
+}
