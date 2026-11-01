@@ -16,12 +16,20 @@ export const PASSKEY_VERIFY_PATHS = new Set([
   "/passkey/verify-authentication",
 ]);
 
+interface LastUsedField {
+  type: "date";
+  required: false;
+  input: false;
+}
+
 /** The configured origin, not a caller's header, is the WebAuthn relying party. */
 export function buildPasskeyPlugin(
   baseURL: string,
   storage: Storage,
 ): ReturnType<typeof passkey> &
-  Pick<import("better-auth").BetterAuthPlugin, "hooks"> {
+  Pick<import("better-auth").BetterAuthPlugin, "hooks"> & {
+    schema: { passkey: { fields: { lastUsedAt: LastUsedField } } };
+  } {
   const url = new URL(baseURL);
   const plugin = passkey({
     rpID: url.hostname,

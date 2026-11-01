@@ -1651,12 +1651,14 @@ const passkey = (n: number, name: string | null) => ({
   id: uid(9000 + n),
   name,
   added: new Date(NOW - (5 + 9 * n) * DAY),
+  lastUsed: n === 2 ? null : new Date(NOW - 3 * n * DAY),
 });
 
 const passwordBase = {
   ...PAGE,
   suggestedName: "Passkey on macOS",
   addressProblem: false,
+  now: NOW,
 };
 
 const profileOwner = { ...OWNER, hasPicture: false };
@@ -2587,7 +2589,7 @@ const CONSOLE: GalleryTab = {
       variant("none", "No passkeys yet", () =>
         renderPasswordPage({ ...passwordBase, passkeys: [] }),
       ),
-      variant("some", "Two passkeys, one unnamed", () =>
+      variant("some", "Two passkeys, one unnamed and never used", () =>
         renderPasswordPage({
           ...passwordBase,
           passkeys: [passkey(1, "Passkey on macOS"), passkey(2, null)],

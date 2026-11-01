@@ -176,7 +176,7 @@ async function rowsOf(
     for (const table of tables) {
       const declared = await reader.execute(`PRAGMA table_info(\`${table}\`)`);
       const columns = declared.rows
-        .map((row) => `\`${String(row.name)}\``)
+        .map((row) => `\`${row.name as string}\``)
         .join(", ");
       const rows = await client.execute(
         `SELECT ${columns} FROM \`${table}\` ORDER BY rowid`,
