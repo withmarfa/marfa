@@ -27,12 +27,17 @@ import { spawn } from "node:child_process";
 import {
   closeSync,
   existsSync,
+  lstatSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
   fstatSync,
   openSync,
   readSync,
   writeFileSync,
 } from "node:fs";
-import { dirname } from "node:path";
+import { basename, dirname } from "node:path";
+import { tmpdir } from "node:os";
 
 const [exitFile, command, ...args] = process.argv.slice(2);
 if (exitFile === undefined || command === undefined) {
@@ -49,14 +54,63 @@ child.once("error", (error) => {
   console.error(`could not start ${command}: ${String(error)}`);
   process.exit(127);
 });
-const WATCH_MS = Number(process.env.CONFORMANCE_SERVER_WATCH_MS ?? 30_000);
-const IDLE_MS = Number(process.env.CONFORMANCE_SERVER_IDLE_MS ?? 30 * 60_000);
+/** A whole number of milliseconds from the environment, else the default. */
+function msSetting(name, fallback, { allowZero }) {
+  const raw = process.env[name];
+  if (raw === undefined || raw.trim() === "") return fallback;
+  const value = Number(raw);
+  if (Number.isSafeInteger(value) && (value > 0 || (allowZero && value === 0)))
+    return value;
+  console.error(
+    `[run-server] ignoring ${name}=${raw}; using ${String(fallback)}`,
+  );
+  return fallback;
+}
+
+const WATCH_MS = msSetting("CONFORMANCE_SERVER_WATCH_MS", 30_000, {
+  allowZero: false,
+});
+const IDLE_MS = msSetting("CONFORMANCE_SERVER_IDLE_MS", 30 * 60_000, {
+  allowZero: true,
+});
 const KILL_AFTER_MS = 20_000;
 const stateDir = dirname(exitFile);
 const serverDir = process.cwd();
 const logFile = `${stateDir}/server.log`;
 let logOffset = existsSync(logFile) ? sizeOf(logFile) : 0;
 let lastRequestAt = Date.now();
+const controlDir = readControlDirectory();
+
+/** The control socket's folder, which only `down` or the next `up` removes. */
+function readControlDirectory() {
+  try {
+    const directory = readFileSync(`${stateDir}/control-directory`, "utf8");
+    if (
+      dirname(directory) === realpathSync(tmpdir()) &&
+      /^marfa-control-[A-Za-z0-9]+$/.test(basename(directory))
+    )
+      return directory;
+  } catch {
+    // No marker: nothing to remove later.
+  }
+  return undefined;
+}
+
+/** With the state directory gone, nothing else can find this folder. */
+function removeOrphanedControlDirectory() {
+  if (controlDir === undefined || existsSync(stateDir)) return;
+  try {
+    const stat = lstatSync(controlDir);
+    if (
+      stat.isDirectory() &&
+      !stat.isSymbolicLink() &&
+      stat.uid === process.getuid?.()
+    )
+      rmSync(controlDir, { recursive: true });
+  } catch {
+    // Already gone.
+  }
+}
 
 function sizeOf(file) {
   const fd = openSync(file, "r");
@@ -123,5 +177,6 @@ child.once("exit", (code, signal) => {
   clearInterval(watch);
   if (existsSync(stateDir))
     writeFileSync(exitFile, JSON.stringify({ code, signal, at: Date.now() }));
+  removeOrphanedControlDirectory();
   process.exit(code ?? 1);
 });
