@@ -5030,13 +5030,18 @@ fn record_verdict_inner(
     }
     // A delete refused as already gone did what it asked, and the event of
     // the removal is still ahead wherever its mark is still there.
-    if let Some(row) = queued_write(conn, id)?
-        && row.kind == WriteKind::DeleteEdge
-        && let Some(edge) = row.edge_id.as_deref()
-        && (answered.verdict == Verdict::Accepted
-            || answered.verdict == Verdict::Refused && answered.reason == Some("edge_not_found"))
+    if (answered.verdict == Verdict::Accepted
+        || answered.verdict == Verdict::Refused && answered.reason == Some("edge_not_found"))
+        && let Some(edge) = conn
+            .query_row(
+                "SELECT edge_id FROM queue WHERE id = ?1 AND kind = ?2",
+                params![id, WriteKind::DeleteEdge.as_str()],
+                |row| row.get::<_, Option<String>>(0),
+            )
+            .optional()?
+            .flatten()
     {
-        removal_accepted(conn, Subject::Edge, edge)?;
+        removal_accepted(conn, Subject::Edge, &edge)?;
     }
     if answered.verdict == Verdict::Accepted && !already_accepted {
         learn_dead_effects(conn, &queued_write(conn, id)?.expect("answered row exists"))?;
