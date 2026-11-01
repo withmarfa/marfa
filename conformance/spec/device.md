@@ -1534,6 +1534,22 @@ When an edit asks to clear the `occurred_at` of an item whose create waits unsen
 
 **Tests:** `device/item-fields-live.test.ts › clears the own time of an item whose create still waits to the server's creation time`.
 
+### `device/edit-occurred-at-clear-unsent-landed`
+
+When a create that names a natural key, and that left out its `occurred_at` under `device/edit-occurred-at-clear-unsent`, is accepted or merged with an item whose `occurred_at` differs from its `created_at`, no edit of the item made after the clear named an `occurred_at`, and the read of the answered item finds it live, a device MUST send, in the drain that makes that read, an edit that sets the item's `occurred_at` to its `created_at`.
+
+**Reason:** a create naming a natural key that a held item already has is applied to that item (`queue-and-verdicts/landed-accepted-moves`), and a create naming no `occurred_at` leaves the held item's own time as it was, so the person's clear would be lost. A create with no natural key is placed at its own creation time. A conflicted create made a sibling and left the held item as it was, so there is no clear to carry out on it. A create refused because another row holds its natural key moves none of the edits made after it onto that row, the clear's included (`queue-and-verdicts/landed-takes-refused`). The edit goes in the drain that reads the item because a host owes no further drain for a write it was not told is waiting.
+
+**Tests:** `device/item-fields-live.test.ts › clears the own time of a keyed create that lands on a row the server holds`, `› sends the time set after a clear on a keyed create that lands on a held row`.
+
+### `device/edit-occurred-at-clear-sent`
+
+When an edit asks to clear the `occurred_at` of an item whose create was sent and not yet answered, and that create is then accepted or merged with an item whose `occurred_at` differs from its `created_at`, no edit of the item made after the clear named an `occurred_at`, and the read of the answered item finds it live, a device MUST send, in the drain that makes that read, one edit for the clear, which sets the item's `occurred_at` to the answered item's `created_at`.
+
+**Reason:** the create already named its time, and the server sets the item's `created_at` when the create lands, so the device does not know the time to send until the answer comes. Sending the time the device queued the create in its place would set a time the person asked to clear. A conflicted create made a sibling, so there is no clear to carry out on it, and a create refused because another row holds its natural key moves none of the edits made after it onto that row, the clear's included (`queue-and-verdicts/landed-takes-refused`). An edit that names a time after the clear is the person's last word, even when the create's answer came before it and is not yet read.
+
+**Tests:** `device/queue.test.ts › clears the own time of an item whose create was sent and not yet answered to the creation time its answer names`.
+
 ### `device/edit-occurred-at-exclusive`
 
 If an edit both names an `occurred_at` and asks to clear it, then a device MUST refuse it before it is queued.

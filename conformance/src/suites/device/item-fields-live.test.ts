@@ -657,6 +657,77 @@ it("clears the own time of an item whose create still waits to the server's crea
   expect(value(await device.get(id)).occurred_at).toBe(served.created_at);
 });
 
+it("clears the own time of a keyed create that lands on a row the server holds", async () => {
+  const key = `cleared-${ctx.runId}`;
+  const held = await make({
+    source: ctx.source,
+    source_id: key,
+    occurred_at: "2020-01-01T00:00:00.000Z",
+  });
+  // The witness: the same landing without the clear keeps the held row's time.
+  const kept = await make({
+    source: ctx.source,
+    source_id: `${key}-kept`,
+    occurred_at: "2020-01-01T00:00:00.000Z",
+  });
+  const draft = (sourceId: string) =>
+    device.create({
+      type: "core.note",
+      source: ctx.source,
+      sourceId,
+      properties: { run: ctx.runId, body: "queued under a held key" },
+    });
+  const clearing = value(await draft(key));
+  value(
+    await device.update(clearing.item_id ?? "", {
+      properties: {},
+      version: value(await device.get(clearing.item_id ?? "")).version,
+      clearOccurredAt: true,
+    }),
+  );
+  value(await draft(`${key}-kept`));
+  value(await device.drain());
+  const served = (await client.getItem(held.id)).data.item;
+  expect(served.properties.body).toBe("queued under a held key");
+  expect(served.occurred_at).toBe(served.created_at);
+  const witness = (await client.getItem(kept.id)).data.item;
+  expect(witness.occurred_at).toBe("2020-01-01T00:00:00.000Z");
+  expect(value(await device.get(held.id)).occurred_at).toBe(served.created_at);
+});
+
+it("sends the time set after a clear on a keyed create that lands on a held row", async () => {
+  const key = `cleared-then-set-${ctx.runId}`;
+  const held = await make({
+    source: ctx.source,
+    source_id: key,
+    occurred_at: "2020-01-01T00:00:00.000Z",
+  });
+  const queued = value(
+    await device.create({
+      type: "core.note",
+      source: ctx.source,
+      sourceId: key,
+      properties: { run: ctx.runId, body: "cleared, then set" },
+    }),
+  );
+  const id = queued.item_id ?? "";
+  for (const change of [
+    { clearOccurredAt: true },
+    { occurredAt: "2024-01-01T00:00:00.000Z" },
+  ]) {
+    value(
+      await device.update(id, {
+        properties: {},
+        version: value(await device.get(id)).version,
+        ...change,
+      }),
+    );
+  }
+  value(await device.drain());
+  const served = (await client.getItem(held.id)).data.item;
+  expect(served.occurred_at).toBe("2024-01-01T00:00:00.000Z");
+});
+
 it("reads a capture location from the copy as the server holds it", async () => {
   const row = await make({ capture_latitude: -33.9, capture_longitude: 151.2 });
   value(await device.catchUp());

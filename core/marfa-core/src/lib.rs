@@ -3781,12 +3781,37 @@ fn queue_update(
     // the create is unsent the time is cleared by sending none: not in the
     // create, nor in an edit queued behind it, all in this transaction.
     let mut unsent_create = None;
-    if edit.clear_occurred_at {
-        let waiting = store::untaken_creates_for_item(tx, id)?;
-        if let [create] = waiting.as_slice()
-            && store::unsent(tx, create)?
-        {
+    // A create already sent fixed the time it names, and its row's creation
+    // time is the server's, unknown until the answer: the clear is carried
+    // out once it comes (`device/edit-occurred-at-clear-sent`).
+    let mut sent_create = None;
+    let waiting = store::untaken_creates_for_item(tx, id)?;
+    if edit.clear_occurred_at
+        && let [create] = waiting.as_slice()
+    {
+        if store::unsent(tx, create)? {
             unsent_create = store::queued_write(tx, create)?;
+        } else {
+            sent_create = Some(create.clone());
+        }
+    }
+    // A new time sent in an edit is the person's last word on it, so a clear
+    // the create's answer would have to carry out is no longer owed. A create
+    // already answered still owes it while its answer waits to be read.
+    if edit.occurred_at.is_some() {
+        store::forget_owed_time_clears(tx, id)?;
+    }
+    if let Some(create) = &sent_create {
+        store::meta_set(tx, &store::cleared_time_key(create), "1")?;
+    }
+    if let Some(create) = &unsent_create {
+        // Once the create lands on a row the server already holds, the clear
+        // is kept nowhere else: the create no longer names a time, so the
+        // held row's own time stands. A create with no natural key is
+        // placed at its own creation time.
+        let payload: Value = serde_json::from_str(&store::payload_of(tx, &create.id)?)?;
+        if payload.get("source_id").is_some() {
+            store::meta_set(tx, &store::cleared_time_key(&create.id), "1")?;
         }
     }
     if unsent_create.is_some() {
@@ -3818,10 +3843,10 @@ fn queue_update(
         ),
         // The server holds no empty time: an item with none of its own
         // takes its creation time, which no write changes.
-        occurred_at: match (edit.clear_occurred_at, &unsent_create) {
-            (true, Some(_)) => None,
-            (true, None) => Some(held.created_at.clone()),
-            (false, _) => edit.occurred_at.clone(),
+        occurred_at: match (edit.clear_occurred_at, &unsent_create, &sent_create) {
+            (true, Some(_), _) | (true, _, Some(_)) => None,
+            (true, None, None) => Some(held.created_at.clone()),
+            (false, _, _) => edit.occurred_at.clone(),
         },
         clear_occurred_at: false,
         clear_properties: edit
@@ -3922,6 +3947,9 @@ fn queue_update(
     if let Some(create) = &unsent_create {
         next.occurred_at.clone_from(&create.queued_at);
         next.created_at.clone_from(&create.queued_at);
+    }
+    if sent_create.is_some() {
+        next.occurred_at.clone_from(&held.created_at);
     }
     // A status word is judged where the edit changes it, as the server
     // judges it: a synced file sends every property back, and a word the

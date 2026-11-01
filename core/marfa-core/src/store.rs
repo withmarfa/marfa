@@ -2315,6 +2315,24 @@ fn chosen_tier_key(id: &str) -> String {
     format!("chosen_tier/{id}")
 }
 
+/// Marks a create whose item's time the person cleared, which its answer
+/// has to carry out (`device/edit-occurred-at-clear-unsent-landed`).
+pub(crate) fn cleared_time_key(create: &str) -> String {
+    format!("cleared_time/{create}")
+}
+
+/// Forgets the clear of `item_id`'s time that the answer of any of its
+/// creates still owes, whether or not that create has been answered.
+pub(crate) fn forget_owed_time_clears(conn: &Connection, item_id: &str) -> Result<(), CoreError> {
+    conn.execute(
+        "DELETE FROM main.meta
+          WHERE key IN (SELECT 'cleared_time/' || id FROM queue
+                         WHERE item_id = ?1 AND kind = ?2)",
+        params![item_id, WriteKind::CreateItem.as_str()],
+    )?;
+    Ok(())
+}
+
 /// The tier a keyed create naming none was given by the copy's slice, which
 /// the drain sends only where the server holds no row under its key.
 pub fn choose_tier(conn: &Connection, id: &str, tier: Tier) -> Result<(), CoreError> {
@@ -5066,6 +5084,12 @@ fn record_verdict_inner(
     if answered.verdict == Verdict::Accepted {
         meta_delete(conn, &effect_key(id))?;
     }
+    // A write refused once sent is never sent again, so no answer is left to
+    // carry out a clear of its item's time. One refused unsent can still be
+    // released and sent.
+    if answered.verdict == Verdict::Refused && !unsent(conn, id)? {
+        meta_delete(conn, &cleared_time_key(id))?;
+    }
     // A delete refused as already gone did what it asked, and the event of
     // the removal is still ahead wherever its mark is still there.
     if (answered.verdict == Verdict::Accepted
@@ -5460,6 +5484,7 @@ fn take_out(
     conn.execute("DELETE FROM queue WHERE id = ?1", [&row.id])?;
     meta_delete(conn, &effect_key(&row.id))?;
     meta_delete(conn, &chosen_tier_key(&row.id))?;
+    meta_delete(conn, &cleared_time_key(&row.id))?;
     put_back(conn, row)
 }
 
@@ -5496,7 +5521,12 @@ fn forget_answered_inner(
         let pass = forget_answered_once(conn, only)?;
         if pass == 0 {
             if clean_effects {
-                for prefix in ["dead_effect/", "chosen_tier/", "upload_sent_as/"] {
+                for prefix in [
+                    "dead_effect/",
+                    "chosen_tier/",
+                    "upload_sent_as/",
+                    "cleared_time/",
+                ] {
                     conn.execute(
                         "DELETE FROM main.meta
                           WHERE key LIKE :prefix || '%'
@@ -5614,6 +5644,7 @@ pub fn discard(conn: &Connection, id: &str) -> Result<bool, CoreError> {
         conn.execute("DELETE FROM queue WHERE id = ?1", [id])?;
         meta_delete(conn, &effect_key(id))?;
         meta_delete(conn, &chosen_tier_key(id))?;
+        meta_delete(conn, &cleared_time_key(id))?;
         return Ok(true);
     };
     take_out(conn, &row, &held, "discarded")?;
@@ -7826,9 +7857,15 @@ mod tests {
             meta_set(&conn, &format!("dead_effect/{id}"), "x").unwrap();
             meta_set(&conn, &format!("chosen_tier/{id}"), "library").unwrap();
             meta_set(&conn, &format!("upload_sent_as/{id}"), "x").unwrap();
+            meta_set(&conn, &format!("cleared_time/{id}"), "1").unwrap();
         }
         assert_eq!(forget_answered_ids(&conn, &named(&["named"])).unwrap(), 1);
-        for prefix in ["dead_effect/", "chosen_tier/", "upload_sent_as/"] {
+        for prefix in [
+            "dead_effect/",
+            "chosen_tier/",
+            "upload_sent_as/",
+            "cleared_time/",
+        ] {
             assert!(
                 meta_get(&conn, &format!("{prefix}named"))
                     .unwrap()
