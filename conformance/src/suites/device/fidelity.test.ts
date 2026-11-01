@@ -1238,6 +1238,74 @@ describe("the scripted answers match the server's", () => {
     );
   });
 
+  it("matches the refusal of an exact update at a version the row moved past, under conflict=auto", async () => {
+    const seeded = await note({ title: "base", body: "base" });
+    const winner = await client.updateItem(seeded.id, {
+      properties: { title: "winner" },
+      version: seeded.version,
+    });
+    expect(winner.ok).toBe(true);
+
+    const stale = await client.rawRequest(
+      `/items/${seeded.id}?conflict=auto`,
+      {
+        method: "PATCH",
+        body: {
+          properties: { body: "loser" },
+          version: seeded.version,
+          version_match: "exact",
+        },
+      },
+    );
+    expect(
+      stale.status,
+      "an exact write at a moved-on version was merged, so the refusal this case exists to compare was never produced",
+    ).toBe(409);
+
+    const door = new FolderDoor([
+      [
+        seeded.id,
+        {
+          properties: { title: "winner", body: "base" },
+          type: "core.note",
+          source: "test",
+          source_id: null,
+          version: 2,
+          tier: "library",
+        },
+      ],
+    ]);
+    expectFidelity(
+      "an exact write at a moved-on version",
+      { status: stale.status, body: stale.error },
+      door.update(
+        seeded.id,
+        {
+          properties: { body: "loser" },
+          version: seeded.version,
+          version_match: "exact",
+        },
+        { resolve: true },
+      ),
+      {
+        same: [
+          "error.code",
+          "error.status",
+          "error.message",
+          "current.id",
+          "current.type",
+          "current.version",
+          "current.properties",
+        ],
+        shape: [
+          "current.tier",
+          "current.occurred_at",
+          "current.source_id",
+        ],
+      },
+    );
+  });
+
   it("matches the ancestor_unavailable envelope, including the ancestor it does not carry", async () => {
     const seeded = await note({ title: "no ancestor", body: "no ancestor" });
     const refused = await client.rawRequest(`/items/${seeded.id}`, {
