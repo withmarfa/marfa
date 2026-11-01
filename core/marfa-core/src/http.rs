@@ -755,7 +755,8 @@ impl Http {
     }
 
     /// Whether the key may list `declared` at `tier`: a one-row listing, so
-    /// the answer, not the rows, is what is asked for.
+    /// the answer, not the rows, is what is asked for. It asks for metadata
+    /// all the same, since a listing under a reach is refused without it.
     pub fn lists(&self, declared: &str, tier: SliceTier) -> Result<(), CoreError> {
         self.get_json::<serde_json::Value>(
             &["items"],
@@ -763,6 +764,7 @@ impl Http {
                 ("type", declared),
                 ("tier", tier.as_str()),
                 ("state", "any"),
+                ("include", "metadata"),
                 ("limit", "1"),
             ],
         )
@@ -1713,6 +1715,17 @@ impl Http {
     ) -> Result<T, CoreError> {
         let url = self.url(segments, params);
         let conditional = self.reach.as_deref().filter(|_| !segments.is_empty());
+        // The server refuses a listing under a reach that does not ask for
+        // metadata, so a request that forgets it fails only for a bound
+        // credential, which most tests do not hold.
+        debug_assert!(
+            conditional.is_none()
+                || body.is_some()
+                || segments != ["items"]
+                || params.iter().any(|(name, value)| *name == "include"
+                    && value.split(',').any(|part| part.trim() == "metadata")),
+            "a listing under a reach asks for include=metadata: {params:?}"
+        );
         let response = self.authorized(|authorization| {
             let sent = match body {
                 None => {

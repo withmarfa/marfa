@@ -608,6 +608,35 @@ mod tests {
     }
 
     #[test]
+    fn reach_probe_listing_asks_for_metadata_as_the_server_requires() {
+        use crate::scripted::*;
+        let server = Scripted::start();
+        let http = Http::new(&server.url(), "k").unwrap().for_reach(FENCE);
+        server.on(
+            "/items",
+            vec![certified(json(200, r#"{"data":[],"next_cursor":null}"#))],
+        );
+        http.lists("core.note", crate::SliceTier::Library).unwrap();
+        let seen = server.seen("/items");
+        assert_eq!(seen[0].reach.as_deref(), Some(FENCE));
+        assert!(
+            seen[0].query.contains("include=metadata"),
+            "{}",
+            seen[0].query
+        );
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    #[should_panic(expected = "include=metadata")]
+    fn reach_listing_without_metadata_is_caught_before_it_is_sent() {
+        use crate::scripted::*;
+        let server = Scripted::start();
+        let http = Http::new(&server.url(), "k").unwrap().for_reach(FENCE);
+        let _ = http.read_whole(&["items"]);
+    }
+
+    #[test]
     fn reach_catch_up_requires_real_live_with_complete_matching_tuple() {
         use crate::scripted::*;
         let server = Scripted::start();

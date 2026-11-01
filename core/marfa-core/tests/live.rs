@@ -219,3 +219,114 @@ fn hydrate_list_search_and_catch_up_against_a_live_server() {
         before_rows
     );
 }
+
+fn post(url: &str, headers: &[(&str, &str)], content_type: &str, body: &str) -> ureq::Body {
+    let mut request = ureq::post(url).header("Content-Type", content_type);
+    for (name, value) in headers {
+        request = request.header(*name, *value);
+    }
+    request
+        .send(body)
+        .unwrap_or_else(|error| panic!("POST {url} failed: {error}"))
+        .into_body()
+}
+
+fn field(text: &str, name: &str) -> String {
+    serde_json::from_str::<serde_json::Value>(text).unwrap()[name]
+        .as_str()
+        .unwrap_or_else(|| panic!("{name} is missing from {text}"))
+        .to_string()
+}
+
+/// The access token of a signed-in app: the way a device holds one, a
+/// device code the owner approves for reading notes. Unlike a key, it is a
+/// bound credential, so a read under a reach is judged against its grant.
+fn app_token(url: &str) -> String {
+    let form = "application/x-www-form-urlencoded";
+    let registered = post(
+        &format!("{url}/auth/oauth2/register"),
+        &[],
+        "application/json",
+        r#"{"client_name":"core-live","application_type":"native","grant_types":["urn:ietf:params:oauth:grant-type:device_code"],"response_types":[],"token_endpoint_auth_method":"none"}"#,
+    )
+    .read_to_string()
+    .unwrap();
+    let client_id = field(&registered, "client_id");
+    let code = post(
+        &format!("{url}/auth/device/code"),
+        &[],
+        form,
+        &format!("client_id={client_id}&scope=core.note:read"),
+    )
+    .read_to_string()
+    .unwrap();
+    let email = std::env::var("MARFA_TEST_OWNER_EMAIL").expect("the boot names its owner");
+    let password = std::env::var("MARFA_TEST_OWNER_PASSWORD").expect("the boot names its owner");
+    let sign_in = ureq::post(format!("{url}/auth/sign-in/email"))
+        .header("Content-Type", "application/json")
+        .header("Origin", url)
+        .send(serde_json::json!({"email": email, "password": password}).to_string())
+        .unwrap();
+    let cookie = sign_in
+        .headers()
+        .get_all("set-cookie")
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .find(|value| value.contains("session_token="))
+        .and_then(|value| value.split(';').next())
+        .expect("the owner's sign-in sets a session cookie")
+        .to_string();
+    post(
+        &format!("{url}/auth/device/consent"),
+        &[("Cookie", &cookie), ("Origin", url)],
+        form,
+        &format!(
+            "user_code={}&decision=approve&access=full&scopes=core.note:read",
+            field(&code, "user_code")
+        ),
+    );
+    let token = post(
+        &format!("{url}/auth/oauth2/token"),
+        &[],
+        form,
+        &format!(
+            "grant_type=urn:ietf:params:oauth:grant-type:device_code&device_code={}&client_id={client_id}",
+            field(&code, "device_code")
+        ),
+    )
+    .read_to_string()
+    .unwrap();
+    field(&token, "access_token")
+}
+
+#[test]
+#[ignore = "needs a running server"]
+fn a_signed_in_device_hydrates_under_its_reach() {
+    let url = server().url;
+    let marker = nonce();
+    let note = seed(&["note", "Device", &format!("{marker} read by a device")]);
+    let dir = tempfile::tempdir().unwrap();
+    let core = Core::open(
+        dir.path().join("core.sqlite"),
+        Some(Server {
+            url: url.clone(),
+            key: app_token(&url),
+        }),
+    )
+    .unwrap();
+    let report = core
+        .hydrate(&["core.note".into()], SliceTier::Library)
+        .expect("a bound credential hydrates the type it may read");
+    assert!(report.items >= 1, "{report:?}");
+    let rows = core
+        .list(
+            &ListFilters {
+                types: Some(vec!["core.note".into()]),
+                ..Default::default()
+            },
+            Sort::default(),
+        )
+        .unwrap()
+        .rows;
+    assert!(rows.iter().any(|row| row.id == note), "the note hydrated");
+}
