@@ -116,7 +116,9 @@ describe("folders: a refused default edge", () => {
 
     for (const path of ["Plain.md", BINARY]) {
       const file = await statusOf(harness, path);
-      expect(file.flag, `${path}: ${JSON.stringify(file)}`).toBe("refused");
+      expect(file.flag, `${path}: ${JSON.stringify(file)}`).toBe(
+        "default_edge_refused",
+      );
       expect(file.reason).toContain("edge_constraint_violation");
       expect(file.reason).toContain("shelved-in");
       expect(file.reason).toContain(beta);
@@ -132,7 +134,9 @@ describe("folders: a refused default edge", () => {
     expect((await statusOf(harness, "Own.md")).flag).toBeUndefined();
     // Asked again each scan, still refused, and sent nothing.
     expect((await harness.folder.push()).ok).toBe(true);
-    expect((await statusOf(harness, "Plain.md")).flag).toBe("refused");
+    expect((await statusOf(harness, "Plain.md")).flag).toBe(
+      "default_edge_refused",
+    );
     expect(shelvedWrites(harness)).toBe(1);
 
     const bytes = (path: string) =>
@@ -157,6 +161,62 @@ describe("folders: a refused default edge", () => {
     expect(shelvedWrites(harness)).toBe(3);
   });
 
+  it("lists a refused default in the plain text of the folder's status, which stays in step", async () => {
+    const built = await defaultsHarness("folder-default-refused-text", {
+      constraint: () => ["core.collection"],
+    });
+    harness = built.made;
+    put(
+      harness,
+      "Own.md",
+      `---\ntitle: Own\nshelved-in: "[[Shelf]]"\n---\nown\n`,
+    );
+    put(harness, "Plain.md", "---\ntitle: Plain\n---\nplain\n");
+    expect((await harness.folder.push()).ok).toBe(true);
+
+    const file = await statusOf(harness, "Plain.md");
+    expect(file.status).toBe("in_step");
+    expect(file.flag).toBe("default_edge_refused");
+    const text = await harness.folder
+      .device()
+      .rootText(["folders", "status", harness.dir]);
+    expect(text.ok, JSON.stringify(text)).toBe(true);
+    if (!text.ok) return;
+    const lines = text.value.split("\n");
+    expect(lines[0]).toMatch(/file\(s\) in step$/);
+    const listed = lines.filter((line) => line.startsWith("Plain.md:"));
+    expect(listed).toHaveLength(1);
+    expect(listed[0]).toContain("in step");
+    expect(listed[0]).toContain("edge_constraint_violation");
+    expect(listed[0]).toContain("shelved-in");
+    // The witness: a file with nothing to say is not listed.
+    expect(lines.some((line) => line.startsWith("Own.md"))).toBe(false);
+  });
+
+  it("tells a person in the plain text of the push that made it that a file with a refused default is sent", async () => {
+    const built = await defaultsHarness("folder-default-refused-scan-text", {
+      constraint: () => ["core.collection"],
+    });
+    harness = built.made;
+    put(harness, "Plain.md", "---\ntitle: Plain\n---\nplain\n");
+
+    const text = await harness.folder
+      .device()
+      .rootText(["folders", "push", harness.dir]);
+    expect(text.ok, JSON.stringify(text)).toBe(true);
+    if (!text.ok) return;
+    const listed = text.value
+      .split("\n")
+      .filter((line) => line.startsWith("Plain.md"));
+    expect(listed, text.value).toHaveLength(1);
+    expect(listed[0]).toContain("is sent");
+    expect(listed[0]).toContain("shelved-in");
+    expect(listed[0]).toContain("edge_constraint_violation");
+    // The witness: a held file is told as held, which this one is not.
+    expect(listed[0]).not.toContain("held");
+    expect(listed[0]).not.toContain("not sent");
+  });
+
   it("keeps a default the server refused, sends it again only after the file changes, and applies it once it is accepted", async () => {
     let refusing = true;
     const edges = new EdgeDoor();
@@ -179,7 +239,9 @@ describe("folders: a refused default edge", () => {
     expect(shelvedWrites(harness)).toBe(2);
     for (const path of ["Plain.md", BINARY]) {
       const file = await statusOf(harness, path);
-      expect(file.flag, `${path}: ${JSON.stringify(file)}`).toBe("refused");
+      expect(file.flag, `${path}: ${JSON.stringify(file)}`).toBe(
+        "default_edge_refused",
+      );
       expect(file.reason).toContain("edge_permission_denied");
       expect(file.reason).toContain("shelved-in");
     }
@@ -189,7 +251,9 @@ describe("folders: a refused default edge", () => {
       expect((await harness.folder.push()).ok).toBe(true);
     }
     expect(shelvedWrites(harness)).toBe(2);
-    expect((await statusOf(harness, "Plain.md")).flag).toBe("refused");
+    expect((await statusOf(harness, "Plain.md")).flag).toBe(
+      "default_edge_refused",
+    );
 
     // The server would take it now, but only a changed file asks again.
     refusing = false;
@@ -197,7 +261,7 @@ describe("folders: a refused default edge", () => {
     expect((await harness.folder.push()).ok).toBe(true);
     expect(shelvedWrites(harness)).toBe(3);
     expect((await statusOf(harness, "Plain.md")).flag).toBeUndefined();
-    expect((await statusOf(harness, BINARY)).flag).toBe("refused");
+    expect((await statusOf(harness, BINARY)).flag).toBe("default_edge_refused");
     expect(
       [...edges.edges.values()].filter(
         (edge) => edge.edge_type === "shelved-in",
@@ -217,7 +281,7 @@ describe("folders: a refused default edge", () => {
     put(harness, "Settings.md", "---\ntitle: Settings\n---\nsettings\n");
     expect((await harness.folder.push()).ok).toBe(true);
     for (const path of ["Line.md", "Settings.md"]) {
-      expect((await statusOf(harness, path)).flag).toBe("refused");
+      expect((await statusOf(harness, path)).flag).toBe("default_edge_refused");
     }
 
     edit(
@@ -231,7 +295,9 @@ describe("folders: a refused default edge", () => {
       (await statusOf(harness, "Line.md")).flag,
       "a default stayed refused after the file wrote its own line",
     ).toBeUndefined();
-    expect((await statusOf(harness, "Settings.md")).flag).toBe("refused");
+    expect((await statusOf(harness, "Settings.md")).flag).toBe(
+      "default_edge_refused",
+    );
 
     harness.settings.settings = {
       ...harness.settings.settings,
@@ -325,7 +391,9 @@ describe("folders: a refused default edge", () => {
     put(harness, "Plain.md", "---\ntitle: Plain\n---\nplain\n");
     expect((await harness.folder.push()).ok).toBe(true);
     // The witness: the refusal stands while the item is not in the bin.
-    expect((await statusOf(harness, "Plain.md")).flag).toBe("refused");
+    expect((await statusOf(harness, "Plain.md")).flag).toBe(
+      "default_edge_refused",
+    );
     const id = idIn(harness, "Plain.md");
     expect(id).toBeDefined();
     edges.events.push(

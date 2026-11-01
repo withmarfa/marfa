@@ -692,11 +692,27 @@ When a new document or file item has no line for an edge type named by the defau
 
 ### `folders/default-edge-refused-held`
 
-If the device or the server refuses an edge that the defaults ask for on a new document or file item, then a device MUST show that file as refused in the folder's status, with a reason that names the edge type, the other item and the way out: writing that line in a document's file, or, for a file item, making the edge in an app or taking it out of the folder's defaults.
+If the device or the server refuses an edge that the defaults ask for on a new document or file item, then a device MUST flag that file `default_edge_refused`, in the folder's status and in the scan that refused the edge, with a reason that names the edge type, the other item and the way out: writing that line in a document's file, or, for a file item, making the edge in an app or taking it out of the folder's defaults.
 
-**Reason:** a default edge is written in no line of the file, so without a record against the file the refusal appears only in the report of the scan that made it, and the file reads as in step. A file item has no lines to write, so the way out the reason names is the one its file can take. The refusal holds no other file, and a pull still writes the item's changes into the file, since nothing the person wrote in the file was refused.
+**Reason:** the flag is not `refused`, which is a change the person made that was refused and leaves the file held. A default edge is written in no line of the file, so without a record against the file the refusal appears only in the report of the scan that made it, and the file reads as in step. A file item has no lines to write, so the way out the reason names is the one its file can take. The refusal holds no other file, and a pull still writes the item's changes into the file, since nothing the person wrote in the file was refused.
 
 **Tests:** `device/folders-default-refused.test.ts › shows a default the copy refused for a document and a file, and makes it once the edge type admits it, the files unchanged`, `device/folders-default-refused.test.ts › keeps a default the server refused, sends it again only after the file changes, and applies it once it is accepted`.
+
+### `folders/status-lists-flagged-files`
+
+When the CLI answers `folders status` in plain text, the CLI MUST list each file that carries a flag, a reason or a warning, whatever its status, with that reason or warning.
+
+**Reason:** a file whose default edge was refused stays in step and carries the refusal only as a flag and reason, so a list of the files that are not in step hid what the JSON reported. The count of files in step is the count by status, and a listed file in step is still counted in it.
+
+**Tests:** `device/folders-default-refused.test.ts › lists a refused default in the plain text of the folder's status, which stays in step`.
+
+### `folders/default-edge-refused-told-sent`
+
+When the CLI answers `folders scan` or `folders push` in plain text for a pass that refused a folder default edge, the CLI MUST say of each file flagged `default_edge_refused` that the file is sent and that the folder's default edge was not applied, counting it apart from the files held or not sent.
+
+**Reason:** the file is in step and nothing the person wrote in it was refused, so the line for a held file would tell a person that work is unsent when it is not.
+
+**Tests:** `device/folders-default-refused.test.ts › tells a person in the plain text of the push that made it that a file with a refused default is sent`.
 
 ### `folders/default-edge-retried`
 

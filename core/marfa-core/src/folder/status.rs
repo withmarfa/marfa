@@ -306,7 +306,7 @@ impl Folder {
                 return Ok(waits(entry, vec!["scan"]));
             }
             return Ok(match bound.writes.refused.last() {
-                Some(refused) => entry.because("refused", refused.reason.clone()),
+                Some(refused) => entry.because(refused_flag(&refused.change), refused.reason.clone()),
                 None => entry.because(
                     "lost",
                     "is bound to an item this copy no longer holds, and unchanged since, so nothing is sent; changed, it goes as a new item",
@@ -362,7 +362,7 @@ impl Folder {
         if entry.flag.is_none()
             && let Some(refused) = bound.writes.refused.last()
         {
-            entry = entry.because("refused", refused.reason.clone());
+            entry = entry.because(refused_flag(&refused.change), refused.reason.clone());
         }
         if !named.is_empty() {
             return Ok(waits(entry, named));
@@ -517,6 +517,13 @@ struct Rows<'a> {
     by_mark: HashMap<&'a str, &'a state::Bound>,
     /// Every walked file's identity.
     marked: HashSet<String>,
+}
+
+fn refused_flag(change: &state::Change) -> &'static str {
+    match change {
+        state::Change::DefaultEdge { .. } => super::DEFAULT_EDGE_REFUSED,
+        _ => "refused",
+    }
 }
 
 fn waits(entry: FileStatus, named: Vec<&'static str>) -> FileStatus {

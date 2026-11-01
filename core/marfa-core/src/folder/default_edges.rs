@@ -109,9 +109,9 @@ impl Folder {
                 match self.make_default_edge(item_id, &line)? {
                     Ok(id) => defaulted.queued.push(id),
                     Err(reason) => {
-                        flagged.push(Flagged::of(
+                        flagged.push(Flagged::default_edge_refused(
                             path,
-                            &default_reason(&line, defaulted.file, &reason),
+                            default_reason(&line, defaulted.file, &reason),
                         ));
                         defaulted.refused.push((line, reason));
                     }
