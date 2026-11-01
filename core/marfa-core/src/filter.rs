@@ -39,6 +39,9 @@ const SYSTEM_FIELDS: [&str; 10] = [
 /// The term that selects by the group of each item's status word.
 const STATUS_GROUP: &str = "status_group";
 
+/// The term that selects parts: items out of the bin with a host out of it.
+const PART: &str = "part";
+
 /// The edge type `beneath` walks: an edge's source is the parent and its
 /// target the child.
 pub(crate) const PARENT_OF: &str = "parent-of";
@@ -206,6 +209,8 @@ enum Term {
     },
     /// The value, where the operator takes one, is one of `STATUS_GROUPS`.
     StatusGroup(Op),
+    /// `eq` or `neq`, with a boolean value.
+    Part(Compare),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -366,9 +371,28 @@ impl Condition {
                 )
             }
             Term::StatusGroup(op) => status_group(*op, &self.value, statuses, values),
+            Term::Part(compare) => {
+                let selected =
+                    matches!(self.value, Literal::Bool(true)) == (*compare == Compare::Eq);
+                format!("{}{PART_SQL}", if selected { "" } else { "NOT " })
+            }
         })
     }
 }
+
+/// An item out of the bin that draws an edge of a `with-hosts` type, read
+/// from the held catalog so a registered type counts, to a host out of the
+/// bin. A host the copy does not hold counts as out of the bin: the copy
+/// cannot know, and an item the server put in the bin would have taken the
+/// part with it.
+const PART_SQL: &str = "(items.state <> 'trashed' AND EXISTS (
+    SELECT 1 FROM edges e LEFT JOIN items h ON h.id = e.target_id
+    WHERE e.source_id = items.id
+      AND e.edge_type IN (
+        SELECT id FROM edge_types
+        WHERE CASE WHEN json_valid(json) THEN json_extract(json, '$.cascade_on_delete') END = 'with-hosts'
+      )
+      AND (h.id IS NULL OR h.state <> 'trashed')))";
 
 /// The literal a system field is compared with: a time column compared as
 /// an instant takes a timestamp, which is normalized, and refuses anything
@@ -650,6 +674,7 @@ enum Field {
     Entry { field: String, member: String },
     Tags,
     StatusGroup,
+    Part,
     Edge { edge_type: String, backref: bool },
 }
 
@@ -671,6 +696,9 @@ fn field(token: &Token) -> Result<Field> {
     }
     if name == STATUS_GROUP {
         return Ok(Field::StatusGroup);
+    }
+    if name == PART {
+        return Ok(Field::Part);
     }
     if let Some(path) = name.strip_prefix("properties.") {
         if path.is_empty() {
@@ -710,7 +738,7 @@ fn field(token: &Token) -> Result<Field> {
         return Ok(Field::System(column));
     }
     Err(refused(format!(
-        "Unknown field \"{name}\" at position {}. Valid system fields: {}. Use \"properties.<field>\" for custom fields, \"tags\" for tag filtering, or \"status_group\" for a status group.",
+        "Unknown field \"{name}\" at position {}. Valid system fields: {}. Use \"properties.<field>\" for custom fields, \"tags\" for tag filtering, \"status_group\" for a status group, or \"{PART}\" for the parts of other items.",
         token.pos,
         SYSTEM_FIELDS.join(", ")
     )))
@@ -751,6 +779,15 @@ fn term(field: Field, op: Op) -> Result<Term> {
             Op::Compare(_) => {
                 return Err(refused(format!(
                     "Operator \"{}\" is not valid for \"{STATUS_GROUP}\". Use: eq, neq, exists, not_exists",
+                    op.name()
+                )));
+            }
+        },
+        Field::Part => match op {
+            Op::Compare(compare @ (Compare::Eq | Compare::Neq)) => Term::Part(compare),
+            _ => {
+                return Err(refused(format!(
+                    "Operator \"{}\" is not valid for \"{PART}\". Use: eq, neq, with true or false",
                     op.name()
                 )));
             }
@@ -820,6 +857,7 @@ fn refuse_null(token: &Token, term: &Term, op: Op) -> CoreError {
         Term::StatusGroup(_) => format!(
             "{never} Use \"not_exists\" to ask for items with no status word their type declares, and \"exists\" for items with one"
         ),
+        Term::Part(_) => format!("{never} Compare \"{PART}\" with true or false"),
     })
 }
 
@@ -886,6 +924,12 @@ fn parse(input: &str) -> Result<Expression> {
                     token.raw,
                     token.pos,
                     STATUS_GROUPS.join(", ")
+                )));
+            }
+            if matches!(term, Term::Part(_)) && !matches!(literal, Literal::Bool(_)) {
+                return Err(refused(format!(
+                    "\"{PART}\" compares with true or false, not {}, at position {}",
+                    token.raw, token.pos
                 )));
             }
             pos += 1;
@@ -1105,7 +1149,7 @@ mod tests {
     fn names_a_position_in_utf16_units() {
         assert_eq!(
             message("id eq \"\u{1F426}\" OR x eq 1"),
-            "Unknown field \"x\" at position 14. Valid system fields: state, type, source, occurred_at, created_at, updated_at, tier, version, id, source_id. Use \"properties.<field>\" for custom fields, \"tags\" for tag filtering, or \"status_group\" for a status group."
+            "Unknown field \"x\" at position 14. Valid system fields: state, type, source, occurred_at, created_at, updated_at, tier, version, id, source_id. Use \"properties.<field>\" for custom fields, \"tags\" for tag filtering, \"status_group\" for a status group, or \"part\" for the parts of other items."
         );
         assert_eq!(
             message("id eq \"\u{1F426}\" \u{e9}"),
@@ -1284,6 +1328,120 @@ mod tests {
         assert!(written("reading").is_err());
     }
 
+    /// Hosts in and out of the bin, archived and not held, and parts on
+    /// them by shipped and registered `with-hosts` types, beside an
+    /// `orphan` edge that makes no part.
+    fn parts() -> Connection {
+        let conn = conn();
+        let edge_type = |id: &str, mode: &str| {
+            json!({ "id": id, "label": id, "reverse_label": id, "cardinality": "many-to-many",
+                    "source_type_constraints": ["*"], "target_type_constraints": ["*"],
+                    "cascade_on_delete": mode, "property_schema": {}, "written_at": "source" })
+        };
+        let catalog = crate::wire::WireCatalog {
+            types: Vec::new(),
+            edge_types: vec![
+                edge_type("comments-on", "with-hosts"),
+                edge_type("attached-to", "with-hosts"),
+                edge_type("acme.annotates", "with-hosts"),
+                edge_type("references", "orphan"),
+            ],
+        };
+        store::replace_catalog(&conn, &catalog).unwrap();
+        for (id, state) in [
+            ("host", "active"),
+            ("binned", "trashed"),
+            ("shelved", "archived"),
+            ("on-host", "active"),
+            ("on-binned", "active"),
+            ("on-unheld", "active"),
+            ("on-shelved", "active"),
+            ("annotation", "active"),
+            ("both", "active"),
+            ("binned-part", "trashed"),
+            ("mention", "active"),
+        ] {
+            let item = wire_item(id, "core.note", state, "2026-01-01T00:00:00Z", json!({}));
+            store::upsert_item(&conn, &item, None, &Indexing::default()).unwrap();
+        }
+        for (id, source, target, edge_type) in [
+            ("1", "on-host", "host", "comments-on"),
+            ("2", "on-binned", "binned", "comments-on"),
+            ("3", "on-unheld", "elsewhere", "comments-on"),
+            ("4", "on-shelved", "shelved", "attached-to"),
+            ("5", "annotation", "host", "acme.annotates"),
+            ("6", "both", "binned", "comments-on"),
+            ("7", "both", "host", "attached-to"),
+            ("8", "binned-part", "host", "comments-on"),
+            ("9", "mention", "host", "references"),
+        ] {
+            store::upsert_edge(&conn, &wire_edge(id, source, target, edge_type)).unwrap();
+        }
+        conn
+    }
+
+    #[test]
+    fn a_part_term_selects_items_with_a_host_out_of_the_bin_as_the_copy_holds_them() {
+        let conn = parts();
+        let selected = ["annotation", "both", "on-host", "on-shelved", "on-unheld"];
+        let rest = [
+            "binned",
+            "binned-part",
+            "host",
+            "mention",
+            "on-binned",
+            "shelved",
+        ];
+        assert_eq!(ids(&conn, Some("part eq true"), None), selected);
+        assert_eq!(ids(&conn, Some("part neq false"), None), selected);
+        assert_eq!(ids(&conn, Some("part eq false"), None), rest);
+        assert_eq!(ids(&conn, Some("part neq true"), None), rest);
+        assert_eq!(
+            ids(&conn, Some("part eq false AND state eq \"active\""), None),
+            ["host", "mention", "on-binned"]
+        );
+        // The witness for `on-binned`: its host back out of the bin makes it
+        // a part again.
+        conn.execute("UPDATE items SET state = 'active' WHERE id = 'binned'", [])
+            .unwrap();
+        assert!(ids(&conn, Some("part eq true"), None).contains(&"on-binned".to_string()));
+    }
+
+    #[test]
+    fn a_part_term_takes_only_eq_and_neq_with_true_or_false() {
+        for (filter, said) in [
+            (
+                "part contains true",
+                "Operator \"contains\" is not valid for \"part\". Use: eq, neq, with true or false",
+            ),
+            (
+                "part exists",
+                "Operator \"exists\" is not valid for \"part\". Use: eq, neq, with true or false",
+            ),
+            (
+                "part gt true",
+                "Operator \"gt\" is not valid for \"part\". Use: eq, neq, with true or false",
+            ),
+            (
+                "part eq 1",
+                "\"part\" compares with true or false, not 1, at position 8",
+            ),
+            (
+                "part eq \"true\"",
+                "\"part\" compares with true or false, not \"true\", at position 8",
+            ),
+            (
+                "part eq null",
+                "Null is not a value to compare with, so \"eq null\" never matches at position 8. Compare \"part\" with true or false",
+            ),
+        ] {
+            assert_eq!(message(filter), said, "{filter}");
+        }
+        assert!(message("parts eq true").ends_with(
+            "Use \"properties.<field>\" for custom fields, \"tags\" for tag filtering, \"status_group\" for a status group, or \"part\" for the parts of other items."
+        ));
+    }
+
     #[test]
     fn a_status_group_term_takes_only_a_group_and_the_operators_that_ask_for_one() {
         for (input, said) in [
@@ -1304,7 +1462,7 @@ mod tests {
             ),
             (
                 "status_groups exists",
-                "or \"status_group\" for a status group",
+                "\"status_group\" for a status group, or \"part\" for the parts of other items",
             ),
         ] {
             let Err(CoreError::Validation { code, message }) = check(input) else {

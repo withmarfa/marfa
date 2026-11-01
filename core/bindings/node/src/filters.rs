@@ -18,7 +18,7 @@ fn not_a_model(error: serde_json::Error) -> Error {
 pub fn encode_filter(
     env: Env,
     #[napi(
-        ts_arg_type = "{ join: \"all\" | \"any\"; conditions: { field: { kind: \"system\"; name: \"state\" | \"type\" | \"source\" | \"occurred_at\" | \"created_at\" | \"updated_at\" | \"tier\" | \"version\" | \"id\" | \"source_id\" } | { kind: \"property\"; name: string } | { kind: \"member\"; field: string; member: string } | { kind: \"tags\" } | { kind: \"status_group\" } | { kind: \"edge\"; edge_type: string; direction: \"outbound\" | \"backref\" }; operator: \"eq\" | \"neq\" | \"gt\" | \"gte\" | \"lt\" | \"lte\" | \"contains\" | \"starts_with\" | \"exists\" | \"not_exists\"; value?: string | number | boolean }[] }"
+        ts_arg_type = "{ join: \"all\" | \"any\"; conditions: { field: { kind: \"system\"; name: \"state\" | \"type\" | \"source\" | \"occurred_at\" | \"created_at\" | \"updated_at\" | \"tier\" | \"version\" | \"id\" | \"source_id\" } | { kind: \"property\"; name: string } | { kind: \"member\"; field: string; member: string } | { kind: \"tags\" } | { kind: \"status_group\" } | { kind: \"part\" } | { kind: \"edge\"; edge_type: string; direction: \"outbound\" | \"backref\" }; operator: \"eq\" | \"neq\" | \"gt\" | \"gte\" | \"lt\" | \"lte\" | \"contains\" | \"starts_with\" | \"exists\" | \"not_exists\"; value?: string | number | boolean }[] }"
     )]
     expression: serde_json::Value,
 ) -> Result<String> {
@@ -32,7 +32,7 @@ pub fn encode_filter(
 /// server's `validation_error`, with its message, where the server refuses
 /// it.
 #[napi(
-    ts_return_type = "{ join: \"all\" | \"any\"; conditions: { field: { kind: \"system\"; name: \"state\" | \"type\" | \"source\" | \"occurred_at\" | \"created_at\" | \"updated_at\" | \"tier\" | \"version\" | \"id\" | \"source_id\" } | { kind: \"property\"; name: string } | { kind: \"member\"; field: string; member: string } | { kind: \"tags\" } | { kind: \"status_group\" } | { kind: \"edge\"; edge_type: string; direction: \"outbound\" | \"backref\" }; operator: \"eq\" | \"neq\" | \"gt\" | \"gte\" | \"lt\" | \"lte\" | \"contains\" | \"starts_with\" | \"exists\" | \"not_exists\"; value?: string | number | boolean }[] }"
+    ts_return_type = "{ join: \"all\" | \"any\"; conditions: { field: { kind: \"system\"; name: \"state\" | \"type\" | \"source\" | \"occurred_at\" | \"created_at\" | \"updated_at\" | \"tier\" | \"version\" | \"id\" | \"source_id\" } | { kind: \"property\"; name: string } | { kind: \"member\"; field: string; member: string } | { kind: \"tags\" } | { kind: \"status_group\" } | { kind: \"part\" } | { kind: \"edge\"; edge_type: string; direction: \"outbound\" | \"backref\" }; operator: \"eq\" | \"neq\" | \"gt\" | \"gte\" | \"lt\" | \"lte\" | \"contains\" | \"starts_with\" | \"exists\" | \"not_exists\"; value?: string | number | boolean }[] }"
 )]
 pub fn decode_filter(env: Env, text: String) -> Result<serde_json::Value> {
     let expression =
@@ -46,7 +46,7 @@ pub fn decode_filter(env: Env, text: String) -> Result<serde_json::Value> {
 )]
 pub fn filter_operators(
     #[napi(
-        ts_arg_type = "{ kind: \"system\"; name: \"state\" | \"type\" | \"source\" | \"occurred_at\" | \"created_at\" | \"updated_at\" | \"tier\" | \"version\" | \"id\" | \"source_id\" } | { kind: \"property\"; name: string } | { kind: \"member\"; field: string; member: string } | { kind: \"tags\" } | { kind: \"status_group\" } | { kind: \"edge\"; edge_type: string; direction: \"outbound\" | \"backref\" }"
+        ts_arg_type = "{ kind: \"system\"; name: \"state\" | \"type\" | \"source\" | \"occurred_at\" | \"created_at\" | \"updated_at\" | \"tier\" | \"version\" | \"id\" | \"source_id\" } | { kind: \"property\"; name: string } | { kind: \"member\"; field: string; member: string } | { kind: \"tags\" } | { kind: \"status_group\" } | { kind: \"part\" } | { kind: \"edge\"; edge_type: string; direction: \"outbound\" | \"backref\" }"
     )]
     field: serde_json::Value,
 ) -> Result<serde_json::Value> {

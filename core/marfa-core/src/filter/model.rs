@@ -65,6 +65,9 @@ pub enum FilterField {
     Tags,
     /// The group of the word in the item's status field.
     StatusGroup,
+    /// Whether the item is a part of another: out of the bin, with a host
+    /// out of the bin. Compared with `eq` or `neq` and a boolean.
+    Part,
     /// `edge[<edge_type>]` or `backref[<edge_type>]`.
     Edge {
         edge_type: String,
@@ -244,6 +247,10 @@ impl FilterCondition {
                 },
             ),
             Term::StatusGroup(op) => (FilterField::StatusGroup, FilterOperator::from_op(*op)),
+            Term::Part(compare) => (
+                FilterField::Part,
+                FilterOperator::from_op(Op::Compare(*compare)),
+            ),
         };
         let value = match &condition.value {
             Literal::Text(text) => Some(FilterValue::Text(text.clone())),
@@ -279,6 +286,7 @@ impl FilterField {
             },
             FilterField::Tags => Field::Tags,
             FilterField::StatusGroup => Field::StatusGroup,
+            FilterField::Part => Field::Part,
             FilterField::Edge {
                 edge_type,
                 direction,
@@ -300,6 +308,7 @@ impl FilterField {
             ),
             FilterField::Tags => "tags".into(),
             FilterField::StatusGroup => super::STATUS_GROUP.into(),
+            FilterField::Part => super::PART.into(),
             FilterField::Edge {
                 edge_type,
                 direction,

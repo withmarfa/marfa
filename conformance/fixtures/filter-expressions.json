@@ -394,6 +394,44 @@
       }
     },
     {
+      "description": "items that are not parts of another",
+      "text": "part eq false",
+      "expression": {
+        "join": "all",
+        "conditions": [
+          {
+            "field": {
+              "kind": "part"
+            },
+            "operator": "eq",
+            "value": false
+          }
+        ]
+      }
+    },
+    {
+      "description": "parts, or anything tagged",
+      "text": "part neq false OR tags exists",
+      "expression": {
+        "join": "any",
+        "conditions": [
+          {
+            "field": {
+              "kind": "part"
+            },
+            "operator": "neq",
+            "value": false
+          },
+          {
+            "field": {
+              "kind": "tags"
+            },
+            "operator": "exists"
+          }
+        ]
+      }
+    },
+    {
       "description": "items with no status group",
       "text": "status_group not_exists",
       "expression": {
@@ -728,7 +766,25 @@
     {
       "description": "a field that is neither a system field nor a property",
       "text": "author eq \"Orwell\"",
-      "message": "Unknown field \"author\" at position 0. Valid system fields: state, type, source, occurred_at, created_at, updated_at, tier, version, id, source_id. Use \"properties.<field>\" for custom fields, \"tags\" for tag filtering, or \"status_group\" for a status group.",
+      "message": "Unknown field \"author\" at position 0. Valid system fields: state, type, source, occurred_at, created_at, updated_at, tier, version, id, source_id. Use \"properties.<field>\" for custom fields, \"tags\" for tag filtering, \"status_group\" for a status group, or \"part\" for the parts of other items.",
+      "code": "validation_error"
+    },
+    {
+      "description": "a part term with an operator other than eq and neq",
+      "text": "part exists",
+      "message": "Operator \"exists\" is not valid for \"part\". Use: eq, neq, with true or false",
+      "code": "validation_error"
+    },
+    {
+      "description": "a part term compared with text",
+      "text": "part eq \"true\"",
+      "message": "\"part\" compares with true or false, not \"true\", at position 8",
+      "code": "validation_error"
+    },
+    {
+      "description": "a part term compared with null",
+      "text": "part neq null",
+      "message": "Null is not a value to compare with, so \"neq null\" never matches at position 9. Compare \"part\" with true or false",
       "code": "validation_error"
     },
     {
