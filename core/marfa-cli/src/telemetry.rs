@@ -173,22 +173,28 @@ impl Run {
     /// command has said or will exit with.
     pub fn finish(self, status: u8, error: Option<&CliError>) {
         let failure = failed(status, error);
-        self.end(status, failure, error.map_or(Cause::Exit, Cause::Error));
+        let fault = error.is_some_and(CliError::is_fault);
+        self.end(
+            status,
+            failure,
+            fault,
+            error.map_or(Cause::Exit, Cause::Error),
+        );
     }
 
     /// Ends a run whose command panicked, which leaves the process with the
     /// status Rust gives a panic. The panic's message and location are not
     /// reported: either can carry content.
     pub fn panicked(self) {
-        self.end(PANICKED, true, Cause::Panic);
+        self.end(PANICKED, true, true, Cause::Panic);
     }
 
-    fn end(self, status: u8, failure: bool, cause: Cause) {
+    fn end(self, status: u8, failure: bool, fault: bool, cause: Cause) {
         // Sent beside the trace's last send, not after it, so that the two
         // together wait no longer than one timeout.
         let exception = self
             .exceptions
-            .filter(|_| failure)
+            .filter(|_| fault)
             .and_then(|reporter| reporter.report(status, cause));
         if let Some(live) = self.live {
             live.root.record("exit_code", u64::from(status));

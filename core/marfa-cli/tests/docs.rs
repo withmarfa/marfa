@@ -6,6 +6,10 @@
 #[path = "../src/door.rs"]
 mod door;
 
+#[allow(dead_code)]
+#[path = "support/quiet.rs"]
+mod quiet;
+
 use std::process::Command;
 
 use door::{Answer, Door};
@@ -31,7 +35,7 @@ struct Ran {
 fn command(site: &str, args: &[&str]) -> Command {
     let nowhere =
         std::env::temp_dir().join(format!("marfa-docs-no-keychain-{}", std::process::id()));
-    let mut command = Command::new(env!("CARGO_BIN_EXE_marfa"));
+    let mut command = quiet::marfa();
     command
         .env_remove("MARFA_API_URL")
         .env_remove("MARFA_API_KEY")

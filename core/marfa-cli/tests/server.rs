@@ -7,6 +7,10 @@
 #[path = "support/terminal.rs"]
 mod terminal;
 
+#[allow(dead_code)]
+#[path = "support/quiet.rs"]
+mod quiet;
+
 use std::fs;
 use std::io::{Read, Write};
 use std::net::TcpListener;
@@ -179,7 +183,7 @@ impl Rig {
     }
 
     fn marfa_with(&self, args: &[&str], env: &[(&str, &Path)]) -> (i32, String, String) {
-        let mut command = Command::new(env!("CARGO_BIN_EXE_marfa"));
+        let mut command = quiet::marfa();
         command
             .arg("server")
             .args(args)
@@ -205,7 +209,7 @@ impl Rig {
     /// it.
     fn install_on_terminal(&self, extra: &[&str], env: &[(&str, &str)]) -> terminal::Ran {
         let port = self.port.to_string();
-        let mut command = Command::new(env!("CARGO_BIN_EXE_marfa"));
+        let mut command = quiet::marfa();
         command
             .args(["server", "install", "--release", "0.0.22", "--port", &port])
             .args(["--yes", "--wait", "5"])
@@ -676,7 +680,7 @@ fn a_bucket_is_written_and_its_secret_key_comes_from_the_environment() {
     let rig = Rig::new("bucket");
     let port = rig.port.to_string();
     let output = output_of(
-        Command::new(env!("CARGO_BIN_EXE_marfa"))
+        quiet::marfa()
             .args([
                 "server",
                 "install",
@@ -821,7 +825,7 @@ fn a_port_in_use_is_refused() {
 fn no_docker_is_said_plainly() {
     let rig = Rig::new("nodocker");
     let output = output_of(
-        Command::new(env!("CARGO_BIN_EXE_marfa"))
+        quiet::marfa()
             .args([
                 "server",
                 "install",
@@ -889,7 +893,7 @@ fn an_upgrade_says_where_the_copy_of_the_database_is() {
     // Witness: a start that logged no update says nothing of one.
     fs::write(rig.state.join("server-log"), "a line of the server's log\n").unwrap();
     let output = output_of(
-        Command::new(env!("CARGO_BIN_EXE_marfa"))
+        quiet::marfa()
             .args([
                 "--json",
                 "server",
@@ -985,7 +989,7 @@ fn status_reports_in_json() {
     assert_eq!(code, 0, "{stderr}");
     assert!(stdout.contains("running and healthy"), "{stdout}");
     let output = output_of(
-        Command::new(env!("CARGO_BIN_EXE_marfa"))
+        quiet::marfa()
             .args(["--json", "server", "status", "--dir"])
             .arg(&rig.dir)
             .env("MARFA_DOCKER", rig.root.join("docker"))
@@ -1347,7 +1351,7 @@ fn a_relative_folder_works_because_compose_reads_it_from_inside() {
     let rig = Rig::new("relative");
     let port = rig.port.to_string();
     let output = output_of(
-        Command::new(env!("CARGO_BIN_EXE_marfa"))
+        quiet::marfa()
             .current_dir(&rig.root)
             .args([
                 "server",

@@ -343,6 +343,12 @@ pub(crate) fn refused_code(status: u16) -> &'static str {
     }
 }
 
+/// A status that is the server's fault: a `5xx`, or one that `refused_code`
+/// gives no name but `server`. A `408` is a timeout, which is the environment's.
+fn unexpected_status(status: u16) -> bool {
+    status != 408 && (status >= 500 || refused_code(status) == "server")
+}
+
 /// Every name `refused_code` answers.
 pub(crate) const REFUSED_CODES: &[&str] = &[
     "validation",
@@ -443,6 +449,26 @@ impl CliError {
             CliError::NoKeychain(_)
             | CliError::FolderHeld(_)
             | CliError::FolderNotHandedOver(_) => Exit::Local,
+        }
+    }
+
+    /// Whether this is a fault, to be reported to error tracking, and not an
+    /// answer given by design (a refusal, a usage error, a missing
+    /// credential) or an environment that failed (offline, a timeout, a
+    /// gateway or a full disk, which `CoreError::is_environmental` names).
+    /// A fault is the server answering with a `5xx` or with a status no
+    /// refusal is named for, an answer that cannot be read, or the local
+    /// store failing for a reason of its own.
+    pub fn is_fault(&self) -> bool {
+        match self {
+            CliError::CatchUp { error, .. } => error.is_fault(),
+            CliError::Core(CoreError::RenewalFailed(cause)) => {
+                CliError::from(*cause.clone()).is_fault()
+            }
+            CliError::Core(CoreError::Server { status, .. }) => unexpected_status(*status),
+            CliError::Core(CoreError::Decoding(_) | CoreError::Store(_)) => true,
+            CliError::Refused { status, .. } => unexpected_status(*status),
+            _ => false,
         }
     }
 

@@ -8,6 +8,10 @@
 #[path = "support/terminal.rs"]
 mod terminal;
 
+#[allow(dead_code)]
+#[path = "support/quiet.rs"]
+mod quiet;
+
 use std::process::Command;
 
 use terminal::Ran;
@@ -21,7 +25,7 @@ type Quiet<'a> = (&'a str, Vec<(&'a str, &'a str)>, Vec<&'a str>, bool);
 fn marfa(args: &[&str], env: &[(&str, &str)]) -> Command {
     let nowhere =
         std::env::temp_dir().join(format!("marfa-colour-no-keychain-{}", std::process::id()));
-    let mut command = Command::new(env!("CARGO_BIN_EXE_marfa"));
+    let mut command = quiet::marfa();
     command
         .env_remove("NO_COLOR")
         .env_remove("MARFA_API_URL")
