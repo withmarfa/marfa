@@ -709,3 +709,145 @@ fn marks_do_not_grow_with_removals_whose_events_are_read() {
     core.catch_up().unwrap();
     assert_eq!(marks(&core), 0);
 }
+
+/// The copy removes `gone` and the server accepts, then a second removal of
+/// the same id is refused before any of the removal's events are read.
+/// Answers whether an event from before the first removal puts the row back.
+fn older_event_after_a_second_refused_removal(removal: Removal, marked: bool) -> bool {
+    let server = Scripted::start();
+    let dir = tempfile::tempdir().unwrap();
+    let core = following(&server, dir.path());
+    let at = "2026-01-01T00:00:00Z";
+    server.on(
+        "/events",
+        vec![replay(&[(
+            "11",
+            "item.created",
+            item_event("item.created", row("gone", 1, removal.state(), "first", at)),
+        )])],
+    );
+    core.catch_up().unwrap();
+    removal.remove(&server, &core, "gone");
+    match removal {
+        Removal::View => {
+            server.on(
+                "/views/gone",
+                vec![certified(scripted::refusal(404, "item_not_found"))],
+            );
+            assert!(core.delete_view("gone", None).is_err());
+        }
+        Removal::Purge => {
+            server.on(
+                "/items/gone/purge",
+                vec![certified(scripted::refusal(404, "item_not_found"))],
+            );
+            assert!(core.purge_item("gone", Some(1)).is_err());
+        }
+    }
+    if !marked {
+        without_marks(&core);
+    }
+    server.on(
+        "/items/gone",
+        vec![certified(scripted::refusal(404, "item_not_found"))],
+    );
+    server.on(
+        "/events",
+        vec![replay(&[(
+            "12",
+            "item.updated",
+            item_event(
+                "item.updated",
+                row("gone", 2, removal.state(), "second", "2026-01-02T00:00:00Z"),
+            ),
+        )])],
+    );
+    core.catch_up().unwrap();
+    held(&core, "gone")
+}
+
+#[test]
+fn a_second_refused_removal_keeps_the_first_removals_mark() {
+    for removal in [Removal::View, Removal::Purge] {
+        assert!(
+            older_event_after_a_second_refused_removal(removal, false),
+            "{removal:?}: the witness, with no mark, kept the row out"
+        );
+        assert!(
+            !older_event_after_a_second_refused_removal(removal, true),
+            "{removal:?}: a refused second removal took the accepted removal's mark away"
+        );
+    }
+}
+
+#[test]
+fn an_edge_made_again_and_its_delete_withdrawn_keeps_the_first_deletes_mark() {
+    let server = Scripted::start();
+    let dir = tempfile::tempdir().unwrap();
+    let core = edge_deleted(&server, dir.path());
+    let removed = |core: &Core| {
+        store::removed(&core.conn().unwrap(), crate::model::Subject::Edge, "link").unwrap()
+    };
+    assert!(removed(&core), "the accepted delete left no mark");
+    // The edge made again under its id, before the first delete's event.
+    let again: crate::wire::WireEdge =
+        serde_json::from_value(edge("link", "source", "target", 1)).unwrap();
+    store::upsert_edge(&core.conn().unwrap(), &again).unwrap();
+    core.delete_edge("link").unwrap();
+    store::withdraw_edge_writes(&core.conn().unwrap(), "link", None).unwrap();
+    // The witness: the withdrawal put the edge back, so it undid the delete.
+    assert!(edge_held(&core, "link"));
+    assert!(
+        removed(&core),
+        "a withdrawn second delete took the accepted delete's mark away"
+    );
+}
+
+/// A hydration starting on either side of the mark never leaves the row
+/// purged with no mark: before it, the purge stands and is marked; after it,
+/// the copy the hydration filled is kept and so is no mark.
+#[test]
+fn a_hydration_on_either_side_of_the_mark_never_purges_unmarked() {
+    let hydration_starts = |core: &Core| {
+        let mut conn = core.conn().unwrap();
+        let tx = conn.transaction().unwrap();
+        store::forget_removals(&tx).unwrap();
+        reach::advance_generation(&tx).unwrap();
+        tx.commit().unwrap();
+    };
+    for during in [false, true] {
+        let server = Scripted::start();
+        let dir = tempfile::tempdir().unwrap();
+        let core = following(&server, dir.path());
+        server.on(
+            "/events",
+            vec![replay(&[(
+                "11",
+                "item.created",
+                item_event(
+                    "item.created",
+                    row("gone", 1, "trashed", "first", "2026-01-01T00:00:00Z"),
+                ),
+            )])],
+        );
+        core.catch_up().unwrap();
+        if !during {
+            hydration_starts(&core);
+        }
+        core.purge_sent("gone", || {
+            assert_eq!(marks(&core), 1, "the purge went out unmarked");
+            if during {
+                hydration_starts(&core);
+            }
+            Ok(())
+        })
+        .unwrap();
+        let marked =
+            store::removed(&core.conn().unwrap(), crate::model::Subject::Item, "gone").unwrap();
+        assert_eq!(
+            (held(&core, "gone"), marked),
+            (during, !during),
+            "hydration during the request {during}"
+        );
+    }
+}

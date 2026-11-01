@@ -4354,9 +4354,14 @@ fn removal_key(subject: Subject, id: &str) -> String {
 
 /// Before the removal can reach the server: the event of a removal read
 /// meanwhile takes the mark away, which tells `removal_accepted` the copy is
-/// already past it.
+/// already past it. An `accepted` mark stays as it is, since the event of
+/// that removal is still ahead whatever becomes of this one.
 pub fn removal_sent(conn: &Connection, subject: Subject, id: &str) -> Result<(), CoreError> {
-    meta_set(conn, &removal_key(subject, id), REMOVAL_SENT)
+    let key = removal_key(subject, id);
+    if meta_get(conn, &key)?.as_deref() != Some(REMOVAL_ACCEPTED) {
+        meta_set(conn, &key, REMOVAL_SENT)?;
+    }
+    Ok(())
 }
 
 pub fn removal_accepted(conn: &Connection, subject: Subject, id: &str) -> Result<(), CoreError> {
@@ -4368,7 +4373,7 @@ pub fn removal_accepted(conn: &Connection, subject: Subject, id: &str) -> Result
 }
 
 /// A removal refused, withdrawn or never answered, which leaves the row the
-/// server's to tell of.
+/// server's to tell of. An `accepted` mark belongs to an earlier removal.
 pub fn removal_unsent(conn: &Connection, subject: Subject, id: &str) -> Result<(), CoreError> {
     let key = removal_key(subject, id);
     if meta_get(conn, &key)?.as_deref() == Some(REMOVAL_SENT) {
