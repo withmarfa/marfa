@@ -410,6 +410,7 @@ function syntheticCalendar(
       },
     },
     settings: { get: () => Promise.resolve(null) },
+    connectors: { readOnly: () => Promise.resolve(() => false) },
   } as unknown as Storage;
 
   return { storage, fetched };

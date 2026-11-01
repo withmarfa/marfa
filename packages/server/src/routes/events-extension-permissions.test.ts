@@ -382,7 +382,10 @@ describe("the replay's shape guard", () => {
     await appendRow("updated", "shape-no-metadata", JSON.stringify(payload));
 
     const text = await replayAfter(cursor, "shape-no-metadata");
-    expect(replayed(text, "shape-no-metadata")).toEqual(payload);
+    expect(replayed(text, "shape-no-metadata")).toEqual({
+      ...payload,
+      item: { ...payload.item, read_only: false },
+    });
   });
 
   it("replays a metadata block carrying no extensions unchanged", async () => {
@@ -409,7 +412,10 @@ describe("the replay's shape guard", () => {
     );
 
     const text = await replayAfter(cursor, "shape-no-extensions");
-    expect(replayed(text, "shape-no-extensions")).toEqual(payload);
+    expect(replayed(text, "shape-no-extensions")).toEqual({
+      ...payload,
+      item: { ...payload.item, read_only: false },
+    });
   });
 
   it("skips a payload that does not parse and replays past it", async () => {

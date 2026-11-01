@@ -553,6 +553,42 @@ describe("dispatch", () => {
 // ---------------------------------------------------------------------------
 
 describe("what a delivery carries", () => {
+  it("sends read_only as connectors' registrations stand at the attempt", async () => {
+    const { id } = await owner();
+    await subscription(id, ["item.created"]);
+    const connector = await mintWorkingKey(ctx, { source: "read-only-hook" });
+    const registered = await request(ctx.app, "POST", "/connectors", {
+      key: connector,
+      body: { name: "read only hook", read_only_types: ["core.note"] },
+    });
+    expect(registered.status).toBe(201);
+    const http = recorder();
+    await dispatch(http, async () => {
+      await publish({
+        type: "created",
+        item: {
+          ...item("01HREADONLYREADONLYREADON0"),
+          source: "read-only-hook",
+        },
+      });
+      await publish({
+        type: "created",
+        item: item("01HEDITABLEEDITABLEEDITAB0"),
+      });
+    });
+    expect(
+      Object.fromEntries(
+        sentBodies(http).map((body) => {
+          const sent = body.item as { id: string; read_only: boolean };
+          return [sent.id, sent.read_only];
+        }),
+      ),
+    ).toEqual({
+      "01HREADONLYREADONLYREADON0": true,
+      "01HEDITABLEEDITABLEEDITAB0": false,
+    });
+  });
+
   it("carries every mark to a credential that may read the rows they name, and no stored type", async () => {
     const { id } = await owner();
     await subscription(id, ["item.restored", "item.deleted", "edge.deleted"]);

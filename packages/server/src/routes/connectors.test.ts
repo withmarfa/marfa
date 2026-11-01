@@ -4,6 +4,7 @@ import {
   request,
   seedOauthBearer,
   cleanupTestContext,
+  mintWorkingKey,
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import type { Connector, ConnectorRun } from "../storage/interface.js";
@@ -910,5 +911,99 @@ describe("a body field the operation does not declare", () => {
       { key: mine.key, body: run },
     );
     expect(unknown.status).toBe(404);
+  });
+});
+
+describe("read_only_types", () => {
+  const declare = (key: string, types?: unknown) =>
+    request(ctx.app, "POST", "/connectors", {
+      key,
+      body: {
+        name: "read only",
+        ...(types === undefined ? {} : { read_only_types: types }),
+      },
+    });
+
+  it("is stored once per type, replaced by each register, and cleared when left out", async () => {
+    const mine = await mintKey("read-only-declares");
+    const first = await declare(mine.key, ["core.note", "core.note"]);
+    expect(first.status).toBe(201);
+    expect((await json<Connector>(first)).read_only_types).toEqual([
+      "core.note",
+    ]);
+    const replaced = await declare(mine.key, ["core.task"]);
+    expect((await json<Connector>(replaced)).read_only_types).toEqual([
+      "core.task",
+    ]);
+    const cleared = await declare(mine.key);
+    expect((await json<Connector>(cleared)).read_only_types).toEqual([]);
+
+    const malformed = await declare(mine.key, ["Not a type"]);
+    expect(malformed.status).toBe(400);
+    expect(
+      (await json<{ error: { code: string } }>(malformed)).error.code,
+    ).toBe("validation_error");
+  });
+
+  it("makes an item read only when every live connector that owns or claims its source declares its type", async () => {
+    const owner = await mintKey("read-only-a");
+    const claimant = await mintWorkingKey(ctx, {
+      source: "read-only-b",
+      sources: ["read-only-a"],
+    });
+    const write = async (key: string, type: string) => {
+      const res = await request(ctx.app, "POST", "/items", {
+        key,
+        body: {
+          type,
+          properties: type === "core.task" ? { title: type } : { body: type },
+        },
+      });
+      expect(res.status).toBe(201);
+      return (await json<{ item: { id: string } }>(res)).item.id;
+    };
+    const note = await write(owner.key, "core.note");
+    const task = await write(owner.key, "core.task");
+    const unclaimed = await write(
+      (await mintKey("read-only-c")).key,
+      "core.note",
+    );
+    const readOnly = async (id: string) =>
+      (
+        await json<{ item: { read_only: boolean } }>(
+          await request(ctx.app, "GET", `/items/${id}`, {
+            key: ctx.workingKey,
+          }),
+        )
+      ).item.read_only;
+
+    expect(await readOnly(note)).toBe(false);
+    expect((await declare(owner.key, ["core.note"])).status).toBe(201);
+    expect(await readOnly(note)).toBe(true);
+    // A type it does not declare, and a source no registration names.
+    expect(await readOnly(task)).toBe(false);
+    expect(await readOnly(unclaimed)).toBe(false);
+
+    // A claimant that still accepts edits to notes from read-only-a.
+    expect((await declare(claimant, ["core.task"])).status).toBe(201);
+    expect(await readOnly(note)).toBe(false);
+    expect((await declare(claimant, ["core.note"])).status).toBe(200);
+    expect(await readOnly(note)).toBe(true);
+
+    const page = await json<{ data: { id: string; read_only: boolean }[] }>(
+      await request(ctx.app, "GET", "/items?type=core.note&limit=200", {
+        key: ctx.workingKey,
+      }),
+    );
+    expect(
+      Object.fromEntries(
+        page.data
+          .filter((item) => item.id === note || item.id === unclaimed)
+          .map((item) => [item.id, item.read_only]),
+      ),
+    ).toEqual({ [note]: true, [unclaimed]: false });
+
+    expect((await declare(owner.key)).status).toBe(200);
+    expect(await readOnly(note)).toBe(false);
   });
 });

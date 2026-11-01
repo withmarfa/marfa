@@ -81,6 +81,14 @@ export interface Item {
   trashed_with?: string;
 }
 
+/** An item as the API answers it. */
+export interface ReadItem extends Item {
+  /** Whether a connector holds the item read only. Derived when the item is
+   *  answered, from the connector registrations for its source, never
+   *  stored on the row. */
+  read_only: boolean;
+}
+
 /** Input for creating a new item. */
 export interface CreateItemInput {
   /**

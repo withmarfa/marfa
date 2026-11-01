@@ -327,8 +327,12 @@ export function searchRoutes(storage: Storage) {
     });
 
     const apiKey = c.get("apiKey");
-    const filtered = results.slice(0, limit).map((r) => ({
+    const page = results.slice(0, limit);
+    const held =
+      page.length > 0 ? await storage.connectors.readOnly() : () => false;
+    const filtered = page.map((r) => ({
       ...r,
+      item: { ...r.item, read_only: held(r.item) },
       metadata: readableMetadata(r.metadata, apiKey),
     }));
     const next = offset + limit;

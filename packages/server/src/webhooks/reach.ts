@@ -31,12 +31,14 @@ import {
   type SourceFilterSettings,
 } from "../storage/filter-sql.js";
 import { readInstanceConfig } from "../storage/instance-config.js";
-import type { Storage } from "../storage/interface.js";
+import type { ReadOnlyItems, Storage } from "../storage/interface.js";
 
 /** What a subscription's credential may be sent, as it stands now. */
 export interface DeliveryReach {
   key: ApiKey;
   sourceFilter: SourceFilterSettings | undefined;
+  /** Whether a connector holds an item read only, as registrations stand now. */
+  readOnly: ReadOnlyItems;
 }
 
 /** The reach of a credential that still stands, with the source filter that
@@ -45,12 +47,14 @@ export async function deliveryReach(
   storage: Storage,
   credential: LiveCredential,
 ): Promise<DeliveryReach> {
+  const [config, readOnly] = await Promise.all([
+    readInstanceConfig(storage.settings),
+    storage.connectors.readOnly(),
+  ]);
   return {
     key: credential.key,
-    sourceFilter: resolveEnforcement(
-      await readInstanceConfig(storage.settings),
-      credential.key,
-    ).source_filter,
+    sourceFilter: resolveEnforcement(config, credential.key).source_filter,
+    readOnly,
   };
 }
 
@@ -64,7 +68,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * with the types its marks name, as `storedFrame` in `pubsub.ts` builds it.
  */
 export function frameInReach(
-  { key, sourceFilter }: DeliveryReach,
+  { key, sourceFilter, readOnly }: DeliveryReach,
   stored: Record<string, unknown>,
 ): Record<string, unknown> | null {
   if (isRecord(stored.edge)) {
@@ -103,7 +107,7 @@ export function frameInReach(
   ) {
     return null;
   }
-  const frame = frameFor(stored, (type) => mayReadType(key, type));
+  const frame = frameFor(stored, (type) => mayReadType(key, type), readOnly);
   const metadata = frame.metadata;
   if (!isRecord(metadata)) return frame;
   return {

@@ -441,6 +441,10 @@ async function scheduleDeliveryRetry(
   });
 }
 
+/** An item as the event log stores it: `read_only` is worked out when a
+ *  frame is sent, never stored. */
+const StoredItemSchema = ItemSchema.omit({ read_only: true });
+
 export function validWebhookFrame(
   frame: Record<string, unknown>,
   eventType: string,
@@ -453,7 +457,7 @@ export function validWebhookFrame(
     : !("edge" in frame) &&
       // The event log keeps frames written before items carried
       // `trashed_at`, and they stay valid as stored.
-      ItemSchema.safeParse(
+      StoredItemSchema.safeParse(
         typeof frame.item === "object" && frame.item !== null
           ? { trashed_at: null, ...frame.item }
           : frame.item,

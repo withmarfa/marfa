@@ -37,7 +37,7 @@ const READS: Record<string, string> = {
   BulkActionJobStore: "scanPendingPropertyPatches getById carriedItems",
   EnrichmentStore: "listCandidates get",
   HousekeepingStore: "listDue list get",
-  ConnectorStore: "list get listRuns",
+  ConnectorStore: "list get listRuns readOnly",
   ConnectorStateStore: "getState lookupAgreements listAgreements",
   InboundStore: "listEndpoints target backlog listDeliveries body",
   FolderStatusStore: "list isCurrent",

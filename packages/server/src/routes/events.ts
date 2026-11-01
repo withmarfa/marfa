@@ -36,7 +36,7 @@ import {
   wireEventName,
 } from "../pubsub.js";
 import type { EdgeEventWithId, ItemEventWithId, LiveFrame } from "../pubsub.js";
-import type { Storage } from "../storage/interface.js";
+import type { ReadOnlyItems, Storage } from "../storage/interface.js";
 import type { ApiKey, Edge, Metadata, TypeFilter } from "@withmarfa/shared";
 import { readableMetadata } from "./_extension-reach.js";
 import {
@@ -303,8 +303,9 @@ function parseCursor(raw: string | undefined): bigint | null {
 export function itemFrameFor(
   stored: Record<string, unknown>,
   apiKey: ApiKey,
+  readOnly: ReadOnlyItems,
 ): string {
-  const frame = frameFor(stored, (type) => mayReadType(apiKey, type));
+  const frame = frameFor(stored, (type) => mayReadType(apiKey, type), readOnly);
   // Shape-checked: `readableMetadata` iterates `.extensions`, and a
   // throw here would end a replay short of events the client never re-asks for.
   const metadata: unknown = frame.metadata;
@@ -633,20 +634,24 @@ export function eventRoutes(
                 /** The key's effective source filter, resolved by
                  *  `refreshReach`, which runs before any frame is sent. */
                 sourceFilter: SourceFilterSettings | undefined;
+                /** Which items connectors hold read only, read with the rest. */
+                readOnly: ReadOnlyItems;
               } = {
                 key: apiKey,
                 typeFilter,
                 sourceFilter: undefined,
+                readOnly: () => false,
               };
               /** False when the credential no longer stands, having ended the
                *  stream and said so. */
               const refreshReach = async (): Promise<boolean> => {
                 if (faultsArmed()) failRead("stream-credential");
-                const [live, instanceConfig] = await Promise.all([
+                const [live, instanceConfig, readOnly] = await Promise.all([
                   resolveLiveCredential(storage, apiKey.id, {
                     tokenOutlivesExpiry: false,
                   }),
                   readInstanceConfig(storage.settings),
+                  storage.connectors.readOnly(),
                 ]);
                 if (state.closed) return false;
                 if (live === null) {
@@ -659,6 +664,7 @@ export function eventRoutes(
                   instanceConfig,
                   live.key,
                 ).source_filter;
+                reach.readOnly = readOnly;
                 return true;
               };
 
@@ -762,7 +768,7 @@ export function eventRoutes(
                   eventId !== undefined ? `id: ${String(eventId)}\n` : "";
                 if (eventId !== undefined) lastSentId = eventId;
                 send(
-                  `${idField}event: ${wireType}\ndata: ${itemFrameFor(storedFrame(event), reach.key)}\n\n`,
+                  `${idField}event: ${wireType}\ndata: ${itemFrameFor(storedFrame(event), reach.key, reach.readOnly)}\n\n`,
                 );
               };
 
@@ -1336,7 +1342,7 @@ export function eventRoutes(
                       );
                       lastSentId = event.id;
                       send(
-                        `id: ${String(event.id)}\nevent: ${replayWireType}\ndata: ${edgeFrame !== null ? edgeFrameFor(edgeFrame, reach.key) : parsed === null ? event.payload : itemFrameFor(parsed, reach.key)}\n\n`,
+                        `id: ${String(event.id)}\nevent: ${replayWireType}\ndata: ${edgeFrame !== null ? edgeFrameFor(edgeFrame, reach.key) : parsed === null ? event.payload : itemFrameFor(parsed, reach.key, reach.readOnly)}\n\n`,
                       );
                       consumeReplayRow(event.id);
                     }

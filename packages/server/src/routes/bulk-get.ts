@@ -1,4 +1,5 @@
 import { faultsArmed, holdAt } from "../control/faults.js";
+import { withReadOnly } from "./_read-only.js";
 import { snapshotReadRoute } from "../middleware/read-snapshot.js";
 /**
  * Bulk read of items by id.
@@ -244,7 +245,7 @@ export function bulkGetRoutes(storage: Storage) {
       ? await hydrateExtensionsForItems(storage, visibleIds, apiKey)
       : null;
 
-    const decorated = visible.map((item) => {
+    const decorated = (await withReadOnly(storage, visible)).map((item) => {
       const withEdges = edgesMap
         ? { ...item, edges: edgesMap.get(item.id) ?? {} }
         : item;
