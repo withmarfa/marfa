@@ -408,7 +408,8 @@ CREATE TABLE IF NOT EXISTS `connectors` (
 	`description` text,
 	`registered_at` text NOT NULL,
 	`updated_at` text NOT NULL,
-	`last_heartbeat_at` text
+	`last_heartbeat_at` text,
+	`read_only_types` text DEFAULT '[]' NOT NULL
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS `connectors_key_id_unique` ON `connectors` (`key_id`);

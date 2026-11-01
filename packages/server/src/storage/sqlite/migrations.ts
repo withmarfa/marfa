@@ -120,6 +120,7 @@ export const MIGRATIONS: readonly Migration[] = [
       ),
   },
   { to: 8, changes: [], apply: passkeyLastUse },
+  { to: 9, changes: ["connectors"], apply: readOnlyTypesOnConnectors },
 ];
 
 const PASSKEY_COLUMNS =
@@ -153,6 +154,33 @@ export async function passkeyLastUse(db: Writer): Promise<void> {
       "DROP TABLE `auth_passkey_was`;\n" +
       "CREATE INDEX `idx_auth_passkey_user_id` ON `auth_passkey` (`user_id`);\n" +
       "CREATE INDEX `idx_auth_passkey_credential_id` ON `auth_passkey` (`credential_id`);",
+  );
+}
+
+/**
+ * Gives every connector registration a `read_only_types` list, empty, since
+ * no registration declared one before the field existed.
+ */
+async function readOnlyTypesOnConnectors(db: Writer): Promise<void> {
+  const columns =
+    "`id`, `key_id`, `source`, `name`, `description`, `registered_at`, `updated_at`, `last_heartbeat_at`";
+  await db.executeMultiple(
+    "CREATE TABLE `connectors_was` AS SELECT * FROM `connectors`;\n" +
+      "DROP TABLE `connectors`;\n" +
+      "CREATE TABLE `connectors` (\n" +
+      "\t`id` text PRIMARY KEY NOT NULL,\n" +
+      "\t`key_id` text NOT NULL,\n" +
+      "\t`source` text NOT NULL,\n" +
+      "\t`name` text NOT NULL,\n" +
+      "\t`description` text,\n" +
+      "\t`registered_at` text NOT NULL,\n" +
+      "\t`updated_at` text NOT NULL,\n" +
+      "\t`last_heartbeat_at` text,\n" +
+      "\t`read_only_types` text DEFAULT '[]' NOT NULL\n" +
+      ");\n" +
+      "CREATE UNIQUE INDEX `connectors_key_id_unique` ON `connectors` (`key_id`);\n" +
+      `INSERT INTO \`connectors\` (${columns}) SELECT ${columns} FROM \`connectors_was\`;\n` +
+      "DROP TABLE `connectors_was`;",
   );
 }
 
