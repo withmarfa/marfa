@@ -5,6 +5,9 @@
 // Each test crate that includes this module uses its own part of it.
 #![allow(dead_code)]
 
+#[path = "../support/quiet.rs"]
+mod quiet;
+
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -47,7 +50,7 @@ impl Isolated {
     }
 
     pub fn marfa(&self) -> Command {
-        let mut command = Command::new(env!("CARGO_BIN_EXE_marfa"));
+        let mut command = quiet::marfa();
         command
             .env_remove("MARFA_API_URL")
             .env_remove("MARFA_API_KEY")

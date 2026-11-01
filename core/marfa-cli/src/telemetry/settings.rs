@@ -1,5 +1,7 @@
 //! What the standard `OTEL_*` variables say, read once and before anything
-//! else happens. With no endpoint named, nothing here asks for anything.
+//! else happens. Whether traces are asked for depends on the endpoint; the
+//! identity a report travels under, and the time it may take, do not, so an
+//! exception report has them without one.
 
 use std::time::Duration;
 
@@ -13,7 +15,7 @@ const DEFAULT_SERVICE: &str = "marfa-cli";
 
 #[derive(Debug, PartialEq)]
 pub enum Reading {
-    /// No endpoint, or telemetry disabled: the run loads and sends nothing.
+    /// No endpoint: the run sends no trace.
     Off,
     /// An endpoint that cannot be used. Names the variable and never its
     /// value, which can carry a credential.
@@ -25,8 +27,15 @@ pub enum Reading {
 pub struct Settings {
     pub url: String,
     pub headers: Vec<(String, String)>,
-    pub timeout: Duration,
     pub sampler: Sampler,
+    pub identity: Identity,
+}
+
+/// What every report of a run shares, whichever of them is asked for.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Identity {
+    /// How long the last send may take, and each one before it.
+    pub timeout: Duration,
     pub service: String,
     /// `OTEL_RESOURCE_ATTRIBUTES`, less `service.name`, which is `service`.
     pub resource: Vec<(String, String)>,
@@ -63,11 +72,47 @@ pub fn text(get: &impl Fn(&str) -> Option<String>, name: &str) -> Option<String>
         .filter(|value| !value.is_empty())
 }
 
-pub fn read(get: impl Fn(&str) -> Option<String>) -> Reading {
-    let set = |name: &str| text(&get, name);
-    if set("OTEL_SDK_DISABLED").is_some_and(|value| value.eq_ignore_ascii_case("true")) {
-        return Reading::Off;
+/// Whether `OTEL_SDK_DISABLED` turns every report of the run off.
+pub fn disabled(get: &impl Fn(&str) -> Option<String>) -> bool {
+    text(get, "OTEL_SDK_DISABLED").is_some_and(|value| value.eq_ignore_ascii_case("true"))
+}
+
+/// The timeout, service name and resource attributes, which no endpoint is
+/// needed for.
+pub fn identity(get: &impl Fn(&str) -> Option<String>) -> Identity {
+    let set = |name: &str| text(get, name);
+    let timeout = [
+        "OTEL_EXPORTER_OTLP_TRACES_TIMEOUT",
+        "OTEL_EXPORTER_OTLP_TIMEOUT",
+    ]
+    .iter()
+    .find_map(|name| set(name))
+    .and_then(|text| text.parse::<u64>().ok())
+    .filter(|milliseconds| *milliseconds > 0)
+    .map_or(DEFAULT_TIMEOUT, Duration::from_millis);
+    let mut resource = set("OTEL_RESOURCE_ATTRIBUTES")
+        .as_deref()
+        .map(resource_of)
+        .unwrap_or_default();
+    // The service name variable wins over the same name among the
+    // attributes, as the specification asks.
+    let named = resource
+        .iter()
+        .find(|(key, _)| key == "service.name")
+        .map(|(_, value)| value.clone());
+    resource.retain(|(key, _)| key != "service.name");
+    Identity {
+        timeout,
+        service: set("OTEL_SERVICE_NAME")
+            .or(named)
+            .unwrap_or_else(|| DEFAULT_SERVICE.into()),
+        resource,
     }
+}
+
+/// What the run's traces are sent with, where an endpoint names a collector.
+pub fn read(get: &impl Fn(&str) -> Option<String>, identity: Identity) -> Reading {
+    let set = |name: &str| text(get, name);
     let (variable, named, appends) = match (
         set("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"),
         set("OTEL_EXPORTER_OTLP_ENDPOINT"),
@@ -104,35 +149,11 @@ pub fn read(get: impl Fn(&str) -> Option<String>) -> Reading {
             headers.push((key, value));
         }
     }
-    let timeout = [
-        "OTEL_EXPORTER_OTLP_TRACES_TIMEOUT",
-        "OTEL_EXPORTER_OTLP_TIMEOUT",
-    ]
-    .iter()
-    .find_map(|name| set(name))
-    .and_then(|text| text.parse::<u64>().ok())
-    .filter(|milliseconds| *milliseconds > 0)
-    .map_or(DEFAULT_TIMEOUT, Duration::from_millis);
-    let mut resource = set("OTEL_RESOURCE_ATTRIBUTES")
-        .as_deref()
-        .map(resource_of)
-        .unwrap_or_default();
-    // The service name variable wins over the same name among the
-    // attributes, as the specification asks.
-    let named = resource
-        .iter()
-        .find(|(key, _)| key == "service.name")
-        .map(|(_, value)| value.clone());
-    resource.retain(|(key, _)| key != "service.name");
     Reading::On(Settings {
         url: address,
         headers,
-        timeout,
         sampler: sampler(set("OTEL_TRACES_SAMPLER"), set("OTEL_TRACES_SAMPLER_ARG")),
-        service: set("OTEL_SERVICE_NAME")
-            .or(named)
-            .unwrap_or_else(|| DEFAULT_SERVICE.into()),
-        resource,
+        identity,
     })
 }
 
@@ -224,13 +245,22 @@ fn decoded(text: &str) -> Option<String> {
 mod tests {
     use super::*;
 
-    fn with(pairs: &[(&str, &str)]) -> Reading {
-        read(|name| {
+    fn getter<'a>(pairs: &'a [(&'a str, &'a str)]) -> impl Fn(&str) -> Option<String> + 'a {
+        move |name| {
             pairs
                 .iter()
                 .find(|(set, _)| *set == name)
                 .map(|(_, value)| value.to_string())
-        })
+        }
+    }
+
+    fn with(pairs: &[(&str, &str)]) -> Reading {
+        let get = getter(pairs);
+        read(&get, identity(&get))
+    }
+
+    fn who(pairs: &[(&str, &str)]) -> Identity {
+        identity(&getter(pairs))
     }
 
     fn on(pairs: &[(&str, &str)]) -> Settings {
@@ -241,7 +271,7 @@ mod tests {
     }
 
     #[test]
-    fn no_endpoint_is_off_whatever_else_is_set() {
+    fn no_endpoint_is_no_traces_whatever_else_is_set() {
         assert_eq!(with(&[]), Reading::Off);
         assert_eq!(
             with(&[
@@ -334,13 +364,12 @@ mod tests {
 
     #[test]
     fn the_sdk_can_be_disabled_the_standard_way() {
-        assert_eq!(
-            with(&[
-                ("OTEL_EXPORTER_OTLP_ENDPOINT", "http://collector:4318"),
-                ("OTEL_SDK_DISABLED", "TRUE"),
-            ]),
-            Reading::Off
-        );
+        assert!(disabled(&getter(&[("OTEL_SDK_DISABLED", "TRUE")])));
+        assert!(disabled(&getter(&[("OTEL_SDK_DISABLED", " true ")])));
+        for not in ["false", "1", "yes", ""] {
+            assert!(!disabled(&getter(&[("OTEL_SDK_DISABLED", not)])), "{not}");
+        }
+        assert!(!disabled(&getter(&[])));
     }
 
     #[test]
@@ -365,13 +394,13 @@ mod tests {
     #[test]
     fn the_timeout_is_two_seconds_unless_the_standard_variable_says_milliseconds() {
         let base = ("OTEL_EXPORTER_OTLP_ENDPOINT", "http://collector:4318");
-        assert_eq!(on(&[base]).timeout, Duration::from_secs(2));
+        assert_eq!(who(&[base]).timeout, Duration::from_secs(2));
         assert_eq!(
-            on(&[base, ("OTEL_EXPORTER_OTLP_TIMEOUT", "750")]).timeout,
+            who(&[base, ("OTEL_EXPORTER_OTLP_TIMEOUT", "750")]).timeout,
             Duration::from_millis(750)
         );
         assert_eq!(
-            on(&[
+            who(&[
                 base,
                 ("OTEL_EXPORTER_OTLP_TIMEOUT", "750"),
                 ("OTEL_EXPORTER_OTLP_TRACES_TIMEOUT", "100"),
@@ -381,7 +410,7 @@ mod tests {
         );
         for bad in ["0", "-5", "soon", "1.5"] {
             assert_eq!(
-                on(&[base, ("OTEL_EXPORTER_OTLP_TIMEOUT", bad)]).timeout,
+                who(&[base, ("OTEL_EXPORTER_OTLP_TIMEOUT", bad)]).timeout,
                 Duration::from_secs(2),
                 "{bad}"
             );
@@ -430,9 +459,9 @@ mod tests {
     #[test]
     fn resource_attributes_are_decoded_and_a_list_with_a_bad_pair_is_discarded_whole() {
         let base = ("OTEL_EXPORTER_OTLP_ENDPOINT", "http://collector:4318");
-        assert_eq!(on(&[base]).resource, Vec::new());
+        assert_eq!(who(&[base]).resource, Vec::new());
         assert_eq!(
-            on(&[
+            who(&[
                 base,
                 (
                     "OTEL_RESOURCE_ATTRIBUTES",
@@ -447,14 +476,14 @@ mod tests {
         );
         for bad in ["a=b,c", "=x", "a=%zz", "a=b,%=c,d"] {
             assert_eq!(
-                on(&[base, ("OTEL_RESOURCE_ATTRIBUTES", bad)]).resource,
+                who(&[base, ("OTEL_RESOURCE_ATTRIBUTES", bad)]).resource,
                 Vec::new(),
                 "{bad}"
             );
         }
         // The witness: the same list without the bad pair is read.
         assert_eq!(
-            on(&[base, ("OTEL_RESOURCE_ATTRIBUTES", "a=b")])
+            who(&[base, ("OTEL_RESOURCE_ATTRIBUTES", "a=b")])
                 .resource
                 .len(),
             1
@@ -465,12 +494,12 @@ mod tests {
     fn the_service_name_variable_wins_over_service_name_among_the_attributes() {
         let base = ("OTEL_EXPORTER_OTLP_ENDPOINT", "http://collector:4318");
         let attributes = ("OTEL_RESOURCE_ATTRIBUTES", "service.name=from-list,a=b");
-        let from_list = on(&[base, attributes]);
+        let from_list = who(&[base, attributes]);
         assert_eq!(from_list.service, "from-list");
         // `service.name` is the service, not a second copy of it.
         assert_eq!(from_list.resource, vec![("a".to_string(), "b".to_string())]);
         assert_eq!(
-            on(&[base, attributes, ("OTEL_SERVICE_NAME", "from-variable")]).service,
+            who(&[base, attributes, ("OTEL_SERVICE_NAME", "from-variable")]).service,
             "from-variable"
         );
     }
@@ -478,7 +507,21 @@ mod tests {
     #[test]
     fn the_service_name_is_the_standard_one_or_ours() {
         let base = ("OTEL_EXPORTER_OTLP_ENDPOINT", "http://collector:4318");
-        assert_eq!(on(&[base]).service, "marfa-cli");
-        assert_eq!(on(&[base, ("OTEL_SERVICE_NAME", "mine")]).service, "mine");
+        assert_eq!(who(&[base]).service, "marfa-cli");
+        assert_eq!(who(&[base, ("OTEL_SERVICE_NAME", "mine")]).service, "mine");
+    }
+
+    #[test]
+    fn the_identity_and_the_timeout_need_no_endpoint() {
+        let identity = who(&[
+            ("OTEL_SERVICE_NAME", "mine"),
+            ("OTEL_RESOURCE_ATTRIBUTES", "a=b"),
+            ("OTEL_EXPORTER_OTLP_TIMEOUT", "750"),
+        ]);
+        assert_eq!(identity.service, "mine");
+        assert_eq!(identity.resource, vec![("a".to_string(), "b".to_string())]);
+        assert_eq!(identity.timeout, Duration::from_millis(750));
+        // The witness: no endpoint still means no traces.
+        assert_eq!(with(&[("OTEL_SERVICE_NAME", "mine")]), Reading::Off);
     }
 }

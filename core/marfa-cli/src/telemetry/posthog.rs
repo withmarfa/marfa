@@ -1,5 +1,5 @@
 //! A failed run as one PostHog `$exception` event, when the environment names
-//! a PostHog project as well as a collector.
+//! a PostHog project. A collector is not needed.
 //!
 //! PostHog's error tracking groups `$exception` events, and a trace does not
 //! produce them, so this is a post of its own. It is sent from a thread of
@@ -59,14 +59,14 @@ impl std::fmt::Debug for Settings {
     }
 }
 
-/// `resource` and `timeout` are the trace's: the exception is reported under
+/// `resource` and `timeout` are the run's identity: a trace is sent under
 /// the same name and attributes and waited for within the same budget.
 pub fn read(
-    get: impl Fn(&str) -> Option<String>,
+    get: &impl Fn(&str) -> Option<String>,
     resource: otlp::Resource,
     timeout: Duration,
 ) -> Reading {
-    let (host, token) = match (text(&get, HOST), text(&get, TOKEN)) {
+    let (host, token) = match (text(get, HOST), text(get, TOKEN)) {
         (None, None) => return Reading::Off,
         (Some(_), None) => return Reading::Said(HOST_ALONE),
         (None, Some(_)) => return Reading::Said(TOKEN_ALONE),
@@ -110,12 +110,10 @@ fn capture_url(host: &str) -> Option<String> {
     Some(url.to_string())
 }
 
-/// What ended the run badly.
+/// The fault a run is reported for (`CliError::is_fault`).
 #[derive(Clone, Copy)]
-pub enum Cause<'a> {
+pub enum Fault<'a> {
     Error(&'a CliError),
-    /// An exit status and no error, as a drain report gives.
-    Exit,
     /// The command panicked. Neither its message nor its location is
     /// kept, since either can carry content.
     Panic,
@@ -153,8 +151,8 @@ impl Reporter {
 
     /// Starts the post of a failed run's event. `None` where the thread
     /// cannot be made: the run then sends nothing.
-    pub fn report(self, status: u8, cause: Cause) -> Option<Pending> {
-        let body = self.event(status, cause);
+    pub fn report(self, status: u8, fault: Fault) -> Option<Pending> {
+        let body = self.event(status, fault);
         let Settings { url, timeout, .. } = self.settings;
         let (finished, done) = mpsc::channel();
         crate::interrupt::spawn_apart("posthog", move || {
@@ -173,11 +171,10 @@ impl Reporter {
         })
     }
 
-    fn event(&self, status: u8, cause: Cause) -> Vec<u8> {
-        let (kind, value) = match cause {
-            Cause::Error(error) => (error.code(), describe::error(error)),
-            Cause::Exit => ("exit", describe::exit(status)),
-            Cause::Panic => ("panic", describe::panic()),
+    fn event(&self, status: u8, fault: Fault) -> Vec<u8> {
+        let (kind, value) = match fault {
+            Fault::Error(error) => (error.code(), describe::error(error)),
+            Fault::Panic => ("panic", describe::panic()),
         };
         let version = env!("CARGO_PKG_VERSION");
         let mut properties = json!({
@@ -194,6 +191,7 @@ impl Reporter {
             }],
             "$exception_level": "error",
             "command": self.command,
+            "error_code": kind,
             "exit_code": status,
         });
         // The binary's own keys stand over an attribute of the same name, as
@@ -202,9 +200,6 @@ impl Reporter {
             if properties.get(&key).is_none() {
                 properties[key] = value.into();
             }
-        }
-        if !matches!(cause, Cause::Exit) {
-            properties["error_code"] = kind.into();
         }
         let event: Value = json!({
             "api_key": self.settings.token,
@@ -224,7 +219,7 @@ mod tests {
 
     fn with(pairs: &[(&str, &str)]) -> Reading {
         read(
-            |name| {
+            &|name| {
                 pairs
                     .iter()
                     .find(|(set, _)| *set == name)
@@ -307,7 +302,7 @@ mod tests {
         let reporter = Reporter::new(on("https://eu.i.posthog.com"), "marfa items create");
         let error = CliError::NotHeld("item-secret".into());
         let event: Value =
-            serde_json::from_slice(&reporter.event(1, Cause::Error(&error))).unwrap();
+            serde_json::from_slice(&reporter.event(1, Fault::Error(&error))).unwrap();
         assert_eq!(event["api_key"], "phc_token");
         assert_eq!(event["event"], "$exception");
         assert_eq!(event["distinct_id"].as_str().unwrap().len(), 32);
@@ -334,7 +329,7 @@ mod tests {
             ("command".into(), "not-the-command".into()),
         ];
         let reporter = Reporter::new(settings, "marfa items create");
-        let event: Value = serde_json::from_slice(&reporter.event(5, Cause::Exit)).unwrap();
+        let event: Value = serde_json::from_slice(&reporter.event(5, Fault::Panic)).unwrap();
         let properties = &event["properties"];
         assert_eq!(properties["deployment.environment"], "rehearsal");
         assert_eq!(properties["service.version"], "9.9.9");
@@ -346,27 +341,16 @@ mod tests {
     fn each_process_has_a_distinct_id_of_its_own() {
         let reporter = Reporter::new(on("https://eu.i.posthog.com"), "marfa status");
         let id = |reporter: &Reporter| {
-            let event: Value = serde_json::from_slice(&reporter.event(3, Cause::Exit)).unwrap();
+            let event: Value = serde_json::from_slice(&reporter.event(3, Fault::Panic)).unwrap();
             event["distinct_id"].as_str().unwrap().to_string()
         };
         assert_ne!(id(&reporter), id(&reporter));
     }
 
     #[test]
-    fn a_run_that_failed_with_a_status_alone_is_described_by_the_status() {
-        let reporter = Reporter::new(on("https://eu.i.posthog.com"), "marfa device drain");
-        let event: Value = serde_json::from_slice(&reporter.event(5, Cause::Exit)).unwrap();
-        let exception = &event["properties"]["$exception_list"][0];
-        assert_eq!(exception["type"], "exit");
-        assert_eq!(exception["value"], describe::exit(5));
-        assert!(event["properties"].get("error_code").is_none());
-        assert_eq!(event["properties"]["exit_code"], 5);
-    }
-
-    #[test]
     fn a_panic_is_a_fixed_type_and_sentence() {
         let reporter = Reporter::new(on("https://eu.i.posthog.com"), "marfa items get");
-        let event: Value = serde_json::from_slice(&reporter.event(101, Cause::Panic)).unwrap();
+        let event: Value = serde_json::from_slice(&reporter.event(101, Fault::Panic)).unwrap();
         let exception = &event["properties"]["$exception_list"][0];
         assert_eq!(exception["type"], "panic");
         assert_eq!(exception["value"], describe::panic());

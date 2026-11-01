@@ -172,7 +172,7 @@ pub struct Poster {
 impl Poster {
     pub fn new(settings: &Settings) -> Poster {
         Poster {
-            agent: agent(settings.timeout, &settings.url),
+            agent: agent(settings.identity.timeout, &settings.url),
             url: settings.url.clone(),
             headers: settings.headers.clone(),
         }

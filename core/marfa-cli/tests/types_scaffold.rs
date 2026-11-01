@@ -5,10 +5,13 @@
 #[path = "../src/door.rs"]
 mod door;
 
+#[allow(dead_code)]
+#[path = "support/quiet.rs"]
+mod quiet;
+
 use std::io::Write;
 use std::net::TcpListener;
 use std::path::PathBuf;
-use std::process::Command;
 use std::sync::{Arc, Mutex};
 
 use serde_json::{Value, json};
@@ -68,7 +71,7 @@ fn marfa(args: &[&str], env: &[(&str, &str)]) -> Ran {
         "marfa-types-scaffold-no-keychain-{}",
         std::process::id()
     ));
-    let mut command = Command::new(env!("CARGO_BIN_EXE_marfa"));
+    let mut command = quiet::marfa();
     command
         .env_remove("MARFA_API_URL")
         .env_remove("MARFA_API_KEY")

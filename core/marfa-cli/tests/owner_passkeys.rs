@@ -1,10 +1,14 @@
+#[allow(dead_code)]
+#[path = "support/quiet.rs"]
+mod quiet;
+
 use std::io::{Read, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::UnixListener;
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 fn command() -> Command {
-    let mut cmd = Command::new(env!("CARGO_BIN_EXE_marfa"));
+    let mut cmd = quiet::marfa();
     cmd.env_remove("MARFA_API_URL")
         .env_remove("MARFA_API_KEY")
         .env_remove("MARFA_DB");

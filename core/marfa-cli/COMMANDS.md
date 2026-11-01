@@ -31,8 +31,8 @@ Every command accepts these.
 | 0 | Done. |
 | 1 | The server refused the request (a wrong or spent setup code included), the CLI refused it before sending, the answer came from another contract, a docs page does not exist, or the archive of an export or a restore lacks blobs it names; a retry does not change it. |
 | 2 | The command line or the profile file was wrong, or named no store or server. |
-| 3 | The environment failed (unreachable, timed out, a 5xx, a 429, an answer naming no contract, full local storage, a docs site that cannot be read); try again. |
-| 4 | The working copy or the queue refused under the device rules, or the keychain cannot be used (locked, missing, unreadable, or none on this system). |
+| 3 | The environment failed (unreachable, timed out, a 5xx, a 408, a 425, a 429, an answer naming no contract, full local storage, a docs site that cannot be read); try again. |
+| 4 | The working copy or the queue refused under the device rules, the keychain cannot be used (locked, missing, unreadable, or none on this system), or the core stopped on a fault of its own. |
 | 5 | There is no credential, a profile's key command gave none, the credential was refused, or the sign-in ended; run `marfa login` to start one. |
 | 130 | You ended a long-lived command (`folders watch`, `events`, `device changes`) with Ctrl-C, or ended one that was still stopping with a second Ctrl-C. |
 
@@ -46,28 +46,28 @@ With --json a refusal is the last line of stderr, one JSON object, after any pla
 {"error":{"code":...,"message":...,"server":{"status":...,"code":...,"details":...}|null,"retry_after_seconds":...},"exit":N}
 ```
 
-where error.code is one of: `not_found`, `unauthorized`, `forbidden`, `validation`, `unknown_type`, `rate_limited`, `server`, `io`, `network`, `unnamed_answer`, `decoding`, `store`, `storage_full`, `signed_out`, `no_keychain`, `redirect`, `no_server`, `no_cursor`, `hydration_incomplete`, `no_catalog`, `reading_handle`, `wrong_schema`, `unsent_differs`, `copy_expired`, `stream_incomplete`, `wrong_server`, `bytes_absent`, `no_room`, `contract_mismatch`, `canceled`, `first_sync_waiting`, `invalid`, `not_held`, `watch`, `usage`, `install`, `no_store`, `no_credential`, `key_command`, `blobs_missing`, `docs_page_not_found`, `docs_section_not_found`, `docs_unreachable`, `conflict`, `too_large`.
+where error.code is one of: `not_found`, `unauthorized`, `forbidden`, `validation`, `unknown_type`, `rate_limited`, `server`, `io`, `network`, `unnamed_answer`, `decoding`, `store`, `storage_full`, `signed_out`, `no_keychain`, `redirect`, `no_server`, `no_cursor`, `hydration_incomplete`, `no_catalog`, `reading_handle`, `wrong_schema`, `unsent_differs`, `copy_expired`, `stream_incomplete`, `wrong_server`, `bytes_absent`, `no_room`, `contract_mismatch`, `canceled`, `first_sync_waiting`, `invalid`, `fault`, `not_held`, `watch`, `usage`, `install`, `no_store`, `no_credential`, `key_command`, `blobs_missing`, `docs_page_not_found`, `docs_section_not_found`, `docs_unreachable`, `conflict`, `too_large`.
 
 ## Telemetry
 
-A command sends one trace to an OpenTelemetry collector when the environment names one, and nothing when it does not. The settings are the standard OpenTelemetry variables, and two for PostHog.
+A command sends one trace to an OpenTelemetry collector when the environment names one, and no trace when it does not. A command that ends in a fault can also send one exception to PostHog, which needs no collector (below). The settings are the standard OpenTelemetry variables, and two for PostHog.
 
 | Variable | Description |
 | --- | --- |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | The collector's base address, `http` or `https`. The trace is posted to `v1/traces` under it. Setting it turns telemetry on. |
-| `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | The address the trace is posted to, used as written. It also turns telemetry on, and takes precedence over `OTEL_EXPORTER_OTLP_ENDPOINT`. |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | The collector's base address, `http` or `https`. The trace is posted to `v1/traces` under it. Setting it turns traces on. |
+| `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | The address the trace is posted to, used as written. It also turns traces on, and takes precedence over `OTEL_EXPORTER_OTLP_ENDPOINT`. |
 | `OTEL_EXPORTER_OTLP_HEADERS`, `OTEL_EXPORTER_OTLP_TRACES_HEADERS` | Headers to send, as comma-separated `key=value` pairs with percent-encoded values. The traces variable overrides the other for a header both name. |
 | `OTEL_EXPORTER_OTLP_TIMEOUT`, `OTEL_EXPORTER_OTLP_TRACES_TIMEOUT` | The longest one send may take, in milliseconds. The default is 2000. The command waits no longer than this at its end. |
 | `OTEL_TRACES_SAMPLER`, `OTEL_TRACES_SAMPLER_ARG` | `always_on` (the default), `always_off`, or `traceidratio` with a ratio from 0 to 1 as the argument. The `parentbased_` forms act as the sampler they wrap. |
 | `OTEL_SERVICE_NAME` | The service name on the trace. The default is `marfa-cli`. It takes precedence over a `service.name` in `OTEL_RESOURCE_ATTRIBUTES`. |
 | `OTEL_RESOURCE_ATTRIBUTES` | Attributes to add to the trace and the exception, as comma-separated `key=value` pairs with percent-encoded values, such as `deployment.environment=staging`. One named here replaces the command's own of the same name. A list with a pair that cannot be read is ignored whole. |
-| `OTEL_SDK_DISABLED` | `true` turns telemetry off. |
-| `MARFA_POSTHOG_HOST` | The PostHog host that receives a failed command's exception, `https` or, to this machine, `http`. It needs `MARFA_POSTHOG_PROJECT_TOKEN` and an OTLP endpoint. |
-| `MARFA_POSTHOG_PROJECT_TOKEN` | The PostHog project token for those exceptions. It needs `MARFA_POSTHOG_HOST` and an OTLP endpoint. |
+| `OTEL_SDK_DISABLED` | `true` turns off both the trace and the exception report. |
+| `MARFA_POSTHOG_HOST` | The PostHog host that receives a failed command's exception, `https` or, to this machine, `http`. It needs `MARFA_POSTHOG_PROJECT_TOKEN`. |
+| `MARFA_POSTHOG_PROJECT_TOKEN` | The PostHog project token for those exceptions. It needs `MARFA_POSTHOG_HOST`. |
 
 The trace's root span is named for the command, such as `marfa items create`, and carries the exit code. The core's operations are beneath it, with their counts and outcomes. A command that fails adds an `error` event with the exit code and, for a refusal, the error code from the list above. The trace holds no argument, address, credential, item content or message. A collector that is unreachable, slow or refusing changes neither the command's output nor its exit code.
 
-A failed command also sends one exception to PostHog's error tracking when an OTLP endpoint, `MARFA_POSTHOG_HOST` and `MARFA_POSTHOG_PROJECT_TOKEN` are all set. With any of them unset, nothing is sent. With only one of the two PostHog variables set, or a host that is neither `https` nor on this machine, the command prints one line on standard error that names the variable, and nothing under `--json`. The exception has the command's name, the error code, the exit code, the version, the operating system and the architecture, and a fixed sentence for the kind of error in place of its message. It names no person, and holds no argument, address, credential, item content or message. A command that Ctrl-C stopped, or that ended `canceled`, sends nothing, and one that panics sends an exception of type `panic` with no message, and `OTEL_TRACES_SAMPLER` does not change what is sent. A PostHog that is unreachable, slow or refusing changes neither the command's output nor its exit code, and the command waits no longer than the timeout above.
+A command that ends in a fault also sends one exception to PostHog's error tracking when `MARFA_POSTHOG_HOST` and `MARFA_POSTHOG_PROJECT_TOKEN` are both set, whether or not an OTLP endpoint is. The trace needs an endpoint and the exception does not, so a malformed endpoint turns off the trace only, and a malformed host the exception only. With either PostHog variable unset, no exception is sent. With only one of the two PostHog variables set, or a host that is neither `https` nor on this machine, the command prints one line on standard error that names the variable, and nothing under `--json`. The exception has the command's name, the error code, the exit code, the version, the operating system and the architecture, and a fixed sentence for the kind of error in place of its message. It names no person, and holds no argument, address, credential, item content or message. A fault is something the command line or the core itself got wrong: a panic, including one the core caught and ended with the code `fault`, the local store failing for a reason of its own, an answer that cannot be read, or an answer status the command line should never cause and no refusal is named for, such as `405` or `415`. Nothing the server or the environment did is a fault, and sends nothing: a refusal by design (a `4xx` answer that names a refusal, a usage error, a missing credential or docs page), a command that Ctrl-C stopped or that ended `canceled`, and an environment that failed (offline, a timeout, a rate limit, a `408` or `425` answer, any `5xx` answer, which the server reports itself, or full local storage). A command that panics sends an exception of type `panic` with no message, and `OTEL_TRACES_SAMPLER` does not change what is sent. A PostHog that is unreachable, slow or refusing changes neither the command's output nor its exit code, and the command waits no longer than the timeout above.
 
 ## status
 

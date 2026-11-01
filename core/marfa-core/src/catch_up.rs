@@ -1108,7 +1108,7 @@ impl Recovery<'_, '_> {
                         recover(core, stop)
                     }))
                     .unwrap_or_else(|fault| {
-                        Some(ChangeEvent::QueueNotDrained(CoreError::Invalid(format!(
+                        Some(ChangeEvent::QueueNotDrained(CoreError::Fault(format!(
                             "the drain stopped on a fault in the core: {}",
                             crate::fault_said(fault.as_ref())
                         ))))
@@ -2891,7 +2891,7 @@ mod tests {
     }
 
     #[test]
-    fn a_fault_on_the_follows_thread_ends_it_with_a_refusal_and_frees_the_stream() {
+    fn a_fault_on_the_follows_thread_ends_it_as_a_fault_and_frees_the_stream() {
         let server = Scripted::start();
         server.on("/types", vec![types(&[(NOTE, None)])]);
         server.on(
@@ -2903,7 +2903,7 @@ mod tests {
             panic!("a listener fault")
         });
         match ended {
-            Err(CoreError::Invalid(said)) => assert!(
+            Err(CoreError::Fault(said)) => assert!(
                 said.contains("a fault in the core: a listener fault"),
                 "{said}"
             ),

@@ -145,6 +145,11 @@ pub enum CoreError {
     FirstSyncWaiting,
     #[error("{0}")]
     Invalid(String),
+    /// The core, or a caller's code it ran, panicked, and the core caught it
+    /// so that its caller is told the work ended. Never the caller's input
+    /// or the server's answer: the core itself went wrong.
+    #[error("{0}")]
+    Fault(String),
 }
 
 /// One list drives the match and the set of codes, so a variant added to
@@ -222,6 +227,7 @@ codes! {
     Canceled: CoreError::Canceled => "canceled",
     FirstSyncWaiting: CoreError::FirstSyncWaiting => "first_sync_waiting",
     Invalid: CoreError::Invalid(_) => "invalid",
+    Fault: CoreError::Fault(_) => "fault",
 }
 
 fn classified(kind: &str, code: Option<&str>, message: &str) -> String {
@@ -250,7 +256,7 @@ impl CoreError {
             | CoreError::Network(_)
             | CoreError::RateLimited { .. }
             | CoreError::Unnamed { .. } => true,
-            CoreError::Server { status, .. } => *status >= 500 || *status == 408,
+            CoreError::Server { status, .. } => environmental_status(*status),
             _ => false,
         }
     }
@@ -270,6 +276,13 @@ impl CoreError {
             _ => None,
         }
     }
+}
+
+/// A status the same request may be answered past: `408` is a proxy's
+/// about the network, `425` asks for the same request again, and a `5xx` is
+/// the server's own trouble, which the server reports itself.
+pub fn environmental_status(status: u16) -> bool {
+    matches!(status, 408 | 425 | 500..=599)
 }
 
 /// Past this a server could park the client indefinitely. The server's webhook
@@ -609,6 +622,8 @@ mod tests {
         };
         assert!(answered(503).is_environmental());
         assert!(answered(408).is_environmental());
+        assert!(answered(425).is_environmental());
+        assert!(answered(507).is_environmental());
         assert!(!answered(405).is_environmental());
         let refused = CoreError::Forbidden {
             code: "type_not_permitted".into(),

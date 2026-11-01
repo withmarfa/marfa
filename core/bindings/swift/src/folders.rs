@@ -588,7 +588,7 @@ impl Folders {
             // that works it again on being told must find it free.
             listener.ended(match watched {
                 Ok(watched) => watched.err().map(|error| ended(error, origin.as_deref())),
-                Err(fault) => Some(MarfaError::Invalid {
+                Err(fault) => Some(MarfaError::Fault {
                     message: format!("the watch stopped on a fault: {}", said(fault.as_ref())),
                 }),
             });
@@ -1330,7 +1330,7 @@ mod tests {
             .recv_timeout(std::time::Duration::from_secs(30))
             .expect("a watch whose listener panicked never said it ended");
         assert!(
-            matches!(&error, Some(MarfaError::Invalid { message }) if message.contains("the listener faulted")),
+            matches!(&error, Some(MarfaError::Fault { message }) if message.contains("the listener faulted")),
             "{error:?}"
         );
         folders.sync(path).expect("the watch let the folder go");

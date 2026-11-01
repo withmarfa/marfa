@@ -120,12 +120,17 @@ pub enum WatchError<E> {
     CredentialRefused(CoreError),
     /// The server's changes stopped reaching the folder.
     FollowEnded(CoreError),
-    /// The directory could not be watched, or the follow ended in a fault.
+    /// The directory could not be watched.
     Unwatchable(String),
-    /// A pass failed.
+    /// A pass failed, or a thread of the watch panicked (`CoreError::Fault`).
     Core(CoreError),
     /// The caller's `tell` failed.
     Told(E),
+}
+
+/// A thread of the watch panicked.
+fn faulted<E>(said: &str) -> WatchError<E> {
+    WatchError::Core(CoreError::Fault(said.into()))
 }
 
 impl<E> From<CoreError> for WatchError<E> {
@@ -228,19 +233,15 @@ impl Folder {
             };
             if let Some(looker) = looker {
                 looker.join().map_err(|_| {
-                    WatchError::Unwatchable(
-                        "looking for a command asking for the folder ended in a fault".into(),
-                    )
+                    faulted("looking for a command asking for the folder ended in a fault")
                 })?;
             }
-            reporter.join().map_err(|_| {
-                WatchError::Unwatchable("folder health reporting ended in a fault".into())
-            })?;
-            let followed = follower.join().map_err(|_| {
-                WatchError::Unwatchable(
-                    "the follow of the server's changes ended in a fault".into(),
-                )
-            })?;
+            reporter
+                .join()
+                .map_err(|_| faulted("folder health reporting ended in a fault"))?;
+            let followed = follower
+                .join()
+                .map_err(|_| faulted("the follow of the server's changes ended in a fault"))?;
             watched.and_then(|end| followed.map(|()| end).map_err(WatchError::Core))
         })
     }
@@ -334,6 +335,11 @@ impl Folder {
                 }
                 Ok(Wake::Ended(error @ CoreError::Unauthorized { .. })) => {
                     return Err(WatchError::CredentialRefused(error));
+                }
+                // The follow caught a panic of the core's: the server is not
+                // what ended it.
+                Ok(Wake::Ended(error @ CoreError::Fault(_))) => {
+                    return Err(WatchError::Core(error));
                 }
                 Ok(Wake::Ended(error)) => return Err(WatchError::FollowEnded(error)),
                 Ok(Wake::Asked) => continue,

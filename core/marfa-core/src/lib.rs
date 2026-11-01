@@ -103,7 +103,9 @@ pub use catalog::{EdgeType, End, ItemType, ServerCatalog, TypeField, WrittenAt};
 pub use catch_up::{Change, ChangeEvent, FollowReport};
 pub use display::ItemDisplay;
 pub use drain::{DrainReport, DrainVerdict};
-pub use error::{CODES as ERROR_CODES, CoreError, CoreErrorKind, FolderStore};
+pub use error::{
+    CODES as ERROR_CODES, CoreError, CoreErrorKind, FolderStore, environmental_status,
+};
 pub use file_cache::{
     Attachments, DEFAULT_FLOOR as FILE_BUDGET_FLOOR, FileBudget, FileCache, KeptFetch, NotHeld,
     NotHeldReason,
@@ -1147,7 +1149,7 @@ impl Core {
                 &mut on_contact,
             )
         }))
-        .unwrap_or_else(|fault| Err(CoreError::Invalid(fault_message(fault.as_ref()))))
+        .unwrap_or_else(|fault| Err(CoreError::Fault(fault_message(fault.as_ref()))))
     }
 
     /// Moves each time another process saves to this store.
