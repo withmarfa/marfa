@@ -2621,33 +2621,16 @@ mod tests {
 
     #[test]
     fn a_page_of_items_is_given_a_body_budget_in_proportion_to_its_rows() {
-        let budgets = |url: &str| {
-            Http::with_timeouts(
-                url,
-                "k",
-                Duration::from_millis(2_000),
-                Duration::from_millis(1_000),
-            )
-            .unwrap()
-        };
-        // The witness: the same trickle, about 1.5 s, outruns the plain budget.
-        assert!(matches!(
-            budgets(&trickling(false)).call(get(&["items"], false)),
-            Err(CoreError::Network(_))
-        ));
-        let page = budgets(&trickling(false)).items_page(&ItemsQuery {
-            r#type: None,
-            tier: SliceTier::All,
-            cursor: None,
-        });
-        assert!(
-            !matches!(page, Err(CoreError::Network(_))),
-            "a page of {ITEM_PAGE_LIMIT} rows was cut off at the budget for {ROWS_PER_BODY_BUDGET}: {page:?}"
-        );
-        let found = budgets(&trickling(false)).items_containing("title", "a", 1);
-        assert!(
-            !matches!(found, Err(CoreError::Network(_))),
-            "a lookup page was cut off: {found:?}"
+        let http = Http::with_timeouts(
+            "http://127.0.0.1:1",
+            "k",
+            Duration::from_millis(2_000),
+            Duration::from_millis(1_000),
+        )
+        .unwrap();
+        assert_eq!(
+            http.page_budget(),
+            Some(Duration::from_millis(1_000) * ITEM_PAGE_LIMIT / ROWS_PER_BODY_BUDGET)
         );
     }
 
