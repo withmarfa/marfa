@@ -2642,7 +2642,11 @@ export class SqliteItemStore implements ItemStore {
       .groupBy(column)
       .all();
 
-    const result: Record<string, number> = {};
+    // No prototype, so a source named `__proto__` is a count like any other.
+    const result: Record<string, number> = Object.create(null) as Record<
+      string,
+      number
+    >;
     for (const row of rows) {
       result[row.bucket] = row.count;
     }
