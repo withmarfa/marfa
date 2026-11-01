@@ -11,9 +11,16 @@ import {
   trackKey,
   trackWebhook,
 } from "../../utils/setup.js";
+import {
+  bootFreshServer,
+  FRESH_SERVER_TIMEOUT_MS,
+  type FreshServer,
+} from "../../utils/fresh-server.js";
+import { HOUR_MS, movedClock, writerOf } from "../../utils/moved-clock.js";
 import { expectMatchesSchema } from "../../utils/openapi.js";
 import { openEventStream } from "../../utils/sse.js";
 import { collectUntil } from "../../utils/stream.js";
+import { TEST_OWNER } from "../../utils/target.js";
 import { startReceiver, type Receiver } from "../../utils/webhook-receiver.js";
 
 let client: MarfaClient;
@@ -355,5 +362,66 @@ describe("read_only on items", () => {
     expect(replayed.headers.get("Idempotency-Replayed")).toBe("true");
     expect(replayed.data.item.id).toBe(first.data.item.id);
     expect(replayed.data.item.read_only).toBe(false);
+  });
+});
+
+describe("a connector whose key has expired", () => {
+  let moving: FreshServer;
+
+  beforeAll(async () => {
+    moving = await bootFreshServer("connector-read-only-clock");
+  }, FRESH_SERVER_TIMEOUT_MS);
+
+  afterAll(async () => {
+    await moving.stop();
+  }, FRESH_SERVER_TIMEOUT_MS);
+
+  it("reads an item editable once the key of the connector that held it expires", async () => {
+    const clock = movedClock(moving);
+    const owner = new MarfaClient({
+      baseUrl: moving.apiUrl,
+      ownerCookie: moving.ownerCookie,
+      ownerCredentials: TEST_OWNER,
+    });
+    const minted = await owner.createKey({
+      label: "read-only-expiring",
+      source: "read-only-expiring",
+      default_tier: "library",
+      expires_at: new Date(clock.now() + HOUR_MS).toISOString(),
+    });
+    expect(minted.status, JSON.stringify(minted.error)).toBe(201);
+    const connector = new MarfaClient({
+      baseUrl: moving.apiUrl,
+      apiKey: minted.data.key,
+    });
+    const created = await connector.createItem({
+      type: "core.note",
+      properties: { body: "read only until the key expires" },
+    });
+    expect(created.status, JSON.stringify(created.error)).toBe(201);
+    const id = created.data.item.id;
+    expect(
+      (
+        await connector.registerConnector({
+          name: "read only expiring",
+          read_only_types: ["core.note"],
+        })
+      ).status,
+    ).toBe(201);
+
+    const reader = writerOf(moving);
+    const readOnly = async (): Promise<boolean | undefined> => {
+      const read = await reader.getItem(id);
+      expect(read.status).toBe(200);
+      return read.data.item.read_only;
+    };
+    // The witness: before its expiry the key is not revoked and holds the item.
+    expect(await readOnly()).toBe(true);
+
+    await clock.advance(2 * HOUR_MS);
+
+    // The key is unrevoked, so only its expiry can have released the item.
+    expect((await connector.getCurrentKey()).status).toBe(401);
+    expect(await readOnly()).toBe(false);
   });
 });

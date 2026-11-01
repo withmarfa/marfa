@@ -307,7 +307,7 @@ export const ItemSchema = z
     read_only: z
       .boolean()
       .describe(
-        "`true` if at least one connector with a live key owns or claims the item's `source` and every such connector lists the item's type in `read_only_types`, so it puts back an edit made in Marfa on its next run. Marfa doesn't refuse the edit.",
+        "`true` if at least one connector with a live key that may write the item's type owns or claims the item's `source` and every such connector lists the type in `read_only_types`, so it puts back an edit made in Marfa on its next run. Marfa doesn't refuse the edit.",
       ),
     capture_latitude: z
       .number()

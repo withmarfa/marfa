@@ -454,7 +454,7 @@
           },
           "read_only": {
             "type": "boolean",
-            "description": "`true` if at least one connector with a live key owns or claims the item's `source` and every such connector lists the item's type in `read_only_types`, so it puts back an edit made in Marfa on its next run. Marfa doesn't refuse the edit."
+            "description": "`true` if at least one connector with a live key that may write the item's type owns or claims the item's `source` and every such connector lists the type in `read_only_types`, so it puts back an edit made in Marfa on its next run. Marfa doesn't refuse the edit."
           },
           "capture_latitude": {
             "type": "number",
@@ -42082,7 +42082,7 @@
                       "example": "app.github.issue"
                     },
                     "maxItems": 1000,
-                    "description": "The types whose items the connector holds read only, putting back any edit made in Marfa. An item reads `read_only` as `true` when every live connector for its source lists its type. The types needn't be registered. Leaving it out clears the list."
+                    "description": "The types whose items the connector holds read only, putting back any edit made in Marfa. An item reads `read_only` as `true` when every connector for its source whose live key may write its type lists the type. The types needn't be registered. Leaving it out clears the list."
                   }
                 },
                 "required": [

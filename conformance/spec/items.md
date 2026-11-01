@@ -44,7 +44,7 @@ While a connector registration's key is revoked or expired, the server MUST answ
 
 **Reason:** a connector whose key no longer works cannot run, so it cannot put an edit back.
 
-**Tests:** `compliance/connector-read-only.test.ts › reads an item editable once the key of the connector that held it is revoked`.
+**Tests:** `compliance/connector-read-only.test.ts › reads an item editable once the key of the connector that held it is revoked`, `› reads an item editable once the key of the connector that held it expires`.
 
 ### `items/read-only-key-may-write`
 

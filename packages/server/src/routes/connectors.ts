@@ -153,7 +153,7 @@ const RegisterSchema = z
       .max(MAX_READ_ONLY_TYPES)
       .optional()
       .describe(
-        "The types whose items the connector holds read only, putting back any edit made in Marfa. An item reads `read_only` as `true` when every live connector for its source lists its type. The types needn't be registered. Leaving it out clears the list.",
+        "The types whose items the connector holds read only, putting back any edit made in Marfa. An item reads `read_only` as `true` when every connector for its source whose live key may write its type lists the type. The types needn't be registered. Leaving it out clears the list.",
       ),
   })
   .meta(CLOSED_BY_HANDLER);

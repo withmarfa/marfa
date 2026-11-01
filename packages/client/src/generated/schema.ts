@@ -2415,7 +2415,7 @@ export interface components {
             source: string;
             /** @description The item's identifier at its source. With `source`, it is the item's natural key. Absent if the writer set none. */
             source_id?: string;
-            /** @description `true` if at least one connector with a live key owns or claims the item's `source` and every such connector lists the item's type in `read_only_types`, so it puts back an edit made in Marfa on its next run. Marfa doesn't refuse the edit. */
+            /** @description `true` if at least one connector with a live key that may write the item's type owns or claims the item's `source` and every such connector lists the type in `read_only_types`, so it puts back an edit made in Marfa on its next run. Marfa doesn't refuse the edit. */
             read_only: boolean;
             /** @description The latitude where the item was captured. Absent if the writer set none. */
             capture_latitude?: number;
@@ -21923,7 +21923,7 @@ export interface operations {
                     name: string;
                     /** @description What the connector does. Leave it out for none: registering again without it clears the old one. */
                     description?: string;
-                    /** @description The types whose items the connector holds read only, putting back any edit made in Marfa. An item reads `read_only` as `true` when every live connector for its source lists its type. The types needn't be registered. Leaving it out clears the list. */
+                    /** @description The types whose items the connector holds read only, putting back any edit made in Marfa. An item reads `read_only` as `true` when every connector for its source whose live key may write its type lists the type. The types needn't be registered. Leaving it out clears the list. */
                     read_only_types?: string[];
                 };
             };
