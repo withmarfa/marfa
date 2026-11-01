@@ -1,14 +1,13 @@
 import type { McpServer } from "@modelcontextprotocol/server";
 import * as z from "zod";
 import { SIGN_IN_NAME_MAX } from "../../auth/sign-in-names.js";
-import { SOURCE_CODE_MAX } from "../../auth/source-codes.js";
+import { isSourceCode } from "../../auth/source-codes.js";
 import type { ToolContext } from "../context.js";
 import { ANSWER_BUDGET_CHARS, fail, fitList, ok, refused } from "../results.js";
 
 const sourceCode = z
   .string()
-  .min(1)
-  .max(SOURCE_CODE_MAX)
+  .refine(isSourceCode, { message: "Invalid source code" })
   .describe("A source code, such as `github`.");
 
 const sourceShape = z.looseObject({ source: z.string(), name: z.string() });

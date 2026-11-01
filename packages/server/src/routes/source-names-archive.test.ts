@@ -202,7 +202,11 @@ describe("source names in an archive", () => {
       200,
     );
     const target = await newContext();
-    const restored = await restore(target, await ownerExport(source));
+    const archive = await ownerExport(source);
+    expect(sourceLines(await extractArchive(archive))).toEqual([
+      { source: code, name: "Long app", mark: null },
+    ]);
+    const restored = await restore(target, archive);
     expect(restored.status, await restored.clone().text()).toBe(200);
     const held = `restored:${code}`;
     expect(held).toHaveLength(209);
@@ -213,10 +217,12 @@ describe("source names in an archive", () => {
     expect(read.status, await read.clone().text()).toBe(200);
     const again = await target.ownerRequest("/export?format=archive");
     expect(again.status, await again.clone().text()).toBe(200);
+    const exported = Buffer.from(await again.arrayBuffer());
+    expect(sourceLines(await extractArchive(exported))).toEqual([
+      { source: held, name: "Long app", mark: null },
+    ]);
     const next = await newContext();
-    expect(
-      (await restore(next, Buffer.from(await again.arrayBuffer()))).status,
-    ).toBe(200);
+    expect((await restore(next, exported)).status).toBe(200);
     expect((await next.storage.sources.get(held))?.name).toBe("Long app");
   });
 
@@ -246,6 +252,8 @@ describe("source names in an archive", () => {
     for (const line of [
       { source: { name: "No code" } },
       { source: { source: " padded ", name: "Padded" } },
+      { source: { source: "c".repeat(201), name: "Too long" } },
+      { source: { source: `restored:${"c".repeat(201)}`, name: "Too long" } },
       { source: { source: "empty" } },
       { source: { source: "bad-name", name: "a‮b" } },
       { source: { source: "bad-mark", mark: 7 } },

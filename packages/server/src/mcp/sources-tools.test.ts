@@ -74,6 +74,36 @@ describe("the source tools", () => {
     });
   });
 
+  it.each(["marfa_sources", "marfa_name_source"])(
+    "%s validates source codes before checking access",
+    async (tool) => {
+      for (const source of [
+        `oauth:${"c".repeat(194)}`,
+        `restored:oauth:${"c".repeat(194)}`,
+      ]) {
+        const answer = await callTool(client, tool, {
+          source,
+          ...(tool === "marfa_name_source" ? { name: "Long app" } : {}),
+        });
+        expect(errorOf(answer).code).toBe(
+          tool === "marfa_sources" ? "source_not_found" : "forbidden",
+        );
+      }
+      for (const source of [
+        `oauth:${"c".repeat(195)}`,
+        `oauth:${"c".repeat(203)}`,
+        " padded",
+      ]) {
+        const answer = await callTool(client, tool, {
+          source,
+          ...(tool === "marfa_name_source" ? { name: "Long app" } : {}),
+        });
+        expect(answer.isError).toBe(true);
+        expect(answer.text).toContain("Invalid source code");
+      }
+    },
+  );
+
   it("is refused another source, and a source it cannot see", async () => {
     const other = errorOf(
       await callTool(client, "marfa_name_source", {

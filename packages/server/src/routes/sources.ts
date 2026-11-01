@@ -8,7 +8,7 @@ import {
   resolveEnforcement,
 } from "@withmarfa/shared";
 import { SIGN_IN_NAME_MAX, usableSignInName } from "../auth/sign-in-names.js";
-import { SOURCE_CODE_MAX } from "../auth/source-codes.js";
+import { isSourceCode } from "../auth/source-codes.js";
 import type { AppEnv } from "../middleware/auth.js";
 import {
   authorityId,
@@ -63,10 +63,9 @@ export const SourceSchema = z
   });
 
 const SourceCodeQuery = z.object({
-  source: maxStringLength(z.string().min(1), SOURCE_CODE_MAX)
-    .refine((code) => code === code.trim(), {
-      message: "source can't start or end with a space",
-    })
+  source: z
+    .string()
+    .refine(isSourceCode, { message: "Invalid source code" })
     .describe(
       "The source code. It's a query parameter because a code such as `..` or one holding `/` can't travel safely in a path.",
     )
@@ -107,7 +106,7 @@ const badCode = {
     },
   },
   description:
-    "- `missing_required_field`: `source` is missing.\n- `validation_error`: `source` isn't 1 to 209 characters or starts or ends with a space, or the query has a parameter this endpoint doesn't take.",
+    "- `missing_required_field`: `source` is missing.\n- `validation_error`: `source` is empty, padded, or over 200 characters excluding a leading `restored:`, or the query has a parameter this endpoint doesn't take.",
 };
 
 const unauthorized = {
@@ -212,7 +211,7 @@ const updateSourceRoute = createRoute({
         },
       },
       description:
-        "- `missing_required_field`: `source` is missing.\n- `validation_error`: `source` isn't 1 to 209 characters or starts or ends with a space, `name` is empty, too long or holds a control character, the body has a field this endpoint doesn't take, or the query has a parameter it doesn't take.\n- `invalid_schema`: `mark` isn't the ID of an icon in a pinned set (`details.errors` names it).",
+        "- `missing_required_field`: `source` is missing.\n- `validation_error`: `source` is empty, padded, or over 200 characters excluding a leading `restored:`, `name` is empty, too long or holds a control character, the body has a field this endpoint doesn't take, or the query has a parameter it doesn't take.\n- `invalid_schema`: `mark` isn't the ID of an icon in a pinned set (`details.errors` names it).",
     },
     401: unauthorized,
     403: {

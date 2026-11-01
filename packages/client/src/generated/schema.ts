@@ -25563,7 +25563,7 @@ export interface operations {
             };
             /**
              * @description - `missing_required_field`: `source` is missing.
-             *     - `validation_error`: `source` isn't 1 to 209 characters or starts or ends with a space, or the query has a parameter this endpoint doesn't take.
+             *     - `validation_error`: `source` is empty, padded, or over 200 characters excluding a leading `restored:`, or the query has a parameter this endpoint doesn't take.
              */
             400: {
                 headers: {
@@ -25718,7 +25718,7 @@ export interface operations {
             };
             /**
              * @description - `missing_required_field`: `source` is missing.
-             *     - `validation_error`: `source` isn't 1 to 209 characters or starts or ends with a space, `name` is empty, too long or holds a control character, the body has a field this endpoint doesn't take, or the query has a parameter it doesn't take.
+             *     - `validation_error`: `source` is empty, padded, or over 200 characters excluding a leading `restored:`, `name` is empty, too long or holds a control character, the body has a field this endpoint doesn't take, or the query has a parameter it doesn't take.
              *     - `invalid_schema`: `mark` isn't the ID of an icon in a pinned set (`details.errors` names it).
              */
             400: {

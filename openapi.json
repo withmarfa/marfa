@@ -49729,8 +49729,6 @@
           {
             "schema": {
               "type": "string",
-              "minLength": 1,
-              "maxLength": 209,
               "description": "The source code. It's a query parameter because a code such as `..` or one holding `/` can't travel safely in a path.",
               "example": "github"
             },
@@ -49769,7 +49767,7 @@
             }
           },
           "400": {
-            "description": "- `missing_required_field`: `source` is missing.\n- `validation_error`: `source` isn't 1 to 209 characters or starts or ends with a space, or the query has a parameter this endpoint doesn't take.",
+            "description": "- `missing_required_field`: `source` is missing.\n- `validation_error`: `source` is empty, padded, or over 200 characters excluding a leading `restored:`, or the query has a parameter this endpoint doesn't take.",
             "content": {
               "application/json": {
                 "schema": {
@@ -50002,8 +50000,6 @@
           {
             "schema": {
               "type": "string",
-              "minLength": 1,
-              "maxLength": 209,
               "description": "The source code. It's a query parameter because a code such as `..` or one holding `/` can't travel safely in a path.",
               "example": "github"
             },
@@ -50083,7 +50079,7 @@
             }
           },
           "400": {
-            "description": "- `missing_required_field`: `source` is missing.\n- `validation_error`: `source` isn't 1 to 209 characters or starts or ends with a space, `name` is empty, too long or holds a control character, the body has a field this endpoint doesn't take, or the query has a parameter it doesn't take.\n- `invalid_schema`: `mark` isn't the ID of an icon in a pinned set (`details.errors` names it).",
+            "description": "- `missing_required_field`: `source` is missing.\n- `validation_error`: `source` is empty, padded, or over 200 characters excluding a leading `restored:`, `name` is empty, too long or holds a control character, the body has a field this endpoint doesn't take, or the query has a parameter it doesn't take.\n- `invalid_schema`: `mark` isn't the ID of an icon in a pinned set (`details.errors` names it).",
             "content": {
               "application/json": {
                 "schema": {

@@ -923,7 +923,7 @@ The server MUST take the source code of `GET /source` and `PATCH /source` from t
 
 ### `keys-and-oauth/source-code-length`
 
-The server MUST take a source code of 1 to 209 UTF-16 code units, with no space at either end, at `GET /source`, `PATCH /source` and every other door that takes one.
+The server MUST take a nonempty source code with no space at either end at `GET /source`, `PATCH /source` and every other door that takes one only if it is at most 200 UTF-16 code units long or is `restored:` followed by at most 200 UTF-16 code units.
 
 **Reason:** a key holds a source of at most 200 code units, and a restore puts `restored:`, 9 more, before an app's source of that length, so no door may refuse a code the instance can hold.
 

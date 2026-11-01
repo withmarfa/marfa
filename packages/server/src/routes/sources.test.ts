@@ -502,6 +502,18 @@ describe("reading sources", () => {
     expect(byState.active).toBeGreaterThan(0);
   });
 
+  it.each([200, 201, 209])(
+    "validates a %i-character OAuth source on PATCH and GET",
+    async (length) => {
+      const source = `oauth:${"c".repeat(length - 6)}`;
+      const expected = length === 200 ? 200 : 400;
+      const patched = await ownerPatch(source, { name: "Long app" });
+      expect(patched.status, await patched.clone().text()).toBe(expected);
+      const read = await ctx.ownerRequest(`/source${query(source)}`);
+      expect(read.status, await read.clone().text()).toBe(expected);
+    },
+  );
+
   it("takes a code as long as a restore can make one, and refuses one longer", async () => {
     const longest = `restored:oauth:${"c".repeat(194)}`;
     expect(longest).toHaveLength(209);
