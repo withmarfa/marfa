@@ -3071,6 +3071,8 @@ describe("embedded files", () => {
       ["sub/near.png", 4],
       ["far.png", 5],
       ["sub/x.png", 6],
+      ["my_pic one.png", 7],
+      ["sub/sized.png", 8],
     ];
     for (const [name, last] of files) {
       mkdirSync(join(harness.dir, name, ".."), { recursive: true });
@@ -3086,6 +3088,8 @@ describe("embedded files", () => {
         "![](/img/rooted.png#part)",
         "![[./near.png]]",
         "![[../far.png]]",
+        "![](../my\\_pic%20one.png)",
+        "| h | h |\n| - | - |\n| a | ![[sized.png\\|200]] |",
         // Addresses, never a file here, though a file of the name is.
         "![](https://example.com/x.png) ![](//cdn.example.com/x.png) ![](#x.png)",
         "![](../../away.png)",
@@ -3102,11 +3106,13 @@ describe("embedded files", () => {
       "Note",
       "far.png",
       "my image.png",
+      "my_pic one.png",
       "near.png",
       "query.png",
       "rooted.png",
+      "sized.png",
     ]);
-    expect(heldEdges(edges)).toHaveLength(10);
+    expect(heldEdges(edges)).toHaveLength(14);
     expect(
       pushed.value.scan.embeds,
       "a path read as Obsidian reads it was reported, or the one leading out was not",

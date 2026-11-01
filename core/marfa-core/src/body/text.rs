@@ -261,6 +261,7 @@ pub(crate) fn embeds(body: &str) -> Vec<Embed> {
         .filter(|found| found.embed)
         .peekable();
     let mut found: Vec<Embed> = Vec::new();
+    let mut table_cells: Option<Vec<Range<usize>>> = None;
     let mut at = 0usize;
     while let Some(start) = text[at..].find("![") {
         let open = at + start;
@@ -272,7 +273,17 @@ pub(crate) fn embeds(body: &str) -> Vec<Embed> {
         let (embed, used) = if rest.starts_with('[') {
             match named.next_if(|bracket| bracket.whole.start == open) {
                 Some(bracket) => {
-                    let name = Typed::new(&body[bracket.inner]).name;
+                    let inner = &body[bracket.inner.clone()];
+                    let in_cell = inner.contains("\\|")
+                        && table_cells
+                            .get_or_insert_with(|| table_cells_of(&text))
+                            .iter()
+                            .any(|cell| cell.contains(&bracket.whole.start));
+                    let name = if in_cell {
+                        Typed::new(&inner.replace("\\|", "|")).name
+                    } else {
+                        Typed::new(inner).name
+                    };
                     let embed = (!name.is_empty()).then(|| Embed::Named {
                         raw: body[bracket.whole.clone()].to_string(),
                         name,
@@ -313,6 +324,21 @@ pub(crate) fn embeds(body: &str) -> Vec<Embed> {
         at = open + used;
     }
     found
+}
+
+/// The byte ranges of the table cells in `text`, in a quote or a callout too.
+/// A table is no part of how code is found, so this is a pass of its own.
+fn table_cells_of(text: &str) -> Vec<Range<usize>> {
+    pulldown_cmark::Parser::new_ext(text, pulldown_cmark::Options::ENABLE_TABLES)
+        .into_offset_iter()
+        .filter_map(|(event, range)| {
+            matches!(
+                event,
+                pulldown_cmark::Event::Start(pulldown_cmark::Tag::TableCell)
+            )
+            .then_some(range)
+        })
+        .collect()
 }
 
 /// A body with its code and comments blanked, byte for byte, since Obsidian
@@ -458,22 +484,32 @@ fn is_address(destination: &str) -> bool {
             .all(|glyph| glyph.is_ascii_alphanumeric() || matches!(glyph, '+' | '.' | '-'))
 }
 
+/// The file a destination names: a backslash before ASCII punctuation is
+/// that character (CommonMark's escape), a percent escape is its byte, and an
+/// unescaped `?` or `#` ends the path. One pass, so `%5C` is a backslash
+/// and no escape.
 fn local(destination: &str) -> String {
-    let path = destination.split(['?', '#']).next().unwrap_or_default();
-    let bytes = path.as_bytes();
+    let bytes = destination.as_bytes();
     let mut decoded = Vec::with_capacity(bytes.len());
     let mut at = 0;
     while at < bytes.len() {
-        if bytes[at] == b'%'
-            && let Some(byte) = path
+        match bytes[at] {
+            b'?' | b'#' => break,
+            b'\\' if bytes.get(at + 1).is_some_and(u8::is_ascii_punctuation) => {
+                decoded.push(bytes[at + 1]);
+                at += 2;
+            }
+            b'%' if let Some(byte) = destination
                 .get(at + 1..at + 3)
-                .and_then(|hex| u8::from_str_radix(hex, 16).ok())
-        {
-            decoded.push(byte);
-            at += 3;
-        } else {
-            decoded.push(bytes[at]);
-            at += 1;
+                .and_then(|hex| u8::from_str_radix(hex, 16).ok()) =>
+            {
+                decoded.push(byte);
+                at += 3;
+            }
+            byte => {
+                decoded.push(byte);
+                at += 1;
+            }
         }
     }
     String::from_utf8_lossy(&decoded).into_owned()
@@ -741,6 +777,57 @@ mod tests {
                 path("![](y.png 'title')", "y.png"),
             ],
             "a raw space was read as ending the path, or a title as part of it"
+        );
+    }
+
+    fn named(raw: &str, name: &str) -> Embed {
+        Embed::Named {
+            raw: raw.into(),
+            name: name.into(),
+        }
+    }
+
+    #[test]
+    fn a_sized_embed_in_a_table_cell_reads_its_escaped_pipe_as_the_bar() {
+        let table = "| h | h |\n| - | - |\n| a | ![[t.png\\|200]] |";
+        assert_eq!(
+            embeds(table),
+            vec![named("![[t.png\\|200]]", "t.png")],
+            "the escaped pipe cut the name at the backslash"
+        );
+        let callout = "> [!note]\n> | h | h |\n> | - | - |\n> | a | ![[t.png\\|200]] |";
+        assert_eq!(embeds(callout), vec![named("![[t.png\\|200]]", "t.png")]);
+        // Witnesses: the same text outside a table keeps the backslash.
+        assert_eq!(
+            embeds("| a | ![[t.png\\|200]] |"),
+            vec![named("![[t.png\\|200]]", "t.png\\")],
+            "a line that is no table cell read the backslash as an escape"
+        );
+        assert_eq!(
+            embeds("![[t.png\\|200]]"),
+            vec![named("![[t.png\\|200]]", "t.png\\")]
+        );
+    }
+
+    #[test]
+    fn an_embed_path_reads_markdown_escapes_and_percent_escapes_once() {
+        let path = |text: &str| match embeds(text).remove(0) {
+            Embed::Path { path, .. } | Embed::Spaced { path, .. } => path,
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(path("![](my\\_pic.png)"), "my_pic.png");
+        assert_eq!(path("![](my\\_pic%20one.png)"), "my_pic one.png");
+        assert_eq!(path("![](<my\\_pic.png>)"), "my_pic.png");
+        assert_eq!(path("![](<my\\_pic one.png>)"), "my_pic one.png");
+        assert_eq!(path("![](my\\_pic one.png)"), "my_pic one.png");
+        assert_eq!(path("![](a\\b.png)"), "a\\b.png");
+        assert_eq!(path("![](my%5C_pic.png)"), "my\\_pic.png");
+        assert_eq!(path("![](a\\%41.png)"), "a%41.png");
+        assert_eq!(path("![](a\\#b.png#frag)"), "a#b.png");
+        assert_eq!(
+            embeds("![[my\\_pic.png]]"),
+            vec![named("![[my\\_pic.png]]", "my\\_pic.png")],
+            "a wiki embed's name was unescaped, which Obsidian does not do"
         );
     }
 }

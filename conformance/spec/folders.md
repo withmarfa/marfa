@@ -2360,7 +2360,15 @@ When a Markdown embed names a path, a device MUST resolve it relative to the emb
 
 ### `folders/embed-path-escapes`
 
-When resolving an embed path, a device MUST decode percent escapes and remove its query or fragment.
+When resolving an embed path, a device MUST read it as `device/embed-path-markdown-escape` reads an embed path, and remove its query or fragment.
+
+**Reason:** a Markdown editor escapes an underscore in a file name as `\_`, and a folder's embed reads the same path as a working copy's body does.
+
+**Tests:** `device/folders-frontmatter.test.ts › reads an embed's path as Obsidian reads one`.
+
+### `folders/embed-table-pipe`
+
+When an embed in a document's body sits inside a table cell, a device MUST read its name as `device/embed-table-pipe` reads it.
 
 **Tests:** `device/folders-frontmatter.test.ts › reads an embed's path as Obsidian reads one`.
 
