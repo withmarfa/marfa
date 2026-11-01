@@ -2260,7 +2260,7 @@ While a body link is unresolved, a device MUST retain the document's existing re
 
 ### `folders/body-link-retitled`
 
-When a pull finds that a wiki link in a document's body names, by a title or a file name, an item the device's record of the body resolves it to, and that name no longer answers to the item, a device MUST rewrite only the name part of the link in the document's file to the item's current title, keeping the link's heading, block reference, and alias, and leaving links by ID, Markdown links, embeds, links in code or comments, and frontmatter lines unchanged.
+When a pull finds that a wiki link in a document's body names, by a title or a file name, an item the device's record of the body resolves it to, and that name no longer answers to the item, a device MUST rewrite only the name part of the link in the document's file to the item's current title, or to its ID where `folders/body-link-retitled-id` applies, keeping the link's heading, block reference, and alias, and leaving links by ID, Markdown links, embeds, links in code or comments, and frontmatter lines unchanged.
 
 **Reason:** a person who retitles a note expects the links to it to follow, as Obsidian rewrites them. Without the rewrite the body keeps a name that the next reader, or another app, resolves to nothing or to another item. Only the name changes, so the link still shows what the person wrote. The device sends the rewritten body as an update conditioned on the exact version it read (`versions/exact-match`), so where two folders or two Macs rewrite the same document, one rewrite lands and the others take its answer.
 
@@ -2289,6 +2289,30 @@ When the item's current title is empty, is not a name a wiki link can hold, or a
 **Reason:** a title that names two items would make the link ambiguous (`folders/body-link-ambiguity`). The ID names the item alone, and the alias keeps what the reader sees.
 
 **Tests:** `device/folders-retitled-links.test.ts › names the item by its id where its new title names another item too`.
+
+### `folders/body-link-retitled-reparsed`
+
+If a document's body, with its links renamed to the items' titles for `folders/body-link-retitled`, would not read as the same links in the same order naming the items meant, with the same embeds and the same cells in each table row, then a device MUST rename those links to the items' IDs as `folders/body-link-retitled-id` does.
+
+**Reason:** a title can hold characters that change how the text around the link reads. A title with a backtick or `<!--` opens a code span or a comment that hides the links after it, so the next scan would end their `references` edges. An ID holds none of these characters.
+
+**Tests:** `device/folders-retitled-links.test.ts › names the item by its id where its new title would open %s over the text after the link`.
+
+### `folders/body-link-retitled-unparsed`
+
+If a document's body, with its links renamed to the items' IDs for `folders/body-link-retitled-id`, would not read as the same links in the same order naming the items meant, with the same embeds and the same cells in each table row, then a device MUST NOT rewrite the document's links.
+
+**Reason:** a rewrite that changes what the body links to, embeds or lays out in a table changes what the person wrote. A link by ID in a table row carries its alias behind `\|`, as Obsidian writes it, so the bar does not end the cell. A device that reads `\|` as part of the link's name would read that link as naming nothing, so the document keeps its old links until it can.
+
+**Tests:** `device/folders-retitled-links.test.ts › leaves a document alone where a link by id would sit in a table row`.
+
+### `folders/body-link-retitled-behind`
+
+If a rewrite of a document's links for `folders/body-link-retitled` is answered `version_conflict`, then a device MUST send each write queued behind the rewrite as it would have sent it had the rewrite never been queued.
+
+**Reason:** the rewrite is the device's own, and the person never made it. Their edit made while it waited is theirs, so it is never refused, dropped or held because the rewrite lost to another writer.
+
+**Tests:** `device/folders-retitled-links.test.ts › lands an edit the person made behind a rewrite another machine beat`.
 
 ### `folders/body-link-retitled-unflagged`
 
