@@ -44,7 +44,7 @@ export const SERVER_INSTRUCTIONS = [
 /** Which API operations each tool calls, for the drift test. */
 export const TOOL_OPERATIONS = {
   marfa_overview: ["getOverview", "getType"],
-  marfa_find: ["searchItems", "listItems", "listViewItems"],
+  marfa_find: ["searchItems", "listItems", "listViewItems", "getType"],
   marfa_get: ["bulkGetItems", "getItem", "getBlobUrl"],
   marfa_create: ["createItem", "uploadBlob", "createEdge"],
   marfa_update: [

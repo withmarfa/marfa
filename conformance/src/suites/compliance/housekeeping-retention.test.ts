@@ -420,3 +420,71 @@ describe("a bin holding more than one run of trash-purge removes", () => {
     4 * FRESH_SERVER_TIMEOUT_MS,
   );
 });
+
+describe("trash-purge and the parts a host's trash took", () => {
+  it(
+    "purges a part with the host that took it, however recently, and leaves one trashed on its own",
+    async () => {
+      const server = await bootFreshServer("retention-parts", QUIET_SCHEDULE);
+      await quiet(server, ["trash-purge"]);
+      const writer = writerOf(server);
+      const config = (await writer.getConfig()).data as Record<string, unknown>;
+      const set = await writer.updateConfig({
+        ...config,
+        trash_retention_days: 1,
+      });
+      expect(set.status, JSON.stringify(set.error)).toBe(200);
+
+      const note = async (body: string): Promise<string> => {
+        const r = await writer.createItem({
+          type: "core.note",
+          properties: { body },
+        });
+        expect(r.ok, JSON.stringify(r.error)).toBe(true);
+        return r.data.item.id;
+      };
+      const link = async (part: string, host: string): Promise<void> => {
+        const r = await writer.createEdge({
+          source_id: part,
+          target_id: host,
+          edge_type: "comments-on",
+        });
+        expect(r.ok, JSON.stringify(r.error)).toBe(true);
+      };
+      const host = await note("host");
+      const taken = await note("taken");
+      const reply = await note("reply");
+      const alone = await note("alone");
+      await link(taken, host);
+      await link(reply, taken);
+      await link(alone, host);
+      expect((await writer.deleteItem(alone)).ok).toBe(true);
+      expect((await writer.deleteItem(host)).ok).toBe(true);
+
+      const binned = async (): Promise<string[]> => {
+        const r = await writer.listItems({ state: "trashed", limit: 100 });
+        expect(r.ok, JSON.stringify(r.error)).toBe(true);
+        return r.data.data.map((item) => item.id).sort();
+      };
+      // The witness: the host's trash took its parts, and nothing is old
+      // enough to purge.
+      expect(await binned()).toEqual([host, taken, reply, alone].sort());
+
+      // Past the retention for the host and its parts. A late part goes to
+      // the bin with its host now, so the retention has not passed for it,
+      // nor for the part trashed on its own, put back and trashed again.
+      await movedClock(server).advance(2 * DAY_MS);
+      const late = await note("late");
+      await link(late, host);
+      expect((await writer.restoreItem(alone)).ok).toBe(true);
+      expect((await writer.deleteItem(alone)).ok).toBe(true);
+      expect(await binned()).toEqual([host, taken, reply, alone, late].sort());
+
+      const run = await runJob(server, "trash-purge");
+      expect(run.outcome, String(run.error)).toBe("ok");
+      expect(run.result).toEqual({ deleted: 4 });
+      expect(await binned()).toEqual([alone]);
+    },
+    4 * FRESH_SERVER_TIMEOUT_MS,
+  );
+});

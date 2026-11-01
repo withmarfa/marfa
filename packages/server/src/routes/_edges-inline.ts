@@ -4,15 +4,24 @@ import {
   assertEdgesCanBeCreated,
   type EdgeProposal,
 } from "../storage/edge-constraints.js";
-import type { Storage } from "../storage/interface.js";
-import type { Edge } from "@withmarfa/shared";
-import { announcedSource, publishEdge } from "../pubsub.js";
+import type { CascadeRoot, Storage } from "../storage/interface.js";
+import type { Edge, Item } from "@withmarfa/shared";
+import { announcedSource, publish, publishEdge } from "../pubsub.js";
 import { edgeSourcesFor } from "./_edge-visibility.js";
+
+/** A row a late part's edge put in the bin with its hosts, as it now
+ *  stands, and the host the edge named. */
+export interface SettledPart {
+  item: Item;
+  trashedWith: CascadeRoot;
+}
 
 /** What one `applyInlineEdges` call changed. */
 export interface InlineEdgeChanges {
   created: Edge[];
   deleted: Edge[];
+  /** The rows the created edges put in the bin (`settleLateParts`). */
+  settled?: SettledPart[];
 }
 
 /**
@@ -173,5 +182,19 @@ export async function announceInlineEdges(
       ...announcedSource(sources.get(edge.source_id)),
       enableFanout,
     });
+  }
+  await announceSettledParts(changes.settled ?? [], enableFanout);
+}
+
+/**
+ * Announce the rows a late part's edge put in the bin, after the edge that
+ * did it, each as a cascade's row with the host it went with.
+ */
+export async function announceSettledParts(
+  settled: readonly SettledPart[],
+  enableFanout = true,
+): Promise<void> {
+  for (const { item, trashedWith } of settled) {
+    await publish({ type: "deleted", item, trashedWith, enableFanout });
   }
 }

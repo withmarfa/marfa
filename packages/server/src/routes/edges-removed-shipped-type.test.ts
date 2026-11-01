@@ -70,7 +70,7 @@ describe("an edge type the code no longer ships", () => {
     const types = await listedTypes();
     expect(types).toContain("about");
     expect(types).not.toContain(REMOVED);
-    expect(types.filter((id) => !id.includes("."))).toHaveLength(10);
+    expect(types.filter((id) => !id.includes("."))).toHaveLength(11);
   });
 
   it("leaves a stored edge readable and deletable", async () => {

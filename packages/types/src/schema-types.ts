@@ -292,8 +292,11 @@ export type EdgeCardinality =
  * - orphan: when either endpoint is deleted, just remove the edge row; the
  *   other endpoint stays.
  * - block: reject the item delete if any edge of this type exists.
+ * - with-hosts: the source is a part of the target, its host. The part goes
+ *   to the bin once every host is in the bin and comes back when any host
+ *   does.
  */
-export type EdgeCascade = "cascade" | "orphan" | "block";
+export type EdgeCascade = "cascade" | "orphan" | "block" | "with-hosts";
 
 export interface EdgeTypeSchema {
   id: string;

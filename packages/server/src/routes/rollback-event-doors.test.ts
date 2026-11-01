@@ -1286,8 +1286,8 @@ const PUBLISHES_UNDER_GUARD: Record<string, PublishingFile> = {
     why: "update_tags, per row; every other arm writes through the item write, which announces",
   },
   "routes/_edges-inline.ts": {
-    sites: 2,
-    why: "the shared inline-edge announcer, reached only by doors that have a row",
+    sites: 3,
+    why: "the shared inline-edge announcer and the item.deleted of a part an edge to a host in the bin takes, reached only by doors that have a row",
   },
 };
 

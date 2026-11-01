@@ -20,12 +20,27 @@ const attachedTo: EdgeTypeSchema = {
   id: "attached-to",
   label: "Attached to",
   reverse_label: "Attachments",
-  description: "Source is a file attached to the target. Many-to-many: a file may be attached to multiple hosts; a host may have multiple attachments. Deleting the host orphans the attachment (it may still be attached to other items). The attachment's own file writes the edge, saying what it was made for; where the attachment cannot carry frontmatter, such as an image, the host's file writes it under the reverse name, `has-attachment`.",
+  description: "Source exists only for the item or items it is attached to, whoever or whatever made it: a file, a scan, a page of a scan, a clip. Many-to-many: a part may be attached to several hosts; a host may have several attachments. The source goes to the trash with its hosts once all of them are in the trash, and comes back when any of them is restored; removing the edge never trashes it. Carries an optional position for ordered parts, such as the pages of a scan. The attachment's own file writes the edge, saying what it was made for; where the attachment cannot carry frontmatter, such as an image, the host's file writes it under the reverse name, `has-attachment`.",
   cardinality: "many-to-many",
   source_type_constraints: ["*"],
   target_type_constraints: ["*"],
-  cascade_on_delete: "orphan",
+  cascade_on_delete: "with-hosts",
   reverse_name: "has-attachment",
+  written_at: "source",
+  property_schema: {
+    position: { type: "number", description: "Ordering among the host's attachments, such as the page of a scan (1-based)." },
+  },
+};
+
+const commentsOn: EdgeTypeSchema = {
+  id: "comments-on",
+  label: "Comment on",
+  reverse_label: "Comments",
+  description: "Source is a comment on the target: a comment, a reply to another comment, a review comment, a suggestion or a review verdict. Many-to-one: a comment is on one item; an item may have many comments. A reply is a comment on the comment it answers. The source goes to the trash with its target and comes back when the target is restored; removing the edge never trashes it.",
+  cardinality: "many-to-one",
+  source_type_constraints: ["*"],
+  target_type_constraints: ["*"],
+  cascade_on_delete: "with-hosts",
   written_at: "source",
   property_schema: {},
 };
@@ -144,6 +159,7 @@ const supersedes: EdgeTypeSchema = {
 export const ALL_EDGE_TYPES: EdgeTypeSchema[] = [
   about,
   attachedTo,
+  commentsOn,
   derivedFrom,
   excerptOf,
   inCollection,
@@ -169,9 +185,25 @@ export const SHIPPED_EDGE_TYPE_SHAPES = {
   },
   "attached-to": {
     "cardinality": "many-to-many",
-    "cascade_on_delete": "orphan",
-    "property_schema": {},
+    "cascade_on_delete": "with-hosts",
+    "property_schema": {
+      "position": {
+        "type": "number"
+      }
+    },
     "reverse_name": "has-attachment",
+    "source_type_constraints": [
+      "*"
+    ],
+    "target_type_constraints": [
+      "*"
+    ],
+    "written_at": "source"
+  },
+  "comments-on": {
+    "cardinality": "many-to-one",
+    "cascade_on_delete": "with-hosts",
+    "property_schema": {},
     "source_type_constraints": [
       "*"
     ],

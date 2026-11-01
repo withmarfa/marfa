@@ -650,3 +650,146 @@ describe("a delete refused for a live grant it would take with it", () => {
     FRESH_SERVER_TIMEOUT_MS * 2,
   );
 });
+
+// A part goes with its hosts judged over every row, whatever the key reads,
+// and a key is told only of rows it may read.
+describe("parts and hosts a key cannot read", () => {
+  /** Writes notes and every edge type, and holds nothing on bookmarks. */
+  let writer: MarfaClient;
+
+  beforeAll(async () => {
+    const minted = await client.createKey({
+      label: "edge-hidden-limits-parts",
+      source: `${ctx.source}-edge-hidden-parts`,
+      permissions: [],
+      type_permissions: { "core.note": "write" },
+      edge_permissions: { "*": "write" },
+    });
+    expect(minted.ok).toBe(true);
+    trackKey(ctx, minted.data.id);
+    writer = new MarfaClient({ baseUrl: apiUrl, apiKey: minted.data.key });
+  });
+
+  async function note(tag: string): Promise<string> {
+    const r = await client.createItem(createNote({ tags: [tag] }));
+    expect(r.status).toBe(201);
+    trackItem(ctx, r.data.item.id);
+    return r.data.item.id;
+  }
+
+  async function bookmark(tag: string): Promise<string> {
+    const r = await client.createItem(
+      createBookmark({ source: ctx.source, tags: [tag] }),
+    );
+    expect(r.status).toBe(201);
+    trackItem(ctx, r.data.item.id);
+    return r.data.item.id;
+  }
+
+  async function attach(part: string, host: string): Promise<void> {
+    const r = await client.createEdge({
+      source_id: part,
+      target_id: host,
+      edge_type: "attached-to",
+    });
+    expect(r.status, JSON.stringify(r.error)).toBe(201);
+    trackEdge(ctx, r.data.edge.id);
+  }
+
+  async function stateOf(id: string): Promise<string | undefined> {
+    const r = await client.getItem(id);
+    return r.ok ? r.data.item.state : "trashed";
+  }
+
+  it("takes and brings back a part whose other host is hidden and in the bin, naming no hidden row", async () => {
+    const tag = `parts-hidden-host-${ctx.runId}`;
+    const host = await note(tag);
+    const secret = await bookmark(tag);
+    const part = await note(tag);
+    await attach(part, host);
+    await attach(part, secret);
+    expect((await client.deleteItem(secret)).status).toBe(200);
+    expect(await stateOf(part)).toBe("active");
+
+    const preview = await writer.previewItemTrash([host]);
+    expect(preview.status, JSON.stringify(preview.error)).toBe(200);
+    expect(preview.data.items[0]?.takes.map((t) => t.id)).toEqual([part]);
+    expect(preview.data.count).toBe(2);
+    expect(JSON.stringify(preview.data)).not.toContain(secret);
+
+    const trashed = await writer.deleteItem(host);
+    expect(trashed.status).toBe(200);
+    expect(JSON.stringify(trashed.data)).not.toContain(secret);
+    expect(await stateOf(part)).toBe("trashed");
+
+    const restored = await writer.restoreItem(host);
+    expect(restored.status).toBe(200);
+    expect(JSON.stringify(restored.data)).not.toContain(secret);
+    expect(await stateOf(part)).toBe("active");
+    // The hidden host stays where its owner put it.
+    expect(await stateOf(secret)).toBe("trashed");
+  });
+
+  it("keeps a part whose hidden host is out of the bin, naming it nowhere", async () => {
+    const tag = `parts-hidden-live-${ctx.runId}`;
+    const host = await note(tag);
+    const secret = await bookmark(tag);
+    const part = await note(tag);
+    await attach(part, host);
+    await attach(part, secret);
+
+    const preview = await writer.previewItemTrash([host]);
+    expect(preview.status).toBe(200);
+    expect(preview.data.items[0]?.takes).toEqual([]);
+    expect(preview.data.count).toBe(1);
+    expect(JSON.stringify(preview.data)).not.toContain(secret);
+
+    expect((await writer.deleteItem(host)).status).toBe(200);
+    expect(await stateOf(part)).toBe("active");
+  });
+
+  it("takes and brings back a hidden part with the host the key trashes, naming it nowhere", async () => {
+    const tag = `parts-hidden-part-${ctx.runId}`;
+    const host = await note(tag);
+    const secret = await bookmark(tag);
+    await attach(secret, host);
+
+    const preview = await writer.previewItemTrash([host]);
+    expect(preview.status).toBe(200);
+    expect(preview.data.items[0]?.takes).toEqual([]);
+    expect(preview.data.count).toBe(1);
+    expect(JSON.stringify(preview.data)).not.toContain(secret);
+
+    const trashed = await writer.deleteItem(host);
+    expect(trashed.status).toBe(200);
+    expect(JSON.stringify(trashed.data)).not.toContain(secret);
+    expect(await stateOf(secret)).toBe("trashed");
+
+    const restored = await writer.restoreItem(host);
+    expect(restored.status).toBe(200);
+    expect(JSON.stringify(restored.data)).not.toContain(secret);
+    expect(await stateOf(secret)).toBe("active");
+  });
+
+  it("judges the part term over a host the key cannot read, naming none", async () => {
+    const tag = `parts-hidden-filter-${ctx.runId}`;
+    const secret = await bookmark(tag);
+    const part = await note(tag);
+    await attach(part, secret);
+
+    const listed = async () => {
+      const r = await writer.listItems({
+        tags: [tag],
+        filter: "part eq true",
+        limit: 100,
+      });
+      expect(r.status, JSON.stringify(r.error)).toBe(200);
+      expect(JSON.stringify(r.data)).not.toContain(secret);
+      return r.data.data.map((item) => item.id);
+    };
+    expect(await listed()).toEqual([part]);
+    // The witness: with its only host in the bin, it is no part.
+    expect((await client.deleteItem(secret)).status).toBe(200);
+    expect(await listed()).toEqual([]);
+  });
+});

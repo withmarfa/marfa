@@ -640,6 +640,36 @@ If a `filter` compares `status_group` with a value other than `"not_started"`, `
 
 **Tests:** `compliance/status-groups.test.ts › refuses %s with validation_error`.
 
+## The part term
+
+A `part` term selects the items that are parts of another (`edges/parts-trash`): an item out of the bin that is the source of a `with-hosts` edge whose target is out of the bin. No listing leaves parts out unless its filter says so.
+
+### `search-and-filters/part`
+
+When a `filter`, on `GET /items`, `GET /items/stats`, in a view's `query` or in a bulk action's `filter`, holds `part eq true`, the server MUST select each item out of the bin that is the source of an edge of a `with-hosts` type whose target is out of the bin.
+
+**Tests:** `correctness/edges/edges-parts.test.ts › selects parts with a host out of the bin on GET /items, stats, a saved view and a bulk filter`.
+
+### `search-and-filters/part-not`
+
+When a `filter` holds `part eq false` or `part neq true`, the server MUST select each item that `part eq true` does not select.
+
+**Reason:** a part restored on its own while its only host is in the bin is not a part, so it is listed among the rest.
+
+**Tests:** `correctness/edges/edges-parts.test.ts › selects parts with a host out of the bin on GET /items, stats, a saved view and a bulk filter`.
+
+### `search-and-filters/part-hidden-host`
+
+When a `filter` holds a `part` term, the server MUST judge it over every host of an item, whatever types the key may read.
+
+**Tests:** `compliance/edge-hidden-limits.test.ts › judges the part term over a host the key cannot read, naming none`.
+
+### `search-and-filters/part-refused`
+
+If a `filter` compares `part` with an operator other than `eq` and `neq`, or with a value other than `true` and `false`, then the server MUST answer `400 validation_error`.
+
+**Tests:** `correctness/edges/edges-parts.test.ts › refuses any other operator or value with a validation error`.
+
 ## The order of the bin
 
 ### `search-and-filters/bin-order`

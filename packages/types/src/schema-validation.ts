@@ -2455,11 +2455,12 @@ export const EDGE_CARDINALITIES: readonly EdgeCardinality[] = [
   "many-to-many",
 ];
 
-export const EDGE_CASCADES: readonly EdgeCascade[] = [
+export const EDGE_CASCADES = [
   "cascade",
   "orphan",
   "block",
-];
+  "with-hosts",
+] as const satisfies readonly EdgeCascade[];
 
 const EDGE_CARDINALITY_SET: ReadonlySet<string> = new Set(EDGE_CARDINALITIES);
 const EDGE_CASCADE_SET: ReadonlySet<string> = new Set(EDGE_CASCADES);

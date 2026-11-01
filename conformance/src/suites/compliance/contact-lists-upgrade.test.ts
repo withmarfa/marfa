@@ -14,8 +14,9 @@ import { streamHead } from "../../utils/stream-tap.js";
  * A database a release before the contact lists wrote, holding `email`,
  * `phone` and `place` on entities. The fixture writes them as the
  * undeclared properties they now are, then drops the bin-order index and the
- * `source_names` table that later versions add and stamps the database with
- * the schema version before the update, so the next start updates it.
+ * `source_names` and `trash_with_hosts` tables that later versions add and
+ * stamps the database with the schema version before the update, so the next
+ * start updates it.
  */
 const SOURCE = "contact-lists-upgrade";
 const BEFORE_CONTACT_LISTS = 3;
@@ -115,6 +116,7 @@ beforeAll(async () => {
       withInstanceDatabase(server.sqlitePath, (db) => {
         db.exec("DROP INDEX idx_items_state_binned_at");
         db.exec("DROP TABLE source_names");
+        db.exec("DROP TABLE trash_with_hosts");
         db.exec(`PRAGMA user_version = ${String(BEFORE_CONTACT_LISTS)}`);
       });
     },

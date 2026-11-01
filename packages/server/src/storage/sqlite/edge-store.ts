@@ -531,7 +531,7 @@ export class SqliteEdgeStore implements EdgeStore {
   }
 
   async wouldCreateCycle(
-    edgeType: string,
+    edgeTypes: readonly string[],
     sourceId: string,
     targetId: string,
     pendingEdges: { source_id: string; target_id: string }[],
@@ -547,7 +547,7 @@ export class SqliteEdgeStore implements EdgeStore {
         ),
         relation(source_id, target_id) AS (
           SELECT source_id, target_id FROM edges
-          WHERE edge_type = ${edgeType}
+          WHERE edge_type IN (SELECT value FROM json_each(${JSON.stringify(edgeTypes)}))
           UNION ALL
           SELECT source_id, target_id FROM pending
         ),

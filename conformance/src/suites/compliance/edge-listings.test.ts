@@ -30,6 +30,7 @@ const SHIPPED_EDGE_TYPES = [
   "attached-to",
   "derived-from",
   "excerpt-of",
+  "comments-on",
   "supersedes",
   "references",
   "in-collection",
@@ -158,9 +159,12 @@ describe("the edge listings", () => {
     const aboutEdge = await makeEdge(source, target, "about");
     const extraEdge = await makeEdge(source, target, extra);
 
-    const ten = SHIPPED_EDGE_TYPES.join(",");
-    const eleven = [...SHIPPED_EDGE_TYPES, extra].join(",");
-    expect(SHIPPED_EDGE_TYPES).toHaveLength(MAX_EDGE_TYPES);
+    // Ten shipped names make the widest filter, whatever the number of
+    // shipped types, so the eleventh name is a registered type.
+    const shipped = SHIPPED_EDGE_TYPES.slice(0, MAX_EDGE_TYPES);
+    expect(shipped).toContain("about");
+    const ten = shipped.join(",");
+    const eleven = [...shipped, extra].join(",");
 
     const fromSource = await client.listItemEdges(source, { edge_type: ten });
     expect(fromSource.status).toBe(200);

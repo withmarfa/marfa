@@ -22,10 +22,10 @@ import * as clock from "../clock.js";
 const MS_PER_DAY = 86_400_000;
 
 /**
- * The most rows one run of a purge removes, so a run's transaction, and the
- * write lock it holds, stay short. A run that leaves rows behind has the
- * housekeeping scheduler run it again at once (`hasBacklog`), so a backlog
- * is cleared a batch at a time and not a batch per interval.
+ * The most root rows one purge run selects. Each root can also purge its
+ * parts, so this does not bound the total rows removed. A run that leaves
+ * rows behind has the housekeeping scheduler run it again at once
+ * (`hasBacklog`).
  */
 const PURGE_BATCH = 200;
 
@@ -42,14 +42,19 @@ async function purgeEach(
   { revokedGrant }: { revokedGrant?: true },
 ): Promise<number> {
   let purged = 0;
+  // Parts an earlier purge took because it left them no host.
+  const purgedAlong = new Set<string>();
   for (const id of ids) {
+    if (purgedAlong.has(id)) continue;
     try {
       const result = await writeItem(
         storage,
         { kind: "platform", by: null },
         { op: "purge", id, ...(revokedGrant && { revokedGrant }) },
       );
-      if (result.outcome === "moved") purged += 1;
+      if (result.outcome !== "moved") continue;
+      purged += 1 + result.parts.length;
+      for (const part of result.parts) purgedAlong.add(part.item.id);
     } catch (err) {
       storage.assertTransactionUsable();
       if (isConnectionLostError(err)) throw err;
@@ -112,8 +117,8 @@ export class TrashPurger {
 
   /**
    * One sweep. Computes the cutoff date from the injected clock and deletes
-   * at most {@link PURGE_BATCH} trashed rows strictly older than it, with one
-   * audit.
+   * at most {@link PURGE_BATCH} trashed roots strictly older than it, plus
+   * the parts their purges take, with one audit.
    *
    * Returns the number of rows deleted, at the configured override when
    * one is wired and at the instance default otherwise.

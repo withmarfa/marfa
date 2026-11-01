@@ -12,6 +12,7 @@ import {
   ALWAYS_SEARCHED_FIELDS,
   ALL_SYSTEM_TYPES,
   ALL_TYPE_IDS,
+  EDGE_CASCADES,
   EDGE_PROPERTY_KEYS,
   EDGE_TYPE_SCHEMA_KEYS,
   ENTRY_MEMBER_TYPES,
@@ -131,6 +132,7 @@ export {
 // strips what it does not declare, so they ask this of the body as it was
 // sent.
 export {
+  EDGE_CASCADES,
   EDGE_PROPERTY_KEYS,
   EDGE_TYPE_SCHEMA_KEYS,
   normalizeEdgeProperties,

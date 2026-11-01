@@ -67,7 +67,7 @@ export interface paths {
         put?: never;
         /**
          * Preview trashing items
-         * @description Returns what `POST /items/trash` would move to the trash for the same `ids`: each item and every item you can read that a cascading edge such as `parent-of` would take with it. Nothing changes.
+         * @description Returns what `POST /items/trash` would move to the trash for the same `ids`: each item and every item you can read that a cascading edge such as `parent-of` reaches, or comment or attachment whose hosts would all be in the trash. Nothing changes.
          */
         post: operations["previewItemTrash"];
         delete?: never;
@@ -2265,10 +2265,10 @@ export interface components {
             /** @description The types an edge's target item can have, in the same form as `source_type_constraints`. */
             target_type_constraints: string[];
             /**
-             * @description What happens when an item an edge joins is deleted. `cascade`: deleting the source trashes the target. `orphan`: the other item stays. `block`: the delete fails while the edge exists.
+             * @description What deleting an item an edge joins does. `cascade`: the source's delete trashes the target. `orphan`: the other stays. `block`: the delete fails. `with-hosts`: the source is trashed with its last target, restored with any.
              * @enum {string}
              */
-            cascade_on_delete: "cascade" | "orphan" | "block";
+            cascade_on_delete: "cascade" | "orphan" | "block" | "with-hosts";
             /** @description The properties an edge of the type can carry, by name. Marfa checks an edge's properties against it each time the edge is written, and accepts a property it doesn't list. */
             property_schema: {
                 [key: string]: components["schemas"]["EdgePropertyDefinition"];
@@ -3410,9 +3410,9 @@ export interface components {
             type: string;
             /** @description The item's version. */
             version: number;
-            /** @description The other items you can read that a cascading edge such as `parent-of` would take into the trash with this item, leaves first, at most 100. */
+            /** @description The other items you can read that trashing the named items would take into the trash with this item, leaves first, at most 100: what a cascading edge such as `parent-of` reaches, and each comment or attachment whose hosts would all be in the trash. */
             takes: components["schemas"]["TrashPreviewEntry"][];
-            /** @description How many items you can read that trashing this item would move to the trash, the item itself included. */
+            /** @description How many items you can read that trashing the named items would move to the trash with this item, the item itself included. */
             count: number;
             /**
              * @description `true` if `takes` was cut at its limit. Absent when it lists every item.
@@ -3941,10 +3941,10 @@ export interface components {
             /** @description The types an edge's target item can have, in the same form as `source_type_constraints`. Leave it out to allow any type. */
             target_type_constraints?: string[];
             /**
-             * @description What happens when an item an edge joins is deleted. `cascade`: deleting the source trashes the target. `orphan`: the other item stays. `block`: the delete fails while the edge exists. Leave it out for `orphan`.
+             * @description What deleting an item an edge joins does. `cascade`: the source's delete trashes the target. `orphan`: the other stays. `block`: the delete fails. `with-hosts`: the source is trashed with its last target, restored with any. Leave it out for `orphan`.
              * @enum {string}
              */
-            cascade_on_delete?: "cascade" | "orphan" | "block";
+            cascade_on_delete?: "cascade" | "orphan" | "block" | "with-hosts";
             /** @description The properties an edge of the type can carry, by name. Marfa checks an edge's properties against it each time the edge is written, and accepts a property it doesn't list. Leave it out for none. */
             property_schema?: {
                 [key: string]: components["schemas"]["EdgePropertyDefinition"];

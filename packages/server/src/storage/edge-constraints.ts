@@ -3,8 +3,10 @@ import {
   MarfaError,
   getEdgeTypeSchema,
   getTypeSchema,
+  isWithHostsEdgeType,
   satisfiesEdgeConstraint,
   validateDeclaredProperties,
+  withHostsEdgeTypes,
 } from "@withmarfa/shared";
 import type { Edge, EdgeTypeSchema, Item } from "@withmarfa/shared";
 import { depthInsideFolder } from "../folder-path.js";
@@ -216,6 +218,9 @@ export interface EdgeProposal {
  *    to hold it to, and every type with a cycle check is shipped.
  * 2. Source and target items both exist outside the bin, and the caller
  *    may read both types: an end it may not read is answered as missing.
+ *    The target of a `with-hosts` edge may be in the bin: a part arriving
+ *    late to a host in the bin, which the caller then bins with it
+ *    (`settleLateParts` in `item-write.ts`).
  * 3. Source type satisfies source_type_constraints (inheritance-aware).
  * 4. Target type satisfies target_type_constraints (inheritance-aware).
  *    For 3 and 4, `replay` takes an end whose item type is not registered,
@@ -226,7 +231,9 @@ export interface EdgeProposal {
  * 6. Exact duplicate (source, target, edge_type) rejected — both DB and in-batch.
  * 7. A self-loop is rejected on every edge type; a longer cycle on
  *    parent-of and supersedes, considering proposed edges as part of the
- *    graph. Both answer `edge_cycle`.
+ *    graph. Both answer `edge_cycle`. A `with-hosts` edge that closes a
+ *    cycle through `with-hosts` edges of any type answers
+ *    `edge_constraint_violation` with `constraint: "cycle"`.
  * 8. The properties are what the edge type requires, and an `in-folder`
  *    edge does not target a revoked folder. `replay`, for the edges an
  *    archive recorded, leaves out the `property_schema` judgment, lets an
@@ -310,8 +317,10 @@ export async function assertEdgesFitGraph(
     itemIds.add(p.target_id);
   }
   const itemMap = await itemStore.getMany(Array.from(itemIds), {
-    includeTrashed: opts.replay === true,
+    includeTrashed: true,
   });
+  const binned = (end: Pick<Item, "state">) =>
+    opts.replay !== true && end.state === "trashed";
   const endFits = (type: string, constraints: readonly string[]) =>
     (opts.replay === true && getTypeSchema(type) === undefined) ||
     satisfiesEdgeConstraint(type, constraints);
@@ -320,10 +329,14 @@ export async function assertEdgesFitGraph(
     const target = itemMap.get(p.target_id);
     // Before every check that reads either end, so a caller cannot tell a
     // row it may not read from no row, nor learn the type of one.
-    if (!source || !mayRead(source.type)) {
+    if (!source || !mayRead(source.type) || binned(source)) {
       throw edgeSourceNotFound(p.source_id);
     }
-    if (!target || !mayRead(target.type)) {
+    if (
+      !target ||
+      !mayRead(target.type) ||
+      (binned(target) && !isWithHostsEdgeType(p.edge_type))
+    ) {
       throw edgeTargetNotFound(p.target_id);
     }
     // A replayed edge of an unregistered type has no constraint to meet.
@@ -448,6 +461,7 @@ export async function assertEdgesFitGraph(
     string,
     { source_id: string; target_id: string }[]
   >();
+  const pendingParts: { source_id: string; target_id: string }[] = [];
 
   for (const { p, schema } of resolved) {
     // Exact duplicate — in-batch repeat or existing DB row.
@@ -549,7 +563,7 @@ export async function assertEdgesFitGraph(
       const pending = pendingByType.get(p.edge_type) ?? [];
       if (
         await edgeStore.wouldCreateCycle(
-          p.edge_type,
+          [p.edge_type],
           p.source_id,
           p.target_id,
           pending,
@@ -567,7 +581,34 @@ export async function assertEdgesFitGraph(
       }
     }
 
+    // A part of its own part, at any depth and across every type that makes
+    // parts, could never leave the bin with its hosts, nor go.
+    const partOf = isWithHostsEdgeType(p.edge_type);
+    if (
+      partOf &&
+      (await edgeStore.wouldCreateCycle(
+        withHostsEdgeTypes(),
+        p.source_id,
+        p.target_id,
+        pendingParts,
+      ))
+    ) {
+      throw new MarfaError(
+        ErrorCode.EDGE_CONSTRAINT_VIOLATION,
+        `Edge "${p.edge_type}" would make an item a part of its own part`,
+        {
+          edge_type: p.edge_type,
+          source_id: p.source_id,
+          target_id: p.target_id,
+          constraint: "cycle",
+        },
+      );
+    }
+
     // Proposal cleared — register it for subsequent in-batch checks.
+    if (partOf) {
+      pendingParts.push({ source_id: p.source_id, target_id: p.target_id });
+    }
     seen.add(dupKey);
     inBatchSourceCount.set(srcKey, batchSourceCount + 1);
     inBatchTargetCount.set(tgtKey, batchTargetCount + 1);

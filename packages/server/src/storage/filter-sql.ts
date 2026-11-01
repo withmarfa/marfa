@@ -15,6 +15,7 @@ import {
   statusFieldsByType,
   subtreeWildcardRoot,
   typeFilterTerms,
+  withHostsEdgeTypes,
   type TypeFilter,
 } from "@withmarfa/shared";
 import { normalizeTimeBound } from "./interface.js";
@@ -288,6 +289,11 @@ function conditionToSql(
     return statusGroupSql(table.type, table.properties, op, value);
   }
 
+  if (field.kind === "part") {
+    const part = partSql(table.id, table.state);
+    return (value === true) === (op === "eq") ? part : sql`NOT ${part}`;
+  }
+
   // tags
   return tagsFieldSql(table.id, op, value);
 }
@@ -345,6 +351,26 @@ function statusGroupSql(
   // A row whose type matches but holds no value compares as NULL, which
   // `not_exists` must count as absent.
   return op === "not_exists" ? sql`NOT COALESCE(${matched}, 0)` : matched;
+}
+
+/**
+ * A `part` term: an item out of the bin with at least one edge of a
+ * `with-hosts` type to an item out of the bin. Judged over every row,
+ * whatever the caller may read, and naming none: the answer is the item's,
+ * not its host's.
+ */
+function partSql(idCol: unknown, stateCol: unknown): SQL {
+  const types = withHostsEdgeTypes();
+  if (types.length === 0) return sql`(1=0)`;
+  return sql`(${stateCol} <> 'trashed' AND EXISTS (
+    SELECT 1 FROM edges e JOIN items h ON h.id = e.target_id
+    WHERE e.source_id = ${idCol}
+      AND e.edge_type IN (${sql.join(
+        types.map((t) => sql`${t}`),
+        sql`, `,
+      )})
+      AND h.state <> 'trashed'
+  ))`;
 }
 
 /**

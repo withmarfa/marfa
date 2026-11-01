@@ -248,6 +248,16 @@ export const trash_cascades = sqliteTable(
   (table) => [index("idx_trash_cascades_with").on(table.trashed_with)],
 );
 
+// Which rows in the bin went there with their hosts, as parts: a restore of
+// any host brings such a row back, and a purge that leaves it no host purges
+// it. Kept apart from `trash_cascades`, whose record a purge of its root
+// re-keys or drops while the part is still in the bin with its hosts.
+export const trash_with_hosts = sqliteTable("trash_with_hosts", {
+  item_id: text("item_id")
+    .primaryKey()
+    .references(() => items.id, { onDelete: "cascade" }),
+});
+
 // Each row's link, in every state: the primary key is the uniqueness a
 // `link_field` promises, rebuilt for a type whenever it names another.
 export const item_links = sqliteTable(

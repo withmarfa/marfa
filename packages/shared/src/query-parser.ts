@@ -38,6 +38,7 @@ type FieldRef =
   | { kind: "entry"; path: string; member: string }
   | { kind: "tags" }
   | { kind: "status_group" }
+  | { kind: "part" }
   | {
       kind: "edge";
       edge_type: string;
@@ -118,6 +119,11 @@ const STATUS_GROUP_ALLOWED_OPS = new Set<ComparisonOp>([
   "exists",
   "not_exists",
 ]);
+
+/** The term that selects parts: items with a host out of the bin. */
+const PART_TERM = "part";
+
+const PART_ALLOWED_OPS = new Set<ComparisonOp>(["eq", "neq"]);
 
 /** A member of a list's entries is compared for equality only. */
 const ENTRY_ALLOWED_OPS = new Set<ComparisonOp>(["eq"]);
@@ -350,6 +356,10 @@ function parseFieldRef(token: Token): FieldRef {
     return { kind: "status_group" };
   }
 
+  if (name === PART_TERM) {
+    return { kind: "part" };
+  }
+
   if (name.startsWith("properties.")) {
     const path = name.slice("properties.".length);
     if (!path) {
@@ -452,6 +462,11 @@ function refuseNullComparison(
         ErrorCode.VALIDATION_ERROR,
         `${never} Use "not_exists" to ask for items with no status word their type declares, and "exists" for items with one`,
       );
+    case "part":
+      return new MarfaError(
+        ErrorCode.VALIDATION_ERROR,
+        `${never} Compare "part" with true or false`,
+      );
   }
 }
 
@@ -545,6 +560,13 @@ export function parseFilter(input: string): FilterExpression {
       );
     }
 
+    if (field.kind === "part" && !PART_ALLOWED_OPS.has(op)) {
+      throw new MarfaError(
+        ErrorCode.VALIDATION_ERROR,
+        `Operator "${op}" is not valid for "part". Use: ${[...PART_ALLOWED_OPS].join(", ")}, with true or false`,
+      );
+    }
+
     if (field.kind === "system" && UNARY_OPS.has(op)) {
       throw new MarfaError(
         ErrorCode.VALIDATION_ERROR,
@@ -567,6 +589,12 @@ export function parseFilter(input: string): FilterExpression {
         throw new MarfaError(
           ErrorCode.VALIDATION_ERROR,
           `Unknown status group ${valToken.raw} at position ${String(valToken.pos)}. Status groups: ${STATUS_GROUPS.join(", ")}`,
+        );
+      }
+      if (field.kind === "part" && typeof value !== "boolean") {
+        throw new MarfaError(
+          ErrorCode.VALIDATION_ERROR,
+          `"part" compares with true or false, not ${valToken.raw}, at position ${String(valToken.pos)}`,
         );
       }
       pos++;

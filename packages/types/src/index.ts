@@ -38,6 +38,7 @@ export type {
 } from "./schema-validation.js";
 export {
   ALWAYS_SEARCHED_FIELDS,
+  EDGE_CASCADES,
   EDGE_PROPERTY_KEYS,
   EDGE_TYPE_SCHEMA_KEYS,
   ENTRY_MEMBER_TYPES,

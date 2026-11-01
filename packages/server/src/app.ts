@@ -1007,6 +1007,7 @@ export function createApp(
       baseUrl: config.authBaseUrl,
       version: deployedVersion,
       confirmKey: deriveKey(config.authSecret, SECRET_INFO.mcpConfirm),
+      storage,
       fetch: {
         fetcher: createPublicFetcher({
           maxBytes: config.mcpFetchMaxBytes ?? 50 * 1024 * 1024,

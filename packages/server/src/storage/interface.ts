@@ -805,6 +805,12 @@ export type TombstoneSelector =
   | { source: string; source_ids: readonly string[] };
 
 /** The row a trash named, as each row its cascade took records it. */
+/** A host of a part, as `ItemStore.partHosts` reads it. */
+export interface PartHost {
+  edge_type: string;
+  host: Pick<Item, "id" | "type" | "properties">;
+}
+
 export interface CascadeRoot {
   id: string;
   type: string;
@@ -927,13 +933,15 @@ export interface ItemStore {
   ): Promise<ResolvedItem | ConflictResponse | AncestorUnavailableResponse>;
   /**
    * Soft-deletes the row. `trashedWith` names the row whose trash took this
-   * one through a cascading edge, recorded only where this call moves the row
-   * into the bin, so a row already there stays its own trash's.
+   * one through a cascading edge or as a part, recorded only where this call
+   * moves the row into the bin, so a row already there stays its own trash's.
+   * `withHosts` records that it went as a part, with its hosts.
    */
   delete(
     id: string,
     trashedWith?: CascadeRoot,
     writer?: VersionWriter | null,
+    withHosts?: boolean,
   ): Promise<void>;
   /** The row each cascaded row's trash named, while the bin holds it. */
   cascadeMarks(ids: string[]): Promise<Map<string, CascadeRoot>>;
@@ -950,6 +958,20 @@ export interface ItemStore {
    * record still names the trash that took it.
    */
   restoreBeneath(id: string): Promise<Item[]>;
+  /**
+   * The parts of any of `hosts` that are in the bin because they went with
+   * their hosts: the sources of `with-hosts` edges into `hosts` holding that
+   * record.
+   */
+  partsInBinWithHosts(hosts: readonly string[]): Promise<string[]>;
+  /** Which of `ids` went to the bin with their hosts and are still there. */
+  wentWithHosts(ids: readonly string[]): Promise<Set<string>>;
+  /**
+   * The hosts out of the bin of each of `ids` that is a part, each with the
+   * edge type that makes it a host, oldest edge first (by `created_at`,
+   * then id). An id with no such host is absent.
+   */
+  partHosts(ids: readonly string[]): Promise<Map<string, PartHost[]>>;
   transition(id: string, state: ItemState): Promise<Item>;
   /**
    * How many items carry this exact type identifier.
@@ -2784,12 +2806,12 @@ export interface EdgeStore {
     edgeType: string,
   ): Promise<Edge | null>;
   /**
-   * Whether adding sourceId -> targetId would close a cycle in the stored
-   * graph plus earlier proposals of the same type. The caller holds the
-   * write transaction throughout this check.
+   * Whether adding sourceId -> targetId would close a cycle through stored
+   * edges of `edgeTypes` plus earlier proposals of the same types. The
+   * caller holds the write transaction throughout this check.
    */
   wouldCreateCycle(
-    edgeType: string,
+    edgeTypes: readonly string[],
     sourceId: string,
     targetId: string,
     pendingEdges: { source_id: string; target_id: string }[],

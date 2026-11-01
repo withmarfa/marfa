@@ -22,6 +22,7 @@ import {
   MarfaError,
   SYSTEM_DEFAULT_STATE,
   getEdgeTypeSchema,
+  isWithHostsEdgeType,
   getTypeSchema,
   hasBoundedLifecycle,
   isValidId,
@@ -61,7 +62,10 @@ import {
 } from "../routes/_edges-inline.js";
 import { announcedSource, publish, publishEdge } from "../pubsub.js";
 import type { EdgeSource } from "../pubsub.js";
-import type { InlineEdgeChanges } from "../routes/_edges-inline.js";
+import type {
+  InlineEdgeChanges,
+  SettledPart,
+} from "../routes/_edges-inline.js";
 import { undeclaredPropertyRefusal } from "../routes/_undeclared-property.js";
 import { sourceAllowlistRefusal } from "../routes/_source-allowlist.js";
 import { assertTierApplicable } from "../routes/_tier-rules.js";
@@ -69,7 +73,7 @@ import {
   assertRetypeKeepsEdges,
   edgeTargetNotFound,
 } from "./edge-constraints.js";
-import { planCascadeDelete } from "./edge-cascade.js";
+import { planCascadeDelete, type CascadePlan } from "./edge-cascade.js";
 import {
   readableBlockingEdges,
   edgeSourcesFor,
@@ -235,11 +239,11 @@ export interface ItemMoved {
   item: Item;
   /** The state the row left. */
   from: ItemState;
-  /** Rows a trash took with it through cascading edges, as they stood
-   *  before it, each recorded as taken with `item`. */
+  /** Rows a trash took with it through cascading edges or as parts, as
+   *  they stood before it, each recorded as taken with `item`. */
   trashed: Item[];
   /** Rows a restore brought back because the trash that took them was
-   *  undone. */
+   *  undone, or because they went with their hosts and a host came back. */
   broughtBack: Item[];
   /** Edges a purge took with the row. */
   edges: Edge[];
@@ -249,6 +253,9 @@ export interface ItemMoved {
   edgeSources: Map<string, EdgeSource>;
   /** The trash a purged row was taken by, read before the purge. */
   trashedWith?: CascadeRoot;
+  /** The parts a purge took because it left them no host, each announced as
+   *  its own purge after the row's. */
+  parts: ItemMoved[];
 }
 
 type ResultOf<W extends ItemWrite> = W extends ItemCreate
@@ -529,6 +536,9 @@ async function announceMove(
         ...(moved.trashedWith && { trashedWith: moved.trashedWith }),
         enableFanout,
       });
+      for (const part of moved.parts) {
+        await announceMove(storage, write, part, enableFanout);
+      }
       return;
     default:
       return;
@@ -621,7 +631,7 @@ async function writeEdges(
   edges: Record<string, string[]> | undefined,
 ): Promise<InlineEdgeChanges | undefined> {
   if (!edges) return undefined;
-  return await applyInlineEdges(
+  const changes = await applyInlineEdges(
     storage,
     id,
     edges,
@@ -630,6 +640,17 @@ async function writeEdges(
     },
     (type) => mayRead(writer, type),
   );
+  const settled = await settleLateParts(storage, writer, changes.created);
+  return settled.length === 0 ? changes : { ...changes, settled };
+}
+
+/** The row a write answers with, as a late part's edge left it. */
+function asSettled<T extends Item>(
+  item: T,
+  edges: InlineEdgeChanges | undefined,
+): T {
+  const row = edges?.settled?.find((part) => part.item.id === item.id);
+  return row ? { ...item, ...row.item } : item;
 }
 
 /**
@@ -659,7 +680,10 @@ async function assertEdgeTargets(
         );
       }
       seen.add(target);
-      const row = await storage.items.get(target);
+      // A host in the bin takes a part arriving late (`settleLateParts`).
+      const row = isWithHostsEdgeType(edgeType)
+        ? await storage.items.getIncludingTrashed(target)
+        : await storage.items.get(target);
       if (!row || !mayRead(writer, row.type)) throw edgeTargetNotFound(target);
       if (writer.kind === "credential") rememberItemSubject(row, "read");
     }
@@ -911,7 +935,7 @@ async function changeRow(
     const metadata = await storage.metadata.get(row.id);
     return {
       outcome: "updated",
-      item,
+      item: asSettled(item, edges),
       metadata,
       ...(edges !== undefined && { edges }),
     };
@@ -1123,7 +1147,7 @@ async function put(
   const edges = await writeEdges(storage, writer, created.id, write.edges);
   return {
     outcome: "created",
-    item: created,
+    item: asSettled(created, edges),
     // What the create wrote: its tags over empty extensions.
     metadata: { item_id: created.id, tags: write.tags ?? [], extensions: {} },
     ...(edges !== undefined && { edges }),
@@ -1263,6 +1287,7 @@ function moved(
     broughtBack: [],
     edges: [],
     edgeSources: new Map(),
+    parts: [],
     ...rest,
   };
 }
@@ -1271,111 +1296,214 @@ function moved(
  * The row into its type's soft-deleted state, and every row its cascading
  * edges reach with it, each recorded as taken with it so a restore brings it
  * back. A `block` edge on any of them refuses the whole move, and so does a
- * live grant record the cascade would carry out.
+ * live grant record the cascade would carry out. Answers the rows the move
+ * took beneath the row.
  */
 async function trash(
   storage: Storage,
   writer: ItemWriter,
   row: Item,
 ): Promise<Item[]> {
-  const root: CascadeRoot = { id: row.id, type: row.type };
-  const { toTrash, taken } = await planTrash(storage, writer, row);
+  const planned = await planTrash(storage, writer, [row]);
   const by = await versionWriter(storage, writer);
-  for (const id of toTrash) {
-    await itemWrites(storage).delete(id, id === row.id ? undefined : root, by);
+  let taken: Item[] = [];
+  for (const [root, ids] of groupsOf(planned)) {
+    const moved = await moveGroup(storage, by, planned, root, ids);
+    if (root === row.id) taken = moved;
   }
-  // Each row as the move left it, so its `item.deleted` carries the
-  // `trashed_at` the move recorded and not the null it held before.
-  return Promise.all(
-    taken.map(
-      async (snap) =>
-        (await storage.items.getIncludingTrashed(snap.id)) ?? snap,
-    ),
-  );
+  return taken;
+}
+
+/** What trashing a set of rows together takes, as `planTrash` answers it. */
+interface PlannedTrash {
+  plan: CascadePlan;
+  /** Each row of the plan the trash moves into the bin, as it stands before
+   *  the move. A row already in the bin is left out: the trash neither
+   *  moves nor announces it, and its own trash record stays. */
+  moving: Map<string, Item>;
 }
 
 /**
- * What moving `row` to the trash takes and whether anything refuses it: the
- * ids in the order they are trashed, leaves first, and every row but `row`
- * itself as it stands. Both the trash and its preview ask this, so a preview
- * names what the move would take and refuses what the move would refuse.
+ * What moving `rows` to the bin together takes and whether anything
+ * refuses it. The trash, its preview and a late part all ask this, so a
+ * preview names what the move would take and refuses what the move would
+ * refuse.
  */
 async function planTrash(
   storage: Storage,
   writer: ItemWriter,
-  row: Item,
-): Promise<{ toTrash: string[]; taken: Item[] }> {
-  let toTrash: string[];
+  rows: readonly Item[],
+): Promise<PlannedTrash> {
+  let plan: CascadePlan;
   try {
-    toTrash = await planCascadeDelete(storage.edges, row.id);
+    plan = await planCascadeDelete(
+      storage,
+      rows.map((row) => row.id),
+    );
   } catch (err) {
     throw await withoutHiddenBlockers(storage, writer, err);
   }
-  const snaps = await Promise.all(toTrash.map((id) => storage.items.get(id)));
-  for (const snap of snaps) {
-    if (!snap) continue;
+  const moving = await storage.items.getMany(plan.ordered);
+  for (const snap of moving.values()) {
     refuseUnlessUninstalled(snap, mayRead(writer, snap.type));
   }
-  return {
-    toTrash,
-    taken: snaps.filter(
-      (snap): snap is Item => snap !== null && snap.id !== row.id,
-    ),
-  };
+  return { plan, moving };
 }
 
-/** One named item of a trash and what its own trash takes. */
+/** The rows `planned` moves, by the named root each goes with, leaves
+ *  first and the root last. */
+function groupsOf(planned: PlannedTrash): Map<string, string[]> {
+  const groups = new Map<string, string[]>();
+  for (const id of planned.plan.ordered) {
+    const root = planned.plan.rootOf.get(id);
+    if (root === undefined || !planned.moving.has(id)) continue;
+    const ids = groups.get(root) ?? [];
+    ids.push(id);
+    groups.set(root, ids);
+  }
+  return groups;
+}
+
+/**
+ * The rows of one group into the bin, each but the root recorded as taken
+ * with it, and a part as going with its hosts. Answers the rows beneath the
+ * root as the move left them, so each `item.deleted` carries the
+ * `trashed_at` the move recorded and not the null it held before.
+ */
+async function moveGroup(
+  storage: Storage,
+  by: VersionWriter | null,
+  planned: PlannedTrash,
+  rootId: string,
+  ids: readonly string[],
+): Promise<Item[]> {
+  const root = planned.moving.get(rootId);
+  const record: CascadeRoot | undefined = root && {
+    id: root.id,
+    type: root.type,
+  };
+  for (const id of ids) {
+    await itemWrites(storage).delete(
+      id,
+      id === rootId ? undefined : record,
+      by,
+      planned.plan.withHosts.has(id),
+    );
+  }
+  const taken: Item[] = [];
+  for (const id of ids) {
+    if (id === rootId) continue;
+    const row =
+      (await storage.items.getIncludingTrashed(id)) ?? planned.moving.get(id);
+    if (row) taken.push(row);
+  }
+  return taken;
+}
+
+/**
+ * Each source of `edges` that an edge of a `with-hosts` type has just made a
+ * part of a host in the bin, into the bin with its hosts when every host it
+ * has is in the bin, with what its own trash takes: a part arriving late, as
+ * an offline write syncs, goes where it would have gone had it arrived
+ * first. Each row records the host the edge named as the row it went with,
+ * and a row already in the bin keeps its own record and is not answered.
+ * Writes in the caller's transaction and announces nothing; the caller
+ * announces the rows after the edges (`announceSettledParts`).
+ */
+export async function settleLateParts(
+  storage: Storage,
+  writer: ItemWriter,
+  edges: readonly Edge[],
+): Promise<SettledPart[]> {
+  const settled: SettledPart[] = [];
+  for (const edge of edges) {
+    if (!isWithHostsEdgeType(edge.edge_type)) continue;
+    const host = await storage.items.getIncludingTrashed(edge.target_id);
+    if (host?.state !== "trashed") continue;
+    const part = await storage.items.get(edge.source_id);
+    if (!part || part.state === "trashed") continue;
+    const hosts = (await storage.edges.listAllByItem(part.id)).outbound
+      .filter((out) => isWithHostsEdgeType(out.edge_type))
+      .map((out) => out.target_id);
+    const held = await storage.items.getMany(hosts, { includeTrashed: true });
+    if (!hosts.every((id) => held.get(id)?.state === "trashed")) continue;
+    const root: CascadeRoot = { id: host.id, type: host.type };
+    const { plan, moving } = await planTrash(storage, writer, [part]);
+    const by = await versionWriter(storage, writer);
+    const ids = plan.ordered.filter((id) => moving.has(id));
+    for (const id of ids) {
+      await itemWrites(storage).delete(
+        id,
+        root,
+        by,
+        id === part.id || plan.withHosts.has(id),
+      );
+    }
+    for (const id of ids) {
+      const row = await storage.items.getIncludingTrashed(id);
+      if (row) settled.push({ item: row, trashedWith: root });
+    }
+  }
+  return settled;
+}
+
+/** One named item of a trash and what its trash takes. */
 export interface TrashPreviewRoot {
   row: Item;
-  /** The rows its trash takes that the writer may read, leaves first. */
+  /** The rows the trash moves beneath it that the writer may read, leaves
+   *  first. */
   taken: Item[];
 }
 
 interface TrashPlan {
-  roots: (TrashPreviewRoot & { toTrash: string[] })[];
+  roots: TrashPreviewRoot[];
+  planned: PlannedTrash;
   /** How many rows the writer may read the whole trash takes, each once. */
   count: number;
   digest: string;
 }
 
 /**
- * What trashing every one of `ids` takes, judged together, and refused as
- * trashing any one of them alone would be refused.
+ * What trashing every one of `ids` together takes, planned once over all of
+ * them, so the preview, its digest and the trash agree on a part only the
+ * named rows together take.
  */
 async function planTrashOf(
   storage: Storage,
   writer: ItemWriter,
   ids: readonly string[],
 ): Promise<TrashPlan> {
-  const roots: TrashPlan["roots"] = [];
-  for (const id of ids) {
+  const rows: Item[] = [];
+  for (const id of new Set(ids)) {
     const row = await lifecycleRow(storage, writer, id, {
       includeTrashed: false,
       message: `Item ${id} not found`,
     });
     assertTypeWrite(writer, row);
-    const { toTrash, taken } = await planTrash(storage, writer, row);
-    roots.push({
-      row,
-      taken: taken.filter((snap) => mayRead(writer, snap.type)),
-      toTrash,
-    });
+    rows.push(row);
   }
-  const shown = new Map<string, Item>();
-  for (const { row, taken } of roots) {
-    for (const item of [row, ...taken]) shown.set(item.id, item);
-  }
+  const planned = await planTrash(storage, writer, rows);
+  const shown = (id: string): Item[] => {
+    const item = planned.moving.get(id);
+    return item && mayRead(writer, item.type) ? [item] : [];
+  };
+  const roots = rows.map((row) => ({
+    row,
+    taken: (planned.plan.beneath.get(row.id) ?? []).flatMap(shown),
+  }));
+  const counted = [...planned.moving.keys()].flatMap(shown);
   return {
     roots,
-    count: shown.size,
-    digest: trashDigest([...shown.values()]),
+    planned,
+    count: counted.length,
+    digest: trashDigest(counted),
   };
 }
 
 /**
  * What `POST /items/trash` would trash for this credential, refused as the
- * trash would refuse it: each named row with the rows a cascading edge takes
- * with it that the credential may read, and the whole trash counted and
+ * trash would refuse it: each named row with the rows the trash moves
+ * beneath it that the credential may read, and the whole trash counted and
  * digested with each row once. Rows it may not read are trashed too and are
  * left out here, as a refusal leaves out a hidden blocker. Writes nothing.
  */
@@ -1385,17 +1513,16 @@ export async function previewTrash(
   ids: readonly string[],
 ): Promise<{ roots: TrashPreviewRoot[]; count: number; digest: string }> {
   const plan = await planTrashOf(storage, { kind: "credential", key }, ids);
-  return {
-    roots: plan.roots.map(({ row, taken }) => ({ row, taken })),
-    count: plan.count,
-    digest: plan.digest,
-  };
+  return { roots: plan.roots, count: plan.count, digest: plan.digest };
 }
 
 /**
- * Every one of `ids` into the trash, with what its cascading edges take, in
- * one transaction or not at all. With `digest`, only if it is the digest
- * `previewTrash` answers for the same IDs as the trash commits.
+ * Every one of `ids` into the trash, with what their trash takes, from the
+ * one plan `previewTrash` answers, in one transaction or not at all. With
+ * `digest`, only if it is the digest `previewTrash` answers for the same IDs
+ * as the trash commits. A named row another named row takes goes with that
+ * row, so it is recorded as taken with it and comes back when that row is
+ * restored.
  */
 export async function trashItems(
   storage: Storage,
@@ -1413,27 +1540,16 @@ export async function trashItems(
         { digest: plan.digest },
       );
     }
-    // A named row another named row takes goes with that row, so it is
-    // recorded as taken with it and comes back when that row is restored.
-    const carried = new Set(
-      plan.roots.flatMap(({ row, toTrash }) =>
-        toTrash.filter((id) => id !== row.id),
-      ),
-    );
-    const order = [
-      ...plan.roots.filter(({ row }) => !carried.has(row.id)),
-      ...plan.roots.filter(({ row }) => carried.has(row.id)),
-    ];
-    const gone = new Set<string>();
+    const by = await versionWriter(storage, writer);
     const moves: ItemMoved[] = [];
-    for (const { row, toTrash } of order) {
-      if (gone.has(row.id)) continue;
-      const move = await writeItem(storage, writer, {
-        op: "delete",
-        id: row.id,
-      });
-      if (move.outcome === "moved") moves.push(move);
-      for (const id of toTrash) gone.add(id);
+    for (const [root, group] of groupsOf(plan.planned)) {
+      const before = plan.planned.moving.get(root);
+      if (!before) continue;
+      const trashed = await moveGroup(storage, by, plan.planned, root, group);
+      const now = await storage.items.getIncludingTrashed(root);
+      const move = moved(now ?? before, before.state, { trashed });
+      await announceWrite(storage, { op: "delete", id: root }, move, true);
+      moves.push(move);
     }
     return moves;
   });
@@ -1515,11 +1631,15 @@ async function transitionRow(
     const now = await storage.items.getIncludingTrashed(row.id);
     return moved(now ?? row, row.state, { trashed });
   }
-  const broughtBack =
-    row.state === "trashed" && write.state === "active"
-      ? await itemWrites(storage).restoreBeneath(row.id)
-      : [];
+  const leaving = row.state === "trashed" && write.state === "active";
+  const broughtBack = leaving
+    ? await itemWrites(storage).restoreBeneath(row.id)
+    : [];
   const item = await itemWrites(storage).transition(row.id, write.state);
+  if (leaving)
+    broughtBack.push(
+      ...(await restorePartsOf(storage, [item, ...broughtBack])),
+    );
   return moved(item, row.state, { broughtBack });
 }
 
@@ -1535,7 +1655,36 @@ async function restoreRow(
   assertTypeWrite(writer, row);
   const broughtBack = await itemWrites(storage).restoreBeneath(row.id);
   const item = await itemWrites(storage).restore(row.id);
+  broughtBack.push(...(await restorePartsOf(storage, [item, ...broughtBack])));
   return moved(item, row.state, { broughtBack });
+}
+
+/**
+ * Brings back, at any depth, every part that went to the bin with its hosts
+ * and now has one of them out of it again: the parts of `back`, then the
+ * parts of what that brings back. Each part brings back what its own trash
+ * took beneath it, as a restore of it would.
+ */
+async function restorePartsOf(
+  storage: Storage,
+  back: readonly Item[],
+): Promise<Item[]> {
+  const writes = itemWrites(storage);
+  const restored: Item[] = [];
+  let frontier = back.map((item) => item.id);
+  while (frontier.length > 0) {
+    const parts = await writes.partsInBinWithHosts(frontier);
+    frontier = [];
+    for (const id of parts) {
+      const row = await storage.items.getIncludingTrashed(id);
+      if (row?.state !== "trashed") continue;
+      const beneath = await writes.restoreBeneath(id);
+      const part = await writes.restore(id);
+      restored.push(...beneath, part);
+      frontier.push(id, ...beneath.map((item) => item.id));
+    }
+  }
+  return restored;
 }
 
 async function purgeRow(
@@ -1570,6 +1719,19 @@ async function purgeRow(
   }
   const stale = staleAgainst(row, write.version);
   if (stale) return stale;
+  return purgeWithParts(storage, row, write.revokedGrant === true);
+}
+
+/**
+ * Removes the row and its edges, then every part in the bin that went there
+ * with its hosts and that the purge left with no host edge, at every depth.
+ * A part trashed on its own, or one with a host left, stays.
+ */
+async function purgeWithParts(
+  storage: Storage,
+  row: Item,
+  revokedGrant: boolean,
+): Promise<ItemMoved> {
   const trashedWith = (await storage.items.cascadeMarks([row.id])).get(row.id);
   // Edges carry no foreign key to items, so they go with the row here.
   const edges = [
@@ -1580,13 +1742,35 @@ async function purgeRow(
     storage,
     edges.map((edge) => edge.source_id),
   );
-  await itemWrites(storage).purge(row.id, {
-    revokedGrant: write.revokedGrant === true,
-  });
+  await itemWrites(storage).purge(row.id, { revokedGrant });
+  const candidates = [
+    ...new Set(
+      edges
+        .filter(
+          (edge) =>
+            edge.target_id === row.id && isWithHostsEdgeType(edge.edge_type),
+        )
+        .map((edge) => edge.source_id),
+    ),
+  ];
+  const withHosts = await storage.items.wentWithHosts(candidates);
+  const parts: ItemMoved[] = [];
+  for (const id of candidates) {
+    if (!withHosts.has(id)) continue;
+    const part = await storage.items.getIncludingTrashed(id);
+    if (part?.state !== "trashed") continue;
+    const hosts = await storage.edges.listAllByItem(id);
+    if (hosts.outbound.some((edge) => isWithHostsEdgeType(edge.edge_type)))
+      continue;
+    const purged = await purgeWithParts(storage, part, false);
+    parts.push(purged, ...purged.parts);
+    purged.parts = [];
+  }
   return moved(row, row.state, {
     edges,
     edgeSources,
     ...(trashedWith && { trashedWith }),
+    parts,
   });
 }
 

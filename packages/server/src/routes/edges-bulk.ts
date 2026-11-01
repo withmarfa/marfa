@@ -67,6 +67,8 @@ import {
   edgeTargetNotFound,
 } from "../storage/edge-constraints.js";
 import { announcedSource, publishEdge } from "../pubsub.js";
+import { announceSettledParts } from "./_edges-inline.js";
+import { settleLateParts } from "../storage/item-write.js";
 import { requestBlobProof } from "./_blob-reach.js";
 import { undeclaredEntryKeyRefusal } from "./_unknown-body-keys.js";
 
@@ -667,6 +669,16 @@ export function edgesBulkRoutes(storage: Storage) {
               ...announcedSource(sources.get(written.source_id)),
               enableFanout,
             });
+          }
+          if (processed.created) {
+            await announceSettledParts(
+              await settleLateParts(
+                storage,
+                { kind: "credential", key: requireAuth(c) },
+                [processed.created],
+              ),
+              enableFanout,
+            );
           }
           return processed;
         };

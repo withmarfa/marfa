@@ -53,7 +53,7 @@ export interface MarfaVersion {
 export type EdgeCardinality =
   "one-to-one" | "one-to-many" | "many-to-one" | "many-to-many";
 
-export type EdgeCascadeBehavior = "cascade" | "orphan" | "block";
+export type EdgeCascadeBehavior = "cascade" | "orphan" | "block" | "with-hosts";
 
 /** A typed, first-class relationship between two items. */
 export interface MarfaEdge {

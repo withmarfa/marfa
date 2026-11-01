@@ -2,11 +2,16 @@
   "id": "attached-to",
   "label": "Attached to",
   "reverse_label": "Attachments",
-  "description": "Source is a file attached to the target. Many-to-many: a file may be attached to multiple hosts; a host may have multiple attachments. Deleting the host orphans the attachment (it may still be attached to other items). The attachment's own file writes the edge, saying what it was made for; where the attachment cannot carry frontmatter, such as an image, the host's file writes it under the reverse name, `has-attachment`.",
+  "description": "Source exists only for the item or items it is attached to, whoever or whatever made it: a file, a scan, a page of a scan, a clip. Many-to-many: a part may be attached to several hosts; a host may have several attachments. The source goes to the trash with its hosts once all of them are in the trash, and comes back when any of them is restored; removing the edge never trashes it. Carries an optional position for ordered parts, such as the pages of a scan. The attachment's own file writes the edge, saying what it was made for; where the attachment cannot carry frontmatter, such as an image, the host's file writes it under the reverse name, `has-attachment`.",
   "cardinality": "many-to-many",
   "source_type_constraints": ["*"],
   "target_type_constraints": ["*"],
-  "cascade_on_delete": "orphan",
-  "property_schema": {},
+  "cascade_on_delete": "with-hosts",
+  "property_schema": {
+    "position": {
+      "type": "number",
+      "description": "Ordering among the host's attachments, such as the page of a scan (1-based)."
+    }
+  },
   "reverse_name": "has-attachment"
 }

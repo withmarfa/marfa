@@ -2,6 +2,7 @@ import type { Permission, TypePermission } from "@withmarfa/shared";
 import type { ToolFetch } from "./file-fetch.js";
 import type { McpApi } from "./api.js";
 import type { McpGroup } from "./groups.js";
+import type { ItemNaming } from "../storage/part-names.js";
 
 /** What every tool of one MCP request works with. */
 export interface ToolContext {
@@ -20,6 +21,15 @@ export interface ToolContext {
   credentialHandle: string;
   /** The key a confirmation token is signed with. */
   confirmKey: Buffer;
+  /** Names each of `items` as the server names it for this caller
+   *  (`namingOf`), a part after the oldest host it may read. */
+  nameItems: (
+    items: readonly {
+      id: string;
+      type: string;
+      properties: Record<string, unknown>;
+    }[],
+  ) => Promise<Map<string, ItemNaming>>;
   /** Fetches a file from a public web address for this caller. */
   fetchFile: ToolFetch;
   now: () => number;

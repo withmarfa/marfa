@@ -1646,11 +1646,19 @@ In these statements, whitespace is the ECMAScript `WhiteSpace` and `LineTerminat
 
 ### `types/item-name-fields`
 
-When computing an item's name, the server MUST use the first property among its effective `display_hints.title_field`, `title`, `name`, effective `display_hints.body_field`, `body`, `text`, `filename`, `url` and `address`, in that order, whose value is a string that produces nonblank text by `types/item-name-markdown` and `types/item-name-text`.
+When computing the name of an item that `types/item-name-part` does not name, the server MUST use the first property among its effective `display_hints.title_field`, `title`, `name`, effective `display_hints.body_field`, `body`, `text`, `filename`, `url` and `address`, in that order, whose value is a string that produces nonblank text by `types/item-name-markdown` and `types/item-name-text`.
 
 **Reason:** Existing display hints, inherited as in `types/read-display-hint`, let a custom type choose its name without a second naming configuration; a file's existing `title` also holds its filename.
 
 **Tests:** `compliance/item-summaries.test.ts › names every built-in and custom type with bounded plain text and fallback fields`, `› names every shared display case as a device does, and Untitled where a device answers no name`.
+
+### `types/item-name-part`
+
+When computing the name of an item that is the source of an edge of a `with-hosts` type and whose effective `display_hints.title_field`, `title` and `name` produce no nonblank text, the server MUST name it `<label> <host name>`, by `types/item-name-text`, from the edge type's `label` and the name by `types/item-name-fields` and `types/item-name-empty` of the target of the oldest such edge, by `created_at` and then `id`, whose target is out of the bin and of a type the credential may read.
+
+**Reason:** a comment or an attached file is read beside its host, so "Comment on Plan" says what it is where its first line would not. With no such host, its own fields name it.
+
+**Tests:** `compliance/item-summaries.test.ts › names a part with no title after its oldest host out of the bin, at read time`, `compliance/mcp.test.ts › names a part after a host the caller may read, and never after one it may not`, `› names a part by the types the caller may read, whatever its edge access`, `› names a part in the bin after its host out of the bin, as the owner's bin does`, `› names a part after its oldest host when it has more hosts than an item read carries`.
 
 ### `types/item-name-text`
 

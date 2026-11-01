@@ -790,8 +790,9 @@ describe("starting on a database at schema version 3", () => {
 describe("starting on an unstamped database", () => {
   it("updates an unstamped one from the last version a build left unstamped", async () => {
     // Schema versions 3 and 4 changed rows and not tables, version 5 adds
-    // one index and version 6 one table, so an unstamped file of this shape
-    // without them is at version 2: every build since stamps what it writes.
+    // one index and versions 6 and 7 one table each, so an unstamped file of
+    // this shape without them is at version 2: every build since stamps what
+    // it writes.
     expect(Math.max(...UNSTAMPED_VERSIONS)).toBe(2);
     const path = scratch();
     const client = createClient({ url: `file:${path}` });
@@ -800,11 +801,15 @@ describe("starting on an unstamped database", () => {
     await client.execute("DROP INDEX idx_items_state_binned_at");
     await client.execute("DROP TABLE source_names");
     await fill(client);
+    await client.execute("DROP TABLE trash_with_hosts");
     client.close();
     // The fixture's icons are bare names no icon set has, which the update
     // to version 3 removes; every other row stays.
     const tables = ownTables(await currentShape()).filter(
-      (table) => table !== "type_icons" && table !== "source_names",
+      (table) =>
+        table !== "type_icons" &&
+        table !== "source_names" &&
+        table !== "trash_with_hosts",
     );
     const before = await rowsOf(path, tables);
 
