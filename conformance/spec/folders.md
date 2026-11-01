@@ -694,7 +694,7 @@ When a new document or file item has no line for an edge type named by the defau
 
 If the device or the server refuses an edge that the defaults ask for on a new document or file item, then a device MUST show that file as refused in the folder's status, with a reason that names the edge type and the other item and says that writing that line in the file applies it.
 
-**Reason:** a default edge is written in no line of the file, so without a record against the file the refusal appears only in the report of the scan that made it, and the file reads as in step. The refusal holds no other file, and a pull still writes the item's changes into the file, since the file holds nothing the person made.
+**Reason:** a default edge is written in no line of the file, so without a record against the file the refusal appears only in the report of the scan that made it, and the file reads as in step. The refusal holds no other file, and a pull still writes the item's changes into the file, since nothing the person wrote in the file was refused.
 
 **Tests:** `device/folders-default-refused.test.ts › shows a default the copy refused for a document and a file, and makes it once the edge type admits it, the files unchanged`, `device/folders-default-refused.test.ts › keeps a default the server refused, sends it again only after the file changes, and applies it once it is accepted`.
 

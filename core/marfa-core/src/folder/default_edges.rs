@@ -132,9 +132,8 @@ impl Folder {
     /// edge is no longer wanted: the defaults stop naming it, the file writes
     /// a line of that type, or its item is gone or trashed. Otherwise a
     /// refusal by the copy is judged again, since what refused it can change
-    /// without the file, and one by the server only once the file differs,
-    /// which the server would refuse alike. A file's saves are counted, so a refusal
-    /// from an earlier save is stale.
+    /// without the file, and one by the server only after a later save of the
+    /// file, since the server would refuse the same write again.
     pub(super) fn settle_default_edges(&self, settings: &Settings) -> Result<()> {
         let bounds = state::every_bound(&*self.core.conn()?)?;
         for mut bound in bounds {
