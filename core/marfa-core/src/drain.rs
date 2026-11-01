@@ -5622,6 +5622,7 @@ mod tests {
         /// Whether a second drain after it succeeds.
         again: Result<DrainReport>,
         /// The bodies of the edits that second drain sent.
+        #[cfg_attr(not(debug_assertions), allow(dead_code))]
         edits_again: Vec<serde_json::Value>,
     }
 
@@ -5722,9 +5723,15 @@ mod tests {
         }
         server.on("/items/server", vec![read]);
         let drained = {
+            #[cfg(debug_assertions)]
             let _full = landing
                 .full_at_clear
                 .then(|| crate::fault::fail_on_this_thread("owed-time-clear"));
+            #[cfg(not(debug_assertions))]
+            assert!(
+                !landing.full_at_clear,
+                "faults compile only with debug assertions"
+            );
             core.drain()
         };
         let sent = |path: &str| -> Vec<serde_json::Value> {
@@ -5931,6 +5938,7 @@ mod tests {
         }
     }
 
+    #[cfg(debug_assertions)]
     #[test]
     fn a_full_store_while_queueing_an_owed_clear_keeps_the_clear_for_the_next_drain() {
         let landed = cleared_create_lands(Landing {
