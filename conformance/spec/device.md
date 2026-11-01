@@ -6846,7 +6846,7 @@ When `MARFA_POSTHOG_HOST` is an `https` address, or an `http` address on this ma
 
 When a command ends in a refusal by design, the CLI MUST NOT send an exception report.
 
-**Reason:** A refusal by design is an answer that works as intended: a `4xx` answer from the server, a usage error, a missing credential, a missing docs page, or an environment that failed (offline, a timeout, a rate limit). It tells error tracking nothing about Marfa, and reporting it would bury the faults.
+**Reason:** A refusal by design is an answer that works as intended: a `4xx` answer that names a refusal, a usage error, a missing credential, a missing docs page, or an environment that failed (offline, a timeout, a rate limit). It tells error tracking nothing about Marfa, and reporting it would bury the faults.
 
 **Tests:** `device/cli-exception-report.test.ts › sends no exception when the command ends in a refusal by design`.
 

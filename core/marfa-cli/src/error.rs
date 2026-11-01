@@ -455,8 +455,7 @@ impl CliError {
     /// Whether this is a fault, to be reported to error tracking, and not an
     /// answer given by design (a refusal, a usage error, a missing
     /// credential) or an environment that failed (offline, a timeout, a
-    /// gateway or a full disk, which `CoreError::is_environmental` names).
-    /// A fault is the server answering with a `5xx` or with a status no
+    /// gateway or a full local disk). A fault is the server answering with a `5xx` or with a status no
     /// refusal is named for, an answer that cannot be read, or the local
     /// store failing for a reason of its own.
     pub fn is_fault(&self) -> bool {
