@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { resetClockForTests } from "../clock.js";
+import { pauseClock, resetClockForTests } from "../clock.js";
 import { testAuthenticator } from "../auth/passkey-test-authenticator.js";
 import { SIGN_IN_ADDRESS_LIMIT } from "../auth/sign-in-throttle.js";
 import {
@@ -204,6 +204,10 @@ describe("POST /auth/confirm with the password", () => {
       });
       expect(direct.status).toBe(401);
     }
+    // The wait is the lockout's remaining whole seconds, rounded up, so two
+    // answers a second boundary apart differ by one. Hold the clock still so
+    // both answers read the same moment.
+    pauseClock(true);
     const locked = await confirm(c, { password: c.owner.password }, stale);
     expect(locked.status).toBe(429);
     expect((await refusalOf(locked)).error.code).toBe("rate_limited");
