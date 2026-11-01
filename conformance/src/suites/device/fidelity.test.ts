@@ -2963,7 +2963,13 @@ describe("a local read answers the listing grammar as the server does", () => {
     );
     // Text a numeric bound casts, text a REAL matches by affinity (source_id)
     // or never (`t`), and floats in a container JavaScript spells in full.
-    const five = await seed({ title: "five", s: "5" }, [], undefined, "1.0");
+    // A part of root, for the `part` term.
+    const five = await seed(
+      { title: "five", s: "5" },
+      [],
+      { "comments-on": [root] },
+      "1.0",
+    );
     const ten = await seed({ title: "ten", s: "10" }, [], undefined, "1");
     const letters = await seed(
       { title: "letters", s: "abc", list: [1e20] },
@@ -3023,6 +3029,8 @@ describe("a local read answers the listing grammar as the server does", () => {
       "source_id eq 5",
       "version gte 1",
       'state eq "archived"',
+      "part eq true",
+      "part neq true",
       'properties.status eq "open" AND tags contains "garden"',
       'properties.status eq "closed" OR tags not_exists',
     ];
@@ -3057,6 +3065,7 @@ describe("a local read answers the listing grammar as the server does", () => {
       "edge[parent-of] eq null",
       "source_id eq null",
       "tags contains null",
+      "part eq null",
     ]) {
       const served = await client.listItems({ type, filter, limit: 100 });
       expect(served.status, `the server answered ${filter}`).toBe(400);

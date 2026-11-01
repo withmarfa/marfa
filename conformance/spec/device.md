@@ -1848,6 +1848,28 @@ When a local list, a local search, a folder or a view names a `status_group` ter
 
 **Tests:** `device/status-groups.test.ts › answers status_group by each type's own words, and takes only a group`.
 
+### `device/filter-part`
+
+When a local list, a local search, a folder or a view names a `part` term, a device MUST select the rows that `search-and-filters/part` and `search-and-filters/part-not` select, from the edges and rows the copy holds and the `cascade_on_delete` of each edge type the copy holds.
+
+**Reason:** a working copy that left out a registered `with-hosts` type, or a host it holds in the bin, would show different parts offline and online.
+
+**Tests:** `device/parts.test.ts › selects items with a host out of the bin, counting a host it does not hold as out of it`, `› lists and counts a saved view of parts offline`, `device/fidelity.test.ts › answers each filter expression with the ids the server answers`.
+
+### `device/filter-part-unheld-host`
+
+When a `part` term meets an edge of a `with-hosts` type whose target the copy does not hold, a device MUST judge that target as a host out of the bin.
+
+**Reason:** the server judges the term over every host, whatever types the key may read (`search-and-filters/part-hidden-host`). A copy misses a host because its slice or its key leaves the host out, not because the host is in the bin: a host the copy held when it went to the bin stays in the copy, in the bin (`device/bin-held-event`).
+
+**Tests:** `device/parts.test.ts › selects items with a host out of the bin, counting a host it does not hold as out of it`.
+
+### `device/filter-part-refused`
+
+If a local list, a local search, a folder or a view compares `part` with an operator other than `eq` and `neq`, or with a value other than `true` and `false`, then a device MUST refuse it with the message the server gives, as `search-and-filters/part-refused` says.
+
+**Tests:** `device/parts.test.ts › takes only eq and neq with true or false, as the server does`.
+
 ### `device/filter-property-kind`
 
 When a filter compares a property with a number or a boolean, a device MUST match no property that holds text, so a number property holding `5` matches `eq 5`, one holding `1` matches `eq true`, and text matches neither.
@@ -4378,6 +4400,22 @@ When an app asks a device for an item's name, a device MUST compute it by `types
 
 **Tests:** `device/binding-item-display.test.ts › names and previews every shared case from the copy's catalog, without asking the server`.
 
+### `device/item-name-part`
+
+When an app asks a device for the name of an item and names the item's id, a device MUST name it by `types/item-name-part` from the edges and rows the copy holds, judging only a host the copy holds out of the bin, and naming the host `Untitled` where `device/item-name` gives it no name.
+
+**Reason:** an app shows "Comment on Plan" offline where the server's summaries show it online. A host the copy does not hold has no name the copy can read, so the part is named by its own fields.
+
+**Tests:** `device/binding-item-display.test.ts › names a part after the host the copy holds out of the bin, and by its body where it holds none`.
+
+### `device/item-preview-part`
+
+When a device names an item by `device/item-name-part`, a device MUST compute its preview from every line of the property `device/item-preview-field` names.
+
+**Reason:** the part's name is not taken from its body, so no line of the body is already shown.
+
+**Tests:** `device/binding-item-display.test.ts › names a part after the host the copy holds out of the bin, and by its body where it holds none`.
+
 ### `device/item-name-none`
 
 When no name candidate produces nonblank text, a device MUST answer that the item has no name.
@@ -5615,6 +5653,14 @@ When the server's row arrives in the bin, a device MUST hold the server's `trash
 **Reason:** the server's time is the one every other client reads, so a copy that kept its own would order its bin otherwise than theirs once the server had answered.
 
 **Tests:** `device/bin-held.test.ts › holds the server's time in place of its own once the server's row arrives`.
+
+### `device/bin-parts-follow`
+
+When a device puts a row it holds in the bin, a device MUST leave out of the bin the parts that `edges/parts-trash` takes with it until the server's events move them.
+
+**Reason:** the server decides which parts go over every host, including hosts the copy does not hold. A copy that decided for itself could bin a part that a host it does not hold keeps out of the bin.
+
+**Tests:** `device/parts.test.ts › leaves a host's parts as they are on an offline delete, and bins them when the server's events arrive`.
 
 ### `device/bin-restored-one-row`
 
