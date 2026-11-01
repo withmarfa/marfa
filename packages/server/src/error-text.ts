@@ -9,8 +9,8 @@
  * the statement's text is not guaranteed to hold only placeholders. For a
  * write those values are the content written. So an error with a database
  * failure anywhere in its chain is replaced, at every sink, by a
- * {@link DatabaseFailure} that keeps the SQLite or libsql code and the outer error's
- * stack frames, and nothing the database was given or said.
+ * {@link DatabaseFailure} that keeps the SQLite or libsql code and the outer
+ * error's stack frames, and nothing the database was given or said.
  *
  * Classification reads the original: a typed refusal, write contention or a
  * full disk is decided before any of this runs.
