@@ -329,6 +329,30 @@ describe("a source's code", () => {
     }
   });
 
+  it("takes a code as long as a restore can make one, and refuses a longer", async () => {
+    const longest = `restored:oauth:${"c".repeat(194)}`;
+    expect(longest).toHaveLength(209);
+    const set = await nameSource(owner, longest, { name: "Longest" });
+    expect(set.status, JSON.stringify(set.error)).toBe(200);
+    expect((await readSource(owner, longest)).data.name).toBe("Longest");
+    const longer = await nameSource(owner, `${longest}x`, { name: "Longer" });
+    expect(longer.status).toBe(400);
+  });
+
+  it("refuses a name an archive could not carry, and keeps what was set", async () => {
+    const source = `${ctx.source}-name-length`;
+    await nameSource(owner, source, { name: "Kept" });
+    for (const name of ["😀".repeat(150), "x".repeat(201), "   ", "a\u202eb"]) {
+      const refused = await nameSource(owner, source, { name });
+      expect(refused.status, JSON.stringify(name)).toBe(400);
+      expect(refused.error?.error.code).toBe("validation_error");
+    }
+    expect((await readSource(owner, source)).data.name).toBe("Kept");
+    // The witness: the longest name that fits is taken.
+    const fits = await nameSource(owner, source, { name: "😀".repeat(100) });
+    expect(fits.status, JSON.stringify(fits.error)).toBe(200);
+  });
+
   it("records a change to a source's name in the audit log", async () => {
     const source = `${ctx.source}-audited`;
     expect((await nameSource(owner, source, { name: "Audited" })).status).toBe(
@@ -370,6 +394,32 @@ describe("reading a source", () => {
     expect((await listSources(reader.client)).map((s) => s.source)).toContain(
       writer.source,
     );
+  });
+});
+
+describe("listing every source", () => {
+  it("lists every source the instance holds to a credential with keys.manage, whatever types it reads", async () => {
+    const orphan = await mintKey("list-orphan");
+    await writeNote(orphan.client, orphan.source);
+    expect((await owner.revokeKey(orphan.id)).status).toBe(200);
+    const claimer = await mintKey("list-claimer", {
+      sources: [`${ctx.source}-claimed-only`],
+    });
+    const manager = await mintKey("list-manager", {
+      permissions: ["keys.manage"],
+      type_permissions: {},
+    });
+    const listed = (await listSources(manager.client)).map((s) => s.source);
+    expect(listed).toContain(orphan.source);
+    expect(listed).toContain(claimer.source);
+    expect(listed).toContain(`${ctx.source}-claimed-only`);
+    expect((await readSource(manager.client, orphan.source)).status).toBe(200);
+
+    // The witness: without keys.manage the same key shape sees none of them.
+    const plain = await mintKey("list-plain", { type_permissions: {} });
+    expect(
+      (await listSources(plain.client)).map((s) => s.source),
+    ).not.toContain(orphan.source);
   });
 });
 
@@ -480,5 +530,47 @@ describe("source names in an archive", () => {
       name: "Odd",
       mark: "simple-icons:github",
     });
+  });
+
+  it("restores the line that carries the code when two land on one", async () => {
+    await writeNote(client, ctx.source);
+    const archive = await client.exportArchive({ source: ctx.source });
+    expect(archive.status).toBe(200);
+    const app = `oauth:${ctx.runId}:shared`;
+    const restoredApp = `restored:${app}`;
+    named.add(restoredApp);
+    const withLines = (lines: unknown[]) =>
+      tarGz(
+        listTarGzEntries(archive.data).map((entry) => ({
+          name: entry.name,
+          body:
+            entry.name === "types.ndjson"
+              ? entry.body.toString("utf8") +
+                lines
+                  .map((line) => `${JSON.stringify({ source: line })}\n`)
+                  .join("")
+              : entry.body,
+        })),
+      );
+    const lines = [
+      { source: app, name: "From the app" },
+      { source: restoredApp, name: "Already restored" },
+    ];
+    for (const order of [lines, [...lines].reverse()]) {
+      expect(
+        (
+          await owner.rawRequest(sourcePath(restoredApp), {
+            method: "PATCH",
+            body: { name: null, mark: null },
+          })
+        ).status,
+      ).toBe(200);
+      const restored = await owner.restoreArchive(withLines(order));
+      expect(restored.ok, JSON.stringify(restored.error)).toBe(true);
+      expect(restored.data.sources_skipped_reasons.duplicate_code).toBe(1);
+      expect((await readSource(owner, restoredApp)).data.name).toBe(
+        "Already restored",
+      );
+    }
   });
 });

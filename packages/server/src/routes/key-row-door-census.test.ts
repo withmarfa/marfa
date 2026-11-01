@@ -52,6 +52,8 @@ const NOT_ROW_ACCESS: Record<string, string> = {
   count: "a number, which names no key",
   ownSourceLabels:
     "the label a live key holds beside its own source, answered as that source's name only to a caller that may see the source",
+  heldSources:
+    "the sources the live keys hold or claim, listed only to a caller that sees every source",
   deleteDeadKeysOlderThan: "retention removing rows no credential holds",
 };
 

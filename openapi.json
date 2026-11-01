@@ -49730,7 +49730,7 @@
             "schema": {
               "type": "string",
               "minLength": 1,
-              "maxLength": 200,
+              "maxLength": 209,
               "description": "The source code. It's a query parameter because a code such as `..` or one holding `/` can't travel safely in a path.",
               "example": "github"
             },
@@ -49769,7 +49769,7 @@
             }
           },
           "400": {
-            "description": "- `missing_required_field`: `source` is missing.\n- `validation_error`: `source` isn't 1 to 200 characters or starts or ends with a space, or the query has a parameter this endpoint doesn't take.",
+            "description": "- `missing_required_field`: `source` is missing.\n- `validation_error`: `source` isn't 1 to 209 characters or starts or ends with a space, or the query has a parameter this endpoint doesn't take.",
             "content": {
               "application/json": {
                 "schema": {
@@ -50003,7 +50003,7 @@
             "schema": {
               "type": "string",
               "minLength": 1,
-              "maxLength": 200,
+              "maxLength": 209,
               "description": "The source code. It's a query parameter because a code such as `..` or one holding `/` can't travel safely in a path.",
               "example": "github"
             },
@@ -50083,7 +50083,7 @@
             }
           },
           "400": {
-            "description": "- `missing_required_field`: `source` is missing.\n- `validation_error`: `source` isn't 1 to 200 characters or starts or ends with a space, `name` is empty, too long or holds a control character, the body has a field this endpoint doesn't take, or the query has a parameter it doesn't take.\n- `invalid_schema`: `mark` isn't the ID of an icon in a pinned set (`details.errors` names it).",
+            "description": "- `missing_required_field`: `source` is missing.\n- `validation_error`: `source` isn't 1 to 209 characters or starts or ends with a space, `name` is empty, too long or holds a control character, the body has a field this endpoint doesn't take, or the query has a parameter it doesn't take.\n- `invalid_schema`: `mark` isn't the ID of an icon in a pinned set (`details.errors` names it).",
             "content": {
               "application/json": {
                 "schema": {
@@ -62249,7 +62249,7 @@
                       "additionalProperties": {
                         "type": "number"
                       },
-                      "description": "How many source names and marks Marfa skipped for each reason: `already_set` when the instance already has a name or mark for the source, `unknown_mark` when the mark isn't the ID of an icon in a set Marfa pins."
+                      "description": "How many source names and marks Marfa skipped for each reason: `already_set` when the instance already has a name or mark for the source, `unknown_mark` when the mark isn't the ID of an icon in a set Marfa pins, `duplicate_code` when another line of the archive lands on the same code and the line already carrying it wins."
                     }
                   },
                   "required": [

@@ -8,6 +8,7 @@ import type { TestContext } from "../test-utils.js";
 import {
   cleanupTestContext,
   createTestContext,
+  raceTheNextTransaction,
   request,
   seedOauthBearer,
   TEST_MANAGEMENT_PERMISSIONS,
@@ -272,6 +273,65 @@ describe("setting a source's name and mark", () => {
     expect((await ctx.storage.sources.get(other))?.name).toBe("Named");
   });
 
+  it("judges a claim in the transaction that writes, so a claim removed just before it sets nothing", async () => {
+    const claimed = unique("claim-race");
+    const key = await mint({
+      label: "Claim race",
+      source: unique("claim-race-own"),
+      sources: [claimed],
+    });
+    const race = raceTheNextTransaction(ctx.storage, async () => {
+      const res = await ctx.ownerRequest(`/keys/${key.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sources: [] }),
+      });
+      expect(res.status).toBe(200);
+    });
+    try {
+      const res = await patchSource(key.key, claimed, { name: "Too late" });
+      expect(race.fired()).toBe(true);
+      expect(res.status, await res.clone().text()).toBe(403);
+    } finally {
+      race.restore();
+    }
+    expect(await ctx.storage.sources.get(claimed)).toBeNull();
+  });
+
+  it("judges keys.manage in the transaction that writes, so a permission removed just before it sets nothing", async () => {
+    const other = unique("manage-race");
+    const manager = await mint({
+      label: "Manage race",
+      source: unique("manage-race-own"),
+      permissions: TEST_MANAGEMENT_PERMISSIONS,
+    });
+    const race = raceTheNextTransaction(ctx.storage, async () => {
+      const res = await ctx.ownerRequest(`/keys/${manager.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ permissions: [] }),
+      });
+      expect(res.status, await res.clone().text()).toBe(200);
+    });
+    try {
+      const res = await patchSource(manager.key, other, { name: "Too late" });
+      expect(race.fired()).toBe(true);
+      expect(res.status, await res.clone().text()).toBe(403);
+    } finally {
+      race.restore();
+    }
+    expect(await ctx.storage.sources.get(other)).toBeNull();
+  });
+
+  it("measures a name as a sign-in's name is measured, so a name export would refuse is refused", async () => {
+    const source = unique("emoji-name");
+    const res = await ownerPatch(source, { name: "😀".repeat(150) });
+    expect(res.status, await res.clone().text()).toBe(400);
+    expect(await ctx.storage.sources.get(source)).toBeNull();
+    const fits = await ownerPatch(source, { name: "😀".repeat(100) });
+    expect(fits.status).toBe(200);
+  });
+
   it("refuses a mark that is no icon ID with the type icon's error", async () => {
     const source = unique("bad-mark");
     for (const mark of ["star", "lucide:", "nosuchset:github"]) {
@@ -371,6 +431,84 @@ describe("reading sources", () => {
     });
     const codes = body.data.map((s) => s.source);
     expect(codes).toEqual([...codes].sort());
+  });
+
+  it("lists to a keys.manage credential with no type grants a source whose key is revoked and whose items remain, as GET /source answers it", async () => {
+    const orphan = unique("orphan");
+    const writer = await mint({ label: "Orphan writer", source: orphan });
+    await createNote(writer.key);
+    const revoked = await ctx.ownerRequest(`/keys/${writer.id}`, {
+      method: "DELETE",
+    });
+    expect(revoked.status).toBe(200);
+    const manager = await mint({
+      label: "Blind manager",
+      source: unique("blind-manager"),
+      type_permissions: {},
+      permissions: TEST_MANAGEMENT_PERMISSIONS,
+    });
+    const single = await getSource(manager.key, orphan);
+    expect(single.status).toBe(200);
+    const listed = (await (
+      await request(ctx.app, "GET", "/sources", { key: manager.key })
+    ).json()) as { data: Source[] };
+    expect(listed.data.map((s) => s.source)).toContain(orphan);
+    // The witness: a key that holds no management permission and reads no
+    // type is not shown it.
+    const plain = await mint({
+      label: "Blind plain",
+      source: unique("blind-plain"),
+      type_permissions: {},
+    });
+    expect((await getSource(plain.key, orphan)).status).toBe(404);
+  });
+
+  it("lists a source claimed by a live key that holds no items to a keys.manage credential", async () => {
+    const claimed = unique("claimed-listed");
+    await mint({
+      label: "Claimer",
+      source: unique("claimer"),
+      sources: [claimed],
+    });
+    const manager = await mint({
+      label: "Claim manager",
+      source: unique("claim-manager"),
+      type_permissions: {},
+      permissions: TEST_MANAGEMENT_PERMISSIONS,
+    });
+    const listed = (await (
+      await request(ctx.app, "GET", "/sources", { key: manager.key })
+    ).json()) as { data: Source[] };
+    expect(listed.data.map((s) => s.source)).toContain(claimed);
+    expect((await getSource(manager.key, claimed)).status).toBe(200);
+  });
+
+  it("holds a source whose name is __proto__ in the counts and the visibility of its items", async () => {
+    const odd = "__proto__";
+    const writer = await mint({ label: "Proto writer", source: odd });
+    await createNote(writer.key);
+    const stats = await ctx.ownerRequest("/items/stats?by=source");
+    const counts = (await stats.json()) as Record<string, number>;
+    expect(Object.hasOwn(counts, odd)).toBe(true);
+    expect(counts[odd]).toBe(1);
+    const reader = await mint({ label: "Proto reader", source: unique("pr") });
+    expect((await getSource(reader.key, odd)).status).toBe(200);
+    // By type and by state share the accumulator; neither name can be held
+    // by a type or a state, so the witness is the count itself.
+    const byState = (await (
+      await ctx.ownerRequest("/items/stats?by=state")
+    ).json()) as Record<string, number>;
+    expect(Object.getPrototypeOf(byState)).toBe(Object.prototype);
+    expect(byState.active).toBeGreaterThan(0);
+  });
+
+  it("takes a code as long as a restore can make one, and refuses one longer", async () => {
+    const longest = `restored:oauth:${"c".repeat(194)}`;
+    expect(longest).toHaveLength(209);
+    expect((await ownerPatch(longest, { name: "Long" })).status).toBe(200);
+    expect(await ownerGet(longest)).toMatchObject({ source: longest });
+    const tooLong = `${longest}x`;
+    expect((await ownerPatch(tooLong, { name: "Longer" })).status).toBe(400);
   });
 
   it("refuses a source code with a space at either end", async () => {

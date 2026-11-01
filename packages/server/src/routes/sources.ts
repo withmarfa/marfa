@@ -4,10 +4,11 @@ import {
   ErrorCode,
   MarfaError,
   iconNameIssue,
+  maxStringLength,
   resolveEnforcement,
 } from "@withmarfa/shared";
-import { UNPRINTABLE } from "../auth/hidden-characters.js";
 import { SIGN_IN_NAME_MAX, usableSignInName } from "../auth/sign-in-names.js";
+import { SOURCE_CODE_MAX } from "../auth/source-codes.js";
 import type { AppEnv } from "../middleware/auth.js";
 import {
   authorityId,
@@ -23,9 +24,6 @@ import { runAuditedTransaction } from "../storage/audited-transaction.js";
 import { readInstanceConfig } from "../storage/instance-config.js";
 import type { SourceNaming, Storage } from "../storage/interface.js";
 import { wholeListOf } from "./_schemas.js";
-
-/** The longest source code a key can hold, which a query has to carry. */
-const SOURCE_CODE_MAX = 200;
 
 const NAME_FROM = ["set", "app", "key", "code"] as const;
 type NameFrom = (typeof NAME_FROM)[number];
@@ -65,10 +63,7 @@ export const SourceSchema = z
   });
 
 const SourceCodeQuery = z.object({
-  source: z
-    .string()
-    .min(1)
-    .max(SOURCE_CODE_MAX)
+  source: maxStringLength(z.string().min(1), SOURCE_CODE_MAX)
     .refine((code) => code === code.trim(), {
       message: "source can't start or end with a space",
     })
@@ -78,14 +73,12 @@ const SourceCodeQuery = z.object({
     .openapi({ example: "github" }),
 });
 
-const NameField = z
-  .string()
-  .trim()
-  .min(1)
-  .max(SIGN_IN_NAME_MAX)
-  .refine((name) => !UNPRINTABLE.test(name), {
-    message: "name can't hold a control or bidirectional formatting character",
-  });
+const NameField = maxStringLength(
+  z.string().trim().min(1),
+  SIGN_IN_NAME_MAX,
+).refine((name) => usableSignInName(name) === name, {
+  message: "name can't hold a control or bidirectional formatting character",
+});
 
 const UpdateSourceBody = z.strictObject({
   name: NameField.nullable()
@@ -114,7 +107,7 @@ const badCode = {
     },
   },
   description:
-    "- `missing_required_field`: `source` is missing.\n- `validation_error`: `source` isn't 1 to 200 characters or starts or ends with a space, or the query has a parameter this endpoint doesn't take.",
+    "- `missing_required_field`: `source` is missing.\n- `validation_error`: `source` isn't 1 to 209 characters or starts or ends with a space, or the query has a parameter this endpoint doesn't take.",
 };
 
 const unauthorized = {
@@ -219,7 +212,7 @@ const updateSourceRoute = createRoute({
         },
       },
       description:
-        "- `missing_required_field`: `source` is missing.\n- `validation_error`: `source` isn't 1 to 200 characters or starts or ends with a space, `name` is empty, too long or holds a control character, the body has a field this endpoint doesn't take, or the query has a parameter it doesn't take.\n- `invalid_schema`: `mark` isn't the ID of an icon in a pinned set (`details.errors` names it).",
+        "- `missing_required_field`: `source` is missing.\n- `validation_error`: `source` isn't 1 to 209 characters or starts or ends with a space, `name` is empty, too long or holds a control character, the body has a field this endpoint doesn't take, or the query has a parameter it doesn't take.\n- `invalid_schema`: `mark` isn't the ID of an icon in a pinned set (`details.errors` names it).",
     },
     401: unauthorized,
     403: {
@@ -274,6 +267,19 @@ async function readableItemSources(
     "source",
   );
   return Object.keys(counts);
+}
+
+/** Every source the instance holds: those of its items in any state, those
+ *  it names, and those its live keys hold as their own or claim. */
+async function everySource(
+  storage: Storage,
+  named: Iterable<string>,
+): Promise<Set<string>> {
+  const codes = new Set(named);
+  const counts = await storage.items.stats({ all_states: true }, "source");
+  for (const code of Object.keys(counts)) codes.add(code);
+  for (const code of await storage.keys.heldSources()) codes.add(code);
+  return codes;
 }
 
 async function appName(
@@ -356,14 +362,12 @@ export function sourceRoutes(storage: Storage) {
         const rows = new Map(
           (await storage.sources.list()).map((row) => [row.source, row]),
         );
-        const codes = new Set(await readableItemSources(c, storage));
-        if (seesEverySource(c)) {
-          for (const code of rows.keys()) codes.add(code);
-          for (const code of (await storage.keys.ownSourceLabels()).keys())
-            codes.add(code);
-        } else {
-          for (const code of ownedSources(c)) codes.add(code);
-        }
+        const codes = seesEverySource(c)
+          ? await everySource(storage, rows.keys())
+          : new Set([
+              ...(await readableItemSources(c, storage)),
+              ...ownedSources(c),
+            ]);
         return sourceViews(storage, codes, rows);
       },
       { signal: c.req.raw.signal },
@@ -396,7 +400,10 @@ export function sourceRoutes(storage: Storage) {
   router.openapi(updateSourceRoute, async (c) => {
     const { source } = c.req.valid("query");
     const body = c.req.valid("json");
-    if (!ownedSources(c).has(source)) requirePermission(c, "keys.manage");
+    const mayName = () => {
+      if (!ownedSources(c).has(source)) requirePermission(c, "keys.manage");
+    };
+    mayName();
     if (typeof body.mark === "string") {
       const refused = iconNameIssue(body.mark, "mark");
       if (refused) {
@@ -408,6 +415,7 @@ export function sourceRoutes(storage: Storage) {
     const view = await runAuditedTransaction(
       storage,
       async () => {
+        mayName();
         const held = await storage.sources.get(source);
         const name = body.name === undefined ? (held?.name ?? null) : body.name;
         const mark = body.mark === undefined ? (held?.mark ?? null) : body.mark;

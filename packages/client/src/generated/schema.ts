@@ -25563,7 +25563,7 @@ export interface operations {
             };
             /**
              * @description - `missing_required_field`: `source` is missing.
-             *     - `validation_error`: `source` isn't 1 to 200 characters or starts or ends with a space, or the query has a parameter this endpoint doesn't take.
+             *     - `validation_error`: `source` isn't 1 to 209 characters or starts or ends with a space, or the query has a parameter this endpoint doesn't take.
              */
             400: {
                 headers: {
@@ -25718,7 +25718,7 @@ export interface operations {
             };
             /**
              * @description - `missing_required_field`: `source` is missing.
-             *     - `validation_error`: `source` isn't 1 to 200 characters or starts or ends with a space, `name` is empty, too long or holds a control character, the body has a field this endpoint doesn't take, or the query has a parameter it doesn't take.
+             *     - `validation_error`: `source` isn't 1 to 209 characters or starts or ends with a space, `name` is empty, too long or holds a control character, the body has a field this endpoint doesn't take, or the query has a parameter it doesn't take.
              *     - `invalid_schema`: `mark` isn't the ID of an icon in a pinned set (`details.errors` names it).
              */
             400: {
@@ -31678,7 +31678,7 @@ export interface operations {
                         sources_added: number;
                         /** @description How many source names and marks Marfa skipped. */
                         sources_skipped: number;
-                        /** @description How many source names and marks Marfa skipped for each reason: `already_set` when the instance already has a name or mark for the source, `unknown_mark` when the mark isn't the ID of an icon in a set Marfa pins. */
+                        /** @description How many source names and marks Marfa skipped for each reason: `already_set` when the instance already has a name or mark for the source, `unknown_mark` when the mark isn't the ID of an icon in a set Marfa pins, `duplicate_code` when another line of the archive lands on the same code and the line already carrying it wins. */
                         sources_skipped_reasons: {
                             [key: string]: number;
                         };

@@ -1429,6 +1429,8 @@ export interface KeyStore {
    * most one live key (`keys-and-oauth/own-source-unique`).
    */
   ownSourceLabels(): Promise<ReadonlyMap<string, string>>;
+  /** The sources the live keys hold as their own or claim. */
+  heldSources(): Promise<ReadonlySet<string>>;
   list(): Promise<StoredApiKey[]>;
   get(id: string): Promise<StoredApiKey | null>;
   validate(

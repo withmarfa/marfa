@@ -147,11 +147,11 @@ Fixture paths are under `src/suites/`.
 
 ## Sources
 
-| Operation       | Status  | Fixture                           | Notes                                                                                                                                                                   |
-| --------------- | ------- | --------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `GET /sources`  | covered | `compliance/source-names.test.ts` | Every source the caller can see, with its name and mark; a source no item it reads carries is left out.                                                                 |
-| `GET /source`   | covered | `compliance/source-names.test.ts` | The name set, then an app's sign-in name, then the label of the key that holds it as its own, then the code; `404 source_not_found` for a source the caller cannot see. |
-| `PATCH /source` | covered | `compliance/source-names.test.ts` | A key's own and claimed sources, any source with `keys.manage`; `403 forbidden` otherwise; a mark held to a type icon's rule.                                           |
+| Operation       | Status  | Fixture                           | Notes                                                                                                                                                                    |
+| --------------- | ------- | --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `GET /sources`  | covered | `compliance/source-names.test.ts` | Every source the caller can see, with its name and mark; a source no item it reads carries is left out, and a `keys.manage` caller sees every source the instance holds. |
+| `GET /source`   | covered | `compliance/source-names.test.ts` | The name set, then an app's sign-in name, then the label of the key that holds it as its own, then the code; `404 source_not_found` for a source the caller cannot see.  |
+| `PATCH /source` | covered | `compliance/source-names.test.ts` | A key's own and claimed sources, any source with `keys.manage`; `403 forbidden` otherwise; a mark held to a type icon's rule.                                            |
 
 ## Events and webhooks
 

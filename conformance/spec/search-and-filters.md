@@ -1630,6 +1630,14 @@ When `POST /restore` reads a `source` line whose code starts with `oauth:`, the 
 
 **Tests:** `compliance/source-names.test.ts › skips and counts a mark outside the pinned sets, and refuses a damaged source line, writing nothing`.
 
+### `search-and-filters/restore-sources-shared-code`
+
+If two `source` lines of an archive land on one code once `search-and-filters/restore-sources-app` has mapped them, then the server MUST keep the line that already carries that code, whatever the order of the lines, skip the other, and count it in `sources_skipped` and under `duplicate_code` in `sources_skipped_reasons`.
+
+**Reason:** an instance can name both an app's source and the restored code it maps to, and an archive of it has to restore, not be refused.
+
+**Tests:** `compliance/source-names.test.ts › restores the line that carries the code when two land on one`.
+
 ### `search-and-filters/restore-sources-skipped`
 
 If a `source` line of an archive names a `mark` that `types/icon-name` refuses, then the server MUST skip that line, set nothing on the source, and count it in `sources_skipped` and under `unknown_mark` in `sources_skipped_reasons`; a line skipped because the instance has a name or mark set on the source is counted under `already_set`.
@@ -1640,7 +1648,7 @@ If a `source` line of an archive names a `mark` that `types/icon-name` refuses, 
 
 ### `search-and-filters/restore-sources-refused`
 
-If a `source` line of an archive is not an object, holds a `source` code that is not 1 to 200 characters or has a space at either end, holds neither a `name` nor a `mark`, holds a `name` that `PATCH /source` could not store as it stands, or holds a `mark` that is not a string, then the server MUST answer `POST /restore` with `400 invalid_schema` and write nothing.
+If a `source` line of an archive is not an object, holds a `source` code that `keys-and-oauth/source-code-length` refuses, as it stands or once `search-and-filters/restore-sources-app` has mapped it, holds neither a `name` nor a `mark`, holds a `name` that `PATCH /source` could not store as it stands, or holds a `mark` that is not a string, then the server MUST answer `POST /restore` with `400 invalid_schema` and write nothing.
 
 **Tests:** `compliance/source-names.test.ts › skips and counts a mark outside the pinned sets, and refuses a damaged source line, writing nothing`.
 

@@ -921,6 +921,14 @@ The server MUST take the source code of `GET /source` and `PATCH /source` from t
 
 **Tests:** `compliance/source-names.test.ts › travels in the query, so a code a path would rewrite reaches its source`.
 
+### `keys-and-oauth/source-code-length`
+
+The server MUST take a source code of 1 to 209 UTF-16 code units, with no space at either end, at `GET /source`, `PATCH /source` and every other door that takes one.
+
+**Reason:** a key holds a source of at most 200 code units, and a restore puts `restored:`, 9 more, before an app's source of that length, so no door may refuse a code the instance can hold.
+
+**Tests:** `compliance/source-names.test.ts › takes a code as long as a restore can make one, and refuses a longer`.
+
 ### `keys-and-oauth/source-read`
 
 When a credential sends `GET /source` naming a source it can see, the server MUST answer the source's `source`, `name` and `name_from`, and its `mark` only where one is set.
@@ -979,6 +987,14 @@ When the key whose own `source` a source is ends, the server MUST NOT answer tha
 
 **Tests:** `compliance/source-names.test.ts › keeps a set name when its source passes to a new key, and drops the revoked key's label`.
 
+### `keys-and-oauth/source-name-length`
+
+If `PATCH /source` sends a `name` that is empty once trimmed, holds a control character or a bidirectional formatting character, or is longer than 200 UTF-16 code units once trimmed, then the server MUST answer `400 validation_error` and leave the source's name and mark as they were.
+
+**Reason:** it is the rule a sign-in's name is held to, and an archive refuses a name that `PATCH /source` could not store, so a name measured another way would stop an export.
+
+**Tests:** `compliance/source-names.test.ts › refuses a name an archive could not carry, and keeps what was set`.
+
 ### `keys-and-oauth/source-set-own`
 
 When a credential sends `PATCH /source` naming its own `source` or a source it claims, the server MUST set the name and mark the body gives.
@@ -1030,6 +1046,14 @@ If `PATCH /source` sends a `mark` that `types/icon-name` refuses as a type's ico
 If `PATCH /source` sends a `mark` that `types/icon-name` refuses as a type's icon, then the server MUST leave the source's name and mark as they were.
 
 **Tests:** `compliance/source-names.test.ts › refuses a mark outside the pinned icon sets with invalid_schema, and sets nothing`.
+
+### `keys-and-oauth/source-list-manage`
+
+When a credential holding `keys.manage`, or direct owner or local authority, sends `GET /sources`, the server MUST answer every source the instance holds: those of its items in any state, those with a name or mark, and those its keys hold as their own or claim, whatever types the credential reads.
+
+**Reason:** `GET /source` answers any source to such a credential, so the list says the same.
+
+**Tests:** `compliance/source-names.test.ts › lists every source the instance holds to a credential with keys.manage, whatever types it reads`.
 
 ### `keys-and-oauth/source-hidden`
 

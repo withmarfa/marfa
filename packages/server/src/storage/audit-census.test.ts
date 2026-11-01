@@ -20,7 +20,7 @@ const READS: Record<string, string> = {
     "list get provenance listRegistered listRegisteredWithProvenance loadAll countRegistered propertyNamesHeld icons",
   EdgeTypeStore: "list get",
   SearchStore: "search",
-  KeyStore: "list get validate count ownSourceLabels",
+  KeyStore: "list get validate count ownSourceLabels heldSources",
   SourceStore: "list get",
   BlobRegistry:
     "get listAll readableThrough lendingHashesOf lendingHashesOfEdges lendingHashesOfExtensions uploadedBy count listStores copiesClaimedAt listCopies storeIdsOf listPendingCopyDeletions listMissingFrom countMissingFrom listToVerify listOrphans listOrphansToPurge listPendingPurges purgePending",
