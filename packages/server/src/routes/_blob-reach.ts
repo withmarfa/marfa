@@ -3,7 +3,6 @@ import {
   MarfaError,
   edgePermissionCovers,
   listTypes,
-  resolveTypePermission,
 } from "@withmarfa/shared";
 import type { ApiKey } from "@withmarfa/shared";
 import type { Context } from "hono";
@@ -14,7 +13,7 @@ import {
   holdsPermission,
   requirePermission,
   getTypeFilter,
-  mayWriteReserved,
+  mayWriteType,
   requireAuth,
   type AppEnv,
   standingRule,
@@ -160,11 +159,7 @@ export function requireBlobUpload(c: Context<AppEnv>): string {
     return blobPrincipal(key, kind);
   }
   const { key, kind } = requestCredential(c);
-  const writes = listTypes().some(
-    (type) =>
-      mayWriteReserved(key, type.id) &&
-      resolveTypePermission(type.id, key.type_permissions) === "write",
-  );
+  const writes = listTypes().some((type) => mayWriteType(key, type.id));
   if (!writes) {
     throw new MarfaError(
       ErrorCode.TYPE_NOT_PERMITTED,

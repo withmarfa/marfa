@@ -3309,7 +3309,7 @@ export interface ConnectorStore {
    * Which items connectors hold read only, from every registration whose key
    * is live, read once for a page: true for an item when at least one such
    * registration's key owns or claims the item's source and every one that
-   * does declares the item's type.
+   * does declares the item's type and may write it.
    */
   readOnly(): Promise<ReadOnlyItems>;
   /** Every registration, newest first. */

@@ -1,6 +1,6 @@
 import { and, desc, eq, gt, lt, or, sql } from "drizzle-orm";
 import { ErrorCode, MarfaError, generateId } from "@withmarfa/shared";
-import type { PaginatedResult } from "@withmarfa/shared";
+import type { PaginatedResult, TypePermission } from "@withmarfa/shared";
 import type {
   Connector,
   ConnectorHoldOutcome,
@@ -24,6 +24,7 @@ import {
 } from "./schema.js";
 import { notRevokedOrExpired } from "./key-store.js";
 import { safeJsonParse } from "../json-utils.js";
+import { mayWriteType } from "../../middleware/auth.js";
 import type { DrizzleDb } from "./connection.js";
 import * as clock from "../../clock.js";
 
@@ -166,6 +167,7 @@ export class SqliteConnectorStore implements ConnectorStore {
       .select({
         own: apiKeys.source,
         claimed: apiKeys.sources,
+        permissions: apiKeys.type_permissions,
         declared: connectors.read_only_types,
       })
       .from(connectors)
@@ -173,14 +175,22 @@ export class SqliteConnectorStore implements ConnectorStore {
       .where(notRevokedOrExpired(clock.now().toISOString()))
       .all();
     // Per source, the types every registration for it declares: one that
-    // declares fewer still takes edits to the rest.
+    // declares fewer still takes edits to the rest. A declared type the key
+    // may no longer write is one its connector cannot put an edit back to.
     const held = new Map<string, Set<string>>();
     for (const row of rows) {
+      const key = {
+        type_permissions: safeJsonParse<Record<string, TypePermission>>(
+          row.permissions,
+          {},
+          "key type_permissions",
+        ),
+      };
       const declared = safeJsonParse<string[]>(
         row.declared,
         [],
         "connector read_only_types",
-      );
+      ).filter((type) => mayWriteType(key, type));
       const sources = new Set([
         row.own,
         ...safeJsonParse<string[]>(row.claimed, [], "key sources"),
