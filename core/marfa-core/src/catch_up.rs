@@ -1375,12 +1375,12 @@ fn edges_of_entering_row(
     }
     {
         let conn = core.conn()?;
-        // A refill keeps the rows it held until its sweep, which takes the
-        // edges of a held row neither its walk nor its replay brought: one
-        // only the replay brings enters as a row the copy does not hold.
         if store::removed(&conn, Subject::Item, &item.id)? {
             return Ok(Vec::new());
         }
+        // A refill keeps the rows it held until its sweep, which takes the
+        // edges of a held row neither its walk nor its replay brought: one
+        // only the replay brings enters as a row the copy does not hold.
         let entering = !store::item_held(&conn, &item.id)?
             || (store::refilling(&conn)? && !reach::answered(&conn, &item.id)?);
         if !entering || !(in_slice(catalog, slice, item)? || store::pinned(&conn, &item.id)?) {
