@@ -251,16 +251,19 @@ fn next_test(
         }
         let current = store::queued_write(&*core.conn()?, &candidate.id)?;
         let candidate = current.as_ref().unwrap_or(candidate);
-        if matches!(
-            readiness(
-                candidate,
-                standing.rows,
-                standing.answers,
-                &ahead,
-                standing.landing,
-            ),
-            Readiness::Ready
-        ) {
+        if candidate.verdict.is_none()
+            && matches!(
+                readiness(
+                    candidate,
+                    standing.rows,
+                    standing.answers,
+                    &ahead,
+                    standing.landing,
+                    create_edges::waits(&*core.conn()?, candidate)?,
+                ),
+                Readiness::Ready
+            )
+        {
             let sent = store::last_sent_seq(&*core.conn()?, &candidate.id)?;
             ready.push((sent, at, candidate.clone()));
         }
@@ -584,6 +587,7 @@ fn readiness(
     verdicts: &HashMap<String, Option<Verdict>>,
     waiting: &HashSet<String>,
     landing: &HashMap<String, String>,
+    owes_edge: bool,
 ) -> Readiness {
     // Ordering before dependencies, so a write that would be refused does
     // not let the writes behind it past the one ahead.
@@ -618,12 +622,7 @@ fn readiness(
     }
     // An id the copy made for an edge a create was shown with names no edge
     // the server holds (`device/edge-write-waits-projected`).
-    if matches!(row.kind, WriteKind::UpdateEdge | WriteKind::DeleteEdge)
-        && row
-            .edge_id
-            .as_deref()
-            .is_some_and(crate::model::is_projected_edge_id)
-    {
+    if owes_edge {
         return Readiness::Held;
     }
     if row.kind == WriteKind::DeleteItem && row.base_version.is_none_or(|version| version <= 0) {
@@ -1013,7 +1012,8 @@ fn send_queue(
     report: &mut DrainReport,
 ) -> Result<()> {
     let waiting = store::waiting_writes(&*core.conn()?)?;
-    let owed = !store::owed_read_backs(&*core.conn()?)?.is_empty();
+    let owed = !store::owed_read_backs(&*core.conn()?)?.is_empty()
+        || create_edges::any_owed(&*core.conn()?)?;
     let names_wait = crate::body::rule::waiting(&*core.conn()?)?;
     let body_answers = crate::body::rule::has_answer_work(&*core.conn()?)?;
     if waiting.is_empty() && !owed && !names_wait && !body_answers {
@@ -1231,8 +1231,18 @@ fn send_queue(
             store::queued_write(&conn, &row.id)?
         };
         let row = current.as_ref().unwrap_or(row);
+        // Answered since the pass read the queue, as a settled create refuses
+        // the writes to an edge it did not make.
+        if let Some(answered) = current.as_ref().and_then(|now| now.verdict) {
+            if answered == Verdict::Blocked {
+                waiting.insert(row.id.clone());
+            }
+            answers.insert(row.id.clone(), Some(answered));
+            continue;
+        }
 
-        let ready = match readiness(row, &rows, &answers, &waiting, &landing) {
+        let owes_edge = create_edges::waits(&*core.conn()?, row)?;
+        let ready = match readiness(row, &rows, &answers, &waiting, &landing, owes_edge) {
             Readiness::Ready => match crate::body::rule::lost_body(&*core.conn()?, row)? {
                 Some(reason) => Readiness::RefusedWith(reason),
                 None => Readiness::Ready,
@@ -2628,6 +2638,8 @@ fn settle_success(
     if row.kind == WriteKind::CreateItem
         && let Some(parsed) = &item
     {
+        // The create is settled whatever the read meets: one that fails is
+        // left owed, for the read before the next pass sends anything.
         match create_edges::read(core, &parsed.item.id) {
             Ok(()) => {}
             Err(error) if error.is_environmental() => {
@@ -2635,11 +2647,16 @@ fn settle_success(
                 settled.unavailable = unavailable_by(&error).or_else(|| Some(error.to_string()));
                 settled.retry_after_seconds = error.retry_after().map(|wait| wait.as_secs());
             }
-            Err(error) => return Err(error),
+            Err(error) => telemetry::degraded!(&error),
         }
     }
     Ok(settled)
 }
+
+/// Given to an edit or delete of an edge a create was shown with that the
+/// server did not make.
+const UNMADE: &str =
+    "the server made no edge to this target when it answered the create the edge was drawn with";
 
 /// The edges a created item was drawn with while its write waited carry
 /// device-own ids. Each leaves where `answered`, the item the server answered
@@ -2671,6 +2688,7 @@ fn drop_projected_edges(
         if !kept {
             let id = crate::model::projected_edge_id(local, &edge_type, &target);
             store::forget_edge(conn, &id)?;
+            store::refuse_edge_writes(conn, &id, UNMADE)?;
         }
     }
     Ok(())
@@ -3142,16 +3160,7 @@ fn read_owed_backs(
         match read_owed(core, &entry, Bin::Held, pass, false)
             .and_then(|read| apply_owed(core, &entry, &read))
         {
-            Err(
-                error @ (CoreError::Redirected { .. }
-                | CoreError::ContractMismatch { .. }
-                | CoreError::RenewalFailed(_)
-                | CoreError::SignedOut { .. }
-                | CoreError::NoKeychain(_)
-                | CoreError::StorageFull(_)
-                | CoreError::CopyExpired { .. }
-                | CoreError::StreamIncomplete { .. }),
-            ) => return Err(error),
+            Err(error) if ends_the_pass(&error) => return Err(error),
             Err(error) => {
                 if let Some(unread) = unreadable(&error) {
                     telemetry::degraded!(&error);
@@ -3162,6 +3171,23 @@ fn read_owed_backs(
         }
     }
     Ok(None)
+}
+
+/// A failure of a read made before the queue is sent that no later read gets
+/// past: the copy, the credential or the server it speaks to has changed.
+/// Any other failure stays with the read it met.
+fn ends_the_pass(error: &CoreError) -> bool {
+    matches!(
+        error,
+        CoreError::Redirected { .. }
+            | CoreError::ContractMismatch { .. }
+            | CoreError::RenewalFailed(_)
+            | CoreError::SignedOut { .. }
+            | CoreError::NoKeychain(_)
+            | CoreError::StorageFull(_)
+            | CoreError::CopyExpired { .. }
+            | CoreError::StreamIncomplete { .. }
+    )
 }
 
 fn apply_owed(core: &Core, owed: &store::Owed, read: &ReadBack) -> Result<()> {
@@ -6752,5 +6778,171 @@ mod tests {
                 .unwrap()
                 .is_empty()
         );
+    }
+
+    fn accepted_create(report: &DrainReport) -> bool {
+        report.verdicts.iter().any(|verdict| {
+            verdict.kind == WriteKind::CreateItem && verdict.verdict == Some(Verdict::Accepted)
+        })
+    }
+
+    #[test]
+    fn a_read_refused_for_its_request_settles_the_edges_as_unread_and_lets_the_queue_go() {
+        let page = |next: &str| {
+            crate::scripted::certified(crate::scripted::json(
+                200,
+                &json!({"data": [], "next_cursor": next}).to_string(),
+            ))
+        };
+        let cases: Vec<(&str, Vec<crate::scripted::Answer>)> = vec![
+            (
+                "refused",
+                vec![crate::scripted::refusal(400, "validation_error")],
+            ),
+            (
+                "malformed",
+                // Text that is not JSON; JSON of another shape is a proof of
+                // reach the copy cannot accept, which expires it.
+                vec![crate::scripted::certified(crate::scripted::json(
+                    200, "<html>",
+                ))],
+            ),
+            ("repeated cursor", vec![page("c9"), page("c9")]),
+        ];
+        for (case, listing) in cases {
+            let server = crate::scripted::Scripted::start();
+            let (_dir, core) = drawn_to(&server, 2, None, false);
+            server.on("/items/made/edges", listing);
+            let delete = core.delete_edge(&projected(1)).unwrap();
+            let first = core
+                .drain()
+                .unwrap_or_else(|error| panic!("{case}: {error}"));
+            assert!(
+                accepted_create(&first),
+                "{case}: the create's report was lost: {first:?}"
+            );
+            assert!(first.unavailable.is_none(), "{case}: {first:?}");
+            let refused = store::queued_write(&core.conn().unwrap(), &delete.id)
+                .unwrap()
+                .unwrap();
+            assert_eq!(refused.verdict, Some(Verdict::Refused), "{case}");
+            assert_eq!(
+                edge_doors(&server, &[projected(1)]),
+                Vec::<String>::new(),
+                "{case}"
+            );
+            // Unread, not known gone: each edge the server holds stays shown.
+            assert_eq!(
+                shown_ids(&core),
+                {
+                    let mut ids = vec![projected(0), projected(1)];
+                    ids.sort();
+                    ids
+                },
+                "{case}"
+            );
+            assert_eq!(
+                store::meta_get(&core.conn().unwrap(), store::META_EVENT_CURSOR)
+                    .unwrap()
+                    .as_deref(),
+                Some("10"),
+                "{case}: the copy expired"
+            );
+            let reads = server.seen("/items/made/edges").len();
+            // A later write goes out, and the read is not asked again.
+            server.on(
+                "/items/t00",
+                vec![
+                    crate::scripted::json(200, r#"{"ok":true}"#),
+                    crate::scripted::certified(crate::scripted::refusal(404, "item_not_found")),
+                ],
+            );
+            server.on("/items", vec![in_the_bin(&[("t00", 1)])]);
+            core.delete_item("t00").unwrap();
+            core.drain()
+                .unwrap_or_else(|error| panic!("{case}: {error}"));
+            assert!(
+                !server.seen("/items/t00").is_empty(),
+                "{case}: a later write was not sent"
+            );
+            assert_eq!(server.seen("/items/made/edges").len(), reads, "{case}");
+        }
+    }
+
+    #[test]
+    fn an_owed_read_is_tried_again_by_a_drain_with_nothing_queued() {
+        let server = crate::scripted::Scripted::start();
+        let (_dir, core) = drawn_to(&server, 2, None, false);
+        server.on(
+            "/items/made/edges",
+            vec![
+                crate::scripted::unnamed(503, "unavailable"),
+                edge_page(0..2, None),
+            ],
+        );
+        let first = core.drain().unwrap();
+        assert!(first.unavailable.is_some(), "{first:?}");
+        let mut drawn = vec![projected(0), projected(1)];
+        drawn.sort();
+        assert_eq!(shown_ids(&core), drawn);
+        core.drain().unwrap();
+        assert_eq!(server.seen("/items/made/edges").len(), 2);
+        assert_eq!(shown_ids(&core), [served_id(0), served_id(1)]);
+    }
+
+    /// An edge write no read owes an id to goes out: an edge the server gave
+    /// a version 4 id, which an archive restore can carry, and an edge a
+    /// create was shown with in a copy that recorded no read for it.
+    #[test]
+    fn an_edge_write_no_read_owes_is_sent() {
+        let ids = [
+            "4f1c2a7e-9b3d-4c5e-8a6f-0d1e2f3a4b5c".to_string(),
+            projected(0),
+        ];
+        for id in ids {
+            let server = crate::scripted::Scripted::start();
+            let (_dir, core) = deleting(&server, &[]);
+            {
+                let conn = core.conn().unwrap();
+                for item in ["made", "t00"] {
+                    let row = store::testing::note(item, item, "", "2026-01-01T00:00:00Z");
+                    store::upsert_item(&conn, &row, None, &Default::default()).unwrap();
+                }
+                let mut edge: crate::wire::WireEdge =
+                    serde_json::from_value(served_edge(0)).unwrap();
+                edge.id = id.clone();
+                store::upsert_edge(&conn, &edge).unwrap();
+            }
+            server.on(&format!("/edges/{id}"), gone_after_delete());
+            let delete = core.delete_edge(&id).unwrap();
+            core.drain().unwrap();
+            assert_eq!(
+                edge_doors(&server, std::slice::from_ref(&id)),
+                [id.as_str()]
+            );
+            assert_eq!(
+                store::queued_write(&core.conn().unwrap(), &delete.id)
+                    .unwrap()
+                    .unwrap()
+                    .verdict,
+                Some(Verdict::Accepted)
+            );
+        }
+    }
+
+    #[test]
+    fn a_whole_answer_block_without_the_edge_refuses_its_waiting_write_unsent() {
+        let server = crate::scripted::Scripted::start();
+        let block = json!({ "data": [served_edge(0)], "next_cursor": null });
+        let (_dir, core) = drawn_to(&server, 2, Some(json!({ "references": block })), false);
+        let delete = core.delete_edge(&projected(1)).unwrap();
+        core.drain().unwrap();
+        assert!(server.seen("/items/made/edges").is_empty());
+        assert_eq!(edge_doors(&server, &[projected(1)]), Vec::<String>::new());
+        let refused = store::queued_write(&core.conn().unwrap(), &delete.id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(refused.verdict, Some(Verdict::Refused));
+        assert_eq!(shown_ids(&core), [served_id(0)]);
     }
 }

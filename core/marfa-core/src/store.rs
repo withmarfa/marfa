@@ -6331,9 +6331,7 @@ pub fn untaken_create_for_edge(conn: &Connection, edge_id: &str) -> Result<Vec<S
         .filter(|row| row.kind == WriteKind::CreateEdge)
         .map(|row| row.id)
         .collect();
-    if crate::model::is_projected_edge_id(edge_id)
-        && let Some(edge) = edge_by_id(conn, edge_id)?
-    {
+    if let Some(edge) = edge_by_id(conn, edge_id)? {
         for create in untaken_creates_for_item(conn, &edge.source_id)? {
             let draft = crate::model::Draft::from_payload(&payload_of(conn, &create)?)?;
             if draft.edge_pairs().iter().any(|(edge_type, target)| {

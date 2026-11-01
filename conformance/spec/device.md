@@ -1432,7 +1432,7 @@ When the server accepts a create that names `edges` and its answer carries no bl
 
 **Reason:** a block of an item's edges carries at most 50 edges and a cursor for the rest (`edges/hydrate-cap` and `edges/hydrate-cursor`), so an edge left out of a cut block was made; dropping the one shown would answer the item with fewer edges than it has. The read that settles it (`device/create-edges-read-rest`) can fail while the server is out of reach.
 
-**Tests:** `device/item-fields-live.test.ts › reads the rest of a create's edges the answer cuts off, before the drain returns`.
+**Tests:** `device/item-fields-live.test.ts › reads the rest of a create's edges the answer cuts off, before the drain returns`, `device/waiting-projections.test.ts › keeps showing a created item's edge while the read of its edges fails, until one succeeds`.
 
 ### `device/create-edges-read-rest`
 
@@ -1442,21 +1442,37 @@ When the server accepts a create that names `edges` and its answer leaves out a 
 
 **Tests:** `device/item-fields-live.test.ts › reads the rest of a create's edges the answer cuts off, before the drain returns`, `device/item-fields-live.test.ts › sends a delete of an edge the create's answer cut off to the server's edge`, `device/item-fields-live.test.ts › sends an edit of an edge the create's answer cut off to the server's edge`.
 
+### `device/create-edges-read-again`
+
+If the read `device/create-edges-read-rest` describes fails because the server cannot be reached, then a device MUST make the read again in a later drain, whether or not any write is queued.
+
+**Reason:** until the read succeeds, the device shows the edge under an id the server never gave and holds each edit or delete of it (`device/edge-write-waits-projected`), and a create's edges can be all a device still owes the server.
+
+**Tests:** `device/waiting-projections.test.ts › keeps showing a created item's edge while the read of its edges fails, until one succeeds`.
+
 ### `device/edge-write-waits-projected`
 
-While a device answers an edge under an id it made, a device MUST hold an edit or delete of that edge in the queue unsent, and send it to the id of the server's edge once a read brings that edge.
+While a device owes the read `device/create-edges-read-rest` describes for an edge it answers under an id it made, a device MUST hold an edit or delete of that edge in the queue unsent, and send it to the id of the server's edge once the read brings that edge.
 
-**Reason:** the server refuses a write to an id it never gave (`edges/create-invalid-id`), so a write sent before the read would be refused for an edge the server holds.
+**Reason:** the server refuses a write to an id it never gave (`edges/create-invalid-id`), so a write sent before the read would be refused for an edge the server holds. Only the owed read can bring that id, so a write to an edge no read is owed for is not held.
 
 **Tests:** `device/item-fields-live.test.ts › sends a delete of an edge the create's answer cut off to the server's edge`, `device/item-fields-live.test.ts › sends an edit of an edge the create's answer cut off to the server's edge`.
 
 ### `device/create-edges-unread-refused`
 
-If a whole read of a created item's edges of a type brings no edge to a target the create named, then a device MUST stop answering the edge it showed to that target and keep each waiting edit or delete of it in the queue as refused, unsent.
+If a whole read of a created item's edges of a type, or a whole block of that type in the create's answer, brings no edge to a target the create named, then a device MUST stop answering the edge it showed to that target and keep each waiting edit or delete of it in the queue as refused, unsent.
 
 **Reason:** a source filter leaves the item's edges out of every read the key can make (`edges/read-source-filter`), so no read brings an id the write could be sent to, and what the person queued stays where they can read it back.
 
 **Tests:** `device/item-fields-live.test.ts › refuses a waiting delete of an edge no read of the created item brings, without sending it`.
+
+### `device/create-edges-read-failed`
+
+If the server refuses the read `device/create-edges-read-rest` describes for the request itself, or answers it with a body that is not JSON or a `next_cursor` it gave before, then a device MUST keep answering the edge it showed to each target the read was for, keep each waiting edit or delete of that edge in the queue as refused, unsent, and not make the read again.
+
+**Reason:** the server made the edge, so the device keeps showing it; the same read fails the same way each time, so a device that kept it owed would ask in every drain and hold the edge's writes for ever, and a failure of the read does not undo the create it follows.
+
+**Tests:** `device/waiting-projections.test.ts › keeps a created item's edge and refuses its waiting delete unsent when the read of its edges is refused`.
 
 ### `device/create-edges-refused-whole`
 

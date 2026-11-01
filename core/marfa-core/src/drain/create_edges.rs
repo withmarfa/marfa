@@ -2,18 +2,18 @@
 //! the item's edge listing as the create settles
 //! (`device/create-edges-read-rest`). Until that read brings the server's
 //! edge, the copy shows the edge under the id it made for it, which the
-//! server never holds, so an edit or delete of it waits
-//! (`device/edge-write-waits-projected`).
+//! server never holds, so an edit or delete of it waits while the read is
+//! owed (`device/edge-write-waits-projected`).
 
 use std::collections::{BTreeMap, HashSet};
 use std::sync::atomic::AtomicBool;
 
 use serde::{Deserialize, Serialize};
 
-use super::{Unreadable, names_no_row, unreadable};
+use super::{Unreadable, ends_the_pass, names_no_row, unreadable};
 use crate::error::CoreError;
 use crate::http::Http;
-use crate::model::{Draft, QueuedWrite, projected_edge_id};
+use crate::model::{Draft, QueuedWrite, WriteKind, projected_edge_id};
 use crate::wire::{WireEdge, WireItem};
 use crate::{Core, Result};
 use crate::{reach, store, telemetry};
@@ -23,6 +23,11 @@ const OWED: &str = "create_edges/";
 /// Given to an edit or delete of a shown edge that a whole read of the
 /// item's edges did not bring (`device/create-edges-unread-refused`).
 const NOT_READ: &str = "a whole read of the item's edges brought no edge this key can read in place of the one the create was shown with";
+
+/// Given to an edit or delete of a shown edge whose read the server refused
+/// for the request itself or answered with something the contract does not
+/// describe (`device/create-edges-read-failed`).
+const READ_FAILED: &str = "the read of the item's edges failed, so the device holds no id of the server's for the edge the create was shown with";
 
 /// One edge type of a create's answer that a read still owes: from `cursor`
 /// where the answer's block was cut, from the start where it carried none.
@@ -87,15 +92,25 @@ pub(super) fn read(core: &Core, item: &str) -> Result<()> {
     };
     let owed: Vec<Owed> = serde_json::from_str(&recorded)?;
     let http = context.http(core.http()?);
+    // `None` for a read that failed for good: asking again would fail the
+    // same way.
     let mut read = Vec::with_capacity(owed.len());
     for block in &owed {
         match listing(&http, item, block) {
-            Ok(edges) => read.push(edges),
+            Ok(edges) => read.push(Some(edges)),
             // The item is gone, or no longer one this key may read: neither
             // holds an edge the copy can name.
-            Err(CoreError::NotFound { .. } | CoreError::Forbidden { .. }) => read.push(Vec::new()),
-            Err(error) if names_no_row(&error) => read.push(Vec::new()),
-            Err(error) => return Err(context.failed(core, error)?),
+            Err(CoreError::NotFound { .. } | CoreError::Forbidden { .. }) => {
+                read.push(Some(Vec::new()));
+            }
+            Err(error) if names_no_row(&error) => read.push(Some(Vec::new())),
+            Err(error) if error.is_environmental() || ends_the_pass(&error) => {
+                return Err(context.failed(core, error)?);
+            }
+            Err(error) => {
+                telemetry::degraded!(&error);
+                read.push(None);
+            }
         }
     }
     let mut conn = core.conn()?;
@@ -106,6 +121,12 @@ pub(super) fn read(core: &Core, item: &str) -> Result<()> {
         return Ok(());
     }
     for (block, edges) in owed.iter().zip(&read) {
+        let Some(edges) = edges else {
+            for target in &block.targets {
+                keep_unread(&tx, item, &block.edge_type, target)?;
+            }
+            continue;
+        };
         for edge in edges {
             store::take_server_edge(&tx, edge)?;
         }
@@ -124,6 +145,66 @@ pub(super) fn read(core: &Core, item: &str) -> Result<()> {
     store::meta_delete(&tx, &key(item))?;
     tx.commit()?;
     Ok(())
+}
+
+/// The edge `item` was shown with to `target`, whose read failed for good:
+/// each write waiting on it is refused unsent, and the edge stays shown as
+/// the create drew it, since the server made it.
+fn keep_unread(
+    conn: &rusqlite::Connection,
+    item: &str,
+    edge_type: &str,
+    target: &str,
+) -> Result<()> {
+    let shown = projected_edge_id(item, edge_type, target);
+    store::refuse_edge_writes(conn, &shown, READ_FAILED)?;
+    let held = store::edges_from(conn, item)?
+        .into_iter()
+        .any(|edge| edge.id != shown && edge.edge_type == edge_type && edge.target_id == target);
+    if held {
+        return Ok(());
+    }
+    let at = store::now_iso();
+    store::upsert_edge(
+        conn,
+        &WireEdge {
+            id: shown,
+            source_id: item.to_string(),
+            target_id: target.to_string(),
+            edge_type: edge_type.to_string(),
+            properties: Default::default(),
+            version: 0,
+            created_at: at.clone(),
+            updated_at: at,
+        },
+    )
+}
+
+/// Whether `row` is an edit or delete of an edge shown under an id the copy
+/// made, whose read is still owed (`device/edge-write-waits-projected`). An
+/// untaken create holds its edges' writes as a dependency instead.
+pub(super) fn waits(conn: &rusqlite::Connection, row: &QueuedWrite) -> Result<bool> {
+    if !matches!(row.kind, WriteKind::UpdateEdge | WriteKind::DeleteEdge) {
+        return Ok(false);
+    }
+    let (Some(item), Some(edge)) = (row.item_id.as_deref(), row.edge_id.as_deref()) else {
+        return Ok(false);
+    };
+    let Some(recorded) = store::meta_get(conn, &key(item))? else {
+        return Ok(false);
+    };
+    let owed: Vec<Owed> = serde_json::from_str(&recorded)?;
+    Ok(owed.iter().any(|block| {
+        block
+            .targets
+            .iter()
+            .any(|target| projected_edge_id(item, &block.edge_type, target) == edge)
+    }))
+}
+
+/// Whether any read is still owed, which a drain does with nothing queued.
+pub(super) fn any_owed(conn: &rusqlite::Connection) -> Result<bool> {
+    Ok(!store::meta_keys(conn, OWED)?.is_empty())
 }
 
 /// Every read a record still owes, tried before the queue is sent. One the
@@ -161,7 +242,11 @@ fn listing(http: &Http, item: &str, block: &Owed) -> Result<Vec<WireEdge>> {
         match page.next_cursor {
             None => return Ok(edges),
             // A repeated cursor would loop forever.
-            Some(next) if !seen.insert(next.clone()) => return Err(reach::invalid()),
+            Some(next) if !seen.insert(next.clone()) => {
+                return Err(CoreError::Decoding(
+                    "the item's edge listing named a cursor it had already given".into(),
+                ));
+            }
             Some(next) => cursor = Some(next),
         }
     }
