@@ -7673,7 +7673,10 @@ mod tests {
                 reader.rebase_on_held("blocked").unwrap_err(),
             ),
             ("withdraw", reader.withdraw("blocked").unwrap_err()),
-            ("withdraw_alone", reader.withdraw_alone("blocked").unwrap_err()),
+            (
+                "withdraw_alone",
+                reader.withdraw_alone("blocked").unwrap_err(),
+            ),
             // Refused at the handle before the missing server, so not `NoServer`.
             ("drain", reader.drain().unwrap_err()),
             ("forget_answered", reader.forget_answered().unwrap_err()),
