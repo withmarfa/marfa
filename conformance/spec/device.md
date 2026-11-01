@@ -1860,7 +1860,7 @@ When a local list, a local search, a folder or a view names a `part` term, a dev
 
 When a `part` term meets an edge of a `with-hosts` type whose target the copy does not hold, a device MUST judge that target as a host out of the bin.
 
-**Reason:** the server judges the term over every host, whatever types the key may read (`search-and-filters/part-hidden-host`). A copy misses a host because its slice or its key leaves the host out, not because the host is in the bin: a host the copy held when it went to the bin stays in the copy, in the bin (`device/bin-held-event`).
+**Reason:** the server judges the term over every host, whatever types the key may read (`search-and-filters/part-hidden-host`). The copy cannot know the state of an unheld host. Its answer can differ from the server's when a part was restored on its own while an unreadable host remains in the bin. A host the copy held when it went to the bin stays in the copy, in the bin (`device/bin-held-event`).
 
 **Tests:** `device/parts.test.ts › selects items with a host out of the bin, counting a host it does not hold as out of it`.
 

@@ -3662,7 +3662,6 @@ pub fn type_rows(conn: &Connection) -> Result<Vec<(String, String)>, CoreError> 
     rows_of(conn, "SELECT id, json FROM types ORDER BY id")
 }
 
-/// Each edge type as `(id, json)`, by id.
 /// The host a part is named after (`types/item-name-part`).
 pub(crate) struct PartHost {
     /// The label of the edge's type.
@@ -3706,6 +3705,7 @@ pub(crate) fn part_host(conn: &Connection, id: &str) -> Result<Option<PartHost>,
     }))
 }
 
+/// Each edge type as `(id, json)`, by id.
 pub fn edge_type_rows(conn: &Connection) -> Result<Vec<(String, String)>, CoreError> {
     rows_of(conn, "SELECT id, json FROM edge_types ORDER BY id")
 }

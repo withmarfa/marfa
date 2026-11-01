@@ -383,8 +383,7 @@ impl Condition {
 /// An item out of the bin that draws an edge of a `with-hosts` type, read
 /// from the held catalog so a registered type counts, to a host out of the
 /// bin. A host the copy does not hold counts as out of the bin: the copy
-/// cannot know, and an item the server put in the bin would have taken the
-/// part with it.
+/// cannot know its state (`device/filter-part-unheld-host`).
 const PART_SQL: &str = "(items.state <> 'trashed' AND EXISTS (
     SELECT 1 FROM edges e LEFT JOIN items h ON h.id = e.target_id
     WHERE e.source_id = items.id

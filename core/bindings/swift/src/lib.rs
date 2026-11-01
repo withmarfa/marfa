@@ -2604,7 +2604,7 @@ impl Core {
     }
 
     /// The name and preview text of each item, in order, by the copy's
-    /// catalog alone. An unknown type is named by the fallback fields. An
+    /// held catalog and rows. An unknown type is named by the fallback fields. An
     /// item given with its id is named after its host where it is a part
     /// the copy holds a host for.
     pub fn item_displays(
