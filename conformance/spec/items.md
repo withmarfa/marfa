@@ -14,17 +14,17 @@ When the server returns item data or related metadata, extensions, edges, histor
 
 ## Read only
 
-A connector declares the types whose items it holds read only in its registration's `read_only_types` (`connectors/read-only-types-stored`). The registrations that hold an item are those whose key is live and has the item's `source` as its own or claims it.
+A connector declares the types whose items it holds read only in its registration's `read_only_types` (`connectors/read-only-types-stored`).
 
 ### `items/read-only-answered`
 
-When the server answers an item, in a response or in an event frame, the server MUST include `read_only` as a boolean.
+When the server answers an item, in a response, in an event frame or in an outbound webhook delivery, the server MUST include `read_only` as a boolean.
 
 **Tests:** `compliance/connector-read-only.test.ts › reads an item read only while its connector declares the type, and editable once the declaration is gone`.
 
 ### `items/read-only-true`
 
-While at least one registration holds an item and every registration that holds it lists the item's type in `read_only_types`, the server MUST answer the item's `read_only` as `true`.
+While at least one connector registration whose key is neither revoked nor expired has an item's `source` as its key's own source or claims it, and every such registration lists the item's type in `read_only_types` and has a key that may write that type, the server MUST answer the item's `read_only` as `true`.
 
 **Reason:** a connector that holds a type read only puts back an edit made in Marfa on its next run, so a client can show the item as locked.
 
@@ -32,17 +32,41 @@ While at least one registration holds an item and every registration that holds 
 
 ### `items/read-only-false`
 
-While no registration holds an item, or a registration that holds it leaves the item's type out of `read_only_types`, the server MUST answer the item's `read_only` as `false`.
+While no connector registration whose key is neither revoked nor expired has an item's `source` as its key's own source or claims it, or one such registration leaves the item's type out of `read_only_types`, the server MUST answer the item's `read_only` as `false`.
 
 **Reason:** a client never locks an item a connector still accepts edits to.
 
 **Tests:** `compliance/connector-read-only.test.ts › reads an item read only while its connector declares the type, and editable once the declaration is gone`, `› keeps an item editable while another connector that claims its source does not declare its type`.
 
+### `items/read-only-key-gone`
+
+While a connector registration's key is revoked or expired, the server MUST answer `read_only` on every item as if that registration did not exist.
+
+**Reason:** a connector whose key no longer works cannot run, so it cannot put an edit back.
+
+**Tests:** `compliance/connector-read-only.test.ts › reads an item editable once the key of the connector that held it is revoked`.
+
+### `items/read-only-key-may-write`
+
+While a connector registration whose key is neither revoked nor expired has an item's `source` as its key's own source or claims it, and that key may not write the item's type, the server MUST answer the item's `read_only` as `false`.
+
+**Reason:** a connector whose key may not write a type cannot put an edit back to it.
+
+**Tests:** `compliance/connector-read-only.test.ts › reads an item editable once the key of the connector that held it may no longer write its type`.
+
 ### `items/read-only-current`
 
-When a registration's `read_only_types` changes, the server MUST answer `read_only` on every later read and every event frame sent after it as the registrations then stand.
+When a connector registration or its key changes, the server MUST answer `read_only` on every later read, every event frame sent after it and every outbound webhook delivery attempted after it as the registrations and keys then stand.
 
-**Tests:** `compliance/connector-read-only.test.ts › reads an item read only while its connector declares the type, and editable once the declaration is gone`.
+**Tests:** `compliance/connector-read-only.test.ts › reads an item read only while its connector declares the type, and editable once the declaration is gone`, `› reads an item editable once the key of the connector that held it is revoked`, `› reads an item editable once the key of the connector that held it may no longer write its type`.
+
+### `items/read-only-replay`
+
+When the server replays a kept answer that holds an item, the server MUST answer the item's `read_only` as the connector registrations and their keys stand at the replay.
+
+**Reason:** `read_only` is worked out when an item is answered and is no part of what the write did, so a kept value would be stale once a registration changed.
+
+**Tests:** `compliance/connector-read-only.test.ts › answers read_only on a replayed write as registrations stand at the replay`.
 
 ### `items/read-only-writable`
 

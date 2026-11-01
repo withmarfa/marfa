@@ -64,7 +64,7 @@ If an access token an app holds sends `POST /connectors`, then the server MUST a
 
 If the server refuses `POST /connectors`, then the server MUST NOT register the key that sent it.
 
-**Tests:** `compliance/connector-codes.test.ts › leaves nothing behind when direct owner authority, a name or a description is refused`, `compliance/connector-session-token.test.ts › refuses an app's session token 403 on registration, leaving nothing registered`, `compliance/connector-read-only.test.ts › refuses a malformed type identifier and registers nothing`.
+**Tests:** `compliance/connector-codes.test.ts › leaves nothing behind when direct owner authority, a name or a description is refused`, `compliance/connector-session-token.test.ts › refuses an app's session token 403 on registration, leaving nothing registered`, `compliance/connector-read-only.test.ts › refuses a malformed type identifier and registers nothing`, `› refuses more than 1,000 read_only_types and registers nothing`.
 
 ### `connectors/register-refused-no-audit`
 
@@ -111,6 +111,12 @@ When `POST /connectors` names in `read_only_types` a type identifier that names 
 If `POST /connectors` names in `read_only_types` a value that is not a type identifier (`types/id-grammar`), then the server MUST answer `400 validation_error`.
 
 **Tests:** `compliance/connector-read-only.test.ts › refuses a malformed type identifier and registers nothing`.
+
+### `connectors/read-only-types-bounds`
+
+If `POST /connectors` names more than 1,000 entries in `read_only_types`, then the server MUST answer `400 validation_error`.
+
+**Tests:** `compliance/connector-read-only.test.ts › refuses more than 1,000 read_only_types and registers nothing`.
 
 ### `connectors/read-only-types-repeat`
 

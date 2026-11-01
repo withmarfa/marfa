@@ -9,21 +9,25 @@ import {
   removeTrackedRegistrations,
   trackItem,
   trackKey,
+  trackWebhook,
 } from "../../utils/setup.js";
 import { expectMatchesSchema } from "../../utils/openapi.js";
 import { openEventStream } from "../../utils/sse.js";
 import { collectUntil } from "../../utils/stream.js";
+import { startReceiver, type Receiver } from "../../utils/webhook-receiver.js";
 
 let client: MarfaClient;
 let ctx: TestContext;
 let apiUrl: string;
 let apiKey: string;
+let receiver: Receiver;
 
 beforeAll(async () => {
   ({ ctx, client, apiUrl, apiKey } = await createTestContext(
     "compliance",
     "connector-read-only",
   ));
+  receiver = await startReceiver();
 });
 
 beforeEach(async () => {
@@ -32,7 +36,14 @@ beforeEach(async () => {
 
 afterAll(async () => {
   await cleanup(ctx);
+  await receiver.close();
 });
+
+/** `GET /events` as a working copy opens it (`reach/copy-bootstrap`). */
+const COPY_QUERY: Array<[string, string]> = [
+  ["edges", "all"],
+  ["copy", "1"],
+];
 
 function declare(by: MarfaClient, readOnlyTypes?: string[]) {
   return by.registerConnector({
@@ -57,6 +68,29 @@ async function write(
   expect(result.ok, JSON.stringify(result.error)).toBe(true);
   trackItem(ctx, result.data.item.id);
   return result.data.item;
+}
+
+/** A key of its own source, minted by the owner, and a client holding it. */
+async function connectorKey(
+  label: string,
+): Promise<{ id: string; client: MarfaClient }> {
+  const minted = await getOwnerClient().createKey({
+    label: `${ctx.source}-${label}`,
+    source: `${ctx.source}-${label}`,
+    default_tier: "library",
+  });
+  expect(minted.ok, JSON.stringify(minted.error)).toBe(true);
+  trackKey(ctx, minted.data.id);
+  return {
+    id: minted.data.id,
+    client: new MarfaClient({ baseUrl: apiUrl, apiKey: minted.data.key }),
+  };
+}
+
+async function readOnlyOf(id: string): Promise<boolean | undefined> {
+  const read = await client.getItem(id);
+  expect(read.status).toBe(200);
+  return read.data.item.read_only;
 }
 
 describe("declaring read_only_types", () => {
@@ -92,6 +126,28 @@ describe("declaring read_only_types", () => {
     expect(refused.status).toBe(400);
     expect(refused.error?.error.code).toBe("validation_error");
     expect((await client.listConnectors()).data.data).toEqual([]);
+  });
+});
+
+describe("the number of read_only_types", () => {
+  it("refuses more than 1,000 read_only_types and registers nothing", async () => {
+    const types = (n: number): string[] =>
+      Array.from({ length: n }, (_, i) => `acme.many.n${String(i)}`);
+    const refused = await client.rawRequest<unknown>("/connectors", {
+      method: "POST",
+      body: { name: `${ctx.runId} too many`, read_only_types: types(1001) },
+    });
+    expect(
+      refused.status,
+      "a registration declaring 1,001 types was taken, so the list grows without bound",
+    ).toBe(400);
+    expect(refused.error?.error.code).toBe("validation_error");
+    expect((await client.listConnectors()).data.data).toEqual([]);
+
+    // The witness: exactly the cap is taken, so the refusal is the count.
+    const atCap = await declare(client, types(1000));
+    expect(atCap.status).toBe(201);
+    expect(atCap.data.read_only_types).toHaveLength(1000);
   });
 });
 
@@ -134,10 +190,35 @@ describe("read_only on items", () => {
       [note.id, true],
     ]);
 
-    // The change frame is worked out as it is sent.
+    // The change frame is worked out as it is sent, on the event stream,
+    // the copy stream and an outbound webhook delivery.
+    const hook = await client.createWebhook({
+      url: receiver.hookUrl(`read-only-${ctx.runId}`),
+      events: ["item.updated"],
+      type_filter: "core.note",
+    });
+    expect(hook.status).toBe(201);
+    trackWebhook(ctx, hook.data.id, client);
+    const delivered = async (body: string): Promise<unknown> => {
+      const received = await receiver.waitFor((r) => {
+        if (!r.path.endsWith(`read-only-${ctx.runId}`)) return false;
+        const sent = JSON.parse(r.body) as {
+          item?: { id?: string; properties?: { body?: string } };
+        };
+        return sent.item?.id === note.id && sent.item.properties?.body === body;
+      });
+      return JSON.parse(received.body);
+    };
     let version = note.version;
-    const updatedFrame = async (body: string): Promise<unknown> => {
-      const stream = await openEventStream(apiUrl, apiKey);
+    const updatedFrame = async (
+      body: string,
+      query?: Array<[string, string]>,
+    ): Promise<unknown> => {
+      const stream = await openEventStream(
+        apiUrl,
+        apiKey,
+        query ? { query } : {},
+      );
       try {
         const edited = await client.updateItem(note.id, {
           properties: { body },
@@ -145,7 +226,7 @@ describe("read_only on items", () => {
         });
         expect(edited.status).toBe(200);
         version = edited.data.item.version;
-        expect(edited.data.item.read_only).toBe(body === "held");
+        expect(edited.data.item.read_only).toBe(body.startsWith("held"));
         const { events } = await collectUntil(
           stream,
           (seen) =>
@@ -168,6 +249,12 @@ describe("read_only on items", () => {
     expect(await updatedFrame("held")).toMatchObject({
       item: { read_only: true },
     });
+    expect(await updatedFrame("held on copy", COPY_QUERY)).toMatchObject({
+      item: { read_only: true },
+    });
+    expect(await delivered("held")).toMatchObject({
+      item: { read_only: true },
+    });
 
     expect((await declare(client)).status).toBe(200);
     expect(await shown()).toEqual({
@@ -179,6 +266,12 @@ describe("read_only on items", () => {
     expect(await updatedFrame("released")).toMatchObject({
       item: { read_only: false },
     });
+    expect(await updatedFrame("released on copy", COPY_QUERY)).toMatchObject({
+      item: { read_only: false },
+    });
+    expect(await delivered("released")).toMatchObject({
+      item: { read_only: false },
+    });
   });
 
   it("keeps an item editable while another connector that claims its source does not declare its type", async () => {
@@ -188,6 +281,8 @@ describe("read_only on items", () => {
       label: `${ctx.source}-claimant`,
       source: `${ctx.source}-claimant`,
       sources: [ctx.source],
+      // A key that may not write a type holds none of it read only.
+      type_permissions: { "core.note": "write", "core.task": "write" },
       default_tier: "library",
     });
     expect(minted.ok, JSON.stringify(minted.error)).toBe(true);
@@ -204,5 +299,61 @@ describe("read_only on items", () => {
     expect(await readOnly()).toBe(false);
     expect((await declare(claimant, ["core.note"])).status).toBe(200);
     expect(await readOnly()).toBe(true);
+  });
+
+  it("reads an item editable once the key of the connector that held it is revoked", async () => {
+    const connector = await connectorKey("revoked");
+    const note = await write(
+      connector.client,
+      "core.note",
+      `read-only-revoked-${ctx.runId}`,
+    );
+    expect((await declare(connector.client, ["core.note"])).status).toBe(201);
+    expect(await readOnlyOf(note.id)).toBe(true);
+
+    expect((await getOwnerClient().revokeKey(connector.id)).ok).toBe(true);
+    expect(await readOnlyOf(note.id)).toBe(false);
+  });
+
+  it("reads an item editable once the key of the connector that held it may no longer write its type", async () => {
+    const connector = await connectorKey("narrowed");
+    const note = await write(
+      connector.client,
+      "core.note",
+      `read-only-narrowed-${ctx.runId}`,
+    );
+    expect((await declare(connector.client, ["core.note"])).status).toBe(201);
+    expect(await readOnlyOf(note.id)).toBe(true);
+
+    const narrowed = await getOwnerClient().updateKey(connector.id, {
+      type_permissions: { "core.note": "read" },
+    });
+    expect(narrowed.ok, JSON.stringify(narrowed.error)).toBe(true);
+    expect(await readOnlyOf(note.id)).toBe(false);
+  });
+
+  it("answers read_only on a replayed write as registrations stand at the replay", async () => {
+    const idempotencyKey = `read-only-replay-${ctx.runId}`;
+    const create = () =>
+      client.rawRequest<{ item: MarfaItem }>("/items", {
+        method: "POST",
+        headers: { "Idempotency-Key": idempotencyKey },
+        body: {
+          type: "core.note",
+          properties: { body: `${ctx.runId} replayed` },
+        },
+      });
+    expect((await declare(client, ["core.note"])).status).toBe(201);
+    const first = await create();
+    expect(first.status).toBe(201);
+    trackItem(ctx, first.data.item.id);
+    expect(first.data.item.read_only).toBe(true);
+
+    expect((await declare(client)).status).toBe(200);
+    const replayed = await create();
+    expect(replayed.status).toBe(201);
+    expect(replayed.headers.get("Idempotency-Replayed")).toBe("true");
+    expect(replayed.data.item.id).toBe(first.data.item.id);
+    expect(replayed.data.item.read_only).toBe(false);
   });
 });
