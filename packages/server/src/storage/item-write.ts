@@ -1390,15 +1390,14 @@ async function moveGroup(
       planned.plan.withHosts.has(id),
     );
   }
-  return Promise.all(
-    ids
-      .filter((id) => id !== rootId)
-      .map(
-        async (id) =>
-          (await storage.items.getIncludingTrashed(id)) ??
-          (planned.moving.get(id) as Item),
-      ),
-  );
+  const taken: Item[] = [];
+  for (const id of ids) {
+    if (id === rootId) continue;
+    const row =
+      (await storage.items.getIncludingTrashed(id)) ?? planned.moving.get(id);
+    if (row) taken.push(row);
+  }
+  return taken;
 }
 
 /**
@@ -1544,7 +1543,8 @@ export async function trashItems(
     const by = await versionWriter(storage, writer);
     const moves: ItemMoved[] = [];
     for (const [root, group] of groupsOf(plan.planned)) {
-      const before = plan.planned.moving.get(root) as Item;
+      const before = plan.planned.moving.get(root);
+      if (!before) continue;
       const trashed = await moveGroup(storage, by, plan.planned, root, group);
       const now = await storage.items.getIncludingTrashed(root);
       const move = moved(now ?? before, before.state, { trashed });
