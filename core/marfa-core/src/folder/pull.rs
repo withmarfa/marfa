@@ -161,6 +161,9 @@ pub struct PullReport {
     pub taken: usize,
     pub elsewhere: usize,
     pub let_go: usize,
+    /// Documents whose body the pull rewrote, to name by its new title an
+    /// item retitled since a link in it was written.
+    pub relinked: usize,
     pub settings: SettingsFileReport,
     pub flagged: Vec<Flagged>,
     pub uncarried: Vec<Uncarried>,
@@ -190,6 +193,7 @@ impl PullReport {
         self.purged += other.purged;
         self.taken += other.taken;
         self.let_go += other.let_go;
+        self.relinked += other.relinked;
     }
 
     fn not_written(&mut self, why: NotWritten, item: &str, path: &str, reason: impl Into<String>) {
@@ -288,10 +292,17 @@ impl Folder {
         self.refuse_while_waiting()?;
         let mut earlier = PullReport::default();
         let mut attempts = 1;
+        let mut relinking = true;
         loop {
             let mut report = PullReport::default();
             match self.pull_into(None, &mut report, selection.as_deref_mut()) {
                 Ok(()) => {
+                    // A body rewritten for a retitled link reaches its file
+                    // in one more pass.
+                    if std::mem::take(&mut relinking) && self.relink(&mut report)? {
+                        earlier.add_writes(&report);
+                        continue;
+                    }
                     report.add_writes(&earlier);
                     report.root_gone = report.root_gone.or_else(|| self.root_gone());
                     return Ok(report);

@@ -982,20 +982,8 @@ impl Folder {
             )?;
             true
         } else if !edit.properties.is_empty() {
-            match based {
-                crate::Based::AsRead => self.core.write_update(
-                    &held.id,
-                    &edit,
-                    crate::Based::AsRead,
-                    crate::Body::Folder,
-                )?,
-                crate::Based::OnHeld => self.core.write_update(
-                    &held.id,
-                    &edit,
-                    crate::Based::OnHeld,
-                    crate::Body::Folder,
-                )?,
-            };
+            self.core
+                .write_update(&held.id, &edit, based, crate::Body::Folder)?;
             true
         } else {
             false

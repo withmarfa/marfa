@@ -371,9 +371,10 @@ fn stopped_by(drain: &crate::DrainReport) -> Option<CoreError> {
         })
 }
 
-/// Whether a pull queued the placement of a file it wrote, or the end of one.
+/// Whether a pull queued the placement of a file it wrote, the end of one, or
+/// a body rewritten for a retitled link.
 fn places(pulled: &PullReport) -> bool {
-    pulled.placed + pulled.ended > 0
+    pulled.placed + pulled.ended + pulled.relinked > 0
 }
 
 /// Not where the first drain or the catch-up shows the server cannot take

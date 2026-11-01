@@ -19,6 +19,7 @@ mod preserve;
 mod pull;
 mod push;
 mod refused;
+mod relink;
 mod removal;
 mod scan;
 mod selective;
@@ -2337,6 +2338,8 @@ fn typed_title(
 
 #[cfg(test)]
 mod held_links_tests;
+#[cfg(test)]
+mod relink_tests;
 
 #[cfg(test)]
 mod tests {

@@ -3676,6 +3676,9 @@ pub(crate) enum Based {
     OnHeld,
     /// The held version or an earlier one, which the server merges against.
     AsRead,
+    /// The held version, which the server refuses `version_conflict` once
+    /// the row has moved past it, rather than merging over another writer.
+    Exact,
 }
 
 fn queue_update(
@@ -3794,7 +3797,14 @@ fn queue_update(
             message: required.join("; "),
         });
     }
-    let payload = edit.payload(base)?;
+    let mut payload = edit.payload(base)?;
+    if based == Based::Exact {
+        let mut body: Value = serde_json::from_str(&payload)?;
+        if let Some(body) = body.as_object_mut() {
+            body.insert("version_match".into(), Value::String("exact".into()));
+        }
+        payload = body.to_string();
+    }
     let projected = catalog.projected_properties(
         edit.r#type.as_deref().unwrap_or(&held.r#type),
         &edit.properties,
@@ -5014,6 +5024,7 @@ mod tests {
             let refused = match based {
                 Based::OnHeld => core.update_item("typed", &edit),
                 Based::AsRead => core.update_item_as_read("typed", &edit),
+                Based::Exact => unreachable!("not among the cases"),
             };
             let Err(CoreError::Validation { code, .. }) = refused else {
                 panic!("a clear of a required field was queued: {refused:?}");
