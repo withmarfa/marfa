@@ -2040,7 +2040,7 @@ If a held edge name still matches more than one item when it is looked up again,
 
 ### `folders/edge-lookup-page-limit`
 
-When the fifth lookup page for a title property and spelling says more matches follow, a device MUST flag the name as exceeding the five-page lookup limit.
+When the second lookup page for a title property and spelling says more matches follow, a device MUST flag the name as exceeding the two-page lookup limit.
 
 **Tests:** `device/folders-frontmatter.test.ts › flags a name more common than the lookup reads`.
 

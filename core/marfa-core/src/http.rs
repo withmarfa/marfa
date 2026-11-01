@@ -18,12 +18,11 @@ use crate::wire::{
     WireMetadata, WirePage, WireType,
 };
 
-/// The page asked of the item listing (`search-and-filters/limit-listing`).
-/// A larger page fills a copy in fewer round trips, but a server that refuses
-/// a `limit` above its bound, rather than reading it as the bound
-/// (`search-and-filters/limit-listing-capped`), refuses one above 200, and
-/// the contract version does not tell it from one that takes more.
-pub const ITEM_PAGE_LIMIT: u32 = 200;
+/// The page asked of the item listing, the most it answers
+/// (`search-and-filters/limit-listing`). A hydration reads a page per round
+/// trip, so a larger page fills a copy sooner over a slow link. A server
+/// before v0.0.48 refuses a `limit` above 200; none is supported.
+pub const ITEM_PAGE_LIMIT: u32 = 500;
 
 /// The page asked of the edge listings, the most they answer
 /// (`edges/list-limit`). A hydration reads a page per round trip, so a larger
@@ -52,6 +51,12 @@ pub const LOOKUP_BODY_BYTES: usize = 256 * 1024;
 /// one read whole.
 const RESPONSE_BUDGET: Duration = Duration::from_secs(30);
 const BODY_BUDGET: Duration = Duration::from_secs(60);
+
+/// The rows of an item page a body budget is set for. The budget bounds the
+/// whole read of a body, so a page of more rows is given more of it in
+/// proportion (`Http::page_budget`), and a page of large notes on a slow link
+/// is not cut off for being larger than it used to be.
+const ROWS_PER_BODY_BUDGET: u32 = 200;
 
 /// A server's address as the core keeps it: no trailing slash, query or
 /// fragment.
@@ -743,7 +748,22 @@ impl Http {
         if let Some(cursor) = query.cursor {
             params.push(("cursor", cursor));
         }
-        self.get_json(&["items"], &params)
+        self.get_page_json(&params)
+    }
+
+    /// Whether the key may list `declared` at `tier`: a one-row listing, so
+    /// the answer, not the rows, is what is asked for.
+    pub fn lists(&self, declared: &str, tier: SliceTier) -> Result<(), CoreError> {
+        self.get_json::<serde_json::Value>(
+            &["items"],
+            &[
+                ("type", declared),
+                ("tier", tier.as_str()),
+                ("state", "any"),
+                ("limit", "1"),
+            ],
+        )
+        .map(drop)
     }
 
     /// `GET /items/stats?by=type`: the rows of every state at `tier`, counted
@@ -999,7 +1019,7 @@ impl Http {
             if let Some(cursor) = &cursor {
                 params.push(("cursor", cursor));
             }
-            let page: WirePage<WireItemWithMetadata> = self.get_json(&["items"], &params)?;
+            let page: WirePage<WireItemWithMetadata> = self.get_page_json(&params)?;
             found.extend(page.data);
             match page.next_cursor {
                 Some(next) if Some(&next) != cursor.as_ref() => cursor = Some(next),
@@ -1652,6 +1672,22 @@ impl Http {
         self.read_json(segments, params, None)
     }
 
+    /// The time a page of `ITEM_PAGE_LIMIT` rows may take to arrive: this
+    /// connection's body budget, set for `ROWS_PER_BODY_BUDGET` rows, scaled
+    /// to the page.
+    fn page_budget(&self) -> Option<Duration> {
+        self.agent
+            .config()
+            .timeouts()
+            .recv_body
+            .map(|budget| budget * ITEM_PAGE_LIMIT / ROWS_PER_BODY_BUDGET)
+    }
+
+    /// `get_json` for a page of the item listing, given `page_budget`.
+    fn get_page_json<T: DeserializeOwned>(&self, params: &[(&str, &str)]) -> Result<T, CoreError> {
+        self.read_json_within(&["items"], params, None, self.page_budget())
+    }
+
     /// A read, sent as a `GET`, or as a `POST` of `body` for a read whose
     /// question is a body. Under a reach it is a conditional read: the
     /// answer has to carry the reach back.
@@ -1660,6 +1696,17 @@ impl Http {
         segments: &[&str],
         params: &[(&str, &str)],
         body: Option<&str>,
+    ) -> Result<T, CoreError> {
+        self.read_json_within(segments, params, body, None)
+    }
+
+    /// `read_json`, with `budget` in place of the connection's body budget.
+    fn read_json_within<T: DeserializeOwned>(
+        &self,
+        segments: &[&str],
+        params: &[(&str, &str)],
+        body: Option<&str>,
+        budget: Option<Duration>,
     ) -> Result<T, CoreError> {
         let url = self.url(segments, params);
         let conditional = self.reach.as_deref().filter(|_| !segments.is_empty());
@@ -1674,7 +1721,14 @@ impl Http {
                     if let Some(reach) = conditional {
                         request = request.header("X-Marfa-Reach", reach);
                     }
-                    request.call()
+                    match budget {
+                        Some(budget) => request
+                            .config()
+                            .timeout_recv_body(Some(budget))
+                            .build()
+                            .call(),
+                        None => request.call(),
+                    }
                 }
                 Some(body) => {
                     let mut request = self
@@ -1749,7 +1803,7 @@ impl Http {
 }
 
 impl Http {
-    /// An answer read whole, past ureq's default 10 MiB, which a page of 200
+    /// An answer read whole, past ureq's default 10 MiB, which a page of 500
     /// rows, a bulk read of 100 or an export can pass. A text answer that is
     /// not UTF-8, such as a proxy's page, is read with its bad bytes
     /// replaced, so its status still reaches the caller; JSON is read
@@ -2469,7 +2523,7 @@ mod tests {
         serving.join().unwrap().unwrap();
     }
 
-    /// A page of 200 rows, a bulk read of 100 and a write's answer can each
+    /// A page of 500 rows, a bulk read of 100 and a write's answer can each
     /// be larger than ureq's default 10 MiB, and an answer cut off there
     /// would fail every hydration that holds such rows.
     #[test]
@@ -2562,6 +2616,38 @@ mod tests {
             budgets(&trickling(false)).call(get(&["items"], false)),
             Err(CoreError::Network(_))
         ));
+    }
+
+    #[test]
+    fn a_page_of_items_is_given_a_body_budget_in_proportion_to_its_rows() {
+        let budgets = |url: &str| {
+            Http::with_timeouts(
+                url,
+                "k",
+                Duration::from_millis(2_000),
+                Duration::from_millis(1_000),
+            )
+            .unwrap()
+        };
+        // The witness: the same trickle, about 1.5 s, outruns the plain budget.
+        assert!(matches!(
+            budgets(&trickling(false)).call(get(&["items"], false)),
+            Err(CoreError::Network(_))
+        ));
+        let page = budgets(&trickling(false)).items_page(&ItemsQuery {
+            r#type: None,
+            tier: SliceTier::All,
+            cursor: None,
+        });
+        assert!(
+            !matches!(page, Err(CoreError::Network(_))),
+            "a page of {ITEM_PAGE_LIMIT} rows was cut off at the budget for {ROWS_PER_BODY_BUDGET}: {page:?}"
+        );
+        let found = budgets(&trickling(false)).items_containing("title", "a", 1);
+        assert!(
+            !matches!(found, Err(CoreError::Network(_))),
+            "a lookup page was cut off: {found:?}"
+        );
     }
 
     #[test]
@@ -2747,7 +2833,7 @@ mod tests {
     }
 
     #[test]
-    fn each_listing_asks_for_a_page_every_server_takes() {
+    fn each_listing_asks_for_the_most_a_page_holds() {
         let server = crate::scripted::Scripted::start();
         let empty = || {
             vec![crate::scripted::json(
@@ -2780,7 +2866,7 @@ mod tests {
                 })
                 .collect()
         };
-        assert_eq!(limits("/items"), ["200", "200"]);
+        assert_eq!(limits("/items"), ["500", "500"]);
         assert_eq!(limits("/edges"), ["500"]);
         assert_eq!(limits("/items/n1/edges"), ["500"]);
     }

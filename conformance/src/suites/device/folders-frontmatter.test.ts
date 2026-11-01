@@ -1200,9 +1200,9 @@ describe("edges in frontmatter", () => {
     const pushed = await harness.folder.push();
     expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
     if (!pushed.ok) return;
-    expect(pushed.value.scan.flagged[0]?.reason).toContain("more than 5 pages");
-    // Five pages for each property a title lives in: `title` and `text`.
-    expect(page, "the lookup read past its cap").toBe(10);
+    expect(pushed.value.scan.flagged[0]?.reason).toContain("more than 2 pages");
+    // Two pages for each property a title lives in: `title` and `text`.
+    expect(page, "the lookup read past its cap").toBe(4);
     expect(sentEdgeWrites(harness)).toEqual([]);
   });
 
