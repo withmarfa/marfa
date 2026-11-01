@@ -157,6 +157,38 @@ describe("folders: a refused default edge", () => {
     expect(shelvedWrites(harness)).toBe(3);
   });
 
+  it("lists a refused default in the plain text of the folder's status, which stays in step", async () => {
+    const built = await defaultsHarness("folder-default-refused-text", {
+      constraint: () => ["core.collection"],
+    });
+    harness = built.made;
+    put(
+      harness,
+      "Own.md",
+      `---\ntitle: Own\nshelved-in: "[[Shelf]]"\n---\nown\n`,
+    );
+    put(harness, "Plain.md", "---\ntitle: Plain\n---\nplain\n");
+    expect((await harness.folder.push()).ok).toBe(true);
+
+    const file = await statusOf(harness, "Plain.md");
+    expect(file.status).toBe("in_step");
+    expect(file.flag).toBe("refused");
+    const text = await harness.folder
+      .device()
+      .rootText(["folders", "status", harness.dir]);
+    expect(text.ok, JSON.stringify(text)).toBe(true);
+    if (!text.ok) return;
+    const lines = text.value.split("\n");
+    expect(lines[0]).toMatch(/file\(s\) in step$/);
+    const listed = lines.filter((line) => line.startsWith("Plain.md:"));
+    expect(listed).toHaveLength(1);
+    expect(listed[0]).toContain("in step");
+    expect(listed[0]).toContain("edge_constraint_violation");
+    expect(listed[0]).toContain("shelved-in");
+    // The witness: a file with nothing to say is not listed.
+    expect(lines.some((line) => line.startsWith("Own.md"))).toBe(false);
+  });
+
   it("keeps a default the server refused, sends it again only after the file changes, and applies it once it is accepted", async () => {
     let refusing = true;
     const edges = new EdgeDoor();

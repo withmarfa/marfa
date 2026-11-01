@@ -1131,7 +1131,12 @@ fn describe_status(report: &marfa_core::StatusReport) -> String {
         .filter(|file| file.status == "in_step")
         .count();
     let mut lines = vec![format!("{in_step} file(s) in step")];
-    for file in report.files.iter().filter(|file| file.status != "in_step") {
+    for file in report.files.iter().filter(|file| {
+        file.status != "in_step"
+            || file.flag.is_some()
+            || file.reason.is_some()
+            || file.warning.is_some()
+    }) {
         let mut line = format!("{}: {}", file.path, status_words(file.status));
         if !file.waits.is_empty() {
             line.push_str(&format!(" ({})", file.waits.join(", ")));
@@ -1514,6 +1519,41 @@ mod tests {
             "{left}"
         );
         assert!(!left.contains("gets a number"), "{left}");
+    }
+
+    #[test]
+    fn a_file_in_step_that_carries_a_refusal_or_a_warning_is_listed_with_it() {
+        let mut refused = file(
+            "a.md",
+            "in_step",
+            "refused",
+            "edge_type_unknown (the folder's default shelved-in edge to b was not applied)",
+        );
+        let mut near = file("b.md", "in_step", "refused", "");
+        near.flag = None;
+        near.reason = None;
+        near.warning = Some("is near the size limit".into());
+        refused.warning = None;
+        let clean = {
+            let mut clean = file("c.md", "in_step", "refused", "");
+            clean.flag = None;
+            clean.reason = None;
+            clean
+        };
+        let said = describe_status(&marfa_core::StatusReport {
+            files: vec![refused, near, clean],
+            ..Default::default()
+        });
+        assert!(said.starts_with("3 file(s) in step"), "{said}");
+        assert!(
+            said.contains("a.md: in step, edge_type_unknown (the folder's default shelved-in edge to b was not applied)"),
+            "{said}"
+        );
+        assert!(
+            said.contains("b.md: in step; is near the size limit"),
+            "{said}"
+        );
+        assert!(!said.contains("c.md"), "{said}");
     }
 
     #[test]

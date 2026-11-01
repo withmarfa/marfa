@@ -698,6 +698,14 @@ If the device or the server refuses an edge that the defaults ask for on a new d
 
 **Tests:** `device/folders-default-refused.test.ts › shows a default the copy refused for a document and a file, and makes it once the edge type admits it, the files unchanged`, `device/folders-default-refused.test.ts › keeps a default the server refused, sends it again only after the file changes, and applies it once it is accepted`.
 
+### `folders/status-lists-flagged-files`
+
+When the CLI answers `folders status` in plain text, it MUST list each file that carries a flag, a reason or a warning, whatever its status, with that reason or warning.
+
+**Reason:** a file whose default edge was refused stays in step and carries the refusal only as a flag and reason, so a list of the files that are not in step hid what the JSON reported. The count of files in step is the count by status, and a listed file in step is still counted in it.
+
+**Tests:** `device/folders-default-refused.test.ts › lists a refused default in the plain text of the folder's status, which stays in step`.
+
 ### `folders/default-edge-retried`
 
 While a file holds a default edge that the device refused and the defaults still name it, a device MUST judge the edge again at each scan and, where the device would now take it, queue the edge and clear the refusal.
