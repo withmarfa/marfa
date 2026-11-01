@@ -29,6 +29,11 @@
  * - `unfold-deadline=<ms>` shortens the time one series may take to unfold.
  * - `store-check-deadline=<ms>` shortens the time one question to a blob
  *   store may go unanswered.
+ * - `release:<point>` clears `hold:<point>` as the server admits its next
+ *   `GET /health`, once, and records the holds that have a caller waiting
+ *   when that request answers. A fixture then reads from the server itself
+ *   whether a job reached a later hold before `/health` answered, with the
+ *   health request already in the server when the job resumes.
  * - `resolve:<hostname>=<answers>` makes an outbound webhook delivery, or an
  *   MCP tool's fetch of a file, resolve that name to scripted addresses.
  *   `<answers>` is one answer per lookup, separated by `;`, each a list of
@@ -75,7 +80,7 @@ export const POINTS: {
     { name: "bulk-job:selected", arg: "none" },
     { name: "bulk-job:claimed", arg: "none" },
     { name: "bulk-job:in-chunk", arg: "none" },
-    { name: "bulk-job:between-chunks", arg: "none" },
+    { name: "bulk-job:between-chunks", arg: "every-or-nth" },
     { name: "housekeeping:<job>", arg: "none" },
     { name: "version-thinning:item", arg: "none" },
     { name: "blob-orphans:purge", arg: "none" },
@@ -142,8 +147,13 @@ export interface ActiveFault {
   arg: string | null;
   /** How many callers are waiting at a `hold` fault now. */
   waiting: number;
-  /** How many times a `fail` fault has acted or a `resolve` fault has answered. */
+  /** How many times a `fail` fault has acted, a `resolve` fault has answered or a `release` fault has released its hold. */
   fired: number;
+  /**
+   * For a `release` fault once the `GET /health` it released for has
+   * answered: the `hold` faults with a caller waiting at that moment.
+   */
+  held_when_answered?: string[];
 }
 
 /** Which reach of a counted point acts. */
@@ -159,6 +169,8 @@ interface Entry {
   target: Target | undefined;
   seen: number;
   fired: number;
+  /** See {@link ActiveFault.held_when_answered}. */
+  heldWhenAnswered: string[] | undefined;
 }
 
 const faults = new Map<string, Entry>();
@@ -272,13 +284,18 @@ function shapeProblem(name: string, arg: string | null): string | undefined {
       return `an ${name} fault takes a whole number of milliseconds from 1`;
     return undefined;
   }
+  if (kind === "release") {
+    if (declared("hold", rest) === undefined)
+      return `no hold point is named ${rest}`;
+    return arg === null ? undefined : "a release fault takes no argument";
+  }
   if (kind === "resolve") {
     if (!HOST_NAME.test(rest)) return `${rest} is not a host name`;
     return answers(arg) === undefined
       ? "a resolve fault takes addresses: one answer per lookup, separated by ;, each a list of addresses separated by ,"
       : undefined;
   }
-  return "a fault is named hold:<point>, fail:<point>, deadline:<job>, free:<volume>, unfold-deadline, store-check-deadline or resolve:<hostname>";
+  return "a fault is named hold:<point>, fail:<point>, release:<point>, deadline:<job>, free:<volume>, unfold-deadline, store-check-deadline or resolve:<hostname>";
 }
 
 /**
@@ -303,7 +320,9 @@ export function faultProblem(
       ? rest
       : kind === "hold" || kind === "fail"
         ? declared(kind, rest)?.job
-        : undefined;
+        : kind === "release"
+          ? declared("hold", rest)?.job
+          : undefined;
   if (job !== undefined && !jobs.includes(job))
     return `no housekeeping job is named ${job}`;
   if (
@@ -337,6 +356,7 @@ export function setFault(name: string, arg: string | null): void {
     existing.target = aimed;
     existing.seen = 0;
     existing.fired = 0;
+    existing.heldWhenAnswered = undefined;
   } else
     faults.set(name, {
       arg,
@@ -344,6 +364,7 @@ export function setFault(name: string, arg: string | null): void {
       target: aimed,
       seen: 0,
       fired: 0,
+      heldWhenAnswered: undefined,
     });
 }
 
@@ -362,7 +383,35 @@ export function activeFaults(): ActiveFault[] {
     arg: entry.arg,
     waiting: entry.release.size,
     fired: entry.fired,
+    ...(entry.heldWhenAnswered !== undefined && {
+      held_when_answered: entry.heldWhenAnswered,
+    }),
   }));
+}
+
+/**
+ * Called as the server admits a `GET /health`, before it reads anything.
+ * Each `release` fault that has not yet acted clears the hold it names, so
+ * the held work resumes with this request already admitted. Answers what to
+ * call once the request has its answer, which records the holds with a
+ * caller waiting then, or `undefined` when no `release` fault acted.
+ */
+export function healthAdmitted(): (() => void) | undefined {
+  if (faults.size === 0) return undefined;
+  const acting = [...faults].filter(
+    ([name, entry]) => name.startsWith("release:") && entry.fired === 0,
+  );
+  if (acting.length === 0) return undefined;
+  for (const [name, entry] of acting) {
+    entry.fired = 1;
+    clearFaults(`hold:${name.slice("release:".length)}`);
+  }
+  return () => {
+    const held = activeFaults()
+      .filter((fault) => fault.name.startsWith("hold:") && fault.waiting > 0)
+      .map((fault) => fault.name);
+    for (const [, entry] of acting) entry.heldWhenAnswered = held;
+  };
 }
 
 /** Whether any fault is set. A server without the hooks never has one. */

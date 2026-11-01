@@ -2,9 +2,8 @@ import { randomBytes } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { v7 as uuidv7 } from "uuid";
 import { MarfaClient } from "../../client/api.js";
-import type { MarfaItem } from "../../client/types.js";
 import { itemsArchive } from "../../utils/archive.js";
-import { HOLD, jobOf, queue, seed } from "../../utils/bulk-jobs.js";
+import { HOLD, queue, seed } from "../../utils/bulk-jobs.js";
 import {
   bootFreshServer,
   FRESH_SERVER_TIMEOUT_MS,
@@ -31,32 +30,25 @@ import { TEST_OWNER } from "../../utils/target.js";
  * `GET /health` answered while each long job runs, between two of its steps,
  * with nothing holding the job (`instance/long-job-health`).
  *
- * **The witness is an order, not a time.** The server runs each database
- * statement synchronously, so a job that does not hand the process to other
- * requests between its steps answers nothing from the moment it resumes
- * until it ends or reaches a point that holds it. Each case holds the job at
- * an early point, releases it, asks `GET /health`, and only once that is
- * answered looks for a later step of the job the client can see: a second
- * hold it has not reached, a report it has not yet written, a progress count
- * below its total, or a change made after `/health` answered that the job
- * then read. A job that does not yield is past that step, or held at it,
- * before `/health` is answered, every time.
+ * **The witness is an order the target records.** Each case holds the job at
+ * an early point and arms a second hold at a later step, dozens of the job's
+ * turns further on. A `release` fault clears the first hold as the target
+ * admits `GET /health`, so the request is already in the server when the job
+ * resumes, and the fault records which holds had a caller waiting when that
+ * request answered. The server runs each database statement synchronously,
+ * so a job that does not hand the process to other requests between its
+ * steps runs from the first hold to the second before `/health` can finish
+ * the disk and store reads it waits on. A job that yields lets `/health`
+ * answer while it is still short of the second hold. The case reads that
+ * order from the target, never from when this process sends or receives.
  *
- * A held job yields on purpose, so `/health` is asked only after the first
- * hold is released, and nothing holds the job between the two steps. It is
- * asked once while the job is held too, so the write probe has committed
- * before the job writes: the probe's outcome answers the calls of the next
+ * `/health` is asked once while the job is held too, so the write probe has
+ * committed before the job writes: its outcome answers the calls of the next
  * ten seconds, and a restore holds the write lock until it commits.
- *
- * **A slow client sees nothing either way.** If this process is slow to send
- * the request, a job that yields can reach the later step before `/health`
- * arrives. That attempt proves nothing, so the case runs the job again, up
- * to `ATTEMPTS` times. A job that does not yield fails every attempt.
  */
 let server: FreshServer;
 
-const ATTEMPTS = 3;
-/** Notes enough that each job has dozens of steps between its two points. */
+/** Notes enough that each job has dozens of steps between its two holds. */
 const ROWS = 4_000;
 const TAG = "long-job-health";
 /**
@@ -84,70 +76,44 @@ async function health(): Promise<void> {
   expect(answer.status).toBe(200);
 }
 
-/**
- * The lines of a whole NDJSON export, read as fast as they arrive, so the
- * export never waits on this process to take what it has sent.
- */
-async function exportLines(): Promise<{ item?: MarfaItem }[]> {
-  const answer = await fetch(`${server.apiUrl}/export`, {
-    headers: { authorization: `Bearer ${server.workingKey}` },
-  });
-  const text = await answer.text();
-  expect(answer.status, text.slice(0, 200)).toBe(200);
-  return text
-    .split("\n")
-    .filter((line) => line !== "")
-    .map((line) => JSON.parse(line) as { item?: MarfaItem });
-}
-
-async function fault(
-  name: string,
-): Promise<{ waiting: number; fired: number }> {
-  const armed = (await server.faults()).find((entry) => entry.name === name);
-  expect(armed, `${name} is armed`).toBeDefined();
-  return { waiting: armed?.waiting ?? 0, fired: armed?.fired ?? 0 };
-}
-
-/** One run of a job, started while `start` holds it. */
-interface Run {
-  /** Called as soon as `/health` has answered: whether the job is short of its later step. */
-  short(): Promise<boolean>;
-  /**
-   * Lets the job run to its end. Answers false when what the job did shows
-   * it was past its later step when `short` was called after all.
-   */
-  finish(): Promise<boolean | void>;
+/** The name of a fault spec, without its argument. */
+function nameOf(spec: string): string {
+  const at = spec.indexOf("=");
+  return at < 0 ? spec : spec.slice(0, at);
 }
 
 /**
- * Runs the job until `/health` is seen answered between its two steps, and
- * answers the attempt that saw it, or 0 when none did.
+ * Runs the job once and answers the holds the target recorded as waiting
+ * when the `GET /health` that released the job answered. Once that is read,
+ * it waits for the job to reach the later hold, which shows the later step
+ * is on the job's path, and lets it finish.
  */
-async function answeredBetween(job: {
-  /** Makes the next run's work, before anything holds the job. */
-  prepare?: () => Promise<void>;
+async function heldWhenHealthAnswered(job: {
   /** The hold the job waits at before its steps. */
   start: string;
-  /** Arms the later step and starts the job. */
-  begin: () => Promise<Run>;
-}): Promise<number> {
-  for (let attempt = 1; attempt <= ATTEMPTS; attempt++) {
-    await job.prepare?.();
-    await server.setFault(job.start);
-    const run = await job.begin();
-    await server.waitForHold(job.start);
-    await health();
-    await server.clearFault(job.start);
-    await health();
-    const short = await run.short();
-    const confirmed = (await run.finish()) !== false;
-    await server.clearFault();
-    if (short && confirmed) return attempt;
-  }
-  return 0;
+  /** The hold at the later step, armed before the job starts. */
+  later: string;
+  /** Starts the job, and answers what checks its outcome once it may finish. */
+  begin: () => Promise<() => Promise<void>>;
+}): Promise<string[]> {
+  const release = `release:${job.start.slice("hold:".length)}`;
+  await server.setFault(job.start);
+  await server.setFault(job.later);
+  const finish = await job.begin();
+  await server.waitForHold(job.start);
+  await health();
+  await server.setFault(release);
+  await health();
+  const recorded = (await server.faults()).find(
+    (fault) => fault.name === release,
+  );
+  expect(recorded?.fired, `${release} released the job`).toBe(1);
+  expect(recorded?.held_when_answered, "/health answered").toBeDefined();
+  await server.waitForHold(nameOf(job.later));
+  await server.clearFault();
+  await finish();
+  return recorded?.held_when_answered ?? [];
 }
-
-const NOT_SEEN = `no attempt of ${String(ATTEMPTS)} saw /health answered while the job ran unheld between two steps`;
 
 /** Every audit entry recorded for `action`. */
 async function audited(action: string): Promise<number> {
@@ -196,70 +162,51 @@ afterAll(async () => {
 
 describe("GET /health while a long job runs", () => {
   it("is answered between two pages of an NDJSON export", async () => {
-    // The item the export reaches last, which a change made once `/health`
-    // has answered shows in the export only while it is still reading pages.
-    const items = (await exportLines()).flatMap((line) =>
-      line.item === undefined ? [] : [line.item],
-    );
-    const last = items.at(-1);
-    expect(last, "the export holds items").toBeDefined();
-    if (last === undefined) return;
-    const attempt = await answeredBetween({
+    // One item on the first page and sixteen on each after it.
+    const held = await heldWhenHealthAnswered({
       start: "hold:read-hydration",
+      later: "hold:export-page=100",
       begin: async () => {
-        const marker = uuidv7();
-        const exporting = exportLines();
-        return {
-          short: async () => {
-            const changed = await working().updateItem(last.id, {
-              properties: { ...last.properties, marker },
-              version: last.version,
-            });
-            expect(changed.status, JSON.stringify(changed.error)).toBe(200);
-            last.version = changed.data.item.version;
-            last.properties = changed.data.item.properties;
-            return true;
-          },
-          finish: async () => {
-            const read = (await exporting).find(
-              (line) => line.item?.id === last.id,
-            );
-            expect(read, "the export carries the item").toBeDefined();
-            return read?.item?.properties.marker === marker;
-          },
+        const exporting = fetch(`${server.apiUrl}/export`, {
+          headers: { authorization: `Bearer ${server.workingKey}` },
+        }).then(async (answer) => ({
+          status: answer.status,
+          text: await answer.text(),
+        }));
+        return async () => {
+          const exported = await exporting;
+          expect(exported.status, exported.text.slice(0, 200)).toBe(200);
+          expect(
+            exported.text.split("\n").filter((line) => line.includes('"item"'))
+              .length,
+          ).toBeGreaterThanOrEqual(ROWS);
         };
       },
     });
-    expect(attempt, NOT_SEEN).toBeGreaterThan(0);
+    expect(held).toEqual([]);
   }, 600_000);
 
   it("is answered between two pages of an archive export", async () => {
     // Twenty-five items a page.
-    const later = "hold:export-page";
-    const attempt = await answeredBetween({
+    const held = await heldWhenHealthAnswered({
       start: "hold:read-hydration",
+      later: "hold:export-page=100",
       begin: async () => {
-        await server.setFault(`${later}=100`);
         const exporting = working().exportArchive();
-        return {
-          short: async () => (await fault(later)).waiting === 0,
-          finish: async () => {
-            await server.waitForHold(later);
-            await server.clearFault(later);
-            expect((await exporting).status).toBe(200);
-          },
+        return async () => {
+          expect((await exporting).status).toBe(200);
         };
       },
     });
-    expect(attempt, NOT_SEEN).toBeGreaterThan(0);
+    expect(held).toEqual([]);
   }, 600_000);
 
   it("is answered between placing an archive restore's blobs and committing its rows", async () => {
     // The restore places the archive's blob before it writes a row, and
     // waits with every row written before it commits.
-    const later = "hold:restore:before-commit";
-    const attempt = await answeredBetween({
+    const held = await heldWhenHealthAnswered({
       start: "hold:blob-write",
+      later: "hold:restore:before-commit",
       begin: async () => {
         const source = `${TAG}-restore-${uuidv7()}`;
         const archive = itemsArchive(
@@ -271,87 +218,67 @@ describe("GET /health while a long job runs", () => {
           })),
           [{ data: randomBytes(64), mime_type: "application/octet-stream" }],
         );
-        await server.setFault(later);
         const restoring = owner().restoreArchive(archive);
-        return {
-          short: async () => (await fault(later)).waiting === 0,
-          finish: async () => {
-            await server.waitForHold(later);
-            await server.clearFault(later);
-            const restored = await restoring;
-            expect(restored.status, JSON.stringify(restored.error)).toBe(200);
-            expect(restored.data.imported).toBe(ROWS);
-          },
+        return async () => {
+          const restored = await restoring;
+          expect(restored.status, JSON.stringify(restored.error)).toBe(200);
+          expect(restored.data.imported).toBe(ROWS);
         };
       },
     });
-    expect(attempt, NOT_SEEN).toBeGreaterThan(0);
+    expect(held).toEqual([]);
   }, 600_000);
 
   it("is answered between two chunks of a bulk action", async () => {
-    let pass = 3;
-    const attempt = await answeredBetween({
+    // A hundred items a chunk.
+    const held = await heldWhenHealthAnswered({
       start: HOLD.claimed,
+      later: `${HOLD.betweenChunks}=10`,
       begin: async () => {
-        pass += 1;
         const id = await queue(working(), {
           action: "update_properties",
-          patch: { pass },
+          patch: { pass: 4 },
           filter: { tags: [TAG] },
           max_items: ROWS,
         });
-        return {
-          short: async () => {
-            const job = await jobOf(working(), id);
-            return job.status === "in_progress" && job.processed < job.matched;
-          },
-          finish: async () => {
-            const done = await working().pollBulkActionToTerminal(id, {
-              timeoutMs: 600_000,
-            });
-            expect(done).toMatchObject({
-              status: "completed",
-              processed: ROWS,
-            });
-          },
+        return async () => {
+          const done = await working().pollBulkActionToTerminal(id, {
+            timeoutMs: 600_000,
+          });
+          expect(done).toMatchObject({ status: "completed", processed: ROWS });
         };
       },
     });
-    expect(attempt, NOT_SEEN).toBeGreaterThan(0);
+    expect(held).toEqual([]);
   }, 900_000);
 
   it("is answered between two pages of the blob orphan sweep", async () => {
-    // The sweep reads every item, edge, version and pending patch for the
-    // blobs they name, and only then reports the blobs nothing names.
-    let orphan = "";
-    const reported = async (): Promise<boolean> => {
-      const report = await operatorOf(server).listBlobOrphans();
-      expect(report.status, JSON.stringify(report.error)).toBe(200);
-      return report.data.data.some((row) => row.hash === orphan);
-    };
-    const attempt = await answeredBetween({
-      prepare: async () => {
-        const uploaded = await working().uploadBlob(
-          randomBytes(64),
-          "application/octet-stream",
-        );
-        expect(uploaded.status, JSON.stringify(uploaded.error)).toBe(201);
-        orphan = uploaded.data.hash;
-      },
+    // The sweep reads every item, edge, version and pending patch, two
+    // hundred a page, before it purges a blob an earlier run reported.
+    const uploaded = await working().uploadBlob(
+      randomBytes(64),
+      "application/octet-stream",
+    );
+    expect(uploaded.status, JSON.stringify(uploaded.error)).toBe(201);
+    await runJob(server, "blob-orphans");
+    const held = await heldWhenHealthAnswered({
       start: "hold:housekeeping:blob-orphans",
+      later: "hold:blob-orphans:purge",
       begin: async () => {
         const sweeping = operatorOf(server).runHousekeeping("blob-orphans");
-        return {
-          short: async () => !(await reported()),
-          finish: async () => {
-            const run = await sweeping;
-            expect(run.status, JSON.stringify(run.error)).toBe(200);
-            expect(await reported(), "the sweep reports the orphan").toBe(true);
-          },
+        return async () => {
+          const run = await sweeping;
+          expect(run.status, JSON.stringify(run.error)).toBe(200);
+          const report = await operatorOf(server).listBlobOrphans();
+          expect(report.status, JSON.stringify(report.error)).toBe(200);
+          expect(
+            report.data.data.some((row) => row.hash === uploaded.data.hash),
+            "the sweep purged the orphan",
+          ).toBe(false);
         };
       },
     });
-    expect(attempt, NOT_SEEN).toBeGreaterThan(0);
+    expect(held).toEqual([]);
   }, 600_000);
 
   it("is answered between two pages of version thinning", async () => {
@@ -371,90 +298,75 @@ describe("GET /health while a long job runs", () => {
     });
     expect(created.status, JSON.stringify(created.error)).toBe(201);
     const last = created.data.item;
+    for (let earlier = 0; earlier < 3; earlier++) {
+      const updated = await working().updateItem(last.id, {
+        properties: { title: `v${String(last.version + 1)}` },
+        version: last.version,
+      });
+      expect(updated.status, JSON.stringify(updated.error)).toBe(200);
+      last.version = updated.data.item.version;
+    }
 
-    // Each run leaves the item one earlier version, so each attempt brings
-    // it to three, of which the run prunes two.
-    let earlier = 0;
-    const later = "hold:version-thinning:item";
-    const attempt = await answeredBetween({
-      prepare: async () => {
-        for (; earlier < 3; earlier++) {
-          const updated = await working().updateItem(last.id, {
-            properties: { title: `v${String(last.version + 1)}` },
-            version: last.version,
-          });
-          expect(updated.status, JSON.stringify(updated.error)).toBe(200);
-          last.version = updated.data.item.version;
-        }
-      },
+    const held = await heldWhenHealthAnswered({
       start: "hold:housekeeping:version-thinning",
+      later: "hold:version-thinning:item",
       begin: async () => {
-        await server.setFault(later);
         const thinning = operatorOf(server).runHousekeeping("version-thinning");
-        return {
-          short: async () => (await fault(later)).waiting === 0,
-          finish: async () => {
-            await server.waitForHold(later);
-            await server.clearFault(later);
-            const run = await thinning;
-            expect(run.status, JSON.stringify(run.error)).toBe(200);
-            expect(run.data.result).toMatchObject({ pruned: 2 });
-            earlier = 1;
-          },
+        return async () => {
+          const run = await thinning;
+          expect(run.status, JSON.stringify(run.error)).toBe(200);
+          expect(run.data.result).toMatchObject({ pruned: 2 });
         };
       },
     });
-    expect(attempt, NOT_SEEN).toBeGreaterThan(0);
+    expect(held).toEqual([]);
   }, 600_000);
 
   /**
-   * Last in the file, because each attempt moves the server's clock a year,
-   * which ends every session and sign-in made before it.
+   * Last in the file, because it moves the server's clock a year, which
+   * ends every session and sign-in made before it.
    */
   it("is answered between two grants of the retirement of inactive grants", async () => {
     const job = "grant-inactivity-retirement";
     const action = "auth.grant.retired";
-    let before = 0;
-    const attempt = await answeredBetween({
-      prepare: async () => {
-        // One sign-in for every grant: the owner's address may make ten
-        // password attempts in fifteen minutes.
-        const origin = await issuerOrigin(server);
-        const cookie = await signIn(server, origin);
-        for (let made = 0; made < GRANTS; made += 10) {
-          await Promise.all(
-            Array.from({ length: 10 }, async () =>
-              connect(
-                server,
-                origin,
-                cookie,
-                await registerApp(server, NOTES),
-                NOTES,
-              ),
-            ),
-          );
-        }
-        before = await audited(action);
-      },
+    // One sign-in for every grant: the owner's address may make ten
+    // password attempts in fifteen minutes.
+    const origin = await issuerOrigin(server);
+    const cookie = await signIn(server, origin);
+    for (let made = 0; made < GRANTS; made += 10) {
+      await Promise.all(
+        Array.from({ length: 10 }, async () =>
+          connect(
+            server,
+            origin,
+            cookie,
+            await registerApp(server, NOTES),
+            NOTES,
+          ),
+        ),
+      );
+    }
+    const before = await audited(action);
+
+    const held = await heldWhenHealthAnswered({
       start: `hold:housekeeping:${job}`,
+      // Each grant's retirement is a write of its own, after a turn.
+      later: `hold:write=${action}@30`,
       begin: async () => {
         // The move makes the job due, and the scheduler may start it before
         // this request does: either run waits at the hold.
         await server.advanceClock(366 * DAY_MS);
         const retiring = operatorOf(server).runHousekeeping(job);
-        return {
-          short: async () => (await audited(action)) - before < GRANTS,
-          finish: async () => {
-            const asked = await retiring;
-            if (asked.status !== 200) {
-              expect(asked.error?.error.code).toBe("housekeeping_job_running");
-              await runJob(server, job);
-            }
-            expect((await audited(action)) - before).toBe(GRANTS);
-          },
+        return async () => {
+          const asked = await retiring;
+          if (asked.status !== 200) {
+            expect(asked.error?.error.code).toBe("housekeeping_job_running");
+            await runJob(server, job);
+          }
+          expect((await audited(action)) - before).toBe(GRANTS);
         };
       },
     });
-    expect(attempt, NOT_SEEN).toBeGreaterThan(0);
+    expect(held).toEqual([]);
   }, 900_000);
 });

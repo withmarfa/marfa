@@ -15,6 +15,7 @@ import {
   type HealthProbes,
 } from "./health-probes.js";
 import { errorReason } from "../error-text.js";
+import { healthAdmitted } from "../control/faults.js";
 import { makeErrorResponseSchema } from "../openapi.js";
 
 export type Status = "ok" | "degraded" | "down";
@@ -429,6 +430,7 @@ export function healthRoutes(
   const { versionFile: version, placement } = config;
 
   router.get("/", refuseUndeclaredQueryKeys([]), async (c) => {
+    const answered = healthAdmitted();
     const { status: overall, components } = await readHealth(
       storage,
       blobs,
@@ -515,6 +517,7 @@ export function healthRoutes(
       scanned: scan.scanned,
     };
 
+    answered?.();
     return c.json(
       {
         status: overall,

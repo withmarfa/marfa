@@ -104,7 +104,8 @@ export interface FreshServer {
    * `deadline:<job>=<ms>` shortens a job's run deadline,
    * `free:<volume>=<bytes>` sets the reported free space,
    * `store-check-deadline=<ms>` shortens how long a blob store may go
-   * unanswered, and `resolve:<hostname>=<answers>` scripts the name
+   * unanswered, `release:<point>` clears `hold:<point>` as the next
+   * `GET /health` arrives, and `resolve:<hostname>=<answers>` scripts the name
    * lookups of webhooks and of files the MCP tools fetch. The points are
    * stated in `conformance/README.md`, "Faults".
    * The fault is cleared by `clearFault`, by `restart`, and by `stop`, so
@@ -130,8 +131,16 @@ export interface ArmedFault {
   arg: string | null;
   /** Callers waiting at a `hold:` fault now. */
   waiting: number;
-  /** Times a `fail:` fault has acted or a `resolve:` fault has answered. */
+  /**
+   * Times a `fail:` fault has acted, a `resolve:` fault has answered or a
+   * `release:` fault has released its hold.
+   */
   fired: number;
+  /**
+   * For a `release:` fault once the `GET /health` it released for has
+   * answered: the `hold:` faults with a caller waiting then.
+   */
+  held_when_answered?: string[];
 }
 
 export interface RestartOptions {
