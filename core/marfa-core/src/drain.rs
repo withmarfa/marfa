@@ -1238,6 +1238,19 @@ fn send_queue(
                 waiting.insert(row.id.clone());
             }
             answers.insert(row.id.clone(), Some(answered));
+            if answered != Verdict::Blocked {
+                // Refused unsent by the store: still a write the pass came to.
+                report.unsent += 1;
+                put_verdict(
+                    report,
+                    replacing,
+                    verdict_of(
+                        row,
+                        &Settled::plain(Some(answered), row.reason.clone(), row.refusals),
+                        None,
+                    ),
+                );
+            }
             continue;
         }
 
@@ -2639,9 +2652,12 @@ fn settle_success(
         && let Some(parsed) = &item
     {
         // The create is settled whatever the read meets: one that fails is
-        // left owed, for the read before the next pass sends anything.
+        // left owed, for the read before the next pass sends anything. One no
+        // later read gets past ends the pass, as `read_owed_backs` does, after
+        // the caller has reported the committed verdict.
         match create_edges::read(core, &parsed.item.id) {
             Ok(()) => {}
+            Err(error) if ends_the_pass(&error) => return Err(error),
             Err(error) if error.is_environmental() => {
                 telemetry::degraded!(&error);
                 settled.unavailable = unavailable_by(&error).or_else(|| Some(error.to_string()));
@@ -6826,6 +6842,15 @@ mod tests {
                 .unwrap()
                 .unwrap();
             assert_eq!(refused.verdict, Some(Verdict::Refused), "{case}");
+            assert!(
+                first
+                    .verdicts
+                    .iter()
+                    .any(|verdict| verdict.id == delete.id
+                        && verdict.verdict == Some(Verdict::Refused)),
+                "{case}: the refused delete is in no verdict: {first:?}"
+            );
+            assert_eq!(first.unsent, 1, "{case}: {first:?}");
             assert_eq!(
                 edge_doors(&server, &[projected(1)]),
                 Vec::<String>::new(),
@@ -6867,6 +6892,38 @@ mod tests {
             );
             assert_eq!(server.seen("/items/made/edges").len(), reads, "{case}");
         }
+    }
+
+    #[test]
+    fn a_read_of_a_created_items_edges_the_copy_cannot_make_ends_the_pass() {
+        let server = crate::scripted::Scripted::start();
+        let (_dir, core) = drawn_to(&server, 2, None, false);
+        server.on(
+            "/items/made/edges",
+            vec![crate::scripted::refusal(409, "reach_changed")],
+        );
+        server.on(
+            "/items/t00",
+            vec![crate::scripted::json(200, r#"{"ok":true}"#)],
+        );
+        core.delete_item("t00").unwrap();
+        let error = core.drain().unwrap_err();
+        assert!(
+            matches!(error, CoreError::CopyExpired { .. }),
+            "the pass went on: {error:?}"
+        );
+        assert_eq!(server.seen("/items/made/edges").len(), 1);
+        assert!(
+            server.seen("/items/t00").is_empty(),
+            "a write was sent after the read ended the pass"
+        );
+        let conn = core.conn().unwrap();
+        let create = store::queued_writes(&conn)
+            .unwrap()
+            .into_iter()
+            .find(|row| row.kind == WriteKind::CreateItem)
+            .unwrap();
+        assert_eq!(create.verdict, Some(Verdict::Accepted));
     }
 
     #[test]

@@ -462,6 +462,10 @@ it("keeps a created item's edge and refuses its waiting delete unsent when the r
     first.value.verdicts.find((row) => row.id === created.created)?.verdict,
     "the create's verdict was lost with the read",
   ).toBe("accepted");
+  expect(
+    first.value.verdicts.find((row) => row.id === deleted.value.id)?.verdict,
+    "the refused delete is in no verdict",
+  ).toBe("refused");
   expect(listingReads(server, created.made)).toBe(1);
   expect(
     server.requests.filter((request) => request.method === "DELETE"),
