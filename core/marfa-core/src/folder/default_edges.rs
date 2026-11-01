@@ -162,8 +162,7 @@ impl Folder {
                 queue.iter().any(|row| {
                     row.kind == crate::model::WriteKind::CreateEdge
                         && row.verdict.is_none()
-                        && row.item_id.as_deref() == Some(edge.source_id.as_str())
-                        && row.target_id.as_deref() == Some(edge.target_id.as_str())
+                        && row.edge_id.as_deref() == Some(edge.id.as_str())
                 })
             })
         };

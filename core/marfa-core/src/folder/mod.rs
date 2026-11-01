@@ -6271,8 +6271,24 @@ mod tests {
         folder.scan().unwrap();
         for path in ["a.md", "archive.bin"] {
             assert_eq!(default_refusals(&folder, path).len(), 1, "{path}");
-            // The person makes the edge in an app, and the pull brings it.
             let item = item_of(&folder, path);
+            // The witness: an edge of that type to another item is not the
+            // edge the default asks for.
+            crate::store::put_server_edge(
+                &folder.core.conn().unwrap(),
+                &crate::store::testing::wire_edge(
+                    &format!("other-{path}"),
+                    &item,
+                    SHELF,
+                    "in-collection",
+                ),
+            )
+            .unwrap();
+            folder
+                .settle_default_edges(&folder.settings().unwrap())
+                .unwrap();
+            assert_eq!(default_refusals(&folder, path).len(), 1, "{path}");
+            // The person makes the edge in an app, and the pull brings it.
             crate::store::put_server_edge(
                 &folder.core.conn().unwrap(),
                 &crate::store::testing::wire_edge(
