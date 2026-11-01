@@ -67,7 +67,7 @@
     "@types/tar-stream": "^3.1.5",
     "drizzle-kit": "^0.31.11",
     "esbuild": "0.28.2",
-    "playwright-core": "^1.64.1",
+    "playwright-core": "^1.63.0",
     "tsup": "^8.5.1",
     "tsx": "^4.23.15",
     "typescript": "^6.0.3"
