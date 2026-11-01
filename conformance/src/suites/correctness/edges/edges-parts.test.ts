@@ -276,6 +276,66 @@ describe("a part goes to the bin with its hosts", () => {
     expect(await stateOf(first)).toBe("trashed");
   });
 
+  it("sends a part named with all its hosts to the bin with them, and one with a host left out on its own", async () => {
+    const tag = `parts-named-${ctx.runId}`;
+    const host = await note(tag);
+    const part = await note(tag);
+    const reply = await note(tag);
+    const kept = await note(tag);
+    const elsewhere = await note(tag);
+    await edge(part, host, "comments-on");
+    await edge(reply, part, "comments-on");
+    await edge(kept, host, "attached-to");
+    await edge(kept, elsewhere, "attached-to");
+
+    const named = [host, reply, part, kept];
+    const preview = await client.previewItemTrash(named);
+    expect(preview.status).toBe(200);
+    const takes = new Map(
+      preview.data.items.map((item) => [item.id, item.takes.map((t) => t.id)]),
+    );
+    expect(takes.get(host)).toEqual([reply, part]);
+    expect(takes.get(part)).toEqual([reply]);
+    expect(takes.get(kept)).toEqual([]);
+    expect(preview.data.count).toBe(4);
+
+    const sent = await client.trashItems(named, preview.data.digest);
+    expect(sent.status, JSON.stringify(sent.error)).toBe(200);
+    const binned = await trashed(tag);
+    for (const id of [part, reply]) {
+      expect(binned.get(id)?.trashed_by_cascade, id).toBe(true);
+      expect(binned.get(id)?.trashed_with, id).toBe(host);
+    }
+    // A part whose other host stays out of the bin goes on its own.
+    expect(binned.has(kept)).toBe(true);
+    expect(binned.get(kept)?.trashed_by_cascade ?? false).toBe(false);
+    expect(binned.get(kept)?.trashed_with ?? null).toBeNull();
+
+    await restore(host);
+    expect(await stateOf(part)).toBe("active");
+    expect(await stateOf(reply)).toBe("active");
+    expect(await stateOf(kept)).toBe("trashed");
+  });
+
+  it("sends a reply named with the comment it answers to the bin with that comment", async () => {
+    const tag = `parts-named-reply-${ctx.runId}`;
+    const host = await note(tag);
+    const comment = await note(tag);
+    const reply = await note(tag);
+    await edge(comment, host, "comments-on");
+    await edge(reply, comment, "comments-on");
+
+    const sent = await client.trashItems([reply, comment]);
+    expect(sent.status, JSON.stringify(sent.error)).toBe(200);
+    const binned = await trashed(tag);
+    expect(binned.has(comment)).toBe(true);
+    expect(binned.get(comment)?.trashed_by_cascade ?? false).toBe(false);
+    expect(binned.get(reply)?.trashed_with).toBe(comment);
+
+    await restore(comment);
+    expect(await stateOf(reply)).toBe("active");
+  });
+
   it("takes a part two hosts share on a bulk transition into the bin that matches both", async () => {
     const tag = `parts-bulk-shared-${ctx.runId}`;
     const first = await note(tag);

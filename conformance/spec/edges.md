@@ -1266,6 +1266,20 @@ When `POST /items/trash` names several items, the server MUST judge each part's 
 
 **Tests:** `correctness/edges/edges-parts.test.ts › plans a part two named hosts share in the preview, its digest and the trash alike`.
 
+### `edges/parts-trash-named`
+
+When `POST /items/trash` names a part whose `with-hosts` targets that trash all moves into the bin or finds there, with at least one it moves, the server MUST move the part into the bin with its hosts, as if the part were not named, and mark it as `edges/parts-trash-marked` says.
+
+**Reason:** a person who selects a note and its comments together means to bin the note with them, and a restore of the note must bring them back as it would had only the note been selected.
+
+**Tests:** `correctness/edges/edges-parts.test.ts › sends a part named with all its hosts to the bin with them, and one with a host left out on its own`, `› sends a reply named with the comment it answers to the bin with that comment`.
+
+### `edges/parts-trash-named-alone`
+
+When `POST /items/trash` names a part with a `with-hosts` target that the trash leaves out of the bin, the server MUST move the part into the bin on its own.
+
+**Tests:** `correctness/edges/edges-parts.test.ts › sends a part named with all its hosts to the bin with them, and one with a host left out on its own`.
+
 ### `edges/parts-trash-binned-left`
 
 When a trash, a late part or a restore reaches an item that is already where it would move it, the server MUST NOT announce `item.deleted` or `item.restored` for that item or change its trash record.

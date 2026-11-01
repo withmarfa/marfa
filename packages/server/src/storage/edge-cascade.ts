@@ -31,7 +31,9 @@ export interface CascadePlan {
  *     in the bin. A part already in the bin is left where it is.
  *
  * Planned once over every root, so a part whose hosts are all named joins,
- * which planning each root alone would miss.
+ * which planning each root alone would miss. A named part whose hosts all
+ * go joins them as if it had not been named; only one left out goes on its
+ * own.
  *
  * A `block` edge on either side of any row in the set refuses the whole
  * plan, naming every blocker. `orphan` does nothing here: `edges` carries no
@@ -56,7 +58,17 @@ export async function planCascadeDelete(
   const children = new Map<string, string[]>();
   const candidates = new Map<string, string[]>();
 
-  const queue = [...roots];
+  // A named part waits until the closure over the other named rows settles:
+  // a part whose hosts all go joins them, as if it had not been named, and
+  // only a part left out then goes on its own.
+  const hostsOf = new Map<string, string[]>();
+  const rootRows = await storage.items.getMany(roots, { includeTrashed: true });
+  for (const id of roots) {
+    if (rootRows.get(id)?.state === "trashed") continue;
+    const hosts = await withHostsTargets(storage, id);
+    if (hosts.length > 0) hostsOf.set(id, hosts);
+  }
+  const queue = roots.filter((id) => !hostsOf.has(id));
   const drain = async (): Promise<void> => {
     for (
       let itemId = queue.shift();
@@ -95,10 +107,10 @@ export async function planCascadeDelete(
     }
   };
 
-  await drain();
-  for (;;) {
-    const pending = [...candidates.keys()].filter((id) => !inSet.has(id));
-    if (pending.length === 0) break;
+  /** The candidates of `pending` whose hosts are now all in the set or the
+   *  bin. A part not joining now may join once more of its hosts are in. */
+  const joiningParts = async (pending: string[]): Promise<string[]> => {
+    if (pending.length === 0) return [];
     const rows = await storage.items.getMany(pending, { includeTrashed: true });
     const joining: string[] = [];
     for (const partId of pending) {
@@ -107,30 +119,43 @@ export async function planCascadeDelete(
         candidates.delete(partId);
         continue;
       }
-      const hosts = (await storage.edges.listAllByItem(partId)).outbound
-        .filter(
-          (edge) =>
-            getEdgeTypeSchema(edge.edge_type)?.cascade_on_delete ===
-            "with-hosts",
-        )
-        .map((edge) => edge.target_id);
-      const outside = hosts.filter((id) => !inSet.has(id));
+      const outside = (await withHostsTargets(storage, partId)).filter(
+        (id) => !inSet.has(id),
+      );
       const held = await storage.items.getMany(outside, {
         includeTrashed: true,
       });
       if (outside.every((id) => held.get(id)?.state === "trashed")) {
         joining.push(partId);
       }
-      // A part not joining now may join once more of its hosts are in.
     }
-    if (joining.length === 0) break;
-    for (const partId of joining) {
-      for (const host of candidates.get(partId) ?? []) {
-        if (inSet.has(host)) children.get(host)?.push(partId);
+    return joining;
+  };
+
+  await drain();
+  for (;;) {
+    const pending = [...candidates.keys()].filter((id) => !inSet.has(id));
+    const joining = await joiningParts(pending);
+    if (joining.length > 0) {
+      for (const partId of joining) {
+        for (const host of candidates.get(partId) ?? []) {
+          if (inSet.has(host)) children.get(host)?.push(partId);
+        }
+        candidates.delete(partId);
+        queue.push(partId);
       }
-      candidates.delete(partId);
-      queue.push(partId);
+      await drain();
+      continue;
     }
+    // Named parts left out go on their own, a part hosted by another one
+    // left out after it, so a reply named with the comment it answers goes
+    // with that comment.
+    const left = new Set([...hostsOf.keys()].filter((id) => !inSet.has(id)));
+    if (left.size === 0) break;
+    const first = [...left].filter(
+      (id) => !(hostsOf.get(id) ?? []).some((host) => left.has(host)),
+    );
+    queue.push(...(first.length > 0 ? first : left));
     await drain();
   }
 
@@ -216,4 +241,17 @@ export async function planCascadeDelete(
     ordered.filter((id) => rootOf.get(id) !== id && !cascadeReached.has(id)),
   );
   return { ordered, rootOf, beneath, withHosts };
+}
+
+/** The targets of the `with-hosts` edges out of `itemId`: its hosts. */
+async function withHostsTargets(
+  storage: Pick<Storage, "edges">,
+  itemId: string,
+): Promise<string[]> {
+  return (await storage.edges.listAllByItem(itemId)).outbound
+    .filter(
+      (edge) =>
+        getEdgeTypeSchema(edge.edge_type)?.cascade_on_delete === "with-hosts",
+    )
+    .map((edge) => edge.target_id);
 }
